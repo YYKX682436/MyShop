@@ -7,6 +7,7 @@ import {
   SquareCheckBig,
   ClipboardList,
   ShieldCheck,
+  RefreshCw,
 } from "lucide-react"
 import { useLocale, useSearch, useSiteConfig } from "@/lib/context"
 import { ProductCard } from "@/components/store/product-card"
@@ -18,9 +19,10 @@ interface HomeContentProps {
   categories: Category[]
   siteSlogan: string
   siteDescription: string
+  productsError?: boolean
 }
 
-export function HomeContent({ products, categories, siteSlogan, siteDescription }: HomeContentProps) {
+export function HomeContent({ products, categories, siteSlogan, siteDescription, productsError = false }: HomeContentProps) {
   const { t } = useLocale()
   const { config } = useSiteConfig()
   const { searchQuery, sortBy, inStockOnly, priceMin, priceMax } = useSearch()
@@ -163,7 +165,20 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription 
       </div>
 
       {/* Product Grid */}
-      {filteredProducts.length > 0 ? (
+      {productsError ? (
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border py-24 text-muted-foreground">
+          <Search className="h-10 w-10 opacity-20" />
+          <p className="text-sm">商品暂时无法加载，请检查网络后重试。</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
+          >
+            <RefreshCw className="h-4 w-4" />
+            重试
+          </button>
+        </div>
+      ) : filteredProducts.length > 0 ? (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 lg:gap-8 2xl:grid-cols-4">
           {filteredProducts.map((product) => (
             <ProductCard key={product.id} product={product} />

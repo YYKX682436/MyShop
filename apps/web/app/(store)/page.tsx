@@ -22,8 +22,13 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function HomePage() {
-  const [productsData, categories, config] = await Promise.all([
-    getProducts({ page: 1, page_size: 100 }).catch(() => ({ list: [] as never[], pagination: { page: 1, page_size: 100, total: 0 } })),
+  const [productsResult, categories, config] = await Promise.all([
+    getProducts({ page: 1, page_size: 100 })
+      .then(data => ({ data, error: false }))
+      .catch(() => ({
+        data: { list: [] as never[], pagination: { page: 1, page_size: 100, total: 0 } },
+        error: true,
+      })),
     getCategories().catch(() => []),
     getSiteConfig().catch(() => null),
   ])
@@ -42,10 +47,11 @@ export default async function HomePage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       <HomeContent
-        products={productsData.list}
+        products={productsResult.data.list}
         categories={categories}
         siteSlogan={config?.site_slogan || ""}
         siteDescription={config?.site_description || ""}
+        productsError={productsResult.error}
       />
     </>
   )
