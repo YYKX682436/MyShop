@@ -103,7 +103,7 @@ class WebhookServiceImplTest {
         Order order = pendingOrder(orderId);
         stubChannelAndOrder(order);
         when(webhookEventRepository.findByEventId("epay:trade-4"))
-                .thenReturn(Optional.empty(), Optional.empty(), Optional.of(new WebhookEvent()));
+                .thenReturn(Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(new WebhookEvent()));
         when(provider.verifyCallback(any(PaymentProvider.CallbackRequest.class))).thenReturn(true);
         when(provider.query(any(PaymentProvider.PaymentQueryRequest.class)))
                 .thenReturn(new PaymentProvider.PaymentQueryResult("TRADE_SUCCESS", "10.00", "trade-4"));
