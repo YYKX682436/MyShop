@@ -28,7 +28,14 @@
         <!-- Spring Boot Starters -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+        <!-- The existing API contract uses Jackson 2 types. Boot 4 defaults
+             to Jackson 3, so keep the Jackson 2 compatibility module explicit
+             while the application is migrated without changing wire shapes. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-jackson2</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -148,6 +155,20 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <!-- JDK 23+ no longer discovers classpath annotation processors by
+                 default. Declare Lombok explicitly for Java 25 builds. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
                 </configuration>
             </plugin>
             <!-- Jib: 直接从 Maven 构建 Docker 镜像并推送到 GHCR（无需 Docker daemon） -->
