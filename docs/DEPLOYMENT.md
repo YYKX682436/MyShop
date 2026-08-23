@@ -36,6 +36,20 @@ required values fail fast. The Caddy service explicitly receives its domain
 and ACME email; it does not depend on root `.env` values being implicitly
 passed into a container.
 
+## Public response headers
+
+Caddy adds the baseline security headers at the public edge, so they cover both
+Spring API responses and Next.js pages: HSTS on HTTPS requests only,
+`X-Content-Type-Options: nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`, a restrictive
+`Permissions-Policy`, and `X-Frame-Options: DENY`. The repository's
+`scripts/check-compose.sh` performs a lightweight presence check for these
+rules and the Caddy client-IP overwrite rules.
+
+No CSP is enabled in this Phase 1 pass. Before production, validate a staged
+CSP against Next.js assets, payment QR/image loading, and Cloudflare Turnstile;
+only then add a policy that does not break login or payment flows.
+
 Flyway runs before the application validates the schema. Do not change
 production `spring.jpa.hibernate.ddl-auto` from `validate`, and do not run
 `flyway clean`.

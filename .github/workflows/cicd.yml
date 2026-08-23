@@ -25,6 +25,8 @@ jobs:
       - name: Build and test
         working-directory: apps/api
         run: mvn -B verify
+      - name: Build API image smoke
+        run: docker build --file Dockerfile.api --tag myshop-api:ci .
 
   web:
     name: Web typecheck, lint, and build
@@ -43,6 +45,8 @@ jobs:
       - run: pnpm --filter @myshop/web test:logic
       - run: pnpm --filter @myshop/web lint
       - run: pnpm --filter @myshop/web build
+      - name: Build Web image smoke
+        run: docker build --file Dockerfile.web --tag myshop-web:ci .
 
   compose:
     name: Compose configuration smoke test

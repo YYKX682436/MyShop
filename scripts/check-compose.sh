@@ -37,6 +37,18 @@ if ! grep -Fq 'header_up X-Real-IP {remote_host}' "$repo_dir/Caddyfile" \
   exit 1
 fi
 
+for expected_header in \
+  'X-Content-Type-Options "nosniff"' \
+  'Referrer-Policy "strict-origin-when-cross-origin"' \
+  'Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"' \
+  'X-Frame-Options "DENY"' \
+  'header @https Strict-Transport-Security "max-age=31536000; includeSubDomains"'; do
+  if ! grep -Fq "$expected_header" "$repo_dir/Caddyfile"; then
+    echo "compose validation missing Caddy security header: $expected_header" >&2
+    exit 1
+  fi
+done
+
 if docker compose --project-directory "$repo_dir" --env-file "$missing_env" config --quiet; then
   echo "compose validation unexpectedly accepted missing required variables" >&2
   exit 1

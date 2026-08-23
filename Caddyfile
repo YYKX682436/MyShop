@@ -5,6 +5,20 @@
 {$SITE_DOMAIN} {
     encode gzip
 
+    # Apply the baseline security policy at the public edge, including pages
+    # served by Next.js rather than only Spring API responses.
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        X-Frame-Options "DENY"
+    }
+
+    # HSTS is emitted only for normal HTTPS requests. Caddy still owns the
+    # HTTP-to-HTTPS redirect, so local HTTP validation does not preload HSTS.
+    @https protocol https
+    header @https Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
     # Keep /api in the request path; Spring's context path is /api.
     reverse_proxy /api/* api:8083 {
         # Caddy is the only ingress point. Overwrite, rather than append to,

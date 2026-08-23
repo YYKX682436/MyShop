@@ -7,6 +7,7 @@ import com.myshop.payment.PaymentProvider;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.DeliverService;
 import com.myshop.service.OrderService;
+import com.myshop.service.PaymentService;
 import com.myshop.service.WebhookService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,10 +26,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.math.BigDecimal;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -59,6 +63,9 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired
     private AutoFulfillmentService autoFulfillmentService;
+
+    @Autowired
+    private PaymentService paymentService;
 
     @MockitoBean
     private com.myshop.service.EmailService emailService;
@@ -129,6 +136,61 @@ class PostgresDeliveryIntegrationTest {
 
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+    }
+
+    @Test
+    void concurrentPaymentInitializationCreatesOneProviderPayment() throws Exception {
+        UUID orderId = insertPendingOrder("payment-concurrency-channel");
+        insertPaymentChannel("payment-concurrency-channel");
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch providerEntered = new CountDownLatch(1);
+        CountDownLatch releaseProvider = new CountDownLatch(1);
+        AtomicInteger providerCreateCalls = new AtomicInteger();
+        when(epayPaymentProvider.create(any(PaymentProvider.PaymentRequest.class)))
+                .thenAnswer(invocation -> {
+                    assertEquals(1, providerCreateCalls.incrementAndGet());
+                    providerEntered.countDown();
+                    assertTrue(releaseProvider.await(10, TimeUnit.SECONDS));
+                    return new PaymentProvider.PaymentResult(
+                            "payment-concurrency-trade",
+                            "https://pay.example/payment-concurrency",
+                            "qr-payment-concurrency");
+                });
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Map<String, Object>> first = executor.submit(() -> createPaymentAfter(
+                    start, ready, orderId));
+            Future<Map<String, Object>> second = executor.submit(() -> createPaymentAfter(
+                    start, ready, orderId));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+
+            // The first transaction holds the PostgreSQL row lock while the
+            // provider call is paused. The second real Spring transaction must
+            // wait for that lock and then reuse the committed gateway result.
+            assertTrue(providerEntered.await(10, TimeUnit.SECONDS));
+            releaseProvider.countDown();
+
+            Map<String, Object> firstResult = first.get(20, TimeUnit.SECONDS);
+            Map<String, Object> secondResult = second.get(20, TimeUnit.SECONDS);
+            assertEquals(firstResult.get("pay_url"), secondResult.get("pay_url"));
+            assertEquals(firstResult.get("qrcode_url"), secondResult.get("qrcode_url"));
+            assertEquals("https://pay.example/payment-concurrency", firstResult.get("pay_url"));
+            assertEquals("qr-payment-concurrency", firstResult.get("qrcode_url"));
+            assertEquals(1, providerCreateCalls.get(), "Provider.create must run once");
+
+            Map<String, Object> stored = jdbcTemplate.queryForMap(
+                    "select payment_url, qrcode_url, epay_trade_no from orders where id = ?", orderId);
+            assertEquals("https://pay.example/payment-concurrency", stored.get("payment_url"));
+            assertEquals("qr-payment-concurrency", stored.get("qrcode_url"));
+            assertEquals("payment-concurrency-trade", stored.get("epay_trade_no"));
+        } finally {
+            releaseProvider.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -203,6 +265,14 @@ class PostgresDeliveryIntegrationTest {
         ready.countDown();
         start.await();
         return deliverService.deliverOrders(request(orderId, lookupToken), null);
+    }
+
+    private Map<String, Object> createPaymentAfter(CountDownLatch start, CountDownLatch ready,
+                                                   UUID orderId) throws Exception {
+        ready.countDown();
+        start.await();
+        return paymentService.createPayment(orderId, "payment-concurrency-channel",
+                new BigDecimal("10.00"), "pc");
     }
 
     private Map<String, Object> request(UUID orderId, String lookupToken) {
