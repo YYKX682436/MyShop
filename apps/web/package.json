@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:logic": "node --experimental-strip-types --test lib/idempotency.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -46,7 +47,7 @@
     "embla-carousel-react": "8.5.1",
     "input-otp": "1.4.1",
     "lucide-react": "^0.544.0",
-    "next": "16.1.6",
+    "next": "16.3.2",
     "next-themes": "^0.4.6",
     "qrcode.react": "^4.2.0",
     "react": "^19",
@@ -65,7 +66,7 @@
   },
   "devDependencies": {
     "eslint": "^9.25.0",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.3.2",
     "@tailwindcss/postcss": "^4.1.13",
     "@types/node": "^22",
     "@types/react": "^19",

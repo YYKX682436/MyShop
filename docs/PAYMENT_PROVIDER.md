@@ -20,11 +20,20 @@ The SPI includes these records:
 - `PaymentQueryRequest`: the merchant order ID plus the stored channel config.
 - `PaymentQueryResult`: provider status, amount, and provider trade number.
 
+`ConfigField` is the backend-owned form contract. Its type can be `text`,
+`password`/`secret`, `url`, `number`, `switch`, or `select`; it also carries
+label, required, placeholder, default value, and select options. The admin UI
+fetches `/payment-providers` at startup and renders this schema. It does not
+use a provider allowlist or Epay field list as its production data source.
+
 ## Channel administration rules
 
 The admin API validates provider IDs and payment types against the registered
-provider. Config keys must be declared by the provider schema and values are
-bounded scalar strings. Sensitive schema fields are masked in read responses.
+provider. Config keys must be declared by the provider schema, field types and
+select options are checked server-side, and values are bounded scalar values.
+Sensitive schema fields are masked in read responses. `channel_code` is the
+unique code of a concrete channel instance, not the payment type; for example
+`epay-alipay-main` and `epay-alipay-backup` can both use `payment_type=alipay`.
 Production configuration must use HTTPS callback and return URLs and must not
 be placed in source control.
 

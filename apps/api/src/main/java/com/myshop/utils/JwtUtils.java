@@ -19,8 +19,17 @@ public class JwtUtils {
 
     public JwtUtils(@Value("${jwt.secret}") String secret,
                     @Value("${jwt.expiration}") long expiration) {
+        validateSecret(secret);
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expiration = expiration;
+    }
+
+    private void validateSecret(String secret) {
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 64
+                || secret.chars().distinct().count() < 16) {
+            throw new IllegalStateException(
+                    "JWT_SECRET must contain at least 64 bytes and sufficient randomness");
+        }
     }
 
     public String generateToken(UUID userId, String username, String role) {

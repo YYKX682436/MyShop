@@ -7,7 +7,8 @@ import { toast } from "sonner"
 import { useLocale, useAuth, useCart } from "@/lib/context"
 import { orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
-import { cn, validateEmail, generateIdempotencyKey, getCurrencySymbol, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { cn, validateEmail, getCurrencySymbol, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PaymentChannelItem } from "@/types"
 
@@ -75,6 +76,13 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     }
 
     setSubmitting(true)
+    const intent = getOrCreateIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, {
+      product_id: product.id,
+      spec_id: selectedSpec?.id ?? null,
+      quantity,
+      email: email.trim().toLowerCase(),
+      payment_method: selectedPayment,
+    })
     try {
       setTurnstileHeaders(turnstileToken)
       const device = detectPaymentDevice()
@@ -84,10 +92,12 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           quantity,
           email,
           payment_method: selectedPayment,
-          idempotency_key: generateIdempotencyKey(),
+          idempotency_key: intent.key,
+          idempotency_fingerprint: intent.fingerprint,
           device,
         }))
       saveOrderLookupToken(result.payment.order_id, result.lookup_token)
+      clearIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, intent.key)
       toast.success(t("checkout.processingOrder"))
       const payUrlH5 = result.payment.pay_url || ""
       const qr = result.payment.qrcode_url || result.payment.payment_url || ""

@@ -87,7 +87,7 @@ export default function OrderQueryPage() {
           <ClipboardList className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-bold text-foreground">查询订单与卡密</h1>
         </div>
-        <p className="text-sm text-muted-foreground">订单号本身不能访问订单；请同时输入下单后得到的查询凭证。</p>
+        <p className="text-sm text-muted-foreground">订单号本身不能访问订单；请同时输入下单后得到的查询凭证。服务器会在支付成功后自动尝试发货。</p>
       </div>
 
       <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
@@ -106,7 +106,7 @@ export default function OrderQueryPage() {
         </div>
         <div className="mt-4 flex items-start gap-2 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <span>查询凭证只在本机订单记录中保存；数据库和服务端日志不会保存明文凭证。</span>
+          <span>查询凭证只在本机订单记录中保存；服务端日志不会记录明文凭证。为支持站长恢复，数据库中的 guest token 字段属于敏感凭证。</span>
         </div>
       </div>
 

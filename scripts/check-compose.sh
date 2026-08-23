@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+valid_env="$(mktemp)"
+missing_env="$(mktemp)"
+trap 'rm -f "$valid_env" "$missing_env"' EXIT
+
+cat >"$valid_env" <<'EOF'
+SITE_DOMAIN=store.example.test
+ACME_EMAIL=ops@example.test
+DB_PASSWORD=compose-validation-password
+JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
+EOF
+
+cat >"$missing_env" <<'EOF'
+DB_PASSWORD=compose-validation-password
+EOF
+
+rendered_config="$(docker compose --project-directory "$repo_dir" --env-file "$valid_env" config)"
+
+for expected in \
+  "subnet: 172.30.0.0/24" \
+  "ipv4_address: 172.30.0.2" \
+  "ipv4_address: 172.30.0.20" \
+  "ipv4_address: 172.30.0.30" \
+  "ipv4_address: 172.30.0.10"; do
+  if [[ "$rendered_config" != *"$expected"* ]]; then
+    echo "compose validation missing expected topology: $expected" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'header_up X-Real-IP {remote_host}' "$repo_dir/Caddyfile" \
+  || ! grep -Fq 'header_up X-Forwarded-For {remote_host}' "$repo_dir/Caddyfile"; then
+  echo "compose validation found no Caddy client-IP overwrite rules" >&2
+  exit 1
+fi
+
+if docker compose --project-directory "$repo_dir" --env-file "$missing_env" config --quiet; then
+  echo "compose validation unexpectedly accepted missing required variables" >&2
+  exit 1
+fi
+
+echo "docker compose required-variable validation passed"

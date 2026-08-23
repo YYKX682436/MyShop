@@ -1,667 +1,273 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
-import { Plus, Edit, Trash2, ToggleLeft, ToggleRight, X, AlertCircle, ChevronDown, Shield, Key } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { useLocale } from "@/lib/context"
+import { useEffect, useMemo, useState } from "react"
+import { Edit, Plus, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
-import { adminPaymentApi, requestOrThrow } from "@/services/api"
 import { Modal } from "@/components/ui/modal"
-import type { PaymentChannelItem, PaymentChannelConfig, ProviderType } from "@/types"
+import { useLocale } from "@/lib/context"
+import { cn } from "@/lib/utils"
+import { adminPaymentApi, paymentApi, requestOrThrow } from "@/services/api"
+import type {
+  PaymentChannelItem,
+  PaymentProviderConfigField,
+  PaymentProviderMetadata,
+} from "@/types"
 
-// ============================================================
-// Provider & Channel definitions
-// ============================================================
-
-interface ConfigField {
-  key: string
-  label: string
-  placeholder: string
-  type?: "password" | "text"
-}
-
-interface ProviderOption {
-  type: ProviderType
-  name: string
-  description: string
-  /** 该 provider 支持的 channel_code 列表 */
-  channels: { code: string; name: string }[]
-  configFields: ConfigField[]
-}
-
-type PaymentType = PaymentChannelItem["payment_type"]
-
-interface PaymentChannelForm {
-  provider_type: string
-  payment_type: PaymentType
+interface ChannelForm {
   channel_code: string
   channel_name: string
+  provider_type: string
+  payment_type: string
   is_enabled: boolean
   sort_order: string
 }
 
-const PROVIDER_OPTIONS: ProviderOption[] = [
-  {
-    type: "epay",
-    name: "易支付（聚合支付）",
-    description: "通过第三方聚合平台接入支付宝/微信，共用一套商户配置",
-    channels: [
-      { code: "alipay", name: "支付宝" },
-      { code: "wechat", name: "微信支付" },
-    ],
-    configFields: [
-      { key: "pid", label: "商户ID (PID)", placeholder: "例如：743794" },
-      { key: "key", label: "商户密钥 (Key)", placeholder: "MD5 密钥", type: "password" },
-      { key: "api_url", label: "API 地址", placeholder: "例如：https://pay.example.com/" },
-      { key: "notify_url", label: "异步回调地址", placeholder: "例如：https://yourdomain.com/api/payments/webhook/epay" },
-      { key: "return_url", label: "同步跳转地址", placeholder: "例如：https://yourdomain.com/order/query" },
-    ],
-  },
-]
-
-const PROVIDER_MAP = Object.fromEntries(PROVIDER_OPTIONS.map(p => [p.type, p]))
-
-/** 获取 provider 的显示标签 */
-function getProviderLabel(type: string): string {
-  return PROVIDER_MAP[type]?.name ?? type
+const emptyForm: ChannelForm = {
+  channel_code: "",
+  channel_name: "",
+  provider_type: "",
+  payment_type: "",
+  is_enabled: true,
+  sort_order: "0",
 }
 
-// ============================================================
-// Page Component
-// ============================================================
+function providerLabel(providers: PaymentProviderMetadata[], providerId: string): string {
+  return providers.find(provider => provider.provider_id === providerId)?.display_name || providerId
+}
+
+function fieldValue(config: Record<string, unknown>, field: PaymentProviderConfigField): unknown {
+  return config[field.name] ?? field.default_value ?? (field.type === "switch" ? false : "")
+}
 
 export default function AdminPaymentChannelsPage() {
   const { t } = useLocale()
   const [channels, setChannels] = useState<PaymentChannelItem[]>([])
+  const [providers, setProviders] = useState<PaymentProviderMetadata[]>([])
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [showKeys, setShowKeys] = useState(false)
+  const [form, setForm] = useState<ChannelForm>(emptyForm)
+  const [config, setConfig] = useState<Record<string, unknown>>({})
 
-  // Form state — step 1: provider, step 2: channel, step 3: config
-  const [providerDropdownOpen, setProviderDropdownOpen] = useState(false)
-  const [channelDropdownOpen, setChannelDropdownOpen] = useState(false)
-
-  const [formData, setFormData] = useState<PaymentChannelForm>({
-    provider_type: "" as string,
-    payment_type: "alipay",
-    channel_code: "",
-    channel_name: "",
-    is_enabled: true,
-    sort_order: "",
-  })
-  const [configData, setConfigData] = useState<Record<string, string>>({})
-  const [formErrors, setFormErrors] = useState<Record<string, boolean>>({})
-  const providerBtnRef = useRef<HTMLButtonElement>(null)
-  const channelNameRef = useRef<HTMLInputElement>(null)
-
-  // Current provider option
   const currentProvider = useMemo(
-    () => PROVIDER_MAP[formData.provider_type] ?? null,
-    [formData.provider_type]
+    () => providers.find(provider => provider.provider_id === form.provider_type),
+    [form.provider_type, providers],
   )
 
-  // Available channel options based on selected provider
-  const availableChannels = useMemo(
-    () => currentProvider?.channels ?? [],
-    [currentProvider]
-  )
-
-  // Already-used (channel_code + provider_type) combos (to prevent duplicates)
-  const usedCombos = useMemo(
-    () => {
-      const set = new Set<string>()
-      for (const c of channels) {
-        if (editId && c.id === editId) continue // 编辑模式排除当前
-        set.add(`${c.channel_code}__${c.provider_type}`)
-      }
-      return set
-    },
-    [channels, editId]
-  )
-
-  const fetchChannels = async () => {
+  const load = async () => {
     try {
-      const data = await adminPaymentApi.getList()
-      setChannels(data)
-    } catch {
+      const [channelData, providerData] = await Promise.all([
+        requestOrThrow(() => adminPaymentApi.getList()),
+        requestOrThrow(() => paymentApi.getProviders()),
+      ])
+      setChannels(channelData)
+      setProviders(providerData)
+    } catch (error) {
       setChannels([])
+      setProviders([])
+      toast.error(error instanceof Error ? error.message : "无法读取支付配置")
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { fetchChannels() }, [])
+  useEffect(() => { void load() }, [])
 
-  const handleEdit = (channel: PaymentChannelItem) => {
+  const closeModal = () => {
+    setShowModal(false)
+    setEditId(null)
+    setForm(emptyForm)
+    setConfig({})
+  }
+
+  const openCreate = () => {
+    const provider = providers[0]
+    setEditId(null)
+    setForm({
+      ...emptyForm,
+      provider_type: provider?.provider_id || "",
+      payment_type: provider?.payment_types[0] || "",
+    })
+    setConfig({})
+    setShowModal(true)
+  }
+
+  const openEdit = (channel: PaymentChannelItem) => {
+    const values: Record<string, unknown> = {}
+    Object.entries(channel.config_data || {}).forEach(([key, value]) => { values[key] = value })
     setEditId(channel.id)
-    setFormData({
-      provider_type: channel.provider_type || "epay",
-      payment_type: channel.payment_type || (channel.channel_code === "wechat" ? "wechat" : "alipay"),
+    setForm({
       channel_code: channel.channel_code,
       channel_name: channel.channel_name,
+      provider_type: channel.provider_type,
+      payment_type: channel.payment_type,
       is_enabled: channel.is_enabled,
       sort_order: String(channel.sort_order),
     })
-    const config = channel.config_data
-    if (config && typeof config === "object") {
-      const parsed: Record<string, string> = {}
-      for (const [k, v] of Object.entries(config)) {
-        if (v != null) parsed[k] = String(v)
-      }
-      setConfigData(parsed)
-    } else {
-      setConfigData({})
-    }
-    setShowKeys(false)
+    setConfig(values)
     setShowModal(true)
   }
 
-  const handleOpenCreate = () => {
-    setEditId(null)
-    setFormData({ provider_type: "", payment_type: "alipay", channel_code: "", channel_name: "", is_enabled: true, sort_order: "" })
-    setConfigData({})
-    setShowKeys(false)
-    setShowModal(true)
-  }
-
-  const handleCloseModal = () => {
-    setShowModal(false)
-    setEditId(null)
-    setFormData({ provider_type: "", payment_type: "alipay", channel_code: "", channel_name: "", is_enabled: true, sort_order: "" })
-    setConfigData({})
-    setProviderDropdownOpen(false)
-    setChannelDropdownOpen(false)
-    setShowKeys(false)
-    setFormErrors({})
-  }
-
-  const handleSelectProvider = (provider: ProviderOption) => {
-    // 如果该 provider 只有一个 channel，自动选中
-    const autoChannel = provider.channels.length === 1 ? provider.channels[0] : null
-    setFormData(prev => ({
-      ...prev,
-      provider_type: provider.type,
-      payment_type: autoChannel?.code === "wechat" ? "wechat" : "alipay",
-      channel_code: autoChannel?.code ?? "",
-      channel_name: autoChannel?.name ?? "",
+  const selectProvider = (providerId: string) => {
+    const provider = providers.find(value => value.provider_id === providerId)
+    setForm(previous => ({
+      ...previous,
+      provider_type: providerId,
+      payment_type: provider?.payment_types.includes(previous.payment_type)
+        ? previous.payment_type
+        : provider?.payment_types[0] || "",
     }))
-    setConfigData({})
-    setProviderDropdownOpen(false)
-    setFormErrors(prev => ({ ...prev, provider: false }))
+    setConfig({})
   }
 
-  const handleSelectChannel = (channel: { code: string; name: string }) => {
-    setFormData(prev => ({
-      ...prev,
-      channel_code: channel.code,
-      channel_name: channel.name,
-    }))
-    setChannelDropdownOpen(false)
+  const setField = (field: PaymentProviderConfigField, rawValue: string | boolean) => {
+    const value = field.type === "number" && typeof rawValue === "string" && rawValue !== ""
+      ? Number(rawValue)
+      : rawValue
+    setConfig(previous => ({ ...previous, [field.name]: value }))
   }
 
-  const handleConfigChange = (key: string, value: string) => {
-    setConfigData(prev => ({ ...prev, [key]: value }))
-  }
-
-  const handleSave = async () => {
-    const errors: Record<string, boolean> = {}
-    if (!formData.provider_type || !formData.channel_code.trim()) errors.provider = true
-    if (!formData.channel_name.trim()) errors.channel_name = true
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors)
-      const messages: string[] = []
-      if (errors.provider) messages.push("支付提供商")
-      if (errors.channel_name) messages.push("渠道名称")
-      toast.error(`请填写：${messages.join("、")}`)
-      if (errors.provider) {
-        providerBtnRef.current?.focus()
-        providerBtnRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
-      } else if (errors.channel_name) {
-        channelNameRef.current?.focus()
-        channelNameRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
-      }
+  const save = async () => {
+    if (!form.provider_type || !form.payment_type || !form.channel_code.trim() || !form.channel_name.trim()) {
+      toast.error("请完整填写通道代码、名称、提供商和支付类型")
       return
     }
-    setFormErrors({})
     setSaving(true)
-
-    const configObj: Record<string, string> = {}
-    for (const [k, v] of Object.entries(configData)) {
-      if (v && v.trim()) configObj[k] = v.trim()
-    }
-    const hasConfig = Object.keys(configObj).length > 0
-
     try {
-      if (editId) {
-        await requestOrThrow(() => adminPaymentApi.update(editId, {
-            channel_name: formData.channel_name,
-            provider_type: formData.provider_type,
-            payment_type: formData.payment_type,
-            config_data: hasConfig ? configObj : {},
-            is_enabled: formData.is_enabled,
-            sort_order: parseInt(formData.sort_order) || 0,
-          }))
-      } else {
-        await requestOrThrow(() => adminPaymentApi.create({
-            channel_code: formData.channel_code,
-            channel_name: formData.channel_name,
-            provider_type: formData.provider_type,
-            payment_type: formData.payment_type,
-            config_data: hasConfig ? configObj : undefined,
-            is_enabled: formData.is_enabled,
-            sort_order: parseInt(formData.sort_order) || 0,
-          }))
+      const data = {
+        channel_code: form.channel_code.trim(),
+        channel_name: form.channel_name.trim(),
+        provider_type: form.provider_type,
+        payment_type: form.payment_type,
+        config_data: config,
+        is_enabled: form.is_enabled,
+        sort_order: Number(form.sort_order) || 0,
       }
+      if (editId) await requestOrThrow(() => adminPaymentApi.update(editId, data))
+      else await requestOrThrow(() => adminPaymentApi.create(data))
       toast.success("保存成功")
-      handleCloseModal()
-      await fetchChannels()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "保存失败")
+      closeModal()
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "保存失败")
     } finally {
       setSaving(false)
     }
   }
 
-  const handleDelete = async (id: string) => {
-    try {
-      await requestOrThrow(() => adminPaymentApi.delete(id))
-      toast.success("删除成功")
-      setShowDeleteConfirm(null)
-      await fetchChannels()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "删除失败")
-    }
-  }
-
-  const handleToggle = async (channel: PaymentChannelItem) => {
+  const toggle = async (channel: PaymentChannelItem) => {
     try {
       await requestOrThrow(() => adminPaymentApi.update(channel.id, { is_enabled: !channel.is_enabled }))
-      toast.success(channel.is_enabled ? "已禁用" : "已启用")
-      await fetchChannels()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "操作失败")
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "操作失败")
     }
   }
 
-  const getConfigStatus = (channel: PaymentChannelItem) => {
-    const config = channel.config_data
-    if (!config || typeof config !== "object") return false
-    return Object.values(config).some(v => v != null && String(v).trim() !== "")
+  const remove = async (channel: PaymentChannelItem) => {
+    if (!window.confirm(`确定删除通道「${channel.channel_name}」吗？`)) return
+    try {
+      await requestOrThrow(() => adminPaymentApi.delete(channel.id))
+      await load()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "删除失败")
+    }
   }
 
-  if (loading) {
+  const renderField = (field: PaymentProviderConfigField) => {
+    const value = fieldValue(config, field)
+    const label = `${field.label}${field.required ? " *" : ""}`
+    if (field.type === "switch") {
+      return (
+        <label key={field.name} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 text-sm">
+          <span>{label}</span>
+          <input type="checkbox" checked={Boolean(value)} onChange={event => setField(field, event.target.checked)} className="h-4 w-4 accent-primary" />
+        </label>
+      )
+    }
+    if (field.type === "select") {
+      return (
+        <label key={field.name} className="flex flex-col gap-1.5 text-sm">
+          <span className="font-medium">{label}</span>
+          <select value={String(value)} onChange={event => setField(field, event.target.value)} className="h-10 rounded-lg border border-input bg-background px-3">
+            {(field.options || []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+      )
+    }
+    const inputType = field.type === "password" || field.type === "secret" || field.secret
+      ? "password"
+      : field.type === "number" ? "number" : field.type
     return (
-      <div className="flex flex-col gap-6">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("admin.payment")}</h1>
-          <p className="text-sm text-muted-foreground">{t("admin.paymentDesc")}</p>
-        </div>
-        <div className="flex items-center justify-center py-24">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        </div>
-      </div>
+      <label key={field.name} className="flex flex-col gap-1.5 text-sm">
+        <span className="font-medium">{label}</span>
+        <input
+          type={inputType}
+          value={String(value ?? "")}
+          placeholder={field.placeholder || undefined}
+          onChange={event => setField(field, event.target.value)}
+          className="h-10 rounded-lg border border-input bg-background px-3"
+        />
+      </label>
     )
   }
 
+  if (loading) return <div className="flex items-center justify-center py-24"><div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>
+
   return (
     <div className="flex flex-col gap-6">
-      {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{t("admin.payment")}</h1>
           <p className="text-sm text-muted-foreground">{t("admin.paymentDesc")}</p>
         </div>
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors"
-          onClick={handleOpenCreate}
-        >
-          <Plus className="h-4 w-4" />
-          {t("admin.addChannel")}
+        <button type="button" onClick={openCreate} disabled={providers.length === 0} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50">
+          <Plus className="h-4 w-4" />新增支付通道
         </button>
       </div>
 
-      {/* Channel Cards */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {channels.map((channel) => {
-          const hasConfig = getConfigStatus(channel)
-          return (
-            <div
-              key={channel.id}
-              className={cn(
-                "rounded-xl border bg-card p-5 shadow-sm transition-colors",
-                channel.is_enabled ? "border-border" : "border-border opacity-60"
-              )}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    "flex h-10 w-10 items-center justify-center rounded-lg",
-                    channel.is_enabled ? "bg-primary/10" : "bg-muted"
-                  )}>
-                    <span className={cn("text-sm font-bold", channel.is_enabled ? "text-primary" : "text-muted-foreground")}>
-                      {channel.channel_code.slice(0, 2).toUpperCase()}
-                    </span>
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-foreground">{channel.channel_name}</h3>
-                    <p className="text-xs text-muted-foreground">
-                      {channel.channel_code}
-                      <span className="mx-1">·</span>
-                      <span className="text-primary/80">{getProviderLabel(channel.provider_type)}</span>
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                  title={channel.is_enabled ? "点击禁用" : "点击启用"}
-                  onClick={() => handleToggle(channel)}
-                >
-                  {channel.is_enabled ? (
-                    <ToggleRight className="h-6 w-6 text-primary" />
-                  ) : (
-                    <ToggleLeft className="h-6 w-6" />
-                  )}
-                </button>
+        {channels.map(channel => (
+          <div key={channel.id} className={cn("rounded-xl border bg-card p-5 shadow-sm", !channel.is_enabled && "opacity-60")}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-medium text-foreground">{channel.channel_name}</h3>
+                <p className="mt-1 text-xs text-muted-foreground">{channel.channel_code} · {providerLabel(providers, channel.provider_type)} · {channel.payment_type}</p>
               </div>
-
-              <div className="mt-4 grid grid-cols-3 gap-4 rounded-lg bg-muted/30 p-3">
-                <div>
-                  <span className="text-xs text-muted-foreground">{t("admin.sortOrderLabel")}</span>
-                  <p className="text-sm font-medium text-foreground">{channel.sort_order}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">{t("admin.createdAt")}</span>
-                  <p className="text-sm font-medium text-foreground">
-                    {new Date(channel.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground">支付配置</span>
-                  <p className={cn("text-sm font-medium", hasConfig ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-                    {hasConfig ? "已配置" : "未配置"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                  onClick={() => handleEdit(channel)}
-                >
-                  <Edit className="h-3.5 w-3.5" />
-                  {t("admin.edit")}
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                  onClick={() => setShowDeleteConfirm(channel.id)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {t("admin.delete")}
-                </button>
-              </div>
+              <button type="button" title={channel.is_enabled ? "禁用" : "启用"} onClick={() => void toggle(channel)}>
+                {channel.is_enabled ? <ToggleRight className="h-6 w-6 text-primary" /> : <ToggleLeft className="h-6 w-6 text-muted-foreground" />}
+              </button>
             </div>
-          )
-        })}
-        {channels.length === 0 && (
-          <div className="col-span-full py-12 text-center text-sm text-muted-foreground">{t("admin.noChannelData")}</div>
-        )}
+            <div className="mt-4 flex items-center justify-between rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+              <span>排序 {channel.sort_order}</span><span>实例代码唯一</span>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => openEdit(channel)} className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs hover:bg-accent"><Edit className="h-3.5 w-3.5" />编辑</button>
+              <button type="button" onClick={() => void remove(channel)} className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10"><Trash2 className="h-3.5 w-3.5" />删除</button>
+            </div>
+          </div>
+        ))}
+        {channels.length === 0 && <div className="col-span-full py-12 text-center text-sm text-muted-foreground">暂无支付通道</div>}
       </div>
 
-      {/* Add/Edit Modal */}
-      <Modal open={showModal} onClose={handleCloseModal} className="max-w-2xl">
-        <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">
-            {editId ? t("admin.editChannelTitle") : t("admin.addChannelTitle")}
-          </h2>
-          <button
-            type="button"
-            onClick={handleCloseModal}
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-          >
-            <X className="h-5 w-5" />
-          </button>
+      <Modal open={showModal} onClose={closeModal} className="max-w-2xl">
+        <div className="flex items-center justify-between border-b border-border px-6 py-4">
+          <h2 className="text-lg font-semibold">{editId ? "编辑支付通道" : "新增支付通道"}</h2>
+          <button type="button" onClick={closeModal} className="rounded-md p-1 text-muted-foreground hover:bg-accent"><X className="h-5 w-5" /></button>
         </div>
-        <div className="flex flex-col gap-4 p-6">
-          {/* Step 1: Provider Type */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-foreground">支付提供商 *</label>
-            <div className="relative">
-              <button
-                ref={providerBtnRef}
-                type="button"
-                className={cn(
-                  "flex h-10 w-full items-center justify-between rounded-lg border bg-background px-3 text-sm transition-colors",
-                  formErrors.provider ? "border-destructive ring-2 ring-destructive/20" : providerDropdownOpen ? "border-ring ring-2 ring-ring" : "border-input",
-                  editId ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:border-muted-foreground/50"
-                )}
-                onClick={() => { !editId && setProviderDropdownOpen(!providerDropdownOpen); setFormErrors(prev => ({ ...prev, provider: false })) }}
-                disabled={!!editId}
-              >
-                <span className={formData.provider_type ? "text-foreground" : "text-muted-foreground"}>
-                  {currentProvider ? currentProvider.name : "请选择支付提供商"}
-                </span>
-                <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", providerDropdownOpen && "rotate-180")} />
-              </button>
-              {providerDropdownOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setProviderDropdownOpen(false)} />
-                  <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
-                    {PROVIDER_OPTIONS.map((option) => (
-                      <button
-                        key={option.type}
-                        type="button"
-                        className={cn(
-                          "flex w-full flex-col items-start px-3 py-2.5 text-sm transition-colors hover:bg-accent cursor-pointer",
-                          formData.provider_type === option.type && "bg-accent/50"
-                        )}
-                        onClick={() => handleSelectProvider(option)}
-                      >
-                        <span className="font-medium text-foreground">{option.name}</span>
-                        <span className="text-xs text-muted-foreground">{option.description}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+        <div className="grid gap-4 p-6">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">支付提供商 *</span><select value={form.provider_type} onChange={event => selectProvider(event.target.value)} className="h-10 rounded-lg border border-input bg-background px-3"><option value="">请选择</option>{providers.map(provider => <option key={provider.provider_id} value={provider.provider_id}>{provider.display_name}</option>)}</select></label>
+            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">支付类型 *</span><select value={form.payment_type} onChange={event => setForm(previous => ({ ...previous, payment_type: event.target.value }))} className="h-10 rounded-lg border border-input bg-background px-3"><option value="">请选择</option>{(currentProvider?.payment_types || []).map(type => <option key={type} value={type}>{type}</option>)}</select></label>
           </div>
-
-          {/* Step 2: Channel Code (only if provider has multiple channels) */}
-          {currentProvider && availableChannels.length > 1 && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">支付方式 *</label>
-              <div className="relative">
-                <button
-                  type="button"
-                  className={cn(
-                    "flex h-10 w-full items-center justify-between rounded-lg border bg-background px-3 text-sm transition-colors",
-                    channelDropdownOpen ? "border-ring ring-2 ring-ring" : "border-input",
-                    editId ? "opacity-50 cursor-not-allowed" : "cursor-pointer hover:border-muted-foreground/50"
-                  )}
-                  onClick={() => !editId && setChannelDropdownOpen(!channelDropdownOpen)}
-                  disabled={!!editId}
-                >
-                  <span className={formData.channel_code ? "text-foreground" : "text-muted-foreground"}>
-                    {formData.channel_code
-                      ? `${formData.channel_name} (${formData.channel_code})`
-                      : "请选择支付方式"
-                    }
-                  </span>
-                  <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", channelDropdownOpen && "rotate-180")} />
-                </button>
-                {channelDropdownOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setChannelDropdownOpen(false)} />
-                    <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
-                      {availableChannels.map((ch) => {
-                        const isUsed = usedCombos.has(`${ch.code}__${formData.provider_type}`)
-                        return (
-                          <button
-                            key={ch.code}
-                            type="button"
-                            className={cn(
-                              "flex w-full items-center justify-between px-3 py-2.5 text-sm transition-colors",
-                              isUsed
-                                ? "opacity-40 cursor-not-allowed"
-                                : "hover:bg-accent cursor-pointer",
-                              formData.channel_code === ch.code && "bg-accent/50 font-medium"
-                            )}
-                            onClick={() => !isUsed && handleSelectChannel(ch)}
-                            disabled={isUsed}
-                          >
-                            <span className="text-foreground">{ch.name}</span>
-                            <span className="text-xs text-muted-foreground">{ch.code}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Channel Name (editable) */}
-          {formData.channel_code && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">{`${t("admin.channelName")} *`}</label>
-              <input
-                ref={channelNameRef}
-                type="text"
-                className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", formErrors.channel_name ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")}
-                placeholder="显示名称（可自定义）"
-                value={formData.channel_name}
-                onChange={(e) => { setFormData({ ...formData, channel_name: e.target.value }); setFormErrors(prev => ({ ...prev, channel_name: false })) }}
-              />
-            </div>
-          )}
-
-          {/* Dynamic Config Fields */}
-          {currentProvider && currentProvider.configFields.length > 0 && formData.channel_code && (
-            <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-medium text-foreground">
-                    {currentProvider.name} 配置
-                  </span>
-                </div>
-                {currentProvider.configFields.some(f => f.type === "password") && (
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    onClick={() => setShowKeys(!showKeys)}
-                  >
-                    <Key className="h-3 w-3" />
-                    {showKeys ? "隐藏密钥" : "显示密钥"}
-                  </button>
-                )}
-              </div>
-              {currentProvider.configFields.map((field) => (
-                <div key={field.key} className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-muted-foreground">{field.label}</label>
-                  <input
-                    type={field.type === "password" && !showKeys ? "password" : "text"}
-                    className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    placeholder={field.placeholder}
-                    value={configData[field.key] ?? ""}
-                    onChange={(e) => handleConfigChange(field.key, e.target.value)}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Sort Order */}
-          {formData.channel_code && (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.sortOrderLabel")}</label>
-                <input
-                  type="number"
-                  className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={t("admin.sortOrderHint")}
-                  value={formData.sort_order}
-                  onChange={(e) => setFormData({ ...formData, sort_order: e.target.value })}
-                />
-              </div>
-
-              {/* Enable toggle */}
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">{t("admin.enableStatus")}</label>
-                <button
-                  type="button"
-                  className={cn(
-                    "relative h-6 w-11 rounded-full transition-colors",
-                    formData.is_enabled ? "bg-primary" : "bg-muted"
-                  )}
-                  onClick={() => setFormData({ ...formData, is_enabled: !formData.is_enabled })}
-                >
-                  <span className={cn(
-                    "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
-                    formData.is_enabled && "translate-x-5"
-                  )} />
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-        <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
-          <button
-            type="button"
-            className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-            onClick={handleCloseModal}
-          >
-            {t("admin.cancel")}
-          </button>
-          <button
-            type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-            onClick={handleSave}
-            disabled={saving || !formData.provider_type || !formData.channel_code}
-          >
-            {saving ? t("admin.saving") : t("admin.save")}
-          </button>
-        </div>
-      </Modal>
-
-      {/* Delete Confirmation Modal */}
-      <Modal open={showDeleteConfirm !== null} onClose={() => setShowDeleteConfirm(null)} className="max-w-md">
-        <div className="flex flex-col gap-4 p-6">
-          <div className="flex items-start gap-3">
-            <div className="rounded-full bg-destructive/10 p-2">
-              <AlertCircle className="h-5 w-5 text-destructive" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-base font-semibold text-foreground">{t("admin.deleteConfirm")}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t("admin.deleteChannelMsg")}
-              </p>
-            </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">通道实例代码 *</span><input value={form.channel_code} onChange={event => setForm(previous => ({ ...previous, channel_code: event.target.value }))} placeholder="例如 epay-alipay-main" className="h-10 rounded-lg border border-input bg-background px-3" /><span className="text-xs text-muted-foreground">同一 provider/payment_type 可创建多个实例。</span></label>
+            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">通道名称 *</span><input value={form.channel_name} onChange={event => setForm(previous => ({ ...previous, channel_name: event.target.value }))} placeholder="例如 支付宝主通道" className="h-10 rounded-lg border border-input bg-background px-3" /></label>
           </div>
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-              onClick={() => setShowDeleteConfirm(null)}
-            >
-              {t("admin.cancel")}
-            </button>
-            <button
-              type="button"
-              className="rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
-              onClick={() => showDeleteConfirm && handleDelete(showDeleteConfirm)}
-            >
-              {t("admin.delete")}
-            </button>
-          </div>
+          {currentProvider && currentProvider.config_schema.length > 0 && <div className="grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-2"><div className="sm:col-span-2 text-sm font-semibold">{currentProvider.display_name} 配置</div>{currentProvider.config_schema.map(renderField)}</div>}
+          <div className="grid gap-4 sm:grid-cols-2"><label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">排序</span><input type="number" value={form.sort_order} onChange={event => setForm(previous => ({ ...previous, sort_order: event.target.value }))} className="h-10 rounded-lg border border-input bg-background px-3" /></label><label className="flex items-center gap-2 self-end text-sm"><input type="checkbox" checked={form.is_enabled} onChange={event => setForm(previous => ({ ...previous, is_enabled: event.target.checked }))} className="h-4 w-4 accent-primary" />启用通道</label></div>
+          <div className="flex justify-end gap-3 border-t border-border pt-4"><button type="button" onClick={closeModal} className="rounded-lg border border-border px-4 py-2 text-sm">取消</button><button type="button" onClick={() => void save()} disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{saving ? "保存中…" : "保存"}</button></div>
         </div>
       </Modal>
     </div>

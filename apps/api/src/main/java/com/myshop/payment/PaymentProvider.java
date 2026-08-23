@@ -30,7 +30,14 @@ public interface PaymentProvider {
         throw new UnsupportedOperationException("Payment provider does not support server-side query");
     }
 
-    record ConfigField(String name, String label, String type, boolean secret, boolean required) { }
+    record ConfigOption(String value, String label) { }
+
+    record ConfigField(String name, String label, String type, boolean secret, boolean required,
+                       String placeholder, Object defaultValue, List<ConfigOption> options) {
+        public ConfigField(String name, String label, String type, boolean secret, boolean required) {
+            this(name, label, type, secret, required, null, null, List.of());
+        }
+    }
 
     record PaymentRequest(String orderId, String paymentType, String productName,
                           BigDecimal amount, String clientIp, String device,

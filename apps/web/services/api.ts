@@ -27,6 +27,7 @@ import type {
   AdminUserItem,
   AdminOrderItem,
   PaymentChannelItem,
+  PaymentProviderMetadata,
   OperationLog,
   RiskConfig,
   WholesaleRule,
@@ -102,6 +103,18 @@ function getSessionToken(): string | null {
 
 function setSessionToken(token: string) {
   localStorage.setItem("session_token", token)
+}
+
+/** Direct-buy guests also need a stable owner for idempotency replays. */
+export function getOrCreateGuestSessionToken(): string {
+  if (typeof window === "undefined") return ""
+  const existing = getSessionToken()
+  if (existing) return existing
+  const token = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  setSessionToken(token)
+  return token
 }
 
 export function clearSessionToken() {
@@ -380,10 +393,14 @@ export const cartApi = {
 // ============================================================
 
 export const orderApi = {
-  create: (data: CreateOrderRequest) =>
-    request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) }),
-  createFromCart: (data: CreateCartOrderRequest) =>
-    request<CreateOrderResult>("/orders/from-cart", { method: "POST", body: JSON.stringify(data) }),
+  create: (data: CreateOrderRequest) => {
+    getOrCreateGuestSessionToken()
+    return request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) })
+  },
+  createFromCart: (data: CreateCartOrderRequest) => {
+    getOrCreateGuestSessionToken()
+    return request<CreateOrderResult>("/orders/from-cart", { method: "POST", body: JSON.stringify(data) })
+  },
   getStatus: (orderId: string, lookupToken?: string) =>
     request<{ order_id: string; status: OrderStatus; expires_at: string; remaining_seconds: number; payment_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`),
   refreshStatus: (orderId: string, lookupToken?: string) =>
@@ -417,6 +434,8 @@ export const siteApi = {
 export const paymentApi = {
   getChannels: () =>
     request<PaymentChannelItem[]>("/payment-channels"),
+  getProviders: () =>
+    request<PaymentProviderMetadata[]>("/payment-providers"),
 }
 
 // ============================================================
@@ -578,9 +597,9 @@ export const adminUserApi = {
 export const adminPaymentApi = {
   getList: () =>
     request<PaymentChannelItem[]>("/admin/payment-channels"),
-  create: (data: { channel_code: string; channel_name: string; provider_type: string; payment_type: "alipay" | "wechat"; config_data?: Record<string, unknown>; is_enabled?: boolean; sort_order?: number }) =>
+  create: (data: { channel_code: string; channel_name: string; provider_type: string; payment_type: string; config_data?: Record<string, unknown>; is_enabled?: boolean; sort_order?: number }) =>
     request<null>("/admin/payment-channels", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: Partial<{ channel_name: string; provider_type: string; payment_type: "alipay" | "wechat"; config_data: Record<string, unknown>; is_enabled: boolean; sort_order: number }>) =>
+  update: (id: string, data: Partial<{ channel_code: string; channel_name: string; provider_type: string; payment_type: string; config_data: Record<string, unknown>; is_enabled: boolean; sort_order: number }>) =>
     request<null>(`/admin/payment-channels/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<null>(`/admin/payment-channels/${id}`, { method: "DELETE" }),

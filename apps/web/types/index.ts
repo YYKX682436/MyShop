@@ -42,7 +42,6 @@ export interface CaptchaResult {
 }
 
 export interface AuthResult {
-  token: string
   user: UserProfile
 }
 
@@ -212,16 +211,35 @@ export interface CurrencyItem {
 // Payment
 // ============================================================
 
-export type ProviderType = 'epay'
+export type ProviderType = string
 
 export interface PaymentChannelConfig {
-  // 易支付
-  pid?: string
-  key?: string
-  api_url?: string
-  notify_url?: string
-  return_url?: string
-  [key: string]: string | undefined
+  [key: string]: string | number | boolean | undefined
+}
+
+export type ProviderConfigFieldType = "text" | "password" | "secret" | "url" | "number" | "switch" | "select"
+
+export interface PaymentProviderOption {
+  value: string
+  label: string
+}
+
+export interface PaymentProviderConfigField {
+  name: string
+  label: string
+  type: ProviderConfigFieldType
+  secret: boolean
+  required: boolean
+  placeholder?: string | null
+  default_value?: string | number | boolean | null
+  options?: PaymentProviderOption[]
+}
+
+export interface PaymentProviderMetadata {
+  provider_id: string
+  display_name: string
+  payment_types: string[]
+  config_schema: PaymentProviderConfigField[]
 }
 
 export interface PaymentChannelItem {
@@ -229,7 +247,7 @@ export interface PaymentChannelItem {
   channel_code: string
   channel_name: string
   provider_type: ProviderType
-  payment_type: "alipay" | "wechat"
+  payment_type: string
   icon?: string
   config_data?: PaymentChannelConfig | null
   is_enabled: boolean
@@ -281,6 +299,7 @@ export interface CreateOrderRequest {
   payment_method: string
   use_points?: boolean
   idempotency_key: string
+  idempotency_fingerprint?: string
   device?: string
 }
 
@@ -289,6 +308,7 @@ export interface CreateCartOrderRequest {
   payment_method: string
   use_points?: boolean
   idempotency_key: string
+  idempotency_fingerprint?: string
   device?: string
 }
 

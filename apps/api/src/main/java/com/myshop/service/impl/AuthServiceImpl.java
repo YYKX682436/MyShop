@@ -7,7 +7,7 @@ import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.LoginRequest;
 import com.myshop.model.request.RegisterRequest;
-import com.myshop.model.response.AuthResponse;
+import com.myshop.model.response.AuthResult;
 import com.myshop.model.response.CaptchaResponse;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.CartItemRepository;
@@ -44,7 +44,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
-    public AuthResponse register(RegisterRequest request) {
+    public AuthResult register(RegisterRequest request) {
         if (!captchaUtils.verify(request.getCaptchaId(), request.getCaptcha())) {
             throw new BusinessException(ErrorCode.CAPTCHA_INVALID, "验证码错误或已过期");
         }
@@ -63,7 +63,7 @@ public class AuthServiceImpl implements AuthService {
         userRepository.save(user);
 
         String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());
-        return new AuthResponse(token, UserProfileResponse.from(user));
+        return new AuthResult(token, UserProfileResponse.from(user));
     }
 
     /** 连续登录失败上限 */
@@ -73,7 +73,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional(noRollbackFor = BusinessException.class)
-    public AuthResponse login(LoginRequest request, String sessionToken) {
+    public AuthResult login(LoginRequest request, String sessionToken) {
         User user = userRepository.findByUsernameOrEmail(request.getAccount(), request.getAccount())
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS, "用户名或密码错误"));
 
@@ -120,7 +120,7 @@ public class AuthServiceImpl implements AuthService {
         }
 
         String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());
-        return new AuthResponse(token, UserProfileResponse.from(user));
+        return new AuthResult(token, UserProfileResponse.from(user));
     }
 
     @Override

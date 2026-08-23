@@ -41,20 +41,18 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public Map<String, Object> createDirectOrder(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
         String device = (String) req.get("device");
-        String idempotencyKey = (String) req.get("idempotency_key");
+        String idempotencyKey = clean((String) req.get("idempotency_key"));
+        String idempotencyFingerprint = clean((String) req.get("idempotency_fingerprint"));
         if (idempotencyKey != null) {
             Optional<Order> existing = orderRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
                 Order existingOrder = existing.get();
-                // F13: 幂等归属校验 — 确保是同一用户/会话的请求，防止通过幂等键探测他人订单
-                boolean sameOwner = (userId != null && userId.equals(existingOrder.getUserId()))
-                        || (userId == null && existingOrder.getUserId() == null
-                            && Objects.equals(sessionToken, existingOrder.getSessionToken()));
+                boolean sameOwner = sameIdempotencyOwner(existingOrder, userId, sessionToken);
                 if (sameOwner) {
-                    return buildOrderResult(existingOrder, device, null);
+                    verifyIdempotencyFingerprint(existingOrder, idempotencyFingerprint);
+                    return buildOrderResult(existingOrder, device, existingOrder.getGuestLookupToken());
                 }
-                // 不同用户/会话的相同幂等键 — 清除以避免唯一约束冲突，视为无幂等键的新订单
-                idempotencyKey = null;
+                throw new BusinessException(ErrorCode.FORBIDDEN, "幂等键不属于当前用户或会话");
             }
         }
 
@@ -108,10 +106,12 @@ public class OrderServiceImpl implements OrderService {
         order.setPaymentMethod(paymentMethod);
         order.setExpiresAt(LocalDateTime.now().plusMinutes(expireMinutes));
         order.setIdempotencyKey(idempotencyKey);
+        order.setIdempotencyFingerprint(idempotencyFingerprint);
         order.setClientIp(clientIp);
         order.setSessionToken(sessionToken);
         LookupTokens.Issued lookupToken = LookupTokens.issue();
         order.setLookupTokenHash(lookupToken.hash());
+        if (userId == null) order.setGuestLookupToken(lookupToken.plaintext());
         orderRepository.save(order);
 
         String specName = null;
@@ -138,19 +138,18 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public Map<String, Object> createCartOrder(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
         String device = (String) req.get("device");
-        String idempotencyKey = (String) req.get("idempotency_key");
+        String idempotencyKey = clean((String) req.get("idempotency_key"));
+        String idempotencyFingerprint = clean((String) req.get("idempotency_fingerprint"));
         if (idempotencyKey != null) {
             Optional<Order> existing = orderRepository.findByIdempotencyKey(idempotencyKey);
             if (existing.isPresent()) {
                 Order existingOrder = existing.get();
-                boolean sameOwner = (userId != null && userId.equals(existingOrder.getUserId()))
-                        || (userId == null && existingOrder.getUserId() == null
-                            && Objects.equals(sessionToken, existingOrder.getSessionToken()));
+                boolean sameOwner = sameIdempotencyOwner(existingOrder, userId, sessionToken);
                 if (sameOwner) {
-                    return buildOrderResult(existingOrder, device, null);
+                    verifyIdempotencyFingerprint(existingOrder, idempotencyFingerprint);
+                    return buildOrderResult(existingOrder, device, existingOrder.getGuestLookupToken());
                 }
-                // 不同用户/会话的相同幂等键 — 清除以避免唯一约束冲突，视为无幂等键的新订单
-                idempotencyKey = null;
+                throw new BusinessException(ErrorCode.FORBIDDEN, "幂等键不属于当前用户或会话");
             }
         }
 
@@ -192,10 +191,12 @@ public class OrderServiceImpl implements OrderService {
         order.setPaymentMethod(paymentMethod);
         order.setExpiresAt(LocalDateTime.now().plusMinutes(expireMinutes));
         order.setIdempotencyKey(idempotencyKey);
+        order.setIdempotencyFingerprint(idempotencyFingerprint);
         order.setClientIp(clientIp);
         order.setSessionToken(sessionToken);
         LookupTokens.Issued lookupToken = LookupTokens.issue();
         order.setLookupTokenHash(lookupToken.hash());
+        if (userId == null) order.setGuestLookupToken(lookupToken.plaintext());
         orderRepository.save(order);
 
         for (CartItem ci : cartItems) {
@@ -440,6 +441,27 @@ public class OrderServiceImpl implements OrderService {
         paymentChannelRepository.findByChannelCodeAndIsDeleted(paymentMethod, 0)
                 .filter(PaymentChannel::isEnabled)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道不可用"));
+    }
+
+    private boolean sameIdempotencyOwner(Order order, UUID userId, String sessionToken) {
+        if (userId != null) return userId.equals(order.getUserId());
+        return order.getUserId() == null
+                && sessionToken != null
+                && !sessionToken.isBlank()
+                && sessionToken.equals(order.getSessionToken());
+    }
+
+    private void verifyIdempotencyFingerprint(Order order, String fingerprint) {
+        if (order.getIdempotencyFingerprint() != null
+                && !Objects.equals(order.getIdempotencyFingerprint(), fingerprint)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "幂等键对应的结账内容已改变，请重新提交");
+        }
+    }
+
+    private String clean(String value) {
+        if (value == null) return null;
+        String result = value.trim();
+        return result.isEmpty() ? null : result;
     }
 
     /** 每用户单次最大购买数量，后台可配，兜底 999（配置异常或 ≤ 0 时回退） */

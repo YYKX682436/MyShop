@@ -5,6 +5,7 @@ import com.myshop.constant.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
@@ -44,6 +45,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException e) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error(ErrorCode.FORBIDDEN, "Access denied"));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConstraint(DataIntegrityViolationException e) {
+        String detail = String.valueOf(e.getMostSpecificCause().getMessage());
+        if (detail.contains("uq_payment_channels_active_code")) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(ErrorCode.CHANNEL_CODE_CONFLICT,
+                            "渠道代码已存在，请使用其他通道实例代码"));
+        }
+        log.warn("Data integrity violation");
+        return ResponseEntity.badRequest()
+                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "数据校验失败"));
     }
 
     @ExceptionHandler(Exception.class)

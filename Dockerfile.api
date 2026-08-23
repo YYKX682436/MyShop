@@ -1,12 +1,12 @@
 # Local/reproducible API image. CI may publish the same artifact with Jib.
-FROM maven:3.9.9-eclipse-temurin-17 AS build
+FROM maven:3.9.11-eclipse-temurin-25 AS build
 WORKDIR /build
 COPY apps/api/pom.xml apps/api/pom.xml
 RUN mvn -B -f apps/api/pom.xml dependency:go-offline
 COPY apps/api/src apps/api/src
 RUN mvn -B -f apps/api/pom.xml package
 
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:25-jre
 WORKDIR /app
 RUN addgroup -S myshop && adduser -S -G myshop myshop
 COPY --from=build /build/apps/api/target/myshop-api-*.jar /app/app.jar

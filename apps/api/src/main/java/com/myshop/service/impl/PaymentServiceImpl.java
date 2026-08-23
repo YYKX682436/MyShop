@@ -52,10 +52,11 @@ public class PaymentServiceImpl implements PaymentService {
                 .filter(PaymentChannel::isEnabled)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道不可用"));
         PaymentProvider provider = paymentProviders.stream()
-                .filter(candidate -> candidate.id().equals(channel.getProviderType()))
+                .filter(candidate -> candidate.id().equalsIgnoreCase(channel.getProviderType()))
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付提供商未注册"));
-        if (!provider.paymentTypes().contains(channel.getPaymentType().toLowerCase())) {
+        if (provider.paymentTypes().stream()
+                .noneMatch(type -> type.equalsIgnoreCase(channel.getPaymentType()))) {
             throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付方式不受该提供商支持");
         }
 

@@ -6,6 +6,11 @@
     encode gzip
 
     # Keep /api in the request path; Spring's context path is /api.
-    reverse_proxy /api/* api:8083
+    reverse_proxy /api/* api:8083 {
+        # Caddy is the only ingress point. Overwrite, rather than append to,
+        # client-controlled proxy headers before forwarding to the API.
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+    }
     reverse_proxy web:3000
 }

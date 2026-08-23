@@ -58,7 +58,7 @@ spring:
 
 # JWT
 jwt:
-  secret: ${JWT_SECRET:myshop-local-only-secret-replace-in-env}
+  secret: ${JWT_SECRET}
   expiration: 86400000  # 24 hours
 
 # Security: password hashes are always BCrypt; there is no plaintext mode.
@@ -86,7 +86,11 @@ mail:
 # Docker 环境必须加入网桥网关 IP，否则所有请求共用同一限流桶
 # 查看网桥 IP：docker network inspect <project>_default | grep Gateway
 rate-limit:
-  trusted-proxies: ${RATE_LIMIT_TRUSTED_PROXIES:127.0.0.1,::1,0:0:0:0:0:0:0:1}
+  trusted-proxies: ${RATE_LIMIT_TRUSTED_PROXIES:127.0.0.1,::1,0:0:0:0:0:0:0:1,172.30.0.2}
+
+fulfillment:
+  retry-interval-ms: ${FULFILLMENT_RETRY_INTERVAL_MS:60000}
+  retry-initial-delay-ms: ${FULFILLMENT_RETRY_INITIAL_DELAY_MS:60000}
 
 # Turnstile
 turnstile:

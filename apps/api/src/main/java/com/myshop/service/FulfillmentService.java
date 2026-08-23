@@ -1,0 +1,15 @@
+package com.myshop.service;
+
+import java.util.Map;
+import java.util.UUID;
+
+/** Internal, authorization-free fulfillment API used after payment confirmation. */
+public interface FulfillmentService {
+
+    /**
+     * Fulfill one order in its own transaction. The caller must already have
+     * established that this is an internal operation; this method never accepts
+     * or fabricates a guest credential.
+     */
+    Map<String, Object> fulfillOrder(UUID orderId);
+}

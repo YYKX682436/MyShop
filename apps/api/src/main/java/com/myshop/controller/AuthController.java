@@ -4,6 +4,7 @@ import com.myshop.common.ApiResponse;
 import com.myshop.model.request.LoginRequest;
 import com.myshop.model.request.RegisterRequest;
 import com.myshop.model.response.AuthResponse;
+import com.myshop.model.response.AuthResult;
 import com.myshop.model.response.CaptchaResponse;
 import com.myshop.service.AuthService;
 import jakarta.validation.Valid;
@@ -33,18 +34,18 @@ public class AuthController {
 
     @PostMapping("/register")
     public ApiResponse<AuthResponse> register(@Valid @RequestBody RegisterRequest request, HttpServletResponse response) {
-        AuthResponse result = authService.register(request);
-        writeAuthCookies(response, result.getToken());
-        return ApiResponse.success(result);
+        AuthResult result = authService.register(request);
+        writeAuthCookies(response, result.token());
+        return ApiResponse.success(new AuthResponse(result.user()));
     }
 
     @PostMapping("/login")
     public ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request,
                                            @RequestHeader(value = "X-Session-Token", required = false) String sessionToken,
                                            HttpServletResponse response) {
-        AuthResponse result = authService.login(request, sessionToken);
-        writeAuthCookies(response, result.getToken());
-        return ApiResponse.success(result);
+        AuthResult result = authService.login(request, sessionToken);
+        writeAuthCookies(response, result.token());
+        return ApiResponse.success(new AuthResponse(result.user()));
     }
 
     @PostMapping("/logout")

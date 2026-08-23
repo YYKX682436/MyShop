@@ -54,9 +54,22 @@ public class Order extends BaseEntity {
     @Column(unique = true)
     private String idempotencyKey;
 
-    /** SHA-256 of the one-time guest lookup token. The plaintext token is never persisted. */
+    /** SHA-256 of the guest lookup token used for normal constant-time authorization. */
     @Column(name = "lookup_token_hash", length = 64)
     private String lookupTokenHash;
+
+    /**
+     * Recoverable guest credential for this self-hosted, low-volume deployment.
+     * It is deliberately never serialized or logged; the hash above remains the
+     * authorization primitive. See the deployment documentation for handling
+     * backups containing this sensitive field.
+     */
+    @Column(name = "guest_lookup_token", length = 128)
+    private String guestLookupToken;
+
+    /** Optional client fingerprint used to reject a changed payload on replay. */
+    @Column(name = "idempotency_fingerprint", length = 64)
+    private String idempotencyFingerprint;
 
     @Column(name = "is_risk_flagged")
     private boolean riskFlagged = false;

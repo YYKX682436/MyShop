@@ -26,7 +26,7 @@ spring:
     enabled: false
 
 jwt:
-  secret: test-secret-key-must-be-at-least-256-bits-long-for-hs256-algorithm
+  secret: test-secret-key-must-be-at-least-64-bytes-long-and-random-for-tests-2026
   expiration: 86400000
 
 upload:

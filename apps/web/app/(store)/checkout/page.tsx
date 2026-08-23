@@ -6,7 +6,8 @@ import { ShoppingBag, Mail, CreditCard, Lock } from "lucide-react"
 import { toast } from "sonner"
 import { useLocale, useCart } from "@/lib/context"
 import { orderApi, paymentApi, requestOrThrow, getApiErrorMessage, saveOrderLookupToken } from "@/services/api"
-import { validateEmail, generateIdempotencyKey, getCurrencySymbol, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { validateEmail, getCurrencySymbol, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { setTurnstileHeaders } from "@/services/api"
@@ -62,16 +63,23 @@ export default function CheckoutPage() {
     }
 
     setSubmitting(true)
+    const intent = getOrCreateIdempotencyKey("myshop:checkout:idempotency", {
+      items: items.map(item => ({ product_id: item.product_id, spec_id: item.spec_id, quantity: item.quantity })),
+      email: email.trim().toLowerCase(),
+      payment_method: selectedPayment,
+    })
     try {
       setTurnstileHeaders(turnstileToken)
       const device = detectPaymentDevice()
       const result = await requestOrThrow(() => orderApi.createFromCart({
           email,
           payment_method: selectedPayment,
-          idempotency_key: generateIdempotencyKey(),
+          idempotency_key: intent.key,
+          idempotency_fingerprint: intent.fingerprint,
           device,
         }))
       saveOrderLookupToken(result.payment.order_id, result.lookup_token)
+      clearIdempotencyKey("myshop:checkout:idempotency", intent.key)
       await refreshCart()
       toast.success(t("checkout.processingOrder"))
       const payUrlH5 = result.payment.pay_url || ""

@@ -27,11 +27,16 @@ public class EpayPaymentProvider implements PaymentProvider {
     @Override
     public List<ConfigField> configSchema() {
         return List.of(
-                new ConfigField("pid", "商户 ID", "text", false, true),
-                new ConfigField("key", "商户密钥", "password", true, true),
-                new ConfigField("api_url", "接口地址", "url", false, true),
-                new ConfigField("notify_url", "异步通知地址", "url", false, true),
-                new ConfigField("return_url", "同步回跳地址", "url", false, true)
+                new ConfigField("pid", "商户 ID", "text", false, true,
+                        "例如：743794", null, List.of()),
+                new ConfigField("key", "商户密钥", "password", true, true,
+                        "MD5 密钥", null, List.of()),
+                new ConfigField("api_url", "接口地址", "url", false, true,
+                        "https://pay.example.com/", null, List.of()),
+                new ConfigField("notify_url", "异步通知地址", "url", false, true,
+                        "https://yourdomain.com/api/payments/webhook/epay", null, List.of()),
+                new ConfigField("return_url", "同步回跳地址", "url", false, true,
+                        "https://yourdomain.com/order/query", null, List.of())
         );
     }
 
