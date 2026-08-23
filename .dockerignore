@@ -11,9 +11,6 @@
 **/.next/
 apps/api/target/
 
-# 后端代码（前端 Docker 镜像不需要）
-apps/api/
-
 # 非代码文件
 tmp/
 ui_picture/
