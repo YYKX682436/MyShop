@@ -1,0 +1,10 @@
+{
+  "name": "myshop",
+  "private": true,
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "dev:web": "pnpm --filter @myshop/web dev",
+    "build:web": "pnpm --filter @myshop/web build",
+    "lint:web": "pnpm --filter @myshop/web lint"
+  }
+}

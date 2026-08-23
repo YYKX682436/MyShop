@@ -1,0 +1,100 @@
+server:
+  port: 8083
+  servlet:
+    context-path: /api
+  forward-headers-strategy: native
+
+spring:
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20        # 最大连接数（默认10，提升以应对并发下单+定时任务）
+      minimum-idle: 10             # 最小空闲连接（预热，减少冷启动延迟）
+      connection-timeout: 10000    # 获取连接超时 10s（默认30s，快速失败优于长时间排队）
+      idle-timeout: 300000         # 空闲连接存活 5min（默认10min）
+      max-lifetime: 1800000        # 连接最大生存时间 30min（需小于 PostgreSQL 的 idle_in_transaction_session_timeout）
+      keepalive-time: 60000        # 每 60s 发送心跳检测，避免被防火墙/PG 断开空闲连接
+      leak-detection-threshold: 30000  # 连接泄漏检测 30s（超过此时间未归还则打印警告日志）
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    default-property-inclusion: non_null  # 跳过JSON序列化时的空值字段
+  sql:
+    init:
+      mode: never
+  flyway:
+    enabled: true
+    validate-on-migrate: true
+    clean-disabled: true
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+# JWT
+jwt:
+  secret: ${JWT_SECRET:myshop-local-only-secret-replace-in-env}
+  expiration: 86400000  # 24 hours
+
+# Security: password hashes are always BCrypt; there is no plaintext mode.
+security:
+  cookie-secure: ${AUTH_COOKIE_SECURE:false}
+
+bootstrap:
+  admin:
+    username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+
+# Upload
+upload:
+  path: ${UPLOAD_PATH:./uploads}
+  url-prefix: ${UPLOAD_URL_PREFIX:/api/uploads}
+
+# Mail
+mail:
+  enabled: ${MAIL_ENABLED:false}
+  site-url: ${MAIL_SITE_URL:http://localhost:3000}
+
+# 受信代理 IP（Nginx / Docker 网桥），用于正确解析真实客户端 IP
+# 影响：限流（按真实 IP 限流）、Webhook 日志（记录真实回调来源 IP）
+# Docker 环境必须加入网桥网关 IP，否则所有请求共用同一限流桶
+# 查看网桥 IP：docker network inspect <project>_default | grep Gateway
+rate-limit:
+  trusted-proxies: ${RATE_LIMIT_TRUSTED_PROXIES:127.0.0.1,::1,0:0:0:0:0:0:0:1}
+
+# Turnstile
+turnstile:
+  secret-key: ${TURNSTILE_SECRET_KEY:}
+  site-key: ${TURNSTILE_SITE_KEY:}
+
+# Logging
+logging:
+  level:
+    com.myshop: INFO
+    org.springframework.security: WARN

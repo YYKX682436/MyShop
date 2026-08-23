@@ -1,0 +1,11 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$SITE_DOMAIN} {
+    encode gzip
+
+    # Keep /api in the request path; Spring's context path is /api.
+    reverse_proxy /api/* api:8083
+    reverse_proxy web:3000
+}

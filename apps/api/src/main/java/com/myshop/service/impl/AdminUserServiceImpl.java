@@ -1,0 +1,73 @@
+package com.myshop.service.impl;
+
+import com.myshop.common.PageResult;
+import com.myshop.constant.ErrorCode;
+import com.myshop.entity.User;
+import com.myshop.exception.BusinessException;
+import com.myshop.repository.UserRepository;
+import com.myshop.service.AdminUserService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+
+@Service
+@RequiredArgsConstructor
+public class AdminUserServiceImpl implements AdminUserService {
+
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+
+    @Override
+    public PageResult<?> listUsers(String keyword, int page, int pageSize) {
+        var pageable = PageRequest.of(page - 1, pageSize);
+        Page<User> userPage;
+        if (keyword != null && !keyword.isBlank()) {
+            userPage = userRepository.findByUsernameContainingOrEmailContaining(keyword, keyword, pageable);
+        } else {
+            userPage = userRepository.findAll(pageable);
+        }
+        var list = userPage.getContent().stream().map(u -> {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("id", u.getId());
+            map.put("username", u.getUsername());
+            map.put("email", u.getEmail());
+            map.put("role", u.getRole().name());
+            map.put("points", u.getPoints());
+            map.put("is_deleted", u.getIsDeleted());
+            map.put("created_at", u.getCreatedAt());
+            return map;
+        }).toList();
+        return PageResult.of(userPage, list);
+    }
+
+    @Override
+    @Transactional
+    public void toggleUser(UUID id, int isDeleted) {
+        if (isDeleted != 0 && isDeleted != 1) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "is_deleted 参数只能为 0 或 1");
+        }
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
+        user.setIsDeleted(isDeleted);
+        userRepository.save(user);
+    }
+
+    @Override
+    @Transactional
+    public void resetPassword(UUID id, String newPassword) {
+        if (newPassword == null || newPassword.length() < 12) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "新密码至少需要 12 个字符");
+        }
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setFailedLoginAttempts(0);
+        user.setLockUntil(null);
+        userRepository.save(user);
+    }
+}
