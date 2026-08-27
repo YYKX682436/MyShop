@@ -1,6 +1,5 @@
 package com.myshop.service.impl;
 
-import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.User;
@@ -79,7 +78,7 @@ class DashboardServiceImplTest {
         when(orderRepository.countByStatus(OrderStatus.PENDING)).thenReturn(2L);
         when(orderRepository.countByStatus(OrderStatus.PAID)).thenReturn(3L);
         when(orderRepository.countDeliveredBetween(todayStart, tomorrow)).thenReturn(1L);
-        when(cardKeyRepository.countByStatus(CardKeyStatus.AVAILABLE)).thenReturn(5L);
+        when(cardKeyRepository.countAvailableForActiveCardKeyProducts()).thenReturn(5L);
 
         when(userRepository.countByRoleAndIsDeletedAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
                 eq(UserRole.USER), eq(0), eq(todayStart), eq(tomorrow))).thenReturn(3L);
@@ -160,7 +159,7 @@ class DashboardServiceImplTest {
         when(userRepository.findTop5ByRoleAndIsDeletedOrderByCreatedAtDesc(UserRole.USER, 0))
                 .thenReturn(List.of());
         when(visitStatsRepository.findByVisitDate(TODAY)).thenReturn(Optional.empty());
-        when(cardKeyRepository.countByStatus(CardKeyStatus.AVAILABLE)).thenReturn(0L);
+        when(cardKeyRepository.countAvailableForActiveCardKeyProducts()).thenReturn(0L);
 
         DashboardStatsResponse result = service.getStats();
 

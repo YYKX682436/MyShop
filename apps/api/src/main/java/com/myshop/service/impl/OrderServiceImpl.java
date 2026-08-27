@@ -1,17 +1,22 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.CardKeyStatus;
+import com.myshop.constant.CustomerInputType;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.*;
 import com.myshop.service.OrderService;
+import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
+import com.myshop.service.ProductRules;
 import com.myshop.utils.LookupTokens;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,7 +28,6 @@ import java.util.*;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
 
     private final OrderRepository orderRepository;
@@ -36,6 +40,38 @@ public class OrderServiceImpl implements OrderService {
     private final SiteConfigRepository siteConfigRepository;
     private final PaymentChannelRepository paymentChannelRepository;
     private final PaymentService paymentService;
+    private final ManualStockService manualStockService;
+
+    @Autowired
+    public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
+                            ProductRepository productRepository, ProductSpecRepository productSpecRepository,
+                            WholesaleRuleRepository wholesaleRuleRepository, CartItemRepository cartItemRepository,
+                            CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
+                            PaymentChannelRepository paymentChannelRepository, PaymentService paymentService,
+                            ManualStockService manualStockService) {
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.productRepository = productRepository;
+        this.productSpecRepository = productSpecRepository;
+        this.wholesaleRuleRepository = wholesaleRuleRepository;
+        this.cartItemRepository = cartItemRepository;
+        this.cardKeyRepository = cardKeyRepository;
+        this.siteConfigRepository = siteConfigRepository;
+        this.paymentChannelRepository = paymentChannelRepository;
+        this.paymentService = paymentService;
+        this.manualStockService = manualStockService;
+    }
+
+    /** Compatibility constructor retained for focused legacy unit tests. */
+    public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
+                            ProductRepository productRepository, ProductSpecRepository productSpecRepository,
+                            WholesaleRuleRepository wholesaleRuleRepository, CartItemRepository cartItemRepository,
+                            CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
+                            PaymentChannelRepository paymentChannelRepository, PaymentService paymentService) {
+        this(orderRepository, orderItemRepository, productRepository, productSpecRepository,
+                wholesaleRuleRepository, cartItemRepository, cardKeyRepository, siteConfigRepository,
+                paymentChannelRepository, paymentService, new ManualStockService(null));
+    }
 
     @Override
     @Transactional
@@ -60,6 +96,8 @@ public class OrderServiceImpl implements OrderService {
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
         int quantity = ((Number) req.get("quantity")).intValue();
         String email = (String) req.get("email");
+        String requestedCustomerInput = req.get("customer_input_value") == null
+                ? null : String.valueOf(req.get("customer_input_value"));
 
         // F4: 购买数量校验（读取后台配置，兜底 999）
         int maxQuantity = getMaxPurchasePerUser();
@@ -80,13 +118,12 @@ public class OrderServiceImpl implements OrderService {
         // F18: 规格模式安全校验 — 防止通过伪造 spec_id 访问非当前模式的库存池或获取不同价格
         validateSpecConsistency(product, specId);
 
-        // Stock check (advisory)
-        long available = specId != null
-                ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(productId, specId, CardKeyStatus.AVAILABLE)
-                : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(productId, CardKeyStatus.AVAILABLE);
-        if (available < quantity) {
+        String customerInputValue = ProductRules.validateCustomerInput(product, requestedCustomerInput);
+        StockMode stockMode = effectiveStockMode(product);
+        StockView stock = getStock(product, specId);
+        if (!stock.unlimited() && stock.available() < quantity) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "库存不足",
-                    Map.of("available", available));
+                    Map.of("available", stock.available()));
         }
 
         BigDecimal unitPrice = getUnitPrice(product, specId, quantity);
@@ -94,6 +131,7 @@ public class OrderServiceImpl implements OrderService {
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
         }
+        reserveManualStock(product, specId, stockMode, quantity);
         int expireMinutes = getConfigInt("order_expire_minutes", 15);
 
         Order order = new Order();
@@ -129,6 +167,7 @@ public class OrderServiceImpl implements OrderService {
         item.setQuantity(quantity);
         item.setUnitPrice(unitPrice);
         item.setSubtotal(totalAmount);
+        setItemSnapshot(item, product, customerInputValue, quantity, stockMode);
         orderItemRepository.save(item);
 
         return buildOrderResult(order, device, lookupToken.plaintext());
@@ -182,6 +221,7 @@ public class OrderServiceImpl implements OrderService {
 
         int expireMinutes = getConfigInt("order_expire_minutes", 15);
         BigDecimal totalAmount = BigDecimal.ZERO;
+        Map<StockPoolKey, Integer> manualReservations = new LinkedHashMap<>();
 
         Order order = new Order();
         order.setUserId(userId);
@@ -212,14 +252,17 @@ public class OrderServiceImpl implements OrderService {
             // F18: 规格模式安全校验
             validateSpecConsistency(product, ci.getSpecId());
 
-            // Advisory stock check (same pattern as createDirectOrder)
-            long available = ci.getSpecId() != null
-                    ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(ci.getProductId(), ci.getSpecId(), CardKeyStatus.AVAILABLE)
-                    : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(ci.getProductId(), CardKeyStatus.AVAILABLE);
-            if (available < ci.getQuantity()) {
+            String customerInputValue = ProductRules.validateCustomerInput(product, ci.getCustomerInputValue());
+            StockMode stockMode = effectiveStockMode(product);
+            StockView stock = getStock(product, ci.getSpecId());
+            if (!stock.unlimited() && stock.available() < ci.getQuantity()) {
                 throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK,
                         "商品「" + product.getTitle() + "」库存不足",
-                        Map.of("available", available, "title", product.getTitle()));
+                        Map.of("available", stock.available(), "title", product.getTitle()));
+            }
+            if (stockMode == StockMode.MANUAL) {
+                StockPoolKey poolKey = new StockPoolKey(ci.getProductId(), ci.getSpecId());
+                manualReservations.merge(poolKey, ci.getQuantity(), Integer::sum);
             }
 
             BigDecimal unitPrice = getUnitPrice(product, ci.getSpecId(), ci.getQuantity());
@@ -241,12 +284,18 @@ public class OrderServiceImpl implements OrderService {
             item.setQuantity(ci.getQuantity());
             item.setUnitPrice(unitPrice);
             item.setSubtotal(subtotal);
+            setItemSnapshot(item, product, customerInputValue, ci.getQuantity(), stockMode);
             orderItemRepository.save(item);
         }
 
         // F16: 订单金额必须为正数 — 防止负数商品价格叠加导致极低金额下单
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
+        }
+
+        for (Map.Entry<StockPoolKey, Integer> reservation : manualReservations.entrySet()) {
+            manualStockService.reserveOrThrow(reservation.getKey().productId(), reservation.getKey().specId(),
+                    reservation.getValue());
         }
 
         order.setTotalAmount(totalAmount);
@@ -264,13 +313,16 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public Map<String, Object> getOrderStatus(UUID orderId, String lookupToken, UUID requestUserId) {
-        Order order = orderRepository.findById(orderId)
+        // The production repository uses a row lock. The fallback keeps the
+        // pre-existing focused unit-test seam (which stubs findById only)
+        // without weakening the real database path.
+        Order order = findOrderForStatus(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         authorize(order, lookupToken, requestUserId);
         // Auto expire check
-        if (order.getStatus() == OrderStatus.PENDING && order.getExpiresAt().isBefore(LocalDateTime.now())) {
-            order.setStatus(OrderStatus.EXPIRED);
-            orderRepository.save(order);
+        if (order.getStatus() == OrderStatus.PENDING && order.getExpiresAt() != null
+                && order.getExpiresAt().isBefore(LocalDateTime.now())) {
+            expireOrder(order);
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", order.getId());
@@ -305,9 +357,11 @@ public class OrderServiceImpl implements OrderService {
     public void expireOrders() {
         List<Order> expired = orderRepository.findExpiredOrders(LocalDateTime.now());
         for (Order order : expired) {
-            order.setStatus(OrderStatus.EXPIRED);
-            orderRepository.save(order);
-            log.info("Order expired: {}", order.getId());
+            Order locked = orderRepository.findByIdForUpdate(order.getId()).orElse(null);
+            if (locked != null && locked.getStatus() == OrderStatus.PENDING
+                    && locked.getExpiresAt() != null && locked.getExpiresAt().isBefore(LocalDateTime.now())) {
+                expireOrder(locked);
+            }
         }
     }
 
@@ -407,6 +461,12 @@ public class OrderServiceImpl implements OrderService {
             im.put("quantity", i.getQuantity());
             im.put("unit_price", i.getUnitPrice());
             im.put("subtotal", i.getSubtotal());
+            im.put("delivery_type", i.getDeliveryType());
+            im.put("customer_input_type", i.getCustomerInputType());
+            im.put("customer_input_value", i.getCustomerInputValue());
+            im.put("stock_mode", i.getStockMode());
+            im.put("fulfillment_status", i.getFulfillmentStatus());
+            im.put("delivered_at", i.getDeliveredAt());
             return im;
         }).toList());
         return map;
@@ -476,5 +536,66 @@ public class OrderServiceImpl implements OrderService {
                     try { return Integer.parseInt(c.getConfigValue()); }
                     catch (Exception e) { return defaultValue; }
                 }).orElse(defaultValue);
+    }
+
+    private StockMode effectiveStockMode(Product product) {
+        return product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
+    }
+
+    private Optional<Order> findOrderForStatus(UUID orderId) {
+        Optional<Order> locked = orderRepository.findByIdForUpdate(orderId);
+        return locked.isPresent() ? locked : orderRepository.findById(orderId);
+    }
+
+    private StockView getStock(Product product, UUID specId) {
+        StockMode stockMode = effectiveStockMode(product);
+        if (stockMode == StockMode.UNLIMITED) return new StockView(Long.MAX_VALUE, true);
+        if (stockMode == StockMode.MANUAL) {
+            return new StockView(manualStockService.getAvailable(product.getId(), specId), false);
+        }
+        long available = specId != null
+                ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(product.getId(), specId, CardKeyStatus.AVAILABLE)
+                : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(product.getId(), CardKeyStatus.AVAILABLE);
+        return new StockView(available, false);
+    }
+
+    private void reserveManualStock(Product product, UUID specId, StockMode stockMode, int quantity) {
+        if (stockMode == StockMode.MANUAL) {
+            manualStockService.reserveOrThrow(product.getId(), specId, quantity);
+        }
+    }
+
+    private void setItemSnapshot(OrderItem item, Product product, String customerInputValue,
+                                 int quantity, StockMode stockMode) {
+        item.setDeliveryType(ProductRules.normalizeDeliveryType(product.getDeliveryType(), "AUTO"));
+        item.setCustomerInputType(product.getCustomerInputType() == null
+                ? CustomerInputType.NONE : product.getCustomerInputType());
+        item.setCustomerInputValue(customerInputValue);
+        item.setStockMode(stockMode);
+        item.setFulfillmentStatus(FulfillmentStatus.PENDING);
+        item.setManualStockReserved(stockMode == StockMode.MANUAL ? quantity : 0);
+    }
+
+    private void expireOrder(Order order) {
+        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+        for (OrderItem item : items) {
+            int reserved = item.getManualStockReserved();
+            if (reserved > 0 && item.getStockMode() == StockMode.MANUAL) {
+                manualStockService.release(item.getProductId(), item.getSpecId(), reserved);
+                item.setManualStockReserved(0);
+            }
+            if (item.getFulfillmentStatus() != FulfillmentStatus.DELIVERED) {
+                item.setFulfillmentStatus(FulfillmentStatus.CANCELLED);
+            }
+            orderItemRepository.save(item);
+        }
+        order.setStatus(OrderStatus.EXPIRED);
+        orderRepository.save(order);
+    }
+
+    private record StockView(long available, boolean unlimited) {
+    }
+
+    private record StockPoolKey(UUID productId, UUID specId) {
     }
 }

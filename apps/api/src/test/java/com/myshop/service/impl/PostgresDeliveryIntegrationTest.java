@@ -6,6 +6,8 @@ import com.myshop.payment.EpayPaymentProvider;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.DeliverService;
+import com.myshop.service.FulfillmentService;
+import com.myshop.service.ManualStockService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
 import com.myshop.service.WebhookService;
@@ -66,6 +68,12 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired
     private PaymentService paymentService;
+
+    @Autowired
+    private FulfillmentService fulfillmentService;
+
+    @Autowired
+    private ManualStockService manualStockService;
 
     @MockitoBean
     private com.myshop.service.EmailService emailService;
@@ -136,6 +144,24 @@ class PostgresDeliveryIntegrationTest {
 
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+    }
+
+    @Test
+    void automaticItemsSharingOnePoolKeepTheirCardBoundaries() {
+        UUID orderId = insertOrder("shared-pool-token");
+        UUID productId = UUID.randomUUID();
+        UUID firstItemId = insertOrderItem(orderId, productId);
+        UUID secondItemId = insertOrderItem(orderId, productId);
+        insertCard(productId, "shared-pool-card-1");
+        insertCard(productId, "shared-pool-card-2");
+
+        Map<?, ?> delivery = (Map<?, ?>) deliverService.deliverOrders(
+                request(orderId, "shared-pool-token"), null).get(0);
+
+        assertEquals("DELIVERED", delivery.get("status"));
+        assertEquals(2, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+        assertEquals(1, number("select count(*) from card_keys where order_item_id = ?", firstItemId));
+        assertEquals(1, number("select count(*) from card_keys where order_item_id = ?", secondItemId));
     }
 
     @Test
@@ -260,11 +286,121 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(1, number("select count(*) from orders where idempotency_key = ?", "guest-idempotency-key"));
     }
 
+    @Test
+    void concurrentManualReservationsPreventOversellAndRecoveryIsExact() throws Exception {
+        UUID productId = UUID.randomUUID();
+        insertManualStock(productId, null, 1, 0);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> first = executor.submit(() -> reserveAfter(start, ready, productId));
+            Future<Boolean> second = executor.submit(() -> reserveAfter(start, ready, productId));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+
+            assertNotEquals(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertEquals(0, number("select available_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(1, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+
+        manualStockService.release(productId, null, 1);
+        assertEquals(1, number("select available_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+    }
+
+    @Test
+    void manualOnlyOrderWaitsForAdminAndIsNotSelectedByAutomaticRetry() {
+        UUID orderId = insertOrder("manual-token");
+        UUID productId = UUID.randomUUID();
+        UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 1, 1);
+        insertManualStock(productId, null, 0, 1);
+
+        Map<?, ?> delivery = (Map<?, ?>) deliverService.deliverOrders(request(orderId, "manual-token"), null)
+                .get(0);
+        assertEquals("PAID", delivery.get("status"));
+        assertEquals("WAITING_MANUAL", scalar(
+                "select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals(0, number("select count(*) from card_keys where order_id = ?", orderId));
+
+        autoFulfillmentService.retryPendingPaidOrders();
+        assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals(0, number("select count(*) from card_keys where order_id = ?", orderId));
+
+        Map<?, ?> completed = fulfillmentService.completeManualItem(orderId, itemId);
+        assertEquals("DELIVERED", completed.get("status"));
+        assertEquals("DELIVERED", scalar(
+                "select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+
+        // Idempotent replay cannot consume the same reservation or repeat the
+        // delivery transition.
+        Map<?, ?> replay = fulfillmentService.completeManualItem(orderId, itemId);
+        assertEquals("DELIVERED", replay.get("status"));
+        assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+    }
+
+    @Test
+    void mixedOrderDeliversAutomaticItemWhileManualItemWaits() {
+        UUID orderId = insertOrder("mixed-token");
+        UUID autoProductId = UUID.randomUUID();
+        UUID manualProductId = UUID.randomUUID();
+        UUID autoItemId = insertOrderItem(orderId, autoProductId, "AUTO", "CARD_KEY", 1, 0);
+        UUID manualItemId = insertOrderItem(orderId, manualProductId, "MANUAL", "MANUAL", 1, 1);
+        insertCard(autoProductId, "mixed-auto-card");
+        insertManualStock(manualProductId, null, 0, 1);
+
+        Map<?, ?> first = (Map<?, ?>) deliverService.deliverOrders(request(orderId, "mixed-token"), null)
+                .get(0);
+        assertEquals("PAID", first.get("status"));
+        assertEquals("DELIVERED", scalar("select fulfillment_status from order_items where id = ?", String.class, autoItemId));
+        assertEquals("WAITING_MANUAL", scalar("select fulfillment_status from order_items where id = ?", String.class, manualItemId));
+        assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+
+        Map<?, ?> second = fulfillmentService.completeManualItem(orderId, manualItemId);
+        assertEquals("DELIVERED", second.get("status"));
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+    }
+
+    @Test
+    void expiredManualOrderReleasesReservationOnce() {
+        UUID orderId = insertExpiredOrder("expired-manual-token");
+        UUID productId = UUID.randomUUID();
+        UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 2, 2);
+        insertManualStock(productId, null, 0, 2);
+
+        orderService.expireOrders();
+        assertEquals("EXPIRED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("CANCELLED", scalar("select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals(0, number("select manual_stock_reserved from order_items where id = ?", itemId));
+        assertEquals(2, number("select available_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+
+        orderService.expireOrders();
+        assertEquals(2, number("select available_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+    }
+
     private List<?> deliverAfter(CountDownLatch start, CountDownLatch ready,
                                  UUID orderId, String lookupToken) throws Exception {
         ready.countDown();
         start.await();
         return deliverService.deliverOrders(request(orderId, lookupToken), null);
+    }
+
+    private boolean reserveAfter(CountDownLatch start, CountDownLatch ready, UUID productId) throws Exception {
+        ready.countDown();
+        start.await();
+        try {
+            manualStockService.reserveOrThrow(productId, null, 1);
+            return true;
+        } catch (BusinessException exception) {
+            return false;
+        }
     }
 
     private Map<String, Object> createPaymentAfter(CountDownLatch start, CountDownLatch ready,
@@ -299,6 +435,17 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING', 'DIRECT', ?,
                     current_timestamp + interval '15 minutes')
                 """, orderId, paymentMethod);
+        return orderId;
+    }
+
+    private UUID insertExpiredOrder(String lookupToken) {
+        UUID orderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into orders (id, created_at, updated_at, actual_amount, total_amount, status,
+                    order_type, lookup_token_hash, expires_at)
+                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING', 'DIRECT', ?,
+                    current_timestamp - interval '1 minute')
+                """, orderId, com.myshop.utils.LookupTokens.hash(lookupToken));
         return orderId;
     }
 
@@ -342,13 +489,29 @@ class PostgresDeliveryIntegrationTest {
     }
 
     private UUID insertOrderItem(UUID orderId, UUID productId) {
+        return insertOrderItem(orderId, productId, "AUTO", "CARD_KEY", 1, 0);
+    }
+
+    private UUID insertOrderItem(UUID orderId, UUID productId, String deliveryType,
+                                 String stockMode, int quantity, int manualStockReserved) {
         UUID itemId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into order_items (id, created_at, updated_at, order_id, product_id,
-                    product_title, quantity, unit_price, subtotal)
-                values (?, current_timestamp, current_timestamp, ?, ?, 'Integration product', 1, 10.00, 10.00)
-                """, itemId, orderId, productId);
+                    product_title, quantity, unit_price, subtotal, delivery_type,
+                    stock_mode, fulfillment_status, manual_stock_reserved)
+                values (?, current_timestamp, current_timestamp, ?, ?, 'Integration product', ?, 10.00, ?, ?, ?, 'PENDING', ?)
+                """, itemId, orderId, productId, quantity,
+                BigDecimal.TEN.multiply(BigDecimal.valueOf(quantity)), deliveryType,
+                stockMode, manualStockReserved);
         return itemId;
+    }
+
+    private void insertManualStock(UUID productId, UUID specId, int available, int reserved) {
+        jdbcTemplate.update("""
+                insert into manual_stocks (id, created_at, updated_at, product_id, spec_id,
+                    available_quantity, reserved_quantity)
+                values (?, current_timestamp, current_timestamp, ?, ?, ?, ?)
+                """, UUID.randomUUID(), productId, specId, available, reserved);
     }
 
     private UUID insertCard(UUID productId, String content) {

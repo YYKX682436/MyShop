@@ -10,9 +10,11 @@ import com.myshop.exception.BusinessException;
 import com.myshop.model.request.ChangePasswordRequest;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.PointsLogRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.UserService;
+import com.myshop.service.ManualStockService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -31,8 +33,10 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
+    private final OrderItemRepository orderItemRepository;
     private final PointsLogRepository pointsLogRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ManualStockService manualStockService;
 
     @Override
     public UserProfileResponse getProfile(UUID userId) {
@@ -74,9 +78,25 @@ public class UserServiceImpl implements UserService {
         // 主动过期检查：PENDING 且已超时的订单标记为 EXPIRED（与 queryOrders 逻辑一致）
         LocalDateTime now = LocalDateTime.now();
         for (Order o : orderPage.getContent()) {
-            if (o.getStatus() == OrderStatus.PENDING && o.getExpiresAt().isBefore(now)) {
-                o.setStatus(OrderStatus.EXPIRED);
-                orderRepository.save(o);
+            if (o.getStatus() == OrderStatus.PENDING && o.getExpiresAt() != null && o.getExpiresAt().isBefore(now)) {
+                // The list query may race the payment/expiry worker. Lock the
+                // order before touching its item reservation so recovery is
+                // idempotent across all expiry entry points.
+                Order locked = orderRepository.findByIdForUpdate(o.getId()).orElse(o);
+                if (locked.getStatus() != OrderStatus.PENDING || locked.getExpiresAt() == null
+                        || !locked.getExpiresAt().isBefore(LocalDateTime.now())) {
+                    continue;
+                }
+                orderItemRepository.findByOrderId(locked.getId()).forEach(item -> {
+                    if (item.getManualStockReserved() > 0) {
+                        manualStockService.release(item.getProductId(), item.getSpecId(), item.getManualStockReserved());
+                        item.setManualStockReserved(0);
+                    }
+                    item.setFulfillmentStatus(com.myshop.constant.FulfillmentStatus.CANCELLED);
+                    orderItemRepository.save(item);
+                });
+                locked.setStatus(OrderStatus.EXPIRED);
+                orderRepository.save(locked);
             }
         }
 

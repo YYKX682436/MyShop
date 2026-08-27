@@ -9,6 +9,7 @@ import { adminOrderApi, adminCardKeyApi, requestOrThrow } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { PaymentIcon, getPaymentLabel } from "@/components/shared/payment-icon"
 import { Modal } from "@/components/ui/modal"
+import { CardContentParts } from "@/components/shared/card-content-parts"
 import type { AdminOrderItem, OrderCardKey } from "@/types"
 
 const ITEMS_PER_PAGE = 10
@@ -52,6 +53,7 @@ export default function AdminOrdersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [markPaidConfirm, setMarkPaidConfirm] = useState<string | null>(null)
   const [markPaidReason, setMarkPaidReason] = useState("")
+  const [completingManualItem, setCompletingManualItem] = useState<string | null>(null)
 
   const fetchOrders = async () => {
     setLoading(true)
@@ -117,6 +119,24 @@ export default function AdminOrdersPage() {
       await fetchOrders()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "操作失败")
+    }
+  }
+
+  const handleCompleteManualItem = async (orderId: string, itemId: string) => {
+    setCompletingManualItem(itemId)
+    try {
+      await requestOrThrow(() => adminOrderApi.completeManualItem(orderId, itemId))
+      toast.success("人工发货已完成")
+      const refreshed = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
+      setShowDetail(refreshed)
+      if (refreshed.status === "DELIVERED") {
+        setDetailCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
+      }
+      await fetchOrders()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "操作失败")
+    } finally {
+      setCompletingManualItem(null)
     }
   }
 
@@ -387,13 +407,33 @@ export default function AdminOrdersPage() {
                 <p className="text-xs text-muted-foreground mb-2">商品明细</p>
                 <div className="rounded-lg border border-border overflow-hidden">
                   {showDetail.items.length > 0 ? showDetail.items.map((item, idx) => (
-                    <div key={item.id} className={cn("flex items-center justify-between px-3 py-2 text-sm", idx > 0 && "border-t border-border/50")}>
-                      <span className="text-foreground">
-                        {item.product_title}
-                        {item.spec_name && <span className="text-muted-foreground"> - {item.spec_name}</span>}
-                        <span className="ml-2 text-muted-foreground">×{item.quantity}</span>
-                      </span>
-                      <span className="font-medium text-foreground">¥{item.subtotal.toFixed(2)}</span>
+                    <div key={item.id} className={cn("flex flex-wrap items-center justify-between gap-3 px-3 py-3 text-sm", idx > 0 && "border-t border-border/50")}>
+                      <div className="min-w-0">
+                        <div className="text-foreground">
+                          {item.product_title}
+                          {item.spec_name && <span className="text-muted-foreground"> - {item.spec_name}</span>}
+                          <span className="ml-2 text-muted-foreground">×{item.quantity}</span>
+                        </div>
+                        {item.customer_input_value && <div className="mt-1 text-xs text-muted-foreground">客户填写：{item.customer_input_value}</div>}
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          <span>{item.delivery_type === "MANUAL" ? "人工发货" : "自动发货"}</span>
+                          <span>·</span>
+                          <span>{item.fulfillment_status === "WAITING_MANUAL" ? "待人工处理" : item.fulfillment_status === "DELIVERED" ? "已完成" : item.fulfillment_status === "CANCELLED" ? "已取消" : "待发货"}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-foreground">¥{item.subtotal.toFixed(2)}</span>
+                        {item.delivery_type === "MANUAL" && item.fulfillment_status !== "DELIVERED" && item.fulfillment_status !== "CANCELLED" && showDetail.status === "PAID" && (
+                          <button
+                            type="button"
+                            disabled={completingManualItem === item.id}
+                            onClick={() => void handleCompleteManualItem(showDetail.id, item.id)}
+                            className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                          >
+                            {completingManualItem === item.id ? "处理中..." : "完成发货"}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )) : (
                     <div className="px-3 py-2 text-sm text-muted-foreground">-</div>
@@ -430,12 +470,12 @@ export default function AdminOrdersPage() {
               {/* 已发卡密 */}
               {showDetail.status === "DELIVERED" && detailCardKeys.length > 0 && (
                 <div onCopy={(e) => { const t = window.getSelection()?.toString(); if (t) { e.clipboardData.setData("text/plain", stripInvisible(t)); e.preventDefault() } }}>
-                  <p className="text-xs text-muted-foreground mb-2">已发卡密</p>
+                  <p className="text-xs text-muted-foreground mb-2">已交付卡券内容</p>
                   {(() => {
                     // 判断是否多商品：按 product_title + spec_name 去重
                     const groups = new Map<string, typeof detailCardKeys>()
                     for (const ck of detailCardKeys) {
-                      const key = ck.product_title + (ck.spec_name ? ` - ${ck.spec_name}` : "")
+                      const key = ck.order_item_id || ck.product_title + (ck.spec_name ? ` - ${ck.spec_name}` : "")
                       if (!groups.has(key)) groups.set(key, [])
                       groups.get(key)!.push(ck)
                     }
@@ -446,9 +486,9 @@ export default function AdminOrdersPage() {
                       return (
                         <div className="flex flex-col gap-1.5">
                           {detailCardKeys.map((ck) => (
-                            <div key={ck.card_key_id} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                              <code className="text-sm text-foreground">{ck.content}</code>
-                            </div>
+                              <div key={ck.card_key_id} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                                <CardContentParts parts={ck.content_parts} fallback={ck.content} onCopy={copyToClipboard} />
+                              </div>
                           ))}
                         </div>
                       )
@@ -462,7 +502,7 @@ export default function AdminOrdersPage() {
                             <div className="flex flex-col gap-1.5">
                               {keys.map((ck) => (
                                 <div key={ck.card_key_id} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                                  <code className="text-sm text-foreground">{ck.content}</code>
+                                  <CardContentParts parts={ck.content_parts} fallback={ck.content} onCopy={copyToClipboard} />
                                 </div>
                               ))}
                             </div>

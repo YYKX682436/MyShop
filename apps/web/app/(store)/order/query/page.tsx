@@ -122,9 +122,39 @@ export default function OrderQueryPage() {
             <span>支付方式：{order.payment_method}</span>
           </div>
           {order.status === "PENDING" && <Link href={`/pay/${order.id}?method=${encodeURIComponent(order.payment_method)}`} className="mt-4 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">继续支付</Link>}
+          {(order.items?.some(item => item.fulfillment_status === "WAITING_MANUAL")
+            || delivery?.item_statuses?.some(item => item.fulfillment_status === "WAITING_MANUAL")) && (
+            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              订单中包含人工发货商品，商家完成处理后会更新订单状态。请保留订单查询凭证。
+            </div>
+          )}
           {delivery?.groups?.length ? <div className="mt-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-base font-semibold"><KeyRound className="h-4 w-4 text-primary" />卡密已发货</h2><button onClick={() => void download()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium"><Download className="h-3.5 w-3.5" />导出</button></div>
-            {delivery.groups.map((group, index) => <div key={`${group.product_title}-${index}`} className="rounded-lg border border-border p-3"><div className="mb-2 text-sm font-medium">{group.product_title}{group.spec_name ? ` · ${group.spec_name}` : ""}</div><div className="space-y-2">{group.card_keys.map(key => <div key={key} className="flex items-center justify-between gap-3 rounded bg-muted/50 px-3 py-2 font-mono text-xs"><span className="break-all">{key}</span><button onClick={() => void copy(key)} aria-label="复制卡密" className="shrink-0 text-muted-foreground hover:text-foreground"><Copy className="h-3.5 w-3.5" /></button></div>)}</div></div>)}
+            {delivery.groups.map((group, index) => {
+              const deliveryItems = group.delivery_items ?? group.card_keys.map(key => ({ parts: [key] }))
+              const allParts = deliveryItems.flatMap(item => item.parts)
+              return <div key={`${group.product_title}-${index}`} className="rounded-lg border border-border p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium">{group.product_title}{group.spec_name ? ` · ${group.spec_name}` : ""}</div>
+                  <button onClick={() => void copy(allParts.join("\n"))} className="text-xs text-muted-foreground hover:text-foreground">复制全部</button>
+                </div>
+                <div className="space-y-3">
+                  {deliveryItems.map((deliveryItem, itemIndex) => (
+                    <div key={`${group.product_title}-${index}-${itemIndex}`} className="rounded-md bg-muted/30 p-2">
+                      <div className="mb-1 text-xs text-muted-foreground">卡券 {itemIndex + 1}</div>
+                      <div className="space-y-1.5">
+                        {deliveryItem.parts.map((part, partIndex) => (
+                          <div key={`${itemIndex}-${partIndex}`} className="flex items-center justify-between gap-3 rounded bg-background px-3 py-2 font-mono text-xs">
+                            <span className="break-all">卡券内容 {partIndex + 1}：{part}</span>
+                            <button onClick={() => void copy(part)} aria-label="复制内容" className="shrink-0 text-muted-foreground hover:text-foreground"><Copy className="h-3.5 w-3.5" /></button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            })}
           </div> : null}
         </section>
       })}

@@ -68,7 +68,10 @@ export interface ProductSpec {
   id: string
   name: string
   price: number
-  stock_available: number
+  stock_available: number | null
+  unlimited?: boolean
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  manual_stock?: number | null
   card_key_count?: number
   is_visible?: boolean
   sort_order?: number
@@ -88,9 +91,12 @@ export interface ProductCard {
   base_price: number
   currency?: string
   category_id: string
-  stock_available: number
+  stock_available: number | null
+  unlimited?: boolean
   has_specs: boolean
   delivery_type?: string
+  customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
   sales_count?: number
   initial_sales?: number
   is_enabled?: boolean
@@ -125,7 +131,11 @@ export interface CartItem {
   unit_price: number
   quantity: number
   subtotal: number
-  stock_available?: number
+  stock_available?: number | null
+  unlimited?: boolean
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
+  customer_input_value?: string | null
 }
 
 export interface Cart {
@@ -149,6 +159,7 @@ export interface OrderBrief {
   order_type: OrderType
   payment_method: string
   created_at: string
+  items?: OrderItemDetail[]
 }
 
 export interface OrderItemDetail {
@@ -159,6 +170,13 @@ export interface OrderItemDetail {
   quantity: number
   unit_price: number
   subtotal: number
+  delivery_type?: string
+  customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
+  customer_input_value?: string | null
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
+  delivered_at?: string | null
+  manual_stock_reserved?: number
 }
 
 export interface OrderDetail extends OrderBrief {
@@ -189,12 +207,17 @@ export interface DeliverResultGroup {
   product_title: string
   spec_name: string | null
   card_keys: string[]
+  quantity?: number
+  delivery_type?: string
+  fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
+  delivery_items?: { parts: string[]; content_parts?: string[] }[]
 }
 
 export interface DeliverResult {
   order_id: string
   status: OrderStatus
   groups: DeliverResultGroup[]
+  item_statuses?: { id: string; product_title: string; fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"; delivery_type: string }[]
 }
 
 // ============================================================
@@ -301,6 +324,7 @@ export interface CreateOrderRequest {
   idempotency_key: string
   idempotency_fingerprint?: string
   device?: string
+  customer_input_value?: string | null
 }
 
 export interface CreateCartOrderRequest {
@@ -434,16 +458,20 @@ export interface CardKeyStockSummary {
   spec_id: string | null
   spec_name: string | null
   spec_enabled?: boolean
-  total: number
-  available: number
+  total: number | null
+  available: number | null
   sold: number
   locked: number
   invalid: number
+  reserved?: number
+  unlimited?: boolean
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
 }
 
 export interface CardKeyListItem {
   id: string
   content: string
+  content_parts?: string[]
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'
   order_id: string | null
   created_at: string
@@ -457,14 +485,19 @@ export interface CardImportBatch {
   imported_by: string
   total_count: number
   success_count: number
+  duplicate_count: number
   fail_count: number
+  column_count: number
+  check_duplicate: boolean
   fail_detail: string | null
   created_at: string
 }
 
 export interface OrderCardKey {
   card_key_id: string
+  order_item_id?: string | null
   content: string
+  content_parts?: string[]
   product_title: string
   spec_name: string | null
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'

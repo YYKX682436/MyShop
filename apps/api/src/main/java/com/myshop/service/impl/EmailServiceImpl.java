@@ -69,12 +69,13 @@ public class EmailServiceImpl implements EmailService {
             }
 
             List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
-            List<CardKey> keys = cardKeyRepository.findByOrderId(orderId);
+            List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
+            if (keys == null || keys.isEmpty()) keys = cardKeyRepository.findByOrderId(orderId);
             Map<UUID, OrderItem> itemMap = items.stream()
-                    .collect(Collectors.toMap(OrderItem::getId, i -> i));
+                    .collect(Collectors.toMap(OrderItem::getId, i -> i, (first, ignored) -> first, LinkedHashMap::new));
             Map<UUID, List<CardKey>> grouped = keys.stream()
                     .filter(k -> k.getOrderItemId() != null)
-                    .collect(Collectors.groupingBy(CardKey::getOrderItemId));
+                    .collect(Collectors.groupingBy(CardKey::getOrderItemId, LinkedHashMap::new, Collectors.toList()));
 
             String siteName = siteConfigRepository.findByConfigKey("site_name")
                     .map(c -> c.getConfigValue())
@@ -150,9 +151,12 @@ public class EmailServiceImpl implements EmailService {
 
         // Card keys grouped by product
         sb.append("<tr><td style=\"padding:0 40px 24px;\">");
-        for (Map.Entry<UUID, List<CardKey>> entry : grouped.entrySet()) {
-            OrderItem item = itemMap.get(entry.getKey());
-            if (item == null) continue;
+        int itemNumber = 0;
+        for (Map.Entry<UUID, OrderItem> itemEntry : itemMap.entrySet()) {
+            List<CardKey> itemKeys = grouped.getOrDefault(itemEntry.getKey(), List.of());
+            if (itemKeys.isEmpty()) continue;
+            itemNumber++;
+            OrderItem item = itemEntry.getValue();
 
             String title = escapeHtml(item.getProductTitle());
             if (item.getSpecName() != null && !item.getSpecName().isBlank()) {
@@ -161,11 +165,18 @@ public class EmailServiceImpl implements EmailService {
 
             sb.append("<div style=\"margin-bottom:16px;border:1px solid #e8e8e8;border-radius:6px;overflow:hidden;\">");
             sb.append("<div style=\"background-color:#f0f0f5;padding:10px 16px;font-size:14px;font-weight:600;color:#333;\">")
-              .append(title).append("</div>");
+              .append("第").append(itemNumber).append("项 · ").append(title).append("</div>");
             sb.append("<div style=\"padding:12px 16px;\">");
-            for (CardKey key : entry.getValue()) {
-                sb.append("<div style=\"background-color:#fafafa;border:1px solid #eee;border-radius:4px;padding:8px 12px;margin-bottom:6px;font-family:'Courier New',Courier,monospace;font-size:13px;color:#222;word-break:break-all;\">")
-                  .append(escapeHtml(key.getContent())).append("</div>");
+            for (int cardIndex = 0; cardIndex < itemKeys.size(); cardIndex++) {
+                CardKey key = itemKeys.get(cardIndex);
+                List<String> parts = key.resolvedContentParts();
+                sb.append("<div style=\"margin-bottom:10px;padding:8px 0 2px;color:#666;font-size:12px;\">第 ")
+                  .append(cardIndex + 1).append(" 份</div>");
+                for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+                    sb.append("<div style=\"background-color:#fafafa;border:1px solid #eee;border-radius:4px;padding:8px 12px;margin-bottom:6px;font-family:'Courier New',Courier,monospace;font-size:13px;color:#222;word-break:break-all;\">")
+                      .append("卡券内容 ").append(partIndex + 1).append(": ")
+                      .append(escapeHtml(parts.get(partIndex))).append("</div>");
+                }
             }
             sb.append("</div></div>");
         }

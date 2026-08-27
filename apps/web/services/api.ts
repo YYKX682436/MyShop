@@ -381,10 +381,13 @@ export const productApi = {
 export const cartApi = {
   get: () =>
     request<Cart>("/cart"),
-  addItem: (data: { product_id: string; spec_id: string | null; quantity: number }) =>
+  addItem: (data: { product_id: string; spec_id: string | null; quantity: number; customer_input_value?: string | null }) =>
     request<null>("/cart/items", { method: "POST", body: JSON.stringify(data) }),
-  updateItem: (itemId: string, quantity: number) =>
-    request<null>(`/cart/items/${itemId}`, { method: "PUT", body: JSON.stringify({ quantity }) }),
+  updateItem: (itemId: string, quantity: number, customer_input_value?: string | null) =>
+    request<null>(`/cart/items/${itemId}`, {
+      method: "PUT",
+      body: JSON.stringify({ quantity, ...(customer_input_value !== undefined ? { customer_input_value } : {}) }),
+    }),
   removeItem: (itemId: string) =>
     request<null>(`/cart/items/${itemId}`, { method: "DELETE" }),
 }
@@ -477,13 +480,17 @@ export const adminProductApi = {
   create: (data: {
     title: string; description?: string; detail_md?: string; cover_url?: string;
     base_price: number; category_id: string; low_stock_threshold?: number;
-    wholesale_enabled?: boolean; is_enabled?: boolean; sort_order?: number
+    wholesale_enabled?: boolean; is_enabled?: boolean; sort_order?: number;
+    delivery_type?: "AUTO" | "MANUAL"; customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE";
+    stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"; manual_stock?: number
   }) =>
     request<ProductDetail>("/admin/products", { method: "POST", body: JSON.stringify(data) }),
   update: (id: string, data: Partial<{
     title: string; description: string; detail_md: string; cover_url: string;
     base_price: number; category_id: string; low_stock_threshold: number;
-    wholesale_enabled: boolean; is_enabled: boolean; sort_order: number
+    wholesale_enabled: boolean; is_enabled: boolean; sort_order: number;
+    delivery_type: "AUTO" | "MANUAL"; customer_input_type: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE";
+    stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"; manual_stock: number
   }>) =>
     request<null>(`/admin/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   delete: (id: string) =>
@@ -491,9 +498,9 @@ export const adminProductApi = {
   // Specs
   getSpecs: (productId: string) =>
     request<ProductSpec[]>(`/admin/products/${productId}/specs`),
-  addSpec: (productId: string, data: { name: string; price: number; is_visible?: boolean; sort_order?: number }) =>
+  addSpec: (productId: string, data: { name: string; price: number; is_visible?: boolean; sort_order?: number; manual_stock?: number }) =>
     request<ProductSpec>(`/admin/products/${productId}/specs`, { method: "POST", body: JSON.stringify(data) }),
-  updateSpec: (productId: string, specId: string, data: Partial<{ name: string; price: number; is_visible: boolean; sort_order: number }>) =>
+  updateSpec: (productId: string, specId: string, data: Partial<{ name: string; price: number; is_visible: boolean; sort_order: number; manual_stock: number }>) =>
     request<null>(`/admin/products/${productId}/specs/${specId}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteSpec: (productId: string, specId: string) =>
     request<null>(`/admin/products/${productId}/specs/${specId}`, { method: "DELETE" }),
@@ -538,7 +545,7 @@ export const adminCardKeyApi = {
     const qs = buildQuery(params ?? {})
     return request<CardKeyStockSummary[]>(`/admin/card-keys/stock?${qs}`)
   },
-  import: (data: { product_id: string; spec_id?: string | null; content: string }) =>
+  import: (data: { product_id: string; spec_id?: string | null; content_columns?: string[]; content?: string; check_duplicate?: boolean }) =>
     request<CardImportBatch>("/admin/card-keys/import", { method: "POST", body: JSON.stringify(data) }),
   getImportBatches: (params: { product_id?: string; page?: number; page_size?: number }) => {
     const qs = buildQuery(params)
@@ -572,6 +579,10 @@ export const adminOrderApi = {
     request<null>(`/admin/orders/${id}/mark-paid`, {
       method: "POST",
       body: JSON.stringify({ reason, confirmed: true }),
+    }),
+  completeManualItem: (orderId: string, orderItemId: string) =>
+    request<{ order_id: string; status: string }>(`/admin/orders/${orderId}/items/${orderItemId}/complete-manual`, {
+      method: "POST",
     }),
 }
 

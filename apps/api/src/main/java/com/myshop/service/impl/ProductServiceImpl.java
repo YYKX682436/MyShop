@@ -2,7 +2,9 @@ package com.myshop.service.impl;
 
 import com.myshop.common.PageResult;
 import com.myshop.constant.CardKeyStatus;
+import com.myshop.constant.CustomerInputType;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.WholesaleRule;
@@ -13,6 +15,8 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.WholesaleRuleRepository;
 import com.myshop.service.ProductService;
+import com.myshop.service.ManualStockService;
+import com.myshop.service.ProductRules;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -32,6 +36,7 @@ public class ProductServiceImpl implements ProductService {
     private final WholesaleRuleRepository wholesaleRuleRepository;
     private final CardKeyRepository cardKeyRepository;
     private final OrderItemRepository orderItemRepository;
+    private final ManualStockService manualStockService;
 
     @Override
     public PageResult<?> listPublicProducts(UUID categoryId, String keyword, int page, int pageSize) {
@@ -106,7 +111,13 @@ public class ProductServiceImpl implements ProductService {
         product.setCoverUrl((String) req.get("cover_url"));
         product.setBasePrice(new BigDecimal(req.get("base_price").toString()));
         if (req.containsKey("currency")) product.setCurrency((String) req.get("currency"));
-        if (req.containsKey("delivery_type")) product.setDeliveryType((String) req.get("delivery_type"));
+        String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), "AUTO");
+        StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
+                "AUTO".equals(deliveryType) ? StockMode.CARD_KEY : StockMode.MANUAL);
+        ProductRules.compatibleStockMode(deliveryType, stockMode);
+        product.setDeliveryType(deliveryType);
+        product.setCustomerInputType(ProductRules.parseCustomerInputType(req.get("customer_input_type")));
+        product.setStockMode(stockMode);
         product.setCategoryId(UUID.fromString((String) req.get("category_id")));
         if (req.containsKey("low_stock_threshold")) product.setLowStockThreshold(((Number) req.get("low_stock_threshold")).intValue());
         if (req.containsKey("wholesale_enabled")) product.setWholesaleEnabled((boolean) req.get("wholesale_enabled"));
@@ -115,6 +126,9 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("initial_sales")) product.setInitialSales(((Number) req.get("initial_sales")).intValue());
         if (req.containsKey("sort_order")) product.setSortOrder(((Number) req.get("sort_order")).intValue());
         productRepository.save(product);
+        if (stockMode == StockMode.MANUAL) {
+            manualStockService.setAvailable(product.getId(), null, integerValue(req.get("manual_stock"), 0));
+        }
         return toProductDetail(product);
     }
 
@@ -130,7 +144,18 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("cover_url")) product.setCoverUrl((String) req.get("cover_url"));
         if (req.containsKey("base_price")) product.setBasePrice(new BigDecimal(req.get("base_price").toString()));
         if (req.containsKey("currency")) product.setCurrency((String) req.get("currency"));
-        if (req.containsKey("delivery_type")) product.setDeliveryType((String) req.get("delivery_type"));
+        String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), product.getDeliveryType());
+        StockMode previousStockMode = product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
+        StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
+                req.containsKey("delivery_type") && !req.containsKey("stock_mode")
+                        ? ("AUTO".equals(deliveryType) ? StockMode.CARD_KEY : StockMode.MANUAL)
+                        : previousStockMode);
+        ProductRules.compatibleStockMode(deliveryType, stockMode);
+        product.setDeliveryType(deliveryType);
+        if (req.containsKey("customer_input_type")) {
+            product.setCustomerInputType(ProductRules.parseCustomerInputType(req.get("customer_input_type")));
+        }
+        product.setStockMode(stockMode);
         if (req.containsKey("category_id")) product.setCategoryId(UUID.fromString((String) req.get("category_id")));
         if (req.containsKey("low_stock_threshold")) product.setLowStockThreshold(((Number) req.get("low_stock_threshold")).intValue());
         if (req.containsKey("wholesale_enabled")) product.setWholesaleEnabled((boolean) req.get("wholesale_enabled"));
@@ -139,6 +164,13 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("initial_sales")) product.setInitialSales(((Number) req.get("initial_sales")).intValue());
         if (req.containsKey("sort_order")) product.setSortOrder(((Number) req.get("sort_order")).intValue());
         productRepository.save(product);
+        if (stockMode == StockMode.MANUAL) {
+            if (req.containsKey("manual_stock")) {
+                manualStockService.setAvailable(product.getId(), null, integerValue(req.get("manual_stock"), 0));
+            } else {
+                manualStockService.ensurePool(product.getId(), null);
+            }
+        }
     }
 
     @Override
@@ -152,8 +184,11 @@ public class ProductServiceImpl implements ProductService {
 
     @Override
     public Object listSpecs(UUID productId) {
+        StockMode stockMode = productRepository.findById(productId)
+                .map(p -> p.getStockMode() == null ? StockMode.CARD_KEY : p.getStockMode())
+                .orElse(StockMode.CARD_KEY);
         return productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0).stream()
-                .map(this::toSpecMap).toList();
+                .map(spec -> toSpecMap(spec, stockMode)).toList();
     }
 
     @Override
@@ -175,6 +210,10 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("is_visible")) spec.setVisible((boolean) req.get("is_visible"));
         if (req.containsKey("sort_order")) spec.setSortOrder(((Number) req.get("sort_order")).intValue());
         productSpecRepository.save(spec);
+        Product product = productRepository.findById(productId).orElseThrow();
+        if (product.getStockMode() == StockMode.MANUAL) {
+            manualStockService.setAvailable(spec.getProductId(), spec.getId(), integerValue(req.get("manual_stock"), 0));
+        }
     }
 
     @Override
@@ -196,6 +235,12 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("is_visible")) spec.setVisible((boolean) req.get("is_visible"));
         if (req.containsKey("sort_order")) spec.setSortOrder(((Number) req.get("sort_order")).intValue());
         productSpecRepository.save(spec);
+        if (req.containsKey("manual_stock")) {
+            Product product = productRepository.findById(productId).orElseThrow();
+            if (product.getStockMode() == StockMode.MANUAL) {
+                manualStockService.setAvailable(productId, specId, integerValue(req.get("manual_stock"), 0));
+            }
+        }
     }
 
     @Override
@@ -246,11 +291,16 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
-    private long getStockAvailable(UUID productId, UUID specId) {
-        if (specId != null) {
-            return cardKeyRepository.countByProductIdAndSpecIdAndStatus(productId, specId, CardKeyStatus.AVAILABLE);
+    private StockView getStock(Product product, UUID specId) {
+        StockMode stockMode = product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
+        if (stockMode == StockMode.UNLIMITED) return new StockView(null, true);
+        if (stockMode == StockMode.MANUAL) {
+            return new StockView((long) manualStockService.getAvailable(product.getId(), specId), false);
         }
-        return cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(productId, CardKeyStatus.AVAILABLE);
+        long available = specId != null
+                ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(product.getId(), specId, CardKeyStatus.AVAILABLE)
+                : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(product.getId(), CardKeyStatus.AVAILABLE);
+        return new StockView(available, false);
     }
 
     private Map<String, Object> toProductCard(Product p) {
@@ -264,19 +314,27 @@ public class ProductServiceImpl implements ProductService {
         map.put("category_id", p.getCategoryId());
         List<ProductSpec> specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(p.getId(), 0);
         boolean hasSpecs = p.isSpecEnabled() && !specs.isEmpty();
-        long stockAvailable;
+        StockMode stockMode = p.getStockMode() == null ? StockMode.CARD_KEY : p.getStockMode();
+        StockView stock;
         if (hasSpecs) {
-            // 多规格模式：按各规格分别统计可用库存求和（精确隔离，不含默认库存池和已删除规格的卡密）
-            stockAvailable = specs.stream()
-                    .mapToLong(s -> cardKeyRepository.countByProductIdAndSpecIdAndStatus(p.getId(), s.getId(), CardKeyStatus.AVAILABLE))
-                    .sum();
+            if (stockMode == StockMode.UNLIMITED) {
+                stock = new StockView(null, true);
+            } else {
+                long available = specs.stream()
+                        .map(s -> getStock(p, s.getId()))
+                        .mapToLong(view -> view.available() == null ? 0 : view.available())
+                        .sum();
+                stock = new StockView(available, false);
+            }
         } else {
-            // 无规格模式：仅统计 spec_id=null 的卡密
-            stockAvailable = cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(p.getId(), CardKeyStatus.AVAILABLE);
+            stock = getStock(p, null);
         }
-        map.put("stock_available", stockAvailable);
+        map.put("stock_available", stock.available());
+        map.put("unlimited", stock.unlimited());
         map.put("has_specs", hasSpecs);
         map.put("delivery_type", p.getDeliveryType());
+        map.put("customer_input_type", p.getCustomerInputType());
+        map.put("stock_mode", stockMode);
         map.put("sales_count", orderItemRepository.sumQuantityByProductId(p.getId()));
         map.put("initial_sales", p.getInitialSales());
         map.put("created_at", p.getCreatedAt());
@@ -287,9 +345,12 @@ public class ProductServiceImpl implements ProductService {
         Map<String, Object> map = new LinkedHashMap<>(toProductCard(p));
         map.put("detail_md", p.getDetailMd());
         List<ProductSpec> specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(p.getId(), 0);
-        map.put("specs", specs.stream().map(this::toSpecMap).toList());
+        StockMode stockMode = p.getStockMode() == null ? StockMode.CARD_KEY : p.getStockMode();
+        map.put("specs", specs.stream().map(spec -> toSpecMap(spec, stockMode)).toList());
         map.put("spec_enabled", p.isSpecEnabled());
         map.put("wholesale_enabled", p.isWholesaleEnabled());
+        map.put("customer_input_type", p.getCustomerInputType());
+        map.put("stock_mode", stockMode);
         map.put("wholesale_rules", wholesaleRuleRepository.findByProductIdOrderByMinQuantityAsc(p.getId()).stream()
                 .map(r -> {
                     Map<String, Object> m = new HashMap<>();
@@ -300,15 +361,35 @@ public class ProductServiceImpl implements ProductService {
         return map;
     }
 
-    private Map<String, Object> toSpecMap(ProductSpec s) {
+    private Map<String, Object> toSpecMap(ProductSpec s, StockMode stockMode) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", s.getId());
         map.put("name", s.getName());
         map.put("price", s.getPrice());
-        map.put("stock_available", getStockAvailable(s.getProductId(), s.getId()));
+        Product product = productRepository.findById(s.getProductId()).orElse(null);
+        StockView stock = product == null
+                ? new StockView(0L, false)
+                : getStock(product, s.getId());
+        map.put("stock_available", stock.available());
+        map.put("unlimited", stock.unlimited());
+        map.put("stock_mode", stockMode);
+        map.put("manual_stock", stockMode == StockMode.MANUAL ? stock.available() : null);
         // 有效卡密数量（AVAILABLE/SOLD/LOCKED），用于前端判断删除规格时是否需要确认
         map.put("card_key_count", cardKeyRepository.countByProductIdAndSpecIdExcludingStatus(
                 s.getProductId(), s.getId(), CardKeyStatus.INVALID));
         return map;
+    }
+
+    private int integerValue(Object raw, int fallback) {
+        if (raw == null) return fallback;
+        if (raw instanceof Number number) return number.intValue();
+        try {
+            return Integer.parseInt(String.valueOf(raw));
+        } catch (NumberFormatException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "手动库存数量无效");
+        }
+    }
+
+    private record StockView(Long available, boolean unlimited) {
     }
 }

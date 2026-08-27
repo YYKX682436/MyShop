@@ -11,5 +11,9 @@ public interface CartService {
 
     void updateItem(UUID userId, String sessionToken, UUID itemId, int quantity);
 
+    void updateItem(UUID userId, String sessionToken, UUID itemId, int quantity, String customerInputValue);
+
+    void updateCustomerInput(UUID userId, String sessionToken, UUID itemId, String customerInputValue);
+
     void deleteItem(UUID userId, String sessionToken, UUID itemId);
 }

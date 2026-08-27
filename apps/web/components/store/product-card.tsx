@@ -13,8 +13,8 @@ interface ProductCardProps {
 export function ProductCard({ product }: ProductCardProps) {
   const { t } = useLocale()
 
-  const inStock = product.stock_available > 0
-  const lowStock = product.stock_available > 0 && product.stock_available <= 10
+  const inStock = product.unlimited || (product.stock_available ?? 0) > 0
+  const lowStock = !product.unlimited && (product.stock_available ?? 0) > 0 && (product.stock_available ?? 0) <= 10
 
   const stockBarColor = !inStock
     ? "bg-destructive/70"
@@ -110,9 +110,11 @@ export function ProductCard({ product }: ProductCardProps) {
         <div
           className={cn("h-full transition-all", stockBarColor)}
           style={{
-            width: !inStock
+            width: product.unlimited
+              ? "100%"
+              : !inStock
               ? "0%"
-              : `${Math.min(Math.round((product.stock_available / 50) * 100), 100)}%`,
+              : `${Math.min(Math.round(((product.stock_available ?? 0) / 50) * 100), 100)}%`,
           }}
         />
       </div>

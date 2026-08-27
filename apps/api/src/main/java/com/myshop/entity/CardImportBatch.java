@@ -28,7 +28,14 @@ public class CardImportBatch extends BaseEntity {
 
     private int successCount;
 
+    private int duplicateCount;
+
     private int failCount;
+
+    private int columnCount = 1;
+
+    @Column(nullable = false)
+    private boolean checkDuplicate = true;
 
     @Column(columnDefinition = "TEXT")
     private String failDetail;

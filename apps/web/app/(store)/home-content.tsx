@@ -47,7 +47,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
       result = result.filter((p) => p.title.toLowerCase().includes(q))
     }
     if (inStockOnly) {
-      result = result.filter((p) => p.stock_available > 0)
+      result = result.filter((p) => p.unlimited || (p.stock_available ?? 0) > 0)
     }
 
     const min = Number.parseFloat(priceMin)

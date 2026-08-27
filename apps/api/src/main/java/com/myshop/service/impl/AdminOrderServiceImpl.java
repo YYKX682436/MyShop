@@ -12,6 +12,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.AdminOrderService;
+import com.myshop.service.FulfillmentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -28,6 +29,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final UserRepository userRepository;
+    private final FulfillmentService fulfillmentService;
 
     @Override
     public PageResult<?> listOrders(String status, String orderType, String paymentMethod,
@@ -78,6 +80,12 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         orderRepository.save(order);
     }
 
+    @Override
+    @Transactional
+    public Map<String, Object> completeManualItem(UUID orderId, UUID orderItemId) {
+        return fulfillmentService.completeManualItem(orderId, orderItemId);
+    }
+
     private Map<String, Object> toAdminOrder(Order o) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", o.getId());
@@ -110,6 +118,13 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             im.put("quantity", i.getQuantity());
             im.put("unit_price", i.getUnitPrice());
             im.put("subtotal", i.getSubtotal());
+            im.put("delivery_type", i.getDeliveryType());
+            im.put("customer_input_type", i.getCustomerInputType());
+            im.put("customer_input_value", i.getCustomerInputValue());
+            im.put("stock_mode", i.getStockMode());
+            im.put("fulfillment_status", i.getFulfillmentStatus());
+            im.put("delivered_at", i.getDeliveredAt());
+            im.put("manual_stock_reserved", i.getManualStockReserved());
             return im;
         }).toList());
         return map;

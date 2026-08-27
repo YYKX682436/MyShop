@@ -12,4 +12,7 @@ public interface FulfillmentService {
      * or fabricates a guest credential.
      */
     Map<String, Object> fulfillOrder(UUID orderId);
+
+    /** Idempotently completes one manual-delivery order item. */
+    Map<String, Object> completeManualItem(UUID orderId, UUID orderItemId);
 }

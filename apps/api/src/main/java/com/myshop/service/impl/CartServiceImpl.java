@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.CartItem;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
@@ -12,6 +13,8 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.service.CartService;
+import com.myshop.service.ManualStockService;
+import com.myshop.service.ProductRules;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +31,7 @@ public class CartServiceImpl implements CartService {
     private final ProductSpecRepository productSpecRepository;
     private final CardKeyRepository cardKeyRepository;
     private final SiteConfigRepository siteConfigRepository;
+    private final ManualStockService manualStockService;
 
     @Override
     @Transactional
@@ -67,6 +71,8 @@ public class CartServiceImpl implements CartService {
         UUID productId = UUID.fromString((String) req.get("product_id"));
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
         int quantity = ((Number) req.get("quantity")).intValue();
+        String requestedCustomerInput = req.get("customer_input_value") == null
+                ? null : String.valueOf(req.get("customer_input_value"));
 
         int maxQuantity = getMaxPurchasePerUser();
         if (quantity < 1 || quantity > maxQuantity) {
@@ -77,6 +83,10 @@ public class CartServiceImpl implements CartService {
         Product product = productRepository.findById(productId)
                 .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
+        ProductRules.validateCustomerInput(product, requestedCustomerInput);
+        String customerInputValue = product.getCustomerInputType() == null
+                || product.getCustomerInputType().name().equals("NONE")
+                ? null : requestedCustomerInput.strip();
 
         // Generate session token for guest
         String resultSessionToken = sessionToken;
@@ -87,9 +97,11 @@ public class CartServiceImpl implements CartService {
         // Check existing cart item
         Optional<CartItem> existing;
         if (userId != null) {
-            existing = cartItemRepository.findByUserIdAndProductIdAndSpecId(userId, productId, specId);
+            existing = cartItemRepository.findByUserIdAndProductIdAndSpecIdAndCustomerInputValue(
+                    userId, productId, specId, customerInputValue);
         } else {
-            existing = cartItemRepository.findBySessionTokenAndProductIdAndSpecId(resultSessionToken, productId, specId);
+            existing = cartItemRepository.findBySessionTokenAndProductIdAndSpecIdAndCustomerInputValue(
+                    resultSessionToken, productId, specId, customerInputValue);
         }
 
         // 合并后总量校验：已有数量 + 新增数量 ≤ 购买上限
@@ -102,13 +114,11 @@ public class CartServiceImpl implements CartService {
         }
 
         // Advisory stock check: 购物车已有数量 + 新增数量 ≤ 可用库存
-        long available = specId != null
-                ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(productId, specId, CardKeyStatus.AVAILABLE)
-                : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(productId, CardKeyStatus.AVAILABLE);
-        if (totalQty > available) {
+        StockView stock = getStock(product, specId);
+        if (!stock.unlimited() && totalQty > stock.available()) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK,
-                    "该商品库存不足，最多可购买 " + available + " 件",
-                    Map.of("available", available));
+                    "该商品库存不足，最多可购买 " + stock.available() + " 件",
+                    Map.of("available", stock.available()));
         }
 
         if (existing.isPresent()) {
@@ -120,6 +130,7 @@ public class CartServiceImpl implements CartService {
             item.setSessionToken(userId == null ? resultSessionToken : null);
             item.setProductId(productId);
             item.setSpecId(specId);
+            item.setCustomerInputValue(customerInputValue);
             item.setQuantity(quantity);
             cartItemRepository.save(item);
         }
@@ -130,6 +141,30 @@ public class CartServiceImpl implements CartService {
     @Override
     @Transactional
     public void updateItem(UUID userId, String sessionToken, UUID itemId, int quantity) {
+        updateItemInternal(userId, sessionToken, itemId, quantity, null, false);
+    }
+
+    @Override
+    @Transactional
+    public void updateItem(UUID userId, String sessionToken, UUID itemId, int quantity, String customerInputValue) {
+        updateItemInternal(userId, sessionToken, itemId, quantity, customerInputValue, true);
+    }
+
+    @Override
+    @Transactional
+    public void updateCustomerInput(UUID userId, String sessionToken, UUID itemId, String customerInputValue) {
+        CartItem item = cartItemRepository.findById(itemId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "购物车项不存在"));
+        verifyOwnership(item, userId, sessionToken);
+        Product product = productRepository.findById(item.getProductId())
+                .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
+        item.setCustomerInputValue(ProductRules.validateCustomerInput(product, customerInputValue));
+        cartItemRepository.save(item);
+    }
+
+    private void updateItemInternal(UUID userId, String sessionToken, UUID itemId, int quantity,
+                                    String customerInputValue, boolean updateCustomerInput) {
         int maxQuantity = getMaxPurchasePerUser();
         if (quantity < 1 || quantity > maxQuantity) {
             throw new BusinessException(ErrorCode.PURCHASE_LIMIT_EXCEEDED, "购买数量无效，允许范围 1~" + maxQuantity,
@@ -141,13 +176,19 @@ public class CartServiceImpl implements CartService {
         verifyOwnership(item, userId, sessionToken);
 
         // Advisory stock check
-        long available = item.getSpecId() != null
-                ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(item.getProductId(), item.getSpecId(), CardKeyStatus.AVAILABLE)
-                : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(item.getProductId(), CardKeyStatus.AVAILABLE);
-        if (quantity > available) {
+        Product product = productRepository.findById(item.getProductId()).orElse(null);
+        if (product == null || product.getIsDeleted() != 0 || !product.isEnabled()) {
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架");
+        }
+        if (updateCustomerInput) {
+            item.setCustomerInputValue(ProductRules.validateCustomerInput(product, customerInputValue));
+        }
+        StockView stock = product == null
+                ? new StockView(0, false) : getStock(product, item.getSpecId());
+        if (!stock.unlimited() && quantity > stock.available()) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK,
-                    "该商品库存不足，最多可购买 " + available + " 件",
-                    Map.of("available", available));
+                    "该商品库存不足，最多可购买 " + stock.available() + " 件",
+                    Map.of("available", stock.available()));
         }
 
         item.setQuantity(quantity);
@@ -178,8 +219,8 @@ public class CartServiceImpl implements CartService {
         if (guestItems.isEmpty()) return;
 
         for (CartItem guestItem : guestItems) {
-            Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductIdAndSpecId(
-                    userId, guestItem.getProductId(), guestItem.getSpecId());
+            Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductIdAndSpecIdAndCustomerInputValue(
+                    userId, guestItem.getProductId(), guestItem.getSpecId(), guestItem.getCustomerInputValue());
             if (existing.isPresent()) {
                 // 已存在同商品+规格 → 合并数量（截断到购买上限，避免超限）
                 int merged = existing.get().getQuantity() + guestItem.getQuantity();
@@ -201,6 +242,7 @@ public class CartServiceImpl implements CartService {
         map.put("id", item.getId());
         map.put("product_id", item.getProductId());
         map.put("spec_id", item.getSpecId());
+        map.put("customer_input_value", item.getCustomerInputValue());
 
         Product product = productRepository.findById(item.getProductId()).orElse(null);
         String productTitle = product != null ? product.getTitle() : "未知商品";
@@ -224,10 +266,15 @@ public class CartServiceImpl implements CartService {
         map.put("quantity", item.getQuantity());
         map.put("subtotal", unitPrice.multiply(BigDecimal.valueOf(item.getQuantity())));
 
-        long stockAvailable = item.getSpecId() != null
-                ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(item.getProductId(), item.getSpecId(), CardKeyStatus.AVAILABLE)
-                : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(item.getProductId(), CardKeyStatus.AVAILABLE);
-        map.put("stock_available", stockAvailable);
+        StockMode stockMode = product == null || product.getStockMode() == null
+                ? StockMode.CARD_KEY : product.getStockMode();
+        StockView stock = product == null ? new StockView(0, false) : getStock(product, item.getSpecId());
+        map.put("stock_available", stock.available());
+        map.put("unlimited", stock.unlimited());
+        map.put("stock_mode", stockMode);
+        map.put("customer_input_type", product == null ? null : product.getCustomerInputType());
+        map.put("customer_input_label", product == null ? null
+                : ProductRules.customerInputLabel(product.getCustomerInputType()));
 
         return map;
     }
@@ -241,5 +288,20 @@ public class CartServiceImpl implements CartService {
                         return (val > 0 && val <= 999) ? val : 999;
                     } catch (Exception e) { return 999; }
                 }).orElse(999);
+    }
+
+    private StockView getStock(Product product, UUID specId) {
+        StockMode stockMode = product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
+        if (stockMode == StockMode.UNLIMITED) return new StockView(0, true);
+        if (stockMode == StockMode.MANUAL) {
+            return new StockView(manualStockService.getAvailable(product.getId(), specId), false);
+        }
+        long available = specId != null
+                ? cardKeyRepository.countByProductIdAndSpecIdAndStatus(product.getId(), specId, CardKeyStatus.AVAILABLE)
+                : cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(product.getId(), CardKeyStatus.AVAILABLE);
+        return new StockView(available, false);
+    }
+
+    private record StockView(long available, boolean unlimited) {
     }
 }

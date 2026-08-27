@@ -19,6 +19,9 @@ import { useLocale } from "@/lib/context"
 import { toast } from "sonner"
 import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
 import { Modal } from "@/components/ui/modal"
+import { CardContentImportFields } from "@/components/admin/card-content-import-fields"
+import { CardContentParts } from "@/components/shared/card-content-parts"
+import { validateCardContentColumns } from "@/lib/card-content"
 import type { CardKeyStockSummary, CardKeyListItem, CardImportBatch, ProductCard, ProductSpec } from "@/types"
 
 export default function AdminCardKeysPage() {
@@ -28,7 +31,6 @@ export default function AdminCardKeysPage() {
   const [stockList, setStockList] = useState<CardKeyStockSummary[]>([])
   const [importBatches, setImportBatches] = useState<CardImportBatch[]>([])
   const [importTotal, setImportTotal] = useState(0)
-  const [importPage, setImportPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [products, setProducts] = useState<ProductCard[]>([])
   const [filterProductId, setFilterProductId] = useState("")
@@ -44,13 +46,36 @@ export default function AdminCardKeysPage() {
   // Import form state
   const [importProductId, setImportProductId] = useState("")
   const [importSpecId, setImportSpecId] = useState("")
-  const [importContent, setImportContent] = useState("")
+  const [importColumns, setImportColumns] = useState([""])
+  const [checkDuplicate, setCheckDuplicate] = useState(true)
   const [importing, setImporting] = useState(false)
   const [importSpecs, setImportSpecs] = useState<ProductSpec[]>([])
   const [loadingSpecs, setLoadingSpecs] = useState(false)
   const [importErrors, setImportErrors] = useState<Record<string, boolean>>({})
   const importProductRef = useRef<HTMLSelectElement>(null)
-  const importContentRef = useRef<HTMLTextAreaElement>(null)
+
+  const copyToClipboard = (value: string) => {
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(value).then(
+        () => toast.success("已复制"),
+        () => fallbackCopy(value),
+      )
+    } else {
+      fallbackCopy(value)
+    }
+  }
+
+  const fallbackCopy = (value: string) => {
+    const textarea = document.createElement("textarea")
+    textarea.value = value
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand("copy")
+    document.body.removeChild(textarea)
+    toast.success("已复制")
+  }
 
   const fetchStock = async () => {
     try {
@@ -63,7 +88,7 @@ export default function AdminCardKeysPage() {
 
   const fetchImportBatches = async () => {
     try {
-      const data = await requestOrThrow(() => adminCardKeyApi.getImportBatches({ page: importPage, page_size: 20 }))
+      const data = await requestOrThrow(() => adminCardKeyApi.getImportBatches({ page: 1, page_size: 20 }))
       setImportBatches(data.list)
       setImportTotal(data.pagination.total)
     } catch {
@@ -88,11 +113,10 @@ export default function AdminCardKeysPage() {
   }, [])
 
   useEffect(() => { fetchStock() }, [filterProductId])
-  useEffect(() => { fetchImportBatches() }, [importPage])
 
   // Computed stats from stockList
-  const totalKeys = stockList.reduce((s, r) => s + r.total, 0)
-  const totalAvailable = stockList.reduce((s, r) => s + r.available, 0)
+  const totalKeys = stockList.reduce((s, r) => s + (r.total ?? 0), 0)
+  const totalAvailable = stockList.reduce((s, r) => s + (r.available ?? 0), 0)
   const totalSold = stockList.reduce((s, r) => s + r.sold, 0)
   const totalInvalid = stockList.reduce((s, r) => s + r.invalid, 0)
 
@@ -125,14 +149,15 @@ export default function AdminCardKeysPage() {
   const handleImport = async () => {
     const errors: Record<string, boolean> = {}
     if (!importProductId) errors.product = true
-    if (!importContent.trim()) errors.content = true
+    const contentError = validateCardContentColumns(importColumns)
+    if (contentError) errors.content = true
     if (Object.keys(errors).length > 0) {
       setImportErrors(errors)
       const messages: string[] = []
       if (errors.product) messages.push("商品")
-      if (errors.content) messages.push("卡密内容")
-      toast.error(`请填写：${messages.join("、")}`)
-      focusFirstError(errors, { product: importProductRef, content: importContentRef })
+      if (contentError) messages.push(contentError)
+      toast.error(messages.join("、"))
+      focusFirstError(errors, { product: importProductRef })
       return
     }
     setImportErrors({})
@@ -141,11 +166,13 @@ export default function AdminCardKeysPage() {
       const result = await requestOrThrow(() => adminCardKeyApi.import({
           product_id: importProductId,
           spec_id: importSpecId || null,
-          content: importContent,
+          content_columns: importColumns,
+          check_duplicate: checkDuplicate,
         }))
       toast.success(`导入成功：${result.success_count} 条${result.fail_count > 0 ? `，失败 ${result.fail_count} 条` : ""}`)
       setShowImportModal(false)
-      setImportContent("")
+      setImportColumns([""])
+      setCheckDuplicate(true)
       setImportProductId("")
       setImportSpecId("")
       setImportErrors({})
@@ -327,6 +354,7 @@ export default function AdminCardKeysPage() {
                   <tr className="border-b border-border bg-muted/30">
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.productName2")}</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.specLabel")}</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">库存模式</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.totalKeys")}</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.soldKeys")}</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.availableKeys")}</th>
@@ -344,11 +372,14 @@ export default function AdminCardKeysPage() {
                           : "-"
                         }
                       </td>
-                      <td className="px-4 py-3 text-foreground">{item.total}</td>
+                      <td className="px-4 py-3 text-foreground">
+                        {item.unlimited ? "无限" : item.stock_mode === "MANUAL" ? "手动" : "卡券"}
+                      </td>
+                      <td className="px-4 py-3 text-foreground">{item.unlimited ? "不限" : item.total}</td>
                       <td className="px-4 py-3 text-foreground">{item.sold}</td>
                       <td className="px-4 py-3">
-                        <span className={cn("font-medium", item.available <= 5 ? "text-amber-500" : "text-foreground")}>
-                          {item.available}
+                         <span className={cn("font-medium", !item.unlimited && (item.available ?? 0) <= 5 ? "text-amber-500" : "text-foreground")}>
+                           {item.unlimited ? "不限" : item.available}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -358,29 +389,29 @@ export default function AdminCardKeysPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
-                          <button
+                           {(item.stock_mode === "CARD_KEY" || !item.stock_mode) && <button
                             type="button"
                             className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                             title={t("admin.viewDetail")}
                             onClick={() => handleViewDetail(item)}
                           >
                             <Eye className="h-4 w-4" />
-                          </button>
-                          <button
+                           </button>}
+                           {(item.stock_mode === "CARD_KEY" || !item.stock_mode) && <button
                             type="button"
                             className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                             title={t("admin.batchInvalidate")}
                             onClick={() => setShowInvalidateConfirm(item)}
                           >
                             <Ban className="h-4 w-4" />
-                          </button>
+                           </button>}
                         </div>
                       </td>
                     </tr>
                   ))}
                   {stockList.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-sm text-muted-foreground">{t("admin.noStockData")}</td>
+                    <td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">{t("admin.noStockData")}</td>
                     </tr>
                   )}
                 </tbody>
@@ -398,8 +429,10 @@ export default function AdminCardKeysPage() {
               <thead>
                 <tr className="border-b border-border bg-muted/30">
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.batchId")}</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">列数</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.importCount")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.successCount")}</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">重复</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.failCount")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
                 </tr>
@@ -410,8 +443,10 @@ export default function AdminCardKeysPage() {
                     <td className="px-4 py-3 font-mono text-xs text-foreground">
                       {batch.id.length > 16 ? `${batch.id.slice(0, 8)}...` : batch.id}
                     </td>
+                    <td className="px-4 py-3 text-foreground">{batch.column_count ?? 1}</td>
                     <td className="px-4 py-3 text-foreground">{batch.total_count}</td>
                     <td className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
+                    <td className="px-4 py-3 text-amber-600">{batch.duplicate_count ?? batch.fail_count}</td>
                     <td className="px-4 py-3">
                       <span className={cn(batch.fail_count > 0 ? "text-red-500" : "text-foreground")}>
                         {batch.fail_count}
@@ -424,7 +459,7 @@ export default function AdminCardKeysPage() {
                 ))}
                 {importBatches.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">{t("admin.noImportData")}</td>
+                    <td colSpan={7} className="py-8 text-center text-sm text-muted-foreground">{t("admin.noImportData")}</td>
                   </tr>
                 )}
               </tbody>
@@ -483,19 +518,13 @@ export default function AdminCardKeysPage() {
                   </select>
                 </div>
               ) : null)}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.cardKeyContentReq")}</label>
-                <textarea
-                  ref={importContentRef}
-                  className={cn("min-h-32 rounded-lg border bg-background px-3 py-2 text-sm font-mono text-foreground break-all focus:outline-none focus:ring-2", importErrors.content ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")}
-                  placeholder={t("admin.cardKeyContentPlaceholder")}
-                  value={importContent}
-                  onChange={(e) => { setImportContent(e.target.value); setImportErrors(prev => ({ ...prev, content: false })) }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t("admin.cardKeyContentHint")} {importContent.trim() ? importContent.trim().split("\n").length : 0} {t("admin.cardKeyContentUnit")}
-                </p>
+              <div className={cn("rounded-lg", importErrors.content && "ring-1 ring-destructive") }>
+                <CardContentImportFields columns={importColumns} onChange={(columns) => { setImportColumns(columns); setImportErrors(prev => ({ ...prev, content: false })) }} disabled={importing} />
               </div>
+              <label className="flex items-center gap-2 text-sm text-foreground">
+                <input type="checkbox" checked={checkDuplicate} onChange={(event) => setCheckDuplicate(event.target.checked)} disabled={importing} />
+                检测历史重复（本批次重复始终过滤）
+              </label>
             </div>
             <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
               <button
@@ -548,7 +577,7 @@ export default function AdminCardKeysPage() {
               <table className="w-full text-sm table-fixed" onCopy={(e) => { const t = window.getSelection()?.toString(); if (t) { e.clipboardData.setData("text/plain", stripInvisible(t)); e.preventDefault() } }}>
                 <thead>
                   <tr className="border-b border-border bg-muted/30">
-                    <th className="w-[36%] px-3 py-2 text-left font-medium text-muted-foreground">卡密内容</th>
+                    <th className="w-[36%] px-3 py-2 text-left font-medium text-muted-foreground">卡券内容</th>
                     <th className="w-[8%] px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">状态</th>
                     <th className="w-[16%] px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">创建时间</th>
                     <th className="w-[16%] px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">订单号</th>
@@ -559,7 +588,9 @@ export default function AdminCardKeysPage() {
                 <tbody>
                   {detailKeys.map((key) => (
                     <tr key={key.id} className="border-b border-border/50 last:border-0">
-                      <td className="px-3 py-2 font-mono text-xs text-foreground break-all">{key.content}</td>
+                      <td className="px-3 py-2 font-mono text-xs text-foreground break-all">
+                        <CardContentParts parts={key.content_parts} fallback={key.content} onCopy={copyToClipboard} />
+                      </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <span className={cn(
                           "rounded-full px-2 py-0.5 text-xs font-medium",

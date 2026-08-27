@@ -26,11 +26,19 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
 
     long countByStatus(CardKeyStatus status);
 
+    @Query(value = "SELECT COUNT(ck.id) FROM card_keys ck "
+            + "JOIN products p ON p.id = ck.product_id "
+            + "WHERE ck.status = 'AVAILABLE' AND p.stock_mode = 'CARD_KEY' "
+            + "AND p.is_deleted = 0", nativeQuery = true)
+    long countAvailableForActiveCardKeyProducts();
+
     long countByProductIdAndSpecIdAndStatus(UUID productId, UUID specId, CardKeyStatus status);
 
     long countByProductIdAndSpecIdIsNullAndStatus(UUID productId, CardKeyStatus status);
 
     List<CardKey> findByOrderId(UUID orderId);
+
+    List<CardKey> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
 
     boolean existsByContentAndProductId(String content, UUID productId);
 
@@ -40,6 +48,13 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
     boolean existsByContentAndProductIdAndSpecId(@Param("content") String content,
                                                  @Param("productId") UUID productId,
                                                  @Param("specId") UUID specId);
+
+    @Query(value = "SELECT content_fingerprint FROM card_keys WHERE product_id = :productId "
+            + "AND ((:specId IS NULL AND spec_id IS NULL) OR spec_id = CAST(:specId AS uuid)) "
+            + "AND content_fingerprint IN (:fingerprints)", nativeQuery = true)
+    List<String> findExistingFingerprints(@Param("productId") UUID productId,
+                                          @Param("specId") UUID specId,
+                                          @Param("fingerprints") List<String> fingerprints);
 
     @Query("SELECT COUNT(ck) FROM CardKey ck WHERE ck.productId = :productId " +
             "AND ((:specId IS NULL AND ck.specId IS NULL) OR ck.specId = :specId) " +

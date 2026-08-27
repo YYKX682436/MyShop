@@ -2,6 +2,7 @@ package com.myshop.service;
 
 import com.myshop.common.PageResult;
 
+import java.util.Map;
 import java.util.UUID;
 
 public interface AdminOrderService {
@@ -12,4 +13,6 @@ public interface AdminOrderService {
     Object getOrderDetail(UUID id);
 
     void markPaid(UUID id, String reason, boolean confirmed);
+
+    Map<String, Object> completeManualItem(UUID orderId, UUID orderItemId);
 }

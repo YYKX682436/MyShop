@@ -15,6 +15,7 @@ import com.myshop.repository.UserRepository;
 import com.myshop.service.DeliverService;
 import com.myshop.service.EmailService;
 import com.myshop.service.FulfillmentService;
+import com.myshop.service.ManualStockService;
 import com.myshop.utils.LookupTokens;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -35,16 +36,28 @@ public class DeliverServiceImpl implements DeliverService {
     private final OrderItemRepository orderItemRepository;
     private final CardKeyRepository cardKeyRepository;
     private final FulfillmentService fulfillmentService;
+    private final ManualStockService manualStockService;
 
     @Autowired
     public DeliverServiceImpl(OrderRepository orderRepository,
                               OrderItemRepository orderItemRepository,
                               CardKeyRepository cardKeyRepository,
-                              FulfillmentService fulfillmentService) {
+                              FulfillmentService fulfillmentService,
+                              ManualStockService manualStockService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.cardKeyRepository = cardKeyRepository;
         this.fulfillmentService = fulfillmentService;
+        this.manualStockService = manualStockService;
+    }
+
+    /** Compatibility constructor for the pre-manual-inventory seam. */
+    public DeliverServiceImpl(OrderRepository orderRepository,
+                              OrderItemRepository orderItemRepository,
+                              CardKeyRepository cardKeyRepository,
+                              FulfillmentService fulfillmentService) {
+        this(orderRepository, orderItemRepository, cardKeyRepository,
+                fulfillmentService, new ManualStockService(null));
     }
 
     /** Compatibility constructor for the focused unit tests and older callers. */
@@ -57,7 +70,8 @@ public class DeliverServiceImpl implements DeliverService {
                               EmailService emailService) {
         this(orderRepository, orderItemRepository, cardKeyRepository,
                 new FulfillmentTransactionService(orderRepository, orderItemRepository, cardKeyRepository,
-                        userRepository, pointsLogRepository, siteConfigRepository, emailService));
+                        userRepository, pointsLogRepository, siteConfigRepository, emailService),
+                new ManualStockService(null));
     }
 
     @Override
@@ -68,7 +82,7 @@ public class DeliverServiceImpl implements DeliverService {
         for (OrderCredential credential : credentials) {
             Order order = findForAuthorization(credential.orderId());
             authorize(order, credential.lookupToken(), requestUserId);
-            expireIfNecessary(order);
+            order = expireIfNecessary(order);
             result.add(toBrief(order));
         }
         return result;
@@ -96,23 +110,36 @@ public class DeliverServiceImpl implements DeliverService {
             throw new BusinessException(ErrorCode.ORDER_NOT_PAID, "订单尚未发货");
         }
 
-        List<CardKey> keys = cardKeyRepository.findByOrderId(orderId);
+        List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
+        if (keys == null || keys.isEmpty()) keys = cardKeyRepository.findByOrderId(orderId);
         List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
-        Map<UUID, OrderItem> itemMap = items.stream()
-                .collect(Collectors.toMap(OrderItem::getId, item -> item));
         StringBuilder result = new StringBuilder();
         result.append("订单号: ").append(orderId).append("\n");
 
         Map<UUID, List<CardKey>> grouped = keys.stream()
                 .filter(key -> key.getOrderItemId() != null)
                 .collect(Collectors.groupingBy(CardKey::getOrderItemId, LinkedHashMap::new, Collectors.toList()));
-        for (Map.Entry<UUID, List<CardKey>> entry : grouped.entrySet()) {
-            OrderItem item = itemMap.get(entry.getKey());
-            if (item == null) continue;
-            result.append("\n").append(item.getProductTitle());
+        int itemNumber = 0;
+        for (OrderItem item : items) {
+            List<CardKey> itemKeys = grouped.getOrDefault(item.getId(), List.of());
+            if (itemKeys.isEmpty()) continue;
+            itemNumber++;
+            result.append("\n第").append(itemNumber).append("项：").append(item.getProductTitle());
             if (item.getSpecName() != null) result.append(" [").append(item.getSpecName()).append("]");
             result.append("\n");
-            entry.getValue().forEach(key -> result.append(key.getContent()).append("\n"));
+            for (int cardIndex = 0; cardIndex < itemKeys.size(); cardIndex++) {
+                CardKey key = itemKeys.get(cardIndex);
+                List<String> parts = key.resolvedContentParts();
+                if (parts.size() == 1) {
+                    result.append(parts.get(0)).append("\n");
+                    continue;
+                }
+                result.append("第 ").append(cardIndex + 1).append(" 份\n");
+                for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+                    result.append("卡券内容 ").append(partIndex + 1).append(": ")
+                            .append(parts.get(partIndex)).append("\n");
+                }
+            }
         }
         return result.toString();
     }
@@ -170,12 +197,30 @@ public class DeliverServiceImpl implements DeliverService {
         return result.isEmpty() ? null : result;
     }
 
-    private void expireIfNecessary(Order order) {
+    private Order expireIfNecessary(Order order) {
         if (order.getStatus() == OrderStatus.PENDING && order.getExpiresAt() != null
                 && order.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
-            order.setStatus(OrderStatus.EXPIRED);
-            orderRepository.save(order);
+            // Query endpoints can race payment/expiry schedulers. Re-read the
+            // order under the same PostgreSQL row lock used by payment and the
+            // scheduler so a reservation is released by at most one path.
+            Order locked = orderRepository.findByIdForUpdate(order.getId()).orElse(order);
+            if (locked.getStatus() != OrderStatus.PENDING || locked.getExpiresAt() == null
+                    || !locked.getExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+                return locked;
+            }
+            orderItemRepository.findByOrderId(locked.getId()).forEach(item -> {
+                if (item.getManualStockReserved() > 0) {
+                    manualStockService.release(item.getProductId(), item.getSpecId(), item.getManualStockReserved());
+                    item.setManualStockReserved(0);
+                }
+                item.setFulfillmentStatus(com.myshop.constant.FulfillmentStatus.CANCELLED);
+                orderItemRepository.save(item);
+            });
+            locked.setStatus(OrderStatus.EXPIRED);
+            orderRepository.save(locked);
+            return locked;
         }
+        return order;
     }
 
     private Map<String, Object> toBrief(Order order) {
@@ -187,6 +232,21 @@ public class DeliverServiceImpl implements DeliverService {
         map.put("order_type", order.getOrderType().name());
         map.put("payment_method", order.getPaymentMethod());
         map.put("created_at", order.getCreatedAt());
+        map.put("items", orderItemRepository.findByOrderId(order.getId()).stream().map(item -> {
+            Map<String, Object> itemMap = new LinkedHashMap<>();
+            itemMap.put("id", item.getId());
+            itemMap.put("product_id", item.getProductId());
+            itemMap.put("product_title", item.getProductTitle());
+            itemMap.put("spec_name", item.getSpecName());
+            itemMap.put("quantity", item.getQuantity());
+            itemMap.put("delivery_type", item.getDeliveryType());
+            itemMap.put("customer_input_type", item.getCustomerInputType());
+            itemMap.put("customer_input_value", item.getCustomerInputValue());
+            itemMap.put("stock_mode", item.getStockMode());
+            itemMap.put("fulfillment_status", item.getFulfillmentStatus());
+            itemMap.put("delivered_at", item.getDeliveredAt());
+            return itemMap;
+        }).toList());
         return map;
     }
 

@@ -4,7 +4,7 @@ import { useState, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Zap, Minus, Plus, ShoppingCart, Package, TrendingUp } from "lucide-react"
 import { toast } from "sonner"
-import { useLocale, useAuth, useCart } from "@/lib/context"
+import { useLocale, useCart } from "@/lib/context"
 import { orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, validateEmail, getCurrencySymbol, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
@@ -20,10 +20,10 @@ interface ProductActionsProps {
 
 export function ProductActions({ product, channels }: ProductActionsProps) {
   const { t } = useLocale()
-  const { isLoggedIn } = useAuth()
   const { addItem } = useCart()
   const router = useRouter()
   const emailInputRef = useRef<HTMLInputElement>(null)
+  const customerInputRef = useRef<HTMLInputElement>(null)
 
   const enabledChannels = useMemo(() => channels.filter(c => c.is_enabled), [channels])
 
@@ -33,6 +33,8 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const [quantity, setQuantity] = useState(1)
   const [email, setEmail] = useState("")
   const [emailError, setEmailError] = useState("")
+  const [customerInput, setCustomerInput] = useState("")
+  const [customerInputError, setCustomerInputError] = useState("")
   const [selectedPayment, setSelectedPayment] = useState(
     enabledChannels.length > 0 ? enabledChannels[0].channel_code : ""
   )
@@ -41,9 +43,17 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
 
   const currentPrice = selectedSpec ? selectedSpec.price : product.base_price
   const totalPrice = currentPrice * quantity
+  const unlimited = selectedSpec?.unlimited ?? product.unlimited ?? false
   const currentStock = selectedSpec?.stock_available ?? product.stock_available ?? 0
-  const isOutOfStock = currentStock === 0
+  const finiteStock = currentStock ?? 0
+  const isOutOfStock = !unlimited && finiteStock === 0
   const deliveryType = product.delivery_type === "MANUAL" ? "manual" : "auto"
+  const customerInputType = product.customer_input_type ?? "NONE"
+  const customerInputLabel = customerInputType === "QQ"
+    ? "QQ号码"
+    : customerInputType === "PHONE"
+      ? "手机号"
+      : customerInputType === "QQ_OR_PHONE" ? "QQ或手机号" : ""
 
   const handleEmailChange = (value: string) => {
     setEmail(value)
@@ -54,7 +64,27 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     }
   }
 
+  const validateCustomerInput = (value: string) => {
+    const normalized = value.trim()
+    if (customerInputType === "NONE") return true
+    const valid = customerInputType === "QQ"
+      ? /^\d{5,12}$/.test(normalized)
+      : customerInputType === "PHONE"
+        ? /^(?:\+?\d{6,15}|1\d{10})$/.test(normalized)
+        : /^(?:\d{5,12}|\+?\d{6,15}|1\d{10})$/.test(normalized)
+    if (!valid) {
+      setCustomerInputError(`请填写有效的${customerInputLabel}`)
+      return false
+    }
+    setCustomerInputError("")
+    return true
+  }
+
   const handleBuyNow = async () => {
+    if (!validateCustomerInput(customerInput)) {
+      customerInputRef.current?.focus()
+      return
+    }
     if (!email.trim()) {
       toast.error(t("product.emailRequired"))
       emailInputRef.current?.focus()
@@ -81,6 +111,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       product_id: product.id,
       spec_id: selectedSpec?.id ?? null,
       quantity,
+      customer_input_value: customerInput.trim() || null,
       email: email.trim().toLowerCase(),
       payment_method: selectedPayment,
     })
@@ -92,6 +123,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           spec_id: selectedSpec?.id ?? null,
           quantity,
           email,
+          customer_input_value: customerInput.trim() || null,
           payment_method: selectedPayment,
           idempotency_key: intent.key,
           idempotency_fingerprint: intent.fingerprint,
@@ -125,6 +157,10 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   }
 
   const handleAddToCart = async () => {
+    if (!validateCustomerInput(customerInput)) {
+      customerInputRef.current?.focus()
+      return
+    }
     if (product.specs.length > 0 && !selectedSpec) return
     if (isOutOfStock) {
       toast.error(t("product.outOfStock"))
@@ -135,6 +171,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         product_id: product.id,
         spec_id: selectedSpec?.id ?? null,
         quantity,
+        customer_input_value: customerInput.trim() || null,
       })
       toast.success(t("product.addToCart"))
     } catch (err: unknown) {
@@ -194,7 +231,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         <div className="flex items-center gap-4 text-sm">
           <span className="flex items-center gap-1.5 text-muted-foreground">
             <Package className="h-3.5 w-3.5" />
-            {t("product.stock")} {selectedSpec?.stock_available ?? product.stock_available}
+            {t("product.stock")} {unlimited ? "不限" : finiteStock}
           </span>
           {((product.sales_count ?? 0) + (product.initial_sales ?? 0)) > 0 && (
             <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -224,10 +261,10 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-border text-foreground hover:border-primary/30"
                   )}
-                  disabled={spec.stock_available === 0}
+                  disabled={!spec.unlimited && spec.stock_available === 0}
                 >
                   {spec.name}
-                  {spec.stock_available === 0 && (
+                  {!spec.unlimited && spec.stock_available === 0 && (
                     <span className="ml-1 text-xs text-muted-foreground">
                       ({t("product.outOfStock")})
                     </span>
@@ -257,23 +294,48 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             <input
               type="number"
               min={1}
-              max={currentStock || 1}
+              max={unlimited ? undefined : Math.max(1, finiteStock)}
               value={quantity}
               onChange={(e) => {
                 const v = parseInt(e.target.value) || 1
-                setQuantity(Math.min(v, currentStock || 1))
+                setQuantity(unlimited ? Math.max(1, v) : Math.min(Math.max(1, v), finiteStock || 1))
               }}
               className="h-9 w-16 border-x border-border bg-background text-center text-sm text-foreground [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
             <button
-              onClick={() => setQuantity(Math.min(quantity + 1, currentStock || 1))}
+              onClick={() => setQuantity(unlimited ? quantity + 1 : Math.min(quantity + 1, finiteStock || 1))}
               className="inline-flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-accent"
-              disabled={quantity >= currentStock}
+              disabled={!unlimited && quantity >= finiteStock}
             >
               <Plus className="h-4 w-4" />
             </button>
           </div>
         </div>
+
+        {customerInputType !== "NONE" && (
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-foreground">
+              {customerInputLabel} <span className="text-destructive">*</span>
+            </label>
+            <input
+              ref={customerInputRef}
+              type="text"
+              inputMode={customerInputType === "PHONE" ? "tel" : "numeric"}
+              value={customerInput}
+              onChange={(e) => {
+                setCustomerInput(e.target.value)
+                if (customerInputError) validateCustomerInput(e.target.value)
+              }}
+              onBlur={() => { if (customerInput.trim()) validateCustomerInput(customerInput) }}
+              placeholder={`请输入${customerInputLabel}`}
+              className={cn(
+                "h-10 w-full rounded-lg border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring",
+                customerInputError ? "border-destructive" : "border-input"
+              )}
+            />
+            {customerInputError && <p className="mt-1 text-xs text-destructive">{customerInputError}</p>}
+          </div>
+        )}
 
         {/* Email input */}
         <div>

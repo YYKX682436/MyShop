@@ -1,6 +1,5 @@
 package com.myshop.service.impl;
 
-import com.myshop.constant.OrderStatus;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.OrderRepository;
 import com.myshop.service.AutoFulfillmentService;
@@ -43,8 +42,7 @@ public class AutoFulfillmentServiceImpl implements AutoFulfillmentService {
             fixedDelayString = "${fulfillment.retry-interval-ms:60000}",
             initialDelayString = "${fulfillment.retry-initial-delay-ms:60000}")
     public void retryPendingPaidOrders() {
-        orderRepository.findByStatusAndDeliveredAtIsNullOrderByCreatedAtAsc(
-                        OrderStatus.PAID, PageRequest.of(0, RETRY_BATCH_SIZE))
+        orderRepository.findPaidOrdersWithPendingAutoItems(PageRequest.of(0, RETRY_BATCH_SIZE))
                 .forEach(order -> trigger(order.getId()));
     }
 }

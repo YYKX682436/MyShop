@@ -25,6 +25,9 @@ public class CartItem extends BaseEntity {
 
     private UUID specId;
 
+    @Column(name = "customer_input_value", length = 255)
+    private String customerInputValue;
+
     @Column(nullable = false)
     private int quantity;
 }

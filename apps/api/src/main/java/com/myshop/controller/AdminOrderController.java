@@ -40,5 +40,11 @@ public class AdminOrderController {
         return ApiResponse.success();
     }
 
+    @LogOperation(action = "order.manual_deliver", targetType = "ORDER", targetId = "#id", detail = "'完成人工发货订单项'")
+    @PostMapping("/{id}/items/{itemId}/complete-manual")
+    public ApiResponse<?> completeManualItem(@PathVariable UUID id, @PathVariable UUID itemId) {
+        return ApiResponse.success(adminOrderService.completeManualItem(id, itemId));
+    }
+
     public record MarkPaidRequest(String reason, boolean confirmed) {}
 }

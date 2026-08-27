@@ -17,14 +17,37 @@ import type { PaymentChannelItem } from "@/types"
 export default function CheckoutPage() {
   const { t } = useLocale()
   const router = useRouter()
-  const { items, totalAmount, itemCount, refreshCart } = useCart()
+  const { items, totalAmount, refreshCart, updateItem } = useCart()
 
   const [email, setEmail] = useState("")
+  const [customerInputs, setCustomerInputs] = useState<Record<string, string>>({})
   const [channels, setChannels] = useState<PaymentChannelItem[]>([])
   const [selectedPayment, setSelectedPayment] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const emailInputRef = useRef<HTMLInputElement>(null)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
+
+  useEffect(() => {
+    setCustomerInputs(current => {
+      const next = { ...current }
+      for (const item of items) {
+        if (!(item.id in next)) next[item.id] = item.customer_input_value || ""
+      }
+      return next
+    })
+  }, [items])
+
+  const customerLabel = (type?: string) => type === "QQ"
+    ? "QQ号码"
+    : type === "PHONE" ? "手机号" : type === "QQ_OR_PHONE" ? "QQ或手机号" : "客户信息"
+
+  const validCustomerInput = (type: string | undefined, value: string) => {
+    const normalized = value.trim()
+    if (!type || type === "NONE") return true
+    if (type === "QQ") return /^\d{5,12}$/.test(normalized)
+    if (type === "PHONE") return /^(?:\+?\d{6,15}|1\d{10})$/.test(normalized)
+    return /^(?:\d{5,12}|\+?\d{6,15}|1\d{10})$/.test(normalized)
+  }
 
   // Fetch payment channels on mount
   useEffect(() => {
@@ -48,6 +71,14 @@ export default function CheckoutPage() {
   }, [])
 
   const handleConfirmOrder = async () => {
+    for (const item of items) {
+      const value = customerInputs[item.id] ?? item.customer_input_value ?? ""
+      if (item.customer_input_type && item.customer_input_type !== "NONE"
+        && !validCustomerInput(item.customer_input_type, value)) {
+        toast.error(`请填写有效的${customerLabel(item.customer_input_type)}`)
+        return
+      }
+    }
     if (!email.trim()) {
       toast.error(t("product.emailRequired"))
       emailInputRef.current?.focus()
@@ -65,11 +96,21 @@ export default function CheckoutPage() {
 
     setSubmitting(true)
     const intent = getOrCreateIdempotencyKey("myshop:checkout:idempotency", {
-      items: items.map(item => ({ product_id: item.product_id, spec_id: item.spec_id, quantity: item.quantity })),
+      items: items.map(item => ({
+        product_id: item.product_id,
+        spec_id: item.spec_id,
+        quantity: item.quantity,
+        customer_input_value: (customerInputs[item.id] ?? item.customer_input_value ?? "").trim() || null,
+      })),
       email: email.trim().toLowerCase(),
       payment_method: selectedPayment,
     })
     try {
+      await Promise.all(items.map(item => updateItem(
+        item.id,
+        item.quantity,
+        (customerInputs[item.id] ?? item.customer_input_value ?? "").trim() || null,
+      )))
       setTurnstileHeaders(turnstileToken)
       const device = detectPaymentDevice()
       const result = await requestOrThrow(() => orderApi.createFromCart({
@@ -137,6 +178,32 @@ export default function CheckoutPage() {
             </div>
           </div>
         </div>
+
+        {/* Email */}
+        {items.some(item => item.customer_input_type && item.customer_input_type !== "NONE") && (
+          <div className="rounded-lg border border-border bg-background p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <ShoppingBag className="h-5 w-5 text-primary" />
+              <h2 className="text-base font-semibold text-foreground">购买客户信息</h2>
+            </div>
+            <div className="space-y-4">
+              {items.filter(item => item.customer_input_type && item.customer_input_type !== "NONE").map(item => (
+                <label key={item.id} className="block text-sm font-medium text-foreground">
+                  {item.product_title}{item.spec_name ? ` · ${item.spec_name}` : ""} · {customerLabel(item.customer_input_type)} <span className="text-destructive">*</span>
+                  <input
+                    type="text"
+                    inputMode={item.customer_input_type === "PHONE" ? "tel" : "numeric"}
+                    value={customerInputs[item.id] ?? item.customer_input_value ?? ""}
+                    onChange={(event) => setCustomerInputs(current => ({ ...current, [item.id]: event.target.value }))}
+                    placeholder={`请输入${customerLabel(item.customer_input_type)}`}
+                    className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">该信息会随订单提供给商家，仅用于本次发货。</p>
+          </div>
+        )}
 
         {/* Email */}
         <div className="rounded-lg border border-border bg-background p-6">

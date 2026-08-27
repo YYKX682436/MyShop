@@ -13,10 +13,11 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.EpayService;
+import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import com.myshop.utils.LookupTokens;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,7 +30,6 @@ import java.util.UUID;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PaymentServiceImpl implements PaymentService {
 
     private static final int REPAY_COOLDOWN_SECONDS = 10;
@@ -39,6 +39,32 @@ public class PaymentServiceImpl implements PaymentService {
     private final OrderItemRepository orderItemRepository;
     private final List<PaymentProvider> paymentProviders;
     private final ObjectMapper objectMapper;
+    private final ManualStockService manualStockService;
+
+    @Autowired
+    public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
+                              OrderRepository orderRepository,
+                              OrderItemRepository orderItemRepository,
+                              List<PaymentProvider> paymentProviders,
+                              ObjectMapper objectMapper,
+                              ManualStockService manualStockService) {
+        this.paymentChannelRepository = paymentChannelRepository;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.paymentProviders = paymentProviders;
+        this.objectMapper = objectMapper;
+        this.manualStockService = manualStockService;
+    }
+
+    /** Compatibility constructor retained for focused payment unit tests. */
+    public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
+                              OrderRepository orderRepository,
+                              OrderItemRepository orderItemRepository,
+                              List<PaymentProvider> paymentProviders,
+                              ObjectMapper objectMapper) {
+        this(paymentChannelRepository, orderRepository, orderItemRepository,
+                paymentProviders, objectMapper, new ManualStockService(null));
+    }
 
     @Override
     public Map<String, Object> createPayment(UUID orderId, String paymentMethod, BigDecimal amount) {
@@ -68,8 +94,7 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单状态不允许发起支付");
         }
         if (order.getExpiresAt() != null && order.getExpiresAt().isBefore(LocalDateTime.now())) {
-            order.setStatus(OrderStatus.EXPIRED);
-            orderRepository.save(order);
+            expireOrder(order);
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期");
         }
         if (order.getActualAmount() == null || amount == null || order.getActualAmount().compareTo(amount) != 0) {
@@ -119,8 +144,7 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单状态不允许重新支付");
         }
         if (order.getExpiresAt() != null && order.getExpiresAt().isBefore(LocalDateTime.now())) {
-            order.setStatus(OrderStatus.EXPIRED);
-            orderRepository.save(order);
+            expireOrder(order);
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期");
         }
         if (order.getUpdatedAt() != null && order.getUpdatedAt().plusSeconds(REPAY_COOLDOWN_SECONDS).isAfter(LocalDateTime.now())) {
@@ -161,6 +185,20 @@ public class PaymentServiceImpl implements PaymentService {
             log.warn("Payment channel configuration is not valid JSON for a configured channel.");
             return Map.of();
         }
+    }
+
+    private void expireOrder(Order order) {
+        for (OrderItem item : orderItemRepository.findByOrderId(order.getId())) {
+            int reserved = item.getManualStockReserved();
+            if (reserved > 0) {
+                manualStockService.release(item.getProductId(), item.getSpecId(), reserved);
+                item.setManualStockReserved(0);
+            }
+            item.setFulfillmentStatus(com.myshop.constant.FulfillmentStatus.CANCELLED);
+            orderItemRepository.save(item);
+        }
+        order.setStatus(OrderStatus.EXPIRED);
+        orderRepository.save(order);
     }
 
     private String required(Map<String, String> config, String field, String channelCode) {

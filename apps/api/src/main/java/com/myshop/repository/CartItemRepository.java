@@ -16,23 +16,38 @@ public interface CartItemRepository extends JpaRepository<CartItem, UUID> {
 
     List<CartItem> findBySessionToken(String sessionToken);
 
-    /**
-     * 查找用户购物车中的指定商品+规格。specId 可能为 null，
-     * 派生查询会生成 `= NULL`（永假），必须手写 IS NULL 处理。
-     */
+    /** Legacy caller compatibility: only matches an item without customer input. */
     @Query("SELECT c FROM CartItem c WHERE c.userId = :userId AND c.productId = :productId " +
-           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId)")
+           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId) " +
+           "AND c.customerInputValue IS NULL")
     Optional<CartItem> findByUserIdAndProductIdAndSpecId(
             @Param("userId") UUID userId,
             @Param("productId") UUID productId,
             @Param("specId") UUID specId);
 
+    /**
+     * 查找用户购物车中的指定商品+规格。specId 可能为 null，
+     * 派生查询会生成 `= NULL`（永假），必须手写 IS NULL 处理。
+     */
+    @Query("SELECT c FROM CartItem c WHERE c.userId = :userId AND c.productId = :productId " +
+           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId) " +
+           "AND ((:customerInputValue IS NULL AND c.customerInputValue IS NULL) " +
+           "OR c.customerInputValue = :customerInputValue)")
+    Optional<CartItem> findByUserIdAndProductIdAndSpecIdAndCustomerInputValue(
+            @Param("userId") UUID userId,
+            @Param("productId") UUID productId,
+            @Param("specId") UUID specId,
+            @Param("customerInputValue") String customerInputValue);
+
     @Query("SELECT c FROM CartItem c WHERE c.sessionToken = :sessionToken AND c.productId = :productId " +
-           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId)")
-    Optional<CartItem> findBySessionTokenAndProductIdAndSpecId(
+           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId) " +
+           "AND ((:customerInputValue IS NULL AND c.customerInputValue IS NULL) " +
+           "OR c.customerInputValue = :customerInputValue)")
+    Optional<CartItem> findBySessionTokenAndProductIdAndSpecIdAndCustomerInputValue(
             @Param("sessionToken") String sessionToken,
             @Param("productId") UUID productId,
-            @Param("specId") UUID specId);
+            @Param("specId") UUID specId,
+            @Param("customerInputValue") String customerInputValue);
 
     @Transactional
     void deleteBySessionToken(String sessionToken);

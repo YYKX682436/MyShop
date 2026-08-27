@@ -1,6 +1,5 @@
 package com.myshop.service.impl;
 
-import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.User;
@@ -116,8 +115,8 @@ public class DashboardServiceImpl implements DashboardService {
                 : (double) successfulPayments / paymentSampleCount * 100;
 
         // One grouped PostgreSQL read replaces the old product loop plus one
-        // card-key count per product. Zero-stock products are included by the
-        // LEFT JOIN and therefore participate in both counters below.
+        // stock count per product. It selects the source by stock mode;
+        // unlimited products return NULL and are excluded from both counters.
         List<Object[]> stockRows = safeRows(productRepository.findActiveProductStockSummaries());
         List<DashboardStatsResponse.LowStockProduct> lowStockProducts = new ArrayList<>();
         long zeroStockProducts = 0;
@@ -125,6 +124,9 @@ public class DashboardServiceImpl implements DashboardService {
             UUID productId = (UUID) row[0];
             String title = String.valueOf(row[1]);
             int threshold = number(row[2]).intValue();
+            // UNLIMITED products intentionally return SQL NULL and never
+            // participate in zero/low-stock counters.
+            if (row[3] == null) continue;
             long availableStock = number(row[3]).longValue();
             if (availableStock == 0) {
                 zeroStockProducts++;
@@ -177,7 +179,7 @@ public class DashboardServiceImpl implements DashboardService {
                 rounded(paymentSuccessRate),
                 paymentSampleCount,
                 stockRows.size(),
-                cardKeyRepository.countByStatus(CardKeyStatus.AVAILABLE),
+                cardKeyRepository.countAvailableForActiveCardKeyProducts(),
                 zeroStockProducts,
                 lowStockProducts,
                 topProducts,

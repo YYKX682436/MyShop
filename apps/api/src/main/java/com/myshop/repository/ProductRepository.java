@@ -54,18 +54,35 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             "SELECT 1 FROM ProductSpec s WHERE s.productId = p.id AND s.isDeleted = 0)")
     int migrateSpecEnabled();
 
-    /** One grouped read supplies every active product's available stock. */
+    /** One grouped read supplies every active product's mode-specific available stock. */
     @Query(value = """
             SELECT p.id,
                    p.title,
                    p.low_stock_threshold,
-                   COUNT(ck.id) FILTER (WHERE ck.status = 'AVAILABLE') AS available_stock
+                   CASE
+                       WHEN p.stock_mode = 'UNLIMITED' THEN NULL
+                       WHEN p.stock_mode = 'MANUAL' THEN COALESCE(ms.available_stock, 0)
+                       ELSE COALESCE(cs.available_stock, 0)
+                   END AS available_stock
             FROM products p
-            LEFT JOIN card_keys ck ON ck.product_id = p.id
+            LEFT JOIN (
+                SELECT product_id,
+                       COUNT(*) FILTER (WHERE status = 'AVAILABLE') AS available_stock
+                FROM card_keys
+                GROUP BY product_id
+            ) cs ON cs.product_id = p.id
+            LEFT JOIN (
+                SELECT product_id, SUM(available_quantity) AS available_stock
+                FROM manual_stocks
+                GROUP BY product_id
+            ) ms ON ms.product_id = p.id
             WHERE p.is_deleted = 0
               AND p.is_enabled = true
-            GROUP BY p.id, p.title, p.low_stock_threshold
-            ORDER BY COUNT(ck.id) FILTER (WHERE ck.status = 'AVAILABLE') ASC,
+            ORDER BY CASE
+                         WHEN p.stock_mode = 'UNLIMITED' THEN 1
+                         WHEN p.stock_mode = 'MANUAL' THEN COALESCE(ms.available_stock, 0)
+                         ELSE COALESCE(cs.available_stock, 0)
+                     END ASC,
                      p.title ASC
             """, nativeQuery = true)
     List<Object[]> findActiveProductStockSummaries();

@@ -1,5 +1,7 @@
 package com.myshop.entity;
 
+import com.myshop.constant.CustomerInputType;
+import com.myshop.constant.StockMode;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -39,6 +41,14 @@ public class Product extends BaseEntity {
 
     @Column(length = 10)
     private String deliveryType = "AUTO";
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "customer_input_type", nullable = false, length = 32)
+    private CustomerInputType customerInputType = CustomerInputType.NONE;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "stock_mode", nullable = false, length = 32)
+    private StockMode stockMode = StockMode.CARD_KEY;
 
     private int lowStockThreshold = 10;
 

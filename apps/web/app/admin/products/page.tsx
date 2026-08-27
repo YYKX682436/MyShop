@@ -6,12 +6,33 @@ import { toast } from "sonner"
 import Link from "next/link"
 import { cn, getCurrencySymbol } from "@/lib/utils"
 import { Modal } from "@/components/ui/modal"
+import { CardContentImportFields } from "@/components/admin/card-content-import-fields"
+import { validateCardContentColumns } from "@/lib/card-content"
 import { useLocale } from "@/lib/context"
 import { adminProductApi, adminCategoryApi, adminCardKeyApi, currencyApi, requestOrThrow } from "@/services/api"
-import type { ProductDetail, Category, ProductSpec, CurrencyItem } from "@/types"
+import type { ProductDetail, Category, CurrencyItem } from "@/types"
 
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/svg+xml"]
 const ALLOWED_IMAGE_ACCEPT = ".jpg,.jpeg,.png,.gif,.webp,.bmp,.svg"
+
+type ProductFormData = {
+  title: string
+  description: string
+  detail_md: string
+  category_id: string
+  base_price: string
+  currency: string
+  cover_url: string
+  low_stock_threshold: string
+  wholesale_enabled: boolean
+  is_enabled: boolean
+  initial_sales: string
+  sort_order: string
+  delivery_type: "AUTO" | "MANUAL"
+  customer_input_type: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
+  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  manual_stock: string
+}
 
 function validateImageFile(file: File): string | null {
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
@@ -52,7 +73,7 @@ export default function AdminProductsPage() {
   const [formErrors, setFormErrors] = useState<Record<string, boolean>>({})
 
   // Form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ProductFormData>({
     title: "",
     description: "",
     detail_md: "",
@@ -66,13 +87,17 @@ export default function AdminProductsPage() {
     initial_sales: "",
     sort_order: "",
     delivery_type: "AUTO",
+    customer_input_type: "NONE",
+    stock_mode: "CARD_KEY",
+    manual_stock: "",
   })
-  const [formSpecs, setFormSpecs] = useState<{ id?: string; name: string; price: string; card_key_count?: number }[]>([])
+  const [formSpecs, setFormSpecs] = useState<{ id?: string; name: string; price: string; manual_stock?: string; card_key_count?: number }[]>([])
   const [specDeleteConfirm, setSpecDeleteConfirm] = useState<{ idx: number; name: string; count: number } | null>(null)
 
   // Import modal state
   const [importSpecId, setImportSpecId] = useState("")
-  const [importContent, setImportContent] = useState("")
+  const [importColumns, setImportColumns] = useState([""])
+  const [importCheckDuplicate, setImportCheckDuplicate] = useState(true)
   const [importing, setImporting] = useState(false)
 
   const fetchProducts = useCallback(async () => {
@@ -131,12 +156,16 @@ export default function AdminProductsPage() {
       is_enabled: product.is_enabled !== false,
       initial_sales: String(product.initial_sales ?? ""),
       sort_order: String(product.sort_order ?? ""),
-      delivery_type: product.delivery_type || "AUTO",
+      delivery_type: product.delivery_type === "MANUAL" ? "MANUAL" : "AUTO",
+      customer_input_type: product.customer_input_type || "NONE",
+      stock_mode: product.stock_mode || ((product.delivery_type || "AUTO") === "MANUAL" ? "MANUAL" : "CARD_KEY"),
+      manual_stock: product.stock_mode === "MANUAL" && product.stock_available != null ? String(product.stock_available) : "",
     })
     const specs = product.specs.map(s => ({
       id: s.id,
       name: s.name,
       price: String(s.price),
+      manual_stock: s.manual_stock != null ? String(s.manual_stock) : "",
       card_key_count: s.card_key_count,
     }))
     setFormSpecs(specs)
@@ -203,6 +232,16 @@ export default function AdminProductsPage() {
         specNames.add(normalizedName)
       }
     }
+    if (formData.stock_mode === "MANUAL") {
+      const rootStock = Number(formData.manual_stock || 0)
+      if (!Number.isInteger(rootStock) || rootStock < 0) { toast.error("手动库存必须是大于等于 0 的整数"); return }
+      for (const spec of formSpecs) {
+        if (spec.manual_stock && (!Number.isInteger(Number(spec.manual_stock)) || Number(spec.manual_stock) < 0)) {
+          toast.error(`规格「${spec.name || "未命名"}」的手动库存必须是大于等于 0 的整数`)
+          return
+        }
+      }
+    }
     setSaving(true)
     try {
       // Auto-sync base_price = min(spec prices) when specs enabled
@@ -229,6 +268,9 @@ export default function AdminProductsPage() {
         initial_sales: parseInt(formData.initial_sales) || 0,
         sort_order: parseInt(formData.sort_order) || undefined,
         delivery_type: formData.delivery_type,
+        customer_input_type: formData.customer_input_type,
+        stock_mode: formData.stock_mode,
+        manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, parseInt(formData.manual_stock) || 0) : undefined,
       }
 
       let productId: string
@@ -261,11 +303,11 @@ export default function AdminProductsPage() {
         for (const spec of formSpecs) {
           if (spec.id && existingIds.has(spec.id)) {
             const old = existingSpecs.find(s => s.id === spec.id)
-            if (old && (old.name !== spec.name || String(old.price) !== spec.price)) {
-              try { await adminProductApi.updateSpec(productId, spec.id, { name: spec.name, price: parseFloat(spec.price) }) } catch { /* ignore */ }
+              if (old && (old.name !== spec.name || String(old.price) !== spec.price || String(old.manual_stock ?? "") !== String(spec.manual_stock ?? ""))) {
+              try { await adminProductApi.updateSpec(productId, spec.id, { name: spec.name, price: parseFloat(spec.price), manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, parseInt(spec.manual_stock || "0") || 0) : undefined }) } catch { /* ignore */ }
             }
           } else {
-            try { await adminProductApi.addSpec(productId, { name: spec.name, price: parseFloat(spec.price) }) } catch { /* ignore */ }
+            try { await adminProductApi.addSpec(productId, { name: spec.name, price: parseFloat(spec.price), manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, parseInt(spec.manual_stock || "0") || 0) : undefined }) } catch { /* ignore */ }
           }
         }
       }
@@ -283,7 +325,7 @@ export default function AdminProductsPage() {
   const handleCloseModal = () => {
     setShowModal(false)
     setEditingProduct(null)
-    setFormData({ title: "", description: "", detail_md: "", category_id: "", base_price: "", currency: "CNY", cover_url: "", low_stock_threshold: "10", wholesale_enabled: false, is_enabled: true, initial_sales: "", sort_order: "", delivery_type: "AUTO" })
+    setFormData({ title: "", description: "", detail_md: "", category_id: "", base_price: "", currency: "CNY", cover_url: "", low_stock_threshold: "10", wholesale_enabled: false, is_enabled: true, initial_sales: "", sort_order: "", delivery_type: "AUTO", customer_input_type: "NONE", stock_mode: "CARD_KEY", manual_stock: "" })
     setFormSpecs([])
     setSpecsEnabled(false)
     setSpecDeleteConfirm(null)
@@ -291,8 +333,9 @@ export default function AdminProductsPage() {
   }
 
   const handleImport = async () => {
-    if (!showImportModal || !importContent.trim()) {
-      toast.error("请输入卡密内容")
+    const contentError = validateCardContentColumns(importColumns)
+    if (!showImportModal || contentError) {
+      toast.error(contentError || "至少需要一列卡券内容")
       return
     }
     setImporting(true)
@@ -300,11 +343,13 @@ export default function AdminProductsPage() {
       const result = await requestOrThrow(() => adminCardKeyApi.import({
           product_id: showImportModal.id,
           spec_id: importSpecId || null,
-          content: importContent,
+          content_columns: importColumns,
+          check_duplicate: importCheckDuplicate,
         }))
       toast.success(`导入成功: ${result.success_count} 条${result.fail_count > 0 ? `，失败 ${result.fail_count} 条` : ""}`)
       setShowImportModal(null)
-      setImportContent("")
+      setImportColumns([""])
+      setImportCheckDuplicate(true)
       setImportSpecId("")
       await fetchProducts()
     } catch (err: unknown) {
@@ -405,7 +450,7 @@ export default function AdminProductsPage() {
                           <Link href={`/product/${product.id}`} className="font-medium text-foreground hover:text-primary hover:underline transition-colors">
                             {product.title}
                           </Link>
-                          {product.stock_available <= (product.low_stock_threshold ?? 10) && product.stock_available > 0 && (
+                          {!product.unlimited && product.stock_available != null && product.stock_available <= (product.low_stock_threshold ?? 10) && product.stock_available > 0 && (
                             <span className="text-xs text-amber-500 flex items-center gap-1">
                               <AlertCircle className="h-3 w-3" />
                               {t("admin.lowStock")}
@@ -421,8 +466,8 @@ export default function AdminProductsPage() {
                     </td>
                     <td className="px-4 py-3 font-medium text-foreground">{getCurrencySymbol(product.currency)}{product.base_price}</td>
                     <td className="px-4 py-3">
-                      <span className={cn("font-medium", product.stock_available === 0 ? "text-red-500" : product.stock_available <= (product.low_stock_threshold ?? 10) ? "text-amber-500" : "text-foreground")}>
-                        {product.stock_available}
+                      <span className={cn("font-medium", product.unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-red-500" : (product.stock_available ?? 0) <= (product.low_stock_threshold ?? 10) ? "text-amber-500" : "text-foreground")}>
+                        {product.unlimited ? "不限" : product.stock_available}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-foreground">{product.sales_count ?? 0}</td>
@@ -436,7 +481,7 @@ export default function AdminProductsPage() {
                         <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors" title="编辑" onClick={() => handleEdit(product)}>
                           <Edit className="h-4 w-4" />
                         </button>
-                        <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors" title="导入卡密" onClick={() => { setShowImportModal(product); setImportSpecId("") }}>
+                        <button type="button" disabled={product.stock_mode === "MANUAL" || product.stock_mode === "UNLIMITED"} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:pointer-events-none disabled:opacity-30" title={product.stock_mode === "MANUAL" || product.stock_mode === "UNLIMITED" ? "手动或无限库存无需导入卡密" : "导入卡密"} onClick={() => { setShowImportModal(product); setImportSpecId("") }}>
                           <KeyRound className="h-4 w-4" />
                         </button>
                         <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors" title={product.is_enabled !== false ? "下架" : "上架"} onClick={() => handleToggleStatus(product)}>
@@ -595,7 +640,7 @@ export default function AdminProductsPage() {
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-input text-foreground hover:border-primary/30"
                     )}
-                    onClick={() => setFormData({ ...formData, delivery_type: "AUTO" })}
+                    onClick={() => setFormData({ ...formData, delivery_type: "AUTO", stock_mode: "CARD_KEY" })}
                   >
                     自动发货
                   </button>
@@ -607,12 +652,60 @@ export default function AdminProductsPage() {
                         ? "border-primary bg-primary/10 text-primary"
                         : "border-input text-foreground hover:border-primary/30"
                     )}
-                    onClick={() => setFormData({ ...formData, delivery_type: "MANUAL" })}
+                    onClick={() => setFormData({ ...formData, delivery_type: "MANUAL", stock_mode: formData.stock_mode === "UNLIMITED" ? "UNLIMITED" : "MANUAL" })}
                   >
                     手动发货
                   </button>
                 </div>
               </div>
+              {/* 客户填写信息 + 库存模式 */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-foreground">购买时客户需填写</label>
+                  <select
+                    className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={formData.customer_input_type}
+                     onChange={(e) => setFormData({ ...formData, customer_input_type: e.target.value as ProductFormData["customer_input_type"] })}
+                  >
+                    <option value="NONE">无需填写</option>
+                    <option value="QQ">QQ号码</option>
+                    <option value="PHONE">手机号</option>
+                    <option value="QQ_OR_PHONE">QQ或手机号</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-foreground">库存模式</label>
+                  <select
+                    className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={formData.stock_mode}
+                     onChange={(e) => setFormData({ ...formData, stock_mode: e.target.value as ProductFormData["stock_mode"] })}
+                  >
+                    {formData.delivery_type === "AUTO" && <option value="CARD_KEY">卡券库存（自动发货）</option>}
+                    {formData.delivery_type === "MANUAL" && <>
+                      <option value="MANUAL">手动库存（有限）</option>
+                      <option value="UNLIMITED">无限库存</option>
+                    </>}
+                  </select>
+                  <p className="text-xs text-muted-foreground">自动发货只能使用卡券；手动发货可使用有限或无限库存。</p>
+                </div>
+              </div>
+              {formData.delivery_type === "MANUAL" && formData.stock_mode === "MANUAL" && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/20">
+                  <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
+                    {specsEnabled ? "默认手动库存（规格库存请在下方分别填写）" : "可售手动库存"}
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="0"
+                      value={formData.manual_stock}
+                      onChange={(e) => setFormData({ ...formData, manual_stock: e.target.value })}
+                    />
+                  </label>
+                  <p className="mt-1.5 text-xs text-muted-foreground">下单时原子预占，订单过期会只恢复一次；无限库存不会生成虚拟数量。</p>
+                </div>
+              )}
               {/* 商品规格 */}
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
@@ -654,6 +747,21 @@ export default function AdminProductsPage() {
                             setFormSpecs(next)
                           }}
                         />
+                        {formData.stock_mode === "MANUAL" && (
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            className="h-9 w-28 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                            placeholder="库存"
+                            value={spec.manual_stock ?? ""}
+                            onChange={(e) => {
+                              const next = [...formSpecs]
+                              next[idx] = { ...next[idx], manual_stock: e.target.value }
+                              setFormSpecs(next)
+                            }}
+                          />
+                        )}
                         <button
                           type="button"
                           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
@@ -819,11 +927,12 @@ export default function AdminProductsPage() {
                   </select>
                 </div>
               )}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.importContent")}</label>
-                <textarea className="min-h-48 rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground font-mono break-all focus:outline-none focus:ring-2 focus:ring-ring" placeholder={"请输入卡密，每行一个\n例如：\nXXXX-YYYY-ZZZZ-AAAA\nBBBB-CCCC-DDDD-EEEE"} value={importContent} onChange={(e) => setImportContent(e.target.value)} />
-              </div>
-              <p className="text-xs text-muted-foreground">提示：支持批量导入，每行一个卡密。导入后会自动增加对应的库存数量。</p>
+              <CardContentImportFields columns={importColumns} onChange={setImportColumns} disabled={importing} />
+              <label className="flex items-center gap-2 text-sm text-foreground">
+                <input type="checkbox" checked={importCheckDuplicate} onChange={(event) => setImportCheckDuplicate(event.target.checked)} disabled={importing} />
+                检测历史重复（本批次重复始终过滤）
+              </label>
+              <p className="text-xs text-muted-foreground">每一行代表一张卡券，多个内容列会按相同行号组成一张卡券。</p>
             </div>
             <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
               <button type="button" className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors" onClick={() => setShowImportModal(null)}>{t("admin.cancel")}</button>

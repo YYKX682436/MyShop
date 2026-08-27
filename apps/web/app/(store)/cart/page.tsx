@@ -1,18 +1,28 @@
 "use client"
 
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Trash2, Minus, Plus, ShoppingCart, ArrowRight, Package } from "lucide-react"
 import { toast } from "sonner"
 import { useLocale, useCart } from "@/lib/context"
 import { getApiErrorMessage } from "@/services/api"
-import { cn } from "@/lib/utils"
 
 export default function CartPage() {
   const { t } = useLocale()
   const router = useRouter()
   const { items, totalAmount, isLoading, updateItem, removeItem } = useCart()
+  const [customerDrafts, setCustomerDrafts] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    setCustomerDrafts(current => {
+      const next = { ...current }
+      for (const item of items) {
+        if (!(item.id in next)) next[item.id] = item.customer_input_value || ""
+      }
+      return next
+    })
+  }, [items])
 
   const totalQty = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items])
 
@@ -98,6 +108,18 @@ export default function CartPage() {
               {item.spec_name && (
                 <span className="text-xs text-muted-foreground">{item.spec_name}</span>
               )}
+              {item.customer_input_type && item.customer_input_type !== "NONE" && (
+                <label className="mt-1 flex max-w-sm flex-col gap-1 text-xs text-muted-foreground">
+                  <span>{item.customer_input_type === "QQ" ? "QQ号码" : item.customer_input_type === "PHONE" ? "手机号" : "QQ或手机号"} <span className="text-destructive">*</span></span>
+                  <input
+                    value={customerDrafts[item.id] ?? item.customer_input_value ?? ""}
+                    onChange={(event) => setCustomerDrafts(current => ({ ...current, [item.id]: event.target.value }))}
+                    onBlur={() => void updateItem(item.id, item.quantity, (customerDrafts[item.id] ?? "").trim())}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder="请填写后再结算"
+                  />
+                </label>
+              )}
               <div className="flex items-center gap-3">
                 <span className="text-sm font-semibold text-foreground">
                   {"\u00A5"}{item.unit_price.toFixed(2)}
@@ -118,12 +140,12 @@ export default function CartPage() {
                   <button
                     onClick={() => handleUpdateQuantity(item.id, item.quantity + 1)}
                     className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
-                    disabled={item.stock_available != null && item.quantity >= item.stock_available}
+                    disabled={!item.unlimited && item.stock_available != null && item.quantity >= item.stock_available}
                   >
                     <Plus className="h-3 w-3" />
                   </button>
                 </div>
-                {item.stock_available != null && item.quantity > item.stock_available && (
+                {!item.unlimited && item.stock_available != null && item.quantity > item.stock_available && (
                   <p className="text-xs text-destructive">{t("product.stockInsufficient")}</p>
                 )}
               </div>

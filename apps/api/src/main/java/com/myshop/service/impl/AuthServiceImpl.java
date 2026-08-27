@@ -130,10 +130,11 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private void mergeCart(String sessionToken, java.util.UUID userId) {
-        List<CartItem> guestItems = cartItemRepository.findBySessionToken(sessionToken);
+            List<CartItem> guestItems = cartItemRepository.findBySessionToken(sessionToken);
         for (CartItem guestItem : guestItems) {
             Optional<CartItem> existing = cartItemRepository
-                    .findByUserIdAndProductIdAndSpecId(userId, guestItem.getProductId(), guestItem.getSpecId());
+                    .findByUserIdAndProductIdAndSpecIdAndCustomerInputValue(
+                            userId, guestItem.getProductId(), guestItem.getSpecId(), guestItem.getCustomerInputValue());
             if (existing.isPresent()) {
                 // Merge quantity into user's existing item, then delete the guest item
                 existing.get().setQuantity(existing.get().getQuantity() + guestItem.getQuantity());
