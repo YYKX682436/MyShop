@@ -15,7 +15,7 @@ import type { SalesTrend } from "@/types"
 export function SalesChart({ trends }: { trends: SalesTrend[] }) {
   const { t } = useLocale()
   return (
-    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
+    <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5 xl:h-full">
       <div className="mb-4 flex items-center justify-between gap-3 sm:mb-6">
         <h3 className="font-semibold text-foreground">{t("admin.salesTrend")}</h3>
         <div className="hidden gap-4 text-xs text-muted-foreground sm:flex">
@@ -30,11 +30,11 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
         </div>
       </div>
       {trends.length === 0 ? (
-        <div className="flex h-64 items-center justify-center text-sm text-muted-foreground sm:h-72">
+        <div className="flex min-h-64 flex-1 items-center justify-center text-sm text-muted-foreground sm:min-h-72">
           {t("admin.noSalesTrendData")}
         </div>
       ) : (
-        <div className="h-64 sm:h-72">
+        <div className="min-h-64 flex-1 sm:min-h-72">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
             <defs>

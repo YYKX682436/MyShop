@@ -200,7 +200,7 @@ export default function AdminDashboardPage() {
       )}
 
       <div className="grid min-w-0 gap-5 xl:grid-cols-3">
-        <div className="min-w-0 xl:col-span-2">
+        <div className="min-w-0 xl:col-span-2 xl:h-full">
           {trends.data ? (
             <>
               {trends.error && <DashboardInlineError onRetry={() => void loadBusiness()} />}
