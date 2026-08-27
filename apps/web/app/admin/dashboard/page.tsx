@@ -20,7 +20,7 @@ import {
 import { SalesChart } from "@/components/admin/sales-chart"
 import { RecentOrders } from "@/components/admin/recent-orders"
 import { useLocale } from "@/lib/context"
-import { buildDashboardAttention } from "@/lib/dashboard"
+import { buildDashboardAttention, shouldShowInitialDashboardLoading } from "@/lib/dashboard"
 import type { TranslationKey } from "@/lib/i18n"
 import { formatDateTime } from "@/lib/utils"
 import { adminDashboardApi, adminOrderApi, requestOrThrow } from "@/services/api"
@@ -43,6 +43,7 @@ export default function AdminDashboardPage() {
   const [trends, setTrends] = useState<AsyncState<SalesTrend[]>>(initialState)
   const [recentOrders, setRecentOrders] = useState<AsyncState<AdminOrderItem[]>>(initialState)
   const [system, setSystem] = useState<AsyncState<SystemStatus>>(initialState)
+  const [manualRefreshing, setManualRefreshing] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const loadBusiness = useCallback(async () => {
@@ -86,7 +87,7 @@ export default function AdminDashboardPage() {
     systemAbortRef.current?.abort()
     const controller = new AbortController()
     systemAbortRef.current = controller
-    setSystem((state) => ({ ...state, loading: true, error: false }))
+    setSystem((state) => ({ ...state, loading: state.data === null, error: false }))
 
     const result = await Promise.allSettled([
       requestOrThrow(() => adminDashboardApi.getSystemStatus({ signal: controller.signal })),
@@ -101,35 +102,25 @@ export default function AdminDashboardPage() {
     }
   }, [])
 
-  const refreshAll = useCallback(() => {
-    void loadBusiness()
-    void loadSystem()
+  const refreshAll = useCallback(async (showIndicator = false) => {
+    if (showIndicator) setManualRefreshing(true)
+    try {
+      await Promise.allSettled([loadBusiness(), loadSystem()])
+    } finally {
+      if (showIndicator && mountedRef.current) setManualRefreshing(false)
+    }
   }, [loadBusiness, loadSystem])
 
   useEffect(() => {
     mountedRef.current = true
-    refreshAll()
-
-    const businessTimer = window.setInterval(() => {
-      if (!document.hidden) void loadBusiness()
-    }, 60_000)
-    const systemTimer = window.setInterval(() => {
-      if (!document.hidden) void loadSystem()
-    }, 10_000)
-    const handleVisibilityChange = () => {
-      if (!document.hidden) refreshAll()
-    }
-    document.addEventListener("visibilitychange", handleVisibilityChange)
+    void refreshAll()
 
     return () => {
       mountedRef.current = false
-      window.clearInterval(businessTimer)
-      window.clearInterval(systemTimer)
-      document.removeEventListener("visibilitychange", handleVisibilityChange)
       businessAbortRef.current?.abort()
       systemAbortRef.current?.abort()
     }
-  }, [loadBusiness, loadSystem, refreshAll])
+  }, [refreshAll])
 
   const attention = useMemo(() => {
     const copy = (key: TranslationKey, values: Record<string, string | number>) =>
@@ -161,9 +152,13 @@ export default function AdminDashboardPage() {
     })
   }, [stats.data, system.data, t])
 
-  const loadingStrip = (!stats.data && stats.loading) || (!system.data && system.loading)
+  const loadingStrip = shouldShowInitialDashboardLoading(stats.data, stats.loading)
+    || shouldShowInitialDashboardLoading(system.data, system.loading)
   const unavailableStrip = (!stats.data && stats.error) || (!system.data && system.error)
-  const isRefreshing = stats.loading || trends.loading || recentOrders.loading || system.loading
+  const isInitialLoading = [stats, trends, recentOrders, system].some((state) =>
+    shouldShowInitialDashboardLoading(state.data, state.loading),
+  )
+  const isRefreshing = manualRefreshing || isInitialLoading
   const updatedText = lastUpdated ? formatDateTime(lastUpdated.toISOString(), locale) : t("admin.dashboardLoading")
 
   return (
@@ -179,7 +174,7 @@ export default function AdminDashboardPage() {
           </p>
           <button
             type="button"
-            onClick={refreshAll}
+            onClick={() => void refreshAll(true)}
             disabled={isRefreshing}
             className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
             aria-label={t("admin.refresh")}

@@ -10,6 +10,10 @@ export const DASHBOARD_THRESHOLDS = {
 export type UsageSeverity = "normal" | "warning" | "critical" | null
 export type SystemStatusLevel = "normal" | "warning" | "critical" | "unavailable"
 
+export function shouldShowInitialDashboardLoading<T>(data: T | null, loading: boolean): boolean {
+  return data === null && loading
+}
+
 export function getUsageSeverity(usagePct: number | null | undefined): UsageSeverity {
   if (usagePct === null || usagePct === undefined || !Number.isFinite(usagePct)) {
     return null

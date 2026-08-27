@@ -9,7 +9,14 @@ import {
   getSystemStatusLevel,
   getUsageSeverity,
   mergeAndSortAttention,
+  shouldShowInitialDashboardLoading,
 } from "./dashboard.ts"
+
+test("background refresh keeps previously loaded dashboard data visible", () => {
+  assert.equal(shouldShowInitialDashboardLoading(null, true), true)
+  assert.equal(shouldShowInitialDashboardLoading(null, false), false)
+  assert.equal(shouldShowInitialDashboardLoading({ ready: true }, true), false)
+})
 
 test("usage severity keeps 70 and 85 in warning and values above 85 critical", () => {
   assert.equal(getUsageSeverity(69.99), "normal")

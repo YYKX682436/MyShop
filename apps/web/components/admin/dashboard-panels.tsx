@@ -429,11 +429,11 @@ export function SystemStatusCard({
   const { t } = useLocale()
   return (
     <Panel title={t("admin.serverStatus")} icon={Server} action={system && <SystemLevelBadge level={getSystemStatusLevel(system)} />}>
-      {loading && <DashboardPanelState loading compact />}
-      {!loading && error && <DashboardPanelState onRetry={onRetry} compact />}
-      {!loading && !error && !system && <DashboardPanelState onRetry={onRetry} compact />}
-      {!loading && !error && system && (
+      {!system && loading && <DashboardPanelState loading compact />}
+      {!system && !loading && <DashboardPanelState onRetry={onRetry} compact />}
+      {system && (
         <div className="space-y-4">
+          {error && <DashboardInlineError onRetry={onRetry} />}
           <div className="grid gap-3 min-[520px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
             <ResourceMetric label={t("admin.systemCpu")} icon={Cpu} showCapacity={false} metric={system.cpu ? {
               total_bytes: null,
