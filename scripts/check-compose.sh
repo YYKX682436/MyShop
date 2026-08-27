@@ -24,12 +24,38 @@ for expected in \
   "ipv4_address: 172.30.0.2" \
   "ipv4_address: 172.30.0.20" \
   "ipv4_address: 172.30.0.30" \
-  "ipv4_address: 172.30.0.10"; do
+  "ipv4_address: 172.30.0.10" \
+  "ipv4_address: 172.30.0.40"; do
   if [[ "$rendered_config" != *"$expected"* ]]; then
     echo "compose validation missing expected topology: $expected" >&2
     exit 1
   fi
 done
+
+if ! grep -Fq 'image: quay.io/prometheus/node-exporter:v1.12.1' <<<"$rendered_config"; then
+  echo "compose validation missing pinned node-exporter image" >&2
+  exit 1
+fi
+
+caddy_config="$(awk '
+  /^  caddy:$/ { in_caddy=1; print; next }
+  in_caddy && /^  [^[:space:]]/ { exit }
+  in_caddy { print }
+' "$repo_dir/docker-compose.yml")"
+if grep -Fq 'node-exporter' <<<"$caddy_config"; then
+  echo "compose validation found node-exporter in the Caddy startup dependency block" >&2
+  exit 1
+fi
+
+if grep -Eq '(^|[^0-9])9100:9100([^0-9]|$)' <<<"$rendered_config"; then
+  echo "compose validation found a published node-exporter port" >&2
+  exit 1
+fi
+
+if grep -Fq '/var/run/docker.sock' "$repo_dir/docker-compose.yml"; then
+  echo "compose validation found a forbidden Docker socket mount" >&2
+  exit 1
+fi
 
 if ! grep -Fq 'header_up X-Real-IP {remote_host}' "$repo_dir/Caddyfile" \
   || ! grep -Fq 'header_up X-Forwarded-For {remote_host}' "$repo_dir/Caddyfile"; then

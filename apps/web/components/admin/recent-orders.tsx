@@ -1,102 +1,143 @@
 "use client"
 
+import { Copy } from "lucide-react"
+import { toast } from "sonner"
+
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { useLocale } from "@/lib/context"
-import { toast } from "sonner"
+import { formatDateTime } from "@/lib/utils"
 import type { AdminOrderItem } from "@/types"
 
 export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
-  const { t } = useLocale()
+  const { locale, t } = useLocale()
 
   const copyToClipboard = (text: string) => {
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(
-        () => toast.success(t("order.copied")),
-        () => fallbackCopy(text)
-      )
-    } else {
-      fallbackCopy(text)
-    }
-    function fallbackCopy(val: string) {
-      const ta = document.createElement("textarea")
-      ta.value = val
-      ta.style.position = "fixed"
-      ta.style.opacity = "0"
-      document.body.appendChild(ta)
-      ta.select()
+    const fallbackCopy = () => {
+      const textarea = document.createElement("textarea")
+      textarea.value = text
+      textarea.style.position = "fixed"
+      textarea.style.opacity = "0"
+      document.body.appendChild(textarea)
+      textarea.select()
       document.execCommand("copy")
-      document.body.removeChild(ta)
+      document.body.removeChild(textarea)
       toast.success(t("order.copied"))
     }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => toast.success(t("order.copied")), fallbackCopy)
+    } else {
+      fallbackCopy()
+    }
   }
+
   return (
-    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-      <h3 className="mb-4 font-semibold text-foreground">{t("admin.recentOrders")}</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm table-fixed">
-          <colgroup>
-            <col className="w-[18%]" />{/* 订单号 */}
-            <col className="w-[24%]" />{/* 商品 */}
-            <col className="w-[19%]" />{/* 用户 */}
-            <col className="w-[10%]" />{/* 金额 */}
-            <col className="w-[10%]" />{/* 状态 */}
-            <col className="w-[19%]" />{/* 时间 */}
-          </colgroup>
-          <thead>
-            <tr className="border-b border-border text-left">
-              <th className="pb-3 font-medium text-muted-foreground">{t("admin.orderNo")}</th>
-              <th className="pb-3 font-medium text-muted-foreground">{t("admin.product")}</th>
-              <th className="pb-3 font-medium text-muted-foreground">{t("admin.user")}</th>
-              <th className="pb-3 font-medium text-muted-foreground">{t("admin.amount")}</th>
-              <th className="pb-3 font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
-              <th className="pb-3 font-medium text-muted-foreground">{t("admin.time")}</th>
-            </tr>
-          </thead>
-          <tbody>
+    <section className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
+      <h2 className="mb-4 font-semibold text-foreground">{t("admin.recentOrders")}</h2>
+      {orders.length === 0 ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">{t("admin.noOrderData")}</p>
+      ) : (
+        <>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[700px] table-fixed text-sm">
+              <colgroup>
+                <col className="w-[18%]" />
+                <col className="w-[24%]" />
+                <col className="w-[18%]" />
+                <col className="w-[12%]" />
+                <col className="w-[12%]" />
+                <col className="w-[16%]" />
+              </colgroup>
+              <thead>
+                <tr className="border-b border-border text-left">
+                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.orderNo")}</th>
+                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.product")}</th>
+                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.user")}</th>
+                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.amount")}</th>
+                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
+                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.time")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => (
+                  <tr key={order.id} className="border-b border-border/50 last:border-0">
+                    <td className="py-3 font-mono text-sm text-foreground">
+                      <CopyOrderButton id={order.id} onCopy={copyToClipboard} />
+                    </td>
+                    <td className="py-3 text-sm text-foreground">
+                      <ProductSummary order={order} />
+                    </td>
+                    <td className="truncate py-3 text-foreground" title={order.username || order.email}>
+                      {order.username || order.email}
+                    </td>
+                    <td className="py-3 font-medium text-foreground">¥{order.actual_amount.toFixed(2)}</td>
+                    <td className="py-3"><OrderStatusBadge status={order.status} /></td>
+                    <td className="py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="space-y-2 md:hidden">
             {orders.map((order) => (
-              <tr key={order.id} className="border-b border-border/50 last:border-0">
-                <td className="py-3 font-mono text-sm text-foreground">
-                  <span
-                    className="cursor-pointer underline-offset-4 transition-colors hover:underline hover:text-primary"
-                    title={order.id}
-                    onClick={() => copyToClipboard(order.id)}
-                  >
-                    {order.id.length > 20 ? `${order.id.slice(0, 8)}...${order.id.slice(-8)}` : order.id}
-                  </span>
-                </td>
-                <td className="py-3 text-sm text-foreground">
-                  <div className="max-w-[80%] truncate" title={
-                    (order.items?.[0]?.product_title || "-") + (order.items?.[0]?.spec_name ? ` - ${order.items[0].spec_name}` : "") + ((order.items?.length ?? 0) > 1 ? ` 等${order.items.length}件` : "")
-                  }>
-                    {order.items?.[0]?.product_title || "-"}
-                    {order.items?.[0]?.spec_name && (
-                      <span className="text-muted-foreground"> - {order.items[0].spec_name}</span>
-                    )}
-                    {(order.items?.length ?? 0) > 1 && (
-                      <span className="ml-1 text-xs text-muted-foreground">等{order.items.length}件</span>
-                    )}
-                  </div>
-                </td>
-                <td className="py-3 truncate text-foreground" title={order.username || order.email}>{order.username || order.email}</td>
-                <td className="py-3 font-medium text-foreground">¥{order.actual_amount.toFixed(2)}</td>
-                <td className="py-3">
+              <article key={order.id} className="min-w-0 rounded-lg border border-border/70 p-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <CopyOrderButton id={order.id} onCopy={copyToClipboard} mobile />
                   <OrderStatusBadge status={order.status} />
-                </td>
-                <td className="py-3 text-muted-foreground">
-                  {new Date(order.created_at).toLocaleString()}
-                </td>
-              </tr>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                  <div className="min-w-0 col-span-2">
+                    <p className="text-xs text-muted-foreground">{t("admin.product")}</p>
+                    <ProductSummary order={order} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-muted-foreground">{t("admin.user")}</p>
+                    <p className="truncate text-foreground" title={order.username || order.email}>{order.username || order.email}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{t("admin.amount")}</p>
+                    <p className="font-medium text-foreground">¥{order.actual_amount.toFixed(2)}</p>
+                  </div>
+                  <time className="col-span-2 text-xs text-muted-foreground" dateTime={order.created_at}>
+                    {formatDateTime(order.created_at, locale)}
+                  </time>
+                </div>
+              </article>
             ))}
-            {orders.length === 0 && (
-              <tr>
-                <td colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
-                  {t("admin.noOrderData")}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+function CopyOrderButton({ id, onCopy, mobile = false }: { id: string; onCopy: (id: string) => void; mobile?: boolean }) {
+  const { t } = useLocale()
+  const shortId = id.length > 20 ? `${id.slice(0, 8)}...${id.slice(-8)}` : id
+  return (
+    <button
+      type="button"
+      className="group inline-flex max-w-full items-center gap-1 rounded px-0.5 text-left font-mono text-sm text-foreground underline-offset-4 hover:text-primary hover:underline"
+      title={id}
+      aria-label={`${t("admin.copyOrder")}: ${id}`}
+      onClick={() => onCopy(id)}
+    >
+      <span className="truncate">{mobile ? id : shortId}</span>
+      <Copy className="h-3.5 w-3.5 shrink-0 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
+    </button>
+  )
+}
+
+function ProductSummary({ order }: { order: AdminOrderItem }) {
+  const { t } = useLocale()
+  const firstItem = order.items?.[0]
+  if (!firstItem) return <span className="text-muted-foreground">{t("admin.systemNoData")}</span>
+  const more = (order.items?.length ?? 0) > 1 ? ` ${t("admin.moreItems").replace("{count}", String(order.items.length))}` : ""
+  return (
+    <div className="min-w-0 truncate" title={`${firstItem.product_title}${firstItem.spec_name ? ` - ${firstItem.spec_name}` : ""}${more}`}>
+      <span>{firstItem.product_title}</span>
+      {firstItem.spec_name && <span className="text-muted-foreground"> - {firstItem.spec_name}</span>}
+      {more && <span className="ml-1 text-xs text-muted-foreground">{more}</span>}
     </div>
   )
 }

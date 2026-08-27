@@ -5,21 +5,31 @@ not a production deployment action performed by CI or this acceptance pass.
 
 ## Topology
 
-Use one Docker Compose project with four services:
+Use one Docker Compose project with five services:
 
 ```text
 Internet -> Caddy (80/443) -> Web (private) -> API (private) -> PostgreSQL (private)
+                                      \-> node-exporter (private host metrics)
 ```
 
 Only Caddy publishes host ports. PostgreSQL uses a named persistent volume;
 uploads use `./uploads` on the host; Caddy uses persistent certificate/config
-volumes. All services have restart policies and health checks.
+volumes. The application services have restart policies and health checks; node-exporter
+is intentionally optional to API startup so a missing exporter only degrades
+the Dashboard metrics.
 
-Compose attaches all four services to the private `172.30.0.0/24` network.
+Compose attaches all five services to the private `172.30.0.0/24` network.
 Caddy is fixed at `172.30.0.2`, API at `172.30.0.20`, Web at `172.30.0.30`,
-and PostgreSQL at `172.30.0.10`. The API trusts only the exact Caddy address,
+PostgreSQL at `172.30.0.10`, and node-exporter at `172.30.0.40`. The API trusts only the exact Caddy address,
 and Caddy overwrites `X-Real-IP` and `X-Forwarded-For` before proxying. Do not
-add a broad private CIDR or publish API/Web/DB ports.
+add a broad private CIDR or publish API/Web/DB/node-exporter ports.
+
+node-exporter is pinned to `quay.io/prometheus/node-exporter:v1.12.1`, has no
+host `ports` mapping, and is reachable only from the Compose network. It reads
+the host `/proc`, `/sys`, and root filesystem through read-only mounts to expose
+host CPU, memory, root filesystem, uptime, and load metrics. It does not mount
+`/var/run/docker.sock`, and the API does not need Docker access. Do not install
+Prometheus or Grafana for this dashboard.
 
 ## First setup
 
@@ -53,6 +63,21 @@ only then add a policy that does not break login or payment flows.
 Flyway runs before the application validates the schema. Do not change
 production `spring.jpa.hibernate.ddl-auto` from `validate`, and do not run
 `flyway clean`.
+
+## Dashboard server metrics
+
+The admin-only `GET /api/admin/dashboard/system-status` endpoint fetches the
+node-exporter text endpoint through `NODE_EXPORTER_URL` (the Compose default is
+`http://node-exporter:9100`). CPU usage is calculated from consecutive
+`node_cpu_seconds_total` counter samples; memory uses MemTotal minus
+MemAvailable; disk uses the real host root filesystem and excludes pseudo
+filesystems; uptime comes from boot time and load from `node_load1`.
+
+The endpoint also performs short best-effort checks for PostgreSQL (`SELECT 1`),
+Web (`http://web:3000/`), and a TCP connection to Caddy port 80. Every check is
+isolated: an unavailable exporter or service returns `available=false`, null
+metrics, or a `DOWN`/`UNKNOWN` status inside a successful JSON response. These
+checks are not a public health or metrics API.
 
 ## Payment callback checklist
 

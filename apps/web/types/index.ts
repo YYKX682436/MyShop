@@ -341,6 +341,20 @@ export interface LowStockProduct {
   threshold: number
 }
 
+export interface DashboardTopProduct {
+  product_id: string
+  title: string
+  quantity: number
+  sales_amount: number
+}
+
+export interface DashboardRecentUser {
+  id: string
+  username: string
+  email: string
+  created_at: string
+}
+
 export interface DashboardStats {
   today_sales: number
   month_sales: number
@@ -349,13 +363,65 @@ export interface DashboardStats {
   conversion_rate: number
   today_pv: number
   today_uv: number
+  today_sales_change_pct: number | null
+  today_orders_change_pct: number | null
+  today_new_users: number
+  today_new_users_change_pct: number | null
+  month_new_users: number
+  total_users: number
+  today_buyers: number
+  pending_orders: number
+  paid_waiting_delivery: number
+  delivered_today: number
+  expired_today: number
+  today_payment_success_rate: number
+  today_payment_success_sample_count: number
+  active_products: number
+  available_card_keys: number
+  zero_stock_products: number
   low_stock_products: LowStockProduct[]
+  top_products: DashboardTopProduct[]
+  recent_users: DashboardRecentUser[]
 }
 
 export interface SalesTrend {
   date: string
   sales_amount: number
   order_count: number
+}
+
+export type ServiceStatus = "UP" | "DOWN" | "UNKNOWN"
+
+export interface ServiceHealth {
+  status: ServiceStatus
+}
+
+export interface SystemResourceMetric {
+  total_bytes: number | null
+  used_bytes: number | null
+  available_bytes: number | null
+  usage_pct: number | null
+}
+
+export interface SystemCpuMetric {
+  usage_pct: number | null
+  cores: number | null
+}
+
+export interface SystemStatus {
+  available: boolean
+  sampled_at: string
+  cpu: SystemCpuMetric | null
+  memory: SystemResourceMetric | null
+  disk: SystemResourceMetric | null
+  uptime_seconds: number | null
+  load_1m: number | null
+  services: {
+    api: ServiceHealth
+    web: ServiceHealth
+    database: ServiceHealth
+    caddy: ServiceHealth
+  }
 }
 
 // ============================================================

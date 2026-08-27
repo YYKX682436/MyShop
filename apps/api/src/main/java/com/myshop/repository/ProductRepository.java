@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.UUID;
+import java.util.List;
 
 public interface ProductRepository extends JpaRepository<Product, UUID> {
 
@@ -52,4 +53,20 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
             "AND p.isDeleted = 0 AND EXISTS (" +
             "SELECT 1 FROM ProductSpec s WHERE s.productId = p.id AND s.isDeleted = 0)")
     int migrateSpecEnabled();
+
+    /** One grouped read supplies every active product's available stock. */
+    @Query(value = """
+            SELECT p.id,
+                   p.title,
+                   p.low_stock_threshold,
+                   COUNT(ck.id) FILTER (WHERE ck.status = 'AVAILABLE') AS available_stock
+            FROM products p
+            LEFT JOIN card_keys ck ON ck.product_id = p.id
+            WHERE p.is_deleted = 0
+              AND p.is_enabled = true
+            GROUP BY p.id, p.title, p.low_stock_threshold
+            ORDER BY COUNT(ck.id) FILTER (WHERE ck.status = 'AVAILABLE') ASC,
+                     p.title ASC
+            """, nativeQuery = true)
+    List<Object[]> findActiveProductStockSummaries();
 }

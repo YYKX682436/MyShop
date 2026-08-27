@@ -20,6 +20,7 @@ import type {
   SiteConfigKV,
   DashboardStats,
   SalesTrend,
+  SystemStatus,
   CardKeyStockSummary,
   CardKeyListItem,
   CardImportBatch,
@@ -452,12 +453,14 @@ export const currencyApi = {
 // ============================================================
 
 export const adminDashboardApi = {
-  getStats: () =>
-    request<DashboardStats>("/admin/dashboard"),
-  getSalesTrend: (params: { period?: string; start_date?: string; end_date?: string }) => {
+  getStats: (options?: RequestInit) =>
+    request<DashboardStats>("/admin/dashboard", options),
+  getSalesTrend: (params: { period?: string; start_date?: string; end_date?: string }, options?: RequestInit) => {
     const qs = buildQuery(params)
-    return request<SalesTrend[]>(`/admin/dashboard/sales-trend?${qs}`)
+    return request<SalesTrend[]>(`/admin/dashboard/sales-trend?${qs}`, options)
   },
+  getSystemStatus: (options?: RequestInit) =>
+    request<SystemStatus>("/admin/dashboard/system-status", options),
 }
 
 // ============================================================
@@ -559,9 +562,9 @@ export const adminOrderApi = {
   getList: (params: {
     page?: number; page_size?: number; status?: string; order_type?: string;
     payment_method?: string; is_risk_flagged?: number; keyword?: string
-  }) => {
+  }, options?: RequestInit) => {
     const qs = buildQuery(params)
-    return request<PaginatedData<AdminOrderItem>>(`/admin/orders?${qs}`)
+    return request<PaginatedData<AdminOrderItem>>(`/admin/orders?${qs}`, options)
   },
   getDetail: (id: string) =>
     request<AdminOrderItem>(`/admin/orders/${id}`),

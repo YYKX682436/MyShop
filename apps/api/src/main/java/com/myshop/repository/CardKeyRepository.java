@@ -24,6 +24,8 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
 
     long countByProductIdAndStatus(UUID productId, CardKeyStatus status);
 
+    long countByStatus(CardKeyStatus status);
+
     long countByProductIdAndSpecIdAndStatus(UUID productId, UUID specId, CardKeyStatus status);
 
     long countByProductIdAndSpecIdIsNullAndStatus(UUID productId, CardKeyStatus status);
