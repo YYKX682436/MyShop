@@ -434,7 +434,7 @@ export function SystemStatusCard({
       {!loading && !error && !system && <DashboardPanelState onRetry={onRetry} compact />}
       {!loading && !error && system && (
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 min-[520px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
             <ResourceMetric label={t("admin.systemCpu")} icon={Cpu} showCapacity={false} metric={system.cpu ? {
               total_bytes: null,
               used_bytes: null,
@@ -447,12 +447,12 @@ export function SystemStatusCard({
             <ResourceMetric label={t("admin.systemDisk")} icon={HardDrive} metric={system.disk} />
           </div>
 
-          <div className="grid grid-cols-2 gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-3 text-sm sm:grid-cols-3">
+          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3 text-sm min-[520px]:grid-cols-2">
             <InfoValue label={t("admin.systemUptime")} value={formatUptime(system.uptime_seconds, t)} icon={Clock3} />
             <InfoValue label={t("admin.systemLoad")} value={system.load_1m === null || system.load_1m === undefined ? t("admin.systemNoData") : system.load_1m.toFixed(2)} icon={Gauge} />
-            <div className="col-span-2 sm:col-span-1">
+            <div className="col-span-1 min-w-0 min-[520px]:col-span-2">
               <p className="mb-2 text-xs text-muted-foreground">{t("admin.systemServices")}</p>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+              <div className="grid gap-x-3 gap-y-2 min-[520px]:grid-cols-2">
                 <ServiceStatusRow label={t("admin.systemApi")} service={system.services.api} />
                 <ServiceStatusRow label={t("admin.systemWeb")} service={system.services.web} />
                 <ServiceStatusRow label={t("admin.systemDatabase")} service={system.services.database} />
@@ -489,12 +489,12 @@ function ResourceMetric({
       : "bg-primary"
   return (
     <div className="min-w-0 rounded-lg border border-border/70 px-3 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-foreground">
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <span className="truncate">{label}</span>
+          <span className="break-words">{label}</span>
         </span>
-        <span className="shrink-0 text-sm font-semibold text-foreground">{formatPercent(usage, t("admin.systemNoData"))}</span>
+        <span className="shrink-0 whitespace-nowrap text-sm font-semibold text-foreground">{formatPercent(usage, t("admin.systemNoData"))}</span>
       </div>
       <div
         className="mt-3 h-2 overflow-hidden rounded-full bg-muted"
@@ -507,7 +507,7 @@ function ResourceMetric({
         <div className={cn("h-full rounded-full transition-[width]", barClass)} style={{ width: usage === null ? "0%" : `${Math.max(0, Math.min(100, usage))}%` }} />
       </div>
       {metric && showCapacity && (
-        <p className="mt-2 truncate text-xs text-muted-foreground" title={interpolate(t("admin.systemUsedOf"), {
+        <p className="mt-2 break-words text-xs leading-5 text-muted-foreground" title={interpolate(t("admin.systemUsedOf"), {
           used: formatBytes(metric.used_bytes, t("admin.systemNoData")),
           total: formatBytes(metric.total_bytes, t("admin.systemNoData")),
         })}>
@@ -517,7 +517,7 @@ function ResourceMetric({
           })}
         </p>
       )}
-      {note && <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p>}
+      {note && <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{note}</p>}
       {(!metric || usage === null) && <p className="mt-2 text-xs text-muted-foreground">{t("admin.systemMonitorUnavailable")}</p>}
     </div>
   )
@@ -526,8 +526,8 @@ function ResourceMetric({
 function InfoValue({ label, value, icon: Icon }: { label: string; value: string; icon: LucideIcon }) {
   return (
     <div className="min-w-0">
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Icon className="h-3.5 w-3.5" aria-hidden="true" />{label}</p>
-      <p className="mt-1 truncate font-medium text-foreground">{value}</p>
+      <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"><Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{label}</p>
+      <p className="mt-1 break-words leading-5 font-medium text-foreground">{value}</p>
     </div>
   )
 }
@@ -539,10 +539,10 @@ function ServiceStatusRow({ label, service }: { label: string; service: ServiceH
   const color = status === "UP" ? "text-emerald-600 dark:text-emerald-400" : status === "DOWN" ? "text-destructive" : "text-muted-foreground"
   const text = status === "UP" ? t("admin.systemUp") : status === "DOWN" ? t("admin.systemDown") : t("admin.systemUnknown")
   return (
-    <span className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
+    <span className="flex min-w-0 items-start gap-1.5 text-xs text-foreground">
       <Icon className={cn("h-3.5 w-3.5 shrink-0", color)} aria-hidden="true" />
-      <span className="truncate">{label}</span>
-      <span className="truncate text-muted-foreground">{text}</span>
+      <span className="min-w-0 break-words">{label}</span>
+      <span className="shrink-0 whitespace-nowrap text-muted-foreground">{text}</span>
     </span>
   )
 }
