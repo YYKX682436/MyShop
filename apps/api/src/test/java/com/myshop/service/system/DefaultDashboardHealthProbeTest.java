@@ -19,6 +19,7 @@ class DefaultDashboardHealthProbeTest {
 
     private final AtomicInteger responseStatus = new AtomicInteger(200);
     private final AtomicReference<String> requestMethod = new AtomicReference<>();
+    private final AtomicReference<String> requestPath = new AtomicReference<>();
     private HttpServer server;
 
     @BeforeEach
@@ -26,6 +27,7 @@ class DefaultDashboardHealthProbeTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             requestMethod.set(exchange.getRequestMethod());
+            requestPath.set(exchange.getRequestURI().getPath());
             exchange.sendResponseHeaders(responseStatus.get(), -1);
             exchange.close();
         });
@@ -40,11 +42,12 @@ class DefaultDashboardHealthProbeTest {
     }
 
     @Test
-    void probeWebUsesHeadAndAcceptsSuccessfulResponse() {
+    void probeWebUsesLightweightGetAndAcceptsSuccessfulResponse() {
         ServiceStatus status = probeWeb().probeWeb().status();
 
         assertEquals(ServiceStatus.UP, status);
-        assertEquals("HEAD", requestMethod.get());
+        assertEquals("GET", requestMethod.get());
+        assertEquals("/robots.txt", requestPath.get());
     }
 
     @Test
@@ -54,7 +57,8 @@ class DefaultDashboardHealthProbeTest {
         ServiceStatus status = probeWeb().probeWeb().status();
 
         assertEquals(ServiceStatus.DOWN, status);
-        assertEquals("HEAD", requestMethod.get());
+        assertEquals("GET", requestMethod.get());
+        assertEquals("/robots.txt", requestPath.get());
     }
 
     @Test
@@ -77,7 +81,7 @@ class DefaultDashboardHealthProbeTest {
     private DefaultDashboardHealthProbe probeWeb() {
         return new DefaultDashboardHealthProbe(
                 mock(JdbcTemplate.class),
-                "http://127.0.0.1:%d/".formatted(server.getAddress().getPort()),
+                "http://127.0.0.1:%d/robots.txt".formatted(server.getAddress().getPort()),
                 "127.0.0.1",
                 1,
                 1000);

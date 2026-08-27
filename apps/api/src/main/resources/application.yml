@@ -97,7 +97,7 @@ fulfillment:
 dashboard:
   node-exporter-url: ${NODE_EXPORTER_URL:http://node-exporter:9100}
   system:
-    web-url: ${DASHBOARD_WEB_URL:http://web:3000/}
+    web-url: ${DASHBOARD_WEB_URL:http://web:3000/robots.txt}
     caddy-host: ${DASHBOARD_CADDY_HOST:caddy}
     caddy-port: ${DASHBOARD_CADDY_PORT:80}
     timeout-ms: ${DASHBOARD_SYSTEM_TIMEOUT_MS:1500}

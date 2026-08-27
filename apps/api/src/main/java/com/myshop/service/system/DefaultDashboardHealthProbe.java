@@ -34,12 +34,12 @@ public class DefaultDashboardHealthProbe implements DashboardHealthProbe {
 
     public DefaultDashboardHealthProbe(
             JdbcTemplate jdbcTemplate,
-            @Value("${dashboard.system.web-url:http://web:3000/}") String webUrl,
+            @Value("${dashboard.system.web-url:http://web:3000/robots.txt}") String webUrl,
             @Value("${dashboard.system.caddy-host:caddy}") String caddyHost,
             @Value("${dashboard.system.caddy-port:80}") int caddyPort,
             @Value("${dashboard.system.timeout-ms:1500}") long timeoutMillis) {
         this.jdbcTemplate = jdbcTemplate;
-        this.webUri = safeUri(webUrl, "http://web:3000/");
+        this.webUri = safeUri(webUrl, "http://web:3000/robots.txt");
         this.caddyHost = caddyHost == null || caddyHost.isBlank() ? "caddy" : caddyHost;
         this.caddyPort = caddyPort;
         this.timeoutMillis = Math.max(250, Math.min((int) timeoutMillis, 5000));
@@ -69,12 +69,12 @@ public class DefaultDashboardHealthProbe implements DashboardHealthProbe {
     @Override
     public ServiceHealth probeWeb() {
         try {
-            // A HEAD probe checks that the Web server can accept the request without
-            // downloading the complete server-rendered homepage on every dashboard
-            // refresh. The Docker healthcheck uses the same lightweight semantics.
+            // Probe the existing static robots route instead of the server-rendered
+            // homepage. This checks that the Web process can serve an HTTP response
+            // without downloading a full Dashboard refresh on every poll.
             HttpRequest request = HttpRequest.newBuilder(webUri)
                     .timeout(Duration.ofMillis(timeoutMillis))
-                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .GET()
                     .build();
             HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
             int status = response.statusCode();
