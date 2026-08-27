@@ -35,7 +35,6 @@ import java.util.stream.Collectors;
 @Service
 public class DashboardServiceImpl implements DashboardService {
 
-    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private static final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100);
 
     private final OrderRepository orderRepository;
@@ -46,7 +45,7 @@ public class DashboardServiceImpl implements DashboardService {
     private final UserRepository userRepository;
     private final Clock clock;
 
-    @Autowired
+    /** Compatibility constructor for non-Spring callers; production wiring injects the Clock bean below. */
     public DashboardServiceImpl(OrderRepository orderRepository,
                                 OrderItemRepository orderItemRepository,
                                 ProductRepository productRepository,
@@ -54,16 +53,17 @@ public class DashboardServiceImpl implements DashboardService {
                                 VisitStatsRepository visitStatsRepository,
                                 UserRepository userRepository) {
         this(orderRepository, orderItemRepository, productRepository, cardKeyRepository,
-                visitStatsRepository, userRepository, Clock.system(BUSINESS_ZONE));
+                visitStatsRepository, userRepository, Clock.system(ZoneId.of("Asia/Shanghai")));
     }
 
-    DashboardServiceImpl(OrderRepository orderRepository,
-                         OrderItemRepository orderItemRepository,
-                         ProductRepository productRepository,
-                         CardKeyRepository cardKeyRepository,
-                         VisitStatsRepository visitStatsRepository,
-                         UserRepository userRepository,
-                         Clock clock) {
+    @Autowired
+    public DashboardServiceImpl(OrderRepository orderRepository,
+                                OrderItemRepository orderItemRepository,
+                                ProductRepository productRepository,
+                                CardKeyRepository cardKeyRepository,
+                                VisitStatsRepository visitStatsRepository,
+                                UserRepository userRepository,
+                                Clock clock) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.productRepository = productRepository;
@@ -75,12 +75,12 @@ public class DashboardServiceImpl implements DashboardService {
 
     @Override
     public DashboardStatsResponse getStats() {
-        LocalDate today = LocalDate.now(clock);
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDate today = now.toLocalDate();
         LocalDate yesterday = today.minusDays(1);
         LocalDateTime todayStart = today.atStartOfDay();
         LocalDateTime tomorrowStart = today.plusDays(1).atStartOfDay();
         LocalDateTime yesterdayStart = yesterday.atStartOfDay();
-        LocalDateTime now = LocalDateTime.now(clock);
         LocalDateTime monthStart = today.withDayOfMonth(1).atStartOfDay();
 
         BigDecimal todaySales = zeroIfNull(orderRepository.sumSalesBetween(todayStart, tomorrowStart));
@@ -186,8 +186,9 @@ public class DashboardServiceImpl implements DashboardService {
 
     @Override
     public List<?> getSalesTrend(String period, String startDate, String endDate) {
-        LocalDate start = startDate != null ? LocalDate.parse(startDate) : LocalDate.now(clock).minusDays(30);
-        LocalDate end = endDate != null ? LocalDate.parse(endDate) : LocalDate.now(clock);
+        LocalDate currentDate = LocalDateTime.now(clock).toLocalDate();
+        LocalDate start = startDate != null ? LocalDate.parse(startDate) : currentDate.minusDays(30);
+        LocalDate end = endDate != null ? LocalDate.parse(endDate) : currentDate;
         LocalDateTime startDateTime = start.atStartOfDay();
         LocalDateTime endDateTime = end.plusDays(1).atStartOfDay();
 

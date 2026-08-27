@@ -18,39 +18,45 @@ import java.util.function.Supplier;
 @Service
 public class SystemStatusService {
 
+    private static final long INITIAL_CPU_SAMPLE_DELAY_MILLIS = 250;
+
     private final NodeExporterClient nodeExporterClient;
     private final NodeExporterMetricsParser parser;
     private final DashboardHealthProbe healthProbe;
     private final Clock clock;
+    private final Sleeper sleeper;
+    private final Object cpuSampleLock = new Object();
     private CpuSample previousCpuSample;
 
     @Autowired
     public SystemStatusService(NodeExporterClient nodeExporterClient,
                                DashboardHealthProbe healthProbe) {
-        this(nodeExporterClient, new NodeExporterMetricsParser(), healthProbe, Clock.systemUTC());
+        this(nodeExporterClient, new NodeExporterMetricsParser(), healthProbe,
+                Clock.systemUTC(), Thread::sleep);
     }
 
     SystemStatusService(NodeExporterClient nodeExporterClient,
                         NodeExporterMetricsParser parser,
                         DashboardHealthProbe healthProbe,
                         Clock clock) {
+        this(nodeExporterClient, parser, healthProbe, clock, Thread::sleep);
+    }
+
+    SystemStatusService(NodeExporterClient nodeExporterClient,
+                        NodeExporterMetricsParser parser,
+                        DashboardHealthProbe healthProbe,
+                        Clock clock,
+                        Sleeper sleeper) {
         this.nodeExporterClient = nodeExporterClient;
         this.parser = parser;
         this.healthProbe = healthProbe;
         this.clock = clock;
+        this.sleeper = sleeper == null ? Thread::sleep : sleeper;
     }
 
     public SystemStatusResponse getStatus() {
         String sampledAt = Instant.now(clock).toString();
-        Optional<String> exposition = scrapeSafely();
-        boolean available = exposition.isPresent();
-        var snapshot = available ? parseSafely(exposition.get()) : null;
-
-        CpuMetric cpu = snapshot == null ? null : cpuMetric(snapshot);
-        SystemResourceMetric memory = snapshot == null ? null : memoryMetric(snapshot);
-        SystemResourceMetric disk = snapshot == null ? null : diskMetric(snapshot);
-        Long uptimeSeconds = snapshot == null ? null : uptime(snapshot);
-        Double load1m = snapshot == null ? null : snapshot.load1();
+        HostMetrics hostMetrics = scrapeHostMetrics();
 
         ServicesHealth services = new ServicesHealth(
                 new ServiceHealth(ServiceStatus.UP),
@@ -59,7 +65,29 @@ public class SystemStatusService {
                 probe(healthProbe::probeCaddy));
 
         return new SystemStatusResponse(
-                available, sampledAt, cpu, memory, disk, uptimeSeconds, load1m, services);
+                hostMetrics.available(), sampledAt, hostMetrics.cpu(), hostMetrics.memory(),
+                hostMetrics.disk(), hostMetrics.uptimeSeconds(), hostMetrics.load1m(), services);
+    }
+
+    private HostMetrics scrapeHostMetrics() {
+        // Keep the first scrape, the optional wait, and the cache update under
+        // one lock. Concurrent first requests must not race with each other's
+        // counter samples or make one request compare against stale data.
+        synchronized (cpuSampleLock) {
+            Optional<String> exposition = scrapeSafely();
+            if (exposition.isEmpty()) {
+                return HostMetrics.unavailable();
+            }
+            NodeExporterMetricsSnapshot snapshot = parseSafely(exposition.get());
+            CpuMetric cpu = cpuMetric(snapshot);
+            return new HostMetrics(
+                    true,
+                    cpu,
+                    memoryMetric(snapshot),
+                    diskMetric(snapshot),
+                    uptime(snapshot),
+                    snapshot.load1());
+        }
     }
 
     private Optional<String> scrapeSafely() {
@@ -80,33 +108,94 @@ public class SystemStatusService {
     }
 
     private CpuMetric cpuMetric(NodeExporterMetricsSnapshot snapshot) {
-        return new CpuMetric(calculateCpuUsage(snapshot.cpuTotalSeconds(), snapshot.cpuIdleSeconds()),
-                snapshot.cpuCores());
+        CpuSample current = cpuSample(snapshot);
+        if (current == null) {
+            return new CpuMetric(null, snapshot.cpuCores());
+        }
+        if (previousCpuSample == null) {
+            return initialCpuMetric(snapshot, current);
+        }
+        return new CpuMetric(recordCpuSample(current), snapshot.cpuCores());
     }
 
-    /**
-     * Calculate usage from deltas of the cumulative counters. The first sample
-     * intentionally has a null percentage because no valid interval exists.
-     */
+    private CpuMetric initialCpuMetric(NodeExporterMetricsSnapshot firstSnapshot,
+                                       CpuSample firstSample) {
+        // Retain the first valid sample even if the follow-up scrape fails;
+        // the next request can then calculate a normal delta without sleeping.
+        previousCpuSample = firstSample;
+        if (!waitForSecondCpuSample()) {
+            return new CpuMetric(null, firstSnapshot.cpuCores());
+        }
+
+        Optional<String> secondExposition = scrapeSafely();
+        if (secondExposition.isEmpty()) {
+            return new CpuMetric(null, firstSnapshot.cpuCores());
+        }
+        NodeExporterMetricsSnapshot secondSnapshot = parseSafely(secondExposition.get());
+        CpuSample secondSample = cpuSample(secondSnapshot);
+        if (secondSample == null) {
+            return new CpuMetric(null, firstSnapshot.cpuCores());
+        }
+
+        previousCpuSample = secondSample;
+        Integer cores = secondSnapshot.cpuCores() != null
+                ? secondSnapshot.cpuCores()
+                : firstSnapshot.cpuCores();
+        return new CpuMetric(cpuUsage(firstSample, secondSample), cores);
+    }
+
+    private boolean waitForSecondCpuSample() {
+        try {
+            sleeper.sleep(INITIAL_CPU_SAMPLE_DELAY_MILLIS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    /** Calculate usage from deltas of the cumulative counters. */
     Double calculateCpuUsage(Double totalSeconds, Double idleSeconds) {
-        if (!validCounter(totalSeconds) || !validCounter(idleSeconds)) {
+        CpuSample current = cpuSample(totalSeconds, idleSeconds);
+        if (current == null) {
             return null;
         }
-        synchronized (this) {
-            CpuSample current = new CpuSample(totalSeconds, idleSeconds);
-            CpuSample previous = previousCpuSample;
-            previousCpuSample = current;
-            if (previous == null) {
-                return null;
-            }
-            double totalDelta = current.totalSeconds() - previous.totalSeconds();
-            double idleDelta = current.idleSeconds() - previous.idleSeconds();
-            if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) {
-                return null;
-            }
-            double usage = (1 - idleDelta / totalDelta) * 100;
-            return Math.max(0, Math.min(100, usage));
+        synchronized (cpuSampleLock) {
+            return recordCpuSample(current);
         }
+    }
+
+    private CpuSample cpuSample(NodeExporterMetricsSnapshot snapshot) {
+        return snapshot == null
+                ? null
+                : cpuSample(snapshot.cpuTotalSeconds(), snapshot.cpuIdleSeconds());
+    }
+
+    private CpuSample cpuSample(Double totalSeconds, Double idleSeconds) {
+        if (!validCounter(totalSeconds) || !validCounter(idleSeconds)
+                || idleSeconds > totalSeconds) {
+            return null;
+        }
+        return new CpuSample(totalSeconds, idleSeconds);
+    }
+
+    private Double recordCpuSample(CpuSample current) {
+        CpuSample previous = previousCpuSample;
+        previousCpuSample = current;
+        return cpuUsage(previous, current);
+    }
+
+    private Double cpuUsage(CpuSample previous, CpuSample current) {
+        if (previous == null) {
+            return null;
+        }
+        double totalDelta = current.totalSeconds() - previous.totalSeconds();
+        double idleDelta = current.idleSeconds() - previous.idleSeconds();
+        if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) {
+            return null;
+        }
+        double usage = (1 - idleDelta / totalDelta) * 100;
+        return Double.isFinite(usage) ? Math.max(0, Math.min(100, usage)) : null;
     }
 
     private SystemResourceMetric memoryMetric(NodeExporterMetricsSnapshot snapshot) {
@@ -157,6 +246,22 @@ public class SystemStatusService {
 
     private boolean validNonNegative(Double value) {
         return value != null && Double.isFinite(value) && value >= 0;
+    }
+
+    @FunctionalInterface
+    interface Sleeper {
+        void sleep(long millis) throws InterruptedException;
+    }
+
+    private record HostMetrics(boolean available,
+                               CpuMetric cpu,
+                               SystemResourceMetric memory,
+                               SystemResourceMetric disk,
+                               Long uptimeSeconds,
+                               Double load1m) {
+        private static HostMetrics unavailable() {
+            return new HostMetrics(false, null, null, null, null, null);
+        }
     }
 
     private record CpuSample(double totalSeconds, double idleSeconds) { }

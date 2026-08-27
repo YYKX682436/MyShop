@@ -63,6 +63,7 @@ services:
         ipv4_address: 172.30.0.20
 
   node-exporter:
+    # Optional sidecar: it must not appear in any application depends_on chain.
     image: quay.io/prometheus/node-exporter:v1.12.1
     command:
       - --path.procfs=/host/proc
@@ -105,6 +106,7 @@ services:
         ipv4_address: 172.30.0.30
 
   caddy:
+    # The public edge depends only on API/Web; the monitoring sidecar is never a startup dependency.
     image: caddy:2-alpine
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN is required}

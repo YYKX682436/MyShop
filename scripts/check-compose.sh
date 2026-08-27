@@ -37,6 +37,16 @@ if ! grep -Fq 'image: quay.io/prometheus/node-exporter:v1.12.1' <<<"$rendered_co
   exit 1
 fi
 
+caddy_config="$(awk '
+  /^  caddy:$/ { in_caddy=1; print; next }
+  in_caddy && /^  [^[:space:]]/ { exit }
+  in_caddy { print }
+' "$repo_dir/docker-compose.yml")"
+if grep -Fq 'node-exporter' <<<"$caddy_config"; then
+  echo "compose validation found node-exporter in the Caddy startup dependency block" >&2
+  exit 1
+fi
+
 if grep -Eq '(^|[^0-9])9100:9100([^0-9]|$)' <<<"$rendered_config"; then
   echo "compose validation found a published node-exporter port" >&2
   exit 1

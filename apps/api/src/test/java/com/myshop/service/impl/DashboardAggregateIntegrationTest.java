@@ -6,7 +6,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -16,6 +20,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -23,12 +29,16 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers(disabledWithoutDocker = true)
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
+@Import(DashboardAggregateIntegrationTest.FixedDashboardClockConfiguration.class)
 class DashboardAggregateIntegrationTest {
+
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final Clock CLOCK = Clock.fixed(
+            Instant.parse("2026-08-27T04:00:00Z"), BUSINESS_ZONE);
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -66,27 +76,27 @@ class DashboardAggregateIntegrationTest {
 
     @Test
     void postgresAggregatesFilterStatusesUsersAndStockInDatabase() {
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Shanghai"));
+        LocalDate today = LocalDate.now(CLOCK);
         LocalDateTime start = today.atStartOfDay();
-        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Shanghai"));
+        LocalDateTime now = LocalDateTime.now(CLOCK);
         UUID product = UUID.randomUUID();
         UUID emptyProduct = UUID.randomUUID();
         insertUser("normal", "Buyer@Example.com", "USER", 0, start.plusHours(1));
         insertUser("admin", "admin@example.com", "ADMIN", 0, start.plusHours(1));
         insertUser("deleted", "deleted@example.com", "USER", 1, start.plusHours(1));
-        insertProduct(product, "Popular", 5, true, 0);
-        insertProduct(emptyProduct, "Empty", 3, true, 0);
-        insertProduct(UUID.randomUUID(), "Disabled", 3, false, 0);
-        insertCard(product, "available", "AVAILABLE");
+        insertProduct(product, "Popular", 5, true, 0, start.plusHours(1));
+        insertProduct(emptyProduct, "Empty", 3, true, 0, start.plusHours(1));
+        insertProduct(UUID.randomUUID(), "Disabled", 3, false, 0, start.plusHours(1));
+        insertCard(product, "available", "AVAILABLE", start.plusHours(1).plusMinutes(1));
 
         UUID paidOrder = insertOrder("PAID", "Buyer@Example.com", start.plusHours(2), start.plusHours(3), "10.00");
-        insertOrderItem(paidOrder, product, "Popular", 2, "10.00");
+        insertOrderItem(paidOrder, product, "Popular", 2, "10.00", start.plusHours(3));
         UUID deliveredOrder = insertOrder("DELIVERED", "buyer@example.com", start.plusHours(4), start.plusHours(5), "5.00");
-        insertOrderItem(deliveredOrder, product, "Popular", 1, "5.00");
+        insertOrderItem(deliveredOrder, product, "Popular", 1, "5.00", start.plusHours(5));
         insertOrder("EXPIRED", "expired@example.com", start.plusHours(6), null, "3.00");
         insertOrder("PENDING", "pending@example.com", start.plusHours(7), null, "7.00");
         insertOrder("PAID", "old@example.com", start.minusDays(10), start.minusDays(9), "99.00");
-        insertVisit(today, 120, 20);
+        insertVisit(today, 120, 20, now.minusMinutes(1));
 
         DashboardStatsResponse stats = dashboardService.getStats();
 
@@ -112,7 +122,16 @@ class DashboardAggregateIntegrationTest {
         List<?> trend = dashboardService.getSalesTrend("daily", today.toString(), today.toString());
         assertEquals(1, trend.size());
         assertEquals(new BigDecimal("15.00"), ((java.util.Map<?, ?>) trend.get(0)).get("sales_amount"));
-        assertTrue(now.isAfter(start));
+        assertEquals(start.plusHours(12), now);
+    }
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class FixedDashboardClockConfiguration {
+        @Bean
+        @Primary
+        Clock fixedDashboardClock() {
+            return CLOCK;
+        }
     }
 
     private void insertUser(String username, String email, String role, int deleted, LocalDateTime createdAt) {
@@ -122,19 +141,20 @@ class DashboardAggregateIntegrationTest {
                 """, UUID.randomUUID(), createdAt, createdAt, username, email, "hash", role, deleted);
     }
 
-    private void insertProduct(UUID id, String title, int threshold, boolean enabled, int deleted) {
+    private void insertProduct(UUID id, String title, int threshold, boolean enabled, int deleted,
+                               LocalDateTime createdAt) {
         jdbcTemplate.update("""
                 INSERT INTO products(id, created_at, updated_at, title, base_price, category_id,
                                      low_stock_threshold, is_enabled, is_deleted)
-                VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, 10.00, ?, ?, ?, ?)
-                """, id, title, UUID.randomUUID(), threshold, enabled, deleted);
+                VALUES (?, ?, ?, ?, 10.00, ?, ?, ?, ?)
+                """, id, createdAt, createdAt, title, UUID.randomUUID(), threshold, enabled, deleted);
     }
 
-    private void insertCard(UUID productId, String content, String status) {
+    private void insertCard(UUID productId, String content, String status, LocalDateTime createdAt) {
         jdbcTemplate.update("""
                 INSERT INTO card_keys(id, created_at, updated_at, product_id, content, status)
-                VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?)
-                """, UUID.randomUUID(), productId, content, status);
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), createdAt, createdAt, productId, content, status);
     }
 
     private UUID insertOrder(String status, String email, LocalDateTime createdAt,
@@ -149,18 +169,20 @@ class DashboardAggregateIntegrationTest {
         return id;
     }
 
-    private void insertOrderItem(UUID orderId, UUID productId, String title, int quantity, String subtotal) {
+    private void insertOrderItem(UUID orderId, UUID productId, String title, int quantity, String subtotal,
+                                 LocalDateTime createdAt) {
         jdbcTemplate.update("""
                 INSERT INTO order_items(id, created_at, updated_at, order_id, product_id, product_title,
                                         quantity, unit_price, subtotal)
-                VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?, 5.00, ?)
-                """, UUID.randomUUID(), orderId, productId, title, quantity, new BigDecimal(subtotal));
+                VALUES (?, ?, ?, ?, ?, ?, ?, 5.00, ?)
+                """, UUID.randomUUID(), createdAt, createdAt, orderId, productId, title, quantity,
+                new BigDecimal(subtotal));
     }
 
-    private void insertVisit(LocalDate date, int pv, int uv) {
+    private void insertVisit(LocalDate date, int pv, int uv, LocalDateTime createdAt) {
         jdbcTemplate.update("""
                 INSERT INTO visit_stats(id, created_at, updated_at, visit_date, pv, uv)
-                VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?)
-                """, UUID.randomUUID(), date, pv, uv);
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), createdAt, createdAt, date, pv, uv);
     }
 }
