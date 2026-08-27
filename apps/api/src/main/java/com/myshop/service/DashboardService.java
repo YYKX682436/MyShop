@@ -1,11 +1,11 @@
 package com.myshop.service;
 
+import com.myshop.model.response.DashboardStatsResponse;
 import java.util.List;
-import java.util.Map;
 
 public interface DashboardService {
 
-    Map<String, Object> getStats();
+    DashboardStatsResponse getStats();
 
     List<?> getSalesTrend(String period, String startDate, String endDate);
 }

@@ -1,5 +1,5 @@
-# MyShop Phase 1: PostgreSQL, API, Web, and one reverse proxy.
-# API and Web have no host port; all public traffic enters through Caddy.
+# MyShop Phase 1: PostgreSQL, API, Web, node-exporter, and one reverse proxy.
+# API, Web, and node-exporter have no host port; all public traffic enters through Caddy.
 
 services:
   db:
@@ -46,6 +46,7 @@ services:
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:-172.30.0.2,127.0.0.1,::1}
+      NODE_EXPORTER_URL: ${NODE_EXPORTER_URL:-http://node-exporter:9100}
     volumes:
       - ./uploads:/app/uploads
     depends_on:
@@ -60,6 +61,27 @@ services:
     networks:
       internal:
         ipv4_address: 172.30.0.20
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v1.12.1
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: 172.30.0.40
 
   web:
     build:

@@ -15,10 +15,10 @@ import type { SalesTrend } from "@/types"
 export function SalesChart({ trends }: { trends: SalesTrend[] }) {
   const { t } = useLocale()
   return (
-    <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3 sm:mb-6">
         <h3 className="font-semibold text-foreground">{t("admin.salesTrend")}</h3>
-        <div className="flex gap-4 text-xs text-muted-foreground">
+        <div className="hidden gap-4 text-xs text-muted-foreground sm:flex">
           <span className="flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-blue-500" />
             {t("admin.salesAmount")}
@@ -29,9 +29,14 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
           </span>
         </div>
       </div>
-      <div className="h-72">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+      {trends.length === 0 ? (
+        <div className="flex h-64 items-center justify-center text-sm text-muted-foreground sm:h-72">
+          {t("admin.noSalesTrendData")}
+        </div>
+      ) : (
+        <div className="h-64 sm:h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.2} />
@@ -43,44 +48,48 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-            <XAxis
-              dataKey="date"
-              tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
-              axisLine={{ stroke: "hsl(var(--border))" }}
-              tickLine={false}
-            />
-            <YAxis
-              tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip
-              contentStyle={{
-                background: "hsl(var(--card))",
-                border: "1px solid hsl(var(--border))",
-                borderRadius: "8px",
-                fontSize: "12px",
-              }}
-            />
-            <Area
-              type="monotone"
-              dataKey="sales_amount"
-              stroke="hsl(217, 91%, 60%)"
-              strokeWidth={2}
-              fill="url(#salesGradient)"
-              name={`${t("admin.salesAmount")} (¥)`}
-            />
-            <Area
-              type="monotone"
-              dataKey="order_count"
-              stroke="hsl(160, 84%, 39%)"
-              strokeWidth={2}
-              fill="url(#ordersGradient)"
-              name={t("admin.orderCount")}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                axisLine={{ stroke: "hsl(var(--border))" }}
+                tickLine={false}
+                minTickGap={24}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                axisLine={false}
+                tickLine={false}
+                width={48}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "hsl(var(--card))",
+                  border: "1px solid hsl(var(--border))",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="sales_amount"
+                stroke="hsl(217, 91%, 60%)"
+                strokeWidth={2}
+                fill="url(#salesGradient)"
+                name={`${t("admin.salesAmount")} (¥)`}
+              />
+              <Area
+                type="monotone"
+                dataKey="order_count"
+                stroke="hsl(160, 84%, 39%)"
+                strokeWidth={2}
+                fill="url(#ordersGradient)"
+                name={t("admin.orderCount")}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </div>
   )
 }

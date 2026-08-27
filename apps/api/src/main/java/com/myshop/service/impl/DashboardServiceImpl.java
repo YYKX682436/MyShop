@@ -2,109 +2,281 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.OrderStatus;
-import com.myshop.entity.Order;
-import com.myshop.entity.Product;
+import com.myshop.constant.UserRole;
+import com.myshop.entity.User;
 import com.myshop.entity.VisitStats;
-import com.myshop.repository.*;
+import com.myshop.model.response.DashboardStatsResponse;
+import com.myshop.repository.CardKeyRepository;
+import com.myshop.repository.OrderItemRepository;
+import com.myshop.repository.OrderRepository;
+import com.myshop.repository.ProductRepository;
+import com.myshop.repository.UserRepository;
+import com.myshop.repository.VisitStatsRepository;
 import com.myshop.service.DashboardService;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class DashboardServiceImpl implements DashboardService {
 
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100);
+
     private final OrderRepository orderRepository;
+    private final OrderItemRepository orderItemRepository;
     private final ProductRepository productRepository;
     private final CardKeyRepository cardKeyRepository;
     private final VisitStatsRepository visitStatsRepository;
-    private final ProductSpecRepository productSpecRepository;
+    private final UserRepository userRepository;
+    private final Clock clock;
+
+    @Autowired
+    public DashboardServiceImpl(OrderRepository orderRepository,
+                                OrderItemRepository orderItemRepository,
+                                ProductRepository productRepository,
+                                CardKeyRepository cardKeyRepository,
+                                VisitStatsRepository visitStatsRepository,
+                                UserRepository userRepository) {
+        this(orderRepository, orderItemRepository, productRepository, cardKeyRepository,
+                visitStatsRepository, userRepository, Clock.system(BUSINESS_ZONE));
+    }
+
+    DashboardServiceImpl(OrderRepository orderRepository,
+                         OrderItemRepository orderItemRepository,
+                         ProductRepository productRepository,
+                         CardKeyRepository cardKeyRepository,
+                         VisitStatsRepository visitStatsRepository,
+                         UserRepository userRepository,
+                         Clock clock) {
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.productRepository = productRepository;
+        this.cardKeyRepository = cardKeyRepository;
+        this.visitStatsRepository = visitStatsRepository;
+        this.userRepository = userRepository;
+        this.clock = clock;
+    }
 
     @Override
-    public Map<String, Object> getStats() {
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        LocalDateTime monthStart = LocalDate.now().withDayOfMonth(1).atStartOfDay();
+    public DashboardStatsResponse getStats() {
+        LocalDate today = LocalDate.now(clock);
+        LocalDate yesterday = today.minusDays(1);
+        LocalDateTime todayStart = today.atStartOfDay();
+        LocalDateTime tomorrowStart = today.plusDays(1).atStartOfDay();
+        LocalDateTime yesterdayStart = yesterday.atStartOfDay();
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime monthStart = today.withDayOfMonth(1).atStartOfDay();
 
-        // Use aggregate queries instead of loading all orders
-        BigDecimal todaySales = orderRepository.sumSalesSince(todayStart);
-        BigDecimal monthSales = orderRepository.sumSalesSince(monthStart);
-        long todayOrders = orderRepository.countPaidOrdersSince(todayStart);
-        long monthOrders = orderRepository.countPaidOrdersSince(monthStart);
-        VisitStats todayVisit = visitStatsRepository.findByVisitDate(LocalDate.now()).orElse(null);
+        BigDecimal todaySales = zeroIfNull(orderRepository.sumSalesBetween(todayStart, tomorrowStart));
+        BigDecimal yesterdaySales = zeroIfNull(orderRepository.sumSalesBetween(yesterdayStart, todayStart));
+        BigDecimal monthSales = zeroIfNull(orderRepository.sumSalesBetween(monthStart, tomorrowStart));
+        long todayOrders = orderRepository.countPaidOrdersBetween(todayStart, tomorrowStart);
+        long yesterdayOrders = orderRepository.countPaidOrdersBetween(yesterdayStart, todayStart);
+        long monthOrders = orderRepository.countPaidOrdersBetween(monthStart, tomorrowStart);
+
+        long todayNewUsers = userRepository
+                .countByRoleAndIsDeletedAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                        UserRole.USER, 0, todayStart, tomorrowStart);
+        long yesterdayNewUsers = userRepository
+                .countByRoleAndIsDeletedAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                        UserRole.USER, 0, yesterdayStart, todayStart);
+        long monthNewUsers = userRepository
+                .countByRoleAndIsDeletedAndCreatedAtGreaterThanEqualAndCreatedAtLessThan(
+                        UserRole.USER, 0, monthStart, tomorrowStart);
+        long totalUsers = userRepository.countByRoleAndIsDeleted(UserRole.USER, 0);
+
+        VisitStats todayVisit = visitStatsRepository.findByVisitDate(today).orElse(null);
+        long todayPv = todayVisit != null ? todayVisit.getPv() : 0;
         long todayUv = todayVisit != null ? todayVisit.getUv() : 0;
-
-        // 电商标准转化率 = 今日成交订单数 / 今日 UV × 100%
         double conversionRate = todayUv > 0 ? (double) todayOrders / todayUv * 100 : 0;
 
-        // Low stock products — count ALL available keys per product (across all specs)
-        List<Product> products = productRepository.findAll().stream()
-                .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
-                .toList();
-        List<Map<String, Object>> lowStock = new ArrayList<>();
-        for (Product p : products) {
-            long available = cardKeyRepository.countByProductIdAndStatus(p.getId(), CardKeyStatus.AVAILABLE);
-            if (available <= p.getLowStockThreshold()) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("product_id", p.getId());
-                m.put("title", p.getTitle());
-                m.put("available_stock", available);
-                m.put("threshold", p.getLowStockThreshold());
-                lowStock.add(m);
+        Map<OrderStatus, Long> outcomes = paymentOutcomes(todayStart, tomorrowStart);
+        long successfulPayments = outcomes.getOrDefault(OrderStatus.PAID, 0L)
+                + outcomes.getOrDefault(OrderStatus.DELIVERED, 0L);
+        long failedPayments = outcomes.getOrDefault(OrderStatus.EXPIRED, 0L);
+        long paymentSampleCount = successfulPayments + failedPayments;
+        double paymentSuccessRate = paymentSampleCount == 0
+                ? 0
+                : (double) successfulPayments / paymentSampleCount * 100;
+
+        // One grouped PostgreSQL read replaces the old product loop plus one
+        // card-key count per product. Zero-stock products are included by the
+        // LEFT JOIN and therefore participate in both counters below.
+        List<Object[]> stockRows = safeRows(productRepository.findActiveProductStockSummaries());
+        List<DashboardStatsResponse.LowStockProduct> lowStockProducts = new ArrayList<>();
+        long zeroStockProducts = 0;
+        for (Object[] row : stockRows) {
+            UUID productId = (UUID) row[0];
+            String title = String.valueOf(row[1]);
+            int threshold = number(row[2]).intValue();
+            long availableStock = number(row[3]).longValue();
+            if (availableStock == 0) {
+                zeroStockProducts++;
+            }
+            if (availableStock <= threshold) {
+                lowStockProducts.add(new DashboardStatsResponse.LowStockProduct(
+                        productId, title, availableStock, threshold));
             }
         }
 
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("today_sales", todaySales);
-        result.put("month_sales", monthSales);
-        result.put("today_orders", todayOrders);
-        result.put("month_orders", monthOrders);
-        result.put("conversion_rate", Math.round(conversionRate * 100.0) / 100.0);
-        result.put("today_pv", todayVisit != null ? todayVisit.getPv() : 0);
-        result.put("today_uv", todayVisit != null ? todayVisit.getUv() : 0);
-        result.put("low_stock_products", lowStock);
-        return result;
+        // TOP 5 is grouped, filtered, sorted, and limited by PostgreSQL; no
+        // order item collection is loaded into the JVM for this panel.
+        List<DashboardStatsResponse.TopProduct> topProducts = safeRows(
+                orderItemRepository.findTopProductsBetween(now.minusDays(7), now)).stream()
+                .map(row -> new DashboardStatsResponse.TopProduct(
+                        (UUID) row[0],
+                        String.valueOf(row[1]),
+                        number(row[2]).longValue(),
+                        decimal(row[3])))
+                .toList();
+
+        List<DashboardStatsResponse.RecentUser> recentUsers = userRepository
+                .findTop5ByRoleAndIsDeletedOrderByCreatedAtDesc(UserRole.USER, 0)
+                .stream()
+                .map(this::toRecentUser)
+                .toList();
+
+        return new DashboardStatsResponse(
+                todaySales,
+                monthSales,
+                todayOrders,
+                monthOrders,
+                rounded(conversionRate),
+                todayPv,
+                todayUv,
+                changePercentage(todaySales, yesterdaySales),
+                changePercentage(BigDecimal.valueOf(todayOrders), BigDecimal.valueOf(yesterdayOrders)),
+                todayNewUsers,
+                changePercentage(BigDecimal.valueOf(todayNewUsers), BigDecimal.valueOf(yesterdayNewUsers)),
+                monthNewUsers,
+                totalUsers,
+                orderRepository.countDistinctBuyersBetween(todayStart, tomorrowStart),
+                orderRepository.countByStatus(OrderStatus.PENDING),
+                orderRepository.countByStatus(OrderStatus.PAID),
+                orderRepository.countDeliveredBetween(todayStart, tomorrowStart),
+                // EXPIRED has no transition timestamp in the current schema;
+                // use today's created_at plus terminal status as the reliable
+                // observable definition for this dashboard metric.
+                outcomes.getOrDefault(OrderStatus.EXPIRED, 0L),
+                rounded(paymentSuccessRate),
+                paymentSampleCount,
+                stockRows.size(),
+                cardKeyRepository.countByStatus(CardKeyStatus.AVAILABLE),
+                zeroStockProducts,
+                lowStockProducts,
+                topProducts,
+                recentUsers);
     }
 
     @Override
     public List<?> getSalesTrend(String period, String startDate, String endDate) {
-        LocalDate start = startDate != null ? LocalDate.parse(startDate) : LocalDate.now().minusDays(30);
-        LocalDate end = endDate != null ? LocalDate.parse(endDate) : LocalDate.now();
+        LocalDate start = startDate != null ? LocalDate.parse(startDate) : LocalDate.now(clock).minusDays(30);
+        LocalDate end = endDate != null ? LocalDate.parse(endDate) : LocalDate.now(clock);
+        LocalDateTime startDateTime = start.atStartOfDay();
+        LocalDateTime endDateTime = end.plusDays(1).atStartOfDay();
 
-        // Still load filtered orders for trend grouping, but with date range filter
-        LocalDateTime startDt = start.atStartOfDay();
-        LocalDateTime endDt = end.plusDays(1).atStartOfDay();
+        List<Object[]> rows = "monthly".equalsIgnoreCase(period)
+                ? orderRepository.findMonthlySalesTrend(startDateTime, endDateTime)
+                : orderRepository.findDailySalesTrend(startDateTime, endDateTime);
 
-        List<Order> orders = orderRepository.findAll().stream()
-                .filter(o -> (o.getStatus() == OrderStatus.PAID || o.getStatus() == OrderStatus.DELIVERED) && o.getPaidAt() != null)
-                .filter(o -> !o.getPaidAt().isBefore(startDt) && o.getPaidAt().isBefore(endDt))
-                .toList();
-
-        Map<String, BigDecimal> salesMap = new TreeMap<>();
-        Map<String, Integer> countMap = new TreeMap<>();
-
-        for (Order o : orders) {
-            String key;
-            if ("monthly".equals(period)) {
-                key = o.getPaidAt().toLocalDate().withDayOfMonth(1).toString().substring(0, 7);
-            } else {
-                key = o.getPaidAt().toLocalDate().toString();
-            }
-            salesMap.merge(key, o.getActualAmount() != null ? o.getActualAmount() : BigDecimal.ZERO, BigDecimal::add);
-            countMap.merge(key, 1, Integer::sum);
+        Map<String, TrendValue> grouped = new TreeMap<>();
+        for (Object[] row : safeRows(rows)) {
+            grouped.put(String.valueOf(row[0]), new TrendValue(decimal(row[1]), number(row[2]).longValue()));
         }
 
-        return salesMap.entrySet().stream().map(e -> {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("date", e.getKey());
-            m.put("sales_amount", e.getValue());
-            m.put("order_count", countMap.getOrDefault(e.getKey(), 0));
-            return m;
+        if ("monthly".equalsIgnoreCase(period)) {
+            YearMonth month = YearMonth.from(start);
+            YearMonth lastMonth = YearMonth.from(end);
+            while (!month.isAfter(lastMonth)) {
+                grouped.putIfAbsent(month.toString(), TrendValue.ZERO);
+                month = month.plusMonths(1);
+            }
+        } else {
+            LocalDate date = start;
+            while (!date.isAfter(end)) {
+                grouped.putIfAbsent(date.toString(), TrendValue.ZERO);
+                date = date.plusDays(1);
+            }
+        }
+
+        return grouped.entrySet().stream().map(entry -> {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("date", entry.getKey());
+            value.put("sales_amount", entry.getValue().salesAmount());
+            value.put("order_count", entry.getValue().orderCount());
+            return value;
         }).collect(Collectors.toList());
+    }
+
+    private Map<OrderStatus, Long> paymentOutcomes(LocalDateTime start, LocalDateTime end) {
+        Map<OrderStatus, Long> result = new LinkedHashMap<>();
+        for (Object[] row : safeRows(orderRepository.countPaymentOutcomesBetween(start, end))) {
+            OrderStatus status = row[0] instanceof OrderStatus
+                    ? (OrderStatus) row[0]
+                    : OrderStatus.valueOf(String.valueOf(row[0]));
+            result.put(status, number(row[1]).longValue());
+        }
+        return result;
+    }
+
+    private DashboardStatsResponse.RecentUser toRecentUser(User user) {
+        return new DashboardStatsResponse.RecentUser(
+                user.getId(), user.getUsername(), user.getEmail(), user.getCreatedAt());
+    }
+
+    private static List<Object[]> safeRows(List<Object[]> rows) {
+        return rows == null ? Collections.emptyList() : rows;
+    }
+
+    private static Number number(Object value) {
+        return value instanceof Number number ? number : 0;
+    }
+
+    private static BigDecimal decimal(Object value) {
+        if (value instanceof BigDecimal decimal) {
+            return decimal;
+        }
+        if (value instanceof Number number) {
+            return BigDecimal.valueOf(number.doubleValue());
+        }
+        return BigDecimal.ZERO;
+    }
+
+    private static BigDecimal zeroIfNull(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private static Double changePercentage(BigDecimal current, BigDecimal previous) {
+        if (previous.signum() > 0) {
+            return rounded(current.subtract(previous)
+                    .multiply(ONE_HUNDRED)
+                    .divide(previous, 8, RoundingMode.HALF_UP)
+                    .doubleValue());
+        }
+        return current.signum() == 0 ? 0d : null;
+    }
+
+    private static double rounded(double value) {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
+    private record TrendValue(BigDecimal salesAmount, long orderCount) {
+        private static final TrendValue ZERO = new TrendValue(BigDecimal.ZERO, 0);
     }
 }

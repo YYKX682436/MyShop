@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test:logic": "node --experimental-strip-types --test lib/idempotency.test.mjs lib/payment-channel.test.mjs"
+    "test:logic": "node --experimental-strip-types --test lib/idempotency.test.mjs lib/payment-channel.test.mjs lib/dashboard.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

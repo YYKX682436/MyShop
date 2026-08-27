@@ -54,8 +54,71 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query("SELECT COALESCE(SUM(o.actualAmount), 0) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) AND o.paidAt >= :since")
     BigDecimal sumSalesSince(@Param("since") LocalDateTime since);
 
+    @Query("SELECT COALESCE(SUM(o.actualAmount), 0) FROM Order o WHERE " +
+            "(o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) " +
+            "AND o.paidAt >= :start AND o.paidAt < :end")
+    BigDecimal sumSalesBetween(@Param("start") LocalDateTime start,
+                               @Param("end") LocalDateTime end);
+
     @Query("SELECT COUNT(o) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) AND o.paidAt >= :since")
     long countPaidOrdersSince(@Param("since") LocalDateTime since);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE " +
+            "(o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) " +
+            "AND o.paidAt >= :start AND o.paidAt < :end")
+    long countPaidOrdersBetween(@Param("start") LocalDateTime start,
+                                @Param("end") LocalDateTime end);
+
+    long countByStatus(OrderStatus status);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.status = com.myshop.constant.OrderStatus.DELIVERED " +
+            "AND o.deliveredAt >= :start AND o.deliveredAt < :end")
+    long countDeliveredBetween(@Param("start") LocalDateTime start,
+                               @Param("end") LocalDateTime end);
+
+    @Query("SELECT o.status, COUNT(o) FROM Order o WHERE o.createdAt >= :start AND o.createdAt < :end " +
+            "AND (o.status = com.myshop.constant.OrderStatus.PAID " +
+            "OR o.status = com.myshop.constant.OrderStatus.DELIVERED " +
+            "OR o.status = com.myshop.constant.OrderStatus.EXPIRED) " +
+            "GROUP BY o.status")
+    List<Object[]> countPaymentOutcomesBetween(@Param("start") LocalDateTime start,
+                                               @Param("end") LocalDateTime end);
+
+    @Query("SELECT COUNT(DISTINCT LOWER(TRIM(o.email))) FROM Order o " +
+            "WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR " +
+            "o.status = com.myshop.constant.OrderStatus.DELIVERED) " +
+            "AND o.paidAt >= :start AND o.paidAt < :end " +
+            "AND o.email IS NOT NULL AND TRIM(o.email) <> ''")
+    long countDistinctBuyersBetween(@Param("start") LocalDateTime start,
+                                    @Param("end") LocalDateTime end);
+
+    @Query(value = """
+            SELECT TO_CHAR(DATE_TRUNC('day', o.paid_at), 'YYYY-MM-DD') AS bucket,
+                   COALESCE(SUM(COALESCE(o.actual_amount, 0)), 0) AS sales_amount,
+                   COUNT(o.id) AS order_count
+            FROM orders o
+            WHERE o.status IN ('PAID', 'DELIVERED')
+              AND o.paid_at >= :start
+              AND o.paid_at < :end
+            GROUP BY DATE_TRUNC('day', o.paid_at)
+            ORDER BY DATE_TRUNC('day', o.paid_at)
+            """, nativeQuery = true)
+    List<Object[]> findDailySalesTrend(@Param("start") LocalDateTime start,
+                                       @Param("end") LocalDateTime end);
+
+    @Query(value = """
+            SELECT TO_CHAR(DATE_TRUNC('month', o.paid_at), 'YYYY-MM') AS bucket,
+                   COALESCE(SUM(COALESCE(o.actual_amount, 0)), 0) AS sales_amount,
+                   COUNT(o.id) AS order_count
+            FROM orders o
+            WHERE o.status IN ('PAID', 'DELIVERED')
+              AND o.paid_at >= :start
+              AND o.paid_at < :end
+            GROUP BY DATE_TRUNC('month', o.paid_at)
+            ORDER BY DATE_TRUNC('month', o.paid_at)
+            """, nativeQuery = true)
+    List<Object[]> findMonthlySalesTrend(@Param("start") LocalDateTime start,
+                                         @Param("end") LocalDateTime end);
 
     @Query("SELECT COUNT(o) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED)")
     long countTotalPaidOrders();

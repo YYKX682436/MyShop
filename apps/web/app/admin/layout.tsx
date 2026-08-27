@@ -13,7 +13,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="min-h-screen bg-background">
       <AdminSidebar />
       <main className="md:ml-60 min-h-screen">
-        <div className="p-6 lg:p-8">{children}</div>
+        <div className="p-4 sm:p-6 lg:p-8">{children}</div>
       </main>
     </div>
   )
