@@ -69,9 +69,12 @@ public class DefaultDashboardHealthProbe implements DashboardHealthProbe {
     @Override
     public ServiceHealth probeWeb() {
         try {
+            // A HEAD probe checks that the Web server can accept the request without
+            // downloading the complete server-rendered homepage on every dashboard
+            // refresh. The Docker healthcheck uses the same lightweight semantics.
             HttpRequest request = HttpRequest.newBuilder(webUri)
                     .timeout(Duration.ofMillis(timeoutMillis))
-                    .GET()
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
                     .build();
             HttpResponse<Void> response = httpClient.send(request, HttpResponse.BodyHandlers.discarding());
             int status = response.statusCode();
