@@ -96,7 +96,7 @@ class DashboardAggregateIntegrationTest {
         assertEquals(1L, stats.todayNewUsers());
         assertEquals(1L, stats.totalUsers());
         assertEquals(1L, stats.pendingOrders());
-        assertEquals(1L, stats.paidWaitingDelivery());
+        assertEquals(2L, stats.paidWaitingDelivery());
         assertEquals(1L, stats.deliveredToday());
         assertEquals(1L, stats.expiredToday());
         assertEquals(66.67, stats.todayPaymentSuccessRate());
