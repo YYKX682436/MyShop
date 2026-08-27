@@ -41,7 +41,7 @@ class DefaultDashboardHealthProbeTest {
 
     @Test
     void probeWebUsesHeadAndAcceptsSuccessfulResponse() {
-        ServiceStatus status = probeWeb().status();
+        ServiceStatus status = probeWeb().probeWeb().status();
 
         assertEquals(ServiceStatus.UP, status);
         assertEquals("HEAD", requestMethod.get());
@@ -51,7 +51,7 @@ class DefaultDashboardHealthProbeTest {
     void probeWebTreatsHttpErrorAsDown() {
         responseStatus.set(503);
 
-        ServiceStatus status = probeWeb().status();
+        ServiceStatus status = probeWeb().probeWeb().status();
 
         assertEquals(ServiceStatus.DOWN, status);
         assertEquals("HEAD", requestMethod.get());
