@@ -44,6 +44,10 @@ public class DefaultDashboardHealthProbe implements DashboardHealthProbe {
         this.caddyPort = caddyPort;
         this.timeoutMillis = Math.max(250, Math.min((int) timeoutMillis, 5000));
         this.httpClient = HttpClient.newBuilder()
+                // Next.js serves this internal cleartext endpoint over HTTP/1.1.
+                // The JDK client otherwise prefers HTTP/2 and can receive an EOF
+                // from the Node server before an HTTP/1.1 response is parsed.
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofMillis(this.timeoutMillis))
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
