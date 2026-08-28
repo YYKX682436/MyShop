@@ -1,7 +1,9 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.CardKeyStatus;
+import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
@@ -9,10 +11,10 @@ import com.myshop.exception.BusinessException;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
-import com.myshop.repository.PointsLogRepository;
-import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.EmailService;
+import com.myshop.service.FulfillmentService;
+import com.myshop.service.ManualStockService;
 import com.myshop.utils.LookupTokens;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,16 +43,20 @@ class DeliverServiceImplTest {
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private CardKeyRepository cardKeyRepository;
     @Mock private UserRepository userRepository;
-    @Mock private PointsLogRepository pointsLogRepository;
-    @Mock private SiteConfigRepository siteConfigRepository;
+    @Mock private com.myshop.repository.PointsLogRepository pointsLogRepository;
+    @Mock private com.myshop.repository.SiteConfigRepository siteConfigRepository;
     @Mock private EmailService emailService;
+    @Mock private ManualStockService manualStockService;
 
     private DeliverServiceImpl service;
 
     @BeforeEach
     void setUp() {
+        FulfillmentService fulfillmentService = new FulfillmentTransactionService(orderRepository, orderItemRepository,
+                cardKeyRepository, userRepository, pointsLogRepository, siteConfigRepository, emailService,
+                manualStockService);
         service = new DeliverServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
-                userRepository, pointsLogRepository, siteConfigRepository, emailService);
+                fulfillmentService, manualStockService);
     }
 
     @Test
@@ -70,9 +76,11 @@ class DeliverServiceImplTest {
         CardKey available = new CardKey();
         available.setId(UUID.randomUUID());
         available.setProductId(firstProductId);
-        available.setContent("first-card");
+        available.setContentParts(List.of("first-card"));
+        available.setContentFingerprint("fingerprint");
         available.setStatus(CardKeyStatus.AVAILABLE);
 
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(first, second));
         when(cardKeyRepository.findAndLockAvailable(firstProductId, null, 1)).thenReturn(List.of(available));
@@ -97,7 +105,7 @@ class DeliverServiceImplTest {
         order.setId(orderId);
         order.setStatus(OrderStatus.PAID);
         order.setLookupTokenHash(LookupTokens.hash("correct-token"));
-        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
 
         BusinessException exception = assertThrows(BusinessException.class, () ->
                 service.deliverOrders(Map.of(
@@ -115,8 +123,9 @@ class DeliverServiceImplTest {
         order.setId(orderId);
         order.setStatus(OrderStatus.DELIVERED);
         order.setLookupTokenHash(LookupTokens.hash(lookupToken));
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
-        when(cardKeyRepository.findByOrderId(orderId)).thenReturn(List.of());
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of());
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of());
 
         List<?> result = service.deliverOrders(Map.of(
@@ -136,6 +145,10 @@ class DeliverServiceImplTest {
         item.setProductId(productId);
         item.setProductTitle("Test product");
         item.setQuantity(quantity);
+        item.setDeliveryType("AUTO");
+        item.setStockMode(StockMode.CARD_KEY);
+        item.setFulfillmentStatus(FulfillmentStatus.PENDING);
+        item.setManualStockReserved(0);
         return item;
     }
 }

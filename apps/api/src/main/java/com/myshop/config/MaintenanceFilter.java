@@ -7,6 +7,7 @@ import com.myshop.repository.SiteConfigRepository;
 import com.myshop.utils.JwtUtils;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.*;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -84,13 +85,15 @@ public class MaintenanceFilter implements Filter {
      */
     private boolean isAdminRequest(HttpServletRequest request) {
         try {
-            String header = request.getHeader("Authorization");
-            if (!StringUtils.hasText(header) || !header.startsWith("Bearer ")) {
-                return false;
+            if (request.getCookies() == null) return false;
+            for (Cookie cookie : request.getCookies()) {
+                if (!"myshop_access_token".equals(cookie.getName()) || !StringUtils.hasText(cookie.getValue())) {
+                    continue;
+                }
+                Claims claims = jwtUtils.parseTokenSafe(cookie.getValue());
+                return claims != null && "ADMIN".equals(claims.get("role", String.class));
             }
-            String token = header.substring(7);
-            Claims claims = jwtUtils.parseTokenSafe(token);
-            return claims != null && "ADMIN".equals(claims.get("role", String.class));
+            return false;
         } catch (Exception e) {
             return false;
         }

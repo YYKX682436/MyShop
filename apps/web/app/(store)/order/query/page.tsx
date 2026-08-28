@@ -150,8 +150,8 @@ export default function OrderQueryPage() {
           {delivery?.groups?.length ? <div className="mt-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-base font-semibold"><KeyRound className="h-4 w-4 text-primary" />卡密已发货</h2><button onClick={() => void download()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium"><Download className="h-3.5 w-3.5" />导出</button></div>
             {delivery.groups.map((group, index) => {
-              const deliveryItems = group.delivery_items ?? group.card_keys.map(key => ({ parts: [key] }))
-              const allParts = deliveryItems.flatMap(item => item.parts)
+              const deliveryItems = group.delivery_items ?? []
+              const allParts = deliveryItems.flatMap(item => item.content_parts)
               return <div key={`${group.product_title}-${index}`} className="rounded-lg border border-border p-3">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm font-medium">{group.product_title}{group.spec_name ? ` · ${group.spec_name}` : ""}</div>
@@ -162,7 +162,7 @@ export default function OrderQueryPage() {
                     <div key={`${group.product_title}-${index}-${itemIndex}`} className="rounded-md bg-muted/30 p-2">
                       <div className="mb-1 text-xs text-muted-foreground">卡券 {itemIndex + 1}</div>
                       <div className="space-y-1.5">
-                        {deliveryItem.parts.map((part, partIndex) => (
+                        {deliveryItem.content_parts.map((part, partIndex) => (
                           <div key={`${itemIndex}-${partIndex}`} className="flex items-center justify-between gap-3 rounded bg-background px-3 py-2 font-mono text-xs">
                             <span className="break-all">卡券内容 {partIndex + 1}：{part}</span>
                             <button onClick={() => void copy(part)} aria-label="复制内容" className="shrink-0 text-muted-foreground hover:text-foreground"><Copy className="h-3.5 w-3.5" /></button>

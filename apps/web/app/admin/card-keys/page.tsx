@@ -592,7 +592,7 @@ export default function AdminCardKeysPage() {
                   {detailKeys.map((key) => (
                     <tr key={key.id} className="border-b border-border/50 last:border-0">
                       <td className="px-3 py-2 font-mono text-xs text-foreground break-all">
-                        <CardContentParts parts={key.content_parts} fallback={key.content} onCopy={copyToClipboard} />
+                        <CardContentParts parts={key.content_parts} onCopy={copyToClipboard} />
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         <span className={cn(
@@ -673,7 +673,7 @@ export default function AdminCardKeysPage() {
                   确定要作废以下卡密吗？此操作不可撤销。
                   <br />
                   <code className="mt-1 inline-block rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground break-all">
-                    {singleInvalidateTarget.content}
+                    {singleInvalidateTarget.content_parts.join(" · ")}
                   </code>
                 </p>
               )}

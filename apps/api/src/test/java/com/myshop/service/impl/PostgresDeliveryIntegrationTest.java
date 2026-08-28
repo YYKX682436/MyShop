@@ -13,6 +13,7 @@ import com.myshop.service.ManualStockService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
 import com.myshop.service.WebhookService;
+import com.myshop.utils.CardContentParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -640,9 +641,10 @@ class PostgresDeliveryIntegrationTest {
     private UUID insertCard(UUID productId, String content) {
         UUID cardId = UUID.randomUUID();
         jdbcTemplate.update("""
-                insert into card_keys (id, created_at, updated_at, product_id, content, status)
-                values (?, current_timestamp, current_timestamp, ?, ?, 'AVAILABLE')
-                """, cardId, productId, content);
+                insert into card_keys (id, created_at, updated_at, product_id, content_parts,
+                                       content_fingerprint, status)
+                values (?, current_timestamp, current_timestamp, ?, jsonb_build_array(?), ?, 'AVAILABLE')
+                """, cardId, productId, content, CardContentParser.fingerprint(List.of(content)));
         return cardId;
     }
 

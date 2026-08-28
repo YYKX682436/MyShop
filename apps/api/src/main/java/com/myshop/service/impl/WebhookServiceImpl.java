@@ -9,7 +9,6 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.repository.WebhookEventRepository;
 import com.myshop.service.WebhookService;
-import com.myshop.service.AutoFulfillmentService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -48,21 +47,6 @@ public class WebhookServiceImpl implements WebhookService {
         this.paymentProviders = paymentProviders;
         this.objectMapper = objectMapper;
         this.confirmationService = confirmationService;
-    }
-
-    /** Compatibility seam for the focused callback unit tests. */
-    public WebhookServiceImpl(WebhookEventRepository webhookEventRepository,
-                              OrderRepository orderRepository,
-                              PaymentChannelRepository paymentChannelRepository,
-                              List<PaymentProvider> paymentProviders,
-                              ObjectMapper objectMapper) {
-        this(webhookEventRepository, orderRepository, paymentChannelRepository,
-                paymentProviders, objectMapper,
-                new PaymentConfirmationTransactionService(webhookEventRepository, orderRepository,
-                        new AutoFulfillmentService() {
-                            @Override public void trigger(UUID orderId) { }
-                            @Override public void retryPendingPaidOrders() { }
-                        }, objectMapper));
     }
 
     @Override

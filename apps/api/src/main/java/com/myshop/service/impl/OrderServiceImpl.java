@@ -61,17 +61,6 @@ public class OrderServiceImpl implements OrderService {
         this.manualStockService = manualStockService;
     }
 
-    /** Compatibility constructor retained for focused legacy unit tests. */
-    public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
-                            ProductRepository productRepository, ProductSpecRepository productSpecRepository,
-                            WholesaleRuleRepository wholesaleRuleRepository, CartItemRepository cartItemRepository,
-                            CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
-                            PaymentChannelRepository paymentChannelRepository, PaymentService paymentService) {
-        this(orderRepository, orderItemRepository, productRepository, productSpecRepository,
-                wholesaleRuleRepository, cartItemRepository, cardKeyRepository, siteConfigRepository,
-                paymentChannelRepository, paymentService, new ManualStockService(null));
-    }
-
     @Override
     @Transactional
     public Map<String, Object> createDirectOrder(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
@@ -117,7 +106,7 @@ public class OrderServiceImpl implements OrderService {
 
         List<com.myshop.model.CustomerInputValue> customerInputs =
                 ProductRules.normalizeCustomerInputs(product, req);
-        StockMode stockMode = effectiveStockMode(product);
+        StockMode stockMode = product.getStockMode();
         StockView stock = getStock(product, specId);
         if (!stock.unlimited() && stock.available() < quantity) {
             throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "库存不足",
@@ -228,14 +217,13 @@ public class OrderServiceImpl implements OrderService {
             List<com.myshop.model.CustomerInputValue> inputs;
             try {
                 inputs = ProductRules.normalizeCustomerInputs(product,
-                        ci.getCustomerInputs() == null ? List.of() : ci.getCustomerInputs(),
-                        true, null, false);
+                        ci.getCustomerInputs() == null ? List.of() : ci.getCustomerInputs(), true);
             } catch (BusinessException exception) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST,
                         "商品填写信息已更新，请补充后再结算");
             }
 
-            StockMode stockMode = effectiveStockMode(product);
+            StockMode stockMode = product.getStockMode();
             StockPoolKey poolKey = new StockPoolKey(ci.getProductId(), ci.getSpecId());
             poolQuantities.merge(poolKey, ci.getQuantity(), Integer::sum);
             if (stockMode == StockMode.MANUAL) {
@@ -317,9 +305,6 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public Map<String, Object> getOrderStatus(UUID orderId, String lookupToken, UUID requestUserId) {
-        // The production repository uses a row lock. The fallback keeps the
-        // pre-existing focused unit-test seam (which stubs findById only)
-        // without weakening the real database path.
         Order order = findOrderForStatus(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         authorize(order, lookupToken, requestUserId);
@@ -350,8 +335,10 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    @Transactional
     public Map<String, Object> refreshOrderStatus(UUID orderId, String lookupToken, UUID requestUserId) {
-        // In a real implementation, this would query the payment provider
+        // Refresh currently reuses the locked server-side status read; it does
+        // not contact the payment provider.
         return getOrderStatus(orderId, lookupToken, requestUserId);
     }
 
@@ -541,17 +528,12 @@ public class OrderServiceImpl implements OrderService {
                 }).orElse(defaultValue);
     }
 
-    private StockMode effectiveStockMode(Product product) {
-        return product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
-    }
-
     private Optional<Order> findOrderForStatus(UUID orderId) {
-        Optional<Order> locked = orderRepository.findByIdForUpdate(orderId);
-        return locked.isPresent() ? locked : orderRepository.findById(orderId);
+        return orderRepository.findByIdForUpdate(orderId);
     }
 
     private StockView getStock(Product product, UUID specId) {
-        StockMode stockMode = effectiveStockMode(product);
+        StockMode stockMode = product.getStockMode();
         if (stockMode == StockMode.UNLIMITED) return new StockView(Long.MAX_VALUE, true);
         if (stockMode == StockMode.MANUAL) {
             return new StockView(manualStockService.getAvailable(product.getId(), specId), false);
@@ -571,7 +553,7 @@ public class OrderServiceImpl implements OrderService {
     private void setItemSnapshot(OrderItem item, Product product,
                                  List<com.myshop.model.CustomerInputValue> customerInputs,
                                  int quantity, StockMode stockMode) {
-        item.setDeliveryType(ProductRules.normalizeDeliveryType(product.getDeliveryType(), "AUTO"));
+        item.setDeliveryType(product.getDeliveryType());
         item.setCustomerInputs(customerInputs == null ? List.of() : List.copyOf(customerInputs));
         item.setStockMode(stockMode);
         item.setFulfillmentStatus(FulfillmentStatus.PENDING);

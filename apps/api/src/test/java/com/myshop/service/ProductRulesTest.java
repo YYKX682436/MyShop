@@ -81,6 +81,7 @@ class ProductRulesTest {
         Product product = product(List.of(
                 new CustomerInputField("contact", "联系方式"),
                 new CustomerInputField("note", "备注")));
+        assertThrows(BusinessException.class, () -> ProductRules.normalizeCustomerInputs(product, Map.of()));
         assertThrows(BusinessException.class, () -> ProductRules.normalizeCustomerInputs(product,
                 Map.of("customer_inputs", List.of(Map.of("id", "contact", "value", "x")))));
         assertThrows(BusinessException.class, () -> ProductRules.normalizeCustomerInputs(product,
@@ -102,23 +103,6 @@ class ProductRulesTest {
         Product oneField = product(List.of(new CustomerInputField("contact", "联系方式")));
         assertThrows(BusinessException.class, () -> ProductRules.normalizeCustomerInputs(oneField,
                 Map.of("customer_inputs", List.of(Map.of("id", "contact", "value", "a\nb")))));
-    }
-
-    @Test
-    void legacyScalarIsOnlyAcceptedForExactlyOneCurrentField() {
-        Product product = product(List.of(new CustomerInputField("contact", "联系方式")));
-        assertEquals(List.of(new CustomerInputValue("contact", "联系方式", "legacy")),
-                ProductRules.normalizeCustomerInputs(product, Map.of("customer_input_value", " legacy ")));
-
-        Product noField = product(List.of());
-        assertThrows(BusinessException.class, () -> ProductRules.normalizeCustomerInputs(
-                noField, Map.of("customer_input_value", "legacy")));
-
-        Product twoFields = product(List.of(
-                new CustomerInputField("contact", "联系方式"),
-                new CustomerInputField("account", "账号")));
-        assertThrows(BusinessException.class, () -> ProductRules.normalizeCustomerInputs(
-                twoFields, Map.of("customer_input_value", "legacy")));
     }
 
     @Test
@@ -153,13 +137,13 @@ class ProductRulesTest {
     }
 
     @Test
-    void deliveryAndStockModesHaveCompatibleDefaults() {
+    void deliveryAndStockModesHaveValidDefaults() {
         assertEquals(StockMode.CARD_KEY, ProductRules.parseStockMode(null, StockMode.CARD_KEY));
         assertEquals(StockMode.MANUAL, ProductRules.parseStockMode("manual", StockMode.CARD_KEY));
-        assertEquals(StockMode.CARD_KEY, ProductRules.compatibleStockMode("AUTO", StockMode.CARD_KEY));
-        assertEquals(StockMode.UNLIMITED, ProductRules.compatibleStockMode("MANUAL", StockMode.UNLIMITED));
-        assertThrows(BusinessException.class, () -> ProductRules.compatibleStockMode("AUTO", StockMode.MANUAL));
-        assertThrows(BusinessException.class, () -> ProductRules.compatibleStockMode("MANUAL", StockMode.CARD_KEY));
+        assertEquals(StockMode.CARD_KEY, ProductRules.validateStockMode("AUTO", StockMode.CARD_KEY));
+        assertEquals(StockMode.UNLIMITED, ProductRules.validateStockMode("MANUAL", StockMode.UNLIMITED));
+        assertThrows(BusinessException.class, () -> ProductRules.validateStockMode("AUTO", StockMode.MANUAL));
+        assertThrows(BusinessException.class, () -> ProductRules.validateStockMode("MANUAL", StockMode.CARD_KEY));
     }
 
     private Product product(List<CustomerInputField> fields) {

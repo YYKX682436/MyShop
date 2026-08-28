@@ -113,7 +113,7 @@ public class ProductServiceImpl implements ProductService {
         String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), "AUTO");
         StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
                 "AUTO".equals(deliveryType) ? StockMode.CARD_KEY : StockMode.MANUAL);
-        ProductRules.compatibleStockMode(deliveryType, stockMode);
+        ProductRules.validateStockMode(deliveryType, stockMode);
         product.setDeliveryType(deliveryType);
         product.setCustomerInputFields(ProductRules.normalizeCustomerInputFields(
                 req.getOrDefault("customer_input_fields", List.of())));
@@ -145,12 +145,12 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("base_price")) product.setBasePrice(new BigDecimal(req.get("base_price").toString()));
         if (req.containsKey("currency")) product.setCurrency((String) req.get("currency"));
         String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), product.getDeliveryType());
-        StockMode previousStockMode = product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
+        StockMode previousStockMode = product.getStockMode();
         StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
                 req.containsKey("delivery_type") && !req.containsKey("stock_mode")
                         ? ("AUTO".equals(deliveryType) ? StockMode.CARD_KEY : StockMode.MANUAL)
                         : previousStockMode);
-        ProductRules.compatibleStockMode(deliveryType, stockMode);
+        ProductRules.validateStockMode(deliveryType, stockMode);
         product.setDeliveryType(deliveryType);
         if (req.containsKey("customer_input_fields")) {
             product.setCustomerInputFields(ProductRules.normalizeCustomerInputFields(req.get("customer_input_fields")));
@@ -184,11 +184,11 @@ public class ProductServiceImpl implements ProductService {
 
     @Override
     public Object listSpecs(UUID productId) {
-        StockMode stockMode = productRepository.findById(productId)
-                .map(p -> p.getStockMode() == null ? StockMode.CARD_KEY : p.getStockMode())
-                .orElse(StockMode.CARD_KEY);
+        Product product = productRepository.findById(productId)
+                .filter(p -> p.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
         return productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0).stream()
-                .map(spec -> toSpecMap(spec, stockMode)).toList();
+                .map(spec -> toSpecMap(product, spec)).toList();
     }
 
     @Override
@@ -292,7 +292,7 @@ public class ProductServiceImpl implements ProductService {
     }
 
     private StockView getStock(Product product, UUID specId) {
-        StockMode stockMode = product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
+        StockMode stockMode = product.getStockMode();
         if (stockMode == StockMode.UNLIMITED) return new StockView(null, true);
         if (stockMode == StockMode.MANUAL) {
             return new StockView((long) manualStockService.getAvailable(product.getId(), specId), false);
@@ -314,7 +314,7 @@ public class ProductServiceImpl implements ProductService {
         map.put("category_id", p.getCategoryId());
         List<ProductSpec> specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(p.getId(), 0);
         boolean hasSpecs = p.isSpecEnabled() && !specs.isEmpty();
-        StockMode stockMode = p.getStockMode() == null ? StockMode.CARD_KEY : p.getStockMode();
+        StockMode stockMode = p.getStockMode();
         StockView stock;
         if (hasSpecs) {
             if (stockMode == StockMode.UNLIMITED) {
@@ -345,8 +345,8 @@ public class ProductServiceImpl implements ProductService {
         Map<String, Object> map = new LinkedHashMap<>(toProductCard(p));
         map.put("detail_md", p.getDetailMd());
         List<ProductSpec> specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(p.getId(), 0);
-        StockMode stockMode = p.getStockMode() == null ? StockMode.CARD_KEY : p.getStockMode();
-        map.put("specs", specs.stream().map(spec -> toSpecMap(spec, stockMode)).toList());
+        map.put("specs", specs.stream().map(spec -> toSpecMap(p, spec)).toList());
+        StockMode stockMode = p.getStockMode();
         map.put("spec_enabled", p.isSpecEnabled());
         map.put("wholesale_enabled", p.isWholesaleEnabled());
         map.put("customer_input_fields", ProductRules.currentFields(p));
@@ -361,15 +361,13 @@ public class ProductServiceImpl implements ProductService {
         return map;
     }
 
-    private Map<String, Object> toSpecMap(ProductSpec s, StockMode stockMode) {
+    private Map<String, Object> toSpecMap(Product product, ProductSpec s) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", s.getId());
         map.put("name", s.getName());
         map.put("price", s.getPrice());
-        Product product = productRepository.findById(s.getProductId()).orElse(null);
-        StockView stock = product == null
-                ? new StockView(0L, false)
-                : getStock(product, s.getId());
+        StockMode stockMode = product.getStockMode();
+        StockView stock = getStock(product, s.getId());
         map.put("stock_available", stock.available());
         map.put("unlimited", stock.unlimited());
         map.put("stock_mode", stockMode);

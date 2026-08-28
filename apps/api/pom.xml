@@ -31,7 +31,7 @@
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
         <!-- The existing API contract uses Jackson 2 types. Boot 4 defaults
-             to Jackson 3, so keep the Jackson 2 compatibility module explicit
+             to Jackson 3, so keep the Jackson 2 contract module explicit
              while the application is migrated without changing wire shapes. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

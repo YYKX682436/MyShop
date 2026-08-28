@@ -43,7 +43,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             registry.addMapping("/**")
                     .allowedOriginPatterns("*")
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                    .allowedHeaders("Content-Type", "Authorization", "X-Session-Token")
+                    .allowedHeaders("Content-Type", "X-Session-Token")
                     .exposedHeaders("X-Session-Token")
                     .allowCredentials(false)
                     .maxAge(3600);
@@ -51,7 +51,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             registry.addMapping("/**")
                     .allowedOrigins(origins)
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                    .allowedHeaders("Content-Type", "Authorization", "X-Session-Token")
+                    .allowedHeaders("Content-Type", "X-Session-Token")
                     .exposedHeaders("X-Session-Token")
                     .allowCredentials(true)
                     .maxAge(3600);

@@ -47,18 +47,7 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
 
     long countByProductIdAndSpecIdIsNullAndStatus(UUID productId, CardKeyStatus status);
 
-    List<CardKey> findByOrderId(UUID orderId);
-
     List<CardKey> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
-
-    boolean existsByContentAndProductId(String content, UUID productId);
-
-    @Query("SELECT CASE WHEN COUNT(ck) > 0 THEN true ELSE false END FROM CardKey ck " +
-            "WHERE ck.content = :content AND ck.productId = :productId " +
-            "AND ((:specId IS NULL AND ck.specId IS NULL) OR ck.specId = :specId)")
-    boolean existsByContentAndProductIdAndSpecId(@Param("content") String content,
-                                                 @Param("productId") UUID productId,
-                                                 @Param("specId") UUID specId);
 
     @Query(value = "SELECT content_fingerprint FROM card_keys WHERE product_id = :productId "
             + "AND ((:specId IS NULL AND spec_id IS NULL) OR spec_id = CAST(:specId AS uuid)) "

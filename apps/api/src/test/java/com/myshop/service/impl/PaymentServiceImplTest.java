@@ -10,6 +10,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.EpayService;
+import com.myshop.service.ManualStockService;
 import com.myshop.utils.LookupTokens;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +42,7 @@ class PaymentServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private PaymentProvider provider;
+    @Mock private ManualStockService manualStockService;
 
     private PaymentServiceImpl service;
 
@@ -51,7 +53,7 @@ class PaymentServiceImplTest {
         lenient().when(orderItemRepository.findByOrderId(any())).thenReturn(List.of());
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         service = new PaymentServiceImpl(paymentChannelRepository, orderRepository, orderItemRepository,
-                List.of(provider), new ObjectMapper());
+                List.of(provider), new ObjectMapper(), manualStockService);
     }
 
     @Test

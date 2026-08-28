@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class CardContentParserTest {
 
     @Test
-    void legacySingleContentColumnIsParsed() {
+    void singleContentColumnPreservesAllRows() {
         CardContentParser.ParsedColumns parsed = CardContentParser.parse(List.of("A\nB\nC"));
 
         assertEquals(List.of(List.of("A", "B", "C")), parsed.columns());
@@ -18,7 +18,7 @@ class CardContentParserTest {
     }
 
     @Test
-    void newSingleContentColumnIsParsed() {
+    void singleContentColumnIsParsed() {
         CardContentParser.ParsedColumns parsed = CardContentParser.parse(List.of("A\nB"));
 
         assertEquals(List.of(List.of("A"), List.of("B")), parsed.rows());

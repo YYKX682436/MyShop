@@ -21,6 +21,7 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.WholesaleRuleRepository;
+import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,6 +61,7 @@ class OrderServiceImplTest {
     @Mock private SiteConfigRepository siteConfigRepository;
     @Mock private PaymentChannelRepository paymentChannelRepository;
     @Mock private PaymentService paymentService;
+    @Mock private ManualStockService manualStockService;
 
     private OrderServiceImpl service;
 
@@ -67,7 +69,7 @@ class OrderServiceImplTest {
     void setUp() {
         service = new OrderServiceImpl(orderRepository, orderItemRepository, productRepository,
                 productSpecRepository, wholesaleRuleRepository, cartItemRepository, cardKeyRepository,
-                siteConfigRepository, paymentChannelRepository, paymentService);
+                siteConfigRepository, paymentChannelRepository, paymentService, manualStockService);
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
         lenient().when(orderRepository.countByClientIpAndStatus(anyString(), eq(OrderStatus.PENDING))).thenReturn(0L);
@@ -198,7 +200,7 @@ class OrderServiceImplTest {
         order.setOrderType(OrderType.DIRECT);
         order.setExpiresAt(LocalDateTime.now().plusMinutes(10));
         order.setLookupTokenHash(com.myshop.utils.LookupTokens.hash(lookupToken));
-        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
 
         BusinessException noCredential = assertThrows(BusinessException.class,
                 () -> service.getOrderStatus(orderId, null, null));

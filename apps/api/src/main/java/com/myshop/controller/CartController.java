@@ -41,7 +41,7 @@ public class CartController {
             @RequestHeader(value = "X-Session-Token", required = false) String sessionToken,
             @RequestBody Map<String, Object> request) {
         int quantity = ((Number) request.get("quantity")).intValue();
-        if (request.containsKey("customer_inputs") || request.containsKey("customer_input_value")) {
+        if (request.containsKey("customer_inputs")) {
             cartService.updateItem(RequestContext.getUserId(), sessionToken, id, quantity, request);
         } else {
             cartService.updateItem(RequestContext.getUserId(), sessionToken, id, quantity);

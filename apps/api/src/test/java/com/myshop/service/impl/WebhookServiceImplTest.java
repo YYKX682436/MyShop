@@ -8,6 +8,7 @@ import com.myshop.payment.PaymentProvider;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.repository.WebhookEventRepository;
+import com.myshop.service.AutoFulfillmentService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,14 +36,18 @@ class WebhookServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private PaymentChannelRepository paymentChannelRepository;
     @Mock private PaymentProvider provider;
+    @Mock private AutoFulfillmentService autoFulfillmentService;
 
     private WebhookServiceImpl service;
 
     @BeforeEach
     void setUp() {
         when(provider.id()).thenReturn("epay");
+        ObjectMapper objectMapper = new ObjectMapper();
+        PaymentConfirmationTransactionService confirmationService = new PaymentConfirmationTransactionService(
+                webhookEventRepository, orderRepository, autoFulfillmentService, objectMapper);
         service = new WebhookServiceImpl(webhookEventRepository, orderRepository,
-                paymentChannelRepository, List.of(provider), new ObjectMapper());
+                paymentChannelRepository, List.of(provider), objectMapper, confirmationService);
     }
 
     @Test

@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from "react"
 import { type Locale, getDictionary, type TranslationKey } from "./i18n"
 import type { UserProfile, CartItem, SiteConfig } from "@/types"
-import { clearToken, clearSessionToken, cartApi, siteApi, currencyApi, userApi, authApi, requestOrThrow } from "@/services/api"
+import { cartApi, siteApi, currencyApi, userApi, authApi, requestOrThrow } from "@/services/api"
 import { initCurrencySymbols } from "./utils"
 
 // ============================================================
@@ -319,7 +319,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void authApi.logout().catch(() => undefined)
-    clearToken()
     setUser(null)
   }, [setUser])
 

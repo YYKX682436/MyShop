@@ -84,10 +84,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private String extractToken(HttpServletRequest request) {
-        String header = request.getHeader("Authorization");
-        if (StringUtils.hasText(header) && header.startsWith("Bearer ")) {
-            return header.substring(7);
-        }
         if (request.getCookies() != null) {
             for (var cookie : request.getCookies()) {
                 if ("myshop_access_token".equals(cookie.getName()) && StringUtils.hasText(cookie.getValue())) {

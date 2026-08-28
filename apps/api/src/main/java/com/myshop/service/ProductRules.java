@@ -50,44 +50,28 @@ public final class ProductRules {
         return List.copyOf(result);
     }
 
-    /** Accept the structured request and the temporary one-field legacy request. */
+    /** Normalize the structured customer_inputs request against current fields. */
     public static List<CustomerInputValue> normalizeCustomerInputs(Product product,
                                                                      Map<String, Object> request) {
-        boolean structured = request.containsKey("customer_inputs");
-        boolean legacy = request.containsKey("customer_input_value");
-        return normalizeCustomerInputs(product,
-                structured ? request.get("customer_inputs") : null,
-                structured,
-                legacy ? request.get("customer_input_value") : null,
-                legacy);
+        return normalizeCustomerInputs(product, request.get("customer_inputs"),
+                request.containsKey("customer_inputs"));
     }
 
     public static List<CustomerInputValue> normalizeCustomerInputs(Product product,
                                                                      Object rawInputs,
-                                                                     boolean structuredProvided,
-                                                                     Object legacyValue,
-                                                                     boolean legacyProvided) {
+                                                                     boolean structuredProvided) {
         List<CustomerInputField> fields = currentFields(product);
-        Object effectiveInputs = rawInputs;
-        if (!structuredProvided && legacyProvided) {
-            String legacy = legacyValue == null ? "" : String.valueOf(legacyValue);
-            if (fields.size() != 1) {
-                if (legacy.isBlank() && fields.isEmpty()) return List.of();
-                throw bad("旧版客户填写信息仅支持当前商品恰好一个字段");
-            }
-            effectiveInputs = List.of(Map.of("id", fields.get(0).id(), "value", legacy));
-        }
 
         if (fields.isEmpty()) {
-            if (!structuredProvided || effectiveInputs == null) return List.of();
-            if (!(effectiveInputs instanceof List<?> list) || !list.isEmpty()) {
+            if (!structuredProvided || rawInputs == null) return List.of();
+            if (!(rawInputs instanceof List<?> list) || !list.isEmpty()) {
                 throw bad("该商品无需填写客户信息");
             }
             return List.of();
         }
-        if (!structuredProvided && !legacyProvided) throw bad("请完整填写商品所需信息");
+        if (!structuredProvided) throw bad("请完整填写商品所需信息");
 
-        List<?> list = asList(effectiveInputs, "客户填写信息必须是数组");
+        List<?> list = asList(rawInputs, "客户填写信息必须是数组");
         if (list.size() != fields.size()) throw bad("请完整填写商品所需信息");
 
         Map<String, String> valuesById = new HashMap<>();
@@ -117,7 +101,7 @@ public final class ProductRules {
         return List.copyOf(result);
     }
 
-    /** Render known values for an outdated cart; checkout still uses strict validation. */
+    /** Render stored cart values after product fields change; checkout remains strict. */
     public static List<CustomerInputValue> knownCustomerInputs(Product product, Object rawInputs) {
         List<CustomerInputField> fields = currentFields(product);
         if (!(rawInputs instanceof List<?> list) || list.isEmpty()) return List.of();
@@ -136,7 +120,7 @@ public final class ProductRules {
             try {
                 valuesById.put(id, validateValue(value));
             } catch (BusinessException ignored) {
-                // Invalid historical values are intentionally rendered as incomplete.
+                // Invalid stored values are intentionally rendered as incomplete.
             }
         }
         List<CustomerInputValue> result = new ArrayList<>();
@@ -149,7 +133,7 @@ public final class ProductRules {
 
     public static boolean hasCompleteCustomerInputs(Product product, Object rawInputs) {
         try {
-            normalizeCustomerInputs(product, rawInputs, true, null, false);
+            normalizeCustomerInputs(product, rawInputs, true);
             return true;
         } catch (BusinessException exception) {
             return false;
@@ -200,7 +184,7 @@ public final class ProductRules {
         return value;
     }
 
-    public static StockMode compatibleStockMode(String deliveryType, StockMode requested) {
+    public static StockMode validateStockMode(String deliveryType, StockMode requested) {
         if ("AUTO".equals(deliveryType) && requested != StockMode.CARD_KEY) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "自动发货商品只能使用卡券库存");
         }

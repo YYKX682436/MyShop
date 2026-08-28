@@ -8,8 +8,4 @@ public interface EmailService {
     /** Send only the newly completed automatic order items when supplied. */
     void sendDeliveryEmail(UUID orderId, String lookupToken, List<UUID> orderItemIds);
 
-    /** Compatibility seam for old callers; an empty selection means all keys. */
-    default void sendDeliveryEmail(UUID orderId, String lookupToken) {
-        sendDeliveryEmail(orderId, lookupToken, List.of());
-    }
 }

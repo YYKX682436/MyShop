@@ -1,7 +1,6 @@
 package com.myshop.service.impl;
 
 import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,9 +13,12 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers(disabledWithoutDocker = true)
@@ -38,89 +40,137 @@ class MigrationChainIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         jdbcTemplate = new JdbcTemplate(dataSource());
-        flyway(null).clean();
+        flyway().clean();
     }
 
     @Test
-    void cleanV1ToV5CreatesStructuredColumns() {
-        flyway(null).migrate();
+    void freshDatabaseBuildsCompleteCurrentBaselineWithoutHistoricalColumns() {
+        Flyway flyway = flyway();
+        flyway.migrate();
 
-        assertEquals("5", flyway(null).info().current().getVersion().getVersion());
+        assertEquals("1", flyway.info().current().getVersion().getVersion());
+        assertEquals(1, flyway.info().all().length);
+        for (String table : List.of(
+                "users", "product_categories", "products", "product_specs", "wholesale_rules",
+                "card_import_batches", "orders", "order_items", "card_keys", "cart_items",
+                "payment_channels", "currencies", "site_configs", "points_logs", "operation_logs",
+                "visit_stats", "webhook_events", "manual_stocks")) {
+            assertTrue(tableExists(table), "missing table: " + table);
+        }
+
+        assertTrue(columnExists("products", "delivery_type"));
         assertTrue(columnExists("products", "customer_input_fields"));
+        assertTrue(columnExists("products", "stock_mode"));
         assertTrue(columnExists("cart_items", "customer_inputs"));
         assertTrue(columnExists("order_items", "customer_inputs"));
         assertTrue(columnExists("order_items", "delivery_notified_at"));
+        assertTrue(columnExists("card_keys", "content_parts"));
+        assertTrue(columnExists("card_keys", "content_fingerprint"));
+
+        assertFalse(columnExists("products", "customer_input_type"));
+        assertFalse(columnExists("cart_items", "customer_input_value"));
+        assertFalse(columnExists("order_items", "customer_input_type"));
+        assertFalse(columnExists("order_items", "customer_input_value"));
+        assertFalse(columnExists("card_keys", "content"));
+
+        for (String[] column : List.of(
+                new String[]{"products", "currency"},
+                new String[]{"products", "delivery_type"},
+                new String[]{"products", "customer_input_fields"},
+                new String[]{"products", "stock_mode"},
+                new String[]{"order_items", "delivery_type"},
+                new String[]{"order_items", "customer_inputs"},
+                new String[]{"order_items", "stock_mode"},
+                new String[]{"order_items", "fulfillment_status"},
+                new String[]{"cart_items", "customer_inputs"})) {
+            assertEquals("NO", nullableValue(column[0], column[1]),
+                    column[0] + "." + column[1] + " must be required");
+        }
+        assertNotNull(defaultValue("products", "currency"));
+        assertNotNull(defaultValue("products", "delivery_type"));
+        assertNotNull(defaultValue("products", "customer_input_fields"));
+        assertNotNull(defaultValue("products", "stock_mode"));
+        assertNotNull(defaultValue("order_items", "customer_inputs"));
+        assertNotNull(defaultValue("cart_items", "customer_inputs"));
+
+        assertTrue(indexExists("idx_card_keys_pool_fingerprint"));
+        assertTrue(indexExists("idx_card_keys_available_pool"));
+        assertFalse(indexExists("uq_card_key_pool_content"));
     }
 
     @Test
-    void V4DataUpgradesToV5AndPreservesLegacyLabels() {
-        flyway("4").migrate();
+    void currentJsonColumnsStoreEmptySingleAndMultipleValuesWithoutCompactingOrder() {
+        flyway().migrate();
         UUID categoryId = UUID.randomUUID();
         UUID productId = UUID.randomUUID();
         UUID orderId = UUID.randomUUID();
         UUID orderItemId = UUID.randomUUID();
-        UUID cartItemId = UUID.randomUUID();
-        UUID phoneProductId = UUID.randomUUID();
-        UUID eitherProductId = UUID.randomUUID();
-        UUID noneProductId = UUID.randomUUID();
 
         jdbcTemplate.update("""
-                insert into product_categories (id, created_at, updated_at, name, sort_order, is_deleted)
-                values (?, current_timestamp, current_timestamp, 'migration-category', 0, 0)
+                INSERT INTO product_categories(id, name)
+                VALUES (?, 'baseline-category')
                 """, categoryId);
         jdbcTemplate.update("""
-                insert into products (id, created_at, updated_at, title, base_price, category_id,
-                    delivery_type, customer_input_type, stock_mode, is_enabled, is_deleted)
-                values (?, current_timestamp, current_timestamp, 'migration-product', 10.00, ?,
-                    'AUTO', 'QQ', 'CARD_KEY', true, 0)
-                """, productId, categoryId);
-        insertLegacyProduct(phoneProductId, categoryId, "PHONE");
-        insertLegacyProduct(eitherProductId, categoryId, "QQ_OR_PHONE");
-        insertLegacyProduct(noneProductId, categoryId, "NONE");
+                INSERT INTO products(id, title, base_price, category_id, customer_input_fields)
+                VALUES (?, 'baseline-product', 10.00, ?, ?::jsonb)
+                """, productId, categoryId,
+                "[{\"id\":\"account\",\"label\":\"账号\"},{\"id\":\"zone\",\"label\":\"区服\"}]");
         jdbcTemplate.update("""
-                insert into orders (id, created_at, updated_at, total_amount, actual_amount, status, order_type)
-                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING', 'DIRECT')
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'DIRECT')
                 """, orderId);
         jdbcTemplate.update("""
-                insert into order_items (id, created_at, updated_at, order_id, product_id, product_title,
-                    quantity, unit_price, subtotal, delivery_type, customer_input_type,
-                    customer_input_value, stock_mode, fulfillment_status, manual_stock_reserved)
-                values (?, current_timestamp, current_timestamp, ?, ?, 'migration-product', 1, 10.00, 10.00,
-                    'AUTO', 'PHONE', '13800138000', 'CARD_KEY', 'PENDING', 0)
-                """, orderItemId, orderId, productId);
+                INSERT INTO order_items(id, order_id, product_id, product_title, quantity, unit_price, subtotal,
+                                        customer_inputs)
+                VALUES (?, ?, ?, 'baseline-product', 1, 10.00, 10.00, ?::jsonb)
+                """, orderItemId, orderId, productId, "[]");
         jdbcTemplate.update("""
-                insert into cart_items (id, created_at, updated_at, session_token, product_id,
-                    customer_input_value, quantity)
-                values (?, current_timestamp, current_timestamp, 'migration-session', ?, 'legacy-qq', 1)
-                """, cartItemId, productId);
+                INSERT INTO cart_items(id, session_token, product_id, customer_inputs, quantity)
+                VALUES (?, 'baseline-session', ?, ?::jsonb, 1)
+                """, UUID.randomUUID(), productId, "[{\"id\":\"account\",\"label\":\"账号\",\"value\":\"A\"}]");
+        jdbcTemplate.update("""
+                INSERT INTO cart_items(id, session_token, product_id, customer_inputs, quantity)
+                VALUES (?, 'baseline-session-2', ?, ?::jsonb, 1)
+                """, UUID.randomUUID(), productId,
+                "[{\"id\":\"account\",\"label\":\"账号\",\"value\":\"A\"},\n {\"id\":\"zone\",\"label\":\"区服\",\"value\":\"Z\"}]");
 
-        flyway(null).migrate();
+        jdbcTemplate.update("""
+                INSERT INTO card_keys(id, product_id, content_parts, content_fingerprint, status)
+                VALUES (?, ?, ?::jsonb, 'single-fingerprint', 'AVAILABLE')
+                """, UUID.randomUUID(), productId, "[\"single\"]");
+        jdbcTemplate.update("""
+                INSERT INTO card_keys(id, product_id, content_parts, content_fingerprint, status)
+                VALUES (?, ?, ?::jsonb, 'multi-fingerprint', 'AVAILABLE')
+                """, UUID.randomUUID(), productId, "[\"username\",\"password\"]");
 
-        assertEquals("QQ号码", jdbcTemplate.queryForObject(
-                "select customer_input_fields->0->>'label' from products where id = ?", String.class, productId));
-        assertEquals("手机号", jdbcTemplate.queryForObject(
-                "select customer_input_fields->0->>'label' from products where id = ?", String.class, phoneProductId));
-        assertEquals("QQ或手机号", jdbcTemplate.queryForObject(
-                "select customer_input_fields->0->>'label' from products where id = ?", String.class, eitherProductId));
         assertEquals(0, jdbcTemplate.queryForObject(
-                "select jsonb_array_length(customer_input_fields) from products where id = ?", Integer.class, noneProductId));
-        assertEquals("QQ号码", jdbcTemplate.queryForObject(
-                "select customer_inputs->0->>'label' from cart_items where id = ?", String.class, cartItemId));
-        assertEquals("legacy-qq", jdbcTemplate.queryForObject(
-                "select customer_inputs->0->>'value' from cart_items where id = ?", String.class, cartItemId));
-        assertEquals("手机号", jdbcTemplate.queryForObject(
-                "select customer_inputs->0->>'label' from order_items where id = ?", String.class, orderItemId));
-        assertEquals("13800138000", jdbcTemplate.queryForObject(
-                "select customer_inputs->0->>'value' from order_items where id = ?", String.class, orderItemId));
+                "SELECT jsonb_array_length(customer_inputs) FROM order_items WHERE id = ?",
+                Integer.class, orderItemId));
+        assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT jsonb_array_length(customer_input_fields) FROM products WHERE id = ?",
+                Integer.class, productId));
+        assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM cart_items WHERE product_id = ?", Integer.class, productId));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT jsonb_array_length(content_parts) FROM card_keys WHERE content_fingerprint = 'single-fingerprint'",
+                Integer.class));
+        assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT jsonb_array_length(content_parts) FROM card_keys WHERE content_fingerprint = 'multi-fingerprint'",
+                Integer.class));
+        assertEquals("username", jdbcTemplate.queryForObject(
+                "SELECT content_parts->>0 FROM card_keys WHERE content_fingerprint = 'multi-fingerprint'",
+                String.class));
+        assertEquals("password", jdbcTemplate.queryForObject(
+                "SELECT content_parts->>1 FROM card_keys WHERE content_fingerprint = 'multi-fingerprint'",
+                String.class));
     }
 
-    private Flyway flyway(String target) {
-        var configuration = Flyway.configure()
+    private Flyway flyway() {
+        return Flyway.configure()
                 .dataSource(dataSource())
                 .locations("classpath:db/migration")
-                .cleanDisabled(false);
-        if (target != null) configuration.target(MigrationVersion.fromVersion(target));
-        return configuration.load();
+                .cleanDisabled(false)
+                .load();
     }
 
     private DriverManagerDataSource dataSource() {
@@ -132,20 +182,41 @@ class MigrationChainIntegrationTest {
         return dataSource;
     }
 
-    private void insertLegacyProduct(UUID productId, UUID categoryId, String customerInputType) {
-        jdbcTemplate.update("""
-                insert into products (id, created_at, updated_at, title, base_price, category_id,
-                    delivery_type, customer_input_type, stock_mode, is_enabled, is_deleted)
-                values (?, current_timestamp, current_timestamp, ?, 10.00, ?,
-                    'AUTO', ?, 'CARD_KEY', true, 0)
-                """, productId, "legacy-" + customerInputType, categoryId, customerInputType);
+    private boolean tableExists(String table) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = ?
+                """, Integer.class, table);
+        return count != null && count == 1;
     }
 
     private boolean columnExists(String table, String column) {
         Integer count = jdbcTemplate.queryForObject("""
-                select count(*) from information_schema.columns
-                where table_schema = 'public' and table_name = ? and column_name = ?
+                SELECT count(*) FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
                 """, Integer.class, table, column);
+        return count != null && count == 1;
+    }
+
+    private String nullableValue(String table, String column) {
+        return jdbcTemplate.queryForObject("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                """, String.class, table, column);
+    }
+
+    private String defaultValue(String table, String column) {
+        return jdbcTemplate.queryForObject("""
+                SELECT column_default FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                """, String.class, table, column);
+    }
+
+    private boolean indexExists(String index) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM pg_indexes
+                WHERE schemaname = 'public' AND indexname = ?
+                """, Integer.class, index);
         return count != null && count == 1;
     }
 }

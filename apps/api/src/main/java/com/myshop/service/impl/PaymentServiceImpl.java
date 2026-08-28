@@ -56,16 +56,6 @@ public class PaymentServiceImpl implements PaymentService {
         this.manualStockService = manualStockService;
     }
 
-    /** Compatibility constructor retained for focused payment unit tests. */
-    public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
-                              OrderRepository orderRepository,
-                              OrderItemRepository orderItemRepository,
-                              List<PaymentProvider> paymentProviders,
-                              ObjectMapper objectMapper) {
-        this(paymentChannelRepository, orderRepository, orderItemRepository,
-                paymentProviders, objectMapper, new ManualStockService(null));
-    }
-
     @Override
     public Map<String, Object> createPayment(UUID orderId, String paymentMethod, BigDecimal amount) {
         return createPayment(orderId, paymentMethod, amount, null);

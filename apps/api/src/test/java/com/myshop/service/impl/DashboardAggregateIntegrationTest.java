@@ -18,6 +18,7 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.myshop.utils.CardContentParser;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -152,9 +153,11 @@ class DashboardAggregateIntegrationTest {
 
     private void insertCard(UUID productId, String content, String status, LocalDateTime createdAt) {
         jdbcTemplate.update("""
-                INSERT INTO card_keys(id, created_at, updated_at, product_id, content, status)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), createdAt, createdAt, productId, content, status);
+                INSERT INTO card_keys(id, created_at, updated_at, product_id, content_parts,
+                                      content_fingerprint, status)
+                VALUES (?, ?, ?, ?, jsonb_build_array(?), ?, ?)
+                """, UUID.randomUUID(), createdAt, createdAt, productId, content,
+                CardContentParser.fingerprint(List.of(content)), status);
     }
 
     private UUID insertOrder(String status, String email, LocalDateTime createdAt,

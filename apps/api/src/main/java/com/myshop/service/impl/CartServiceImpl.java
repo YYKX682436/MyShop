@@ -135,7 +135,7 @@ public class CartServiceImpl implements CartService {
 
         List<CustomerInputValue> customerInputs = item.getCustomerInputs() == null
                 ? List.of() : item.getCustomerInputs();
-        if (request.containsKey("customer_inputs") || request.containsKey("customer_input_value")) {
+        if (request.containsKey("customer_inputs")) {
             customerInputs = ProductRules.normalizeCustomerInputs(product, request);
         }
 
@@ -220,8 +220,7 @@ public class CartServiceImpl implements CartService {
         map.put("quantity", item.getQuantity());
         map.put("subtotal", unitPrice.multiply(BigDecimal.valueOf(item.getQuantity())));
 
-        StockMode stockMode = product == null || product.getStockMode() == null
-                ? StockMode.CARD_KEY : product.getStockMode();
+        StockMode stockMode = product == null ? StockMode.CARD_KEY : product.getStockMode();
         StockView stock = product == null ? new StockView(0, false) : getStock(product, item.getSpecId());
         int otherInPool = poolTotals.getOrDefault(new StockPoolKey(item.getProductId(), item.getSpecId()), 0)
                 - item.getQuantity();
@@ -306,7 +305,7 @@ public class CartServiceImpl implements CartService {
     }
 
     private StockView getStock(Product product, UUID specId) {
-        StockMode stockMode = product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
+        StockMode stockMode = product.getStockMode();
         if (stockMode == StockMode.UNLIMITED) return new StockView(Long.MAX_VALUE, true);
         if (stockMode == StockMode.MANUAL) {
             return new StockView(manualStockService.getAvailable(product.getId(), specId), false);

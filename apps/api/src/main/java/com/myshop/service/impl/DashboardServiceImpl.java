@@ -21,7 +21,6 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -43,17 +42,6 @@ public class DashboardServiceImpl implements DashboardService {
     private final VisitStatsRepository visitStatsRepository;
     private final UserRepository userRepository;
     private final Clock clock;
-
-    /** Compatibility constructor for non-Spring callers; production wiring injects the Clock bean below. */
-    public DashboardServiceImpl(OrderRepository orderRepository,
-                                OrderItemRepository orderItemRepository,
-                                ProductRepository productRepository,
-                                CardKeyRepository cardKeyRepository,
-                                VisitStatsRepository visitStatsRepository,
-                                UserRepository userRepository) {
-        this(orderRepository, orderItemRepository, productRepository, cardKeyRepository,
-                visitStatsRepository, userRepository, Clock.system(ZoneId.of("Asia/Shanghai")));
-    }
 
     @Autowired
     public DashboardServiceImpl(OrderRepository orderRepository,
@@ -114,7 +102,7 @@ public class DashboardServiceImpl implements DashboardService {
                 ? 0
                 : (double) successfulPayments / paymentSampleCount * 100;
 
-        // One grouped PostgreSQL read replaces the old product loop plus one
+        // One grouped PostgreSQL read replaces the per-product loop plus one
         // stock count per product. It selects the source by stock mode;
         // unlimited products return NULL and are excluded from both counters.
         List<Object[]> stockRows = safeRows(productRepository.findActiveProductStockSummaries());

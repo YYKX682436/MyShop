@@ -10,6 +10,7 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -26,15 +27,11 @@ public class CardKey extends BaseEntity {
 
     private UUID specId;
 
-    @Column(nullable = false, columnDefinition = "TEXT")
-    private String content;
-
-    /** Ordered JSON array. Empty legacy rows are read through content. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "content_parts", nullable = false, columnDefinition = "jsonb")
-    private List<String> contentParts;
+    private List<String> contentParts = new ArrayList<>();
 
-    @Column(name = "content_fingerprint", length = 64)
+    @Column(name = "content_fingerprint", nullable = false, length = 64)
     private String contentFingerprint;
 
     @Enumerated(EnumType.STRING)
@@ -49,10 +46,4 @@ public class CardKey extends BaseEntity {
 
     private LocalDateTime soldAt;
 
-    public List<String> resolvedContentParts() {
-        if (contentParts != null && !contentParts.isEmpty()) {
-            return List.copyOf(contentParts);
-        }
-        return content == null ? List.of() : List.of(content);
-    }
 }

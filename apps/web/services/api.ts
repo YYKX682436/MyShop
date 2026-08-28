@@ -58,32 +58,14 @@ class ApiError extends Error {
   }
 }
 
-// ============================================================
-// Browser auth uses HttpOnly cookies. The bearer functions remain as no-op
-// compatibility shims for older UI modules and never persist credentials.
-// ============================================================
-
-function getToken(): string | null {
-  return null
-}
-
-export function setToken(token: string) {
-  void token
-}
-
-export function clearToken() {
-  // The server clears the HttpOnly cookie through /auth/logout.
-}
-
 /**
- * JWT 过期/无效时：清除本地登录态，跳转登录页
+ * JWT 过期/无效时：跳转登录页；HttpOnly 登录 Cookie 由服务端控制
  * 使用防抖避免多个并发请求同时触发多次跳转
  */
 let redirecting = false
 function handleUnauthorized() {
   if (typeof window === "undefined" || redirecting) return
   redirecting = true
-  clearToken()
   const currentPath = window.location.pathname
   // 已经在登录页则不再跳转
   if (currentPath === "/login") {
@@ -204,21 +186,18 @@ async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   }
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`
-  }
   const method = (options.method || "GET").toUpperCase()
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
     const csrf = getCsrfToken()
     if (csrf) headers["X-CSRF-Token"] = csrf
   }
-  // 始终发送 session token（购物车等功能需要：JWT 无效/过期时作为身份回退）
+  // Session token only owns the guest cart/order flow; authentication remains
+  // exclusively in the HttpOnly access cookie.
   const sessionToken = getSessionToken()
   if (sessionToken) {
     headers["X-Session-Token"] = sessionToken
@@ -266,11 +245,7 @@ async function request<T>(
 }
 
 async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
-  const token = getToken()
   const headers: Record<string, string> = {}
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`
-  }
   const csrf = getCsrfToken()
   if (csrf) headers["X-CSRF-Token"] = csrf
   const sessionToken = getSessionToken()
@@ -545,7 +520,7 @@ export const adminCardKeyApi = {
     const qs = buildQuery(params ?? {})
     return request<CardKeyStockSummary[]>(`/admin/card-keys/stock?${qs}`)
   },
-  import: (data: { product_id: string; spec_id?: string | null; content_columns?: string[]; content?: string; check_duplicate?: boolean }) =>
+  import: (data: { product_id: string; spec_id?: string | null; content_columns?: string[]; check_duplicate?: boolean }) =>
     request<CardImportBatch>("/admin/card-keys/import", { method: "POST", body: JSON.stringify(data) }),
   getImportBatches: (params: { product_id?: string; page?: number; page_size?: number }) => {
     const qs = buildQuery(params)

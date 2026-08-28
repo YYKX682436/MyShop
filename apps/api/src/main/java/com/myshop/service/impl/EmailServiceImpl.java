@@ -70,7 +70,6 @@ public class EmailServiceImpl implements EmailService {
 
             List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
             List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
-            if (keys == null || keys.isEmpty()) keys = cardKeyRepository.findByOrderId(orderId);
             Set<UUID> selected = orderItemIds == null ? Set.of() : new LinkedHashSet<>(orderItemIds);
             Map<UUID, OrderItem> itemMap = items.stream()
                     .filter(item -> selected.isEmpty() || selected.contains(item.getId()))
@@ -181,7 +180,7 @@ public class EmailServiceImpl implements EmailService {
             }
             for (int cardIndex = 0; cardIndex < itemKeys.size(); cardIndex++) {
                 CardKey key = itemKeys.get(cardIndex);
-                List<String> parts = key.resolvedContentParts();
+                        List<String> parts = key.getContentParts();
                 sb.append("<div style=\"margin-bottom:10px;padding:8px 0 2px;color:#666;font-size:12px;\">第 ")
                   .append(cardIndex + 1).append(" 份</div>");
                 for (int partIndex = 0; partIndex < parts.size(); partIndex++) {

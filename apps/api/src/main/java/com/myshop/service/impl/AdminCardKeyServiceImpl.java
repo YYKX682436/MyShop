@@ -55,7 +55,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
                 Object defaultTotalValue = defaultEntry.get("total");
                 long defaultTotal = defaultTotalValue instanceof Number number ? number.longValue() : 0;
                 // 如果默认池有卡密，或者商品没有任何规格，则显示默认池条目
-                if (defaultTotal > 0 || specs.isEmpty() || effectiveStockMode(p) != StockMode.CARD_KEY) {
+                if (defaultTotal > 0 || specs.isEmpty() || p.getStockMode() != StockMode.CARD_KEY) {
                     defaultEntry.put("spec_enabled", p.isSpecEnabled());
                     result.add(defaultEntry);
                 }
@@ -88,8 +88,8 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
                 .filter(p -> p.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
 
-        if (effectiveStockMode(product) != StockMode.CARD_KEY
-                || !"AUTO".equalsIgnoreCase(product.getDeliveryType() == null ? "AUTO" : product.getDeliveryType())) {
+        if (product.getStockMode() != StockMode.CARD_KEY
+                || !"AUTO".equalsIgnoreCase(product.getDeliveryType())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只有自动发货的卡券库存商品可以导入卡密");
         }
 
@@ -139,7 +139,6 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             CardKey key = new CardKey();
             key.setProductId(productId);
             key.setSpecId(specId);
-            key.setContent(parts.get(0));
             key.setContentParts(List.copyOf(parts));
             key.setContentFingerprint(fingerprint);
             key.setStatus(CardKeyStatus.AVAILABLE);
@@ -227,9 +226,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("card_key_id", k.getId());
             map.put("order_item_id", k.getOrderItemId());
-            List<String> parts = k.resolvedContentParts();
-            map.put("content", parts.isEmpty() ? null : parts.get(0));
-            map.put("content_parts", parts);
+            map.put("content_parts", List.copyOf(k.getContentParts()));
             OrderItem item = k.getOrderItemId() != null ? itemMap.get(k.getOrderItemId()) : null;
             map.put("product_title", item != null ? item.getProductTitle() : null);
             map.put("spec_name", item != null ? item.getSpecName() : null);
@@ -245,9 +242,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         var list = keyPage.getContent().stream().map(k -> {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("id", k.getId());
-            List<String> parts = k.resolvedContentParts();
-            map.put("content", parts.isEmpty() ? null : parts.get(0));
-            map.put("content_parts", parts);
+            map.put("content_parts", List.copyOf(k.getContentParts()));
             map.put("status", k.getStatus().name());
             map.put("order_id", k.getOrderId());
             map.put("created_at", k.getCreatedAt());
@@ -260,7 +255,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
     private Map<String, Object> buildStockEntry(Product product, UUID specId, String specName) {
         UUID productId = product.getId();
         String productTitle = product.getTitle();
-        StockMode stockMode = effectiveStockMode(product);
+        StockMode stockMode = product.getStockMode();
         if (stockMode == StockMode.UNLIMITED) {
             Map<String, Object> unlimited = new LinkedHashMap<>();
             unlimited.put("product_id", productId);
@@ -329,8 +324,6 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         if (rawColumns instanceof List<?> list && !list.isEmpty()) {
             return list.stream().map(value -> value == null ? "" : String.valueOf(value)).toList();
         }
-        Object legacy = request.get("content");
-        if (legacy != null) return List.of(String.valueOf(legacy));
         throw new BusinessException(ErrorCode.CARD_KEY_FORMAT_ERROR, "至少需要一列卡券内容");
     }
 
@@ -340,7 +333,4 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         return Boolean.parseBoolean(String.valueOf(value));
     }
 
-    private StockMode effectiveStockMode(Product product) {
-        return product.getStockMode() == null ? StockMode.CARD_KEY : product.getStockMode();
-    }
 }

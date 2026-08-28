@@ -9,11 +9,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
-import com.myshop.repository.PointsLogRepository;
-import com.myshop.repository.SiteConfigRepository;
-import com.myshop.repository.UserRepository;
 import com.myshop.service.DeliverService;
-import com.myshop.service.EmailService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
 import com.myshop.utils.LookupTokens;
@@ -49,29 +45,6 @@ public class DeliverServiceImpl implements DeliverService {
         this.cardKeyRepository = cardKeyRepository;
         this.fulfillmentService = fulfillmentService;
         this.manualStockService = manualStockService;
-    }
-
-    /** Compatibility constructor for the pre-manual-inventory seam. */
-    public DeliverServiceImpl(OrderRepository orderRepository,
-                              OrderItemRepository orderItemRepository,
-                              CardKeyRepository cardKeyRepository,
-                              FulfillmentService fulfillmentService) {
-        this(orderRepository, orderItemRepository, cardKeyRepository,
-                fulfillmentService, new ManualStockService(null));
-    }
-
-    /** Compatibility constructor for the focused unit tests and older callers. */
-    public DeliverServiceImpl(OrderRepository orderRepository,
-                              OrderItemRepository orderItemRepository,
-                              CardKeyRepository cardKeyRepository,
-                              UserRepository userRepository,
-                              PointsLogRepository pointsLogRepository,
-                              SiteConfigRepository siteConfigRepository,
-                              EmailService emailService) {
-        this(orderRepository, orderItemRepository, cardKeyRepository,
-                new FulfillmentTransactionService(orderRepository, orderItemRepository, cardKeyRepository,
-                        userRepository, pointsLogRepository, siteConfigRepository, emailService),
-                new ManualStockService(null));
     }
 
     @Override
@@ -111,7 +84,6 @@ public class DeliverServiceImpl implements DeliverService {
         }
 
         List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
-        if (keys == null || keys.isEmpty()) keys = cardKeyRepository.findByOrderId(orderId);
         List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
         StringBuilder result = new StringBuilder();
         result.append("订单号: ").append(orderId).append("\n");
@@ -129,7 +101,7 @@ public class DeliverServiceImpl implements DeliverService {
             result.append("\n");
             for (int cardIndex = 0; cardIndex < itemKeys.size(); cardIndex++) {
                 CardKey key = itemKeys.get(cardIndex);
-                List<String> parts = key.resolvedContentParts();
+                List<String> parts = key.getContentParts();
                 if (parts.size() == 1) {
                     result.append(parts.get(0)).append("\n");
                     continue;
@@ -145,11 +117,7 @@ public class DeliverServiceImpl implements DeliverService {
     }
 
     private Order findForAuthorization(UUID orderId) {
-        Order order = orderRepository.findById(orderId).orElse(null);
-        if (order != null) return order;
-        // Keeps the old narrow unit-test seam while the real fulfillment path
-        // obtains its own lock in FulfillmentTransactionService.
-        return orderRepository.findByIdForUpdate(orderId)
+        return orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
     }
 

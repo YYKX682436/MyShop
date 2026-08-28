@@ -64,9 +64,10 @@ class AdminCardKeyServiceImplTest {
     }
 
     @Test
-    void legacyContentRequestCreatesOnePartKeys() {
+    void singleContentColumnCreatesOnePartKeys() {
         Map<String, Object> result = service.importCardKeys(
-                Map.of("product_id", productId.toString(), "content", " A \n B "), UUID.randomUUID());
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of(" A \n B ")), UUID.randomUUID());
 
         assertEquals(2, result.get("total_count"));
         assertEquals(2, result.get("success_count"));

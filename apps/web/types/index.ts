@@ -218,11 +218,10 @@ export interface CreateOrderResult {
 export interface DeliverResultGroup {
   product_title: string
   spec_name: string | null
-  card_keys: string[]
   quantity?: number
   delivery_type?: string
   fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
-  delivery_items?: { parts: string[]; content_parts?: string[] }[]
+  delivery_items: { content_parts: string[] }[]
 }
 
 export interface DeliverResult {
@@ -483,8 +482,7 @@ export interface CardKeyStockSummary {
 
 export interface CardKeyListItem {
   id: string
-  content: string
-  content_parts?: string[]
+  content_parts: string[]
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'
   order_id: string | null
   created_at: string
@@ -509,8 +507,7 @@ export interface CardImportBatch {
 export interface OrderCardKey {
   card_key_id: string
   order_item_id?: string | null
-  content: string
-  content_parts?: string[]
+  content_parts: string[]
   product_title: string
   spec_name: string | null
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'

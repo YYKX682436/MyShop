@@ -70,18 +70,6 @@ public class FulfillmentTransactionService implements FulfillmentService {
         this.manualStockService = manualStockService;
     }
 
-    /** Compatibility constructor retained for the existing focused tests. */
-    public FulfillmentTransactionService(OrderRepository orderRepository,
-                                         OrderItemRepository orderItemRepository,
-                                         CardKeyRepository cardKeyRepository,
-                                         UserRepository userRepository,
-                                         PointsLogRepository pointsLogRepository,
-                                         SiteConfigRepository siteConfigRepository,
-                                         EmailService emailService) {
-        this(orderRepository, orderItemRepository, cardKeyRepository, userRepository,
-                pointsLogRepository, siteConfigRepository, emailService, new ManualStockService(null));
-    }
-
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Map<String, Object> fulfillOrder(UUID orderId) {
@@ -98,12 +86,9 @@ public class FulfillmentTransactionService implements FulfillmentService {
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         List<UUID> newlyCompletedAutoItems = new ArrayList<>();
         LocalDateTime deliveryAttemptAt = LocalDateTime.now();
-        // This also repairs a pre-V5 mixed order whose automatic item was
-        // already delivered while the old implementation withheld email
-        // until the manual lane completed.
         for (OrderItem item : items) {
             if (!isManual(item)
-                    && effectiveFulfillmentStatus(item) == FulfillmentStatus.DELIVERED
+                    && item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED
                     && item.getDeliveryNotifiedAt() == null) {
                 item.setDeliveryNotifiedAt(deliveryAttemptAt);
                 newlyCompletedAutoItems.add(item.getId());
@@ -116,7 +101,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
         // key. A later shortage therefore rolls back the whole fulfillment
         // transaction and leaves earlier pools untouched.
         for (OrderItem item : items) {
-            FulfillmentStatus status = effectiveFulfillmentStatus(item);
+            FulfillmentStatus status = item.getFulfillmentStatus();
             if (status == FulfillmentStatus.DELIVERED || status == FulfillmentStatus.CANCELLED) {
                 continue;
             }
@@ -126,7 +111,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
                 continue;
             }
 
-            if (effectiveStockMode(item) != StockMode.CARD_KEY) {
+            if (item.getStockMode() != StockMode.CARD_KEY) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "自动发货订单的库存模式无效");
             }
             autoQuantities.merge(new StockPoolKey(item.getProductId(), item.getSpecId()),
@@ -152,7 +137,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
 
         Map<StockPoolKey, Integer> poolOffsets = new LinkedHashMap<>();
         for (OrderItem item : items) {
-            FulfillmentStatus status = effectiveFulfillmentStatus(item);
+            FulfillmentStatus status = item.getFulfillmentStatus();
             if (status == FulfillmentStatus.DELIVERED || status == FulfillmentStatus.CANCELLED || isManual(item)) {
                 continue;
             }
@@ -181,7 +166,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
             }
         }
         for (OrderItem item : items) {
-            if (isManual(item) && effectiveFulfillmentStatus(item) != FulfillmentStatus.DELIVERED) {
+            if (isManual(item) && item.getFulfillmentStatus() != FulfillmentStatus.DELIVERED) {
                 item.setFulfillmentStatus(FulfillmentStatus.WAITING_MANUAL);
             }
             orderItemRepository.save(item);
@@ -214,10 +199,10 @@ public class FulfillmentTransactionService implements FulfillmentService {
         if (!isManual(item)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只有人工发货订单项可以手动完成");
         }
-        if (effectiveFulfillmentStatus(item) == FulfillmentStatus.DELIVERED) {
+        if (item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED) {
             return result(order, buildDeliveryGroups(order.getId()));
         }
-        if (effectiveFulfillmentStatus(item) == FulfillmentStatus.CANCELLED) {
+        if (item.getFulfillmentStatus() == FulfillmentStatus.CANCELLED) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "已取消的订单项不能完成发货");
         }
         if (order.getStatus() != OrderStatus.PAID) {
@@ -225,7 +210,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
         }
 
         int reserved = item.getManualStockReserved();
-        if (reserved > 0 && effectiveStockMode(item) == StockMode.MANUAL) {
+        if (reserved > 0 && item.getStockMode() == StockMode.MANUAL) {
             manualStockService.consumeReservation(item.getProductId(), item.getSpecId(), reserved);
             item.setManualStockReserved(0);
         }
@@ -276,8 +261,8 @@ public class FulfillmentTransactionService implements FulfillmentService {
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("id", item.getId());
             status.put("product_title", item.getProductTitle());
-            status.put("fulfillment_status", effectiveFulfillmentStatus(item));
-            status.put("delivery_type", effectiveDeliveryType(item));
+            status.put("fulfillment_status", item.getFulfillmentStatus());
+            status.put("delivery_type", item.getDeliveryType());
             return status;
         }).toList());
         return result;
@@ -285,11 +270,6 @@ public class FulfillmentTransactionService implements FulfillmentService {
 
     private List<Map<String, Object>> buildDeliveryGroups(UUID orderId) {
         List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
-        if (keys == null || keys.isEmpty()) {
-            // Compatibility with old repository seams and old rows; the
-            // production query above preserves deterministic card order.
-            keys = cardKeyRepository.findByOrderId(orderId);
-        }
         List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
         Map<UUID, List<CardKey>> byItem = new LinkedHashMap<>();
         for (CardKey key : keys) {
@@ -306,22 +286,14 @@ public class FulfillmentTransactionService implements FulfillmentService {
             group.put("product_title", item.getProductTitle());
             group.put("spec_name", item.getSpecName());
             group.put("quantity", item.getQuantity());
-            group.put("delivery_type", effectiveDeliveryType(item));
-            group.put("fulfillment_status", effectiveFulfillmentStatus(item));
+            group.put("delivery_type", item.getDeliveryType());
+            group.put("fulfillment_status", item.getFulfillmentStatus());
             List<Map<String, Object>> deliveryItems = itemKeys.stream().map(key -> {
-                List<String> parts = key.resolvedContentParts();
                 Map<String, Object> deliveryItem = new LinkedHashMap<>();
-                deliveryItem.put("parts", parts);
-                // Compatibility alias; the structured parts array is the
-                // authoritative representation for new clients.
-                deliveryItem.put("content_parts", parts);
+                deliveryItem.put("content_parts", List.copyOf(key.getContentParts()));
                 return deliveryItem;
             }).toList();
             group.put("delivery_items", deliveryItems);
-            group.put("card_keys", itemKeys.stream().map(key -> {
-                List<String> parts = key.resolvedContentParts();
-                return parts.isEmpty() ? "" : parts.get(0);
-            }).toList());
             result.add(group);
         }
         return result;
@@ -329,24 +301,11 @@ public class FulfillmentTransactionService implements FulfillmentService {
 
     private boolean allItemsDelivered(List<OrderItem> items) {
         return !items.isEmpty() && items.stream()
-                .allMatch(item -> effectiveFulfillmentStatus(item) == FulfillmentStatus.DELIVERED);
+                .allMatch(item -> item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED);
     }
 
     private boolean isManual(OrderItem item) {
-        return "MANUAL".equalsIgnoreCase(effectiveDeliveryType(item));
-    }
-
-    private String effectiveDeliveryType(OrderItem item) {
-        return item.getDeliveryType() == null || item.getDeliveryType().isBlank()
-                ? "AUTO" : item.getDeliveryType().trim().toUpperCase();
-    }
-
-    private StockMode effectiveStockMode(OrderItem item) {
-        return item.getStockMode() == null ? StockMode.CARD_KEY : item.getStockMode();
-    }
-
-    private FulfillmentStatus effectiveFulfillmentStatus(OrderItem item) {
-        return item.getFulfillmentStatus() == null ? FulfillmentStatus.PENDING : item.getFulfillmentStatus();
+        return "MANUAL".equalsIgnoreCase(item.getDeliveryType());
     }
 
     private void awardPoints(Order order) {

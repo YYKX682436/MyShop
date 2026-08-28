@@ -491,7 +491,7 @@ export default function AdminOrdersPage() {
                         <div className="flex flex-col gap-1.5">
                           {detailCardKeys.map((ck) => (
                               <div key={ck.card_key_id} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                                <CardContentParts parts={ck.content_parts} fallback={ck.content} onCopy={copyToClipboard} />
+                                <CardContentParts parts={ck.content_parts} onCopy={copyToClipboard} />
                               </div>
                           ))}
                         </div>
@@ -506,7 +506,7 @@ export default function AdminOrdersPage() {
                             <div className="flex flex-col gap-1.5">
                               {keys.map((ck) => (
                                 <div key={ck.card_key_id} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                                  <CardContentParts parts={ck.content_parts} fallback={ck.content} onCopy={copyToClipboard} />
+                                  <CardContentParts parts={ck.content_parts} onCopy={copyToClipboard} />
                                 </div>
                               ))}
                             </div>
