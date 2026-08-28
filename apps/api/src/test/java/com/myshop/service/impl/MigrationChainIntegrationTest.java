@@ -117,7 +117,8 @@ class MigrationChainIntegrationTest {
     private Flyway flyway(String target) {
         var configuration = Flyway.configure()
                 .dataSource(dataSource())
-                .locations("classpath:db/migration");
+                .locations("classpath:db/migration")
+                .cleanDisabled(false);
         if (target != null) configuration.target(MigrationVersion.fromVersion(target));
         return configuration.load();
     }
