@@ -9,6 +9,7 @@ export const DASHBOARD_THRESHOLDS = {
 
 export type UsageSeverity = "normal" | "warning" | "critical" | null
 export type SystemStatusLevel = "normal" | "warning" | "critical" | "unavailable"
+type SystemResourceKey = "cpu" | "memory" | "disk" | "data_disk"
 
 export function shouldShowInitialDashboardLoading<T>(data: T | null, loading: boolean): boolean {
   return data === null && loading
@@ -66,6 +67,7 @@ export function getSystemStatusLevel(system: SystemStatus | null): SystemStatusL
     getUsageSeverity(system.cpu?.usage_pct),
     getUsageSeverity(system.memory?.usage_pct),
     getUsageSeverity(system.disk?.usage_pct),
+    getUsageSeverity(system.data_disk?.usage_pct),
   ]
   if (resourceSeverities.includes("critical")) return "critical"
   if (resourceSeverities.includes("warning")) return "warning"
@@ -104,7 +106,7 @@ export interface DashboardAttentionMessages {
   zeroStock: (count: number) => string
   paymentSuccessRate: (rate: number) => string
   monitorUnavailable: () => string
-  resource: (resource: "cpu" | "memory" | "disk", usagePct: number, severity: "critical" | "warning") => string
+  resource: (resource: SystemResourceKey, usagePct: number, severity: "critical" | "warning") => string
   serviceUnavailable: (service: "api" | "web" | "database" | "caddy") => string
   serviceUnknown: (service: "api" | "web" | "database" | "caddy") => string
 }
@@ -181,6 +183,7 @@ export function buildDashboardAttention(
       addResourceAttention(items, "cpu", system.cpu?.usage_pct, messages)
       addResourceAttention(items, "memory", system.memory?.usage_pct, messages)
       addResourceAttention(items, "disk", system.disk?.usage_pct, messages)
+      addResourceAttention(items, "data_disk", system.data_disk?.usage_pct, messages)
     }
   }
 
@@ -199,7 +202,7 @@ function hasSystemMeasurements(system: SystemStatus): boolean {
 
 function addResourceAttention(
   items: DashboardAttentionItem[],
-  resource: "cpu" | "memory" | "disk",
+  resource: SystemResourceKey,
   usagePct: number | null | undefined,
   messages: DashboardAttentionMessages,
 ) {

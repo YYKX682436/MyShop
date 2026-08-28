@@ -10,6 +10,7 @@ public record SystemStatusResponse(
         CpuMetric cpu,
         SystemResourceMetric memory,
         SystemResourceMetric disk,
+        SystemResourceMetric dataDisk,
         Long uptimeSeconds,
         Double load1m,
         ServicesHealth services

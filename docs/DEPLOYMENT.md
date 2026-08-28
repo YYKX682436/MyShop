@@ -13,10 +13,11 @@ Internet -> Caddy (80/443) -> Web (private) -> API (private) -> PostgreSQL (priv
 ```
 
 Only Caddy publishes host ports. PostgreSQL uses a named persistent volume;
-uploads use `./uploads` on the host; Caddy uses persistent certificate/config
-volumes. The application services have restart policies and health checks; node-exporter
-is intentionally optional to API startup so a missing exporter only degrades
-the Dashboard metrics.
+uploads use `./uploads` on the host (the production path may be a symlink to a
+dedicated data disk); Caddy uses persistent certificate/config volumes. The
+application services have restart policies and health checks; node-exporter is
+intentionally optional to API startup so a missing exporter only degrades the
+Dashboard metrics.
 
 Compose attaches all five services to the private `172.30.0.0/24` network.
 Caddy is fixed at `172.30.0.2`, API at `172.30.0.20`, Web at `172.30.0.30`,
@@ -64,6 +65,28 @@ Flyway runs before the application validates the schema. Do not change
 production `spring.jpa.hibernate.ddl-auto` from `validate`, and do not run
 `flyway clean`.
 
+## Dedicated host data disk
+
+For a single-shop host with a separate ext4 data disk, keep the operating
+system and release files on the root filesystem, and mount the data disk at
+`/data` before Docker starts. The recommended production layout is:
+
+```text
+/data/docker             Docker images, build cache, containers, and named volumes
+/data/myshop/uploads     Product and site uploads
+/data/myshop/backups     PostgreSQL backups
+/opt/myshop              Releases, Compose files, and runtime configuration
+```
+
+Configure Docker's `data-root` to `/data/docker`, keep the operational upload
+path `/opt/myshop/uploads` pointing to `/data/myshop/uploads`, and keep the
+operational backup path `/opt/myshop/backups` pointing to `/data/myshop/backups`.
+When the data disk is mounted elsewhere, set `DATA_DISK_MOUNTPOINT` to that
+absolute mountpoint. Do not format an existing disk as part of a migration;
+verify its device, UUID, filesystem, mountpoint, and contents first, then copy
+Docker and application data while Docker is stopped. Retain a database backup
+before changing Docker's data root.
+
 ## Dashboard server metrics
 
 The admin-only `GET /api/admin/dashboard/system-status` endpoint fetches the
@@ -71,7 +94,10 @@ node-exporter text endpoint through `NODE_EXPORTER_URL` (the Compose default is
 `http://node-exporter:9100`). CPU usage is calculated from consecutive
 `node_cpu_seconds_total` counter samples; memory uses MemTotal minus
 MemAvailable; disk uses the real host root filesystem and excludes pseudo
-filesystems; uptime comes from boot time and load from `node_load1`.
+filesystems; data disk uses the real filesystem mounted at
+`DATA_DISK_MOUNTPOINT` (default `/data`); uptime comes from boot time and load
+from `node_load1`. If the configured data mountpoint is absent, the data disk
+metric is unavailable while the root disk metric remains independent.
 
 The endpoint also performs short best-effort checks for PostgreSQL (`SELECT 1`),
 Web (`http://web:3000/`), and a TCP connection to Caddy port 80. Every check is

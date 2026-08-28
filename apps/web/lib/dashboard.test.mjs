@@ -66,6 +66,7 @@ test("unavailable exporter never hides a critical service failure", () => {
     cpu: null,
     memory: null,
     disk: null,
+    data_disk: null,
     uptime_seconds: null,
     load_1m: null,
     sampled_at: "2026-08-27T00:00:00Z",
@@ -85,5 +86,39 @@ test("unavailable exporter never hides a critical service failure", () => {
   assert.deepEqual(buildDashboardAttention(null, system, messages).map(item => item.message), [
     "database down",
     "monitor unavailable",
+  ])
+})
+
+test("data disk usage participates in system severity and attention", () => {
+  const system = {
+    available: true,
+    services: {
+      api: { status: "UP" },
+      web: { status: "UP" },
+      database: { status: "UP" },
+      caddy: { status: "UP" },
+    },
+    cpu: { usage_pct: 10, cores: 2 },
+    memory: { usage_pct: 20 },
+    disk: { usage_pct: 30 },
+    data_disk: { usage_pct: 86 },
+    uptime_seconds: 60,
+    load_1m: 0.1,
+    sampled_at: "2026-08-27T00:00:00Z",
+  }
+  const messages = {
+    paidWaitingDelivery: (count) => `${count} paid`,
+    lowStock: (count) => `${count} low`,
+    zeroStock: (count) => `${count} zero`,
+    paymentSuccessRate: (rate) => `${rate} payment`,
+    monitorUnavailable: () => "monitor unavailable",
+    resource: (resource, usage) => `${resource} ${usage}`,
+    serviceUnavailable: (service) => `${service} down`,
+    serviceUnknown: (service) => `${service} unknown`,
+  }
+
+  assert.equal(getSystemStatusLevel(system), "critical")
+  assert.deepEqual(buildDashboardAttention(null, system, messages).map(item => item.message), [
+    "data_disk 86",
   ])
 })

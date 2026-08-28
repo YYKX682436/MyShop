@@ -125,10 +125,11 @@ export default function AdminDashboardPage() {
   const attention = useMemo(() => {
     const copy = (key: TranslationKey, values: Record<string, string | number>) =>
       t(key).replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? `{${name}}`))
-    const resourceKeys: Record<"cpu" | "memory" | "disk", TranslationKey> = {
+    const resourceKeys: Record<"cpu" | "memory" | "disk" | "data_disk", TranslationKey> = {
       cpu: "admin.attentionCpu",
       memory: "admin.attentionMemory",
       disk: "admin.attentionDisk",
+      data_disk: "admin.attentionDataDisk",
     }
     const serviceKeys: Record<"api" | "web" | "database" | "caddy", TranslationKey> = {
       api: "admin.systemApi",

@@ -47,6 +47,7 @@ services:
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:-172.30.0.2,127.0.0.1,::1}
       NODE_EXPORTER_URL: ${NODE_EXPORTER_URL:-http://node-exporter:9100}
+      DATA_DISK_MOUNTPOINT: ${DATA_DISK_MOUNTPOINT:-/data}
     volumes:
       - ./uploads:/app/uploads
     depends_on:

@@ -7,6 +7,7 @@ import com.myshop.model.response.SystemStatusResponse.ServiceStatus;
 import com.myshop.model.response.SystemStatusResponse.ServicesHealth;
 import com.myshop.model.response.SystemStatusResponse.SystemResourceMetric;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -30,8 +31,9 @@ public class SystemStatusService {
 
     @Autowired
     public SystemStatusService(NodeExporterClient nodeExporterClient,
-                               DashboardHealthProbe healthProbe) {
-        this(nodeExporterClient, new NodeExporterMetricsParser(), healthProbe,
+                               DashboardHealthProbe healthProbe,
+                               @Value("${dashboard.data-mountpoint:/data}") String dataMountpoint) {
+        this(nodeExporterClient, new NodeExporterMetricsParser(dataMountpoint), healthProbe,
                 Clock.systemUTC(), Thread::sleep);
     }
 
@@ -66,7 +68,8 @@ public class SystemStatusService {
 
         return new SystemStatusResponse(
                 hostMetrics.available(), sampledAt, hostMetrics.cpu(), hostMetrics.memory(),
-                hostMetrics.disk(), hostMetrics.uptimeSeconds(), hostMetrics.load1m(), services);
+                hostMetrics.disk(), hostMetrics.dataDisk(), hostMetrics.uptimeSeconds(),
+                hostMetrics.load1m(), services);
     }
 
     private HostMetrics scrapeHostMetrics() {
@@ -85,6 +88,7 @@ public class SystemStatusService {
                     cpu,
                     memoryMetric(snapshot),
                     diskMetric(snapshot),
+                    dataDiskMetric(snapshot),
                     uptime(snapshot),
                     snapshot.load1());
         }
@@ -103,7 +107,7 @@ public class SystemStatusService {
         try {
             return parser.parse(exposition);
         } catch (RuntimeException e) {
-            return new NodeExporterMetricsSnapshot(null, null, null, null, null, null, null, null);
+            return new NodeExporterMetricsSnapshot(null, null, null, null, null, null, null, null, null);
         }
     }
 
@@ -210,6 +214,14 @@ public class SystemStatusService {
                 snapshot.rootFilesystem().availableBytes());
     }
 
+    private SystemResourceMetric dataDiskMetric(NodeExporterMetricsSnapshot snapshot) {
+        if (snapshot.dataFilesystem() == null) {
+            return null;
+        }
+        return resourceMetric(snapshot.dataFilesystem().sizeBytes(),
+                snapshot.dataFilesystem().availableBytes());
+    }
+
     private SystemResourceMetric resourceMetric(Double totalBytes, Double availableBytes) {
         if (!validNonNegative(totalBytes) || !validNonNegative(availableBytes)
                 || availableBytes > totalBytes) {
@@ -257,10 +269,11 @@ public class SystemStatusService {
                                CpuMetric cpu,
                                SystemResourceMetric memory,
                                SystemResourceMetric disk,
+                               SystemResourceMetric dataDisk,
                                Long uptimeSeconds,
                                Double load1m) {
         private static HostMetrics unavailable() {
-            return new HostMetrics(false, null, null, null, null, null);
+            return new HostMetrics(false, null, null, null, null, null, null);
         }
     }
 

@@ -96,6 +96,7 @@ fulfillment:
 # The endpoint is admin-protected and has no public metrics route.
 dashboard:
   node-exporter-url: ${NODE_EXPORTER_URL:http://node-exporter:9100}
+  data-mountpoint: ${DATA_DISK_MOUNTPOINT:/data}
   system:
     web-url: ${DASHBOARD_WEB_URL:http://web:3000/robots.txt}
     caddy-host: ${DASHBOARD_CADDY_HOST:caddy}

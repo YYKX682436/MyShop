@@ -44,6 +44,7 @@ class SystemStatusServiceTest {
         assertNull(response.cpu());
         assertNull(response.memory());
         assertNull(response.disk());
+        assertNull(response.dataDisk());
         assertEquals(ServiceStatus.UP, response.services().api().status());
         assertEquals(ServiceStatus.UP, response.services().database().status());
     }
@@ -102,6 +103,8 @@ class SystemStatusServiceTest {
                 node_memory_MemAvailable_bytes 25
                 node_filesystem_size_bytes{device="/dev/vda1",fstype="ext4",mountpoint="/"} 1000
                 node_filesystem_avail_bytes{device="/dev/vda1",fstype="ext4",mountpoint="/"} 100
+                node_filesystem_size_bytes{device="/dev/vdb1",fstype="ext4",mountpoint="/data"} 2000
+                node_filesystem_avail_bytes{device="/dev/vdb1",fstype="ext4",mountpoint="/data"} 1500
                 node_boot_time_seconds 1700000000
                 node_load1 0.5
                 """));
@@ -118,6 +121,7 @@ class SystemStatusServiceTest {
         assertEquals(ServiceStatus.DOWN, response.services().caddy().status());
         assertEquals(75.0, response.memory().usagePct());
         assertEquals(90.0, response.disk().usagePct());
+        assertEquals(25.0, response.dataDisk().usagePct());
     }
 
     @Test

@@ -450,6 +450,7 @@ export interface SystemStatus {
   cpu: SystemCpuMetric | null
   memory: SystemResourceMetric | null
   disk: SystemResourceMetric | null
+  data_disk: SystemResourceMetric | null
   uptime_seconds: number | null
   load_1m: number | null
   services: {

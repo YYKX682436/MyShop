@@ -445,6 +445,7 @@ export function SystemStatusCard({
               : interpolate(t("admin.systemCores"), { count: system.cpu.cores })} />
             <ResourceMetric label={t("admin.systemMemory")} icon={Activity} metric={system.memory} />
             <ResourceMetric label={t("admin.systemDisk")} icon={HardDrive} metric={system.disk} />
+            <ResourceMetric label={t("admin.systemDataDisk")} icon={HardDrive} metric={system.data_disk} />
           </div>
 
           <div className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3 text-sm min-[520px]:grid-cols-2">

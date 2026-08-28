@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
  */
 public class NodeExporterMetricsParser {
 
+    private static final String DEFAULT_DATA_MOUNTPOINT = "/data";
     private static final Pattern SAMPLE_PATTERN = Pattern.compile(
             "^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\\{([^}]*)})?\\s+([^\\s]+)(?:\\s+\\d+)?\\s*$");
     private static final Pattern LABEL_PATTERN = Pattern.compile(
@@ -25,6 +26,16 @@ public class NodeExporterMetricsParser {
             "devtmpfs", "fusectl", "hugetlbfs", "mqueue", "overlay", "proc",
             "pstore", "ramfs", "rootfs", "rpc_pipefs", "securityfs", "squashfs", "sysfs",
             "tmpfs", "tracefs");
+
+    private final String dataMountpoint;
+
+    public NodeExporterMetricsParser() {
+        this(DEFAULT_DATA_MOUNTPOINT);
+    }
+
+    public NodeExporterMetricsParser(String dataMountpoint) {
+        this.dataMountpoint = normalizeMountpoint(dataMountpoint);
+    }
 
     public NodeExporterMetricsSnapshot parse(String exposition) {
         Map<String, List<MetricSample>> samples = new HashMap<>();
@@ -56,7 +67,8 @@ public class NodeExporterMetricsParser {
                 cpuNames.isEmpty() ? null : cpuNames.size(),
                 scalar(samples, "node_memory_MemTotal_bytes"),
                 scalar(samples, "node_memory_MemAvailable_bytes"),
-                rootFilesystem(samples),
+                filesystem(samples, "/"),
+                filesystem(samples, dataMountpoint),
                 scalar(samples, "node_boot_time_seconds"),
                 scalar(samples, "node_load1"));
     }
@@ -120,31 +132,48 @@ public class NodeExporterMetricsParser {
         return values == null || values.isEmpty() ? null : values.get(0).value();
     }
 
-    private NodeExporterMetricsSnapshot.RootFilesystem rootFilesystem(
-            Map<String, List<MetricSample>> samples) {
+    private NodeExporterMetricsSnapshot.Filesystem filesystem(
+            Map<String, List<MetricSample>> samples, String mountpoint) {
+        if (mountpoint == null) {
+            return null;
+        }
         List<MetricSample> sizes = samples.getOrDefault("node_filesystem_size_bytes", List.of());
         List<MetricSample> available = samples.getOrDefault("node_filesystem_avail_bytes", List.of());
         for (MetricSample size : sizes) {
-            if (!isRootRealFilesystem(size)) {
+            if (!isRealFilesystem(size, mountpoint)) {
                 continue;
             }
             for (MetricSample free : available) {
                 if (sameFilesystem(size, free)) {
-                    return new NodeExporterMetricsSnapshot.RootFilesystem(size.value(), free.value());
+                    return new NodeExporterMetricsSnapshot.Filesystem(size.value(), free.value());
                 }
             }
         }
         return null;
     }
 
-    private boolean isRootRealFilesystem(MetricSample sample) {
+    private boolean isRealFilesystem(MetricSample sample, String expectedMountpoint) {
         String mountpoint = sample.labels().get("mountpoint");
         String fstype = sample.labels().get("fstype");
         String device = sample.labels().get("device");
-        return "/".equals(mountpoint)
+        return expectedMountpoint.equals(mountpoint)
                 && fstype != null
                 && !PSEUDO_FILESYSTEMS.contains(fstype.toLowerCase())
                 && (device == null || !"overlay".equalsIgnoreCase(device));
+    }
+
+    private String normalizeMountpoint(String mountpoint) {
+        if (mountpoint == null || mountpoint.isBlank()) {
+            return DEFAULT_DATA_MOUNTPOINT;
+        }
+        String normalized = mountpoint.trim();
+        if (!normalized.startsWith("/")) {
+            normalized = "/" + normalized;
+        }
+        while (normalized.length() > 1 && normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return "/".equals(normalized) ? null : normalized;
     }
 
     private boolean sameFilesystem(MetricSample left, MetricSample right) {
@@ -152,7 +181,7 @@ public class NodeExporterMetricsParser {
     }
 
     private NodeExporterMetricsSnapshot emptySnapshot() {
-        return new NodeExporterMetricsSnapshot(null, null, null, null, null, null, null, null);
+        return new NodeExporterMetricsSnapshot(null, null, null, null, null, null, null, null, null);
     }
 
     private record MetricSample(String name, Map<String, String> labels, double value) { }

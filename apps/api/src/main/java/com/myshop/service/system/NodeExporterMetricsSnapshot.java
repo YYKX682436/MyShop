@@ -7,9 +7,10 @@ public record NodeExporterMetricsSnapshot(
         Integer cpuCores,
         Double memoryTotalBytes,
         Double memoryAvailableBytes,
-        RootFilesystem rootFilesystem,
+        Filesystem rootFilesystem,
+        Filesystem dataFilesystem,
         Double bootTimeSeconds,
         Double load1
 ) {
-    public record RootFilesystem(Double sizeBytes, Double availableBytes) { }
+    public record Filesystem(Double sizeBytes, Double availableBytes) { }
 }

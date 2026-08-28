@@ -22,6 +22,8 @@ class NodeExporterMetricsParserTest {
                 node_memory_MemAvailable_bytes 400
                 node_filesystem_size_bytes{device="/dev/vda1",fstype="ext4",mountpoint="/"} 5000
                 node_filesystem_avail_bytes{device="/dev/vda1",fstype="ext4",mountpoint="/"} 1500
+                node_filesystem_size_bytes{device="/dev/vdb1",fstype="ext4",mountpoint="/data"} 8000
+                node_filesystem_avail_bytes{device="/dev/vdb1",fstype="ext4",mountpoint="/data"} 7000
                 node_filesystem_size_bytes{device="overlay",fstype="overlay",mountpoint="/"} 999999
                 node_filesystem_avail_bytes{device="overlay",fstype="overlay",mountpoint="/"} 999998
                 node_boot_time_seconds 1700000000
@@ -36,8 +38,27 @@ class NodeExporterMetricsParserTest {
         assertNotNull(snapshot.rootFilesystem());
         assertEquals(5000.0, snapshot.rootFilesystem().sizeBytes());
         assertEquals(1500.0, snapshot.rootFilesystem().availableBytes());
+        assertNotNull(snapshot.dataFilesystem());
+        assertEquals(8000.0, snapshot.dataFilesystem().sizeBytes());
+        assertEquals(7000.0, snapshot.dataFilesystem().availableBytes());
         assertEquals(1700000000.0, snapshot.bootTimeSeconds());
         assertEquals(1.25, snapshot.load1());
+    }
+
+    @Test
+    void dataFilesystemUsesConfiguredMountpointAndIgnoresOtherMounts() {
+        NodeExporterMetricsParser configuredParser = new NodeExporterMetricsParser("/srv/myshop/");
+
+        NodeExporterMetricsSnapshot snapshot = configuredParser.parse("""
+                node_filesystem_size_bytes{device="/dev/vdb1",fstype="ext4",mountpoint="/data"} 8000
+                node_filesystem_avail_bytes{device="/dev/vdb1",fstype="ext4",mountpoint="/data"} 7000
+                node_filesystem_size_bytes{device="/dev/vdc1",fstype="ext4",mountpoint="/srv/myshop"} 12000
+                node_filesystem_avail_bytes{device="/dev/vdc1",fstype="ext4",mountpoint="/srv/myshop"} 9000
+                """);
+
+        assertNotNull(snapshot.dataFilesystem());
+        assertEquals(12000.0, snapshot.dataFilesystem().sizeBytes());
+        assertEquals(9000.0, snapshot.dataFilesystem().availableBytes());
     }
 
     @Test
