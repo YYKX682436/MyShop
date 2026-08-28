@@ -13,8 +13,8 @@ Internet -> Caddy (80/443) -> Web (private) -> API (private) -> PostgreSQL (priv
 ```
 
 Only Caddy publishes host ports. PostgreSQL uses a named persistent volume;
-uploads use `./uploads` on the host (the production path may be a symlink to a
-dedicated data disk); Caddy uses persistent certificate/config volumes. The
+uploads use the explicit `UPLOAD_HOST_PATH` bind on the host (production uses
+`/data/myshop/uploads`, never a release-local directory or symlink); Caddy uses persistent certificate/config volumes. The
 application services have restart policies and health checks; node-exporter is
 intentionally optional to API startup so a missing exporter only degrades the
 Dashboard metrics.
@@ -36,10 +36,10 @@ Prometheus or Grafana for this dashboard.
 
 1. Provision a supported Linux host with Docker Engine and Compose v2.
 2. Copy the repository and `.env.example` to a protected deployment directory.
-3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, `ACME_EMAIL`, and `AUTH_COOKIE_SECURE=true`.
+3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, and `UPLOAD_HOST_PATH`.
 4. Set all bootstrap admin variables only for the first startup. Use a password of at least 12 characters, then remove `BOOTSTRAP_ADMIN_PASSWORD` after successful login.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
-6. Run `docker compose up -d --build` and inspect `docker compose ps` and API logs.
+6. Create the configured upload directory with owner `10001:10001` and mode `0750`, then run `docker compose up -d --build` and inspect `docker compose ps` and API logs. The API performs a write/delete probe during startup and refuses to become healthy when the path is not usable.
 
 Before startup, `bash scripts/check-compose.sh` verifies that Compose receives
 `SITE_DOMAIN`, `ACME_EMAIL`, `DB_PASSWORD`, and `JWT_SECRET`, and that missing
@@ -78,14 +78,40 @@ system and release files on the root filesystem, and mount the data disk at
 /opt/myshop              Releases, Compose files, and runtime configuration
 ```
 
-Configure Docker's `data-root` to `/data/docker`, keep the operational upload
-path `/opt/myshop/uploads` pointing to `/data/myshop/uploads`, and keep the
-operational backup path `/opt/myshop/backups` pointing to `/data/myshop/backups`.
-When the data disk is mounted elsewhere, set `DATA_DISK_MOUNTPOINT` to that
-absolute mountpoint. Do not format an existing disk as part of a migration;
-verify its device, UUID, filesystem, mountpoint, and contents first, then copy
-Docker and application data while Docker is stopped. Retain a database backup
-before changing Docker's data root.
+Configure Docker's `data-root` to `/data/docker` and set the production `.env`
+value `UPLOAD_HOST_PATH=/data/myshop/uploads`. Do not create or depend on an
+`/opt/myshop/uploads` symlink. Set `DATA_DISK_MOUNTPOINT=/data` so the
+Dashboard reports the real data filesystem. Do not format an existing disk as
+part of a migration; verify its device, stable UUID, filesystem, mountpoint,
+and contents first, then copy Docker and application data while Docker is
+stopped. Retain a database backup before changing Docker's data root.
+
+Use a stable UUID entry in `/etc/fstab`, for example:
+
+```fstab
+UUID=<data-disk-uuid> /data ext4 defaults 0 2
+```
+
+Make Docker wait for the data disk with
+`/etc/systemd/system/docker.service.d/myshop-data.conf`:
+
+```ini
+[Unit]
+RequiresMountsFor=/data
+```
+
+Before every deployment, require all of the following to succeed:
+
+```bash
+findmnt -M /data
+docker info --format '{{.DockerRootDir}}' # must be /data/docker
+docker volume inspect myshop_postgres_data myshop_caddy_data myshop_caddy_config \
+  --format '{{.Name}} {{.Mountpoint}}' # each mountpoint must be under /data/docker/volumes
+docker compose config
+```
+
+Never remove Docker volumes as part of a data-disk or schema migration. Verify
+that PostgreSQL and Caddy data remain available before continuing.
 
 ## Dashboard server metrics
 
@@ -158,12 +184,13 @@ does not deploy production.
 Before every schema or image change:
 
 ```bash
-docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom > backups/myshop-$(date +%Y%m%d-%H%M%S).dump
+mkdir -p /data/myshop/backups
+docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom > /data/myshop/backups/myshop-$(date +%Y%m%d-%H%M%S).dump
 docker compose ps
 ```
 
-Keep backups outside the repository and periodically perform a restore test
-into an isolated PostgreSQL instance. To roll back an application image,
+Keep backups in `/data/myshop/backups`, outside the repository, and periodically
+perform a restore test into an isolated PostgreSQL instance. To roll back an application image,
 change `API_IMAGE`/`WEB_IMAGE` to the previous immutable tags and run
 `docker compose up -d`; never roll back a database migration by deleting rows
 or editing Flyway history. A migration requiring rollback must ship a new

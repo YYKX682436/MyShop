@@ -4,13 +4,23 @@ set -euo pipefail
 repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 valid_env="$(mktemp)"
 missing_env="$(mktemp)"
-trap 'rm -f "$valid_env" "$missing_env"' EXIT
+production_env="$(mktemp)"
+trap 'rm -f "$valid_env" "$missing_env" "$production_env"' EXIT
 
 cat >"$valid_env" <<'EOF'
 SITE_DOMAIN=store.example.test
 ACME_EMAIL=ops@example.test
 DB_PASSWORD=compose-validation-password
 JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
+UPLOAD_HOST_PATH=./uploads
+EOF
+
+cat >"$production_env" <<'EOF'
+SITE_DOMAIN=store.example.test
+ACME_EMAIL=ops@example.test
+DB_PASSWORD=compose-validation-password
+JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
+UPLOAD_HOST_PATH=/data/myshop/uploads
 EOF
 
 cat >"$missing_env" <<'EOF'
@@ -18,6 +28,7 @@ DB_PASSWORD=compose-validation-password
 EOF
 
 rendered_config="$(docker compose --project-directory "$repo_dir" --env-file "$valid_env" config)"
+production_config="$(docker compose --project-directory "$repo_dir" --env-file "$production_env" config)"
 
 for expected in \
   "subnet: 172.30.0.0/24" \
@@ -28,6 +39,36 @@ for expected in \
   "ipv4_address: 172.30.0.40"; do
   if [[ "$rendered_config" != *"$expected"* ]]; then
     echo "compose validation missing expected topology: $expected" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'create_host_path: false' "$repo_dir/docker-compose.yml"; then
+  echo "compose validation missing create_host_path: false for the upload bind" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'target: /app/uploads' <<<"$rendered_config"; then
+  echo "compose validation missing the /app/uploads container target" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'source: /data/myshop/uploads' <<<"$production_config"; then
+  echo "compose validation did not resolve the production upload path to /data/myshop/uploads" >&2
+  exit 1
+fi
+
+if grep -Fq '/opt/myshop/uploads' "$repo_dir/docker-compose.yml"; then
+  echo "compose validation found the retired /opt/myshop/uploads symlink path" >&2
+  exit 1
+fi
+
+for expected_user in \
+  'groupadd --gid 10001' \
+  'useradd --uid 10001' \
+  'USER 10001:10001'; do
+  if ! grep -Fq "$expected_user" "$repo_dir/Dockerfile.api"; then
+    echo "compose validation missing fixed API identity declaration: $expected_user" >&2
     exit 1
   fi
 done

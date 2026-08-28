@@ -49,7 +49,11 @@ services:
       NODE_EXPORTER_URL: ${NODE_EXPORTER_URL:-http://node-exporter:9100}
       DATA_DISK_MOUNTPOINT: ${DATA_DISK_MOUNTPOINT:-/data}
     volumes:
-      - ./uploads:/app/uploads
+      - type: bind
+        source: ${UPLOAD_HOST_PATH:-./uploads}
+        target: /app/uploads
+        bind:
+          create_host_path: false
     depends_on:
       db:
         condition: service_healthy

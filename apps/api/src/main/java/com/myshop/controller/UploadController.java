@@ -3,7 +3,7 @@ package com.myshop.controller;
 import com.myshop.common.ApiResponse;
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
-import jakarta.annotation.PostConstruct;
+import com.myshop.service.UploadStorage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
@@ -11,9 +11,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -22,6 +20,8 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/upload")
 public class UploadController {
+
+    private static final long MAX_FILE_SIZE_BYTES = 10L * 1024 * 1024;
 
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
             ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"
@@ -43,31 +43,22 @@ public class UploadController {
             ".bmp", new byte[][]{{0x42, 0x4D}}                // BM
     );
 
-    @Value("${upload.path:./uploads}")
-    private String uploadPath;
-
-    @Value("${upload.url-prefix:/uploads}")
+    @Value("${upload.url-prefix:/api/uploads}")
     private String urlPrefix;
 
-    private Path resolvedUploadDir;
+    private final UploadStorage uploadStorage;
 
-    @PostConstruct
-    public void init() throws IOException {
-        Path dir = Paths.get(uploadPath);
-        if (!dir.isAbsolute()) {
-            dir = Paths.get(System.getProperty("user.dir")).resolve(uploadPath).normalize();
-        }
-        this.resolvedUploadDir = dir;
-        if (!Files.exists(this.resolvedUploadDir)) {
-            Files.createDirectories(this.resolvedUploadDir);
-        }
-        log.info("Upload directory resolved to: {}", this.resolvedUploadDir);
+    public UploadController(UploadStorage uploadStorage) {
+        this.uploadStorage = uploadStorage;
     }
 
     @PostMapping("/image")
     public ApiResponse<?> uploadImage(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "文件不能为空");
+        }
+        if (file.getSize() > MAX_FILE_SIZE_BYTES) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片大小不能超过 10MB");
         }
 
         // Validate content type
@@ -95,9 +86,9 @@ public class UploadController {
         String filename = UUID.randomUUID() + extension;
 
         try {
-            Path target = resolvedUploadDir.resolve(filename);
+            Path target = uploadStorage.resolve(filename);
             file.transferTo(target.toFile());
-            log.info("File uploaded: {}", target);
+            log.info("File uploaded");
 
             String url = urlPrefix + "/" + filename;
             return ApiResponse.success(Map.of("url", url));

@@ -1,5 +1,6 @@
 package com.myshop.config;
 
+import com.myshop.service.UploadStorage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,19 +10,29 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Arrays;
 
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
 
-    @Value("${upload.path:./uploads}")
-    private String uploadPath;
-
     /** CORS 允许的来源列表，逗号分隔。默认允许 localhost 开发环境。 */
     @Value("${cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
     private String corsAllowedOrigins;
+
+    private static final String[] ALLOWED_HEADERS = {
+            "Content-Type",
+            "Accept",
+            "X-Session-Token",
+            "X-CSRF-Token",
+            "X-Device-Id",
+            "X-Turnstile-Token"
+    };
+
+    private final UploadStorage uploadStorage;
+
+    public WebMvcConfig(UploadStorage uploadStorage) {
+        this.uploadStorage = uploadStorage;
+    }
 
     @Bean
     public RestTemplate restTemplate() {
@@ -43,7 +54,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             registry.addMapping("/**")
                     .allowedOriginPatterns("*")
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                    .allowedHeaders("Content-Type", "X-Session-Token")
+                    .allowedHeaders(ALLOWED_HEADERS)
                     .exposedHeaders("X-Session-Token")
                     .allowCredentials(false)
                     .maxAge(3600);
@@ -51,7 +62,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             registry.addMapping("/**")
                     .allowedOrigins(origins)
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                    .allowedHeaders("Content-Type", "X-Session-Token")
+                    .allowedHeaders(ALLOWED_HEADERS)
                     .exposedHeaders("X-Session-Token")
                     .allowCredentials(true)
                     .maxAge(3600);
@@ -60,11 +71,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        Path dir = Paths.get(uploadPath);
-        if (!dir.isAbsolute()) {
-            dir = Paths.get(System.getProperty("user.dir")).resolve(uploadPath).normalize();
-        }
-        String location = "file:" + dir.toString().replace('\\', '/') + "/";
+        String location = "file:" + uploadStorage.directory().toString().replace('\\', '/') + "/";
         registry.addResourceHandler("/uploads/**")
                 .addResourceLocations(location);
     }
