@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import org.springframework.security.web.FilterChainProxy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -38,6 +39,9 @@ class UploadControllerTest {
 
     @Autowired
     private WebApplicationContext webApplicationContext;
+
+    @Autowired
+    private FilterChainProxy springSecurityFilterChain;
 
     private MockMvc mockMvc;
 
@@ -120,7 +124,11 @@ class UploadControllerTest {
 
     @Test
     void corsAllowsHeadersUsedByTheWebClient() throws Exception {
-        mockMvc.perform(options("/api/upload/image")
+        MockMvc securedMockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+                .addFilters(springSecurityFilterChain)
+                .build();
+
+        securedMockMvc.perform(options("/api/upload/image")
                         .contextPath("/api")
                         .header("Origin", "http://localhost:3000")
                         .header("Access-Control-Request-Method", "POST")
