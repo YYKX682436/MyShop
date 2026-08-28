@@ -1,19 +1,18 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef, type RefObject } from "react"
-import { Plus, Search, Edit, Trash2, Upload, X, AlertCircle, ChevronDown, EyeOff, Eye, KeyRound, Loader2, ImagePlus } from "lucide-react"
+import { Plus, Search, Edit, Trash2, X, AlertCircle, ChevronDown, EyeOff, Eye, KeyRound } from "lucide-react"
 import { toast } from "sonner"
 import Link from "next/link"
 import { cn, getCurrencySymbol } from "@/lib/utils"
 import { Modal } from "@/components/ui/modal"
 import { CardContentImportFields } from "@/components/admin/card-content-import-fields"
+import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
+import { MarkdownEditor } from "@/components/admin/markdown-editor"
 import { validateCardContentColumns } from "@/lib/card-content"
 import { useLocale } from "@/lib/context"
 import { adminProductApi, adminCategoryApi, adminCardKeyApi, currencyApi, requestOrThrow } from "@/services/api"
 import type { ProductDetail, Category, CurrencyItem } from "@/types"
-
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/svg+xml"]
-const ALLOWED_IMAGE_ACCEPT = ".jpg,.jpeg,.png,.gif,.webp,.bmp,.svg"
 
 type ProductFormData = {
   title: string
@@ -32,16 +31,6 @@ type ProductFormData = {
   customer_input_fields: { id: string; label: string }[]
   stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
   manual_stock: string
-}
-
-function validateImageFile(file: File): string | null {
-  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    return "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP/SVG"
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    return "图片大小不能超过 10MB"
-  }
-  return null
 }
 
 export default function AdminProductsPage() {
@@ -63,10 +52,7 @@ export default function AdminProductsPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
   const [showImportModal, setShowImportModal] = useState<ProductDetail | null>(null)
   const [saving, setSaving] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [detailUploading, setDetailUploading] = useState(false)
   const [specsEnabled, setSpecsEnabled] = useState(false)
-  const detailTextareaRef = useRef<HTMLTextAreaElement>(null)
   const titleRef = useRef<HTMLInputElement>(null)
   const categoryRef = useRef<HTMLSelectElement>(null)
   const basePriceRef = useRef<HTMLInputElement>(null)
@@ -93,6 +79,11 @@ export default function AdminProductsPage() {
   })
   const [formSpecs, setFormSpecs] = useState<{ id?: string; name: string; price: string; manual_stock?: string; card_key_count?: number }[]>([])
   const [specDeleteConfirm, setSpecDeleteConfirm] = useState<{ idx: number; name: string; count: number } | null>(null)
+
+  const uploadImage = useCallback(async (file: File) => {
+    const result = await adminProductApi.uploadImage(file)
+    return result.url
+  }, [])
 
   // Import modal state
   const [importSpecId, setImportSpecId] = useState("")
@@ -534,7 +525,7 @@ export default function AdminProductsPage() {
       )}
 
       {/* Add/Edit Product Modal */}
-      <Modal open={showModal} onClose={handleCloseModal} className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <Modal open={showModal} onClose={handleCloseModal} className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="border-b border-border px-6 py-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-foreground">
                 {editingProduct ? t("admin.editProduct") : t("admin.addProduct")}
@@ -578,43 +569,18 @@ export default function AdminProductsPage() {
                 </div>
               </div>
               {/* 基础售价 + 封面图片 */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 lg:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium text-foreground">{t("admin.basePriceReq")}</label>
                   <input ref={basePriceRef} type="number" step="0.01" className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", formErrors.base_price ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")} placeholder="0.00" value={formData.base_price} onChange={(e) => { setFormData({ ...formData, base_price: e.target.value }); setFormErrors(prev => ({ ...prev, base_price: false })) }} />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium text-foreground">{t("admin.coverUrl")}</label>
-                  <div className="flex gap-2">
-                    <input type="text" className="h-10 flex-1 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" placeholder="https://..." value={formData.cover_url} onChange={(e) => setFormData({ ...formData, cover_url: e.target.value })} />
-                    <label className={cn("flex h-10 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground hover:bg-accent transition-colors", uploading && "pointer-events-none opacity-50")}>
-                      {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                      上传
-                      <input
-                        type="file"
-                        accept={ALLOWED_IMAGE_ACCEPT}
-                        className="hidden"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0]
-                          if (!file) return
-                          const err = validateImageFile(file)
-                          if (err) { toast.error(err); e.target.value = ""; return }
-                          setUploading(true)
-                          try {
-                            const result = await adminProductApi.uploadImage(file)
-                            setFormData(prev => ({ ...prev, cover_url: result.url }))
-                            toast.success("上传成功")
-                          } catch (err: unknown) {
-                            toast.error(err instanceof Error ? err.message : "上传失败")
-                          } finally {
-                            setUploading(false)
-                            e.target.value = ""
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
-                  <p className="text-xs text-muted-foreground">建议 1:1 正方形图片，支持 JPG/PNG/GIF/WebP，用于商品卡和详情页展示</p>
+                  <ImageUploadDropzone
+                    value={formData.cover_url}
+                    onChange={(coverUrl) => setFormData(prev => ({ ...prev, cover_url: coverUrl }))}
+                    uploadImage={uploadImage}
+                  />
                 </div>
               </div>
               {/* 排序权重 + 低库存预警 */}
@@ -860,59 +826,12 @@ export default function AdminProductsPage() {
                 )}
               </div>
               {/* 详细说明（放在最底部） */}
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-foreground">{t("admin.detailMd")}</label>
-                  <label className={cn("flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors", detailUploading && "pointer-events-none opacity-50")}>
-                    {detailUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
-                    插入图片
-                    <input
-                      type="file"
-                      accept={ALLOWED_IMAGE_ACCEPT}
-                      className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0]
-                        if (!file) return
-                        const err = validateImageFile(file)
-                        if (err) { toast.error(err); e.target.value = ""; return }
-                        setDetailUploading(true)
-                        try {
-                          const result = await adminProductApi.uploadImage(file)
-                          const textarea = detailTextareaRef.current
-                          const mdImage = `![${file.name}](${result.url})`
-                          if (textarea) {
-                            const start = textarea.selectionStart
-                            const end = textarea.selectionEnd
-                            const text = formData.detail_md
-                            const before = text.substring(0, start)
-                            const after = text.substring(end)
-                            const newText = before + (before.length > 0 && !before.endsWith("\n") ? "\n" : "") + mdImage + "\n" + after
-                            setFormData(prev => ({ ...prev, detail_md: newText }))
-                            requestAnimationFrame(() => {
-                              const newPos = before.length + (before.length > 0 && !before.endsWith("\n") ? 1 : 0) + mdImage.length + 1
-                              textarea.selectionStart = textarea.selectionEnd = newPos
-                              textarea.focus()
-                            })
-                          } else {
-                            setFormData(prev => ({ ...prev, detail_md: prev.detail_md + (prev.detail_md ? "\n" : "") + mdImage + "\n" }))
-                          }
-                          toast.success("图片已插入")
-                        } catch (err: unknown) {
-                          toast.error(err instanceof Error ? err.message : "上传失败")
-                        } finally {
-                          setDetailUploading(false)
-                          e.target.value = ""
-                        }
-                      }}
-                    />
-                  </label>
-                </div>
-                <textarea
-                  ref={detailTextareaRef}
-                  className="min-h-32 rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={"支持 Markdown 格式编辑\n# 标题  ## 二级标题  ### 三级标题\n**粗体**  *斜体*  空一行为段落换行\n![图片描述](图片URL) — 可点击上方「插入图片」自动生成"}
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <label className="text-sm font-medium text-foreground">{t("admin.detailMd")}</label>
+                <MarkdownEditor
                   value={formData.detail_md}
-                  onChange={(e) => setFormData({ ...formData, detail_md: e.target.value })}
+                  onChange={(detailMd) => setFormData(prev => ({ ...prev, detail_md: detailMd }))}
+                  uploadImage={uploadImage}
                 />
               </div>
             </div>

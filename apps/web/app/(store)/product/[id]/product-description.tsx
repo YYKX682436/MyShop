@@ -19,7 +19,7 @@ export function ProductDescription({ product }: { product: ProductDetail }) {
       </div>
 
       {product.detail_md ? (
-        <div className="prose prose-sm max-w-none text-muted-foreground dark:prose-invert">
+        <div className="min-w-0 max-w-full overflow-hidden break-words prose prose-sm text-muted-foreground dark:prose-invert [&_img]:my-3 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-lg">
           <ReactMarkdown>{product.detail_md}</ReactMarkdown>
         </div>
       ) : (
