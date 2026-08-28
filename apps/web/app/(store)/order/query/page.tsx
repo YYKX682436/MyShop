@@ -121,6 +121,25 @@ export default function OrderQueryPage() {
             <span>创建于 {new Date(order.created_at).toLocaleString()}</span>
             <span>支付方式：{order.payment_method}</span>
           </div>
+          {order.items?.some(item => item.customer_inputs.length > 0) && (
+            <div className="mt-5 rounded-lg border border-border bg-muted/20 p-3">
+              <p className="mb-2 text-xs font-medium text-muted-foreground">购买填写信息</p>
+              <div className="space-y-3">
+                {order.items.filter(item => item.customer_inputs.length > 0).map(item => (
+                  <div key={item.id} className="text-sm">
+                    <p className="font-medium text-foreground">{item.product_title}{item.spec_name ? ` · ${item.spec_name}` : ""}</p>
+                    <div className="mt-1 grid gap-1 sm:grid-cols-2">
+                      {item.customer_inputs.map(input => (
+                        <div key={input.id} className="flex gap-2 text-xs text-muted-foreground">
+                          <span>{input.label}：</span><span className="break-all text-foreground">{input.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {order.status === "PENDING" && <Link href={`/pay/${order.id}?method=${encodeURIComponent(order.payment_method)}`} className="mt-4 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">继续支付</Link>}
           {(order.items?.some(item => item.fulfillment_status === "WAITING_MANUAL")
             || delivery?.item_statuses?.some(item => item.fulfillment_status === "WAITING_MANUAL")) && (

@@ -121,6 +121,22 @@ export default function MyOrdersPage() {
                 </span>
               </div>
 
+              {order.items?.some(item => item.customer_inputs.length > 0) && (
+                <div className="mb-3 rounded-md bg-muted/30 p-3 text-xs">
+                  <p className="mb-2 font-medium text-muted-foreground">购买填写信息</p>
+                  <div className="space-y-2">
+                    {order.items.filter(item => item.customer_inputs.length > 0).map(item => (
+                      <div key={item.id}>
+                        <p className="font-medium text-foreground">{item.product_title}</p>
+                        <div className="mt-1 grid gap-1 sm:grid-cols-2">
+                          {item.customer_inputs.map(input => <span key={input.id} className="text-muted-foreground">{input.label}：<span className="text-foreground">{input.value}</span></span>)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Footer */}
               <div className="flex items-center justify-between border-t border-border pt-3">
                 <span className="text-sm text-muted-foreground">

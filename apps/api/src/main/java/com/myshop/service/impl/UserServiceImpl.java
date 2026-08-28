@@ -4,6 +4,7 @@ import com.myshop.common.PageResult;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
 import com.myshop.entity.PointsLog;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -127,6 +129,24 @@ public class UserServiceImpl implements UserService {
         map.put("order_type", o.getOrderType().name());
         map.put("payment_method", o.getPaymentMethod());
         map.put("created_at", o.getCreatedAt());
+        map.put("items", orderItemRepository.findByOrderId(o.getId()).stream().map(this::toOrderItemBrief).toList());
+        return map;
+    }
+
+    private Map<String, Object> toOrderItemBrief(OrderItem item) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", item.getId());
+        map.put("product_id", item.getProductId());
+        map.put("product_title", item.getProductTitle());
+        map.put("spec_name", item.getSpecName());
+        map.put("quantity", item.getQuantity());
+        map.put("unit_price", item.getUnitPrice());
+        map.put("subtotal", item.getSubtotal());
+        map.put("delivery_type", item.getDeliveryType());
+        map.put("customer_inputs", item.getCustomerInputs() == null ? List.of() : item.getCustomerInputs());
+        map.put("stock_mode", item.getStockMode());
+        map.put("fulfillment_status", item.getFulfillmentStatus());
+        map.put("delivered_at", item.getDeliveredAt());
         return map;
     }
 }

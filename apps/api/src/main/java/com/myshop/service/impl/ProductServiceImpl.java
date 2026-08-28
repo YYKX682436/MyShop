@@ -2,7 +2,6 @@ package com.myshop.service.impl;
 
 import com.myshop.common.PageResult;
 import com.myshop.constant.CardKeyStatus;
-import com.myshop.constant.CustomerInputType;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.Product;
@@ -116,7 +115,8 @@ public class ProductServiceImpl implements ProductService {
                 "AUTO".equals(deliveryType) ? StockMode.CARD_KEY : StockMode.MANUAL);
         ProductRules.compatibleStockMode(deliveryType, stockMode);
         product.setDeliveryType(deliveryType);
-        product.setCustomerInputType(ProductRules.parseCustomerInputType(req.get("customer_input_type")));
+        product.setCustomerInputFields(ProductRules.normalizeCustomerInputFields(
+                req.getOrDefault("customer_input_fields", List.of())));
         product.setStockMode(stockMode);
         product.setCategoryId(UUID.fromString((String) req.get("category_id")));
         if (req.containsKey("low_stock_threshold")) product.setLowStockThreshold(((Number) req.get("low_stock_threshold")).intValue());
@@ -152,8 +152,8 @@ public class ProductServiceImpl implements ProductService {
                         : previousStockMode);
         ProductRules.compatibleStockMode(deliveryType, stockMode);
         product.setDeliveryType(deliveryType);
-        if (req.containsKey("customer_input_type")) {
-            product.setCustomerInputType(ProductRules.parseCustomerInputType(req.get("customer_input_type")));
+        if (req.containsKey("customer_input_fields")) {
+            product.setCustomerInputFields(ProductRules.normalizeCustomerInputFields(req.get("customer_input_fields")));
         }
         product.setStockMode(stockMode);
         if (req.containsKey("category_id")) product.setCategoryId(UUID.fromString((String) req.get("category_id")));
@@ -333,7 +333,7 @@ public class ProductServiceImpl implements ProductService {
         map.put("unlimited", stock.unlimited());
         map.put("has_specs", hasSpecs);
         map.put("delivery_type", p.getDeliveryType());
-        map.put("customer_input_type", p.getCustomerInputType());
+        map.put("customer_input_fields", ProductRules.currentFields(p));
         map.put("stock_mode", stockMode);
         map.put("sales_count", orderItemRepository.sumQuantityByProductId(p.getId()));
         map.put("initial_sales", p.getInitialSales());
@@ -349,7 +349,7 @@ public class ProductServiceImpl implements ProductService {
         map.put("specs", specs.stream().map(spec -> toSpecMap(spec, stockMode)).toList());
         map.put("spec_enabled", p.isSpecEnabled());
         map.put("wholesale_enabled", p.isWholesaleEnabled());
-        map.put("customer_input_type", p.getCustomerInputType());
+        map.put("customer_input_fields", ProductRules.currentFields(p));
         map.put("stock_mode", stockMode);
         map.put("wholesale_rules", wholesaleRuleRepository.findByProductIdOrderByMinQuantityAsc(p.getId()).stream()
                 .map(r -> {

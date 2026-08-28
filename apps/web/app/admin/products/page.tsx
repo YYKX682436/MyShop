@@ -29,7 +29,7 @@ type ProductFormData = {
   initial_sales: string
   sort_order: string
   delivery_type: "AUTO" | "MANUAL"
-  customer_input_type: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
+  customer_input_fields: { id: string; label: string }[]
   stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
   manual_stock: string
 }
@@ -87,7 +87,7 @@ export default function AdminProductsPage() {
     initial_sales: "",
     sort_order: "",
     delivery_type: "AUTO",
-    customer_input_type: "NONE",
+    customer_input_fields: [],
     stock_mode: "CARD_KEY",
     manual_stock: "",
   })
@@ -157,7 +157,7 @@ export default function AdminProductsPage() {
       initial_sales: String(product.initial_sales ?? ""),
       sort_order: String(product.sort_order ?? ""),
       delivery_type: product.delivery_type === "MANUAL" ? "MANUAL" : "AUTO",
-      customer_input_type: product.customer_input_type || "NONE",
+      customer_input_fields: (product.customer_input_fields || []).map(field => ({ id: field.id, label: field.label })),
       stock_mode: product.stock_mode || ((product.delivery_type || "AUTO") === "MANUAL" ? "MANUAL" : "CARD_KEY"),
       manual_stock: product.stock_mode === "MANUAL" && product.stock_available != null ? String(product.stock_available) : "",
     })
@@ -222,6 +222,24 @@ export default function AdminProductsPage() {
     }
     setFormErrors({})
 
+    if (formData.customer_input_fields.length > 20) {
+      toast.error("客户填写字段最多支持20项")
+      return
+    }
+    const customerInputLabels = new Set<string>()
+    for (const field of formData.customer_input_fields) {
+      const label = field.label.trim()
+      if (!label) { toast.error("客户填写字段名称不能为空"); return }
+      if (label.length > 50) { toast.error("客户填写字段名称最多50个字符"); return }
+      if ([...label].some(character => /\p{C}/u.test(character))) {
+        toast.error("客户填写字段名称不能包含换行或控制字符")
+        return
+      }
+      const key = label.toLocaleLowerCase()
+      if (customerInputLabels.has(key)) { toast.error(`客户填写字段名称「${label}」重复`); return }
+      customerInputLabels.add(key)
+    }
+
     if (specsEnabled) {
       const specNames = new Set<string>()
       for (const spec of formSpecs) {
@@ -268,7 +286,7 @@ export default function AdminProductsPage() {
         initial_sales: parseInt(formData.initial_sales) || 0,
         sort_order: parseInt(formData.sort_order) || undefined,
         delivery_type: formData.delivery_type,
-        customer_input_type: formData.customer_input_type,
+        customer_input_fields: formData.customer_input_fields.map(field => ({ id: field.id, label: field.label.trim() })),
         stock_mode: formData.stock_mode,
         manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, parseInt(formData.manual_stock) || 0) : undefined,
       }
@@ -325,7 +343,7 @@ export default function AdminProductsPage() {
   const handleCloseModal = () => {
     setShowModal(false)
     setEditingProduct(null)
-    setFormData({ title: "", description: "", detail_md: "", category_id: "", base_price: "", currency: "CNY", cover_url: "", low_stock_threshold: "10", wholesale_enabled: false, is_enabled: true, initial_sales: "", sort_order: "", delivery_type: "AUTO", customer_input_type: "NONE", stock_mode: "CARD_KEY", manual_stock: "" })
+    setFormData({ title: "", description: "", detail_md: "", category_id: "", base_price: "", currency: "CNY", cover_url: "", low_stock_threshold: "10", wholesale_enabled: false, is_enabled: true, initial_sales: "", sort_order: "", delivery_type: "AUTO", customer_input_fields: [], stock_mode: "CARD_KEY", manual_stock: "" })
     setFormSpecs([])
     setSpecsEnabled(false)
     setSpecDeleteConfirm(null)
@@ -346,7 +364,7 @@ export default function AdminProductsPage() {
           content_columns: importColumns,
           check_duplicate: importCheckDuplicate,
         }))
-      toast.success(`导入成功: ${result.success_count} 条${result.fail_count > 0 ? `，失败 ${result.fail_count} 条` : ""}`)
+       toast.success(`读取 ${result.total_count}，成功 ${result.success_count}，重复 ${result.duplicate_count}，失败 ${result.fail_count}`)
       setShowImportModal(null)
       setImportColumns([""])
       setImportCheckDuplicate(true)
@@ -658,20 +676,60 @@ export default function AdminProductsPage() {
                   </button>
                 </div>
               </div>
-              {/* 客户填写信息 + 库存模式 */}
+              {/* 客户填写字段 + 库存模式 */}
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">购买时客户需填写</label>
-                  <select
-                    className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={formData.customer_input_type}
-                     onChange={(e) => setFormData({ ...formData, customer_input_type: e.target.value as ProductFormData["customer_input_type"] })}
-                  >
-                    <option value="NONE">无需填写</option>
-                    <option value="QQ">QQ号码</option>
-                    <option value="PHONE">手机号</option>
-                    <option value="QQ_OR_PHONE">QQ或手机号</option>
-                  </select>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-foreground">购买时客户需填写</label>
+                    <span className="text-xs text-muted-foreground">{formData.customer_input_fields.length}/20</span>
+                  </div>
+                  <div className="space-y-2 rounded-lg border border-input bg-muted/10 p-3">
+                    {formData.customer_input_fields.map((field, index) => (
+                      <div key={field.id} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          maxLength={50}
+                          value={field.label}
+                          placeholder="例如：QQ号码、收货账号"
+                          onChange={(event) => setFormData(current => ({
+                            ...current,
+                            customer_input_fields: current.customer_input_fields.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, label: event.target.value } : item
+                            ),
+                          }))}
+                          className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                        <button
+                          type="button"
+                          title="删除字段"
+                          onClick={() => setFormData(current => ({
+                            ...current,
+                            customer_input_fields: current.customer_input_fields.filter((_, itemIndex) => itemIndex !== index),
+                          }))}
+                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      disabled={formData.customer_input_fields.length >= 20}
+                      onClick={() => setFormData(current => ({
+                        ...current,
+                        customer_input_fields: [...current.customer_input_fields, {
+                          id: globalThis.crypto?.randomUUID?.() || `field-${Date.now()}-${current.customer_input_fields.length}`,
+                          label: "",
+                        }],
+                      }))}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-dashed border-primary/50 px-3 text-xs font-medium text-primary hover:bg-primary/5 disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> 添加字段
+                    </button>
+                    {formData.customer_input_fields.length === 0 && (
+                      <p className="text-xs text-muted-foreground">不添加字段时，商品购买页不会显示客户填写项。</p>
+                    )}
+                  </div>
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-sm font-medium text-foreground">库存模式</label>

@@ -10,6 +10,8 @@ import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.WholesaleRule;
 import com.myshop.exception.BusinessException;
+import com.myshop.model.CustomerInputField;
+import com.myshop.model.CustomerInputValue;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.CartItemRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -98,6 +100,31 @@ class OrderServiceImplTest {
         assertNotNull(first.get("lookup_token"));
         assertTrue(String.valueOf(first.get("lookup_token")).length() >= 40);
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
+    }
+
+    @Test
+    void directOrderStoresAllCustomerInputsWithCurrentLabels() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, "10.00");
+        product.setCustomerInputFields(List.of(
+                new CustomerInputField("account", "充值账号"),
+                new CustomerInputField("zone", "游戏区服")));
+        stubProduct(product, 3);
+
+        Map<String, Object> request = request(productId, null, 1);
+        request.put("customer_inputs", List.of(
+                Map.of("id", "zone", "label", "伪造区服", "value", "艾欧尼亚"),
+                Map.of("id", "account", "value", "123456")));
+
+        service.createDirectOrder(request, null, "203.0.113.14", "snapshot-session");
+
+        ArgumentCaptor<com.myshop.entity.OrderItem> itemCaptor =
+                ArgumentCaptor.forClass(com.myshop.entity.OrderItem.class);
+        org.mockito.Mockito.verify(orderItemRepository).save(itemCaptor.capture());
+        assertEquals(List.of(
+                new CustomerInputValue("account", "充值账号", "123456"),
+                new CustomerInputValue("zone", "游戏区服", "艾欧尼亚")),
+                itemCaptor.getValue().getCustomerInputs());
     }
 
     @Test

@@ -5,6 +5,8 @@ import com.myshop.entity.Product;
 import com.myshop.payment.EpayPaymentProvider;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.service.AutoFulfillmentService;
+import com.myshop.service.AdminCardKeyService;
+import com.myshop.service.CartService;
 import com.myshop.service.DeliverService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
@@ -41,6 +43,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @Testcontainers(disabledWithoutDocker = true)
@@ -59,6 +65,12 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired
     private OrderService orderService;
+
+    @Autowired
+    private CartService cartService;
+
+    @Autowired
+    private AdminCardKeyService adminCardKeyService;
 
     @Autowired
     private WebhookService webhookService;
@@ -162,6 +174,76 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(2, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
         assertEquals(1, number("select count(*) from card_keys where order_item_id = ?", firstItemId));
         assertEquals(1, number("select count(*) from card_keys where order_item_id = ?", secondItemId));
+    }
+
+    @Test
+    void cartAdvisoryRejectsSplitCustomerInputRowsWhenPoolTotalExceedsStock() {
+        UUID productId = insertProductWithCustomerField("account");
+        insertCards(productId, 5, "cart-advisory");
+        String session = "cart-advisory-" + UUID.randomUUID();
+
+        cartService.addItem(null, session, cartItemRequest(productId, 3, "first"));
+        assertThrows(BusinessException.class,
+                () -> cartService.addItem(null, session, cartItemRequest(productId, 3, "second")));
+
+        assertEquals(1, number("select count(*) from cart_items where session_token = ?", session));
+        assertEquals(3, number("select sum(quantity) from cart_items where session_token = ?", session));
+    }
+
+    @Test
+    void cartCheckoutAggregatesCardPoolAcrossDifferentCustomerInputs() {
+        UUID productId = insertProductWithCustomerField("account");
+        insertCards(productId, 5, "cart-checkout");
+        String session = "cart-checkout-" + UUID.randomUUID();
+        insertCartItem(session, productId, 3, "first");
+        insertCartItem(session, productId, 3, "second");
+        String channel = "cart-aggregate-channel-" + UUID.randomUUID();
+        insertPaymentChannel(channel);
+
+        Map<String, Object> request = cartOrderRequest(channel);
+        assertThrows(BusinessException.class,
+                () -> orderService.createCartOrder(request, null, "203.0.113.20", session));
+        assertEquals(0, number("select count(*) from orders where session_token = ?", session));
+
+        String successSession = "cart-checkout-success-" + UUID.randomUUID();
+        insertCartItem(successSession, productId, 2, "first");
+        insertCartItem(successSession, productId, 3, "second");
+        when(epayPaymentProvider.create(any(PaymentProvider.PaymentRequest.class)))
+                .thenReturn(new PaymentProvider.PaymentResult(
+                        "cart-aggregate-trade", "https://pay.example/cart-aggregate", null));
+
+        Map<String, Object> result = orderService.createCartOrder(
+                cartOrderRequest(channel), null, "203.0.113.21", successSession);
+        UUID orderId = UUID.fromString(String.valueOf(((Map<?, ?>) result.get("order")).get("id")));
+        assertEquals(2, number("select count(*) from order_items where order_id = ?", orderId));
+        assertEquals(2, number("select count(*) from order_items where order_id = ? and customer_inputs @> '[{\"id\":\"account\"}]'::jsonb", orderId));
+    }
+
+    @Test
+    void concurrentDuplicateCheckedImportsAddOnlyOneHistoricalFingerprint() throws Exception {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Map<String, Object> importRequest = Map.of(
+                    "product_id", productId.toString(),
+                    "content_columns", List.of("same-card"),
+                    "check_duplicate", true);
+            Future<Map<String, Object>> first = executor.submit(() ->
+                    adminCardKeyService.importCardKeys(importRequest, UUID.randomUUID()));
+            Future<Map<String, Object>> second = executor.submit(() ->
+                    adminCardKeyService.importCardKeys(importRequest, UUID.randomUUID()));
+
+            Map<String, Object> firstResult = first.get(20, TimeUnit.SECONDS);
+            Map<String, Object> secondResult = second.get(20, TimeUnit.SECONDS);
+            assertEquals(1, ((Number) firstResult.get("success_count")).intValue()
+                    + ((Number) secondResult.get("success_count")).intValue());
+            assertEquals(1, ((Number) firstResult.get("duplicate_count")).intValue()
+                    + ((Number) secondResult.get("duplicate_count")).intValue());
+            assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -360,6 +442,12 @@ class PostgresDeliveryIntegrationTest {
         assertEquals("DELIVERED", scalar("select fulfillment_status from order_items where id = ?", String.class, autoItemId));
         assertEquals("WAITING_MANUAL", scalar("select fulfillment_status from order_items where id = ?", String.class, manualItemId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), nullable(String.class), eq(List.of(autoItemId)));
+
+        // A retry while the manual lane is still waiting must not resend the
+        // already-completed automatic item or its card body.
+        deliverService.deliverOrders(request(orderId, "mixed-token"), null);
+        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), nullable(String.class), eq(List.of(autoItemId)));
 
         Map<?, ?> second = fulfillmentService.completeManualItem(orderId, manualItemId);
         assertEquals("DELIVERED", second.get("status"));
@@ -461,6 +549,41 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, 'Integration product', 10.00, ?,
                     'AUTO', true, 0)
                 """, productId, categoryId);
+    }
+
+    private UUID insertProductWithCustomerField(String fieldId) {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        jdbcTemplate.update("update products set customer_input_fields = cast(? as jsonb) where id = ?",
+                "[{\"id\":\"" + fieldId + "\",\"label\":\"收货账号\"}]", productId);
+        return productId;
+    }
+
+    private void insertCards(UUID productId, int count, String prefix) {
+        for (int index = 0; index < count; index++) insertCard(productId, prefix + "-" + index);
+    }
+
+    private Map<String, Object> cartItemRequest(UUID productId, int quantity, String value) {
+        return Map.of(
+                "product_id", productId.toString(),
+                "quantity", quantity,
+                "customer_inputs", List.of(Map.of("id", "account", "value", value)));
+    }
+
+    private void insertCartItem(String sessionToken, UUID productId, int quantity, String value) {
+        jdbcTemplate.update("""
+                insert into cart_items (id, created_at, updated_at, session_token, product_id,
+                    customer_inputs, quantity)
+                values (?, current_timestamp, current_timestamp, ?, ?, cast(? as jsonb), ?)
+                """, UUID.randomUUID(), sessionToken, productId,
+                "[{\"id\":\"account\",\"label\":\"收货账号\",\"value\":\"" + value + "\"}]", quantity);
+    }
+
+    private Map<String, Object> cartOrderRequest(String channel) {
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("email", "cart-aggregate-" + UUID.randomUUID() + "@example.com");
+        request.put("payment_method", channel);
+        return request;
     }
 
     private void insertPaymentChannel(String channelCode) {

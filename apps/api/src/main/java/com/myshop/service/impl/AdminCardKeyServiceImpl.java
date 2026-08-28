@@ -110,6 +110,12 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         boolean checkDuplicate = booleanValue(req.get("check_duplicate"), true);
         List<List<String>> rows = parsed.rows();
         List<String> fingerprints = rows.stream().map(CardContentParser::fingerprint).toList();
+        if (checkDuplicate) {
+            // The lock must cover the historical fingerprint read and the
+            // subsequent batch insert; otherwise two concurrent imports can
+            // both observe an empty history and insert the same card.
+            cardKeyRepository.lockImportPool(productId, specId);
+        }
         Set<String> historical = checkDuplicate && !fingerprints.isEmpty()
                 ? new HashSet<>(cardKeyRepository.findExistingFingerprints(productId, specId, fingerprints))
                 : Set.of();

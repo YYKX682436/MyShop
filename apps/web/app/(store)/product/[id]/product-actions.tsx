@@ -12,6 +12,7 @@ import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotenc
 import { getPaymentTypeForChannel, isWechatChannel } from "@/lib/payment-channel"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PaymentChannelItem } from "@/types"
+import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
 
 interface ProductActionsProps {
   product: ProductDetail
@@ -23,7 +24,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const { addItem } = useCart()
   const router = useRouter()
   const emailInputRef = useRef<HTMLInputElement>(null)
-  const customerInputRef = useRef<HTMLInputElement>(null)
+  const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const enabledChannels = useMemo(() => channels.filter(c => c.is_enabled), [channels])
 
@@ -33,8 +34,11 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const [quantity, setQuantity] = useState(1)
   const [email, setEmail] = useState("")
   const [emailError, setEmailError] = useState("")
-  const [customerInput, setCustomerInput] = useState("")
-  const [customerInputError, setCustomerInputError] = useState("")
+  const customerInputFields = product.customer_input_fields ?? []
+  const [customerInputs, setCustomerInputs] = useState<Record<string, string>>(() =>
+    Object.fromEntries(customerInputFields.map(field => [field.id, ""]))
+  )
+  const [customerInputErrors, setCustomerInputErrors] = useState<Record<string, string>>({})
   const [selectedPayment, setSelectedPayment] = useState(
     enabledChannels.length > 0 ? enabledChannels[0].channel_code : ""
   )
@@ -48,12 +52,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const finiteStock = currentStock ?? 0
   const isOutOfStock = !unlimited && finiteStock === 0
   const deliveryType = product.delivery_type === "MANUAL" ? "manual" : "auto"
-  const customerInputType = product.customer_input_type ?? "NONE"
-  const customerInputLabel = customerInputType === "QQ"
-    ? "QQ号码"
-    : customerInputType === "PHONE"
-      ? "手机号"
-      : customerInputType === "QQ_OR_PHONE" ? "QQ或手机号" : ""
 
   const handleEmailChange = (value: string) => {
     setEmail(value)
@@ -64,27 +62,20 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     }
   }
 
-  const validateCustomerInput = (value: string) => {
-    const normalized = value.trim()
-    if (customerInputType === "NONE") return true
-    const valid = customerInputType === "QQ"
-      ? /^\d{5,12}$/.test(normalized)
-      : customerInputType === "PHONE"
-        ? /^(?:\+?\d{6,15}|1\d{10})$/.test(normalized)
-        : /^(?:\d{5,12}|\+?\d{6,15}|1\d{10})$/.test(normalized)
-    if (!valid) {
-      setCustomerInputError(`请填写有效的${customerInputLabel}`)
-      return false
+  const validateCustomerInputsForAction = () => {
+    const result = validateCustomerInputs(customerInputFields, customerInputs)
+    if (!result.ok) {
+      setCustomerInputErrors(current => ({ ...current, [result.field ?? ""]: result.message }))
+      if (result.field) customerInputRefs.current[result.field]?.focus()
+      return null
     }
-    setCustomerInputError("")
-    return true
+    setCustomerInputErrors({})
+    return result.values
   }
 
   const handleBuyNow = async () => {
-    if (!validateCustomerInput(customerInput)) {
-      customerInputRef.current?.focus()
-      return
-    }
+    const normalizedCustomerInputs = validateCustomerInputsForAction()
+    if (!normalizedCustomerInputs) return
     if (!email.trim()) {
       toast.error(t("product.emailRequired"))
       emailInputRef.current?.focus()
@@ -111,7 +102,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       product_id: product.id,
       spec_id: selectedSpec?.id ?? null,
       quantity,
-      customer_input_value: customerInput.trim() || null,
+      customer_inputs: normalizedCustomerInputs,
       email: email.trim().toLowerCase(),
       payment_method: selectedPayment,
     })
@@ -123,7 +114,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           spec_id: selectedSpec?.id ?? null,
           quantity,
           email,
-          customer_input_value: customerInput.trim() || null,
+          customer_inputs: normalizedCustomerInputs,
           payment_method: selectedPayment,
           idempotency_key: intent.key,
           idempotency_fingerprint: intent.fingerprint,
@@ -157,10 +148,8 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   }
 
   const handleAddToCart = async () => {
-    if (!validateCustomerInput(customerInput)) {
-      customerInputRef.current?.focus()
-      return
-    }
+    const normalizedCustomerInputs = validateCustomerInputsForAction()
+    if (!normalizedCustomerInputs) return
     if (product.specs.length > 0 && !selectedSpec) return
     if (isOutOfStock) {
       toast.error(t("product.outOfStock"))
@@ -171,7 +160,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         product_id: product.id,
         spec_id: selectedSpec?.id ?? null,
         quantity,
-        customer_input_value: customerInput.trim() || null,
+        customer_inputs: normalizedCustomerInputs,
       })
       toast.success(t("product.addToCart"))
     } catch (err: unknown) {
@@ -312,30 +301,36 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           </div>
         </div>
 
-        {customerInputType !== "NONE" && (
-          <div>
+        {customerInputFields.map(field => (
+          <div key={field.id}>
             <label className="mb-1.5 block text-sm font-medium text-foreground">
-              {customerInputLabel} <span className="text-destructive">*</span>
+              {field.label} <span className="text-destructive">*</span>
             </label>
             <input
-              ref={customerInputRef}
+              ref={element => { customerInputRefs.current[field.id] = element }}
               type="text"
-              inputMode={customerInputType === "PHONE" ? "tel" : "numeric"}
-              value={customerInput}
-              onChange={(e) => {
-                setCustomerInput(e.target.value)
-                if (customerInputError) validateCustomerInput(e.target.value)
+              value={customerInputs[field.id] ?? ""}
+              onChange={(event) => {
+                const value = event.target.value
+                setCustomerInputs(current => ({ ...current, [field.id]: value }))
+                if (customerInputErrors[field.id]) {
+                  const error = validateCustomerInputValue(value)
+                  setCustomerInputErrors(current => ({ ...current, [field.id]: error ?? "" }))
+                }
               }}
-              onBlur={() => { if (customerInput.trim()) validateCustomerInput(customerInput) }}
-              placeholder={`请输入${customerInputLabel}`}
+              onBlur={() => {
+                const error = validateCustomerInputValue(customerInputs[field.id] ?? "")
+                if (error) setCustomerInputErrors(current => ({ ...current, [field.id]: `${field.label}：${error}` }))
+              }}
+              placeholder={`请输入${field.label}`}
               className={cn(
                 "h-10 w-full rounded-lg border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring",
-                customerInputError ? "border-destructive" : "border-input"
+                customerInputErrors[field.id] ? "border-destructive" : "border-input"
               )}
             />
-            {customerInputError && <p className="mt-1 text-xs text-destructive">{customerInputError}</p>}
+            {customerInputErrors[field.id] && <p className="mt-1 text-xs text-destructive">{customerInputErrors[field.id]}</p>}
           </div>
-        )}
+        ))}
 
         {/* Email input */}
         <div>

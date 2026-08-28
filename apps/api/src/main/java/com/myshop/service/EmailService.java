@@ -1,8 +1,15 @@
 package com.myshop.service;
 
 import java.util.UUID;
+import java.util.List;
 
 public interface EmailService {
 
-    void sendDeliveryEmail(UUID orderId, String lookupToken);
+    /** Send only the newly completed automatic order items when supplied. */
+    void sendDeliveryEmail(UUID orderId, String lookupToken, List<UUID> orderItemIds);
+
+    /** Compatibility seam for old callers; an empty selection means all keys. */
+    default void sendDeliveryEmail(UUID orderId, String lookupToken) {
+        sendDeliveryEmail(orderId, lookupToken, List.of());
+    }
 }

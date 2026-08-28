@@ -82,6 +82,17 @@ export interface WholesaleRule {
   unit_price: number
 }
 
+export interface CustomerInputField {
+  id: string
+  label: string
+}
+
+export interface CustomerInputValue {
+  id: string
+  label: string
+  value: string
+}
+
 /** Product list item (returned by GET /products) */
 export interface ProductCard {
   id: string
@@ -95,7 +106,7 @@ export interface ProductCard {
   unlimited?: boolean
   has_specs: boolean
   delivery_type?: string
-  customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
+  customer_input_fields: CustomerInputField[]
   stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
   sales_count?: number
   initial_sales?: number
@@ -134,8 +145,10 @@ export interface CartItem {
   stock_available?: number | null
   unlimited?: boolean
   stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
-  customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
-  customer_input_value?: string | null
+  customer_input_fields: CustomerInputField[]
+  customer_inputs: CustomerInputValue[]
+  customer_inputs_complete?: boolean
+  customer_input_error?: string
 }
 
 export interface Cart {
@@ -171,8 +184,7 @@ export interface OrderItemDetail {
   unit_price: number
   subtotal: number
   delivery_type?: string
-  customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE"
-  customer_input_value?: string | null
+  customer_inputs: CustomerInputValue[]
   stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
   fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
   delivered_at?: string | null
@@ -324,7 +336,7 @@ export interface CreateOrderRequest {
   idempotency_key: string
   idempotency_fingerprint?: string
   device?: string
-  customer_input_value?: string | null
+  customer_inputs?: { id: string; value: string }[]
 }
 
 export interface CreateCartOrderRequest {

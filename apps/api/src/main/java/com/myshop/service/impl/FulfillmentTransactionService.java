@@ -96,6 +96,19 @@ public class FulfillmentTransactionService implements FulfillmentService {
         }
 
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+        List<UUID> newlyCompletedAutoItems = new ArrayList<>();
+        LocalDateTime deliveryAttemptAt = LocalDateTime.now();
+        // This also repairs a pre-V5 mixed order whose automatic item was
+        // already delivered while the old implementation withheld email
+        // until the manual lane completed.
+        for (OrderItem item : items) {
+            if (!isManual(item)
+                    && effectiveFulfillmentStatus(item) == FulfillmentStatus.DELIVERED
+                    && item.getDeliveryNotifiedAt() == null) {
+                item.setDeliveryNotifiedAt(deliveryAttemptAt);
+                newlyCompletedAutoItems.add(item.getId());
+            }
+        }
         List<Allocation> allocations = new ArrayList<>();
         Map<StockPoolKey, Integer> autoQuantities = new LinkedHashMap<>();
 
@@ -124,7 +137,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
         // rows it already locked with FOR UPDATE SKIP LOCKED, so taking keys
         // item-by-item while leaving them AVAILABLE would allocate the same
         // key twice when two cart items share a pool (for example, different
-        // customer_input_value values). Aggregate first, then slice the
+        // customer-input values). Aggregate first, then slice the
         // locked list back into the original order-item boundaries.
         Map<StockPoolKey, List<CardKey>> lockedKeysByPool = new LinkedHashMap<>();
         for (Map.Entry<StockPoolKey, Integer> entry : autoQuantities.entrySet()) {
@@ -151,7 +164,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
             poolOffsets.put(pool, end);
         }
 
-        LocalDateTime deliveredAt = LocalDateTime.now();
+        LocalDateTime deliveredAt = deliveryAttemptAt;
         for (Allocation allocation : allocations) {
             for (CardKey key : allocation.keys()) {
                 key.setStatus(CardKeyStatus.SOLD);
@@ -162,6 +175,10 @@ public class FulfillmentTransactionService implements FulfillmentService {
             cardKeyRepository.saveAll(allocation.keys());
             allocation.item().setFulfillmentStatus(FulfillmentStatus.DELIVERED);
             allocation.item().setDeliveredAt(deliveredAt);
+            if (allocation.item().getDeliveryNotifiedAt() == null) {
+                allocation.item().setDeliveryNotifiedAt(deliveredAt);
+                newlyCompletedAutoItems.add(allocation.item().getId());
+            }
         }
         for (OrderItem item : items) {
             if (isManual(item) && effectiveFulfillmentStatus(item) != FulfillmentStatus.DELIVERED) {
@@ -177,6 +194,9 @@ public class FulfillmentTransactionService implements FulfillmentService {
             // Mixed orders deliberately remain PAID until the manual lane is
             // completed. The retry scheduler only selects automatic items.
             orderRepository.save(order);
+        }
+        if (!newlyCompletedAutoItems.isEmpty()) {
+            notifyAfterCommit(order, newlyCompletedAutoItems);
         }
         return result(order, buildDeliveryGroups(order.getId()));
     }
@@ -229,21 +249,21 @@ public class FulfillmentTransactionService implements FulfillmentService {
         order.setDeliveredAt(deliveredAt);
         orderRepository.save(order);
         awardPoints(order);
-        notifyAfterCommit(order);
     }
 
-    private void notifyAfterCommit(Order order) {
+    private void notifyAfterCommit(Order order, List<UUID> orderItemIds) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             UUID orderId = order.getId();
             String lookupToken = order.getGuestLookupToken();
+            List<UUID> selectedItems = List.copyOf(orderItemIds);
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    emailService.sendDeliveryEmail(orderId, lookupToken);
+                    emailService.sendDeliveryEmail(orderId, lookupToken, selectedItems);
                 }
             });
         } else {
-            emailService.sendDeliveryEmail(order.getId(), order.getGuestLookupToken());
+            emailService.sendDeliveryEmail(order.getId(), order.getGuestLookupToken(), orderItemIds);
         }
     }
 

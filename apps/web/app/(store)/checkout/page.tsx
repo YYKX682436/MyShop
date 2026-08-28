@@ -13,6 +13,7 @@ import { PaymentSelector } from "@/components/shared/payment-selector"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { setTurnstileHeaders } from "@/services/api"
 import type { PaymentChannelItem } from "@/types"
+import { validateCustomerInputs } from "@/lib/customer-inputs"
 
 export default function CheckoutPage() {
   const { t } = useLocale()
@@ -20,7 +21,7 @@ export default function CheckoutPage() {
   const { items, totalAmount, refreshCart, updateItem } = useCart()
 
   const [email, setEmail] = useState("")
-  const [customerInputs, setCustomerInputs] = useState<Record<string, string>>({})
+  const [customerInputs, setCustomerInputs] = useState<Record<string, Record<string, string>>>({})
   const [channels, setChannels] = useState<PaymentChannelItem[]>([])
   const [selectedPayment, setSelectedPayment] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -31,23 +32,16 @@ export default function CheckoutPage() {
     setCustomerInputs(current => {
       const next = { ...current }
       for (const item of items) {
-        if (!(item.id in next)) next[item.id] = item.customer_input_value || ""
+        if (!(item.id in next)) {
+          next[item.id] = Object.fromEntries(item.customer_input_fields.map(field => [
+            field.id,
+            item.customer_inputs.find(input => input.id === field.id)?.value ?? "",
+          ]))
+        }
       }
       return next
     })
   }, [items])
-
-  const customerLabel = (type?: string) => type === "QQ"
-    ? "QQ号码"
-    : type === "PHONE" ? "手机号" : type === "QQ_OR_PHONE" ? "QQ或手机号" : "客户信息"
-
-  const validCustomerInput = (type: string | undefined, value: string) => {
-    const normalized = value.trim()
-    if (!type || type === "NONE") return true
-    if (type === "QQ") return /^\d{5,12}$/.test(normalized)
-    if (type === "PHONE") return /^(?:\+?\d{6,15}|1\d{10})$/.test(normalized)
-    return /^(?:\d{5,12}|\+?\d{6,15}|1\d{10})$/.test(normalized)
-  }
 
   // Fetch payment channels on mount
   useEffect(() => {
@@ -71,13 +65,15 @@ export default function CheckoutPage() {
   }, [])
 
   const handleConfirmOrder = async () => {
+    const normalizedInputsByItem: Record<string, { id: string; value: string }[]> = {}
     for (const item of items) {
-      const value = customerInputs[item.id] ?? item.customer_input_value ?? ""
-      if (item.customer_input_type && item.customer_input_type !== "NONE"
-        && !validCustomerInput(item.customer_input_type, value)) {
-        toast.error(`请填写有效的${customerLabel(item.customer_input_type)}`)
+      const drafts = customerInputs[item.id] ?? {}
+      const validation = validateCustomerInputs(item.customer_input_fields, drafts)
+      if (!validation.ok) {
+        toast.error(validation.message)
         return
       }
+      normalizedInputsByItem[item.id] = validation.values
     }
     if (!email.trim()) {
       toast.error(t("product.emailRequired"))
@@ -100,7 +96,7 @@ export default function CheckoutPage() {
         product_id: item.product_id,
         spec_id: item.spec_id,
         quantity: item.quantity,
-        customer_input_value: (customerInputs[item.id] ?? item.customer_input_value ?? "").trim() || null,
+        customer_inputs: normalizedInputsByItem[item.id],
       })),
       email: email.trim().toLowerCase(),
       payment_method: selectedPayment,
@@ -109,7 +105,7 @@ export default function CheckoutPage() {
       await Promise.all(items.map(item => updateItem(
         item.id,
         item.quantity,
-        (customerInputs[item.id] ?? item.customer_input_value ?? "").trim() || null,
+        normalizedInputsByItem[item.id],
       )))
       setTurnstileHeaders(turnstileToken)
       const device = detectPaymentDevice()
@@ -180,25 +176,32 @@ export default function CheckoutPage() {
         </div>
 
         {/* Email */}
-        {items.some(item => item.customer_input_type && item.customer_input_type !== "NONE") && (
+        {items.some(item => item.customer_input_fields.length > 0) && (
           <div className="rounded-lg border border-border bg-background p-6">
             <div className="mb-4 flex items-center gap-2">
               <ShoppingBag className="h-5 w-5 text-primary" />
               <h2 className="text-base font-semibold text-foreground">购买客户信息</h2>
             </div>
             <div className="space-y-4">
-              {items.filter(item => item.customer_input_type && item.customer_input_type !== "NONE").map(item => (
-                <label key={item.id} className="block text-sm font-medium text-foreground">
-                  {item.product_title}{item.spec_name ? ` · ${item.spec_name}` : ""} · {customerLabel(item.customer_input_type)} <span className="text-destructive">*</span>
-                  <input
-                    type="text"
-                    inputMode={item.customer_input_type === "PHONE" ? "tel" : "numeric"}
-                    value={customerInputs[item.id] ?? item.customer_input_value ?? ""}
-                    onChange={(event) => setCustomerInputs(current => ({ ...current, [item.id]: event.target.value }))}
-                    placeholder={`请输入${customerLabel(item.customer_input_type)}`}
-                    className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                </label>
+              {items.filter(item => item.customer_input_fields.length > 0).map(item => (
+                <div key={item.id} className="space-y-3">
+                  <p className="text-sm font-medium text-foreground">{item.product_title}{item.spec_name ? ` · ${item.spec_name}` : ""}</p>
+                  {item.customer_input_fields.map(field => (
+                    <label key={field.id} className="block text-sm font-medium text-foreground">
+                      {field.label} <span className="text-destructive">*</span>
+                      <input
+                        type="text"
+                        value={customerInputs[item.id]?.[field.id] ?? ""}
+                        onChange={(event) => setCustomerInputs(current => ({
+                          ...current,
+                          [item.id]: { ...(current[item.id] ?? {}), [field.id]: event.target.value },
+                        }))}
+                        placeholder={`请输入${field.label}`}
+                        className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    </label>
+                  ))}
+                </div>
               ))}
             </div>
             <p className="mt-3 text-xs text-muted-foreground">该信息会随订单提供给商家，仅用于本次发货。</p>

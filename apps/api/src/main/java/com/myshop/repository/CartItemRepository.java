@@ -2,12 +2,9 @@ package com.myshop.repository;
 
 import com.myshop.entity.CartItem;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 public interface CartItemRepository extends JpaRepository<CartItem, UUID> {
@@ -16,38 +13,10 @@ public interface CartItemRepository extends JpaRepository<CartItem, UUID> {
 
     List<CartItem> findBySessionToken(String sessionToken);
 
-    /** Legacy caller compatibility: only matches an item without customer input. */
-    @Query("SELECT c FROM CartItem c WHERE c.userId = :userId AND c.productId = :productId " +
-           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId) " +
-           "AND c.customerInputValue IS NULL")
-    Optional<CartItem> findByUserIdAndProductIdAndSpecId(
-            @Param("userId") UUID userId,
-            @Param("productId") UUID productId,
-            @Param("specId") UUID specId);
+    /** Pool candidates are compared in Java after structured normalization. */
+    List<CartItem> findByUserIdAndProductId(UUID userId, UUID productId);
 
-    /**
-     * 查找用户购物车中的指定商品+规格。specId 可能为 null，
-     * 派生查询会生成 `= NULL`（永假），必须手写 IS NULL 处理。
-     */
-    @Query("SELECT c FROM CartItem c WHERE c.userId = :userId AND c.productId = :productId " +
-           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId) " +
-           "AND ((:customerInputValue IS NULL AND c.customerInputValue IS NULL) " +
-           "OR c.customerInputValue = :customerInputValue)")
-    Optional<CartItem> findByUserIdAndProductIdAndSpecIdAndCustomerInputValue(
-            @Param("userId") UUID userId,
-            @Param("productId") UUID productId,
-            @Param("specId") UUID specId,
-            @Param("customerInputValue") String customerInputValue);
-
-    @Query("SELECT c FROM CartItem c WHERE c.sessionToken = :sessionToken AND c.productId = :productId " +
-           "AND ((:specId IS NULL AND c.specId IS NULL) OR c.specId = :specId) " +
-           "AND ((:customerInputValue IS NULL AND c.customerInputValue IS NULL) " +
-           "OR c.customerInputValue = :customerInputValue)")
-    Optional<CartItem> findBySessionTokenAndProductIdAndSpecIdAndCustomerInputValue(
-            @Param("sessionToken") String sessionToken,
-            @Param("productId") UUID productId,
-            @Param("specId") UUID specId,
-            @Param("customerInputValue") String customerInputValue);
+    List<CartItem> findBySessionTokenAndProductId(String sessionToken, UUID productId);
 
     @Transactional
     void deleteBySessionToken(String sessionToken);

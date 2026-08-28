@@ -1,16 +1,20 @@
 package com.myshop.entity;
 
-import com.myshop.constant.CustomerInputType;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.StockMode;
+import com.myshop.model.CustomerInputValue;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 @Getter
 @Setter
@@ -45,12 +49,9 @@ public class OrderItem extends BaseEntity {
     @Column(name = "delivery_type", nullable = false, length = 10)
     private String deliveryType = "AUTO";
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "customer_input_type", nullable = false, length = 32)
-    private CustomerInputType customerInputType = CustomerInputType.NONE;
-
-    @Column(name = "customer_input_value", length = 255)
-    private String customerInputValue;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "customer_inputs", nullable = false, columnDefinition = "jsonb")
+    private List<CustomerInputValue> customerInputs = new ArrayList<>();
 
     @Enumerated(EnumType.STRING)
     @Column(name = "stock_mode", nullable = false, length = 32)
@@ -62,6 +63,9 @@ public class OrderItem extends BaseEntity {
 
     @Column(name = "delivered_at")
     private java.time.LocalDateTime deliveredAt;
+
+    @Column(name = "delivery_notified_at")
+    private java.time.LocalDateTime deliveryNotifiedAt;
 
     @Column(name = "manual_stock_reserved", nullable = false)
     private int manualStockReserved = 0;

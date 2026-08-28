@@ -381,12 +381,12 @@ export const productApi = {
 export const cartApi = {
   get: () =>
     request<Cart>("/cart"),
-  addItem: (data: { product_id: string; spec_id: string | null; quantity: number; customer_input_value?: string | null }) =>
+  addItem: (data: { product_id: string; spec_id: string | null; quantity: number; customer_inputs?: { id: string; value: string }[] }) =>
     request<null>("/cart/items", { method: "POST", body: JSON.stringify(data) }),
-  updateItem: (itemId: string, quantity: number, customer_input_value?: string | null) =>
+  updateItem: (itemId: string, quantity: number, customer_inputs?: { id: string; value: string }[]) =>
     request<null>(`/cart/items/${itemId}`, {
       method: "PUT",
-      body: JSON.stringify({ quantity, ...(customer_input_value !== undefined ? { customer_input_value } : {}) }),
+      body: JSON.stringify({ quantity, ...(customer_inputs !== undefined ? { customer_inputs } : {}) }),
     }),
   removeItem: (itemId: string) =>
     request<null>(`/cart/items/${itemId}`, { method: "DELETE" }),
@@ -481,7 +481,7 @@ export const adminProductApi = {
     title: string; description?: string; detail_md?: string; cover_url?: string;
     base_price: number; category_id: string; low_stock_threshold?: number;
     wholesale_enabled?: boolean; is_enabled?: boolean; sort_order?: number;
-    delivery_type?: "AUTO" | "MANUAL"; customer_input_type?: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE";
+    delivery_type?: "AUTO" | "MANUAL"; customer_input_fields?: { id?: string; label: string }[];
     stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"; manual_stock?: number
   }) =>
     request<ProductDetail>("/admin/products", { method: "POST", body: JSON.stringify(data) }),
@@ -489,7 +489,7 @@ export const adminProductApi = {
     title: string; description: string; detail_md: string; cover_url: string;
     base_price: number; category_id: string; low_stock_threshold: number;
     wholesale_enabled: boolean; is_enabled: boolean; sort_order: number;
-    delivery_type: "AUTO" | "MANUAL"; customer_input_type: "NONE" | "QQ" | "PHONE" | "QQ_OR_PHONE";
+    delivery_type: "AUTO" | "MANUAL"; customer_input_fields?: { id?: string; label: string }[];
     stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"; manual_stock: number
   }>) =>
     request<null>(`/admin/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),

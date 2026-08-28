@@ -414,7 +414,11 @@ export default function AdminOrdersPage() {
                           {item.spec_name && <span className="text-muted-foreground"> - {item.spec_name}</span>}
                           <span className="ml-2 text-muted-foreground">×{item.quantity}</span>
                         </div>
-                        {item.customer_input_value && <div className="mt-1 text-xs text-muted-foreground">客户填写：{item.customer_input_value}</div>}
+                        {item.customer_inputs.length > 0 && (
+                          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                            {item.customer_inputs.map(input => <div key={input.id}>客户填写 · {input.label}：{input.value}</div>)}
+                          </div>
+                        )}
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                           <span>{item.delivery_type === "MANUAL" ? "人工发货" : "自动发货"}</span>
                           <span>·</span>

@@ -1,15 +1,19 @@
 package com.myshop.entity;
 
-import com.myshop.constant.CustomerInputType;
 import com.myshop.constant.StockMode;
+import com.myshop.model.CustomerInputField;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 @Getter
 @Setter
@@ -42,9 +46,9 @@ public class Product extends BaseEntity {
     @Column(length = 10)
     private String deliveryType = "AUTO";
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "customer_input_type", nullable = false, length = 32)
-    private CustomerInputType customerInputType = CustomerInputType.NONE;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "customer_input_fields", nullable = false, columnDefinition = "jsonb")
+    private List<CustomerInputField> customerInputFields = new ArrayList<>();
 
     @Enumerated(EnumType.STRING)
     @Column(name = "stock_mode", nullable = false, length = 32)

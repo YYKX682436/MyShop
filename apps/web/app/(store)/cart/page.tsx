@@ -7,28 +7,55 @@ import { Trash2, Minus, Plus, ShoppingCart, ArrowRight, Package } from "lucide-r
 import { toast } from "sonner"
 import { useLocale, useCart } from "@/lib/context"
 import { getApiErrorMessage } from "@/services/api"
+import { validateCustomerInputs } from "@/lib/customer-inputs"
+import type { CartItem } from "@/types"
+
+type CustomerDrafts = Record<string, Record<string, string>>
+
+function draftsForItem(item: CartItem): Record<string, string> {
+  return Object.fromEntries(item.customer_input_fields.map(field => [
+    field.id,
+    item.customer_inputs.find(input => input.id === field.id)?.value ?? "",
+  ]))
+}
 
 export default function CartPage() {
   const { t } = useLocale()
   const router = useRouter()
   const { items, totalAmount, isLoading, updateItem, removeItem } = useCart()
-  const [customerDrafts, setCustomerDrafts] = useState<Record<string, string>>({})
+  const [customerDrafts, setCustomerDrafts] = useState<CustomerDrafts>({})
 
   useEffect(() => {
     setCustomerDrafts(current => {
       const next = { ...current }
       for (const item of items) {
-        if (!(item.id in next)) next[item.id] = item.customer_input_value || ""
+        const defaults = draftsForItem(item)
+        next[item.id] = { ...defaults, ...(current[item.id] ?? {}) }
       }
       return next
     })
   }, [items])
 
-  const totalQty = useMemo(() => items.reduce((s, i) => s + i.quantity, 0), [items])
+  const totalQty = useMemo(() => items.reduce((sum, item) => sum + item.quantity, 0), [items])
 
-  const handleUpdateQuantity = async (itemId: string, qty: number) => {
+  const handleUpdateQuantity = async (itemId: string, quantity: number) => {
     try {
-      await updateItem(itemId, qty)
+      await updateItem(itemId, quantity)
+    } catch (err: unknown) {
+      toast.error(getApiErrorMessage(err, t))
+    }
+  }
+
+  const handleUpdateInputs = async (item: CartItem) => {
+    const drafts = customerDrafts[item.id] ?? draftsForItem(item)
+    const result = validateCustomerInputs(item.customer_input_fields, drafts)
+    if (!result.ok) {
+      toast.error(result.message)
+      return
+    }
+    try {
+      await updateItem(item.id, item.quantity, result.values)
+      toast.success("商品填写信息已保存")
     } catch (err: unknown) {
       toast.error(getApiErrorMessage(err, t))
     }
@@ -58,13 +85,8 @@ export default function CartPage() {
     return (
       <div className="flex flex-col items-center justify-center py-24">
         <ShoppingCart className="mb-4 h-16 w-16 text-muted-foreground/20" />
-        <p className="mb-4 text-lg font-medium text-muted-foreground">
-          {t("cart.empty")}
-        </p>
-        <Link
-          href="/"
-          className="inline-flex h-10 items-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-        >
+        <p className="mb-4 text-lg font-medium text-muted-foreground">{t("cart.empty")}</p>
+        <Link href="/" className="inline-flex h-10 items-center rounded-lg bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
           {t("cart.goShopping")}
         </Link>
       </div>
@@ -75,73 +97,54 @@ export default function CartPage() {
     <div className="flex flex-col gap-6 pb-24">
       <h1 className="text-xl font-bold text-foreground">{t("cart.title")}</h1>
 
-      {/* Items */}
       <div className="flex flex-col gap-3">
         {items.map((item) => (
-          <div
-            key={item.id}
-            className="flex items-center gap-3 rounded-lg border border-border bg-background p-3 transition-colors hover:border-muted-foreground/20 hover:shadow-sm sm:gap-4 sm:p-4"
-          >
-            {/* Product Image */}
+          <div key={item.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3 transition-colors hover:border-muted-foreground/20 hover:shadow-sm sm:gap-4 sm:p-4">
             <div className="h-16 w-16 shrink-0 overflow-hidden rounded-md bg-muted sm:h-20 sm:w-20">
               {item.cover_url ? (
-                <img
-                  src={item.cover_url || "/placeholder.svg"}
-                  alt={item.product_title}
-                  className="h-full w-full object-cover"
-                />
+                <img src={item.cover_url || "/placeholder.svg"} alt={item.product_title} className="h-full w-full object-cover" />
               ) : (
-                <div className="flex h-full w-full items-center justify-center">
-                  <Package className="h-6 w-6 text-muted-foreground/30" />
-                </div>
+                <div className="flex h-full w-full items-center justify-center"><Package className="h-6 w-6 text-muted-foreground/30" /></div>
               )}
             </div>
 
-            {/* Info */}
             <div className="flex min-w-0 flex-1 flex-col gap-1">
-              <Link
-                href={`/product/${item.product_id}`}
-                className="truncate text-sm font-medium text-card-foreground hover:text-primary transition-colors"
-              >
+              <Link href={`/product/${item.product_id}`} className="truncate text-sm font-medium text-card-foreground transition-colors hover:text-primary">
                 {item.product_title}
               </Link>
-              {item.spec_name && (
-                <span className="text-xs text-muted-foreground">{item.spec_name}</span>
-              )}
-              {item.customer_input_type && item.customer_input_type !== "NONE" && (
-                <label className="mt-1 flex max-w-sm flex-col gap-1 text-xs text-muted-foreground">
-                  <span>{item.customer_input_type === "QQ" ? "QQ号码" : item.customer_input_type === "PHONE" ? "手机号" : "QQ或手机号"} <span className="text-destructive">*</span></span>
-                  <input
-                    value={customerDrafts[item.id] ?? item.customer_input_value ?? ""}
-                    onChange={(event) => setCustomerDrafts(current => ({ ...current, [item.id]: event.target.value }))}
-                    onBlur={() => void updateItem(item.id, item.quantity, (customerDrafts[item.id] ?? "").trim())}
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    placeholder="请填写后再结算"
-                  />
-                </label>
-              )}
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-foreground">
-                  {"\u00A5"}{item.unit_price.toFixed(2)}
-                </span>
+              {item.spec_name && <span className="text-xs text-muted-foreground">{item.spec_name}</span>}
 
-                {/* Quantity Control */}
+              {item.customer_input_fields.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {item.customer_input_fields.map(field => (
+                    <label key={field.id} className="flex max-w-sm flex-col gap-1 text-xs text-muted-foreground">
+                      <span>{field.label} <span className="text-destructive">*</span></span>
+                      <input
+                        value={customerDrafts[item.id]?.[field.id] ?? ""}
+                        onChange={(event) => setCustomerDrafts(current => ({
+                          ...current,
+                          [item.id]: { ...(current[item.id] ?? {}), [field.id]: event.target.value },
+                        }))}
+                        onBlur={() => void handleUpdateInputs(item)}
+                        className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder={`请输入${field.label}`}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+              {!item.customer_inputs_complete && item.customer_input_error && (
+                <p className="mt-1 text-xs text-destructive">{item.customer_input_error}</p>
+              )}
+
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-foreground">¥{item.unit_price.toFixed(2)}</span>
                 <div className="inline-flex items-center rounded border border-border">
-                  <button
-                    onClick={() => handleUpdateQuantity(item.id, Math.max(1, item.quantity - 1))}
-                    className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground hover:bg-accent"
-                    disabled={item.quantity <= 1}
-                  >
+                  <button onClick={() => handleUpdateQuantity(item.id, Math.max(1, item.quantity - 1))} className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground hover:bg-accent" disabled={item.quantity <= 1}>
                     <Minus className="h-3 w-3" />
                   </button>
-                  <span className="inline-flex h-7 w-8 items-center justify-center border-x border-border bg-background text-xs text-foreground">
-                    {item.quantity}
-                  </span>
-                  <button
-                    onClick={() => handleUpdateQuantity(item.id, item.quantity + 1)}
-                    className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
-                    disabled={!item.unlimited && item.stock_available != null && item.quantity >= item.stock_available}
-                  >
+                  <span className="inline-flex h-7 w-8 items-center justify-center border-x border-border bg-background text-xs text-foreground">{item.quantity}</span>
+                  <button onClick={() => handleUpdateQuantity(item.id, item.quantity + 1)} className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-50" disabled={!item.unlimited && item.stock_available != null && item.quantity >= item.stock_available}>
                     <Plus className="h-3 w-3" />
                   </button>
                 </div>
@@ -151,16 +154,9 @@ export default function CartPage() {
               </div>
             </div>
 
-            {/* Subtotal & Remove */}
             <div className="flex flex-col items-end gap-2">
-              <span className="text-sm font-bold text-foreground">
-                {"\u00A5"}{item.subtotal.toFixed(2)}
-              </span>
-              <button
-                onClick={() => handleRemoveItem(item.id)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                aria-label={t("cart.remove")}
-              >
+              <span className="text-sm font-bold text-foreground">¥{item.subtotal.toFixed(2)}</span>
+              <button onClick={() => handleRemoveItem(item.id)} className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" aria-label={t("cart.remove")}>
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -168,30 +164,13 @@ export default function CartPage() {
         ))}
       </div>
 
-      {/* Checkout Bar - fixed bottom */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur-sm shadow-lg">
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 shadow-lg backdrop-blur-sm">
         <div className="container mx-auto flex items-center justify-between p-4">
-          <div className="text-sm text-muted-foreground">
-            {t("cart.selected")} <span className="font-semibold text-foreground">{totalQty}</span>{" "}
-            {t("cart.items")}
-          </div>
+          <div className="text-sm text-muted-foreground">{t("cart.selected")} <span className="font-semibold text-foreground">{totalQty}</span> {t("cart.items")}</div>
           <div className="flex items-center gap-4">
-            <div className="text-right">
-              <span className="text-sm text-muted-foreground">{t("cart.total")}:</span>
-              <span className="ml-2 text-xl font-bold text-foreground">
-                {"\u00A5"}{totalAmount.toFixed(2)}
-              </span>
-            </div>
-            <button
-              onClick={() => {
-                if (items.length === 0) return
-                router.push("/checkout")
-              }}
-              disabled={items.length === 0}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {t("cart.checkout")}
-              <ArrowRight className="h-4 w-4" />
+            <div className="text-right"><span className="text-sm text-muted-foreground">{t("cart.total")}:</span><span className="ml-2 text-xl font-bold text-foreground">¥{totalAmount.toFixed(2)}</span></div>
+            <button onClick={() => items.length > 0 && router.push("/checkout")} disabled={items.length === 0} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50">
+              {t("cart.checkout")}<ArrowRight className="h-4 w-4" />
             </button>
           </div>
         </div>

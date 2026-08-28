@@ -14,6 +14,17 @@ import java.util.UUID;
 
 public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
 
+    /**
+     * Serializes duplicate-checked imports for one product/spec pool for the
+     * lifetime of the surrounding PostgreSQL transaction. The hashed key is
+     * stable and the extremely unlikely hash collision only causes harmless
+     * serialization between pools.
+     */
+    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(" +
+            "CAST(:productId AS text) || ':' || COALESCE(CAST(:specId AS text), '<default>'), 0))",
+            nativeQuery = true)
+    void lockImportPool(@Param("productId") UUID productId, @Param("specId") UUID specId);
+
     @Query(value = "SELECT * FROM card_keys WHERE product_id = :productId " +
             "AND ((:specId IS NULL AND spec_id IS NULL) OR spec_id = CAST(:specId AS uuid)) " +
             "AND status = 'AVAILABLE' ORDER BY created_at ASC LIMIT :count " +

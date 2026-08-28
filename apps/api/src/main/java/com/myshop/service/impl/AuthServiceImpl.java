@@ -13,6 +13,7 @@ import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.CartItemRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.AuthService;
+import com.myshop.service.ProductRules;
 import com.myshop.utils.CaptchaUtils;
 import com.myshop.utils.JwtUtils;
 import lombok.RequiredArgsConstructor;
@@ -130,11 +131,15 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private void mergeCart(String sessionToken, java.util.UUID userId) {
-            List<CartItem> guestItems = cartItemRepository.findBySessionToken(sessionToken);
+        List<CartItem> guestItems = cartItemRepository.findBySessionToken(sessionToken);
         for (CartItem guestItem : guestItems) {
-            Optional<CartItem> existing = cartItemRepository
-                    .findByUserIdAndProductIdAndSpecIdAndCustomerInputValue(
-                            userId, guestItem.getProductId(), guestItem.getSpecId(), guestItem.getCustomerInputValue());
+            Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductId(userId, guestItem.getProductId())
+                    .stream()
+                    .filter(item -> item.getSpecId() == null
+                            ? guestItem.getSpecId() == null
+                            : item.getSpecId().equals(guestItem.getSpecId()))
+                    .filter(item -> ProductRules.sameCustomerInputs(item.getCustomerInputs(), guestItem.getCustomerInputs()))
+                    .findFirst();
             if (existing.isPresent()) {
                 // Merge quantity into user's existing item, then delete the guest item
                 existing.get().setQuantity(existing.get().getQuantity() + guestItem.getQuantity());

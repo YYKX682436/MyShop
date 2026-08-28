@@ -240,8 +240,7 @@ public class DeliverServiceImpl implements DeliverService {
             itemMap.put("spec_name", item.getSpecName());
             itemMap.put("quantity", item.getQuantity());
             itemMap.put("delivery_type", item.getDeliveryType());
-            itemMap.put("customer_input_type", item.getCustomerInputType());
-            itemMap.put("customer_input_value", item.getCustomerInputValue());
+            itemMap.put("customer_inputs", item.getCustomerInputs() == null ? List.of() : item.getCustomerInputs());
             itemMap.put("stock_mode", item.getStockMode());
             itemMap.put("fulfillment_status", item.getFulfillmentStatus());
             itemMap.put("delivered_at", item.getDeliveredAt());

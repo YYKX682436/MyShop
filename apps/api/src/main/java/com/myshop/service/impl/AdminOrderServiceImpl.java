@@ -119,8 +119,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             im.put("unit_price", i.getUnitPrice());
             im.put("subtotal", i.getSubtotal());
             im.put("delivery_type", i.getDeliveryType());
-            im.put("customer_input_type", i.getCustomerInputType());
-            im.put("customer_input_value", i.getCustomerInputValue());
+            im.put("customer_inputs", i.getCustomerInputs() == null ? List.of() : i.getCustomerInputs());
             im.put("stock_mode", i.getStockMode());
             im.put("fulfillment_status", i.getFulfillmentStatus());
             im.put("delivered_at", i.getDeliveredAt());

@@ -51,7 +51,7 @@ public class EmailServiceImpl implements EmailService {
 
     @Async
     @Override
-    public void sendDeliveryEmail(UUID orderId, String lookupToken) {
+    public void sendDeliveryEmail(UUID orderId, String lookupToken, List<UUID> orderItemIds) {
         if (!mailEnabled) {
             return;
         }
@@ -71,10 +71,13 @@ public class EmailServiceImpl implements EmailService {
             List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
             List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
             if (keys == null || keys.isEmpty()) keys = cardKeyRepository.findByOrderId(orderId);
+            Set<UUID> selected = orderItemIds == null ? Set.of() : new LinkedHashSet<>(orderItemIds);
             Map<UUID, OrderItem> itemMap = items.stream()
+                    .filter(item -> selected.isEmpty() || selected.contains(item.getId()))
                     .collect(Collectors.toMap(OrderItem::getId, i -> i, (first, ignored) -> first, LinkedHashMap::new));
             Map<UUID, List<CardKey>> grouped = keys.stream()
                     .filter(k -> k.getOrderItemId() != null)
+                    .filter(k -> selected.isEmpty() || selected.contains(k.getOrderItemId()))
                     .collect(Collectors.groupingBy(CardKey::getOrderItemId, LinkedHashMap::new, Collectors.toList()));
 
             String siteName = siteConfigRepository.findByConfigKey("site_name")
@@ -167,6 +170,15 @@ public class EmailServiceImpl implements EmailService {
             sb.append("<div style=\"background-color:#f0f0f5;padding:10px 16px;font-size:14px;font-weight:600;color:#333;\">")
               .append("第").append(itemNumber).append("项 · ").append(title).append("</div>");
             sb.append("<div style=\"padding:12px 16px;\">");
+            if (item.getCustomerInputs() != null && !item.getCustomerInputs().isEmpty()) {
+                sb.append("<div style=\"margin-bottom:12px;padding:8px 10px;background-color:#f8f9fa;border-radius:4px;font-size:12px;color:#666;\">");
+                for (var input : item.getCustomerInputs()) {
+                    sb.append("<div style=\"margin-bottom:4px;\"><span style=\"color:#888;\">")
+                      .append(escapeHtml(input.label())).append("：</span>")
+                      .append(escapeHtml(input.value())).append("</div>");
+                }
+                sb.append("</div>");
+            }
             for (int cardIndex = 0; cardIndex < itemKeys.size(); cardIndex++) {
                 CardKey key = itemKeys.get(cardIndex);
                 List<String> parts = key.resolvedContentParts();

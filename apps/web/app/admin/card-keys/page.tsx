@@ -53,6 +53,9 @@ export default function AdminCardKeysPage() {
   const [loadingSpecs, setLoadingSpecs] = useState(false)
   const [importErrors, setImportErrors] = useState<Record<string, boolean>>({})
   const importProductRef = useRef<HTMLSelectElement>(null)
+  const importableProducts = products.filter(product =>
+    (product.delivery_type || "AUTO") === "AUTO" && (product.stock_mode || "CARD_KEY") === "CARD_KEY"
+  )
 
   const copyToClipboard = (value: string) => {
     if (navigator.clipboard?.writeText) {
@@ -169,7 +172,7 @@ export default function AdminCardKeysPage() {
           content_columns: importColumns,
           check_duplicate: checkDuplicate,
         }))
-      toast.success(`导入成功：${result.success_count} 条${result.fail_count > 0 ? `，失败 ${result.fail_count} 条` : ""}`)
+      toast.success(`读取 ${result.total_count}，成功 ${result.success_count}，重复 ${result.duplicate_count}，失败 ${result.fail_count}`)
       setShowImportModal(false)
       setImportColumns([""])
       setCheckDuplicate(true)
@@ -493,7 +496,7 @@ export default function AdminCardKeysPage() {
                   onChange={(e) => { handleProductChange(e.target.value); setImportErrors(prev => ({ ...prev, product: false })) }}
                 >
                   <option value="">{t("admin.selectProductPlaceholder")}</option>
-                  {products.map((p) => (
+                  {importableProducts.map((p) => (
                     <option key={p.id} value={p.id}>{p.title}</option>
                   ))}
                 </select>

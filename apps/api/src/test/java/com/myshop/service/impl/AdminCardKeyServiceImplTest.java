@@ -93,6 +93,18 @@ class AdminCardKeyServiceImplTest {
     }
 
     @Test
+    void duplicateCheckOffStillAllowsAHistoricalDuplicate() {
+        Map<String, Object> result = service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A"),
+                        "check_duplicate", false), UUID.randomUUID());
+
+        assertEquals(1, result.get("success_count"));
+        assertEquals(0, result.get("duplicate_count"));
+        verify(cardKeyRepository, never()).findExistingFingerprints(any(), any(), anyList());
+    }
+
+    @Test
     void historicalDuplicateUsesOneBatchFingerprintQueryAndFullTuple() {
         String fingerprint = CardContentParser.fingerprint(List.of("1", "a"));
         when(cardKeyRepository.findExistingFingerprints(productId, null,

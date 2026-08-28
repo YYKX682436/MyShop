@@ -1,7 +1,6 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.CardKeyStatus;
-import com.myshop.constant.CustomerInputType;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
@@ -96,8 +95,6 @@ public class OrderServiceImpl implements OrderService {
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
         int quantity = ((Number) req.get("quantity")).intValue();
         String email = (String) req.get("email");
-        String requestedCustomerInput = req.get("customer_input_value") == null
-                ? null : String.valueOf(req.get("customer_input_value"));
 
         // F4: 购买数量校验（读取后台配置，兜底 999）
         int maxQuantity = getMaxPurchasePerUser();
@@ -118,7 +115,8 @@ public class OrderServiceImpl implements OrderService {
         // F18: 规格模式安全校验 — 防止通过伪造 spec_id 访问非当前模式的库存池或获取不同价格
         validateSpecConsistency(product, specId);
 
-        String customerInputValue = ProductRules.validateCustomerInput(product, requestedCustomerInput);
+        List<com.myshop.model.CustomerInputValue> customerInputs =
+                ProductRules.normalizeCustomerInputs(product, req);
         StockMode stockMode = effectiveStockMode(product);
         StockView stock = getStock(product, specId);
         if (!stock.unlimited() && stock.available() < quantity) {
@@ -167,7 +165,7 @@ public class OrderServiceImpl implements OrderService {
         item.setQuantity(quantity);
         item.setUnitPrice(unitPrice);
         item.setSubtotal(totalAmount);
-        setItemSnapshot(item, product, customerInputValue, quantity, stockMode);
+        setItemSnapshot(item, product, customerInputs, quantity, stockMode);
         orderItemRepository.save(item);
 
         return buildOrderResult(order, device, lookupToken.plaintext());
@@ -209,23 +207,81 @@ public class OrderServiceImpl implements OrderService {
             throw new BusinessException(ErrorCode.CART_EMPTY, "购物车为空");
         }
 
-        // 购物车每项数量校验（与直接下单统一上限）
         int maxQuantity = getMaxPurchasePerUser();
+        Map<StockPoolKey, Integer> poolQuantities = new LinkedHashMap<>();
+        Map<StockPoolKey, Integer> manualReservations = new LinkedHashMap<>();
+        List<CartPlan> plans = new ArrayList<>();
+        BigDecimal totalAmount = BigDecimal.ZERO;
+
+        // Validate every line and aggregate by product/spec before creating an
+        // order. Customer inputs never participate in the stock key: two cart
+        // rows with different input values consume the same CARD_KEY pool.
         for (CartItem ci : cartItems) {
             if (ci.getQuantity() < 1 || ci.getQuantity() > maxQuantity) {
                 throw new BusinessException(ErrorCode.PURCHASE_LIMIT_EXCEEDED,
-                        "购买数量无效，允许范围 1~" + maxQuantity,
-                        Map.of("max", maxQuantity));
+                        "购买数量无效，允许范围 1~" + maxQuantity, Map.of("max", maxQuantity));
+            }
+            Product product = productRepository.findById(ci.getProductId())
+                    .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
+            validateSpecConsistency(product, ci.getSpecId());
+            List<com.myshop.model.CustomerInputValue> inputs;
+            try {
+                inputs = ProductRules.normalizeCustomerInputs(product,
+                        ci.getCustomerInputs() == null ? List.of() : ci.getCustomerInputs(),
+                        true, null, false);
+            } catch (BusinessException exception) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "商品填写信息已更新，请补充后再结算");
+            }
+
+            StockMode stockMode = effectiveStockMode(product);
+            StockPoolKey poolKey = new StockPoolKey(ci.getProductId(), ci.getSpecId());
+            poolQuantities.merge(poolKey, ci.getQuantity(), Integer::sum);
+            if (stockMode == StockMode.MANUAL) {
+                manualReservations.merge(poolKey, ci.getQuantity(), Integer::sum);
+            }
+
+            BigDecimal unitPrice = getUnitPrice(product, ci.getSpecId(), ci.getQuantity());
+            BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(ci.getQuantity()));
+            totalAmount = totalAmount.add(subtotal);
+            String specName = null;
+            if (ci.getSpecId() != null) {
+                specName = productSpecRepository.findById(ci.getSpecId()).map(ProductSpec::getName).orElse(null);
+            }
+            plans.add(new CartPlan(ci, product, inputs, stockMode, unitPrice, subtotal, specName));
+        }
+
+        Set<StockPoolKey> checkedPools = new HashSet<>();
+        for (CartPlan plan : plans) {
+            // Check each finite pool once after aggregation. This is the
+            // authoritative checkout-side guard for split customer-input rows.
+            StockPoolKey poolKey = new StockPoolKey(plan.cartItem().getProductId(), plan.cartItem().getSpecId());
+            if (checkedPools.add(poolKey)) {
+                StockView stock = getStock(plan.product(), plan.cartItem().getSpecId());
+                int requested = poolQuantities.get(poolKey);
+                if (!stock.unlimited() && requested > stock.available()) {
+                    throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK,
+                            "商品「" + plan.product().getTitle() + "」库存不足",
+                            Map.of("available", stock.available(), "title", plan.product().getTitle()));
+                }
             }
         }
 
-        int expireMinutes = getConfigInt("order_expire_minutes", 15);
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        Map<StockPoolKey, Integer> manualReservations = new LinkedHashMap<>();
+        if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
+        }
+        for (Map.Entry<StockPoolKey, Integer> reservation : manualReservations.entrySet()) {
+            manualStockService.reserveOrThrow(reservation.getKey().productId(), reservation.getKey().specId(),
+                    reservation.getValue());
+        }
 
+        int expireMinutes = getConfigInt("order_expire_minutes", 15);
         Order order = new Order();
         order.setUserId(userId);
         order.setEmail(email);
+        order.setTotalAmount(totalAmount);
+        order.setActualAmount(totalAmount);
         order.setStatus(OrderStatus.PENDING);
         order.setOrderType(OrderType.CART);
         order.setPaymentMethod(paymentMethod);
@@ -239,74 +295,22 @@ public class OrderServiceImpl implements OrderService {
         if (userId == null) order.setGuestLookupToken(lookupToken.plaintext());
         orderRepository.save(order);
 
-        for (CartItem ci : cartItems) {
-            // F15: 防御性数量校验 — 购物车项数量必须为正整数，防止负数数量绕过价格计算
-            if (ci.getQuantity() < 1) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "购物车包含无效数量，请刷新购物车后重试");
-            }
-
-            Product product = productRepository.findById(ci.getProductId())
-                    .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
-                    .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
-
-            // F18: 规格模式安全校验
-            validateSpecConsistency(product, ci.getSpecId());
-
-            String customerInputValue = ProductRules.validateCustomerInput(product, ci.getCustomerInputValue());
-            StockMode stockMode = effectiveStockMode(product);
-            StockView stock = getStock(product, ci.getSpecId());
-            if (!stock.unlimited() && stock.available() < ci.getQuantity()) {
-                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK,
-                        "商品「" + product.getTitle() + "」库存不足",
-                        Map.of("available", stock.available(), "title", product.getTitle()));
-            }
-            if (stockMode == StockMode.MANUAL) {
-                StockPoolKey poolKey = new StockPoolKey(ci.getProductId(), ci.getSpecId());
-                manualReservations.merge(poolKey, ci.getQuantity(), Integer::sum);
-            }
-
-            BigDecimal unitPrice = getUnitPrice(product, ci.getSpecId(), ci.getQuantity());
-            BigDecimal subtotal = unitPrice.multiply(BigDecimal.valueOf(ci.getQuantity()));
-            totalAmount = totalAmount.add(subtotal);
-
-            String specName = null;
-            if (ci.getSpecId() != null) {
-                ProductSpec spec = productSpecRepository.findById(ci.getSpecId()).orElse(null);
-                specName = spec != null ? spec.getName() : null;
-            }
-
+        for (CartPlan plan : plans) {
+            CartItem ci = plan.cartItem();
             OrderItem item = new OrderItem();
             item.setOrderId(order.getId());
             item.setProductId(ci.getProductId());
             item.setSpecId(ci.getSpecId());
-            item.setProductTitle(product.getTitle());
-            item.setSpecName(specName);
+            item.setProductTitle(plan.product().getTitle());
+            item.setSpecName(plan.specName());
             item.setQuantity(ci.getQuantity());
-            item.setUnitPrice(unitPrice);
-            item.setSubtotal(subtotal);
-            setItemSnapshot(item, product, customerInputValue, ci.getQuantity(), stockMode);
+            item.setUnitPrice(plan.unitPrice());
+            item.setSubtotal(plan.subtotal());
+            setItemSnapshot(item, plan.product(), plan.customerInputs(), ci.getQuantity(), plan.stockMode());
             orderItemRepository.save(item);
         }
 
-        // F16: 订单金额必须为正数 — 防止负数商品价格叠加导致极低金额下单
-        if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
-        }
-
-        for (Map.Entry<StockPoolKey, Integer> reservation : manualReservations.entrySet()) {
-            manualStockService.reserveOrThrow(reservation.getKey().productId(), reservation.getKey().specId(),
-                    reservation.getValue());
-        }
-
-        order.setTotalAmount(totalAmount);
-        order.setActualAmount(totalAmount);
-        orderRepository.save(order);
-
-        // Clear cart after order creation to prevent duplicate orders from same cart items
-        for (CartItem ci : cartItems) {
-            cartItemRepository.delete(ci);
-        }
-
+        for (CartItem ci : cartItems) cartItemRepository.delete(ci);
         return buildOrderResult(order, device, lookupToken.plaintext());
     }
 
@@ -462,8 +466,7 @@ public class OrderServiceImpl implements OrderService {
             im.put("unit_price", i.getUnitPrice());
             im.put("subtotal", i.getSubtotal());
             im.put("delivery_type", i.getDeliveryType());
-            im.put("customer_input_type", i.getCustomerInputType());
-            im.put("customer_input_value", i.getCustomerInputValue());
+            im.put("customer_inputs", i.getCustomerInputs() == null ? List.of() : i.getCustomerInputs());
             im.put("stock_mode", i.getStockMode());
             im.put("fulfillment_status", i.getFulfillmentStatus());
             im.put("delivered_at", i.getDeliveredAt());
@@ -565,12 +568,11 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private void setItemSnapshot(OrderItem item, Product product, String customerInputValue,
+    private void setItemSnapshot(OrderItem item, Product product,
+                                 List<com.myshop.model.CustomerInputValue> customerInputs,
                                  int quantity, StockMode stockMode) {
         item.setDeliveryType(ProductRules.normalizeDeliveryType(product.getDeliveryType(), "AUTO"));
-        item.setCustomerInputType(product.getCustomerInputType() == null
-                ? CustomerInputType.NONE : product.getCustomerInputType());
-        item.setCustomerInputValue(customerInputValue);
+        item.setCustomerInputs(customerInputs == null ? List.of() : List.copyOf(customerInputs));
         item.setStockMode(stockMode);
         item.setFulfillmentStatus(FulfillmentStatus.PENDING);
         item.setManualStockReserved(stockMode == StockMode.MANUAL ? quantity : 0);
@@ -597,5 +599,11 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private record StockPoolKey(UUID productId, UUID specId) {
+    }
+
+    private record CartPlan(CartItem cartItem, Product product,
+                            List<com.myshop.model.CustomerInputValue> customerInputs,
+                            StockMode stockMode, BigDecimal unitPrice,
+                            BigDecimal subtotal, String specName) {
     }
 }

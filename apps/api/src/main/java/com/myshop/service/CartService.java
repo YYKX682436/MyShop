@@ -11,9 +11,8 @@ public interface CartService {
 
     void updateItem(UUID userId, String sessionToken, UUID itemId, int quantity);
 
-    void updateItem(UUID userId, String sessionToken, UUID itemId, int quantity, String customerInputValue);
-
-    void updateCustomerInput(UUID userId, String sessionToken, UUID itemId, String customerInputValue);
+    /** Updates quantity and, when present, the structured customer inputs. */
+    void updateItem(UUID userId, String sessionToken, UUID itemId, int quantity, Map<String, Object> request);
 
     void deleteItem(UUID userId, String sessionToken, UUID itemId);
 }
