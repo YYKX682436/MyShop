@@ -7,6 +7,7 @@ import {
   hasContactMethods,
   normalizeContactItems,
   parseContactItems,
+  parseContactItemsSafely,
   serializeContactItems,
 } from "./contact-items.ts"
 
@@ -29,6 +30,14 @@ test("contact item validation rejects four entries, empty names, and missing des
   ]), /最多/)
   assert.throws(() => normalizeContactItems([{ name: "   ", url: "https://example.com" }]), /不能为空/)
   assert.throws(() => normalizeContactItems([{ name: "客服" }]), /链接或二维码/)
+})
+
+test("admin-safe contact parsing isolates malformed persisted configuration", () => {
+  assert.deepEqual(parseContactItemsSafely("not-json"), { items: [], hasError: true })
+  assert.deepEqual(parseContactItemsSafely('[{"name":"客服","url":"https://example.com"}]'), {
+    items: [{ name: "客服", url: "https://example.com" }],
+    hasError: false,
+  })
 })
 
 test("contact item validation allows https and uploaded QR paths but rejects javascript and data URLs", () => {

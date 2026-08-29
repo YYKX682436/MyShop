@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { CheckCircle, Copy, Eye } from "lucide-react"
 import { toast } from "sonner"
 
@@ -52,6 +52,8 @@ export default function AdminOrdersPage() {
   const [markPaidReason, setMarkPaidReason] = useState("")
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
   const [completingManualItem, setCompletingManualItem] = useState<string | null>(null)
+  const detailRequestRef = useRef(0)
+  const detailCardKeysRequestRef = useRef(0)
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -86,50 +88,70 @@ export default function AdminOrdersPage() {
 
   useEffect(() => { void loadOrders() }, [loadOrders])
 
-  const loadDetailCardKeys = useCallback(async (orderId: string) => {
+  const invalidateDetailRequests = () => {
+    detailRequestRef.current += 1
+    detailCardKeysRequestRef.current += 1
+  }
+
+  const loadDetailCardKeys = useCallback(async (orderId: string, detailRequestId = detailRequestRef.current) => {
+    const cardKeysRequestId = ++detailCardKeysRequestRef.current
     setDetailCardKeysLoading(true)
     setDetailCardKeysError(false)
     try {
-      setDetailCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
+      const cardKeys = await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId))
+      if (detailRequestRef.current !== detailRequestId || detailCardKeysRequestRef.current !== cardKeysRequestId) return
+      setDetailCardKeys(cardKeys)
     } catch {
+      if (detailRequestRef.current !== detailRequestId || detailCardKeysRequestRef.current !== cardKeysRequestId) return
       setDetailCardKeys([])
       setDetailCardKeysError(true)
     } finally {
-      setDetailCardKeysLoading(false)
+      if (detailRequestRef.current === detailRequestId && detailCardKeysRequestRef.current === cardKeysRequestId) {
+        setDetailCardKeysLoading(false)
+      }
     }
   }, [])
 
   const loadOrderDetail = useCallback(async (orderId: string) => {
+    const detailRequestId = ++detailRequestRef.current
+    detailCardKeysRequestRef.current += 1
     setDetailOrderLoading(true)
     setDetailOrderError(false)
     try {
       const detail = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
+      if (detailRequestRef.current !== detailRequestId) return
       setDetailOrder(detail)
-      if (detail.status === "DELIVERED") await loadDetailCardKeys(orderId)
+      if (detail.status === "DELIVERED") await loadDetailCardKeys(orderId, detailRequestId)
       else {
         setDetailCardKeys([])
+        setDetailCardKeysLoading(false)
         setDetailCardKeysError(false)
       }
     } catch {
+      if (detailRequestRef.current !== detailRequestId) return
       setDetailOrderError(true)
     } finally {
-      setDetailOrderLoading(false)
+      if (detailRequestRef.current === detailRequestId) setDetailOrderLoading(false)
     }
   }, [loadDetailCardKeys])
 
   const openDetail = (order: AdminOrderItem) => {
     setDetailOrder(order)
     setDetailCardKeys([])
+    setDetailCardKeysLoading(false)
     setDetailCardKeysError(false)
     void loadOrderDetail(order.id)
   }
 
   const closeDetail = (open: boolean) => {
     if (!open) {
+      invalidateDetailRequests()
       setDetailOrder(null)
       setDetailOrderLoading(false)
       setDetailOrderError(false)
       setDetailCardKeys([])
+      setDetailCardKeysLoading(false)
+      setDetailCardKeysError(false)
     }
   }
 
@@ -146,7 +168,13 @@ export default function AdminOrdersPage() {
       toast.success(t("admin.markedPaid"))
       setMarkPaidOrderId(null)
       setMarkPaidReason("")
+      invalidateDetailRequests()
       setDetailOrder(null)
+      setDetailOrderLoading(false)
+      setDetailOrderError(false)
+      setDetailCardKeys([])
+      setDetailCardKeysLoading(false)
+      setDetailCardKeysError(false)
       await loadOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -156,11 +184,12 @@ export default function AdminOrdersPage() {
   }
 
   const handleCompleteManualItem = async (orderId: string, orderItemId: string) => {
+    const detailRequestId = detailRequestRef.current
     setCompletingManualItem(orderItemId)
     try {
       await requestOrThrow(() => adminOrderApi.completeManualItem(orderId, orderItemId))
       toast.success(t("admin.manualDeliveryCompleted"))
-      await loadOrderDetail(orderId)
+      if (detailRequestRef.current === detailRequestId) await loadOrderDetail(orderId)
       await loadOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))

@@ -68,11 +68,20 @@ export default function AdminCategoriesPage() {
     setDialogOpen(true)
   }
 
+  const resetDialog = () => {
+    setEditing(null)
+    setFormData({ name: "", sortOrder: "" })
+  }
+
   const closeDialog = () => {
     if (saving) return
     setDialogOpen(false)
-    setEditing(null)
-    setFormData({ name: "", sortOrder: "" })
+    resetDialog()
+  }
+
+  const closeDialogAfterSuccess = () => {
+    setDialogOpen(false)
+    resetDialog()
   }
 
   const handleSave = async () => {
@@ -91,8 +100,8 @@ export default function AdminCategoriesPage() {
       } else {
         await requestOrThrow(() => adminCategoryApi.create({ name, sort_order: Number.isNaN(sortOrder) ? undefined : sortOrder }))
       }
-      toast.success(t("admin.productSaved"))
-      closeDialog()
+      toast.success(t("admin.categorySaved"))
+      closeDialogAfterSuccess()
       await loadCategories()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -106,7 +115,7 @@ export default function AdminCategoriesPage() {
     setDeleting(true)
     try {
       await requestOrThrow(() => adminCategoryApi.delete(deleteCategory.id))
-      toast.success(t("admin.productDeleted"))
+      toast.success(t("admin.categoryDeleted"))
       setDeleteCategory(null)
       await loadCategories()
     } catch (requestError: unknown) {

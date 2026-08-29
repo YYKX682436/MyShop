@@ -72,12 +72,21 @@ export default function AdminPaymentChannelsPage() {
 
   useEffect(() => { void load() }, [load])
 
-  const closeDialog = () => {
-    if (saving) return
-    setDialogOpen(false)
+  const resetDialog = () => {
     setEditingId(null)
     setForm(EMPTY_FORM)
     setConfig({})
+  }
+
+  const closeDialog = () => {
+    if (saving) return
+    setDialogOpen(false)
+    resetDialog()
+  }
+
+  const closeDialogAfterSuccess = () => {
+    setDialogOpen(false)
+    resetDialog()
   }
 
   const openCreate = () => {
@@ -117,7 +126,7 @@ export default function AdminPaymentChannelsPage() {
       if (editingId) await requestOrThrow(() => adminPaymentApi.update(editingId, data))
       else await requestOrThrow(() => adminPaymentApi.create(data))
       toast.success(t("admin.paymentSaved"))
-      closeDialog()
+      closeDialogAfterSuccess()
       await load()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))

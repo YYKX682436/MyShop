@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
-import { Plus, Trash2 } from "lucide-react"
+import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
@@ -40,6 +40,32 @@ type ProductSpecDraft = {
   price: string
   manual_stock?: string
   card_key_count?: number
+}
+
+type SpecSyncOperation = "load" | "delete" | "update" | "add"
+
+type SpecSyncFailure = {
+  productId: string
+  operation: SpecSyncOperation
+  specName: string
+  message: string
+}
+
+class SpecSyncError extends Error {
+  constructor(
+    readonly operation: SpecSyncOperation,
+    readonly specName: string,
+    message: string,
+  ) {
+    super(message)
+    this.name = "SpecSyncError"
+  }
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message
+  if (typeof error === "string" && error.trim()) return error
+  return fallback
 }
 
 function emptyForm(): ProductFormData {
@@ -107,6 +133,8 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
   const [specsEnabled, setSpecsEnabled] = useState(product?.spec_enabled === true)
   const [formErrors, setFormErrors] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
+  const [retryingSpecSync, setRetryingSpecSync] = useState(false)
+  const [specSyncFailure, setSpecSyncFailure] = useState<SpecSyncFailure | null>(null)
   const [specDeleteConfirm, setSpecDeleteConfirm] = useState<{ idx: number; name: string; count: number } | null>(null)
   const titleRef = useRef<HTMLInputElement>(null)
   const categoryRef = useRef<HTMLSelectElement>(null)
@@ -117,6 +145,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
     setFormSpecs(getSpecs(product))
     setSpecsEnabled(product?.spec_enabled === true)
     setFormErrors({})
+    setSpecSyncFailure(null)
   }, [product])
 
   const uploadImage = useCallback(async (file: File) => {
@@ -136,6 +165,74 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
         break
       }
     }
+  }
+
+  const syncProductSpecs = async (productId: string) => {
+    if (!specsEnabled) return
+
+    let existingSpecs: ProductDetail["specs"]
+    try {
+      existingSpecs = await requestOrThrow(() => adminProductApi.getSpecs(productId))
+    } catch (error: unknown) {
+      throw new SpecSyncError("load", t("admin.productSpecs"), getErrorMessage(error, t("admin.saveFailed")))
+    }
+    const existingIds = new Set(existingSpecs.map((spec) => spec.id))
+    const keepIds = new Set(formSpecs.filter((spec) => spec.id).map((spec) => spec.id as string))
+    const keepDraftNames = new Set(formSpecs.filter((spec) => !spec.id).map((spec) => spec.name.trim()))
+    const runSpecOperation = async (operation: SpecSyncOperation, specName: string, action: () => Promise<unknown>) => {
+      try {
+        await requestOrThrow(action)
+      } catch (error: unknown) {
+        throw new SpecSyncError(operation, specName, getErrorMessage(error, t("admin.saveFailed")))
+      }
+    }
+
+    for (const oldSpec of existingSpecs) {
+      if (!keepIds.has(oldSpec.id) && !keepDraftNames.has(oldSpec.name.trim())) {
+        await runSpecOperation("delete", oldSpec.name, () => adminProductApi.deleteSpec(productId, oldSpec.id))
+      }
+    }
+
+    for (const spec of formSpecs) {
+      const manualStock = formData.stock_mode === "MANUAL"
+        ? Math.max(0, Number.parseInt(spec.manual_stock || "0", 10) || 0)
+        : undefined
+      if (spec.id && existingIds.has(spec.id)) {
+        const old = existingSpecs.find((candidate) => candidate.id === spec.id)
+        if (old && (old.name !== spec.name || String(old.price) !== spec.price || String(old.manual_stock ?? "") !== String(spec.manual_stock ?? ""))) {
+          await runSpecOperation("update", spec.name, () => adminProductApi.updateSpec(productId, spec.id as string, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
+        }
+      } else {
+        const existingDraft = existingSpecs.find((candidate) => candidate.name.trim() === spec.name.trim())
+        if (existingDraft) {
+          if (String(existingDraft.price) !== spec.price || String(existingDraft.manual_stock ?? "") !== String(spec.manual_stock ?? "")) {
+            await runSpecOperation("update", spec.name, () => adminProductApi.updateSpec(productId, existingDraft.id, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
+          }
+        } else {
+          await runSpecOperation("add", spec.name, () => adminProductApi.addSpec(productId, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
+        }
+      }
+    }
+  }
+
+  const buildSpecSyncFailure = (productId: string, error: unknown): SpecSyncFailure => {
+    if (error instanceof SpecSyncError) {
+      return { productId, operation: error.operation, specName: error.specName, message: error.message }
+    }
+    return { productId, operation: "update", specName: t("admin.unnamed"), message: getErrorMessage(error, t("admin.saveFailed")) }
+  }
+
+  const specSyncOperationLabel = (operation: SpecSyncOperation) => {
+    if (operation === "load") return t("admin.specSyncLoad")
+    if (operation === "delete") return t("admin.specSyncDelete")
+    if (operation === "add") return t("admin.specSyncAdd")
+    return t("admin.specSyncUpdate")
+  }
+
+  const reportSpecSyncFailure = (productId: string, error: unknown) => {
+    const failure = buildSpecSyncFailure(productId, error)
+    setSpecSyncFailure(failure)
+    toast.error(`${t("admin.productBaseSavedSpecSyncFailed")} · ${t("admin.specSyncStep").replace("{action}", specSyncOperationLabel(failure.operation)).replace("{name}", failure.specName)} · ${failure.message}`)
   }
 
   const handleSave = async () => {
@@ -249,45 +346,42 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
         : (await requestOrThrow(() => adminProductApi.create(payload))).id
 
       if (specsEnabled) {
-        const existingSpecs = product?.specs || []
-        const existingIds = new Set(existingSpecs.map((spec) => spec.id))
-        const keepIds = new Set(formSpecs.filter((spec) => spec.id).map((spec) => spec.id as string))
-
-        for (const oldSpec of existingSpecs) {
-          if (!keepIds.has(oldSpec.id)) {
-            try {
-              await requestOrThrow(() => adminProductApi.deleteSpec(productId, oldSpec.id))
-            } catch (error: unknown) {
-              if (error instanceof Error) toast.error(error.message)
-            }
-          }
-        }
-
-        for (const spec of formSpecs) {
-          const manualStock = formData.stock_mode === "MANUAL"
-            ? Math.max(0, Number.parseInt(spec.manual_stock || "0", 10) || 0)
-            : undefined
-          try {
-            if (spec.id && existingIds.has(spec.id)) {
-              const old = existingSpecs.find((candidate) => candidate.id === spec.id)
-              if (old && (old.name !== spec.name || String(old.price) !== spec.price || String(old.manual_stock ?? "") !== String(spec.manual_stock ?? ""))) {
-                await requestOrThrow(() => adminProductApi.updateSpec(productId, spec.id as string, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
-              }
-            } else {
-              await requestOrThrow(() => adminProductApi.addSpec(productId, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
-            }
-          } catch (error: unknown) {
-            if (error instanceof Error) toast.error(error.message)
-          }
+        try {
+          await syncProductSpecs(productId)
+        } catch (specError: unknown) {
+          reportSpecSyncFailure(productId, specError)
+          return
         }
       }
 
+      setSpecSyncFailure(null)
       toast.success(t("admin.productSaved"))
       await onSaved()
     } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : t("admin.saveFailed"))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const retrySpecSync = async () => {
+    const failure = specSyncFailure
+    if (!failure) return
+    if (!specsEnabled) {
+      toast.error(t("admin.specSyncRetryRequiresSpecs"))
+      return
+    }
+
+    setRetryingSpecSync(true)
+    try {
+      await syncProductSpecs(failure.productId)
+      setSpecSyncFailure(null)
+      toast.success(t("admin.specSyncCompleted"))
+      await onSaved()
+    } catch (specError: unknown) {
+      reportSpecSyncFailure(failure.productId, specError)
+    } finally {
+      setRetryingSpecSync(false)
     }
   }
 
@@ -347,7 +441,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
           </label>
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
             {t("admin.coverUrl")}
-            <ImageUploadDropzone value={formData.cover_url} onChange={(value) => setField("cover_url", value)} uploadImage={uploadImage} disabled={saving} />
+            <ImageUploadDropzone value={formData.cover_url} onChange={(value) => setField("cover_url", value)} uploadImage={uploadImage} disabled={saving || retryingSpecSync} />
           </label>
         </div>
       </FormSection>
@@ -508,13 +602,32 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
         )}
       </FormSection>
 
+      {specSyncFailure && (
+        <div role="alert" className="flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-800 dark:text-amber-200">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0 space-y-1">
+              <p className="font-medium">{t("admin.productBaseSavedSpecSyncFailed")}</p>
+              <p>{t("admin.specSyncStep").replace("{action}", specSyncOperationLabel(specSyncFailure.operation)).replace("{name}", specSyncFailure.specName)}</p>
+              <p className="break-words text-xs opacity-80">{specSyncFailure.message}</p>
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" onClick={() => void retrySpecSync()} disabled={saving || retryingSpecSync || !specsEnabled}>
+              {retryingSpecSync && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+              {retryingSpecSync ? t("admin.retryingSpecSync") : t("admin.retrySpecSync")}
+            </Button>
+          </div>
+        </div>
+      )}
+
       <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
         <MarkdownEditor value={formData.detail_md} onChange={(value) => setField("detail_md", value)} uploadImage={uploadImage} />
       </FormSection>
 
       <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
-        <Button type="button" onClick={() => void handleSave()} disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={saving || retryingSpecSync}>{t("admin.cancel")}</Button>
+        <Button type="button" onClick={() => void handleSave()} disabled={saving || retryingSpecSync}>{saving ? t("admin.saving") : t("admin.save")}</Button>
       </div>
 
       <ConfirmAlert

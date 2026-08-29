@@ -130,12 +130,15 @@ export function OrderDetailSheet({
                     {!detailCardKeysLoading && detailCardKeysError && <div className="flex flex-col items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryCardKeys && <Button type="button" variant="outline" size="sm" onClick={onRetryCardKeys}>{t("common.retry")}</Button>}</div>}
                     {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length === 0 && <p className="text-sm text-muted-foreground">{t("admin.systemNoData")}</p>}
                     {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && (() => {
-                      const groups = new Map<string, OrderCardKey[]>()
+                      const groups = new Map<string, { title: string; cards: OrderCardKey[] }>()
                       detailCardKeys.forEach((card) => {
-                        const groupKey = card.order_item_id || `${card.product_title} · ${card.spec_name || t("admin.defaultSpec")}`
-                        groups.set(groupKey, [...(groups.get(groupKey) || []), card])
+                        const groupKey = card.order_item_id || `${card.product_title}\u0000${card.spec_name || ""}`
+                        const title = [card.product_title, card.spec_name].filter(Boolean).join(" · ") || t("admin.deliveredCardContent")
+                        const group = groups.get(groupKey)
+                        if (group) group.cards.push(card)
+                        else groups.set(groupKey, { title, cards: [card] })
                       })
-                      return <div className="flex flex-col gap-3">{[...groups.entries()].map(([group, cards]) => <div key={group} className="flex flex-col gap-2"><p className="text-xs font-medium text-muted-foreground">{groups.size > 1 ? group : t("admin.deliveredCardContent")}</p>{cards.map((card) => <DataTableShell key={card.card_key_id} className="rounded-lg"><div className="p-3"><CardContentParts parts={card.content_parts} onCopy={copyToClipboard} /></div></DataTableShell>)}</div>)}</div>
+                      return <div className="flex flex-col gap-3">{[...groups.entries()].map(([groupKey, group]) => <div key={groupKey} className="flex flex-col gap-2"><p className="text-xs font-medium text-muted-foreground">{groups.size > 1 ? group.title : t("admin.deliveredCardContent")}</p>{group.cards.map((card) => <DataTableShell key={card.card_key_id} className="rounded-lg"><div className="p-3"><CardContentParts parts={card.content_parts} onCopy={copyToClipboard} /></div></DataTableShell>)}</div>)}</div>
                     })()}
                   </section>
                 )}

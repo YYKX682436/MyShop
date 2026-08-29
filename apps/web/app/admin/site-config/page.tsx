@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { cn } from "@/lib/utils"
-import { MAX_CONTACT_ITEMS, parseContactItems, serializeContactItems } from "@/lib/contact-items"
+import { MAX_CONTACT_ITEMS, parseContactItemsSafely, serializeContactItems } from "@/lib/contact-items"
 import { ALLOWED_IMAGE_ACCEPT, QR_ALLOWED_IMAGE_ACCEPT, validateImageFile, validateQrImageFile } from "@/lib/image-upload"
 import { adminConfigApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { ContactItem, SiteConfigKV } from "@/types"
@@ -25,6 +25,7 @@ export default function AdminSiteConfigPage() {
   const [tab, setTab] = useState<TabKey>("basic")
   const [configMap, setConfigMap] = useState<Record<string, string>>({})
   const [contactItems, setContactItems] = useState<ContactItem[]>([])
+  const [contactConfigError, setContactConfigError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -36,17 +37,20 @@ export default function AdminSiteConfigPage() {
   const load = useCallback(async () => {
     setLoading(true)
     setError(false)
+    setContactConfigError(false)
     try {
       const data = await requestOrThrow(() => adminConfigApi.get())
       const map: Record<string, string> = {}
       data.forEach((item: SiteConfigKV) => { map[item.config_key] = item.config_value })
-      const parsedItems = parseContactItems(map.contact_items)
-      map.contact_items = serializeContactItems(parsedItems)
-      setContactItems(parsedItems)
+      const parsedContacts = parseContactItemsSafely(map.contact_items)
+      if (!parsedContacts.hasError) map.contact_items = serializeContactItems(parsedContacts.items)
+      setContactItems(parsedContacts.items)
+      setContactConfigError(parsedContacts.hasError)
       setConfigMap(map)
     } catch {
       setConfigMap({})
       setContactItems([])
+      setContactConfigError(false)
       setError(true)
     } finally {
       setLoading(false)
@@ -59,6 +63,7 @@ export default function AdminSiteConfigPage() {
   const setValue = (key: string, value: string) => setConfigMap((current) => ({ ...current, [key]: value }))
   const getBool = (key: string) => getValue(key) === "true"
   const updateContactItems = (updater: (items: ContactItem[]) => ContactItem[]) => {
+    setContactConfigError(false)
     setContactItems((current) => {
       const next = updater(current)
       setConfigMap((previous) => ({ ...previous, contact_items: serializeContactItems(next) }))
@@ -163,6 +168,7 @@ export default function AdminSiteConfigPage() {
 
         <TabsContent value="contact">
           <SettingsSection title={t("admin.contactTab")} description={t("admin.contactItemsHint")}>
+            {contactConfigError && <div role="alert" className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-700 dark:text-amber-300"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /><span>{t("admin.contactConfigError")}</span></div>}
             <div className="max-w-4xl space-y-5">
               <label className="flex max-w-xl flex-col gap-1.5 text-sm font-medium"><span>{t("admin.contactEmail")}</span><Input type="email" value={getValue("contact_email")} onChange={(event) => setValue("contact_email", event.target.value)} /></label>
               <div className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-medium">{t("admin.contactItems")}</p><p className="text-xs text-muted-foreground">{t("admin.contactItemsHint")}</p></div><span className="text-xs text-muted-foreground">{contactItems.length}/{MAX_CONTACT_ITEMS}</span></div>

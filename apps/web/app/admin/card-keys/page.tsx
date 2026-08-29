@@ -80,6 +80,7 @@ export default function AdminCardKeysPage() {
   const [singleInvalidating, setSingleInvalidating] = useState(false)
   const [batchInvalidateTarget, setBatchInvalidateTarget] = useState<CardKeyStockSummary | null>(null)
   const [batchInvalidating, setBatchInvalidating] = useState(false)
+  const detailRequestRef = useRef(0)
 
   const importableProducts = products.filter((product) => (product.delivery_type || "AUTO") === "AUTO" && (product.stock_mode || "CARD_KEY") === "CARD_KEY")
 
@@ -142,10 +143,14 @@ export default function AdminCardKeysPage() {
     setImportErrors({})
   }
 
+  const closeImportDialog = () => {
+    setImportDialogOpen(false)
+    resetImport()
+  }
+
   const handleImportDialogChange = (open: boolean) => {
     if (!open && !importing) {
-      setImportDialogOpen(false)
-      resetImport()
+      closeImportDialog()
     } else if (open) {
       setImportDialogOpen(true)
     }
@@ -195,7 +200,7 @@ export default function AdminCardKeysPage() {
           .replace("{duplicate}", String(result.duplicate_count))
           .replace("{failed}", String(result.fail_count)),
       )
-      handleImportDialogChange(false)
+      closeImportDialog()
       await Promise.all([loadStock(), loadImportBatches()])
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.importFailed"))
@@ -205,18 +210,21 @@ export default function AdminCardKeysPage() {
   }
 
   const fetchDetailKeys = useCallback(async (item: CardKeyStockSummary, page: number) => {
+    const detailRequestId = ++detailRequestRef.current
     setDetailLoading(true)
     setDetailError(false)
     try {
       const data = await requestOrThrow(() => adminCardKeyApi.getList({ product_id: item.product_id, spec_id: item.spec_id, page, page_size: PAGE_SIZE }))
+      if (detailRequestRef.current !== detailRequestId) return
       setDetailKeys(data.list)
       setDetailTotal(data.pagination.total)
     } catch {
+      if (detailRequestRef.current !== detailRequestId) return
       setDetailKeys([])
       setDetailTotal(0)
       setDetailError(true)
     } finally {
-      setDetailLoading(false)
+      if (detailRequestRef.current === detailRequestId) setDetailLoading(false)
     }
   }, [])
 
@@ -228,8 +236,11 @@ export default function AdminCardKeysPage() {
 
   const closeDetail = (open: boolean) => {
     if (!open) {
+      detailRequestRef.current += 1
       setDetailItem(null)
       setDetailKeys([])
+      setDetailTotal(0)
+      setDetailLoading(false)
       setDetailError(false)
     }
   }

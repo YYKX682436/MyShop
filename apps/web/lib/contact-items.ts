@@ -90,6 +90,18 @@ export function parseContactItems(raw: string | null | undefined): ContactItem[]
   return normalizeContactItems(parsed)
 }
 
+/**
+ * Admin settings must be able to load the rest of the configuration even when
+ * an older or manually edited contact_items value is malformed.
+ */
+export function parseContactItemsSafely(raw: string | null | undefined): { items: ContactItem[]; hasError: boolean } {
+  try {
+    return { items: parseContactItems(raw), hasError: false }
+  } catch {
+    return { items: [], hasError: true }
+  }
+}
+
 export function serializeContactItems(items: readonly ContactItem[]): string {
   return JSON.stringify(normalizeContactItems(items))
 }

@@ -269,8 +269,8 @@ export function ConfirmAlert({
             disabled={loading || confirmDisabled}
             className={destructive ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
             onClick={(event) => {
+              event.preventDefault()
               if (loading || confirmDisabled) {
-                event.preventDefault()
                 return
               }
               onConfirm()

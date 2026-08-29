@@ -2,12 +2,12 @@
 
 import React, { useState, useEffect, useCallback } from "react"
 import { usePathname } from "next/navigation"
-import { Wrench, X } from "lucide-react"
+import { Wrench } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import { StoreHeader } from "@/components/layout/store-header"
 import { StoreFooter } from "@/components/layout/store-footer"
 import { VisitTracker } from "@/components/store/visit-tracker"
-import { Modal } from "@/components/ui/modal"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
 import { ContactSupport } from "@/components/shared/contact-methods"
 
@@ -87,32 +87,27 @@ function PopupAnnouncement() {
   if (!open) return null
 
   return (
-    <Modal open={open} onClose={handleClose} className="max-w-lg">
-      <div className="flex items-center justify-between border-b border-border px-6 py-4">
-        <h2 className="text-base font-semibold text-foreground">公告</h2>
-        <button
-          type="button"
-          className="rounded-lg p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-          onClick={handleClose}
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      <div className="px-6 py-4">
-        <div className="prose prose-sm max-w-none text-muted-foreground dark:prose-invert">
-          <ReactMarkdown>{config!.popup_content!}</ReactMarkdown>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) handleClose() }}>
+      <DialogContent className="max-w-lg gap-0 p-0">
+        <DialogHeader className="border-b border-border px-6 py-4 pr-12">
+          <DialogTitle className="text-base">公告</DialogTitle>
+        </DialogHeader>
+        <div className="px-6 py-4">
+          <div className="prose prose-sm max-w-none text-muted-foreground dark:prose-invert">
+            <ReactMarkdown>{config!.popup_content!}</ReactMarkdown>
+          </div>
         </div>
-      </div>
-      <div className="flex justify-end border-t border-border px-6 py-3">
-        <button
-          type="button"
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          onClick={handleClose}
-        >
-          我知道了
-        </button>
-      </div>
-    </Modal>
+        <DialogFooter className="border-t border-border px-6 py-3">
+          <button
+            type="button"
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            onClick={handleClose}
+          >
+            我知道了
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Eye, Save, ShieldAlert, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
@@ -51,6 +51,8 @@ export default function AdminRiskPage() {
   const [detailCardKeys, setDetailCardKeys] = useState<OrderCardKey[]>([])
   const [detailCardKeysLoading, setDetailCardKeysLoading] = useState(false)
   const [detailCardKeysError, setDetailCardKeysError] = useState(false)
+  const detailRequestRef = useRef(0)
+  const detailCardKeysRequestRef = useRef(0)
 
   const loadConfig = useCallback(async () => {
     setConfigLoading(true)
@@ -107,38 +109,71 @@ export default function AdminRiskPage() {
     }
   }
 
-  const loadDetailCardKeys = useCallback(async (orderId: string) => {
+  const invalidateDetailRequests = () => {
+    detailRequestRef.current += 1
+    detailCardKeysRequestRef.current += 1
+  }
+
+  const loadDetailCardKeys = useCallback(async (orderId: string, detailRequestId = detailRequestRef.current) => {
+    const cardKeysRequestId = ++detailCardKeysRequestRef.current
     setDetailCardKeysLoading(true)
     setDetailCardKeysError(false)
     try {
-      setDetailCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
+      const cardKeys = await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId))
+      if (detailRequestRef.current !== detailRequestId || detailCardKeysRequestRef.current !== cardKeysRequestId) return
+      setDetailCardKeys(cardKeys)
     } catch {
+      if (detailRequestRef.current !== detailRequestId || detailCardKeysRequestRef.current !== cardKeysRequestId) return
       setDetailCardKeys([])
       setDetailCardKeysError(true)
     } finally {
-      setDetailCardKeysLoading(false)
+      if (detailRequestRef.current === detailRequestId && detailCardKeysRequestRef.current === cardKeysRequestId) {
+        setDetailCardKeysLoading(false)
+      }
     }
   }, [])
 
   const loadOrderDetail = useCallback(async (orderId: string) => {
+    const detailRequestId = ++detailRequestRef.current
+    detailCardKeysRequestRef.current += 1
     setDetailLoading(true)
     setDetailError(false)
     try {
       const detail = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
+      if (detailRequestRef.current !== detailRequestId) return
       setDetailOrder(detail)
-      if (detail.status === "DELIVERED") await loadDetailCardKeys(orderId)
-      else setDetailCardKeys([])
+      if (detail.status === "DELIVERED") await loadDetailCardKeys(orderId, detailRequestId)
+      else {
+        setDetailCardKeys([])
+        setDetailCardKeysLoading(false)
+        setDetailCardKeysError(false)
+      }
     } catch {
+      if (detailRequestRef.current !== detailRequestId) return
       setDetailError(true)
     } finally {
-      setDetailLoading(false)
+      if (detailRequestRef.current === detailRequestId) setDetailLoading(false)
     }
   }, [loadDetailCardKeys])
 
   const openDetail = (order: AdminOrderItem) => {
     setDetailOrder(order)
     setDetailCardKeys([])
+    setDetailCardKeysLoading(false)
+    setDetailCardKeysError(false)
     void loadOrderDetail(order.id)
+  }
+
+  const closeDetail = (open: boolean) => {
+    if (!open) {
+      invalidateDetailRequests()
+      setDetailOrder(null)
+      setDetailLoading(false)
+      setDetailError(false)
+      setDetailCardKeys([])
+      setDetailCardKeysLoading(false)
+      setDetailCardKeysError(false)
+    }
   }
 
   const configNumber = (key: keyof RiskConfig, label: string) => <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{label}</span><Input type="number" min="0" value={Number(config[key])} onChange={(event) => setConfig((current) => ({ ...current, [key]: Number.parseInt(event.target.value, 10) || 0 }))} /></label>
@@ -183,7 +218,7 @@ export default function AdminRiskPage() {
         </TabsContent>
       </Tabs>
 
-      <OrderDetailSheet order={detailOrder} onOpenChange={(open) => { if (!open) { setDetailOrder(null); setDetailError(false) } }} detailLoading={detailLoading} detailError={detailError} onRetryDetail={() => detailOrder && void loadOrderDetail(detailOrder.id)} detailCardKeys={detailCardKeys} detailCardKeysLoading={detailCardKeysLoading} detailCardKeysError={detailCardKeysError} onRetryCardKeys={() => detailOrder && void loadDetailCardKeys(detailOrder.id)} />
+      <OrderDetailSheet order={detailOrder} onOpenChange={closeDetail} detailLoading={detailLoading} detailError={detailError} onRetryDetail={() => detailOrder && void loadOrderDetail(detailOrder.id)} detailCardKeys={detailCardKeys} detailCardKeysLoading={detailCardKeysLoading} detailCardKeysError={detailCardKeysError} onRetryCardKeys={() => detailOrder && void loadDetailCardKeys(detailOrder.id)} />
     </AdminPage>
   )
 }
