@@ -1,6 +1,6 @@
--- V1 seeds the current model for new databases. This forward migration also
--- cleans retired generic config rows from existing databases and creates the
--- single replacement key without touching unrelated configuration.
+-- This forward migration creates the current contact model for fresh and
+-- existing databases, cleans retired generic config rows, and leaves all
+-- unrelated configuration untouched. V1 remains immutable after deployment.
 DELETE FROM site_configs
 WHERE config_key IN ('github_url', 'contact_telegram', 'contact_telegram_group');
 
