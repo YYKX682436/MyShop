@@ -1,10 +1,23 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { ALLOWED_IMAGE_ACCEPT, validateImageFile } from "./image-upload.ts"
+import {
+  ALLOWED_IMAGE_ACCEPT,
+  QR_ALLOWED_IMAGE_ACCEPT,
+  validateImageFile,
+  validateQrImageFile,
+} from "./image-upload.ts"
 
 test("image upload validation matches the backend-safe formats and size", () => {
   assert.equal(validateImageFile({ type: "image/jpeg", size: 10 * 1024 * 1024 }), null)
   assert.equal(validateImageFile({ type: "image/svg+xml", size: 1 }), "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP")
   assert.equal(validateImageFile({ type: "image/png", size: 10 * 1024 * 1024 + 1 }), "图片大小不能超过 10MB")
   assert.equal(ALLOWED_IMAGE_ACCEPT.includes(".svg"), false)
+})
+
+test("QR upload validation only allows PNG/JPG/JPEG/WebP", () => {
+  assert.equal(validateQrImageFile({ type: "image/png", size: 1 }), null)
+  assert.equal(validateQrImageFile({ type: "image/jpeg", size: 1 }), null)
+  assert.equal(validateQrImageFile({ type: "image/webp", size: 1 }), null)
+  assert.equal(validateQrImageFile({ type: "image/gif", size: 1 }), "二维码仅支持 JPG/PNG/WebP 格式")
+  assert.equal(QR_ALLOWED_IMAGE_ACCEPT.includes(".bmp"), false)
 })

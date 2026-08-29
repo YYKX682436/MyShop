@@ -1,25 +1,23 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Save, AlertTriangle, Upload, Loader2, ImagePlus } from "lucide-react"
+import { Save, AlertTriangle, Upload, Loader2, ImagePlus, Plus, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import { adminConfigApi, adminProductApi, requestOrThrow } from "@/services/api"
 import { useLocale } from "@/lib/context"
-import type { SiteConfigKV } from "@/types"
-
-const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/svg+xml"]
-const ALLOWED_IMAGE_ACCEPT = ".jpg,.jpeg,.png,.gif,.webp,.bmp,.svg"
-
-function validateImageFile(file: File): string | null {
-  if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-    return "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP/SVG"
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    return "图片大小不能超过 10MB"
-  }
-  return null
-}
+import type { ContactItem, SiteConfigKV } from "@/types"
+import {
+  ALLOWED_IMAGE_ACCEPT,
+  QR_ALLOWED_IMAGE_ACCEPT,
+  validateImageFile,
+  validateQrImageFile,
+} from "@/lib/image-upload"
+import {
+  MAX_CONTACT_ITEMS,
+  parseContactItems,
+  serializeContactItems,
+} from "@/lib/contact-items"
 
 type TabKey = "basic" | "announcement" | "points" | "contact" | "maintenance"
 
@@ -31,6 +29,8 @@ export default function AdminSiteConfigPage() {
   const [saving, setSaving] = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
   const [popupUploading, setPopupUploading] = useState(false)
+  const [qrUploadingIndex, setQrUploadingIndex] = useState<number | null>(null)
+  const [contactItems, setContactItems] = useState<ContactItem[]>([])
   const popupTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   const fetchConfig = useCallback(async () => {
@@ -39,6 +39,15 @@ export default function AdminSiteConfigPage() {
       const data = await requestOrThrow(() => adminConfigApi.get())
       const map: Record<string, string> = {}
       data.forEach((kv: SiteConfigKV) => { map[kv.config_key] = kv.config_value })
+      try {
+        const parsedItems = parseContactItems(map.contact_items)
+        map.contact_items = serializeContactItems(parsedItems)
+        setContactItems(parsedItems)
+      } catch (error: unknown) {
+        toast.error(error instanceof Error ? error.message : "联系方式配置无效")
+        map.contact_items = "[]"
+        setContactItems([])
+      }
       setConfigMap(map)
     } catch {
       setConfigMap({})
@@ -53,6 +62,13 @@ export default function AdminSiteConfigPage() {
   const setValue = (key: string, value: string) => {
     setConfigMap(prev => ({ ...prev, [key]: value }))
   }
+  const updateContactItems = (updater: (items: ContactItem[]) => ContactItem[]) => {
+    setContactItems(current => {
+      const next = updater(current)
+      setConfigMap(prev => ({ ...prev, contact_items: JSON.stringify(next) }))
+      return next
+    })
+  }
   const getBool = (key: string) => configMap[key] === "true"
   const toggleBool = (key: string) => {
     setConfigMap(prev => ({ ...prev, [key]: prev[key] === "true" ? "false" : "true" }))
@@ -61,16 +77,42 @@ export default function AdminSiteConfigPage() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      const configs = Object.entries(configMap).map(([config_key, config_value]) => ({
+      const contactItemsValue = serializeContactItems(contactItems)
+      const configs = Object.entries(configMap)
+        .filter(([config_key]) => config_key !== "contact_items")
+        .map(([config_key, config_value]) => ({
         config_key,
         config_value,
-      }))
+        }))
+      configs.push({ config_key: "contact_items", config_value: contactItemsValue })
       await requestOrThrow(() => adminConfigApi.update({ configs }))
       toast.success("保存成功")
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "保存失败")
     } finally {
       setSaving(false)
+    }
+  }
+
+  const uploadContactQr = async (index: number, file: File | undefined) => {
+    if (!file) return
+    const validationError = validateQrImageFile(file)
+    if (validationError) {
+      toast.error(validationError)
+      return
+    }
+
+    setQrUploadingIndex(index)
+    try {
+      const result = await adminProductApi.uploadImage(file)
+      updateContactItems(items => items.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, qr_url: result.url } : item,
+      ))
+      toast.success("二维码上传成功")
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "上传失败")
+    } finally {
+      setQrUploadingIndex(null)
     }
   }
 
@@ -210,17 +252,6 @@ export default function AdminSiteConfigPage() {
                 value={getValue("footer_text")}
                 onChange={(e) => setValue("footer_text", e.target.value)}
               />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">{t("admin.githubUrl")}</label>
-              <input
-                type="url"
-                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="https://github.com/..."
-                value={getValue("github_url")}
-                onChange={(e) => setValue("github_url", e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">{t("admin.githubUrlHint")}</p>
             </div>
             <button
               type="button"
@@ -398,7 +429,7 @@ export default function AdminSiteConfigPage() {
       {/* Contact */}
       {tab === "contact" && (
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <div className="flex flex-col gap-5 max-w-xl">
+          <div className="flex max-w-3xl flex-col gap-5">
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-foreground">{t("admin.contactEmail")}</label>
               <input
@@ -408,25 +439,154 @@ export default function AdminSiteConfigPage() {
                 onChange={(e) => setValue("contact_email", e.target.value)}
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">{t("admin.contactTelegram")}</label>
-              <input
-                type="text"
-                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                value={getValue("contact_telegram")}
-                onChange={(e) => setValue("contact_telegram", e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">{t("admin.contactTelegramGroup")}</label>
-              <input
-                type="text"
-                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="https://t.me/..."
-                value={getValue("contact_telegram_group")}
-                onChange={(e) => setValue("contact_telegram_group", e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">{t("admin.contactTelegramGroupHint")}</p>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-sm font-medium text-foreground">{t("admin.contactItems")}</label>
+                  <span className="text-xs text-muted-foreground">
+                    {contactItems.length}/{MAX_CONTACT_ITEMS}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("admin.contactItemsHint")}</p>
+              </div>
+
+              {contactItems.length === 0 && (
+                <div className="rounded-lg border border-dashed border-border px-4 py-5 text-center text-sm text-muted-foreground">
+                  {t("admin.noContactItems")}
+                </div>
+              )}
+
+              {contactItems.map((item, index) => {
+                const qrUploading = qrUploadingIndex === index
+                return (
+                  <div key={index} className="flex flex-col gap-4 rounded-xl border border-border bg-background/60 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-foreground">
+                        {t("admin.contactItemNumber")} {index + 1}
+                      </p>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
+                        onClick={() => updateContactItems(items => items.filter((_, itemIndex) => itemIndex !== index))}
+                        disabled={saving || qrUploadingIndex !== null}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {t("admin.removeContactItem")}
+                      </button>
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium text-foreground">
+                        {t("admin.contactName")}
+                        <input
+                          type="text"
+                          maxLength={30}
+                          className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder={t("admin.contactNamePlaceholder")}
+                          value={item.name}
+                          onChange={(event) => updateContactItems(items => items.map((current, itemIndex) =>
+                            itemIndex === index ? { ...current, name: event.target.value } : current,
+                          ))}
+                          disabled={saving || qrUploading}
+                        />
+                        <span className="text-xs font-normal text-muted-foreground">{t("admin.contactNameHint")}</span>
+                      </label>
+
+                      <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium text-foreground">
+                        {t("admin.contactUrl")}
+                        <input
+                          type="text"
+                          inputMode="url"
+                          className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="https://..."
+                          value={item.url ?? ""}
+                          onChange={(event) => updateContactItems(items => items.map((current, itemIndex) =>
+                            itemIndex === index ? { ...current, url: event.target.value } : current,
+                          ))}
+                          disabled={saving || qrUploading}
+                        />
+                        <span className="text-xs font-normal text-muted-foreground">{t("admin.contactUrlHint")}</span>
+                      </label>
+                    </div>
+
+                    <div className="flex min-w-0 flex-col gap-2">
+                      <span className="text-sm font-medium text-foreground">{t("admin.contactQr")}</span>
+                      {item.qr_url ? (
+                        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-start">
+                          <div className="flex h-36 w-36 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white p-2">
+                            <img src={item.qr_url} alt={t("admin.contactQrPreviewAlt")} className="max-h-full max-w-full object-contain" />
+                          </div>
+                          <div className="flex min-w-0 flex-1 flex-col gap-2">
+                            <p className="break-all text-xs text-muted-foreground">{item.qr_url}</p>
+                            <div className="flex flex-wrap gap-2">
+                              <label className={cn(
+                                "inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent",
+                                (saving || qrUploadingIndex !== null) && "pointer-events-none opacity-50",
+                              )}>
+                                {qrUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                                {t("admin.replaceQr")}
+                                <input
+                                  type="file"
+                                  accept={QR_ALLOWED_IMAGE_ACCEPT}
+                                  className="hidden"
+                                  disabled={saving || qrUploadingIndex !== null}
+                                  onChange={(event) => {
+                                    void uploadContactQr(index, event.target.files?.[0])
+                                    event.target.value = ""
+                                  }}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
+                                onClick={() => updateContactItems(items => items.map((current, itemIndex) =>
+                                  itemIndex === index ? { ...current, qr_url: "" } : current,
+                                ))}
+                                disabled={saving || qrUploadingIndex !== null}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                {t("admin.removeQr")}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <label className={cn(
+                          "flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-muted/10 px-4 py-5 text-center transition-colors hover:border-primary/60 hover:bg-primary/5",
+                          (saving || qrUploadingIndex !== null) && "pointer-events-none opacity-50",
+                        )}>
+                          {qrUploading ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <ImagePlus className="h-6 w-6 text-primary/70" />}
+                          <span className="text-sm font-medium text-foreground">{qrUploading ? t("admin.uploadingQr") : t("admin.uploadQr")}</span>
+                          <span className="text-xs text-muted-foreground">{t("admin.contactQrHint")}</span>
+                          <input
+                            type="file"
+                            accept={QR_ALLOWED_IMAGE_ACCEPT}
+                            className="hidden"
+                            disabled={saving || qrUploadingIndex !== null}
+                            onChange={(event) => {
+                              void uploadContactQr(index, event.target.files?.[0])
+                              event.target.value = ""
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+
+              <button
+                type="button"
+                className="inline-flex w-fit items-center gap-2 rounded-lg border border-dashed border-primary/60 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/5 disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => updateContactItems(items => [...items, { name: "", url: "", qr_url: "" }])}
+                disabled={contactItems.length >= MAX_CONTACT_ITEMS || saving || qrUploadingIndex !== null}
+              >
+                <Plus className="h-4 w-4" />
+                {t("admin.addContactItem")}
+              </button>
+              {contactItems.length >= MAX_CONTACT_ITEMS && (
+                <p className="text-xs text-muted-foreground">{t("admin.contactItemsLimit")}</p>
+              )}
             </div>
             <button
               type="button"

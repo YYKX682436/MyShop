@@ -1,6 +1,7 @@
 package com.myshop.service.impl;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,8 +49,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("1", flyway.info().current().getVersion().getVersion());
-        assertEquals(1, flyway.info().all().length);
+        assertEquals("2", flyway.info().current().getVersion().getVersion());
+        assertEquals(2, flyway.info().all().length);
         for (String table : List.of(
                 "users", "product_categories", "products", "product_specs", "wholesale_rules",
                 "card_import_batches", "orders", "order_items", "card_keys", "cart_items",
@@ -96,6 +97,28 @@ class MigrationChainIntegrationTest {
         assertTrue(indexExists("idx_card_keys_pool_fingerprint"));
         assertTrue(indexExists("idx_card_keys_available_pool"));
         assertFalse(indexExists("uq_card_key_pool_content"));
+        assertEquals("[]", configValue("contact_items"));
+        for (String retiredKey : List.of("github_url", "contact_telegram", "contact_telegram_group")) {
+            assertEquals(0, configCount(retiredKey), "retired config key must not be seeded: " + retiredKey);
+        }
+    }
+
+    @Test
+    void forwardContactMigrationRemovesRetiredRowsAndKeepsReplacementKey() {
+        flyway("1").migrate();
+        for (String retiredKey : List.of("github_url", "contact_telegram", "contact_telegram_group")) {
+            jdbcTemplate.update("""
+                    INSERT INTO site_configs(config_key, config_value, config_group)
+                    VALUES (?, 'legacy-value', 'basic')
+                    """, retiredKey);
+        }
+
+        flyway().migrate();
+
+        for (String retiredKey : List.of("github_url", "contact_telegram", "contact_telegram_group")) {
+            assertEquals(0, configCount(retiredKey), "retired config row must be removed: " + retiredKey);
+        }
+        assertEquals("[]", configValue("contact_items"));
     }
 
     @Test
@@ -166,11 +189,16 @@ class MigrationChainIntegrationTest {
     }
 
     private Flyway flyway() {
-        return Flyway.configure()
+        return flyway(null);
+    }
+
+    private Flyway flyway(String target) {
+        var configuration = Flyway.configure()
                 .dataSource(dataSource())
                 .locations("classpath:db/migration")
-                .cleanDisabled(false)
-                .load();
+                .cleanDisabled(false);
+        if (target != null) configuration.target(MigrationVersion.fromVersion(target));
+        return configuration.load();
     }
 
     private DriverManagerDataSource dataSource() {
@@ -218,5 +246,16 @@ class MigrationChainIntegrationTest {
                 WHERE schemaname = 'public' AND indexname = ?
                 """, Integer.class, index);
         return count != null && count == 1;
+    }
+
+    private String configValue(String key) {
+        return jdbcTemplate.queryForObject(
+                "SELECT config_value FROM site_configs WHERE config_key = ?", String.class, key);
+    }
+
+    private int configCount(String key) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM site_configs WHERE config_key = ?", Integer.class, key);
+        return count == null ? 0 : count;
     }
 }

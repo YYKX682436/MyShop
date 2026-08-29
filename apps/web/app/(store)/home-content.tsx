@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   RefreshCw,
 } from "lucide-react"
-import { useLocale, useSearch, useSiteConfig } from "@/lib/context"
+import { useLocale, useSearch } from "@/lib/context"
 import { ProductCard } from "@/components/store/product-card"
 import { cn } from "@/lib/utils"
 import type { ProductCard as ProductCardType, Category } from "@/types"
@@ -24,7 +24,6 @@ interface HomeContentProps {
 
 export function HomeContent({ products, categories, siteSlogan, siteDescription, productsError = false }: HomeContentProps) {
   const { t } = useLocale()
-  const { config } = useSiteConfig()
   const { searchQuery, sortBy, inStockOnly, priceMin, priceMax } = useSearch()
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
@@ -92,17 +91,6 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
           <p className="mt-3 text-sm text-muted-foreground">
             {siteDescription}
           </p>
-          {config?.contact_telegram_group && (
-            <a
-              href={config.contact_telegram_group}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="tg-ghost-btn mt-6 inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold text-[#2AABEE] transition-all active:scale-[0.97]"
-            >
-              <img src="/images/telegram.png" alt="" className="h-4 w-4" />
-              <span>{t("home.joinTelegram")}</span>
-            </a>
-          )}
         </div>
       </section>
 

@@ -293,6 +293,12 @@ export interface PaymentChannelItem {
 // Site Config
 // ============================================================
 
+export interface ContactItem {
+  name: string
+  url?: string
+  qr_url?: string
+}
+
 export interface SiteConfig {
   site_name: string
   site_slogan?: string
@@ -304,14 +310,12 @@ export interface SiteConfig {
   popup_enabled: boolean
   popup_content?: string
   contact_email?: string
-  contact_telegram?: string
-  contact_telegram_group?: string
+  contact_items?: ContactItem[]
   points_enabled: boolean
   points_rate: number
   maintenance_enabled: boolean
   maintenance_message?: string
   footer_text?: string
-  github_url?: string
   custom_css?: string
 }
 

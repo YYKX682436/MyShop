@@ -308,5 +308,6 @@ VALUES
     ('maintenance_message', '站点维护中，请稍后再试。', 'maintenance'),
     ('points_enabled', 'false', 'points'),
     ('points_rate', '0', 'points'),
-    ('footer_text', 'MyShop 数字商品商店', 'basic')
+    ('footer_text', 'MyShop 数字商品商店', 'basic'),
+    ('contact_items', '[]', 'basic')
 ON CONFLICT (config_key) DO NOTHING;

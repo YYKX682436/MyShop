@@ -1,6 +1,12 @@
 package com.myshop.service.impl;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myshop.constant.ErrorCode;
 import com.myshop.entity.SiteConfig;
+import com.myshop.exception.BusinessException;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.service.SiteConfigService;
 import lombok.RequiredArgsConstructor;
@@ -8,6 +14,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -17,6 +26,7 @@ import java.util.regex.Pattern;
 public class SiteConfigServiceImpl implements SiteConfigService {
 
     private final SiteConfigRepository siteConfigRepository;
+    private final ObjectMapper objectMapper;
 
     @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
     private String turnstileSiteKey;
@@ -26,8 +36,8 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     private static final List<String> PUBLIC_KEYS = List.of(
             "site_name", "site_slogan", "site_description", "logo_url", "favicon_url",
             "announcement_enabled", "announcement", "popup_enabled", "popup_content",
-            "contact_email", "contact_telegram", "contact_telegram_group", "points_enabled", "points_rate",
-            "maintenance_enabled", "maintenance_message", "footer_text", "github_url", "custom_css"
+            "contact_email", "contact_items", "points_enabled", "points_rate",
+            "maintenance_enabled", "maintenance_message", "footer_text", "custom_css"
     );
 
     /** F16: 管理员允许编辑的配置键白名单 — 防止写入系统内部键或注入任意配置 */
@@ -37,13 +47,13 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             // 公告 / 弹窗
             "announcement_enabled", "announcement", "popup_enabled", "popup_content",
             // 联系方式
-            "contact_email", "contact_telegram", "contact_telegram_group",
+            "contact_email", "contact_items",
             // 积分
             "points_enabled", "points_rate",
             // 维护模式
             "maintenance_enabled", "maintenance_message",
-            // 页脚 / 外链
-            "footer_text", "github_url",
+            // 页脚
+            "footer_text",
             // 自定义样式
             "custom_css",
             // 系统参数
@@ -64,7 +74,17 @@ public class SiteConfigServiceImpl implements SiteConfigService {
         for (String key : PUBLIC_KEYS) {
             siteConfigRepository.findByConfigKey(key).ifPresent(c -> {
                 String val = c.getConfigValue();
-                if ("true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val)) {
+                if ("contact_items".equals(key)) {
+                    try {
+                        result.put(key, normalizeContactItems(val));
+                    } catch (BusinessException exception) {
+                        // Values written through this service are valid. If an
+                        // operator edited the generic config table manually,
+                        // preserve the public array contract safely.
+                        log.error("Invalid stored contact_items; exposing an empty array", exception);
+                        result.put(key, List.of());
+                    }
+                } else if ("true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val)) {
                     result.put(key, Boolean.parseBoolean(val));
                 } else if (NUMERIC_KEYS.contains(key)) {
                     try {
@@ -77,6 +97,8 @@ public class SiteConfigServiceImpl implements SiteConfigService {
                 }
             });
         }
+        // Keep the public type stable while an empty database is initializing.
+        result.putIfAbsent("contact_items", List.of());
         // F15: 对 custom_css 进行安全过滤，防止存储型 XSS
         if (result.containsKey("custom_css") && result.get("custom_css") instanceof String css) {
             result.put("custom_css", sanitizeCss(css));
@@ -118,6 +140,9 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             if ("custom_css".equals(key) && value != null) {
                 value = sanitizeCss(value);
             }
+            if ("contact_items".equals(key)) {
+                value = serializeContactItems(value);
+            }
             SiteConfig config = siteConfigRepository.findByConfigKey(key)
                     .orElseGet(() -> {
                         SiteConfig c = new SiteConfig();
@@ -127,6 +152,124 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             config.setConfigValue(value);
             siteConfigRepository.save(config);
         }
+    }
+
+    private String serializeContactItems(String value) {
+        try {
+            return objectMapper.writeValueAsString(normalizeContactItems(value));
+        } catch (JsonProcessingException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "联系方式配置无法序列化");
+        }
+    }
+
+    private List<Map<String, String>> normalizeContactItems(String value) {
+        if (value == null || value.isBlank()) {
+            throw invalidContactItems("必须是 JSON 数组");
+        }
+
+        final JsonNode root;
+        try (JsonParser parser = objectMapper.getFactory().createParser(value)) {
+            root = objectMapper.readTree(parser);
+            if (parser.nextToken() != null) {
+                throw invalidContactItems("必须是有效 JSON 数组");
+            }
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw invalidContactItems("必须是有效 JSON 数组");
+        }
+        if (root == null || !root.isArray()) {
+            throw invalidContactItems("必须是 JSON 数组");
+        }
+        if (root.size() > 3) {
+            throw invalidContactItems("最多配置 3 项");
+        }
+
+        List<Map<String, String>> normalized = new ArrayList<>(root.size());
+        for (int index = 0; index < root.size(); index++) {
+            JsonNode item = root.get(index);
+            if (item == null || !item.isObject()) {
+                throw invalidContactItems("第" + (index + 1) + "项必须是对象");
+            }
+
+            Iterator<String> fieldNames = item.fieldNames();
+            while (fieldNames.hasNext()) {
+                String fieldName = fieldNames.next();
+                if (!Set.of("name", "url", "qr_url").contains(fieldName)) {
+                    throw invalidContactItems("第" + (index + 1) + "项包含不支持的字段「" + fieldName + "」");
+                }
+            }
+
+            String name = requiredText(item, "name", index);
+            if (name.codePointCount(0, name.length()) > 30) {
+                throw invalidContactItems("第" + (index + 1) + "项名称不能超过 30 个字符");
+            }
+            String url = optionalText(item, "url", index);
+            if (url != null && !isHttpUrl(url)) {
+                throw invalidContactItems("第" + (index + 1) + "项链接必须是合法的 http/https URL");
+            }
+            String qrUrl = optionalText(item, "qr_url", index);
+            if (qrUrl != null && !isSafeQrUrl(qrUrl)) {
+                throw invalidContactItems("第" + (index + 1) + "项二维码地址必须是合法的 http/https URL 或站内路径");
+            }
+            if (url == null && qrUrl == null) {
+                throw invalidContactItems("第" + (index + 1) + "项必须填写链接或二维码");
+            }
+
+            Map<String, String> normalizedItem = new LinkedHashMap<>();
+            normalizedItem.put("name", name);
+            if (url != null) normalizedItem.put("url", url);
+            if (qrUrl != null) normalizedItem.put("qr_url", qrUrl);
+            normalized.add(normalizedItem);
+        }
+        return normalized;
+    }
+
+    private String requiredText(JsonNode item, String field, int index) {
+        JsonNode value = item.get(field);
+        if (value == null || !value.isTextual()) {
+            throw invalidContactItems("第" + (index + 1) + "项名称必须是文本");
+        }
+        String normalized = value.textValue().trim();
+        if (normalized.isEmpty()) {
+            throw invalidContactItems("第" + (index + 1) + "项名称不能为空");
+        }
+        return normalized;
+    }
+
+    private String optionalText(JsonNode item, String field, int index) {
+        JsonNode value = item.get(field);
+        if (value == null || value.isNull()) return null;
+        if (!value.isTextual()) {
+            throw invalidContactItems("第" + (index + 1) + "项「" + field + "」必须是文本");
+        }
+        String normalized = value.textValue().trim();
+        return normalized.isEmpty() ? null : normalized;
+    }
+
+    private boolean isHttpUrl(String value) {
+        if (value.codePoints().anyMatch(Character::isISOControl)) return false;
+        try {
+            URI uri = new URI(value);
+            String scheme = uri.getScheme();
+            return uri.isAbsolute()
+                    && ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    && uri.getHost() != null
+                    && !uri.getHost().isBlank();
+        } catch (URISyntaxException exception) {
+            return false;
+        }
+    }
+
+    private boolean isSafeQrUrl(String value) {
+        // Uploaded QR images use an application-relative path. External QR
+        // images may use http(s), while script/data schemes are never exposed.
+        return isHttpUrl(value) || (value.startsWith("/") && !value.startsWith("//")
+                && !value.codePoints().anyMatch(Character::isISOControl));
+    }
+
+    private BusinessException invalidContactItems(String detail) {
+        return new BusinessException(ErrorCode.BAD_REQUEST, "联系方式配置无效：" + detail);
     }
 
     @Override
