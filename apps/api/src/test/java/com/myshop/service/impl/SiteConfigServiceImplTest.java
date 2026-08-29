@@ -41,8 +41,6 @@ class SiteConfigServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new SiteConfigServiceImpl(repository, new ObjectMapper());
-        when(repository.findByConfigKey(anyString())).thenReturn(Optional.empty());
-        when(repository.save(any(SiteConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     @Test
@@ -90,6 +88,8 @@ class SiteConfigServiceImplTest {
     }
 
     private void saveContactItems(String raw, String expected) {
+        when(repository.findByConfigKey(anyString())).thenReturn(Optional.empty());
+        when(repository.save(any(SiteConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
         service.updateConfigs(List.of(config("contact_items", raw)));
 
         ArgumentCaptor<SiteConfig> captor = ArgumentCaptor.forClass(SiteConfig.class);
