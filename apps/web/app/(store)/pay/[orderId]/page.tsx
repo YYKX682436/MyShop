@@ -6,11 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { ArrowRight, CheckCircle2, Clock, Copy, Loader2, RefreshCw, Smartphone, XCircle } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
 import { toast } from "sonner"
-import { useCart, useLocale } from "@/lib/context"
+import { useCart, useLocale, useSiteConfig } from "@/lib/context"
 import { orderApi } from "@/services/api"
 import type { OrderStatus } from "@/types"
 import { cn, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
+import { ContactSupport } from "@/components/shared/contact-methods"
 
 const POLL_INTERVAL = 3000
 const MANUAL_REFRESH_COOLDOWN = 10
@@ -18,6 +19,7 @@ const MANUAL_REFRESH_COOLDOWN = 10
 export default function PaymentPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params)
   const { t } = useLocale()
+  const { config } = useSiteConfig()
   const { refreshCart } = useCart()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -129,6 +131,14 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
       <div className="flex w-full items-center justify-between border-t border-border pt-4 text-sm"><span className="text-muted-foreground">{t("payment.orderNo")}</span><button onClick={() => void copy(orderId)} className="flex items-center gap-1 font-mono text-xs"><span>{orderId}</span><Copy className="h-3.5 w-3.5" /></button></div>
     </div>
     <button onClick={() => void manualRefresh()} disabled={refreshCooldown > 0 || refreshing} className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-5 text-sm font-medium disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{refreshing ? "刷新中" : refreshCooldown > 0 ? `${refreshCooldown}s 后可刷新` : "刷新支付状态"}</button>
-    <div className="flex flex-col items-center gap-2 pt-2 text-sm"><Link href={`/order/query?orderId=${orderId}`} className="text-muted-foreground hover:text-foreground">已完成支付？查看订单与卡密 <ArrowRight className="inline h-4 w-4" /></Link></div>
+    <div className="flex flex-col items-center gap-2 pt-2 text-sm">
+      <Link href={`/order/query?orderId=${orderId}`} className="text-muted-foreground hover:text-foreground">已完成支付？查看订单与卡密 <ArrowRight className="inline h-4 w-4" /></Link>
+      <ContactSupport
+        title={t("payment.needHelp")}
+        email={config?.contact_email}
+        items={config?.contact_items}
+        emailLabel={t("payment.contactSupport")}
+      />
+    </div>
   </div>
 }

@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import {
+  getContactItemAction,
+  getDisplayContactItems,
+  hasContactMethods,
   normalizeContactItems,
   parseContactItems,
   serializeContactItems,
@@ -42,4 +45,30 @@ test("serialization strips blank optional fields and produces canonical JSON", (
     serializeContactItems([{ name: "  客服 ", url: "https://example.com", qr_url: " " }]),
     '[{"name":"客服","url":"https://example.com"}]',
   )
+})
+
+test("shared contact rendering preserves order and prioritizes QR behavior", () => {
+  const items = [
+    { name: "链接", url: "https://example.com" },
+    { name: "二维码", qr_url: "/api/uploads/qr.webp" },
+    { name: "二维码+链接", url: "https://example.com/chat", qr_url: "/api/uploads/chat.webp" },
+  ]
+
+  assert.equal(getContactItemAction(items[0]), "link")
+  assert.equal(getContactItemAction(items[1]), "qr")
+  assert.equal(getContactItemAction(items[2]), "qr")
+  assert.deepEqual(getDisplayContactItems(items).map(item => item.name), ["链接", "二维码", "二维码+链接"])
+})
+
+test("shared contact rendering ignores empty destinations and reports availability", () => {
+  const items = [
+    { name: "空白", url: "", qr_url: "" },
+    { name: "有效", url: "https://example.com" },
+  ]
+
+  assert.deepEqual(getDisplayContactItems(items).map(item => item.name), ["有效"])
+  assert.equal(hasContactMethods(undefined, []), false)
+  assert.equal(hasContactMethods("  ", items.slice(0, 1)), false)
+  assert.equal(hasContactMethods(undefined, items), true)
+  assert.equal(hasContactMethods("support@example.com", []), true)
 })

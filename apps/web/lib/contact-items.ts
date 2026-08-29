@@ -2,6 +2,8 @@ import type { ContactItem } from "@/types"
 
 export const MAX_CONTACT_ITEMS = 3
 
+export type ContactItemAction = "qr" | "link" | null
+
 const CONTACT_ITEM_FIELDS = new Set(["name", "url", "qr_url"])
 
 function isHttpUrl(value: string): boolean {
@@ -90,4 +92,32 @@ export function parseContactItems(raw: string | null | undefined): ContactItem[]
 
 export function serializeContactItems(items: readonly ContactItem[]): string {
   return JSON.stringify(normalizeContactItems(items))
+}
+
+/**
+ * Resolve the interaction that the storefront should expose for one item.
+ * QR codes take precedence so a QR+link item opens the shared QR dialog and
+ * exposes its link from inside that dialog, matching the footer behavior.
+ */
+export function getContactItemAction(item: Pick<ContactItem, "url" | "qr_url">): ContactItemAction {
+  if (item.qr_url) return "qr"
+  if (item.url) return "link"
+  return null
+}
+
+/**
+ * Keep storefront rendering defensive when a stale or partially configured
+ * public response is encountered, without changing the persisted data shape.
+ */
+export function getDisplayContactItems(items: readonly ContactItem[] | null | undefined): ContactItem[] {
+  return (items ?? [])
+    .slice(0, MAX_CONTACT_ITEMS)
+    .filter(item => Boolean(item.name?.trim()) && getContactItemAction(item) !== null)
+}
+
+export function hasContactMethods(
+  email: string | null | undefined,
+  items: readonly ContactItem[] | null | undefined,
+): boolean {
+  return Boolean(email?.trim()) || getDisplayContactItems(items).length > 0
 }

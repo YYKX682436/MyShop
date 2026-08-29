@@ -242,7 +242,7 @@ export default function AdminSiteConfigPage() {
                   />
                 </label>
               </div>
-              <p className="text-xs text-muted-foreground">建议使用正方形 Logo 图片，支持 JPG/PNG/GIF/WebP/SVG</p>
+              <p className="text-xs text-muted-foreground">{t("admin.logoUrlHint")}</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium text-foreground">{t("admin.footerText")}</label>

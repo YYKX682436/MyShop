@@ -2,13 +2,14 @@
 
 import React, { useState, useEffect, useCallback } from "react"
 import { usePathname } from "next/navigation"
-import { Wrench, Mail, X } from "lucide-react"
+import { Wrench, X } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import { StoreHeader } from "@/components/layout/store-header"
 import { StoreFooter } from "@/components/layout/store-footer"
 import { VisitTracker } from "@/components/store/visit-tracker"
 import { Modal } from "@/components/ui/modal"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
+import { ContactSupport } from "@/components/shared/contact-methods"
 
 function AnnouncementBar() {
   const { config } = useSiteConfig()
@@ -39,15 +40,12 @@ function MaintenancePage() {
         <p className="mb-6 max-w-md text-sm text-muted-foreground">
           {config?.maintenance_message || t("maintenance.description")}
         </p>
-        {config?.contact_email && (
-          <a
-            href={`mailto:${config.contact_email}`}
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            <Mail className="h-4 w-4" />
-            {t("maintenance.contactSupport")}
-          </a>
-        )}
+        <ContactSupport
+          title={t("maintenance.needHelp")}
+          email={config?.contact_email}
+          items={config?.contact_items}
+          emailLabel={t("maintenance.contactSupport")}
+        />
       </div>
     </div>
   )
