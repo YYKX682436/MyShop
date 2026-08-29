@@ -50,6 +50,8 @@ class DashboardAggregateIntegrationTest {
     @Autowired
     private DashboardService dashboardService;
 
+    private long nextUserNo;
+
     @DynamicPropertySource
     static void postgresProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
@@ -73,6 +75,7 @@ class DashboardAggregateIntegrationTest {
         jdbcTemplate.execute("DELETE FROM products");
         jdbcTemplate.execute("DELETE FROM users");
         jdbcTemplate.execute("DELETE FROM visit_stats");
+        nextUserNo = 10000L;
     }
 
     @Test
@@ -136,10 +139,11 @@ class DashboardAggregateIntegrationTest {
     }
 
     private void insertUser(String username, String email, String role, int deleted, LocalDateTime createdAt) {
+        Long userNo = "USER".equals(role) ? nextUserNo++ : null;
         jdbcTemplate.update("""
-                INSERT INTO users(id, created_at, updated_at, username, email, password_hash, role, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), createdAt, createdAt, username, email, "hash", role, deleted);
+                INSERT INTO users(id, created_at, updated_at, username, email, password_hash, role, is_deleted, user_no)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), createdAt, createdAt, username, email, "hash", role, deleted, userNo);
     }
 
     private void insertProduct(UUID id, String title, int threshold, boolean enabled, int deleted,

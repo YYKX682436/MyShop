@@ -88,17 +88,18 @@ class MigrationChainIntegrationTest {
 
         UUID defaultBalanceUserId = UUID.randomUUID();
         jdbcTemplate.update("""
-                INSERT INTO users(id, username, email, password_hash, role)
-                VALUES (?, ?, ?, 'test-hash', 'USER')
-                """, defaultBalanceUserId, "balance-default-user", "balance-default@example.com");
+                INSERT INTO users(id, username, email, password_hash, role, user_no)
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?)
+                """, defaultBalanceUserId, "balance-default-user", "balance-default@example.com", 10000L);
         BigDecimal defaultBalance = jdbcTemplate.queryForObject(
                 "SELECT balance FROM users WHERE id = ?", BigDecimal.class, defaultBalanceUserId);
         assertNotNull(defaultBalance);
         assertEquals(0, defaultBalance.compareTo(BigDecimal.ZERO));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
-                INSERT INTO users(id, username, email, password_hash, role, balance)
-                VALUES (?, ?, ?, 'test-hash', 'USER', ?)
-                """, UUID.randomUUID(), "negative-balance-user", "negative-balance@example.com", new BigDecimal("-0.01")));
+                INSERT INTO users(id, username, email, password_hash, role, user_no, balance)
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?)
+                """, UUID.randomUUID(), "negative-balance-user", "negative-balance@example.com", 10001L,
+                new BigDecimal("-0.01")));
 
         assertFalse(columnExists("users", "points"));
         assertFalse(columnExists("orders", "points_deducted"));
