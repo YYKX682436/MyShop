@@ -26,7 +26,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -73,8 +72,12 @@ class SiteConfigServiceImplTest {
 
     @Test
     void exposesContactItemsAsAnArrayRatherThanStoredJsonText() {
-        when(repository.findByConfigKey(eq("contact_items")))
-                .thenReturn(Optional.of(configValue("[{\"name\":\"客服\",\"url\":\"https://example.com\"}]")));
+        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            return "contact_items".equals(key)
+                    ? Optional.of(configValue("[{\"name\":\"客服\",\"url\":\"https://example.com\"}]"))
+                    : Optional.empty();
+        });
 
         Object value = service.getPublicConfig().get("contact_items");
 
