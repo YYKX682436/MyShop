@@ -131,6 +131,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
   const [formData, setFormData] = useState<ProductFormData>(() => getFormData(product))
   const [formSpecs, setFormSpecs] = useState<ProductSpecDraft[]>(() => getSpecs(product))
   const [specsEnabled, setSpecsEnabled] = useState(product?.spec_enabled === true)
+  const [persistedProductId, setPersistedProductId] = useState<string | null>(() => product?.id ?? null)
   const [formErrors, setFormErrors] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [retryingSpecSync, setRetryingSpecSync] = useState(false)
@@ -144,6 +145,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
     setFormData(getFormData(product))
     setFormSpecs(getSpecs(product))
     setSpecsEnabled(product?.spec_enabled === true)
+    setPersistedProductId(product?.id ?? null)
     setFormErrors({})
     setSpecSyncFailure(null)
   }, [product])
@@ -341,9 +343,16 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
         manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, Number.parseInt(formData.manual_stock, 10) || 0) : undefined,
       }
 
-      const productId = product
-        ? (await requestOrThrow(() => adminProductApi.update(product.id, payload)), product.id)
-        : (await requestOrThrow(() => adminProductApi.create(payload))).id
+      const existingProductId = persistedProductId ?? product?.id ?? null
+      let productId: string
+      if (existingProductId) {
+        await requestOrThrow(() => adminProductApi.update(existingProductId, payload))
+        productId = existingProductId
+      } else {
+        const created = await requestOrThrow(() => adminProductApi.create(payload))
+        productId = created.id
+        setPersistedProductId(productId)
+      }
 
       if (specsEnabled) {
         try {
@@ -371,10 +380,11 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
       toast.error(t("admin.specSyncRetryRequiresSpecs"))
       return
     }
+    if (!persistedProductId || persistedProductId !== failure.productId) return
 
     setRetryingSpecSync(true)
     try {
-      await syncProductSpecs(failure.productId)
+      await syncProductSpecs(persistedProductId)
       setSpecSyncFailure(null)
       toast.success(t("admin.specSyncCompleted"))
       await onSaved()

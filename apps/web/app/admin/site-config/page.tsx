@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { cn } from "@/lib/utils"
-import { MAX_CONTACT_ITEMS, parseContactItemsSafely, serializeContactItems } from "@/lib/contact-items"
+import { MAX_CONTACT_ITEMS, parseContactItemsSafely, resolveContactItemsForSave, serializeContactItems } from "@/lib/contact-items"
 import { ALLOWED_IMAGE_ACCEPT, QR_ALLOWED_IMAGE_ACCEPT, validateImageFile, validateQrImageFile } from "@/lib/image-upload"
 import { adminConfigApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { ContactItem, SiteConfigKV } from "@/types"
@@ -26,6 +26,7 @@ export default function AdminSiteConfigPage() {
   const [configMap, setConfigMap] = useState<Record<string, string>>({})
   const [contactItems, setContactItems] = useState<ContactItem[]>([])
   const [contactConfigError, setContactConfigError] = useState(false)
+  const [contactItemsDirty, setContactItemsDirty] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -38,6 +39,7 @@ export default function AdminSiteConfigPage() {
     setLoading(true)
     setError(false)
     setContactConfigError(false)
+    setContactItemsDirty(false)
     try {
       const data = await requestOrThrow(() => adminConfigApi.get())
       const map: Record<string, string> = {}
@@ -46,11 +48,13 @@ export default function AdminSiteConfigPage() {
       if (!parsedContacts.hasError) map.contact_items = serializeContactItems(parsedContacts.items)
       setContactItems(parsedContacts.items)
       setContactConfigError(parsedContacts.hasError)
+      setContactItemsDirty(false)
       setConfigMap(map)
     } catch {
       setConfigMap({})
       setContactItems([])
       setContactConfigError(false)
+      setContactItemsDirty(false)
       setError(true)
     } finally {
       setLoading(false)
@@ -63,20 +67,27 @@ export default function AdminSiteConfigPage() {
   const setValue = (key: string, value: string) => setConfigMap((current) => ({ ...current, [key]: value }))
   const getBool = (key: string) => getValue(key) === "true"
   const updateContactItems = (updater: (items: ContactItem[]) => ContactItem[]) => {
-    setContactConfigError(false)
-    setContactItems((current) => {
-      const next = updater(current)
-      setConfigMap((previous) => ({ ...previous, contact_items: serializeContactItems(next) }))
-      return next
-    })
+    setContactItemsDirty(true)
+    setContactItems((current) => updater(current))
   }
 
   const handleSave = async () => {
     setSaving(true)
     try {
       const configs = Object.entries(configMap).filter(([key]) => key !== "contact_items").map(([config_key, config_value]) => ({ config_key, config_value }))
-      configs.push({ config_key: "contact_items", config_value: serializeContactItems(contactItems) })
+      const contactItemsValue = resolveContactItemsForSave({
+        storedValue: configMap.contact_items,
+        items: contactItems,
+        hasError: contactConfigError,
+        dirty: contactItemsDirty,
+      })
+      configs.push({ config_key: "contact_items", config_value: contactItemsValue })
       await requestOrThrow(() => adminConfigApi.update({ configs }))
+      if (contactItemsDirty) {
+        setConfigMap((current) => ({ ...current, contact_items: contactItemsValue }))
+        setContactConfigError(false)
+        setContactItemsDirty(false)
+      }
       toast.success(t("admin.settingsSaved"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))

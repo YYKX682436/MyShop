@@ -106,6 +106,16 @@ export function serializeContactItems(items: readonly ContactItem[]): string {
   return JSON.stringify(normalizeContactItems(items))
 }
 
+export function resolveContactItemsForSave(options: {
+  storedValue: string | null | undefined
+  items: readonly ContactItem[]
+  hasError: boolean
+  dirty: boolean
+}): string {
+  if (options.hasError && !options.dirty) return options.storedValue ?? ""
+  return serializeContactItems(options.items)
+}
+
 /**
  * Resolve the interaction that the storefront should expose for one item.
  * QR codes take precedence so a QR+link item opens the shared QR dialog and

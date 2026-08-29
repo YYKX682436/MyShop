@@ -8,6 +8,7 @@ import {
   normalizeContactItems,
   parseContactItems,
   parseContactItemsSafely,
+  resolveContactItemsForSave,
   serializeContactItems,
 } from "./contact-items.ts"
 
@@ -38,6 +39,25 @@ test("admin-safe contact parsing isolates malformed persisted configuration", ()
     items: [{ name: "客服", url: "https://example.com" }],
     hasError: false,
   })
+})
+
+test("saving other settings preserves malformed contact_items until contacts are changed", () => {
+  const malformed = "not-json"
+  assert.equal(resolveContactItemsForSave({
+    storedValue: malformed,
+    items: [],
+    hasError: true,
+    dirty: false,
+  }), malformed)
+})
+
+test("changed contact items replace malformed persisted configuration with canonical JSON", () => {
+  assert.equal(resolveContactItemsForSave({
+    storedValue: "not-json",
+    items: [{ name: " 客服 ", url: " https://example.com/support " }],
+    hasError: true,
+    dirty: true,
+  }), '[{"name":"客服","url":"https://example.com/support"}]')
 })
 
 test("contact item validation allows https and uploaded QR paths but rejects javascript and data URLs", () => {
