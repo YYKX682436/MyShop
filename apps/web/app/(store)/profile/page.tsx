@@ -1,17 +1,16 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect } from "react"
-import { User, Lock, Star, Eye, EyeOff, Save } from "lucide-react"
+import { useState } from "react"
+import { User, Lock, Eye, EyeOff, Save } from "lucide-react"
 import { toast } from "sonner"
 import { useLocale } from "@/lib/context"
 import { useAuth } from "@/lib/context"
 import { useRequireAuth } from "@/lib/hooks"
 import { userApi, requestOrThrow, getApiErrorMessage } from "@/services/api"
-import type { PointRecord } from "@/types"
-import { cn } from "@/lib/utils"
+import { cn, formatYuan } from "@/lib/utils"
 
-type Tab = "info" | "password" | "points"
+type Tab = "info" | "password"
 
 export default function ProfilePage() {
   const { t } = useLocale()
@@ -22,7 +21,6 @@ export default function ProfilePage() {
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "info", label: t("profile.info"), icon: <User className="h-4 w-4" /> },
     { key: "password", label: t("profile.changePassword"), icon: <Lock className="h-4 w-4" /> },
-    { key: "points", label: t("profile.points"), icon: <Star className="h-4 w-4" /> },
   ]
 
   if (!currentUser) return null
@@ -70,8 +68,8 @@ export default function ProfilePage() {
             <hr className="border-border" />
             <div className="grid grid-cols-2 gap-4">
               <div className="rounded-lg bg-muted/50 p-3">
-                <p className="text-xs text-muted-foreground">{t("profile.pointsBalance")}</p>
-                <p className="text-2xl font-bold text-foreground">{user?.points || 0}</p>
+                <p className="text-xs text-muted-foreground">{t("profile.balance")}</p>
+                <p className="text-2xl font-bold text-foreground">{formatYuan(user?.balance ?? 0)}</p>
               </div>
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground">{t("profile.role")}</p>
@@ -87,8 +85,6 @@ export default function ProfilePage() {
       {/* Password Tab */}
       {activeTab === "password" && <ChangePasswordForm />}
 
-      {/* Points Tab */}
-      {activeTab === "points" && <PointsHistory />}
     </div>
   )
 }
@@ -195,90 +191,6 @@ function ChangePasswordForm() {
           {t("profile.save")}
         </button>
       </form>
-    </div>
-  )
-}
-
-function PointsHistory() {
-  const { t } = useLocale()
-  const [records, setRecords] = useState<PointRecord[]>([])
-  const [totalPoints, setTotalPoints] = useState(0)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let cancelled = false
-    async function fetchPoints() {
-      setLoading(true)
-      try {
-        const data = await requestOrThrow(() => userApi.getPoints({ page: 1, page_size: 50 }))
-        if (!cancelled) {
-          setRecords(data.list)
-          setTotalPoints(data.total_points)
-        }
-      } catch {
-        if (!cancelled) {
-          setRecords([])
-          setTotalPoints(0)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    fetchPoints()
-    return () => { cancelled = true }
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="rounded-lg border border-border bg-card">
-        <div className="flex items-center justify-center py-12">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="rounded-lg border border-border bg-card">
-      {/* Points summary */}
-      <div className="border-b border-border p-4">
-        <p className="text-xs text-muted-foreground">{t("profile.pointsBalance")}</p>
-        <p className="text-2xl font-bold text-foreground">{totalPoints}</p>
-      </div>
-
-      <div className="divide-y divide-border">
-        {records.map((record, idx) => (
-          <div key={idx} className="flex items-center justify-between p-4">
-            <div>
-              <p className="text-sm text-card-foreground">{record.reason}</p>
-              <p className="text-xs text-muted-foreground">
-                {new Date(record.created_at).toLocaleString()}
-              </p>
-            </div>
-            <div className="text-right">
-              <p
-                className={cn(
-                  "text-sm font-semibold",
-                  record.change_amount > 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-foreground"
-                )}
-              >
-                {record.change_amount > 0 ? "+" : ""}
-                {record.change_amount}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {t("profile.pointsBalance")}: {record.balance_after}
-              </p>
-            </div>
-          </div>
-        ))}
-        {records.length === 0 && (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            {t("common.noData")}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

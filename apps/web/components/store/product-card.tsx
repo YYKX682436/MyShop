@@ -4,7 +4,7 @@ import Link from "next/link"
 import { Zap, Package, AlertTriangle } from "lucide-react"
 import type { ProductCard as ProductCardType } from "@/types"
 import { useLocale } from "@/lib/context"
-import { cn, getCurrencySymbol } from "@/lib/utils"
+import { cn, formatYuan } from "@/lib/utils"
 
 interface ProductCardProps {
   product: ProductCardType
@@ -84,11 +84,8 @@ export function ProductCard({ product }: ProductCardProps) {
         {/* Price + Buy Now */}
         <div className="mt-auto flex items-center justify-between border-t border-border/40 pt-2">
           <div className="flex items-baseline gap-0.5">
-            <span className="text-sm font-extrabold text-primary">
-              {getCurrencySymbol(product.currency)}
-            </span>
             <span className="text-xl font-extrabold tracking-tight text-primary">
-              {product.base_price.toFixed(2)}
+              {formatYuan(product.base_price)}
             </span>
             {product.has_specs && (
               <span className="ml-0.5 text-xs text-muted-foreground">

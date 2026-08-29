@@ -13,7 +13,7 @@ MyShop 是 Phase 1 的数字商品（卡密）商店。它保留了参考实现�
 - 安全：BCrypt、只在 HttpOnly Cookie 中传输 JWT、CSRF 双提交保护、固定 Caddy 代理 IP 解析，以及游客订单随机凭证的 hash + 受控可恢复值。
 - 交付：支付回调提交 `PAID` 后由服务端直接触发独立 fulfillment 事务；按订单行逐池 `FOR UPDATE SKIP LOCKED` 锁定，先检查全部库存，再统一修改，任何一个池缺货都会回滚整笔发货并由 1 分钟补偿任务重试。
 
-明确不在 Phase 1：USDT/多币种支付、优惠券/自定义字段/会员等级、Kafka/RabbitMQ/Elasticsearch/Kubernetes、Redis 默认限流、微服务拆分和生产部署。
+商店统一使用人民币（CNY）计价。明确不在 Phase 1：优惠券/自定义字段/会员等级、Kafka/RabbitMQ/Elasticsearch/Kubernetes、Redis 默认限流、微服务拆分和生产部署。
 
 ## 目录
 

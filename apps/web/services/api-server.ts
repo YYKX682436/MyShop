@@ -15,7 +15,6 @@ import type {
   Category,
   PaymentChannelItem,
   SiteConfig,
-  CurrencyItem,
 } from "@/types"
 
 // 后端直连地址（Docker 内部网络或本地开发）
@@ -91,12 +90,4 @@ export async function getPaymentChannels(): Promise<PaymentChannelItem[]> {
 
 export async function getSiteConfig(): Promise<SiteConfig> {
   return serverRequest<SiteConfig>("/site/config")
-}
-
-// ============================================================
-// Public API — 货币
-// ============================================================
-
-export async function getCurrencies(): Promise<CurrencyItem[]> {
-  return serverRequest<CurrencyItem[]>("/currencies")
 }

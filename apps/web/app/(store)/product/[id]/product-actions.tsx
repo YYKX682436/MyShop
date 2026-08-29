@@ -7,7 +7,7 @@ import { toast } from "sonner"
 import { useLocale, useCart } from "@/lib/context"
 import { orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
-import { cn, validateEmail, getCurrencySymbol, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { cn, validateEmail, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel, isWechatChannel } from "@/lib/payment-channel"
 import { PaymentSelector } from "@/components/shared/payment-selector"
@@ -183,9 +183,8 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         <div className="flex flex-wrap items-baseline justify-between gap-y-2">
           <div className="flex items-baseline gap-3">
             <div className="flex items-baseline gap-0.5">
-              <span className="text-lg font-extrabold text-primary">{getCurrencySymbol(product.currency)}</span>
               <span className="text-2xl font-extrabold text-primary">
-                {currentPrice.toFixed(2)}
+                {formatYuan(currentPrice)}
               </span>
             </div>
           </div>
@@ -374,9 +373,8 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         <div className="flex items-baseline justify-between border-t border-border pt-4">
           <span className="text-sm text-muted-foreground">{t("product.totalPrice")}</span>
           <div className="flex items-baseline gap-0.5">
-            <span className="text-lg font-bold text-primary">{getCurrencySymbol(product.currency)}</span>
             <span className="text-2xl font-bold text-primary">
-              {totalPrice.toFixed(2)}
+              {formatYuan(totalPrice)}
             </span>
           </div>
         </div>

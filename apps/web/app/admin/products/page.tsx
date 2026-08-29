@@ -4,15 +4,15 @@ import { useState, useEffect, useCallback, useRef, type RefObject } from "react"
 import { Plus, Search, Edit, Trash2, X, AlertCircle, ChevronDown, EyeOff, Eye, KeyRound } from "lucide-react"
 import { toast } from "sonner"
 import Link from "next/link"
-import { cn, getCurrencySymbol } from "@/lib/utils"
+import { cn, formatYuan } from "@/lib/utils"
 import { Modal } from "@/components/ui/modal"
 import { CardContentImportFields } from "@/components/admin/card-content-import-fields"
 import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
 import { MarkdownEditor } from "@/components/admin/markdown-editor"
 import { validateCardContentColumns } from "@/lib/card-content"
 import { useLocale } from "@/lib/context"
-import { adminProductApi, adminCategoryApi, adminCardKeyApi, currencyApi, requestOrThrow } from "@/services/api"
-import type { ProductDetail, Category, CurrencyItem } from "@/types"
+import { adminProductApi, adminCategoryApi, adminCardKeyApi, requestOrThrow } from "@/services/api"
+import type { ProductDetail, Category } from "@/types"
 
 type ProductFormData = {
   title: string
@@ -20,7 +20,6 @@ type ProductFormData = {
   detail_md: string
   category_id: string
   base_price: string
-  currency: string
   cover_url: string
   low_stock_threshold: string
   wholesale_enabled: boolean
@@ -37,7 +36,6 @@ export default function AdminProductsPage() {
   const { t } = useLocale()
   const [products, setProducts] = useState<ProductDetail[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [currencies, setCurrencies] = useState<CurrencyItem[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("")
@@ -65,7 +63,6 @@ export default function AdminProductsPage() {
     detail_md: "",
     category_id: "",
     base_price: "",
-    currency: "CNY",
     cover_url: "",
     low_stock_threshold: "10",
     wholesale_enabled: false,
@@ -114,15 +111,10 @@ export default function AdminProductsPage() {
   useEffect(() => {
     async function fetchInitData() {
       try {
-        const [cats, curs] = await Promise.all([
-          requestOrThrow(() => adminCategoryApi.getList()),
-          requestOrThrow(() => currencyApi.getList()),
-        ])
+        const cats = await requestOrThrow(() => adminCategoryApi.getList())
         setCategories(cats)
-        setCurrencies(curs)
       } catch {
         setCategories([])
-        setCurrencies([])
       }
     }
     fetchInitData()
@@ -140,7 +132,6 @@ export default function AdminProductsPage() {
       detail_md: product.detail_md || "",
       category_id: product.category_id,
       base_price: String(product.base_price),
-      currency: product.currency || "CNY",
       cover_url: product.cover_url || "",
       low_stock_threshold: String(product.low_stock_threshold ?? 10),
       wholesale_enabled: false,
@@ -268,7 +259,6 @@ export default function AdminProductsPage() {
         detail_md: formData.detail_md || undefined,
         category_id: formData.category_id,
         base_price: basePrice,
-        currency: formData.currency,
         cover_url: formData.cover_url || undefined,
         low_stock_threshold: parseInt(formData.low_stock_threshold) || 10,
         wholesale_enabled: false,
@@ -334,7 +324,7 @@ export default function AdminProductsPage() {
   const handleCloseModal = () => {
     setShowModal(false)
     setEditingProduct(null)
-    setFormData({ title: "", description: "", detail_md: "", category_id: "", base_price: "", currency: "CNY", cover_url: "", low_stock_threshold: "10", wholesale_enabled: false, is_enabled: true, initial_sales: "", sort_order: "", delivery_type: "AUTO", customer_input_fields: [], stock_mode: "CARD_KEY", manual_stock: "" })
+    setFormData({ title: "", description: "", detail_md: "", category_id: "", base_price: "", cover_url: "", low_stock_threshold: "10", wholesale_enabled: false, is_enabled: true, initial_sales: "", sort_order: "", delivery_type: "AUTO", customer_input_fields: [], stock_mode: "CARD_KEY", manual_stock: "" })
     setFormSpecs([])
     setSpecsEnabled(false)
     setSpecDeleteConfirm(null)
@@ -473,7 +463,7 @@ export default function AdminProductsPage() {
                         {getCategoryName(product.category_id)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-medium text-foreground">{getCurrencySymbol(product.currency)}{product.base_price}</td>
+                    <td className="px-4 py-3 font-medium text-foreground">{formatYuan(product.base_price)}</td>
                     <td className="px-4 py-3">
                       <span className={cn("font-medium", product.unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-red-500" : (product.stock_available ?? 0) <= (product.low_stock_threshold ?? 10) ? "text-amber-500" : "text-foreground")}>
                         {product.unlimited ? "不限" : product.stock_available}
@@ -545,28 +535,13 @@ export default function AdminProductsPage() {
                 <label className="text-sm font-medium text-foreground">{t("admin.productBrief")}</label>
                 <input type="text" className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" placeholder="简短描述商品特点" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
               </div>
-              {/* 分类 + 货币类型 */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">{t("admin.categoryReq")}</label>
-                  <select ref={categoryRef} className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", formErrors.category_id ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")} value={formData.category_id} onChange={(e) => { setFormData({ ...formData, category_id: e.target.value }); setFormErrors(prev => ({ ...prev, category_id: false })) }}>
-                    <option value="">请选择分类</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">货币类型</label>
-                  <select
-                    className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={formData.currency}
-                    onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                  >
-                    {currencies.map(c => (
-                      <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-                    ))}
-                    {currencies.length === 0 && <option value="CNY">CNY - 人民币</option>}
-                  </select>
-                </div>
+              {/* 分类 */}
+              <div className="flex max-w-md flex-col gap-1.5">
+                <label className="text-sm font-medium text-foreground">{t("admin.categoryReq")}</label>
+                <select ref={categoryRef} className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", formErrors.category_id ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")} value={formData.category_id} onChange={(e) => { setFormData({ ...formData, category_id: e.target.value }); setFormErrors(prev => ({ ...prev, category_id: false })) }}>
+                  <option value="">请选择分类</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
               </div>
               {/* 基础售价 + 封面图片 */}
               <div className="grid gap-4 lg:grid-cols-2">
@@ -763,7 +738,7 @@ export default function AdminProductsPage() {
                           type="number"
                           step="0.01"
                           className="h-9 w-32 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                          placeholder="价格"
+                           placeholder="价格（元）"
                           value={spec.price}
                           onChange={(e) => {
                             const next = [...formSpecs]
@@ -819,7 +794,7 @@ export default function AdminProductsPage() {
                     {formSpecs.filter(s => s.id).map((spec) => (
                       <div key={spec.id} className="flex items-center gap-2">
                         <span className="h-9 flex-1 rounded-lg border border-input bg-muted px-3 text-sm text-muted-foreground leading-9">{spec.name}</span>
-                        <span className="h-9 w-32 rounded-lg border border-input bg-muted px-3 text-sm text-muted-foreground leading-9">{spec.price}</span>
+                         <span className="h-9 w-32 rounded-lg border border-input bg-muted px-3 text-sm text-muted-foreground leading-9">{formatYuan(Number.parseFloat(spec.price) || 0)}</span>
                       </div>
                     ))}
                   </div>

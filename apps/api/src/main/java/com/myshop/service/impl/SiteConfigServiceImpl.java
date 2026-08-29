@@ -31,12 +31,10 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
     private String turnstileSiteKey;
 
-    private static final Set<String> NUMERIC_KEYS = Set.of("points_rate");
-
     private static final List<String> PUBLIC_KEYS = List.of(
             "site_name", "site_slogan", "site_description", "logo_url", "favicon_url",
             "announcement_enabled", "announcement", "popup_enabled", "popup_content",
-            "contact_email", "contact_items", "points_enabled", "points_rate",
+            "contact_email", "contact_items",
             "maintenance_enabled", "maintenance_message", "footer_text", "custom_css"
     );
 
@@ -48,8 +46,6 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             "announcement_enabled", "announcement", "popup_enabled", "popup_content",
             // 联系方式
             "contact_email", "contact_items",
-            // 积分
-            "points_enabled", "points_rate",
             // 维护模式
             "maintenance_enabled", "maintenance_message",
             // 页脚
@@ -86,12 +82,6 @@ public class SiteConfigServiceImpl implements SiteConfigService {
                     }
                 } else if ("true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val)) {
                     result.put(key, Boolean.parseBoolean(val));
-                } else if (NUMERIC_KEYS.contains(key)) {
-                    try {
-                        result.put(key, Integer.parseInt(val));
-                    } catch (NumberFormatException e) {
-                        result.put(key, val);
-                    }
                 } else {
                     result.put(key, val);
                 }

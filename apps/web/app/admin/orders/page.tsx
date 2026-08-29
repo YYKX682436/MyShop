@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Search, ChevronDown, Eye, Download, ChevronLeft, ChevronRight, X, CheckCircle } from "lucide-react"
-import { cn, stripInvisible } from "@/lib/utils"
+import { cn, formatYuan, stripInvisible } from "@/lib/utils"
 import { useLocale } from "@/lib/context"
 import { toast } from "sonner"
 import { adminOrderApi, adminCardKeyApi, requestOrThrow } from "@/services/api"
@@ -282,7 +282,7 @@ export default function AdminOrdersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="font-medium text-foreground">¥{order.actual_amount.toFixed(2)}</span>
+                      <span className="font-medium text-foreground">{formatYuan(order.actual_amount)}</span>
                     </td>
                     <td className="px-4 py-3">
                       <span className={cn(
@@ -426,7 +426,7 @@ export default function AdminOrdersPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="font-medium text-foreground">¥{item.subtotal.toFixed(2)}</span>
+                        <span className="font-medium text-foreground">{formatYuan(item.subtotal)}</span>
                         {item.delivery_type === "MANUAL" && item.fulfillment_status !== "DELIVERED" && item.fulfillment_status !== "CANCELLED" && showDetail.status === "PAID" && (
                           <button
                             type="button"
@@ -448,7 +448,7 @@ export default function AdminOrdersPage() {
               <div className="grid grid-cols-2 gap-x-8 gap-y-4">
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-muted-foreground">支付金额</span>
-                  <span className="text-sm font-medium text-foreground">¥{showDetail.actual_amount.toFixed(2)}</span>
+                  <span className="text-sm font-medium text-foreground">{formatYuan(showDetail.actual_amount)}</span>
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-muted-foreground">支付方式</span>

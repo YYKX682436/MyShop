@@ -3,10 +3,7 @@ import type {
   PaginatedData,
   UserProfile,
   OrderBrief,
-  OrderDetail,
   OrderStatus,
-  PointRecord,
-  PointsData,
   ProductCard,
   ProductDetail,
   ProductSpec,
@@ -34,7 +31,6 @@ import type {
   WholesaleRule,
   CaptchaResult,
   AuthResult,
-  CurrencyItem,
 } from "@/types"
 
 // ============================================================
@@ -328,10 +324,6 @@ export const userApi = {
     const qs = buildQuery(params)
     return request<PaginatedData<OrderBrief>>(`/user/orders?${qs}`)
   },
-  getPoints: (params: { page?: number; page_size?: number }) => {
-    const qs = buildQuery(params)
-    return request<PointsData>(`/user/points?${qs}`)
-  },
 }
 
 // ============================================================
@@ -415,15 +407,6 @@ export const paymentApi = {
     request<PaymentChannelItem[]>("/payment-channels"),
   getProviders: () =>
     request<PaymentProviderMetadata[]>("/payment-providers"),
-}
-
-// ============================================================
-// Currencies (public)
-// ============================================================
-
-export const currencyApi = {
-  getList: () =>
-    request<CurrencyItem[]>("/currencies"),
 }
 
 // ============================================================

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Save, ShieldAlert, ShieldCheck, Eye, ChevronLeft, ChevronRight } from "lucide-react"
 import { useLocale } from "@/lib/context"
-import { cn } from "@/lib/utils"
+import { cn, formatYuan } from "@/lib/utils"
 import { toast } from "sonner"
 import { adminRiskApi, requestOrThrow } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
@@ -298,7 +298,7 @@ export default function AdminRiskPage() {
                       </td>
                       <td className="px-4 py-3 text-foreground">{order.username || t("admin.guest")}</td>
                       <td className="px-4 py-3 text-muted-foreground">{order.email}</td>
-                      <td className="px-4 py-3 font-medium text-foreground">¥{order.actual_amount.toFixed(2)}</td>
+                      <td className="px-4 py-3 font-medium text-foreground">{formatYuan(order.actual_amount)}</td>
                       <td className="px-4 py-3">
                         <OrderStatusBadge status={order.status} />
                       </td>

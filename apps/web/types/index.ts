@@ -50,7 +50,7 @@ export interface UserProfile {
   username: string
   email: string
   role: 'USER' | 'ADMIN'
-  points: number
+  balance: number
   created_at: string
 }
 
@@ -100,7 +100,6 @@ export interface ProductCard {
   description?: string
   cover_url?: string
   base_price: number
-  currency?: string
   category_id: string
   stock_available: number | null
   unlimited?: boolean
@@ -138,7 +137,6 @@ export interface CartItem {
   product_title: string
   spec_name: string | null
   cover_url?: string
-  currency?: string
   unit_price: number
   quantity: number
   subtotal: number
@@ -193,8 +191,6 @@ export interface OrderItemDetail {
 
 export interface OrderDetail extends OrderBrief {
   email: string
-  points_deducted: number
-  points_discount: number
   expires_at: string
   paid_at: string | null
   delivered_at: string | null
@@ -229,16 +225,6 @@ export interface DeliverResult {
   status: OrderStatus
   groups: DeliverResultGroup[]
   item_statuses?: { id: string; product_title: string; fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"; delivery_type: string }[]
-}
-
-// ============================================================
-// Currency
-// ============================================================
-
-export interface CurrencyItem {
-  code: string
-  name: string
-  symbol: string
 }
 
 // ============================================================
@@ -311,8 +297,6 @@ export interface SiteConfig {
   popup_content?: string
   contact_email?: string
   contact_items?: ContactItem[]
-  points_enabled: boolean
-  points_rate: number
   maintenance_enabled: boolean
   maintenance_message?: string
   footer_text?: string
@@ -335,7 +319,6 @@ export interface CreateOrderRequest {
   quantity: number
   email: string
   payment_method: string
-  use_points?: boolean
   idempotency_key: string
   idempotency_fingerprint?: string
   device?: string
@@ -345,28 +328,9 @@ export interface CreateOrderRequest {
 export interface CreateCartOrderRequest {
   email: string
   payment_method: string
-  use_points?: boolean
   idempotency_key: string
   idempotency_fingerprint?: string
   device?: string
-}
-
-// ============================================================
-// Points
-// ============================================================
-
-export interface PointRecord {
-  change_amount: number
-  balance_after: number
-  reason: string
-  order_id: string | null
-  created_at: string
-}
-
-export interface PointsData {
-  total_points: number
-  list: PointRecord[]
-  pagination: Pagination
 }
 
 // ============================================================
@@ -536,7 +500,7 @@ export interface AdminUserItem {
   username: string
   email: string
   role: string
-  points: number
+  balance: number
   is_deleted: 0 | 1
   created_at: string
 }

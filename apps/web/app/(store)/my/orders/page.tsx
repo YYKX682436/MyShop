@@ -10,7 +10,7 @@ import { userApi, requestOrThrow } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import type { OrderBrief, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
-import { cn } from "@/lib/utils"
+import { cn, formatYuan } from "@/lib/utils"
 
 const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "EXPIRED"]
 
@@ -142,7 +142,7 @@ export default function MyOrdersPage() {
                 <span className="text-sm text-muted-foreground">
                   {t("order.amount")}:{" "}
                   <span className="font-semibold text-foreground">
-                    {"\u00A5"}{order.actual_amount.toFixed(2)}
+                    {formatYuan(order.actual_amount)}
                   </span>
                 </span>
                 <div className="flex gap-2">

@@ -7,6 +7,7 @@ import { ClipboardList, Copy, Download, KeyRound, Loader2, Search, ShieldCheck }
 import { toast } from "sonner"
 import { getApiErrorMessage, getOrderLookupToken, orderApi, saveOrderLookupToken } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
+import { formatYuan } from "@/lib/utils"
 import type { DeliverResult, OrderBrief } from "@/types"
 
 export default function OrderQueryPage() {
@@ -115,7 +116,7 @@ export default function OrderQueryPage() {
         return <section key={order.id} className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3"><span className="font-mono text-sm">{order.id}</span><OrderStatusBadge status={order.status} /></div>
-            <span className="text-sm font-semibold">¥{order.actual_amount.toFixed(2)}</span>
+            <span className="text-sm font-semibold">{formatYuan(order.actual_amount)}</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
             <span>创建于 {new Date(order.created_at).toLocaleString()}</span>

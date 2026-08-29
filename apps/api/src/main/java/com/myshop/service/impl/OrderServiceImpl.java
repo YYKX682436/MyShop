@@ -438,8 +438,6 @@ public class OrderServiceImpl implements OrderService {
         map.put("payment_method", o.getPaymentMethod());
         map.put("created_at", o.getCreatedAt());
         map.put("email", o.getEmail());
-        map.put("points_deducted", o.getPointsDeducted());
-        map.put("points_discount", o.getPointsDiscount());
         map.put("expires_at", o.getExpiresAt());
         map.put("paid_at", o.getPaidAt());
         map.put("delivered_at", o.getDeliveredAt());

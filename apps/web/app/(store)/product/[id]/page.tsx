@@ -69,7 +69,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     offers: {
       "@type": "Offer",
       price: product.base_price,
-      priceCurrency: product.currency || "CNY",
+      priceCurrency: "CNY",
       availability: inStock
         ? "https://schema.org/InStock"
         : "https://schema.org/OutOfStock",

@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.springframework.dao.DataAccessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,10 +17,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 import java.util.UUID;
+import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers(disabledWithoutDocker = true)
@@ -49,15 +52,47 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("2", flyway.info().current().getVersion().getVersion());
-        assertEquals(2, flyway.info().all().length);
+        assertEquals("3", flyway.info().current().getVersion().getVersion());
+        assertEquals(3, flyway.info().all().length);
         for (String table : List.of(
                 "users", "product_categories", "products", "product_specs", "wholesale_rules",
                 "card_import_batches", "orders", "order_items", "card_keys", "cart_items",
-                "payment_channels", "currencies", "site_configs", "points_logs", "operation_logs",
+                "payment_channels", "site_configs", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
+        assertFalse(tableExists("currencies"));
+        assertFalse(tableExists("points_logs"));
+
+        assertTrue(columnExists("users", "balance"));
+        assertEquals("NO", nullableValue("users", "balance"));
+        assertEquals("numeric", dataType("users", "balance"));
+        assertEquals("12", numericPrecision("users", "balance"));
+        assertEquals("2", numericScale("users", "balance"));
+        assertNotNull(defaultValue("users", "balance"));
+        assertTrue(defaultValue("users", "balance").contains("0.00"));
+        assertTrue(checkConstraintExists("users_balance_non_negative"));
+
+        UUID defaultBalanceUserId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role)
+                VALUES (?, ?, ?, 'test-hash', 'USER')
+                """, defaultBalanceUserId, "balance-default-user", "balance-default@example.com");
+        BigDecimal defaultBalance = jdbcTemplate.queryForObject(
+                "SELECT balance FROM users WHERE id = ?", BigDecimal.class, defaultBalanceUserId);
+        assertNotNull(defaultBalance);
+        assertEquals(0, defaultBalance.compareTo(BigDecimal.ZERO));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role, balance)
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?)
+                """, UUID.randomUUID(), "negative-balance-user", "negative-balance@example.com", new BigDecimal("-0.01")));
+
+        assertFalse(columnExists("users", "points"));
+        assertFalse(columnExists("orders", "points_deducted"));
+        assertFalse(columnExists("orders", "points_discount"));
+        assertFalse(columnExists("products", "currency"));
+        assertEquals(0, configCount("points_enabled"));
+        assertEquals(0, configCount("points_rate"));
 
         assertTrue(columnExists("products", "delivery_type"));
         assertTrue(columnExists("products", "customer_input_fields"));
@@ -75,7 +110,6 @@ class MigrationChainIntegrationTest {
         assertFalse(columnExists("card_keys", "content"));
 
         for (String[] column : List.of(
-                new String[]{"products", "currency"},
                 new String[]{"products", "delivery_type"},
                 new String[]{"products", "customer_input_fields"},
                 new String[]{"products", "stock_mode"},
@@ -87,7 +121,6 @@ class MigrationChainIntegrationTest {
             assertEquals("NO", nullableValue(column[0], column[1]),
                     column[0] + "." + column[1] + " must be required");
         }
-        assertNotNull(defaultValue("products", "currency"));
         assertNotNull(defaultValue("products", "delivery_type"));
         assertNotNull(defaultValue("products", "customer_input_fields"));
         assertNotNull(defaultValue("products", "stock_mode"));
@@ -101,6 +134,23 @@ class MigrationChainIntegrationTest {
         for (String retiredKey : List.of("github_url", "contact_telegram", "contact_telegram_group")) {
             assertEquals(0, configCount(retiredKey), "retired config key must not be seeded: " + retiredKey);
         }
+    }
+
+    @Test
+    void v3DoesNotConvertLegacyPointsIntoBalance() {
+        flyway("2").migrate();
+        UUID legacyUserId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role, points)
+                VALUES (?, ?, ?, 'test-hash', 'USER', 73)
+                """, legacyUserId, "legacy-points-user", "legacy-points@example.com");
+
+        flyway().migrate();
+
+        BigDecimal balance = jdbcTemplate.queryForObject(
+                "SELECT balance FROM users WHERE id = ?", BigDecimal.class, legacyUserId);
+        assertNotNull(balance);
+        assertEquals(0, balance.compareTo(BigDecimal.ZERO));
     }
 
     @Test
@@ -238,6 +288,36 @@ class MigrationChainIntegrationTest {
                 SELECT column_default FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
                 """, String.class, table, column);
+    }
+
+    private String dataType(String table, String column) {
+        return jdbcTemplate.queryForObject("""
+                SELECT data_type FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                """, String.class, table, column);
+    }
+
+    private String numericPrecision(String table, String column) {
+        return jdbcTemplate.queryForObject("""
+                SELECT numeric_precision::text FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                """, String.class, table, column);
+    }
+
+    private String numericScale(String table, String column) {
+        return jdbcTemplate.queryForObject("""
+                SELECT numeric_scale::text FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = ? AND column_name = ?
+                """, String.class, table, column);
+    }
+
+    private boolean checkConstraintExists(String constraint) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                WHERE t.relname = 'users' AND c.conname = ? AND c.contype = 'c'
+                """, Integer.class, constraint);
+        return count != null && count == 1;
     }
 
     private boolean indexExists(String index) {

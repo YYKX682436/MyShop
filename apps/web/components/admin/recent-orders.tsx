@@ -5,7 +5,7 @@ import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { useLocale } from "@/lib/context"
-import { formatDateTime } from "@/lib/utils"
+import { formatDateTime, formatYuan } from "@/lib/utils"
 import type { AdminOrderItem } from "@/types"
 
 export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
@@ -69,7 +69,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                     <td className="truncate py-3 text-foreground" title={order.username || order.email}>
                       {order.username || order.email}
                     </td>
-                    <td className="py-3 font-medium text-foreground">¥{order.actual_amount.toFixed(2)}</td>
+                    <td className="py-3 font-medium text-foreground">{formatYuan(order.actual_amount)}</td>
                     <td className="py-3"><OrderStatusBadge status={order.status} /></td>
                     <td className="py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
                   </tr>
@@ -96,7 +96,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">{t("admin.amount")}</p>
-                    <p className="font-medium text-foreground">¥{order.actual_amount.toFixed(2)}</p>
+                    <p className="font-medium text-foreground">{formatYuan(order.actual_amount)}</p>
                   </div>
                   <time className="col-span-2 text-xs text-muted-foreground" dateTime={order.created_at}>
                     {formatDateTime(order.created_at, locale)}

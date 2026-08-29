@@ -6,7 +6,7 @@ import { ShoppingBag, Mail, CreditCard, Lock } from "lucide-react"
 import { toast } from "sonner"
 import { useLocale, useCart } from "@/lib/context"
 import { orderApi, paymentApi, requestOrThrow, getApiErrorMessage, saveOrderLookupToken } from "@/services/api"
-import { validateEmail, getCurrencySymbol, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { validateEmail, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel, isWechatChannel } from "@/lib/payment-channel"
 import { PaymentSelector } from "@/components/shared/payment-selector"
@@ -163,13 +163,13 @@ export default function CheckoutPage() {
                   {item.spec_name ? ` (${item.spec_name})` : ""}
                   {" x"}{item.quantity}
                 </span>
-                <span className="font-medium text-foreground">{getCurrencySymbol(item.currency)}{item.subtotal.toFixed(2)}</span>
+                <span className="font-medium text-foreground">{formatYuan(item.subtotal)}</span>
               </div>
             ))}
             <div className="flex items-center justify-between border-t border-border pt-3">
               <span className="text-base font-medium text-foreground">{t("checkout.totalAmount")}</span>
               <span className="text-2xl font-bold text-primary">
-                {getCurrencySymbol(items[0]?.currency)}{totalAmount.toFixed(2)}
+                {formatYuan(totalAmount)}
               </span>
             </div>
           </div>
@@ -267,7 +267,7 @@ export default function CheckoutPage() {
               {t("checkout.processingOrder")}
             </span>
           ) : (
-            <>{t("checkout.confirmOrder")} {getCurrencySymbol(items[0]?.currency)}{totalAmount.toFixed(2)}</>
+            <>{t("checkout.confirmOrder")} {formatYuan(totalAmount)}</>
           )}
         </button>
       </div>

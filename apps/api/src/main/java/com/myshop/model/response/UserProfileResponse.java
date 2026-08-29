@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -16,7 +17,7 @@ public class UserProfileResponse {
     private String username;
     private String email;
     private String role;
-    private int points;
+    private BigDecimal balance;
     private LocalDateTime createdAt;
 
     public static UserProfileResponse from(User user) {
@@ -25,7 +26,7 @@ public class UserProfileResponse {
         r.setUsername(user.getUsername());
         r.setEmail(user.getEmail());
         r.setRole(user.getRole().name());
-        r.setPoints(user.getPoints());
+        r.setBalance(user.getBalance());
         r.setCreatedAt(user.getCreatedAt());
         return r;
     }

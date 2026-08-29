@@ -5,14 +5,12 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
-import com.myshop.entity.PointsLog;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.ChangePasswordRequest;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.OrderItemRepository;
-import com.myshop.repository.PointsLogRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.UserService;
 import com.myshop.service.ManualStockService;
@@ -36,7 +34,6 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
-    private final PointsLogRepository pointsLogRepository;
     private final PasswordEncoder passwordEncoder;
     private final ManualStockService manualStockService;
 
@@ -104,20 +101,6 @@ public class UserServiceImpl implements UserService {
 
         var list = orderPage.getContent().stream().map(this::toOrderBrief).toList();
         return PageResult.of(orderPage, list);
-    }
-
-    @Override
-    public Map<String, Object> getPoints(UUID userId, int page, int pageSize) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
-        PageRequest pageable = PageRequest.of(page - 1, pageSize);
-        Page<PointsLog> logPage = pointsLogRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("total_points", user.getPoints());
-        result.put("list", logPage.getContent());
-        result.put("pagination", new PageResult.Pagination(page, pageSize, logPage.getTotalElements()));
-        return result;
     }
 
     private Map<String, Object> toOrderBrief(Order o) {

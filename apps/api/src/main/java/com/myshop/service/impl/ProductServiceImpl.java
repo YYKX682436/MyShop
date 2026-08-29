@@ -109,7 +109,6 @@ public class ProductServiceImpl implements ProductService {
         product.setDetailMd((String) req.get("detail_md"));
         product.setCoverUrl((String) req.get("cover_url"));
         product.setBasePrice(new BigDecimal(req.get("base_price").toString()));
-        if (req.containsKey("currency")) product.setCurrency((String) req.get("currency"));
         String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), "AUTO");
         StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
                 "AUTO".equals(deliveryType) ? StockMode.CARD_KEY : StockMode.MANUAL);
@@ -143,7 +142,6 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("detail_md")) product.setDetailMd((String) req.get("detail_md"));
         if (req.containsKey("cover_url")) product.setCoverUrl((String) req.get("cover_url"));
         if (req.containsKey("base_price")) product.setBasePrice(new BigDecimal(req.get("base_price").toString()));
-        if (req.containsKey("currency")) product.setCurrency((String) req.get("currency"));
         String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), product.getDeliveryType());
         StockMode previousStockMode = product.getStockMode();
         StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
@@ -310,7 +308,6 @@ public class ProductServiceImpl implements ProductService {
         map.put("description", p.getDescription());
         map.put("cover_url", p.getCoverUrl());
         map.put("base_price", p.getBasePrice());
-        map.put("currency", p.getCurrency());
         map.put("category_id", p.getCategoryId());
         List<ProductSpec> specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(p.getId(), 0);
         boolean hasSpecs = p.isSpecEnabled() && !specs.isEmpty();

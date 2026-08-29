@@ -3,8 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from "react"
 import { type Locale, getDictionary, type TranslationKey } from "./i18n"
 import type { UserProfile, CartItem, SiteConfig } from "@/types"
-import { cartApi, siteApi, currencyApi, userApi, authApi, requestOrThrow } from "@/services/api"
-import { initCurrencySymbols } from "./utils"
+import { cartApi, siteApi, userApi, authApi, requestOrThrow } from "@/services/api"
 
 // ============================================================
 // Theme
@@ -407,23 +406,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
       }
     }
     fetchConfig()
-    return () => { cancelled = true }
-  }, [])
-
-  // ---------- Currency Symbols ----------
-  useEffect(() => {
-    let cancelled = false
-    async function fetchCurrencies() {
-      try {
-        const currencies = await requestOrThrow(() => currencyApi.getList())
-        if (!cancelled) {
-          initCurrencySymbols(currencies)
-        }
-      } catch {
-        // fallback symbols are already hardcoded in getCurrencySymbol
-      }
-    }
-    fetchCurrencies()
     return () => { cancelled = true }
   }, [])
 

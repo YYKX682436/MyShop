@@ -11,7 +11,6 @@ import com.myshop.exception.BusinessException;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
-import com.myshop.repository.UserRepository;
 import com.myshop.service.EmailService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
@@ -42,9 +41,6 @@ class DeliverServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private CardKeyRepository cardKeyRepository;
-    @Mock private UserRepository userRepository;
-    @Mock private com.myshop.repository.PointsLogRepository pointsLogRepository;
-    @Mock private com.myshop.repository.SiteConfigRepository siteConfigRepository;
     @Mock private EmailService emailService;
     @Mock private ManualStockService manualStockService;
 
@@ -53,8 +49,7 @@ class DeliverServiceImplTest {
     @BeforeEach
     void setUp() {
         FulfillmentService fulfillmentService = new FulfillmentTransactionService(orderRepository, orderItemRepository,
-                cardKeyRepository, userRepository, pointsLogRepository, siteConfigRepository, emailService,
-                manualStockService);
+                cardKeyRepository, emailService, manualStockService);
         service = new DeliverServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
                 fulfillmentService, manualStockService);
     }

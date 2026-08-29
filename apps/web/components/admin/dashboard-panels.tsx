@@ -36,7 +36,7 @@ import {
   type DashboardAttentionItem,
   type SystemStatusLevel,
 } from "@/lib/dashboard"
-import { cn } from "@/lib/utils"
+import { cn, formatYuan } from "@/lib/utils"
 import type {
   DashboardRecentUser,
   DashboardStats,
@@ -176,10 +176,7 @@ function ChangeValue({ value }: { value: number | null }) {
 
 export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
-  const money = (value: number) => `¥${value.toLocaleString(locale === "en" ? "en-US" : "zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
+  const money = formatYuan
   return (
     <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 xl:grid-cols-4">
       <KpiCard
@@ -222,10 +219,7 @@ function MetricTile({ label, value, note }: { label: string; value: string; note
 
 export function BusinessOverview({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
-  const money = (value: number) => `¥${value.toLocaleString(locale === "en" ? "en-US" : "zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
+  const money = formatYuan
   const number = (value: number) => formatNumber(value, locale)
   return (
     <Panel title={t("admin.businessOverview")} icon={Activity}>
@@ -304,10 +298,7 @@ export function LowStockPanel({ products }: { products: LowStockProduct[] }) {
 
 export function TopProductsPanel({ products }: { products: DashboardTopProduct[] }) {
   const { locale, t } = useLocale()
-  const money = (value: number) => `¥${value.toLocaleString(locale === "en" ? "en-US" : "zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
+  const money = formatYuan
   return (
     <Panel title={t("admin.topProducts")} icon={TrendingUp}>
       {products.length === 0 ? (

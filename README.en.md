@@ -13,7 +13,7 @@ The source and license boundary is recorded in [THIRD_PARTY_NOTICES.md](THIRD_PA
 - Security: BCrypt, HttpOnly session cookie plus CSRF double-submit protection, trusted-proxy IP resolution, and hashed random guest order credentials.
 - Delivery: per-line PostgreSQL `FOR UPDATE SKIP LOCKED`; every pool is checked before any mutation, and one shortage rolls back the whole delivery.
 
-Not in Phase 1: USDT/multicurrency, coupons/custom fields/membership tiers, Kafka/RabbitMQ/Elasticsearch/Kubernetes, Redis-by-default rate limiting, microservice splitting, or production deployment.
+The storefront uses CNY-only pricing. Not in Phase 1: coupons/custom fields/membership tiers, Kafka/RabbitMQ/Elasticsearch/Kubernetes, Redis-by-default rate limiting, microservice splitting, or production deployment.
 
 ## Layout
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Search, UserCheck, UserX, KeyRound, ChevronLeft, ChevronRight } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { cn, formatYuan } from "@/lib/utils"
 import { useLocale } from "@/lib/context"
 import { toast } from "sonner"
 import { adminUserApi, requestOrThrow } from "@/services/api"
@@ -117,7 +117,7 @@ export default function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.usernameLabel")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.emailLabel")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.role")}</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.pointsLabel")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceLabel")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.registeredAt")}</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
@@ -142,7 +142,7 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3 font-medium text-foreground">{user.username}</td>
                     <td className="px-4 py-3 text-muted-foreground">{user.email}</td>
                     <td className="px-4 py-3 text-foreground">{user.role}</td>
-                    <td className="px-4 py-3 text-foreground">{user.points}</td>
+                    <td className="px-4 py-3 text-foreground">{formatYuan(user.balance)}</td>
                     <td className="px-4 py-3">
                       <span
                         className={cn(

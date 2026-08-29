@@ -7,6 +7,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Getter
@@ -30,7 +31,8 @@ public class User extends BaseEntity {
     @Column(nullable = false)
     private UserRole role = UserRole.USER;
 
-    private int points = 0;
+    @Column(nullable = false, precision = 12, scale = 2)
+    private BigDecimal balance = BigDecimal.ZERO;
 
     private int isDeleted = 0;
 

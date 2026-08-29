@@ -19,7 +19,7 @@ import {
   serializeContactItems,
 } from "@/lib/contact-items"
 
-type TabKey = "basic" | "announcement" | "points" | "contact" | "maintenance"
+type TabKey = "basic" | "announcement" | "contact" | "maintenance"
 
 export default function AdminSiteConfigPage() {
   const { t } = useLocale()
@@ -152,7 +152,6 @@ export default function AdminSiteConfigPage() {
         {([
           { key: "basic" as const, label: t("admin.basicInfo") },
           { key: "announcement" as const, label: t("admin.announcementTab") },
-          { key: "points" as const, label: t("admin.pointsSettings") },
           { key: "contact" as const, label: t("admin.contactTab") },
           { key: "maintenance" as const, label: t("admin.maintenanceTab") },
         ]).map((tabItem) => (
@@ -369,48 +368,6 @@ export default function AdminSiteConfigPage() {
                 placeholder={"支持 Markdown 格式编辑\n# 标题  ## 二级标题  ### 三级标题\n**粗体**  *斜体*  空一行为段落换行\n![图片描述](图片URL) — 可点击上方「插入图片」自动生成"}
                 value={getValue("popup_content")}
                 onChange={(e) => setValue("popup_content", e.target.value)}
-              />
-            </div>
-            <button
-              type="button"
-              className="flex w-fit items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              <Save className="h-4 w-4" />
-              {saving ? t("admin.saving") : t("admin.saveSettings")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Points Setting */}
-      {tab === "points" && (
-        <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <div className="flex flex-col gap-5 max-w-xl">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-foreground">{t("admin.enablePointsSystem")}</label>
-              <button
-                type="button"
-                className={cn(
-                  "relative h-6 w-11 rounded-full transition-colors",
-                  getBool("points_enabled") ? "bg-primary" : "bg-muted"
-                )}
-                onClick={() => toggleBool("points_enabled")}
-              >
-                <span className={cn(
-                  "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
-                  getBool("points_enabled") && "translate-x-5"
-                )} />
-              </button>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">{t("admin.pointsRate")}</label>
-              <input
-                type="number"
-                className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                value={getValue("points_rate")}
-                onChange={(e) => setValue("points_rate", e.target.value)}
               />
             </div>
             <button

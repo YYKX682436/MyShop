@@ -8,15 +8,10 @@ import com.myshop.constant.StockMode;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
-import com.myshop.entity.PointsLog;
-import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
-import com.myshop.repository.PointsLogRepository;
-import com.myshop.repository.SiteConfigRepository;
-import com.myshop.repository.UserRepository;
 import com.myshop.service.EmailService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
@@ -45,9 +40,6 @@ public class FulfillmentTransactionService implements FulfillmentService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final CardKeyRepository cardKeyRepository;
-    private final UserRepository userRepository;
-    private final PointsLogRepository pointsLogRepository;
-    private final SiteConfigRepository siteConfigRepository;
     private final EmailService emailService;
     private final ManualStockService manualStockService;
 
@@ -55,17 +47,11 @@ public class FulfillmentTransactionService implements FulfillmentService {
     public FulfillmentTransactionService(OrderRepository orderRepository,
                                          OrderItemRepository orderItemRepository,
                                          CardKeyRepository cardKeyRepository,
-                                         UserRepository userRepository,
-                                         PointsLogRepository pointsLogRepository,
-                                         SiteConfigRepository siteConfigRepository,
                                          EmailService emailService,
                                          ManualStockService manualStockService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.cardKeyRepository = cardKeyRepository;
-        this.userRepository = userRepository;
-        this.pointsLogRepository = pointsLogRepository;
-        this.siteConfigRepository = siteConfigRepository;
         this.emailService = emailService;
         this.manualStockService = manualStockService;
     }
@@ -233,7 +219,6 @@ public class FulfillmentTransactionService implements FulfillmentService {
         order.setStatus(OrderStatus.DELIVERED);
         order.setDeliveredAt(deliveredAt);
         orderRepository.save(order);
-        awardPoints(order);
     }
 
     private void notifyAfterCommit(Order order, List<UUID> orderItemIds) {
@@ -306,40 +291,6 @@ public class FulfillmentTransactionService implements FulfillmentService {
 
     private boolean isManual(OrderItem item) {
         return "MANUAL".equalsIgnoreCase(item.getDeliveryType());
-    }
-
-    private void awardPoints(Order order) {
-        if (order.getUserId() == null) return;
-        boolean enabled = siteConfigRepository.findByConfigKey("points_enabled")
-                .map(config -> "true".equalsIgnoreCase(config.getConfigValue()))
-                .orElse(false);
-        int rate = siteConfigRepository.findByConfigKey("points_rate")
-                .map(config -> {
-                    try {
-                        return Integer.parseInt(config.getConfigValue());
-                    } catch (Exception ignored) {
-                        return 0;
-                    }
-                }).orElse(0);
-        if (!enabled || rate <= 0 || order.getActualAmount() == null) return;
-
-        int earned = order.getActualAmount()
-                .multiply(java.math.BigDecimal.valueOf(rate))
-                .intValue();
-        if (earned <= 0) return;
-
-        User user = userRepository.findById(order.getUserId()).orElse(null);
-        if (user == null) return;
-        user.setPoints(user.getPoints() + earned);
-        userRepository.save(user);
-
-        PointsLog pointsLog = new PointsLog();
-        pointsLog.setUserId(user.getId());
-        pointsLog.setChangeAmount(earned);
-        pointsLog.setBalanceAfter(user.getPoints());
-        pointsLog.setReason("订单购买获得积分");
-        pointsLog.setOrderId(order.getId());
-        pointsLogRepository.save(pointsLog);
     }
 
     private record Allocation(OrderItem item, List<CardKey> keys) {

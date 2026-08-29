@@ -10,10 +10,12 @@ import {
   ResponsiveContainer,
 } from "recharts"
 import { useLocale } from "@/lib/context"
+import { formatYuan } from "@/lib/utils"
 import type { SalesTrend } from "@/types"
 
 export function SalesChart({ trends }: { trends: SalesTrend[] }) {
   const { t } = useLocale()
+  const salesLabel = `${t("admin.salesAmount")} (¥)`
   return (
     <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5 xl:h-full">
       <div className="mb-4 flex items-center justify-between gap-3 sm:mb-6">
@@ -60,7 +62,8 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
                 tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
                 axisLine={false}
                 tickLine={false}
-                width={48}
+                tickFormatter={(value) => formatYuan(Number(value))}
+                width={64}
               />
               <Tooltip
                 contentStyle={{
@@ -69,6 +72,9 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
                   borderRadius: "8px",
                   fontSize: "12px",
                 }}
+                formatter={(value, name) =>
+                  name === salesLabel ? [formatYuan(Number(value)), name] : [value, name]
+                }
               />
               <Area
                 type="monotone"
@@ -76,7 +82,7 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
                 stroke="hsl(217, 91%, 60%)"
                 strokeWidth={2}
                 fill="url(#salesGradient)"
-                name={`${t("admin.salesAmount")} (¥)`}
+                name={salesLabel}
               />
               <Area
                 type="monotone"

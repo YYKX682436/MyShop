@@ -40,11 +40,6 @@ public class Order extends BaseEntity {
 
     private String paymentMethod;
 
-    private int pointsDeducted = 0;
-
-    @Column(precision = 10, scale = 2)
-    private BigDecimal pointsDiscount = BigDecimal.ZERO;
-
     private LocalDateTime expiresAt;
 
     private LocalDateTime paidAt;

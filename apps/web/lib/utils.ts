@@ -21,33 +21,9 @@ export function generateIdempotencyKey(): string {
   })
 }
 
-// Dynamic currency symbol cache (populated from API via initCurrencySymbols)
-let currencySymbolMap: Record<string, string> = {}
-
-export function initCurrencySymbols(currencies: { code: string; symbol: string }[]) {
-  currencySymbolMap = {}
-  for (const c of currencies) {
-    currencySymbolMap[c.code] = c.symbol
-  }
-}
-
-export function getCurrencySymbol(currency?: string): string {
-  if (currency && currencySymbolMap[currency]) {
-    return currencySymbolMap[currency]
-  }
-  // Static fallback for common currencies
-  switch (currency) {
-    case "USD": return "$"
-    case "EUR": return "€"
-    case "GBP": return "£"
-    case "JPY": return "¥"
-    case "CNY":
-    default: return "¥"
-  }
-}
-
-export function formatPrice(amount: number, currency?: string): string {
-  return `${getCurrencySymbol(currency)}${amount.toFixed(2)}`
+/** Format every store amount as Chinese yuan with exactly two decimals. */
+export function formatYuan(amount: number): string {
+  return `¥${amount.toFixed(2)}`
 }
 
 export function detectPaymentDevice(): string {

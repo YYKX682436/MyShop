@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { Trash2, Minus, Plus, ShoppingCart, ArrowRight, Package } from "lucide-react"
 import { toast } from "sonner"
 import { useLocale, useCart } from "@/lib/context"
+import { formatYuan } from "@/lib/utils"
 import { getApiErrorMessage } from "@/services/api"
 import { validateCustomerInputs } from "@/lib/customer-inputs"
 import type { CartItem } from "@/types"
@@ -138,7 +139,7 @@ export default function CartPage() {
               )}
 
               <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-foreground">¥{item.unit_price.toFixed(2)}</span>
+                <span className="text-sm font-semibold text-foreground">{formatYuan(item.unit_price)}</span>
                 <div className="inline-flex items-center rounded border border-border">
                   <button onClick={() => handleUpdateQuantity(item.id, Math.max(1, item.quantity - 1))} className="inline-flex h-7 w-7 items-center justify-center text-muted-foreground hover:bg-accent" disabled={item.quantity <= 1}>
                     <Minus className="h-3 w-3" />
@@ -155,7 +156,7 @@ export default function CartPage() {
             </div>
 
             <div className="flex flex-col items-end gap-2">
-              <span className="text-sm font-bold text-foreground">¥{item.subtotal.toFixed(2)}</span>
+              <span className="text-sm font-bold text-foreground">{formatYuan(item.subtotal)}</span>
               <button onClick={() => handleRemoveItem(item.id)} className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" aria-label={t("cart.remove")}>
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -168,7 +169,7 @@ export default function CartPage() {
         <div className="container mx-auto flex items-center justify-between p-4">
           <div className="text-sm text-muted-foreground">{t("cart.selected")} <span className="font-semibold text-foreground">{totalQty}</span> {t("cart.items")}</div>
           <div className="flex items-center gap-4">
-            <div className="text-right"><span className="text-sm text-muted-foreground">{t("cart.total")}:</span><span className="ml-2 text-xl font-bold text-foreground">¥{totalAmount.toFixed(2)}</span></div>
+            <div className="text-right"><span className="text-sm text-muted-foreground">{t("cart.total")}:</span><span className="ml-2 text-xl font-bold text-foreground">{formatYuan(totalAmount)}</span></div>
             <button onClick={() => items.length > 0 && router.push("/checkout")} disabled={items.length === 0} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50">
               {t("cart.checkout")}<ArrowRight className="h-4 w-4" />
             </button>
