@@ -175,9 +175,9 @@ operation logs, exception messages, screenshots, or support bundles.
 The API baseline is Java 25 LTS with Spring Boot 4.1.1. The web baseline is
 Next.js 16.3.3, upgraded to the official security release for the 16.3.x
 Active LTS line. The security-version upgrade is complete in this baseline;
-production release still requires this revision's complete CI run and a
-separate authorized real-device acceptance. This acceptance pass intentionally
-does not deploy production.
+production deployment requires a successful CI run for the exact revision and
+explicit browser acceptance. After deployment, record the exact deployed
+revision in /opt/myshop/DEPLOYED_SHA.
 
 ## Backup and rollback
 
