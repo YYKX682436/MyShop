@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { CheckCircle, Copy, Eye } from "lucide-react"
 import { toast } from "sonner"
 
@@ -31,6 +32,7 @@ const PAGE_SIZE = 20
 
 export default function AdminOrdersPage() {
   const { t, locale } = useLocale()
+  const searchParams = useSearchParams()
   const [orders, setOrders] = useState<AdminOrderItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -54,6 +56,7 @@ export default function AdminOrdersPage() {
   const [completingManualItem, setCompletingManualItem] = useState<string | null>(null)
   const detailRequestRef = useRef(0)
   const detailCardKeysRequestRef = useRef(0)
+  const autoOpenedOrderIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -142,6 +145,13 @@ export default function AdminOrdersPage() {
     setDetailCardKeysError(false)
     void loadOrderDetail(order.id)
   }
+
+  useEffect(() => {
+    const orderId = searchParams.get("order_id")
+    if (!orderId || autoOpenedOrderIdRef.current === orderId) return
+    autoOpenedOrderIdRef.current = orderId
+    void loadOrderDetail(orderId)
+  }, [loadOrderDetail, searchParams])
 
   const closeDetail = (open: boolean) => {
     if (!open) {

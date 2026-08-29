@@ -12,6 +12,9 @@ import java.util.UUID;
 
 public interface OperationLogRepository extends JpaRepository<OperationLog, UUID> {
 
+    Page<OperationLog> findByTargetTypeAndTargetIdOrderByCreatedAtDesc(
+            String targetType, String targetId, Pageable pageable);
+
     @Query(value = "SELECT * FROM operation_logs o WHERE " +
             "(CAST(:userId AS uuid) IS NULL OR o.user_id = CAST(:userId AS uuid)) " +
             "AND (CAST(:action AS text) IS NULL OR o.action LIKE CAST(:action AS text) || '%') " +

@@ -16,9 +16,9 @@ import { cn } from "@/lib/utils"
 import { MAX_CONTACT_ITEMS, parseContactItemsSafely, resolveContactItemsForSave, serializeContactItems } from "@/lib/contact-items"
 import { ALLOWED_IMAGE_ACCEPT, QR_ALLOWED_IMAGE_ACCEPT, validateImageFile, validateQrImageFile } from "@/lib/image-upload"
 import { adminConfigApi, adminProductApi, requestOrThrow } from "@/services/api"
-import type { ContactItem, SiteConfigKV } from "@/types"
+import type { ContactItem, SiteConfigKV, UserNumberConfig } from "@/types"
 
-type TabKey = "basic" | "announcement" | "contact" | "maintenance"
+type TabKey = "basic" | "announcement" | "contact" | "user" | "maintenance"
 
 export default function AdminSiteConfigPage() {
   const { t } = useLocale()
@@ -33,15 +33,22 @@ export default function AdminSiteConfigPage() {
   const [logoUploading, setLogoUploading] = useState(false)
   const [qrUploadingIndex, setQrUploadingIndex] = useState<number | null>(null)
   const [maintenanceToggling, setMaintenanceToggling] = useState(false)
+  const [userNumberConfig, setUserNumberConfig] = useState<UserNumberConfig>({ start_user_no: 10000, next_user_no: 10000 })
+  const [userNumberLoading, setUserNumberLoading] = useState(true)
+  const [userNumberSaving, setUserNumberSaving] = useState(false)
   const popupContent = getValueFromMap(configMap, "popup_content")
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(false)
+    setUserNumberLoading(true)
     setContactConfigError(false)
     setContactItemsDirty(false)
     try {
-      const data = await requestOrThrow(() => adminConfigApi.get())
+      const [data, numbering] = await Promise.all([
+        requestOrThrow(() => adminConfigApi.get()),
+        requestOrThrow(() => adminConfigApi.getUserNumbering()),
+      ])
       const map: Record<string, string> = {}
       data.forEach((item: SiteConfigKV) => { map[item.config_key] = item.config_value })
       const parsedContacts = parseContactItemsSafely(map.contact_items)
@@ -50,12 +57,15 @@ export default function AdminSiteConfigPage() {
       setContactConfigError(parsedContacts.hasError)
       setContactItemsDirty(false)
       setConfigMap(map)
+      setUserNumberConfig(numbering)
+      setUserNumberLoading(false)
     } catch {
       setConfigMap({})
       setContactItems([])
       setContactConfigError(false)
       setContactItemsDirty(false)
       setError(true)
+      setUserNumberLoading(false)
     } finally {
       setLoading(false)
     }
@@ -143,6 +153,31 @@ export default function AdminSiteConfigPage() {
     }
   }
 
+  const updateUserNumber = (key: keyof UserNumberConfig, value: string) => {
+    const parsed = Number(value)
+    setUserNumberConfig((current) => ({ ...current, [key]: Number.isFinite(parsed) ? parsed : 0 }))
+  }
+
+  const handleSaveUserNumbering = async () => {
+    if (!Number.isSafeInteger(userNumberConfig.start_user_no) || userNumberConfig.start_user_no < 1) {
+      toast.error(t("admin.userNumberPositive"))
+      return
+    }
+    if (!Number.isSafeInteger(userNumberConfig.next_user_no) || userNumberConfig.next_user_no < userNumberConfig.start_user_no) {
+      toast.error(t("admin.userNumberNextInvalid"))
+      return
+    }
+    setUserNumberSaving(true)
+    try {
+      await requestOrThrow(() => adminConfigApi.updateUserNumbering(userNumberConfig))
+      toast.success(t("admin.settingsSaved"))
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      setUserNumberSaving(false)
+    }
+  }
+
   if (loading) return <AdminPage><PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} /><div className="h-64 animate-pulse rounded-xl border border-border bg-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
   if (error) return <AdminPage><PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} /><div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button></div></AdminPage>
 
@@ -150,7 +185,7 @@ export default function AdminSiteConfigPage() {
     <AdminPage>
       <PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} />
       <Tabs value={tab} onValueChange={(value) => setTab(value as TabKey)}>
-        <TabsList className="max-w-full justify-start overflow-x-auto"><TabsTrigger value="basic">{t("admin.basicInfo")}</TabsTrigger><TabsTrigger value="announcement">{t("admin.announcementTab")}</TabsTrigger><TabsTrigger value="contact">{t("admin.contactTab")}</TabsTrigger><TabsTrigger value="maintenance">{t("admin.maintenanceTab")}</TabsTrigger></TabsList>
+        <TabsList className="max-w-full justify-start overflow-x-auto"><TabsTrigger value="basic">{t("admin.basicInfo")}</TabsTrigger><TabsTrigger value="announcement">{t("admin.announcementTab")}</TabsTrigger><TabsTrigger value="contact">{t("admin.contactTab")}</TabsTrigger><TabsTrigger value="user">{t("admin.userSettingsTab")}</TabsTrigger><TabsTrigger value="maintenance">{t("admin.maintenanceTab")}</TabsTrigger></TabsList>
 
         <TabsContent value="basic">
           <SettingsSection title={t("admin.basicInfo")} description={t("admin.siteConfigDesc")}>
@@ -189,6 +224,36 @@ export default function AdminSiteConfigPage() {
               </div>
             </div>
             {saveButton}
+          </SettingsSection>
+        </TabsContent>
+
+        <TabsContent value="user">
+          <SettingsSection title={t("admin.userSettingsTab")} description={t("admin.userNumberSettingsDesc")}>
+            {userNumberLoading ? (
+              <div className="h-32 animate-pulse rounded-lg bg-muted" role="status" aria-label={t("common.loading")} />
+            ) : (
+              <div className="max-w-2xl space-y-5">
+                <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm text-blue-700 dark:text-blue-300">
+                  {t("admin.userNumberSettingsHint")}
+                </div>
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1.5 text-sm font-medium">
+                    <span>{t("admin.userNumberStart")}</span>
+                    <Input type="number" min={1} step={1} value={userNumberConfig.start_user_no} onChange={(event) => updateUserNumber("start_user_no", event.target.value)} disabled={userNumberSaving} />
+                  </label>
+                  <label className="flex flex-col gap-1.5 text-sm font-medium">
+                    <span>{t("admin.userNumberNext")}</span>
+                    <Input type="number" min={1} step={1} value={userNumberConfig.next_user_no} onChange={(event) => updateUserNumber("next_user_no", event.target.value)} disabled={userNumberSaving} />
+                  </label>
+                </div>
+                <div className="flex justify-end border-t border-border pt-5">
+                  <Button type="button" onClick={() => void handleSaveUserNumbering()} disabled={userNumberSaving}>
+                    <Save className="h-4 w-4" aria-hidden="true" />
+                    {userNumberSaving ? t("admin.saving") : t("admin.saveSettings")}
+                  </Button>
+                </div>
+              </div>
+            )}
           </SettingsSection>
         </TabsContent>
 

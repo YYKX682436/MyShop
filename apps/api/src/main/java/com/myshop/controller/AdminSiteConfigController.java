@@ -3,6 +3,9 @@ package com.myshop.controller;
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
 import com.myshop.service.SiteConfigService;
+import com.myshop.model.request.UserNumberConfigUpdateRequest;
+import com.myshop.model.response.UserNumberConfigResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -35,6 +38,18 @@ public class AdminSiteConfigController {
     public ApiResponse<Void> toggleMaintenance(@RequestBody Map<String, Object> request) {
         boolean enabled = (boolean) request.get("enabled");
         siteConfigService.toggleMaintenance(enabled);
+        return ApiResponse.success();
+    }
+
+    @GetMapping("/user-numbering")
+    public ApiResponse<UserNumberConfigResponse> getUserNumberConfig() {
+        return ApiResponse.success(siteConfigService.getUserNumberConfig());
+    }
+
+    @LogOperation(action = "config.user_number_update", targetType = "SITE_CONFIG", detail = "'更新用户编号配置'")
+    @PutMapping("/user-numbering")
+    public ApiResponse<Void> updateUserNumberConfig(@Valid @RequestBody UserNumberConfigUpdateRequest request) {
+        siteConfigService.updateUserNumberConfig(request);
         return ApiResponse.success();
     }
 }

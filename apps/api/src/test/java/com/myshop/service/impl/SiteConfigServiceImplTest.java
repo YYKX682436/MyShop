@@ -2,8 +2,12 @@ package com.myshop.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.entity.SiteConfig;
+import com.myshop.entity.UserNumberSequence;
 import com.myshop.exception.BusinessException;
+import com.myshop.model.request.UserNumberConfigUpdateRequest;
 import com.myshop.repository.SiteConfigRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
+import com.myshop.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -27,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -35,11 +40,17 @@ class SiteConfigServiceImplTest {
     @Mock
     private SiteConfigRepository repository;
 
+    @Mock
+    private UserNumberSequenceRepository userNumberSequenceRepository;
+
+    @Mock
+    private UserRepository userRepository;
+
     private SiteConfigServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new SiteConfigServiceImpl(repository, new ObjectMapper());
+        service = new SiteConfigServiceImpl(repository, new ObjectMapper(), userNumberSequenceRepository, userRepository);
     }
 
     @Test
@@ -84,6 +95,55 @@ class SiteConfigServiceImplTest {
         assertNotNull(value);
         assertInstanceOf(List.class, value);
         assertEquals(List.of(Map.of("name", "客服", "url", "https://example.com")), value);
+    }
+
+    @Test
+    void readsDurableDefaultUserNumberConfig() {
+        when(userNumberSequenceRepository.findById(1))
+                .thenReturn(Optional.of(new UserNumberSequence(1, 10000L, 10000L)));
+
+        var result = service.getUserNumberConfig();
+
+        assertEquals(10000L, result.startUserNo());
+        assertEquals(10000L, result.nextUserNo());
+    }
+
+    @Test
+    void updatesCounterWithoutRewritingExistingUsers() {
+        UserNumberSequence sequence = new UserNumberSequence(1, 10000L, 10000L);
+        when(userNumberSequenceRepository.findByIdForUpdate(1)).thenReturn(sequence);
+        when(userRepository.countByRole(com.myshop.constant.UserRole.USER)).thenReturn(1L);
+        when(userRepository.findMaxUserNoByRole(com.myshop.constant.UserRole.USER)).thenReturn(10000L);
+        when(userNumberSequenceRepository.save(any(UserNumberSequence.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        UserNumberConfigUpdateRequest request = new UserNumberConfigUpdateRequest();
+        request.setStartUserNo(20000L);
+        request.setNextUserNo(20000L);
+
+        service.updateUserNumberConfig(request);
+
+        assertEquals(20000L, sequence.getStartUserNo());
+        assertEquals(20000L, sequence.getNextUserNo());
+        verify(userNumberSequenceRepository).save(sequence);
+    }
+
+    @Test
+    void rejectsCounterValueThatCollidesWithExistingUser() {
+        UserNumberSequence sequence = new UserNumberSequence(1, 10000L, 10001L);
+        when(userNumberSequenceRepository.findByIdForUpdate(1)).thenReturn(sequence);
+        when(userRepository.countByRole(com.myshop.constant.UserRole.USER)).thenReturn(1L);
+        when(userRepository.findMaxUserNoByRole(com.myshop.constant.UserRole.USER)).thenReturn(10000L);
+
+        UserNumberConfigUpdateRequest request = new UserNumberConfigUpdateRequest();
+        request.setStartUserNo(10000L);
+        request.setNextUserNo(10000L);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.updateUserNumberConfig(request));
+
+        assertTrue(exception.getMessage().contains("冲突"));
+        verify(userNumberSequenceRepository, never()).save(any(UserNumberSequence.class));
     }
 
     private void saveContactItems(String raw) {

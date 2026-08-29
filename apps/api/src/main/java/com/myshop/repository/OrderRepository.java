@@ -45,6 +45,14 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     long countByUserIdAndStatus(UUID userId, OrderStatus status);
 
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.userId = :userId "
+            + "AND o.status IN (com.myshop.constant.OrderStatus.PAID, com.myshop.constant.OrderStatus.DELIVERED)")
+    long countSuccessfulByUserId(@Param("userId") UUID userId);
+
+    @Query("SELECT COALESCE(SUM(o.actualAmount), 0) FROM Order o WHERE o.userId = :userId "
+            + "AND o.status IN (com.myshop.constant.OrderStatus.PAID, com.myshop.constant.OrderStatus.DELIVERED)")
+    BigDecimal sumSuccessfulActualAmountByUserId(@Param("userId") UUID userId);
+
     long countByClientIpAndStatus(String clientIp, OrderStatus status);
 
     long countByEmailAndStatus(String email, OrderStatus status);

@@ -52,12 +52,12 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("3", flyway.info().current().getVersion().getVersion());
-        assertEquals(3, flyway.info().all().length);
+        assertEquals("4", flyway.info().current().getVersion().getVersion());
+        assertEquals(4, flyway.info().all().length);
         for (String table : List.of(
                 "users", "product_categories", "products", "product_specs", "wholesale_rules",
                 "card_import_batches", "orders", "order_items", "card_keys", "cart_items",
-                "payment_channels", "site_configs", "operation_logs",
+                "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
@@ -72,6 +72,19 @@ class MigrationChainIntegrationTest {
         assertNotNull(defaultValue("users", "balance"));
         assertTrue(defaultValue("users", "balance").contains("0.00"));
         assertTrue(checkConstraintExists("users_balance_non_negative"));
+        assertTrue(columnExists("users", "user_no"));
+        assertEquals("bigint", dataType("users", "user_no"));
+        assertTrue(indexExists("uq_users_user_no_user"));
+        assertTrue(indexExists("uq_users_email_normalized"));
+        assertEquals(10000L, jdbcTemplate.queryForObject(
+                "SELECT next_user_no FROM user_number_sequences WHERE id = 1", Long.class));
+        for (String column : List.of(
+                "user_id", "type", "amount", "delta", "balance_before", "balance_after",
+                "reason", "operator_id", "order_id", "created_at")) {
+            assertTrue(columnExists("balance_transactions", column),
+                    "missing balance transaction column: " + column);
+        }
+        assertTrue(indexExists("idx_balance_transactions_user_created"));
 
         UUID defaultBalanceUserId = UUID.randomUUID();
         jdbcTemplate.update("""
@@ -151,6 +164,10 @@ class MigrationChainIntegrationTest {
                 "SELECT balance FROM users WHERE id = ?", BigDecimal.class, legacyUserId);
         assertNotNull(balance);
         assertEquals(0, balance.compareTo(BigDecimal.ZERO));
+        assertEquals(10000L, jdbcTemplate.queryForObject(
+                "SELECT user_no FROM users WHERE id = ?", Long.class, legacyUserId));
+        assertEquals(10001L, jdbcTemplate.queryForObject(
+                "SELECT next_user_no FROM user_number_sequences WHERE id = 1", Long.class));
     }
 
     @Test

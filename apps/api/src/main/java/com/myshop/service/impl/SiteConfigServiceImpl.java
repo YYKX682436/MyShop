@@ -6,8 +6,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.entity.SiteConfig;
+import com.myshop.entity.UserNumberSequence;
 import com.myshop.exception.BusinessException;
+import com.myshop.constant.UserRole;
+import com.myshop.model.request.UserNumberConfigUpdateRequest;
+import com.myshop.model.response.UserNumberConfigResponse;
 import com.myshop.repository.SiteConfigRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
+import com.myshop.repository.UserRepository;
 import com.myshop.service.SiteConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,6 +33,8 @@ public class SiteConfigServiceImpl implements SiteConfigService {
 
     private final SiteConfigRepository siteConfigRepository;
     private final ObjectMapper objectMapper;
+    private final UserNumberSequenceRepository userNumberSequenceRepository;
+    private final UserRepository userRepository;
 
     @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
     private String turnstileSiteKey;
@@ -274,6 +282,49 @@ public class SiteConfigServiceImpl implements SiteConfigService {
                 });
         config.setConfigValue(String.valueOf(enabled));
         siteConfigRepository.save(config);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserNumberConfigResponse getUserNumberConfig() {
+        UserNumberSequence sequence = requireUserNumberSequence(false);
+        return new UserNumberConfigResponse(sequence.getStartUserNo(), sequence.getNextUserNo());
+    }
+
+    @Override
+    @Transactional
+    public void updateUserNumberConfig(UserNumberConfigUpdateRequest request) {
+        if (request == null || request.getStartUserNo() == null || request.getNextUserNo() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "用户编号配置不能为空");
+        }
+        long start = request.getStartUserNo();
+        long next = request.getNextUserNo();
+        if (start <= 0 || next <= 0 || next < start) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "下一个用户编号必须大于等于起始值，且编号必须大于 0");
+        }
+
+        UserNumberSequence sequence = requireUserNumberSequence(true);
+        long existingUsers = userRepository.countByRole(UserRole.USER);
+        Long maxUserNo = userRepository.findMaxUserNoByRole(UserRole.USER);
+        if (existingUsers > 0 && maxUserNo != null && next <= maxUserNo) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "下一个用户编号不能与已有用户编号冲突");
+        }
+
+        sequence.setStartUserNo(start);
+        sequence.setNextUserNo(next);
+        userNumberSequenceRepository.save(sequence);
+    }
+
+    private UserNumberSequence requireUserNumberSequence(boolean locked) {
+        UserNumberSequence sequence = locked
+                ? userNumberSequenceRepository.findByIdForUpdate(1)
+                : userNumberSequenceRepository.findById(1).orElse(null);
+        if (sequence == null) {
+            throw new IllegalStateException("user_number_sequences is not initialized");
+        }
+        return sequence;
     }
 
     /**

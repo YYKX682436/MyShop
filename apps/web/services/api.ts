@@ -23,6 +23,11 @@ import type {
   CardImportBatch,
   OrderCardKey,
   AdminUserItem,
+  AdminUserDetail,
+  AdminUserOrder,
+  BalanceTransaction,
+  AdminOperationLogDetail,
+  UserNumberConfig,
   AdminOrderItem,
   PaymentChannelItem,
   PaymentProviderMetadata,
@@ -549,10 +554,28 @@ export const adminOrderApi = {
 // ============================================================
 
 export const adminUserApi = {
-  getList: (params: { page?: number; page_size?: number; keyword?: string }) => {
+  getList: (params: { page?: number; page_size?: number; keyword?: string; is_deleted?: 0 | 1 }) => {
     const qs = buildQuery(params)
     return request<PaginatedData<AdminUserItem>>(`/admin/users?${qs}`)
   },
+  getDetail: (id: string) =>
+    request<AdminUserDetail>(`/admin/users/${id}`),
+  getOrders: (id: string, params: { page?: number; page_size?: number } = {}) => {
+    const qs = buildQuery(params)
+    return request<PaginatedData<AdminUserOrder>>(`/admin/users/${id}/orders?${qs}`)
+  },
+  getBalanceTransactions: (id: string, params: { page?: number; page_size?: number } = {}) => {
+    const qs = buildQuery(params)
+    return request<PaginatedData<BalanceTransaction>>(`/admin/users/${id}/balance-transactions?${qs}`)
+  },
+  getOperationLogs: (id: string, params: { page?: number; page_size?: number } = {}) => {
+    const qs = buildQuery(params)
+    return request<PaginatedData<AdminOperationLogDetail>>(`/admin/users/${id}/operation-logs?${qs}`)
+  },
+  updateProfile: (id: string, data: { email: string }) =>
+    request<AdminUserDetail>(`/admin/users/${id}/profile`, { method: "PUT", body: JSON.stringify(data) }),
+  adjustBalance: (id: string, data: { type: "INCREASE" | "DECREASE"; amount: number; reason: string }) =>
+    request<BalanceTransaction>(`/admin/users/${id}/balance`, { method: "POST", body: JSON.stringify(data) }),
   toggleStatus: (id: string, isDeleted: 0 | 1) =>
     request<null>(`/admin/users/${id}/toggle`, { method: "POST", body: JSON.stringify({ is_deleted: isDeleted }) }),
   resetPassword: (id: string, newPassword: string) =>
@@ -588,6 +611,10 @@ export const adminConfigApi = {
     request<null>("/admin/site-config", { method: "PUT", body: JSON.stringify(data) }),
   toggleMaintenance: (enabled: boolean) =>
     request<null>("/admin/site-config/maintenance", { method: "POST", body: JSON.stringify({ enabled }) }),
+  getUserNumbering: () =>
+    request<UserNumberConfig>("/admin/site-config/user-numbering"),
+  updateUserNumbering: (data: UserNumberConfig) =>
+    request<null>("/admin/site-config/user-numbering", { method: "PUT", body: JSON.stringify(data) }),
 }
 
 // ============================================================

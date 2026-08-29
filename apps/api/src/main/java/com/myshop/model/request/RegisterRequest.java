@@ -20,6 +20,7 @@ public class RegisterRequest {
 
     @NotBlank(message = "Email is required")
     @Email(message = "Invalid email format")
+    @Size(max = 255, message = "Email must be at most 255 characters")
     private String email;
 
     @NotBlank(message = "Captcha ID is required")
@@ -27,4 +28,9 @@ public class RegisterRequest {
 
     @NotBlank(message = "Captcha is required")
     private String captcha;
+
+    /** Validate the canonical-looking value while the service applies lowercase normalization. */
+    public void setEmail(String email) {
+        this.email = email == null ? null : email.trim();
+    }
 }

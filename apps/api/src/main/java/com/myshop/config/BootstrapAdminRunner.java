@@ -11,6 +11,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
+
 /**
  * Optional first-admin bootstrap. It only runs when all three explicit
  * environment variables are supplied; there is no built-in credential.
@@ -48,14 +50,15 @@ public class BootstrapAdminRunner implements ApplicationRunner {
         if (username.isBlank() || email.isBlank() || password.length() < 12) {
             throw new IllegalStateException("Bootstrap admin requires username, email, and a password of at least 12 characters");
         }
-        if (userRepository.existsByUsername(username) || userRepository.existsByEmail(email)) {
+        String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
+        if (userRepository.existsByUsername(username) || userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
             log.info("Admin bootstrap skipped because the configured account already exists.");
             return;
         }
 
         User admin = new User();
         admin.setUsername(username);
-        admin.setEmail(email);
+        admin.setEmail(normalizedEmail);
         admin.setPasswordHash(passwordEncoder.encode(password));
         admin.setRole(UserRole.ADMIN);
         userRepository.save(admin);

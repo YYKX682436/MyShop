@@ -17,6 +17,7 @@ public class UserProfileResponse {
     private String username;
     private String email;
     private String role;
+    private Long userNo;
     private BigDecimal balance;
     private LocalDateTime createdAt;
 
@@ -26,6 +27,7 @@ public class UserProfileResponse {
         r.setUsername(user.getUsername());
         r.setEmail(user.getEmail());
         r.setRole(user.getRole().name());
+        r.setUserNo(user.getUserNo());
         r.setBalance(user.getBalance());
         r.setCreatedAt(user.getCreatedAt());
         return r;

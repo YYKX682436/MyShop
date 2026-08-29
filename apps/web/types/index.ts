@@ -50,6 +50,7 @@ export interface UserProfile {
   username: string
   email: string
   role: 'USER' | 'ADMIN'
+  user_no: number | null
   balance: number
   created_at: string
 }
@@ -497,11 +498,73 @@ export interface AdminOrderItem extends OrderDetail {
 
 export interface AdminUserItem {
   id: string
+  user_no: number
   username: string
   email: string
-  role: string
   balance: number
+  order_count: number
+  total_spent: number
   is_deleted: 0 | 1
+  created_at: string
+}
+
+export interface UserNumberConfig {
+  start_user_no: number
+  next_user_no: number
+}
+
+export interface AdminUserDetail extends Omit<AdminUserItem, "order_count" | "total_spent"> {
+  successful_order_count: number
+  total_spent: number
+}
+
+export interface AdminUserOrderItem {
+  id: string
+  product_title: string
+  spec_name: string | null
+  quantity: number
+  unit_price: number
+  subtotal: number
+}
+
+export interface AdminUserOrder {
+  id: string
+  total_amount: number | null
+  actual_amount: number | null
+  status: OrderStatus
+  order_type: OrderType
+  payment_method: string | null
+  email: string | null
+  created_at: string
+  paid_at: string | null
+  delivered_at: string | null
+  items: AdminUserOrderItem[]
+}
+
+export type BalanceTransactionType = 'ADMIN_ADJUSTMENT' | 'RECHARGE' | 'ORDER_PAYMENT' | 'REFUND'
+
+export interface BalanceTransaction {
+  id: string
+  type: BalanceTransactionType
+  amount: number
+  delta: number
+  balance_before: number
+  balance_after: number
+  reason: string
+  operator_id: string
+  order_id: string | null
+  created_at: string
+}
+
+export interface AdminOperationLogDetail {
+  id: string
+  user_id: string
+  username: string
+  action: string
+  target_type: string
+  target_id: string
+  detail: string
+  ip_address: string
   created_at: string
 }
 

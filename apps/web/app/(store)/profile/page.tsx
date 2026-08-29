@@ -72,9 +72,9 @@ export default function ProfilePage() {
                 <p className="text-2xl font-bold text-foreground">{formatYuan(user?.balance ?? 0)}</p>
               </div>
               <div className="rounded-lg bg-muted/50 p-3">
-                <p className="text-xs text-muted-foreground">{t("profile.role")}</p>
+                <p className="text-xs text-muted-foreground">{t("profile.userNumber")}</p>
                 <p className="text-sm font-medium text-foreground">
-                  {user?.role || "-"}
+                  {user?.user_no ?? "-"}
                 </p>
               </div>
             </div>

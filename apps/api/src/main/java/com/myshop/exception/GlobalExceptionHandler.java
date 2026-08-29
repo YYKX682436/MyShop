@@ -62,6 +62,11 @@ public class GlobalExceptionHandler {
                     .body(ApiResponse.error(ErrorCode.CHANNEL_CODE_CONFLICT,
                             "渠道代码已存在，请使用其他通道实例代码"));
         }
+        if (detail.contains("uq_users_email_normalized")) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(ErrorCode.EMAIL_EXISTS,
+                            "该邮箱已被其他用户使用"));
+        }
         log.warn("Data integrity violation");
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "数据校验失败"));

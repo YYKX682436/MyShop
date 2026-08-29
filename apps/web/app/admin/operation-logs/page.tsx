@@ -4,13 +4,14 @@ import { useCallback, useEffect, useState } from "react"
 
 import { AdminPage, AdminPagination, DataTableShell, PageHeader, PageToolbar, StatusBadge, TableEmptyState, TableErrorState, TableLoadingState } from "@/components/admin/shared"
 import { useLocale } from "@/lib/context"
+import type { TranslationKey } from "@/lib/i18n"
 import { formatDateTime } from "@/lib/utils"
 import { adminLogApi, requestOrThrow } from "@/services/api"
 import type { OperationLog } from "@/types"
 
 const PAGE_SIZE = 20
 
-const ACTIONS: Record<string, { key: "admin.actionProductCreate" | "admin.actionProductUpdate" | "admin.actionProductDelete" | "admin.actionCardImport" | "admin.actionCardInvalidate" | "admin.actionOrderMarkPaid" | "admin.actionUserDisable" | "admin.actionUserEnable" | "admin.actionConfigUpdate" | "admin.actionCategoryCreate" | "admin.actionCategoryUpdate" | "admin.actionCategoryDelete" | "admin.actionPaymentCreate" | "admin.actionPaymentUpdate" | "admin.actionPaymentDelete" | "admin.actionUserToggle"; tone: "success" | "info" | "danger" | "warning" | "purple" }> = {
+const ACTIONS: Record<string, { key: TranslationKey; tone: "success" | "info" | "danger" | "warning" | "purple" }> = {
   "product.create": { key: "admin.actionProductCreate", tone: "success" },
   "product.update": { key: "admin.actionProductUpdate", tone: "info" },
   "product.delete": { key: "admin.actionProductDelete", tone: "danger" },
@@ -27,6 +28,10 @@ const ACTIONS: Record<string, { key: "admin.actionProductCreate" | "admin.action
   "payment.update": { key: "admin.actionPaymentUpdate", tone: "info" },
   "payment.delete": { key: "admin.actionPaymentDelete", tone: "danger" },
   "user.toggle": { key: "admin.actionUserToggle", tone: "warning" },
+  "user.update_profile": { key: "admin.actionUserUpdateProfile", tone: "info" },
+  "user.adjust_balance": { key: "admin.actionUserAdjustBalance", tone: "warning" },
+  "user.reset_password": { key: "admin.actionUserResetPassword", tone: "warning" },
+  "config.user_number_update": { key: "admin.actionUserNumberUpdate", tone: "info" },
 }
 
 export default function AdminOperationLogsPage() {
