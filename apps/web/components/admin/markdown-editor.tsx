@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { ALLOWED_IMAGE_ACCEPT, validateImageFile } from "@/lib/image-upload"
 import { createMarkdownImage, insertMarkdownImage, type TextSelection } from "@/lib/markdown-image"
 import { MarkdownPreview } from "@/components/admin/markdown-preview"
+import { useLocale } from "@/lib/context"
 
 interface MarkdownEditorProps {
   value: string
@@ -15,6 +16,7 @@ interface MarkdownEditorProps {
 }
 
 export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorProps) {
+  const { t } = useLocale()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
@@ -74,11 +76,11 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
     setUploading(true)
     try {
       const url = await uploadImage(file)
-      if (!url) throw new Error("上传未返回图片地址")
+      if (!url) throw new Error(t("admin.uploadUrlMissing"))
       insertImage(file.name, url)
-      toast.success("图片已插入")
+      toast.success(t("admin.imageInserted"))
     } catch (error: unknown) {
-      toast.error(error instanceof Error ? error.message : "上传失败")
+      toast.error(error instanceof Error ? error.message : t("admin.uploadFailed"))
     } finally {
       setUploading(false)
       resetInput()
@@ -130,7 +132,7 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
     <div className="grid min-w-0 gap-4 lg:grid-cols-2">
       <div className="min-w-0">
         <div className="mb-1.5 flex items-center justify-between gap-3">
-          <span className="text-xs text-muted-foreground">支持 Markdown 文本和本地图片拖拽</span>
+          <span className="text-xs text-muted-foreground">{t("admin.markdownHint")}</span>
           <button
             type="button"
             className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
@@ -139,7 +141,7 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
             disabled={uploading}
           >
             {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
-            插入图片
+            {t("admin.insertImage")}
           </button>
         </div>
         <div
@@ -155,7 +157,7 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
           <textarea
             ref={textareaRef}
             className="block min-h-52 w-full resize-y rounded-lg border-0 bg-transparent px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder={"支持 Markdown 格式编辑\n# 标题  ## 二级标题  ### 三级标题\n**粗体**  *斜体*  空一行为段落换行\n![图片描述](图片URL) — 可点击「插入图片」或拖拽图片自动生成"}
+            placeholder={t("admin.markdownPlaceholder")}
             value={value}
             onChange={(event) => {
               currentValueRef.current = event.target.value
@@ -167,17 +169,17 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
             onSelect={(event) => rememberSelection(event.currentTarget)}
             onKeyUp={(event) => rememberSelection(event.currentTarget)}
             onKeyDown={handleEditorKeyDown}
-            aria-label="商品详细说明 Markdown 编辑器"
+            aria-label={t("admin.markdownEditor")}
           />
           {isDragActive && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary/15 text-sm font-semibold text-primary">
-              松开即可插入图片
+              {t("admin.releaseToInsert")}
             </div>
           )}
           {uploading && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-lg bg-background/75 text-sm font-medium text-foreground backdrop-blur-[1px]">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              正在上传并插入...
+              {t("admin.uploadingAndInsert")}
             </div>
           )}
         </div>
@@ -192,9 +194,9 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
       </div>
 
       <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="border-b border-border px-3 py-2 text-sm font-medium text-foreground">实时预览</div>
+        <div className="border-b border-border px-3 py-2 text-sm font-medium text-foreground">{t("admin.markdownPreview")}</div>
         <div className="min-w-0 p-3">
-          <MarkdownPreview value={value} />
+          <MarkdownPreview value={value} emptyMessage={t("admin.markdownEmpty")} />
         </div>
       </div>
     </div>

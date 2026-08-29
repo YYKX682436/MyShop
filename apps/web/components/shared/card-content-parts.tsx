@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Copy } from "lucide-react"
+import { useLocale } from "@/lib/context"
 
 interface CardContentPartsProps {
   parts: string[]
@@ -11,6 +12,7 @@ interface CardContentPartsProps {
 
 /** Renders one CardKey's ordered parts without assigning card-number semantics. */
 export function CardContentParts({ parts, onCopy, className = "" }: CardContentPartsProps) {
+  const { t } = useLocale()
   const resolvedParts = parts
   const [expanded, setExpanded] = useState(false)
   const visibleParts = expanded ? resolvedParts : resolvedParts.slice(0, 2)
@@ -26,7 +28,7 @@ export function CardContentParts({ parts, onCopy, className = "" }: CardContentP
           <button
             type="button"
             onClick={() => onCopy(part)}
-            aria-label="复制内容"
+            aria-label={t("admin.copyContent")}
             className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <Copy className="h-3.5 w-3.5" />
@@ -40,7 +42,7 @@ export function CardContentParts({ parts, onCopy, className = "" }: CardContentP
             onClick={() => setExpanded(value => !value)}
             className="text-xs text-primary hover:underline"
           >
-            {expanded ? "收起" : `更多（${remainingCount}）`}
+            {expanded ? t("admin.collapse") : t("admin.moreContent").replace("{count}", String(remainingCount))}
           </button>
         )}
         <button
@@ -48,7 +50,7 @@ export function CardContentParts({ parts, onCopy, className = "" }: CardContentP
           onClick={() => onCopy(resolvedParts.join("\n"))}
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
-          <Copy className="h-3.5 w-3.5" />复制全部
+          <Copy className="h-3.5 w-3.5" />{t("admin.copyAllContent")}
         </button>
       </div>
     </div>

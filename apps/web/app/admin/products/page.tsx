@@ -1,896 +1,259 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef, type RefObject } from "react"
-import { Plus, Search, Edit, Trash2, X, AlertCircle, ChevronDown, EyeOff, Eye, KeyRound } from "lucide-react"
-import { toast } from "sonner"
+import { useCallback, useEffect, useState } from "react"
+import { AlertCircle, Edit, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
-import { cn, formatYuan } from "@/lib/utils"
-import { Modal } from "@/components/ui/modal"
-import { CardContentImportFields } from "@/components/admin/card-content-import-fields"
-import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
-import { MarkdownEditor } from "@/components/admin/markdown-editor"
-import { validateCardContentColumns } from "@/lib/card-content"
-import { useLocale } from "@/lib/context"
-import { adminProductApi, adminCategoryApi, adminCardKeyApi, requestOrThrow } from "@/services/api"
-import type { ProductDetail, Category } from "@/types"
+import { toast } from "sonner"
 
-type ProductFormData = {
-  title: string
-  description: string
-  detail_md: string
-  category_id: string
-  base_price: string
-  cover_url: string
-  low_stock_threshold: string
-  wholesale_enabled: boolean
-  is_enabled: boolean
-  initial_sales: string
-  sort_order: string
-  delivery_type: "AUTO" | "MANUAL"
-  customer_input_fields: { id: string; label: string }[]
-  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
-  manual_stock: string
-}
+import { CardKeyImportDialog } from "@/components/admin/products/card-key-import-dialog"
+import {
+  AdminPage,
+  AdminPagination,
+  ConfirmAlert,
+  DataTableShell,
+  PageHeader,
+  PageToolbar,
+  StatusBadge,
+  TableEmptyState,
+  TableErrorState,
+  TableLoadingState,
+} from "@/components/admin/shared"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useLocale } from "@/lib/context"
+import { cn, formatYuan } from "@/lib/utils"
+import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
+import type { Category, ProductDetail } from "@/types"
+
+const PAGE_SIZE = 20
 
 export default function AdminProductsPage() {
   const { t } = useLocale()
   const [products, setProducts] = useState<ProductDetail[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const [categoryError, setCategoryError] = useState(false)
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("")
-  const [statusFilter, setStatusFilter] = useState<string>("")
+  const [statusFilter, setStatusFilter] = useState("")
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
-  const pageSize = 20
+  const [deleteProduct, setDeleteProduct] = useState<ProductDetail | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [importProduct, setImportProduct] = useState<ProductDetail | null>(null)
 
-  // Modal states
-  const [showModal, setShowModal] = useState(false)
-  const [editingProduct, setEditingProduct] = useState<ProductDetail | null>(null)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
-  const [showImportModal, setShowImportModal] = useState<ProductDetail | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [specsEnabled, setSpecsEnabled] = useState(false)
-  const titleRef = useRef<HTMLInputElement>(null)
-  const categoryRef = useRef<HTMLSelectElement>(null)
-  const basePriceRef = useRef<HTMLInputElement>(null)
-  const [formErrors, setFormErrors] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [search])
 
-  // Form state
-  const [formData, setFormData] = useState<ProductFormData>({
-    title: "",
-    description: "",
-    detail_md: "",
-    category_id: "",
-    base_price: "",
-    cover_url: "",
-    low_stock_threshold: "10",
-    wholesale_enabled: false,
-    is_enabled: true,
-    initial_sales: "",
-    sort_order: "",
-    delivery_type: "AUTO",
-    customer_input_fields: [],
-    stock_mode: "CARD_KEY",
-    manual_stock: "",
-  })
-  const [formSpecs, setFormSpecs] = useState<{ id?: string; name: string; price: string; manual_stock?: string; card_key_count?: number }[]>([])
-  const [specDeleteConfirm, setSpecDeleteConfirm] = useState<{ idx: number; name: string; count: number } | null>(null)
-
-  const uploadImage = useCallback(async (file: File) => {
-    const result = await adminProductApi.uploadImage(file)
-    return result.url
+  const loadCategories = useCallback(async () => {
+    setCategoryError(false)
+    try {
+      setCategories(await requestOrThrow(() => adminCategoryApi.getList()))
+    } catch {
+      setCategoryError(true)
+    }
   }, [])
 
-  // Import modal state
-  const [importSpecId, setImportSpecId] = useState("")
-  const [importColumns, setImportColumns] = useState([""])
-  const [importCheckDuplicate, setImportCheckDuplicate] = useState(true)
-  const [importing, setImporting] = useState(false)
-
-  const fetchProducts = useCallback(async () => {
+  const loadProducts = useCallback(async () => {
     setLoading(true)
+    setError(false)
     try {
       const data = await requestOrThrow(() => adminProductApi.getList({
-          page,
-          page_size: pageSize,
-          category_id: categoryFilter || undefined,
-          is_enabled: statusFilter ? (statusFilter === "enabled" ? 1 : 0) : undefined,
-          keyword: search || undefined,
-        }))
+        page,
+        page_size: PAGE_SIZE,
+        category_id: categoryFilter || undefined,
+        is_enabled: statusFilter ? (statusFilter === "enabled" ? 1 : 0) : undefined,
+        keyword: debouncedSearch || undefined,
+      }))
       setProducts(data.list)
       setTotal(data.pagination.total)
     } catch {
       setProducts([])
       setTotal(0)
+      setError(true)
     } finally {
       setLoading(false)
     }
-  }, [page, categoryFilter, statusFilter, search])
+  }, [categoryFilter, debouncedSearch, page, statusFilter])
 
-  useEffect(() => {
-    async function fetchInitData() {
-      try {
-        const cats = await requestOrThrow(() => adminCategoryApi.getList())
-        setCategories(cats)
-      } catch {
-        setCategories([])
-      }
-    }
-    fetchInitData()
-  }, [])
+  useEffect(() => { void loadCategories() }, [loadCategories])
+  useEffect(() => { void loadProducts() }, [loadProducts])
 
-  useEffect(() => { fetchProducts() }, [fetchProducts])
-
-  const getCategoryName = (id: string) => categories.find(c => c.id === id)?.name || "-"
-
-  const handleEdit = (product: ProductDetail) => {
-    setEditingProduct(product)
-    setFormData({
-      title: product.title,
-      description: product.description || "",
-      detail_md: product.detail_md || "",
-      category_id: product.category_id,
-      base_price: String(product.base_price),
-      cover_url: product.cover_url || "",
-      low_stock_threshold: String(product.low_stock_threshold ?? 10),
-      wholesale_enabled: false,
-      is_enabled: product.is_enabled !== false,
-      initial_sales: String(product.initial_sales ?? ""),
-      sort_order: String(product.sort_order ?? ""),
-      delivery_type: product.delivery_type === "MANUAL" ? "MANUAL" : "AUTO",
-      customer_input_fields: (product.customer_input_fields || []).map(field => ({ id: field.id, label: field.label })),
-      stock_mode: product.stock_mode || ((product.delivery_type || "AUTO") === "MANUAL" ? "MANUAL" : "CARD_KEY"),
-      manual_stock: product.stock_mode === "MANUAL" && product.stock_available != null ? String(product.stock_available) : "",
-    })
-    const specs = product.specs.map(s => ({
-      id: s.id,
-      name: s.name,
-      price: String(s.price),
-      manual_stock: s.manual_stock != null ? String(s.manual_stock) : "",
-      card_key_count: s.card_key_count,
-    }))
-    setFormSpecs(specs)
-    setSpecsEnabled(product.spec_enabled === true)
-    setShowModal(true)
-  }
-
-  const handleDelete = async (id: string) => {
-    try {
-      await requestOrThrow(() => adminProductApi.delete(id))
-      toast.success("删除成功")
-      setShowDeleteConfirm(null)
-      await fetchProducts()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "删除失败")
-    }
-  }
+  const getCategoryName = (categoryId: string) => categories.find((category) => category.id === categoryId)?.name || "—"
+  const isUnlimited = (product: ProductDetail) => product.unlimited === true || product.stock_mode === "UNLIMITED"
+  const isCardKeyStock = (product: ProductDetail) => product.stock_mode !== "MANUAL" && product.stock_mode !== "UNLIMITED"
 
   const handleToggleStatus = async (product: ProductDetail) => {
     try {
       await requestOrThrow(() => adminProductApi.update(product.id, { is_enabled: product.is_enabled === false }))
-      toast.success(product.is_enabled === false ? "已上架" : "已下架")
-      await fetchProducts()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "操作失败")
+      toast.success(product.is_enabled === false ? t("admin.productPublished") : t("admin.productUnpublished"))
+      await loadProducts()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     }
   }
 
-  const focusFirstError = (errors: Record<string, boolean>, refMap: Record<string, RefObject<HTMLElement | null>>) => {
-    for (const key of Object.keys(errors)) {
-      if (errors[key] && refMap[key]?.current) {
-        refMap[key].current!.focus()
-        refMap[key].current!.scrollIntoView({ behavior: "smooth", block: "center" })
-        break
-      }
-    }
-  }
-
-  const handleSave = async () => {
-    const errors: Record<string, boolean> = {}
-    if (!formData.title.trim()) errors.title = true
-    if (!formData.category_id) errors.category_id = true
-    if (!specsEnabled && (!formData.base_price || parseFloat(formData.base_price) <= 0)) errors.base_price = true
-
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors)
-      const messages: string[] = []
-      if (errors.title) messages.push("商品名称")
-      if (errors.category_id) messages.push("商品分类")
-      if (errors.base_price) messages.push("基础售价")
-      toast.error(`请填写：${messages.join("、")}`)
-      focusFirstError(errors, { title: titleRef, category_id: categoryRef, base_price: basePriceRef })
-      return
-    }
-    setFormErrors({})
-
-    if (formData.customer_input_fields.length > 20) {
-      toast.error("客户填写字段最多支持20项")
-      return
-    }
-    const customerInputLabels = new Set<string>()
-    for (const field of formData.customer_input_fields) {
-      const label = field.label.trim()
-      if (!label) { toast.error("客户填写字段名称不能为空"); return }
-      if (label.length > 50) { toast.error("客户填写字段名称最多50个字符"); return }
-      if ([...label].some(character => /\p{C}/u.test(character))) {
-        toast.error("客户填写字段名称不能包含换行或控制字符")
-        return
-      }
-      const key = label.toLocaleLowerCase()
-      if (customerInputLabels.has(key)) { toast.error(`客户填写字段名称「${label}」重复`); return }
-      customerInputLabels.add(key)
-    }
-
-    if (specsEnabled) {
-      const specNames = new Set<string>()
-      for (const spec of formSpecs) {
-        if (!spec.name.trim()) { toast.error("规格名称不能为空"); return }
-        if (!spec.price || parseFloat(spec.price) <= 0) { toast.error(`规格「${spec.name || "未命名"}」价格无效`); return }
-        const normalizedName = spec.name.trim()
-        if (specNames.has(normalizedName)) { toast.error(`规格名称「${normalizedName}」重复`); return }
-        specNames.add(normalizedName)
-      }
-    }
-    if (formData.stock_mode === "MANUAL") {
-      const rootStock = Number(formData.manual_stock || 0)
-      if (!Number.isInteger(rootStock) || rootStock < 0) { toast.error("手动库存必须是大于等于 0 的整数"); return }
-      for (const spec of formSpecs) {
-        if (spec.manual_stock && (!Number.isInteger(Number(spec.manual_stock)) || Number(spec.manual_stock) < 0)) {
-          toast.error(`规格「${spec.name || "未命名"}」的手动库存必须是大于等于 0 的整数`)
-          return
-        }
-      }
-    }
-    setSaving(true)
+  const handleDelete = async () => {
+    if (!deleteProduct) return
+    setDeleting(true)
     try {
-      // Auto-sync base_price = min(spec prices) when specs enabled
-      let basePrice = parseFloat(formData.base_price) || 0
-      if (specsEnabled && formSpecs.length > 0) {
-        const specPrices = formSpecs.map(s => parseFloat(s.price)).filter(p => p > 0)
-        if (specPrices.length > 0) {
-          basePrice = Math.min(...specPrices)
-        }
-      }
-
-      const payload = {
-        title: formData.title,
-        description: formData.description || undefined,
-        detail_md: formData.detail_md || undefined,
-        category_id: formData.category_id,
-        base_price: basePrice,
-        cover_url: formData.cover_url || undefined,
-        low_stock_threshold: parseInt(formData.low_stock_threshold) || 10,
-        wholesale_enabled: false,
-        spec_enabled: specsEnabled,
-        is_enabled: formData.is_enabled,
-        initial_sales: parseInt(formData.initial_sales) || 0,
-        sort_order: parseInt(formData.sort_order) || undefined,
-        delivery_type: formData.delivery_type,
-        customer_input_fields: formData.customer_input_fields.map(field => ({ id: field.id, label: field.label.trim() })),
-        stock_mode: formData.stock_mode,
-        manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, parseInt(formData.manual_stock) || 0) : undefined,
-      }
-
-      let productId: string
-      if (editingProduct) {
-        await requestOrThrow(() => adminProductApi.update(editingProduct.id, payload))
-        productId = editingProduct.id
-      } else {
-        const created = await requestOrThrow(() => adminProductApi.create(payload))
-        productId = created.id
-      }
-
-      // Sync specs：仅在多规格启用时执行增删改，停用时仅通过 spec_enabled=false 控制显示，不删除规格
-      if (productId && specsEnabled) {
-        const existingSpecs = editingProduct?.specs || []
-        const existingIds = new Set(existingSpecs.map(s => s.id))
-        const keepIds = new Set(formSpecs.filter(s => s.id).map(s => s.id!))
-
-        // Delete removed specs (backend will reject if spec has card keys)
-        for (const oldSpec of existingSpecs) {
-          if (!keepIds.has(oldSpec.id)) {
-            try {
-              await adminProductApi.deleteSpec(productId, oldSpec.id)
-            } catch (err: unknown) {
-              // 后端拒绝删除（有卡密）：提示用户但不中断保存流程
-              if (err instanceof Error) toast.error(err.message)
-            }
-          }
-        }
-        // Update existing + add new specs
-        for (const spec of formSpecs) {
-          if (spec.id && existingIds.has(spec.id)) {
-            const old = existingSpecs.find(s => s.id === spec.id)
-              if (old && (old.name !== spec.name || String(old.price) !== spec.price || String(old.manual_stock ?? "") !== String(spec.manual_stock ?? ""))) {
-              try { await adminProductApi.updateSpec(productId, spec.id, { name: spec.name, price: parseFloat(spec.price), manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, parseInt(spec.manual_stock || "0") || 0) : undefined }) } catch { /* ignore */ }
-            }
-          } else {
-            try { await adminProductApi.addSpec(productId, { name: spec.name, price: parseFloat(spec.price), manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, parseInt(spec.manual_stock || "0") || 0) : undefined }) } catch { /* ignore */ }
-          }
-        }
-      }
-
-      toast.success("保存成功")
-      handleCloseModal()
-      await fetchProducts()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "保存失败")
+      await requestOrThrow(() => adminProductApi.delete(deleteProduct.id))
+      toast.success(t("admin.productDeleted"))
+      setDeleteProduct(null)
+      await loadProducts()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.deleteConfirm"))
     } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleCloseModal = () => {
-    setShowModal(false)
-    setEditingProduct(null)
-    setFormData({ title: "", description: "", detail_md: "", category_id: "", base_price: "", cover_url: "", low_stock_threshold: "10", wholesale_enabled: false, is_enabled: true, initial_sales: "", sort_order: "", delivery_type: "AUTO", customer_input_fields: [], stock_mode: "CARD_KEY", manual_stock: "" })
-    setFormSpecs([])
-    setSpecsEnabled(false)
-    setSpecDeleteConfirm(null)
-    setFormErrors({})
-  }
-
-  const handleImport = async () => {
-    const contentError = validateCardContentColumns(importColumns)
-    if (!showImportModal || contentError) {
-      toast.error(contentError || "至少需要一列卡券内容")
-      return
-    }
-    setImporting(true)
-    try {
-      const result = await requestOrThrow(() => adminCardKeyApi.import({
-          product_id: showImportModal.id,
-          spec_id: importSpecId || null,
-          content_columns: importColumns,
-          check_duplicate: importCheckDuplicate,
-        }))
-       toast.success(`读取 ${result.total_count}，成功 ${result.success_count}，重复 ${result.duplicate_count}，失败 ${result.fail_count}`)
-      setShowImportModal(null)
-      setImportColumns([""])
-      setImportCheckDuplicate(true)
-      setImportSpecId("")
-      await fetchProducts()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "导入失败")
-    } finally {
-      setImporting(false)
+      setDeleting(false)
     }
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("admin.products")}</h1>
-          <p className="text-sm text-muted-foreground">{t("admin.manageProducts")}</p>
-        </div>
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors"
-          onClick={() => setShowModal(true)}
-        >
-          <Plus className="h-4 w-4" />
-          {t("admin.addProduct")}
-        </button>
-      </div>
+    <AdminPage>
+      <PageHeader
+        title={t("admin.products")}
+        description={t("admin.manageProducts")}
+        actions={
+          <Button asChild>
+            <Link href="/admin/products/new"><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addProduct")}</Link>
+          </Button>
+        }
+      />
 
-      {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={t("admin.searchProduct")}
-            className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+      <PageToolbar>
+        <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+          <Input
+            className="min-w-0 sm:max-w-sm"
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+            onChange={(event) => { setSearch(event.target.value); setPage(1) }}
+            placeholder={t("admin.searchProduct")}
+            aria-label={t("admin.searchProduct")}
           />
-        </div>
-        <div className="relative">
           <select
-            className="h-10 appearance-none rounded-lg border border-input bg-background pl-3 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={categoryFilter}
-            onChange={(e) => { setCategoryFilter(e.target.value); setPage(1) }}
+            onChange={(event) => { setCategoryFilter(event.target.value); setPage(1) }}
+            aria-label={t("admin.category")}
+            disabled={categoryError}
           >
             <option value="">{t("admin.allCategoriesFilter")}</option>
-            {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        </div>
-        <div className="relative">
           <select
-            className="h-10 appearance-none rounded-lg border border-input bg-background pl-3 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1) }}
+            onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }}
+            aria-label={t("admin.statusLabel")}
           >
             <option value="">{t("admin.allStatus")}</option>
             <option value="enabled">{t("admin.active")}</option>
             <option value="disabled">{t("admin.inactive")}</option>
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         </div>
-      </div>
+        {categoryError && (
+          <Button type="button" variant="outline" size="sm" onClick={() => void loadCategories()}>
+            {t("common.retry")}
+          </Button>
+        )}
+      </PageToolbar>
 
-      {/* Table */}
-      {loading ? (
-        <div className="flex items-center justify-center py-24">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        </div>
-      ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.product")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.category")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.basePrice")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.stockLabel")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.sold")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
-                  <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((product) => (
-                  <tr key={product.id} className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <Link href={`/product/${product.id}`} className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-muted hover:opacity-80 transition-opacity">
-                          {product.cover_url ? (
-                            <img src={product.cover_url} alt={product.title} className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">N/A</div>
-                          )}
-                        </Link>
-                        <div className="flex flex-col">
-                          <Link href={`/product/${product.id}`} className="font-medium text-foreground hover:text-primary hover:underline transition-colors">
-                            {product.title}
-                          </Link>
-                          {!product.unlimited && product.stock_available != null && product.stock_available <= (product.low_stock_threshold ?? 10) && product.stock_available > 0 && (
-                            <span className="text-xs text-amber-500 flex items-center gap-1">
-                              <AlertCircle className="h-3 w-3" />
-                              {t("admin.lowStock")}
-                            </span>
-                          )}
-                        </div>
+      <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t("admin.product")}</TableHead>
+              <TableHead>{t("admin.category")}</TableHead>
+              <TableHead>{t("admin.basePrice")}</TableHead>
+              <TableHead>{t("admin.stockLabel")}</TableHead>
+              <TableHead>{t("admin.sold")}</TableHead>
+              <TableHead>{t("admin.statusLabel")}</TableHead>
+              <TableHead className="text-right">{t("admin.actions")}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading && <TableLoadingState colSpan={7} />}
+            {!loading && error && <TableErrorState colSpan={7} onRetry={() => void loadProducts()} />}
+            {!loading && !error && products.length === 0 && <TableEmptyState colSpan={7}>{t("admin.noProductData")}</TableEmptyState>}
+            {!loading && !error && products.map((product) => {
+              const unlimited = isUnlimited(product)
+              const lowStock = !unlimited && product.stock_available != null && product.stock_available > 0 && product.stock_available <= (product.low_stock_threshold ?? 10)
+              const cardKeyStock = isCardKeyStock(product)
+              return (
+                <TableRow key={product.id}>
+                  <TableCell className="min-w-[16rem]">
+                    <div className="flex items-center gap-3">
+                      <Link href={`/product/${product.id}`} className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-muted" aria-label={product.title}>
+                        {product.cover_url ? <img src={product.cover_url} alt={product.title} className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{t("admin.systemNoData")}</span>}
+                      </Link>
+                      <div className="min-w-0">
+                        <Link href={`/product/${product.id}`} className="block truncate font-medium text-foreground hover:text-primary hover:underline">{product.title}</Link>
+                        {lowStock && <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600"><AlertCircle className="h-3 w-3" aria-hidden="true" />{t("admin.lowStock")}</span>}
                       </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                        {getCategoryName(product.category_id)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-foreground">{formatYuan(product.base_price)}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn("font-medium", product.unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-red-500" : (product.stock_available ?? 0) <= (product.low_stock_threshold ?? 10) ? "text-amber-500" : "text-foreground")}>
-                        {product.unlimited ? "不限" : product.stock_available}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-foreground">{product.sales_count ?? 0}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn("rounded-full px-2.5 py-0.5 text-xs font-medium", product.is_enabled !== false ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground")}>
-                        {product.is_enabled !== false ? t("admin.active") : t("admin.inactive")}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors" title="编辑" onClick={() => handleEdit(product)}>
-                          <Edit className="h-4 w-4" />
-                        </button>
-                        <button type="button" disabled={product.stock_mode === "MANUAL" || product.stock_mode === "UNLIMITED"} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:pointer-events-none disabled:opacity-30" title={product.stock_mode === "MANUAL" || product.stock_mode === "UNLIMITED" ? "手动或无限库存无需导入卡密" : "导入卡密"} onClick={() => { setShowImportModal(product); setImportSpecId("") }}>
-                          <KeyRound className="h-4 w-4" />
-                        </button>
-                        <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors" title={product.is_enabled !== false ? "下架" : "上架"} onClick={() => handleToggleStatus(product)}>
-                          {product.is_enabled !== false ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                        <button type="button" className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" title="删除" onClick={() => setShowDeleteConfirm(product.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {products.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-12 text-center text-sm text-muted-foreground">{t("admin.noProductData")}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {total > pageSize && (
-            <div className="flex items-center justify-between border-t border-border px-4 py-3">
-              <span className="text-sm text-muted-foreground">共 {total} 件商品</span>
-              <div className="flex items-center gap-2">
-                <button type="button" disabled={page <= 1} onClick={() => setPage(p => p - 1)} className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground disabled:opacity-50">{t("admin.prevPage")}</button>
-                <span className="text-sm text-muted-foreground">{page} / {Math.ceil(total / pageSize)}</span>
-                <button type="button" disabled={page >= Math.ceil(total / pageSize)} onClick={() => setPage(p => p + 1)} className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground disabled:opacity-50">{t("admin.nextPage")}</button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+                    </div>
+                  </TableCell>
+                  <TableCell><StatusBadge label={getCategoryName(product.category_id)} /></TableCell>
+                  <TableCell className="whitespace-nowrap font-medium">{formatYuan(product.base_price)}</TableCell>
+                  <TableCell>
+                    <span className={cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-600" : "text-foreground")}>
+                      {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}
+                    </span>
+                  </TableCell>
+                  <TableCell>{product.sales_count ?? 0}</TableCell>
+                  <TableCell><StatusBadge label={product.is_enabled !== false ? t("admin.active") : t("admin.inactive")} tone={product.is_enabled !== false ? "success" : "neutral"} /></TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1">
+                      <Button asChild variant="ghost" size="icon" title={t("admin.editProduct")} aria-label={t("admin.editProduct")}>
+                        <Link href={`/admin/products/${product.id}/edit`}><Edit className="h-4 w-4" aria-hidden="true" /></Link>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title={cardKeyStock ? t("admin.importKeys") : t("admin.stockModeHint")}
+                        aria-label={cardKeyStock ? t("admin.importKeys") : t("admin.stockModeHint")}
+                        disabled={!cardKeyStock}
+                        onClick={() => setImportProduct(product)}
+                      >
+                        <KeyRound className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon" title={product.is_enabled !== false ? t("admin.inactive") : t("admin.active")} aria-label={product.is_enabled !== false ? t("admin.inactive") : t("admin.active")} onClick={() => void handleToggleStatus(product)}>
+                        {product.is_enabled !== false ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon" title={t("admin.delete")} aria-label={t("admin.delete")} onClick={() => setDeleteProduct(product)}>
+                        <Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      </DataTableShell>
 
-      {/* Add/Edit Product Modal */}
-      <Modal open={showModal} onClose={handleCloseModal} className="max-w-4xl max-h-[90vh] overflow-y-auto">
-            <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-foreground">
-                {editingProduct ? t("admin.editProduct") : t("admin.addProduct")}
-              </h2>
-              <button type="button" onClick={handleCloseModal} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="flex flex-col gap-5 p-6">
-              {/* 商品名称 */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.productNameReq")}</label>
-                <input ref={titleRef} type="text" className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", formErrors.title ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")} placeholder="请输入商品名称" value={formData.title} onChange={(e) => { setFormData({ ...formData, title: e.target.value }); setFormErrors(prev => ({ ...prev, title: false })) }} />
-              </div>
-              {/* 商品简介 */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.productBrief")}</label>
-                <input type="text" className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" placeholder="简短描述商品特点" value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} />
-              </div>
-              {/* 分类 */}
-              <div className="flex max-w-md flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.categoryReq")}</label>
-                <select ref={categoryRef} className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", formErrors.category_id ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")} value={formData.category_id} onChange={(e) => { setFormData({ ...formData, category_id: e.target.value }); setFormErrors(prev => ({ ...prev, category_id: false })) }}>
-                  <option value="">请选择分类</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              {/* 基础售价 + 封面图片 */}
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">{t("admin.basePriceReq")}</label>
-                  <input ref={basePriceRef} type="number" step="0.01" className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", formErrors.base_price ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")} placeholder="0.00" value={formData.base_price} onChange={(e) => { setFormData({ ...formData, base_price: e.target.value }); setFormErrors(prev => ({ ...prev, base_price: false })) }} />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">{t("admin.coverUrl")}</label>
-                  <ImageUploadDropzone
-                    value={formData.cover_url}
-                    onChange={(coverUrl) => setFormData(prev => ({ ...prev, cover_url: coverUrl }))}
-                    uploadImage={uploadImage}
-                  />
-                </div>
-              </div>
-              {/* 排序权重 + 低库存预警 */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">排序权重</label>
-                  <input type="number" className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" placeholder="0" value={formData.sort_order} onChange={(e) => setFormData({ ...formData, sort_order: e.target.value })} />
-                  <p className="text-xs text-muted-foreground">数字越小越靠前，默认为 0</p>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">{t("admin.lowStockAlert")}</label>
-                  <input type="number" className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" placeholder="10" value={formData.low_stock_threshold} onChange={(e) => setFormData({ ...formData, low_stock_threshold: e.target.value })} />
-                </div>
-              </div>
-              {/* 上架状态 + 初始销量 */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">{t("admin.listingStatus")}</label>
-                  <div className="flex h-10 items-center gap-2">
-                    <button type="button" className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors", formData.is_enabled ? "bg-primary" : "bg-muted")} onClick={() => setFormData({ ...formData, is_enabled: !formData.is_enabled })}>
-                      <span className={cn("absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform", formData.is_enabled && "translate-x-5")} />
-                    </button>
-                    <span className="text-sm text-muted-foreground">{formData.is_enabled ? "已上架" : "已下架"}</span>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">初始销量</label>
-                  <input type="number" className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" placeholder="0" value={formData.initial_sales} onChange={(e) => setFormData({ ...formData, initial_sales: e.target.value })} />
-                  <p className="text-xs text-muted-foreground">前台显示销量 = 真实销量 + 初始销量</p>
-                </div>
-              </div>
-              {/* 发货方式 */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">发货方式</label>
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                      formData.delivery_type === "AUTO"
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-input text-foreground hover:border-primary/30"
-                    )}
-                    onClick={() => setFormData({ ...formData, delivery_type: "AUTO", stock_mode: "CARD_KEY" })}
-                  >
-                    自动发货
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                      formData.delivery_type === "MANUAL"
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-input text-foreground hover:border-primary/30"
-                    )}
-                    onClick={() => setFormData({ ...formData, delivery_type: "MANUAL", stock_mode: formData.stock_mode === "UNLIMITED" ? "UNLIMITED" : "MANUAL" })}
-                  >
-                    手动发货
-                  </button>
-                </div>
-              </div>
-              {/* 客户填写字段 + 库存模式 */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium text-foreground">购买时客户需填写</label>
-                    <span className="text-xs text-muted-foreground">{formData.customer_input_fields.length}/20</span>
-                  </div>
-                  <div className="space-y-2 rounded-lg border border-input bg-muted/10 p-3">
-                    {formData.customer_input_fields.map((field, index) => (
-                      <div key={field.id} className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          maxLength={50}
-                          value={field.label}
-                          placeholder="例如：QQ号码、收货账号"
-                          onChange={(event) => setFormData(current => ({
-                            ...current,
-                            customer_input_fields: current.customer_input_fields.map((item, itemIndex) =>
-                              itemIndex === index ? { ...item, label: event.target.value } : item
-                            ),
-                          }))}
-                          className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                        />
-                        <button
-                          type="button"
-                          title="删除字段"
-                          onClick={() => setFormData(current => ({
-                            ...current,
-                            customer_input_fields: current.customer_input_fields.filter((_, itemIndex) => itemIndex !== index),
-                          }))}
-                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      disabled={formData.customer_input_fields.length >= 20}
-                      onClick={() => setFormData(current => ({
-                        ...current,
-                        customer_input_fields: [...current.customer_input_fields, {
-                          id: globalThis.crypto?.randomUUID?.() || `field-${Date.now()}-${current.customer_input_fields.length}`,
-                          label: "",
-                        }],
-                      }))}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-dashed border-primary/50 px-3 text-xs font-medium text-primary hover:bg-primary/5 disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      <Plus className="h-3.5 w-3.5" /> 添加字段
-                    </button>
-                    {formData.customer_input_fields.length === 0 && (
-                      <p className="text-xs text-muted-foreground">不添加字段时，商品购买页不会显示客户填写项。</p>
-                    )}
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">库存模式</label>
-                  <select
-                    className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={formData.stock_mode}
-                     onChange={(e) => setFormData({ ...formData, stock_mode: e.target.value as ProductFormData["stock_mode"] })}
-                  >
-                    {formData.delivery_type === "AUTO" && <option value="CARD_KEY">卡券库存（自动发货）</option>}
-                    {formData.delivery_type === "MANUAL" && <>
-                      <option value="MANUAL">手动库存（有限）</option>
-                      <option value="UNLIMITED">无限库存</option>
-                    </>}
-                  </select>
-                  <p className="text-xs text-muted-foreground">自动发货只能使用卡券；手动发货可使用有限或无限库存。</p>
-                </div>
-              </div>
-              {formData.delivery_type === "MANUAL" && formData.stock_mode === "MANUAL" && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/20">
-                  <label className="flex flex-col gap-1.5 text-sm font-medium text-foreground">
-                    {specsEnabled ? "默认手动库存（规格库存请在下方分别填写）" : "可售手动库存"}
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                      placeholder="0"
-                      value={formData.manual_stock}
-                      onChange={(e) => setFormData({ ...formData, manual_stock: e.target.value })}
-                    />
-                  </label>
-                  <p className="mt-1.5 text-xs text-muted-foreground">下单时原子预占，订单过期会只恢复一次；无限库存不会生成虚拟数量。</p>
-                </div>
-              )}
-              {/* 商品规格 */}
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-foreground">商品规格</label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">启用多规格</span>
-                    <button type="button" className={cn("relative h-6 w-11 rounded-full transition-colors", specsEnabled ? "bg-primary" : "bg-muted")} onClick={() => {
-                      if (specsEnabled) { setSpecsEnabled(false) } else { setSpecsEnabled(true); if (formSpecs.length === 0) setFormSpecs([{ name: "", price: "" }]) }
-                    }}>
-                      <span className={cn("absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform", specsEnabled && "translate-x-5")} />
-                    </button>
-                  </div>
-                </div>
-                {/* 多规格启用时：可编辑 */}
-                {specsEnabled && (
-                  <div className="rounded-lg border border-border bg-muted/20 p-3 flex flex-col gap-2">
-                    {formSpecs.map((spec, idx) => (
-                      <div key={spec.id || idx} className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          className="h-9 flex-1 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                          placeholder="规格名称（如：1个月、6个月）"
-                          value={spec.name}
-                          onChange={(e) => {
-                            const next = [...formSpecs]
-                            next[idx] = { ...next[idx], name: e.target.value }
-                            setFormSpecs(next)
-                          }}
-                        />
-                        <input
-                          type="number"
-                          step="0.01"
-                          className="h-9 w-32 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                           placeholder="价格（元）"
-                          value={spec.price}
-                          onChange={(e) => {
-                            const next = [...formSpecs]
-                            next[idx] = { ...next[idx], price: e.target.value }
-                            setFormSpecs(next)
-                          }}
-                        />
-                        {formData.stock_mode === "MANUAL" && (
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            className="h-9 w-28 rounded-lg border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                            placeholder="库存"
-                            value={spec.manual_stock ?? ""}
-                            onChange={(e) => {
-                              const next = [...formSpecs]
-                              next[idx] = { ...next[idx], manual_stock: e.target.value }
-                              setFormSpecs(next)
-                            }}
-                          />
-                        )}
-                        <button
-                          type="button"
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                          onClick={() => {
-                            const s = formSpecs[idx]
-                            if (s.id && s.card_key_count && s.card_key_count > 0) {
-                              setSpecDeleteConfirm({ idx, name: s.name, count: s.card_key_count })
-                            } else {
-                              setFormSpecs(prev => prev.filter((_, i) => i !== idx))
-                            }
-                          }}
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      className="flex h-9 w-full items-center justify-center gap-1 rounded-lg border border-dashed border-border text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-                      onClick={() => setFormSpecs(prev => [...prev, { name: "", price: "" }])}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      添加规格
-                    </button>
-                  </div>
-                )}
-                {/* 多规格停用但有已保存的规格时：只读置灰展示，提示规格和卡密已保留 */}
-                {!specsEnabled && formSpecs.length > 0 && formSpecs.some(s => s.id) && (
-                  <div className="rounded-lg border border-border bg-muted/30 p-3 flex flex-col gap-2 opacity-60">
-                    <p className="text-xs text-muted-foreground">以下规格及其卡密已保留，重新启用多规格后可继续使用</p>
-                    {formSpecs.filter(s => s.id).map((spec) => (
-                      <div key={spec.id} className="flex items-center gap-2">
-                        <span className="h-9 flex-1 rounded-lg border border-input bg-muted px-3 text-sm text-muted-foreground leading-9">{spec.name}</span>
-                         <span className="h-9 w-32 rounded-lg border border-input bg-muted px-3 text-sm text-muted-foreground leading-9">{formatYuan(Number.parseFloat(spec.price) || 0)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {/* 详细说明（放在最底部） */}
-              <div className="flex min-w-0 flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.detailMd")}</label>
-                <MarkdownEditor
-                  value={formData.detail_md}
-                  onChange={(detailMd) => setFormData(prev => ({ ...prev, detail_md: detailMd }))}
-                  uploadImage={uploadImage}
-                />
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
-              <button type="button" className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors" onClick={handleCloseModal}>{t("admin.cancel")}</button>
-              <button type="button" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50" onClick={handleSave} disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</button>
-            </div>
-      </Modal>
+      <ConfirmAlert
+        open={deleteProduct !== null}
+        onOpenChange={(open) => { if (!open && !deleting) setDeleteProduct(null) }}
+        title={t("admin.deleteConfirm")}
+        description={deleteProduct ? `${deleteProduct.title} · ${t("admin.deleteProductMsg")}` : undefined}
+        confirmLabel={t("admin.delete")}
+        cancelLabel={t("admin.cancel")}
+        destructive
+        loading={deleting}
+        onConfirm={() => void handleDelete()}
+      />
 
-      {/* Delete Confirmation */}
-      <Modal open={showDeleteConfirm !== null} onClose={() => setShowDeleteConfirm(null)} className="max-w-md">
-            <div className="flex flex-col gap-4 p-6">
-              <div className="flex items-start gap-3">
-                <div className="rounded-full bg-destructive/10 p-2"><AlertCircle className="h-5 w-5 text-destructive" /></div>
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-foreground">{t("admin.deleteConfirm")}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">{t("admin.deleteProductMsg")}</p>
-                </div>
-              </div>
-              <div className="flex justify-end gap-3">
-                <button type="button" className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors" onClick={() => setShowDeleteConfirm(null)}>{t("admin.cancel")}</button>
-                <button type="button" className="rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors" onClick={() => showDeleteConfirm && handleDelete(showDeleteConfirm)}>{t("admin.delete")}</button>
-              </div>
-            </div>
-      </Modal>
-
-      {/* Spec Delete Confirmation */}
-      <Modal open={specDeleteConfirm !== null} onClose={() => setSpecDeleteConfirm(null)} className="max-w-md">
-            <div className="flex flex-col gap-4 p-6">
-              <div className="flex items-start gap-3">
-                <div className="rounded-full bg-destructive/10 p-2"><AlertCircle className="h-5 w-5 text-destructive" /></div>
-                <div className="flex-1">
-                  <h3 className="text-base font-semibold text-foreground">确认删除规格</h3>
-                  {specDeleteConfirm && (
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      规格「{specDeleteConfirm.name}」下有 <span className="font-medium text-foreground">{specDeleteConfirm.count}</span> 个有效卡密，删除后可用卡密将自动作废，已售卡密保留在订单记录中。确认删除？
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="flex justify-end gap-3">
-                <button type="button" className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors" onClick={() => setSpecDeleteConfirm(null)}>取消</button>
-                <button type="button" className="rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors" onClick={() => {
-                  if (specDeleteConfirm) {
-                    setFormSpecs(prev => prev.filter((_, i) => i !== specDeleteConfirm.idx))
-                    setSpecDeleteConfirm(null)
-                  }
-                }}>确认删除</button>
-              </div>
-            </div>
-      </Modal>
-
-      {/* Import Card Keys Modal */}
-      <Modal open={showImportModal !== null} onClose={() => setShowImportModal(null)} className="max-w-2xl">
-            <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-foreground">{t("admin.importKeys")} — {showImportModal?.title}</h2>
-              <button type="button" onClick={() => setShowImportModal(null)} className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="flex flex-col gap-5 p-6">
-              {showImportModal && showImportModal.specs.length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">{t("admin.selectSpec")}</label>
-                  <select className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" value={importSpecId} onChange={(e) => setImportSpecId(e.target.value)}>
-                    <option value="">默认规格</option>
-                    {showImportModal.specs.map((spec) => (
-                      <option key={spec.id} value={spec.id}>{spec.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <CardContentImportFields columns={importColumns} onChange={setImportColumns} disabled={importing} />
-              <label className="flex items-center gap-2 text-sm text-foreground">
-                <input type="checkbox" checked={importCheckDuplicate} onChange={(event) => setImportCheckDuplicate(event.target.checked)} disabled={importing} />
-                检测历史重复（本批次重复始终过滤）
-              </label>
-              <p className="text-xs text-muted-foreground">每一行代表一张卡券，多个内容列会按相同行号组成一张卡券。</p>
-            </div>
-            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
-              <button type="button" className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors" onClick={() => setShowImportModal(null)}>{t("admin.cancel")}</button>
-              <button type="button" className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50" onClick={handleImport} disabled={importing}>{importing ? t("admin.saving") : t("admin.import")}</button>
-            </div>
-      </Modal>
-    </div>
+      <CardKeyImportDialog
+        product={importProduct}
+        open={importProduct !== null}
+        onOpenChange={(open) => { if (!open) setImportProduct(null) }}
+        onImported={loadProducts}
+      />
+    </AdminPage>
   )
 }

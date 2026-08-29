@@ -19,6 +19,8 @@ import {
 } from "@/components/admin/dashboard-stats"
 import { SalesChart } from "@/components/admin/sales-chart"
 import { RecentOrders } from "@/components/admin/recent-orders"
+import { AdminPage, PageHeader } from "@/components/admin/shared"
+import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
 import { buildDashboardAttention, shouldShowInitialDashboardLoading } from "@/lib/dashboard"
 import type { TranslationKey } from "@/lib/i18n"
@@ -163,28 +165,20 @@ export default function AdminDashboardPage() {
   const updatedText = lastUpdated ? formatDateTime(lastUpdated.toISOString(), locale) : t("admin.dashboardLoading")
 
   return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-5 sm:gap-6">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">{t("admin.dashboard")}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t("admin.welcome")}</p>
-        </div>
-        <div className="flex items-center justify-between gap-3 sm:justify-end">
-          <p className="truncate text-xs text-muted-foreground">
-            {t("admin.dashboardLastUpdated").replace("{time}", updatedText)}
-          </p>
-          <button
-            type="button"
-            onClick={() => void refreshAll(true)}
-            disabled={isRefreshing}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-            aria-label={t("admin.refresh")}
-          >
-            <RefreshCw className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} aria-hidden="true" />
-            <span className="hidden min-[420px]:inline">{isRefreshing ? t("admin.refreshing") : t("admin.refresh")}</span>
-          </button>
-        </div>
-      </header>
+    <AdminPage className="gap-5 sm:gap-6">
+      <PageHeader
+        title={t("admin.dashboard")}
+        description={t("admin.welcome")}
+        actions={
+          <div className="flex items-center gap-3">
+            <p className="hidden truncate text-xs text-muted-foreground sm:block">{t("admin.dashboardLastUpdated").replace("{time}", updatedText)}</p>
+            <Button type="button" variant="outline" onClick={() => void refreshAll(true)} disabled={isRefreshing} aria-label={t("admin.refresh")}>
+              <RefreshCw className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} aria-hidden="true" />
+              <span className="hidden min-[420px]:inline">{isRefreshing ? t("admin.refreshing") : t("admin.refresh")}</span>
+            </Button>
+          </div>
+        }
+      />
 
       <AttentionStrip items={attention} loading={loadingStrip} unavailable={unavailableStrip} />
 
@@ -254,7 +248,7 @@ export default function AdminDashboardPage() {
           </DashboardRegion>
         )}
       </div>
-    </div>
+    </AdminPage>
   )
 }
 

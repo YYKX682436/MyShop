@@ -1,17 +1,24 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { Edit, Plus, ToggleLeft, ToggleRight, Trash2, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { Edit, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
-import { Modal } from "@/components/ui/modal"
+
+import {
+  AdminPage,
+  ConfirmAlert,
+  PageHeader,
+  SettingsSection,
+  StatusBadge,
+  TableEmptyState,
+} from "@/components/admin/shared"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { useLocale } from "@/lib/context"
-import { cn } from "@/lib/utils"
 import { adminPaymentApi, paymentApi, requestOrThrow } from "@/services/api"
-import type {
-  PaymentChannelItem,
-  PaymentProviderConfigField,
-  PaymentProviderMetadata,
-} from "@/types"
+import type { PaymentChannelItem, PaymentProviderConfigField, PaymentProviderMetadata } from "@/types"
 
 interface ChannelForm {
   channel_code: string
@@ -22,18 +29,7 @@ interface ChannelForm {
   sort_order: string
 }
 
-const emptyForm: ChannelForm = {
-  channel_code: "",
-  channel_name: "",
-  provider_type: "",
-  payment_type: "",
-  is_enabled: true,
-  sort_order: "0",
-}
-
-function providerLabel(providers: PaymentProviderMetadata[], providerId: string): string {
-  return providers.find(provider => provider.provider_id === providerId)?.display_name || providerId
-}
+const EMPTY_FORM: ChannelForm = { channel_code: "", channel_name: "", provider_type: "", payment_type: "", is_enabled: true, sort_order: "0" }
 
 function fieldValue(config: Record<string, unknown>, field: PaymentProviderConfigField): unknown {
   return config[field.name] ?? field.default_value ?? (field.type === "switch" ? false : "")
@@ -44,18 +40,20 @@ export default function AdminPaymentChannelsPage() {
   const [channels, setChannels] = useState<PaymentChannelItem[]>([])
   const [providers, setProviders] = useState<PaymentProviderMetadata[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [showModal, setShowModal] = useState(false)
-  const [editId, setEditId] = useState<string | null>(null)
-  const [form, setForm] = useState<ChannelForm>(emptyForm)
+  const [error, setError] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<ChannelForm>(EMPTY_FORM)
   const [config, setConfig] = useState<Record<string, unknown>>({})
+  const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<PaymentChannelItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  const currentProvider = useMemo(
-    () => providers.find(provider => provider.provider_id === form.provider_type),
-    [form.provider_type, providers],
-  )
+  const currentProvider = useMemo(() => providers.find((provider) => provider.provider_id === form.provider_type), [form.provider_type, providers])
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(false)
     try {
       const [channelData, providerData] = await Promise.all([
         requestOrThrow(() => adminPaymentApi.getList()),
@@ -63,213 +61,143 @@ export default function AdminPaymentChannelsPage() {
       ])
       setChannels(channelData)
       setProviders(providerData)
-    } catch (error) {
+    } catch {
       setChannels([])
       setProviders([])
-      toast.error(error instanceof Error ? error.message : "无法读取支付配置")
+      setError(true)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  useEffect(() => { void load() }, [])
+  useEffect(() => { void load() }, [load])
 
-  const closeModal = () => {
-    setShowModal(false)
-    setEditId(null)
-    setForm(emptyForm)
+  const closeDialog = () => {
+    if (saving) return
+    setDialogOpen(false)
+    setEditingId(null)
+    setForm(EMPTY_FORM)
     setConfig({})
   }
 
   const openCreate = () => {
     const provider = providers[0]
-    setEditId(null)
-    setForm({
-      ...emptyForm,
-      provider_type: provider?.provider_id || "",
-      payment_type: provider?.payment_types[0] || "",
-    })
+    setEditingId(null)
+    setForm({ ...EMPTY_FORM, provider_type: provider?.provider_id || "", payment_type: provider?.payment_types[0] || "" })
     setConfig({})
-    setShowModal(true)
+    setDialogOpen(true)
   }
 
   const openEdit = (channel: PaymentChannelItem) => {
-    const values: Record<string, unknown> = {}
-    Object.entries(channel.config_data || {}).forEach(([key, value]) => { values[key] = value })
-    setEditId(channel.id)
-    setForm({
-      channel_code: channel.channel_code,
-      channel_name: channel.channel_name,
-      provider_type: channel.provider_type,
-      payment_type: channel.payment_type,
-      is_enabled: channel.is_enabled,
-      sort_order: String(channel.sort_order),
-    })
-    setConfig(values)
-    setShowModal(true)
+    setEditingId(channel.id)
+    setForm({ channel_code: channel.channel_code, channel_name: channel.channel_name, provider_type: channel.provider_type, payment_type: channel.payment_type, is_enabled: channel.is_enabled, sort_order: String(channel.sort_order) })
+    setConfig({ ...(channel.config_data || {}) })
+    setDialogOpen(true)
   }
 
   const selectProvider = (providerId: string) => {
-    const provider = providers.find(value => value.provider_id === providerId)
-    setForm(previous => ({
-      ...previous,
-      provider_type: providerId,
-      payment_type: provider?.payment_types.includes(previous.payment_type)
-        ? previous.payment_type
-        : provider?.payment_types[0] || "",
-    }))
+    const provider = providers.find((candidate) => candidate.provider_id === providerId)
+    setForm((current) => ({ ...current, provider_type: providerId, payment_type: provider?.payment_types.includes(current.payment_type) ? current.payment_type : provider?.payment_types[0] || "" }))
     setConfig({})
   }
 
-  const setField = (field: PaymentProviderConfigField, rawValue: string | boolean) => {
-    const value = field.type === "number" && typeof rawValue === "string" && rawValue !== ""
-      ? Number(rawValue)
-      : rawValue
-    setConfig(previous => ({ ...previous, [field.name]: value }))
+  const setField = (field: PaymentProviderConfigField, value: string | boolean) => {
+    const normalized = field.type === "number" && typeof value === "string" && value !== "" ? Number(value) : value
+    setConfig((current) => ({ ...current, [field.name]: normalized }))
   }
 
   const save = async () => {
     if (!form.provider_type || !form.payment_type || !form.channel_code.trim() || !form.channel_name.trim()) {
-      toast.error("请完整填写通道代码、名称、提供商和支付类型")
+      toast.error(`${t("admin.channelCodeRequired")} · ${t("admin.channelNameRequired")}`)
       return
     }
     setSaving(true)
     try {
-      const data = {
-        channel_code: form.channel_code.trim(),
-        channel_name: form.channel_name.trim(),
-        provider_type: form.provider_type,
-        payment_type: form.payment_type,
-        config_data: config,
-        is_enabled: form.is_enabled,
-        sort_order: Number(form.sort_order) || 0,
-      }
-      if (editId) await requestOrThrow(() => adminPaymentApi.update(editId, data))
+      const data = { channel_code: form.channel_code.trim(), channel_name: form.channel_name.trim(), provider_type: form.provider_type, payment_type: form.payment_type, config_data: config, is_enabled: form.is_enabled, sort_order: Number(form.sort_order) || 0 }
+      if (editingId) await requestOrThrow(() => adminPaymentApi.update(editingId, data))
       else await requestOrThrow(() => adminPaymentApi.create(data))
-      toast.success("保存成功")
-      closeModal()
+      toast.success(t("admin.paymentSaved"))
+      closeDialog()
       await load()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败")
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
       setSaving(false)
     }
   }
 
-  const toggle = async (channel: PaymentChannelItem) => {
+  const toggle = async (channel: PaymentChannelItem, enabled: boolean) => {
     try {
-      await requestOrThrow(() => adminPaymentApi.update(channel.id, { is_enabled: !channel.is_enabled }))
-      await load()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "操作失败")
+      await requestOrThrow(() => adminPaymentApi.update(channel.id, { is_enabled: enabled }))
+      setChannels((current) => current.map((candidate) => candidate.id === channel.id ? { ...candidate, is_enabled: enabled } : candidate))
+      toast.success(enabled ? t("admin.channelEnabled") : t("admin.channelDisabled"))
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     }
   }
 
-  const remove = async (channel: PaymentChannelItem) => {
-    if (!window.confirm(`确定删除通道「${channel.channel_name}」吗？`)) return
+  const remove = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
-      await requestOrThrow(() => adminPaymentApi.delete(channel.id))
+      await requestOrThrow(() => adminPaymentApi.delete(deleteTarget.id))
+      toast.success(t("admin.paymentDeleted"))
+      setDeleteTarget(null)
       await load()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除失败")
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      setDeleting(false)
     }
   }
 
-  const renderField = (field: PaymentProviderConfigField) => {
+  const renderProviderField = (field: PaymentProviderConfigField) => {
     const value = fieldValue(config, field)
     const label = `${field.label}${field.required ? " *" : ""}`
     if (field.type === "switch") {
-      return (
-        <label key={field.name} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 text-sm">
-          <span>{label}</span>
-          <input type="checkbox" checked={Boolean(value)} onChange={event => setField(field, event.target.checked)} className="h-4 w-4 accent-primary" />
-        </label>
-      )
+      return <div key={field.name} className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 text-sm"><span>{label}</span><Switch checked={Boolean(value)} onCheckedChange={(checked) => setField(field, checked)} aria-label={label} /></div>
     }
     if (field.type === "select") {
-      return (
-        <label key={field.name} className="flex flex-col gap-1.5 text-sm">
-          <span className="font-medium">{label}</span>
-          <select value={String(value)} onChange={event => setField(field, event.target.value)} className="h-10 rounded-lg border border-input bg-background px-3">
-            {(field.options || []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
-      )
+      return <label key={field.name} className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{label}</span><select value={String(value)} onChange={(event) => setField(field, event.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-foreground">{(field.options || []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
     }
-    const inputType = field.type === "password" || field.type === "secret" || field.secret
-      ? "password"
-      : field.type === "number" ? "number" : field.type
-    return (
-      <label key={field.name} className="flex flex-col gap-1.5 text-sm">
-        <span className="font-medium">{label}</span>
-        <input
-          type={inputType}
-          value={String(value ?? "")}
-          placeholder={field.placeholder || undefined}
-          onChange={event => setField(field, event.target.value)}
-          className="h-10 rounded-lg border border-input bg-background px-3"
-        />
-      </label>
-    )
+    const inputType = field.type === "password" || field.type === "secret" || field.secret ? "password" : field.type === "number" ? "number" : field.type
+    return <label key={field.name} className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{label}</span><Input type={inputType} value={String(value ?? "")} placeholder={field.placeholder || undefined} onChange={(event) => setField(field, event.target.value)} /></label>
   }
 
-  if (loading) return <div className="flex items-center justify-center py-24"><div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>
-
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("admin.payment")}</h1>
-          <p className="text-sm text-muted-foreground">{t("admin.paymentDesc")}</p>
-        </div>
-        <button type="button" onClick={openCreate} disabled={providers.length === 0} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground disabled:opacity-50">
-          <Plus className="h-4 w-4" />新增支付通道
-        </button>
-      </div>
+    <AdminPage>
+      <PageHeader title={t("admin.payment")} description={t("admin.paymentDesc")} actions={<Button type="button" onClick={openCreate} disabled={loading || providers.length === 0}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addChannel")}</Button>} />
+      {loading && <div className="h-24 animate-pulse rounded-xl border border-border bg-muted" role="status" aria-label={t("common.loading")} />}
+      {!loading && error && <div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadPaymentFailed")}</span><Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button></div>}
+      {!loading && !error && <div className="grid gap-4 lg:grid-cols-2">
+        {channels.map((channel) => <SettingsSection key={channel.id} title={channel.channel_name} description={`${channel.channel_code} · ${channel.provider_type} · ${channel.payment_type}`} className={!channel.is_enabled ? "opacity-65" : undefined}>
+          <div className="flex items-center justify-between gap-3"><StatusBadge label={channel.is_enabled ? t("admin.channelEnabled") : t("admin.channelDisabled")} tone={channel.is_enabled ? "success" : "neutral"} /><Switch checked={channel.is_enabled} onCheckedChange={(checked) => void toggle(channel, checked)} aria-label={channel.is_enabled ? t("admin.channelDisabled") : t("admin.channelEnabled")} /></div>
+          <div className="mt-4 flex items-center justify-between rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground"><span>{t("admin.channelOrder").replace("{order}", String(channel.sort_order))}</span><span>{t("admin.uniqueInstance")}</span></div>
+          <div className="mt-4 flex justify-end gap-2"><Button type="button" variant="outline" size="sm" onClick={() => openEdit(channel)}><Edit className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.edit")}</Button><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setDeleteTarget(channel)}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.delete")}</Button></div>
+        </SettingsSection>)}
+        {channels.length === 0 && <div className="col-span-full rounded-xl border border-border bg-card"><table className="w-full"><tbody><TableEmptyState colSpan={1}>{t("admin.noChannelData")}</TableEmptyState></tbody></table></div>}
+      </div>}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {channels.map(channel => (
-          <div key={channel.id} className={cn("rounded-xl border bg-card p-5 shadow-sm", !channel.is_enabled && "opacity-60")}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-medium text-foreground">{channel.channel_name}</h3>
-                <p className="mt-1 text-xs text-muted-foreground">{channel.channel_code} · {providerLabel(providers, channel.provider_type)} · {channel.payment_type}</p>
-              </div>
-              <button type="button" title={channel.is_enabled ? "禁用" : "启用"} onClick={() => void toggle(channel)}>
-                {channel.is_enabled ? <ToggleRight className="h-6 w-6 text-primary" /> : <ToggleLeft className="h-6 w-6 text-muted-foreground" />}
-              </button>
+      <Dialog open={dialogOpen} onOpenChange={(open) => open ? setDialogOpen(true) : closeDialog()}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader><DialogTitle>{editingId ? t("admin.editChannelTitle") : t("admin.addChannelTitle")}</DialogTitle></DialogHeader>
+          <div className="grid gap-5 py-2">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{t("admin.paymentProvider")}</span><select value={form.provider_type} onChange={(event) => selectProvider(event.target.value)} className="h-10 rounded-md border border-input bg-background px-3 text-foreground"><option value="">{t("admin.choose")}</option>{providers.map((provider) => <option key={provider.provider_id} value={provider.provider_id}>{provider.display_name}</option>)}</select></label>
+              <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{t("admin.paymentType")}</span><select value={form.payment_type} onChange={(event) => setForm((current) => ({ ...current, payment_type: event.target.value }))} className="h-10 rounded-md border border-input bg-background px-3 text-foreground"><option value="">{t("admin.choose")}</option>{(currentProvider?.payment_types || []).map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
             </div>
-            <div className="mt-4 flex items-center justify-between rounded-lg bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              <span>排序 {channel.sort_order}</span><span>实例代码唯一</span>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{t("admin.channelCodeRequired")}</span><Input value={form.channel_code} onChange={(event) => setForm((current) => ({ ...current, channel_code: event.target.value }))} placeholder="epay-alipay-main" /><span className="text-xs text-muted-foreground">{t("admin.channelCodeHint")}</span></label>
+              <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{t("admin.channelNameRequired")}</span><Input value={form.channel_name} onChange={(event) => setForm((current) => ({ ...current, channel_name: event.target.value }))} /></label>
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => openEdit(channel)} className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs hover:bg-accent"><Edit className="h-3.5 w-3.5" />编辑</button>
-              <button type="button" onClick={() => void remove(channel)} className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10"><Trash2 className="h-3.5 w-3.5" />删除</button>
-            </div>
+            {currentProvider && <SettingsSection title={`${currentProvider.display_name} · ${t("admin.providerConfig")}`} className="max-w-none"><div className="grid gap-4 sm:grid-cols-2">{currentProvider.config_schema.map(renderProviderField)}</div></SettingsSection>}
+            <div className="grid gap-4 sm:grid-cols-2"><label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{t("admin.sortOrderLabel")}</span><Input type="number" value={form.sort_order} onChange={(event) => setForm((current) => ({ ...current, sort_order: event.target.value }))} /></label><div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5 text-sm"><span>{t("admin.enableChannel")}</span><Switch checked={form.is_enabled} onCheckedChange={(checked) => setForm((current) => ({ ...current, is_enabled: checked }))} aria-label={t("admin.enableChannel")} /></div></div>
           </div>
-        ))}
-        {channels.length === 0 && <div className="col-span-full py-12 text-center text-sm text-muted-foreground">暂无支付通道</div>}
-      </div>
+          <DialogFooter><Button type="button" variant="outline" onClick={closeDialog} disabled={saving}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void save()} disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      <Modal open={showModal} onClose={closeModal} className="max-w-2xl">
-        <div className="flex items-center justify-between border-b border-border px-6 py-4">
-          <h2 className="text-lg font-semibold">{editId ? "编辑支付通道" : "新增支付通道"}</h2>
-          <button type="button" onClick={closeModal} className="rounded-md p-1 text-muted-foreground hover:bg-accent"><X className="h-5 w-5" /></button>
-        </div>
-        <div className="grid gap-4 p-6">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">支付提供商 *</span><select value={form.provider_type} onChange={event => selectProvider(event.target.value)} className="h-10 rounded-lg border border-input bg-background px-3"><option value="">请选择</option>{providers.map(provider => <option key={provider.provider_id} value={provider.provider_id}>{provider.display_name}</option>)}</select></label>
-            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">支付类型 *</span><select value={form.payment_type} onChange={event => setForm(previous => ({ ...previous, payment_type: event.target.value }))} className="h-10 rounded-lg border border-input bg-background px-3"><option value="">请选择</option>{(currentProvider?.payment_types || []).map(type => <option key={type} value={type}>{type}</option>)}</select></label>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">通道实例代码 *</span><input value={form.channel_code} onChange={event => setForm(previous => ({ ...previous, channel_code: event.target.value }))} placeholder="例如 epay-alipay-main" className="h-10 rounded-lg border border-input bg-background px-3" /><span className="text-xs text-muted-foreground">同一 provider/payment_type 可创建多个实例。</span></label>
-            <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">通道名称 *</span><input value={form.channel_name} onChange={event => setForm(previous => ({ ...previous, channel_name: event.target.value }))} placeholder="例如 支付宝主通道" className="h-10 rounded-lg border border-input bg-background px-3" /></label>
-          </div>
-          {currentProvider && currentProvider.config_schema.length > 0 && <div className="grid gap-4 rounded-lg border border-border p-4 sm:grid-cols-2"><div className="sm:col-span-2 text-sm font-semibold">{currentProvider.display_name} 配置</div>{currentProvider.config_schema.map(renderField)}</div>}
-          <div className="grid gap-4 sm:grid-cols-2"><label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">排序</span><input type="number" value={form.sort_order} onChange={event => setForm(previous => ({ ...previous, sort_order: event.target.value }))} className="h-10 rounded-lg border border-input bg-background px-3" /></label><label className="flex items-center gap-2 self-end text-sm"><input type="checkbox" checked={form.is_enabled} onChange={event => setForm(previous => ({ ...previous, is_enabled: event.target.checked }))} className="h-4 w-4 accent-primary" />启用通道</label></div>
-          <div className="flex justify-end gap-3 border-t border-border pt-4"><button type="button" onClick={closeModal} className="rounded-lg border border-border px-4 py-2 text-sm">取消</button><button type="button" onClick={() => void save()} disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">{saving ? "保存中…" : "保存"}</button></div>
-        </div>
-      </Modal>
-    </div>
+      <ConfirmAlert open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null) }} title={t("admin.deleteConfirm")} description={deleteTarget ? `${deleteTarget.channel_name} · ${t("admin.deleteChannelMsg")}` : undefined} confirmLabel={t("admin.delete")} cancelLabel={t("admin.cancel")} destructive loading={deleting} onConfirm={() => void remove()} />
+    </AdminPage>
   )
 }

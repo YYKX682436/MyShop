@@ -5,6 +5,7 @@ import { AlertCircle, ImagePlus, Loader2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { ALLOWED_IMAGE_ACCEPT, validateImageFile } from "@/lib/image-upload"
+import { useLocale } from "@/lib/context"
 
 interface ImageUploadDropzoneProps {
   value: string
@@ -14,6 +15,7 @@ interface ImageUploadDropzoneProps {
 }
 
 export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = false }: ImageUploadDropzoneProps) {
+  const { t } = useLocale()
   const inputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
   const [isDragActive, setIsDragActive] = useState(false)
@@ -44,12 +46,12 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
     setUploading(true)
     try {
       const url = await uploadImage(file)
-      if (!url) throw new Error("上传未返回图片地址")
+      if (!url) throw new Error(t("admin.uploadUrlMissing"))
       setFailedUrl(null)
       onChange(url)
-      toast.success("上传成功")
+      toast.success(t("admin.uploadSuccess"))
     } catch (error: unknown) {
-      toast.error(error instanceof Error ? error.message : "上传失败")
+      toast.error(error instanceof Error ? error.message : t("admin.uploadFailed"))
     } finally {
       setUploading(false)
       resetInput()
@@ -126,7 +128,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
         {normalizedValue && !previewFailed ? (
           <img
             src={normalizedValue}
-            alt="商品封面预览"
+            alt={t("admin.coverPreviewAlt")}
             className="max-h-64 max-w-full rounded-lg object-contain"
             onLoad={() => setFailedUrl(null)}
             onError={() => setFailedUrl(normalizedValue)}
@@ -134,27 +136,27 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
         ) : normalizedValue ? (
           <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
             <AlertCircle className="h-8 w-8 text-amber-500" />
-            <span className="font-medium text-foreground">图片预览失败</span>
-            <span className="max-w-xs break-words text-xs">请检查图片 URL 是否可访问，表单仍可继续保存。</span>
+            <span className="font-medium text-foreground">{t("admin.previewFailed")}</span>
+            <span className="max-w-xs break-words text-xs">{t("admin.previewFailedHint")}</span>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2 text-muted-foreground">
             <ImagePlus className="h-9 w-9 text-primary/70" />
-            <span className="text-sm font-medium text-foreground">将图片拖拽到这里，或点击选择图片</span>
-            <span className="text-xs">支持 JPG / PNG / GIF / WebP / BMP</span>
-            <span className="text-xs">最大 10MB</span>
+            <span className="text-sm font-medium text-foreground">{t("admin.dropImage")}</span>
+            <span className="text-xs">{t("admin.imageFormats")}</span>
+            <span className="text-xs">{t("admin.maxFileSize")}</span>
           </div>
         )}
 
         {isDragActive && !busy && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-primary/15 px-4 text-sm font-semibold text-primary">
-            松开即可上传
+            {t("admin.releaseToUpload")}
           </div>
         )}
         {uploading && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 bg-background/75 text-sm font-medium text-foreground backdrop-blur-[1px]">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            正在上传...
+            {t("admin.uploading")}
           </div>
         )}
       </div>
@@ -177,7 +179,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
             disabled={busy}
           >
             <Upload className="h-3.5 w-3.5" />
-            更换图片
+            {t("admin.replaceImage")}
           </button>
           <button
             type="button"
@@ -189,13 +191,13 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
             disabled={busy}
           >
             <X className="h-3.5 w-3.5" />
-            移除图片
+            {t("admin.removeImage")}
           </button>
         </div>
       )}
 
       <label className="mt-3 flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
-        图片 URL
+        {t("admin.imageUrl")}
         <input
           type="text"
           className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
@@ -205,7 +207,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
           disabled={busy}
         />
       </label>
-      <p className="mt-1.5 text-xs text-muted-foreground">图片会用于商品卡和详情页展示；移除图片只会清空 URL，不会删除服务器文件。</p>
+      <p className="mt-1.5 text-xs text-muted-foreground">{t("admin.imageUsageHint")}</p>
     </div>
   )
 }

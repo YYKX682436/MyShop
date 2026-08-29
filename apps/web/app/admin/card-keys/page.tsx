@@ -1,137 +1,165 @@
 "use client"
 
-import { useState, useEffect, useRef, type RefObject } from "react"
-import {
-  Upload,
-  Eye,
-  Ban,
-  Package,
-  KeyRound,
-  AlertCircle,
-  X,
-  FileText,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react"
-import { cn, stripInvisible } from "@/lib/utils"
-import { useLocale } from "@/lib/context"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Ban, Eye, FileText, KeyRound, Package, Upload } from "lucide-react"
 import { toast } from "sonner"
-import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
-import { Modal } from "@/components/ui/modal"
+
 import { CardContentImportFields } from "@/components/admin/card-content-import-fields"
 import { CardContentParts } from "@/components/shared/card-content-parts"
+import {
+  AdminPage,
+  AdminPagination,
+  ConfirmAlert,
+  DataTableShell,
+  PageHeader,
+  PageToolbar,
+  StatusBadge,
+  TableEmptyState,
+  TableErrorState,
+  TableLoadingState,
+} from "@/components/admin/shared"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useLocale } from "@/lib/context"
 import { validateCardContentColumns } from "@/lib/card-content"
-import type { CardKeyStockSummary, CardKeyListItem, CardImportBatch, ProductCard, ProductSpec } from "@/types"
+import { formatDateTime, stripInvisible } from "@/lib/utils"
+import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
+import type { CardImportBatch, CardKeyListItem, CardKeyStockSummary, ProductCard, ProductSpec } from "@/types"
+
+const PAGE_SIZE = 20
+
+const cardStatusTone = {
+  AVAILABLE: "success",
+  LOCKED: "warning",
+  SOLD: "info",
+  INVALID: "danger",
+} as const
 
 export default function AdminCardKeysPage() {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const [tab, setTab] = useState<"stock" | "import">("stock")
-  const [showImportModal, setShowImportModal] = useState(false)
-  const [stockList, setStockList] = useState<CardKeyStockSummary[]>([])
-  const [importBatches, setImportBatches] = useState<CardImportBatch[]>([])
-  const [importTotal, setImportTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
   const [products, setProducts] = useState<ProductCard[]>([])
+  const [productsError, setProductsError] = useState(false)
+  const [stockList, setStockList] = useState<CardKeyStockSummary[]>([])
+  const [stockLoading, setStockLoading] = useState(true)
+  const [stockError, setStockError] = useState(false)
   const [filterProductId, setFilterProductId] = useState("")
+  const [importBatches, setImportBatches] = useState<CardImportBatch[]>([])
+  const [importPage, setImportPage] = useState(1)
+  const [importTotal, setImportTotal] = useState(0)
+  const [importLoading, setImportLoading] = useState(true)
+  const [importError, setImportError] = useState(false)
 
-  // Detail modal state
-  const [showDetailModal, setShowDetailModal] = useState(false)
-  const [detailItem, setDetailItem] = useState<CardKeyStockSummary | null>(null)
-  const [detailKeys, setDetailKeys] = useState<CardKeyListItem[]>([])
-  const [detailTotal, setDetailTotal] = useState(0)
-  const [detailPage, setDetailPage] = useState(1)
-  const [detailLoading, setDetailLoading] = useState(false)
-
-  // Import form state
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importProductId, setImportProductId] = useState("")
   const [importSpecId, setImportSpecId] = useState("")
+  const [importSpecs, setImportSpecs] = useState<ProductSpec[]>([])
+  const [loadingSpecs, setLoadingSpecs] = useState(false)
   const [importColumns, setImportColumns] = useState([""])
   const [checkDuplicate, setCheckDuplicate] = useState(true)
   const [importing, setImporting] = useState(false)
-  const [importSpecs, setImportSpecs] = useState<ProductSpec[]>([])
-  const [loadingSpecs, setLoadingSpecs] = useState(false)
   const [importErrors, setImportErrors] = useState<Record<string, boolean>>({})
   const importProductRef = useRef<HTMLSelectElement>(null)
-  const importableProducts = products.filter(product =>
-    (product.delivery_type || "AUTO") === "AUTO" && (product.stock_mode || "CARD_KEY") === "CARD_KEY"
-  )
 
-  const copyToClipboard = (value: string) => {
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(value).then(
-        () => toast.success("已复制"),
-        () => fallbackCopy(value),
-      )
-    } else {
-      fallbackCopy(value)
+  const [detailItem, setDetailItem] = useState<CardKeyStockSummary | null>(null)
+  const [detailKeys, setDetailKeys] = useState<CardKeyListItem[]>([])
+  const [detailPage, setDetailPage] = useState(1)
+  const [detailTotal, setDetailTotal] = useState(0)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState(false)
+  const [singleInvalidateTarget, setSingleInvalidateTarget] = useState<CardKeyListItem | null>(null)
+  const [singleInvalidating, setSingleInvalidating] = useState(false)
+  const [batchInvalidateTarget, setBatchInvalidateTarget] = useState<CardKeyStockSummary | null>(null)
+  const [batchInvalidating, setBatchInvalidating] = useState(false)
+
+  const importableProducts = products.filter((product) => (product.delivery_type || "AUTO") === "AUTO" && (product.stock_mode || "CARD_KEY") === "CARD_KEY")
+
+  const loadProducts = useCallback(async () => {
+    setProductsError(false)
+    try {
+      const data = await requestOrThrow(() => adminProductApi.getList({ page: 1, page_size: 100 }))
+      setProducts(data.list)
+    } catch {
+      setProducts([])
+      setProductsError(true)
     }
-  }
+  }, [])
 
-  const fallbackCopy = (value: string) => {
-    const textarea = document.createElement("textarea")
-    textarea.value = value
-    textarea.style.position = "fixed"
-    textarea.style.opacity = "0"
-    document.body.appendChild(textarea)
-    textarea.select()
-    document.execCommand("copy")
-    document.body.removeChild(textarea)
-    toast.success("已复制")
-  }
-
-  const fetchStock = async () => {
+  const loadStock = useCallback(async () => {
+    setStockLoading(true)
+    setStockError(false)
     try {
       const data = await requestOrThrow(() => adminCardKeyApi.getStock(filterProductId ? { product_id: filterProductId } : undefined))
       setStockList(data)
     } catch {
       setStockList([])
+      setStockError(true)
+    } finally {
+      setStockLoading(false)
     }
-  }
+  }, [filterProductId])
 
-  const fetchImportBatches = async () => {
+  const loadImportBatches = useCallback(async () => {
+    setImportLoading(true)
+    setImportError(false)
     try {
-      const data = await requestOrThrow(() => adminCardKeyApi.getImportBatches({ page: 1, page_size: 20 }))
+      const data = await requestOrThrow(() => adminCardKeyApi.getImportBatches({ page: importPage, page_size: PAGE_SIZE }))
       setImportBatches(data.list)
       setImportTotal(data.pagination.total)
     } catch {
       setImportBatches([])
+      setImportTotal(0)
+      setImportError(true)
+    } finally {
+      setImportLoading(false)
     }
+  }, [importPage])
+
+  useEffect(() => { void loadProducts() }, [loadProducts])
+  useEffect(() => { void loadStock() }, [loadStock])
+  useEffect(() => { void loadImportBatches() }, [loadImportBatches])
+
+  const totalKeys = stockList.reduce((sum, row) => sum + (row.total ?? 0), 0)
+  const totalAvailable = stockList.reduce((sum, row) => sum + (row.available ?? 0), 0)
+  const totalSold = stockList.reduce((sum, row) => sum + row.sold, 0)
+  const totalInvalid = stockList.reduce((sum, row) => sum + row.invalid, 0)
+
+  const resetImport = () => {
+    setImportProductId("")
+    setImportSpecId("")
+    setImportSpecs([])
+    setImportColumns([""])
+    setCheckDuplicate(true)
+    setImportErrors({})
   }
 
-  useEffect(() => {
-    const init = async () => {
-      setLoading(true)
-      try {
-        const prods = await requestOrThrow(() => adminProductApi.getList({ page: 1, page_size: 100 }))
-        setProducts(prods.list)
-      } catch {
-        setProducts([])
-      }
-      await Promise.all([fetchStock(), fetchImportBatches()])
-      setLoading(false)
+  const handleImportDialogChange = (open: boolean) => {
+    if (!open && !importing) {
+      setImportDialogOpen(false)
+      resetImport()
+    } else if (open) {
+      setImportDialogOpen(true)
     }
-    init()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => { fetchStock() }, [filterProductId])
-
-  // Computed stats from stockList
-  const totalKeys = stockList.reduce((s, r) => s + (r.total ?? 0), 0)
-  const totalAvailable = stockList.reduce((s, r) => s + (r.available ?? 0), 0)
-  const totalSold = stockList.reduce((s, r) => s + r.sold, 0)
-  const totalInvalid = stockList.reduce((s, r) => s + r.invalid, 0)
+  }
 
   const handleProductChange = async (productId: string) => {
     setImportProductId(productId)
     setImportSpecId("")
     setImportSpecs([])
+    setImportErrors((current) => ({ ...current, product: false }))
     if (!productId) return
     setLoadingSpecs(true)
     try {
-      const specs = await requestOrThrow(() => adminProductApi.getSpecs(productId))
-      setImportSpecs(specs)
+      setImportSpecs(await requestOrThrow(() => adminProductApi.getSpecs(productId)))
     } catch {
       setImportSpecs([])
     } finally {
@@ -139,109 +167,94 @@ export default function AdminCardKeysPage() {
     }
   }
 
-  const focusFirstError = (errors: Record<string, boolean>, refMap: Record<string, RefObject<HTMLElement | null>>) => {
-    for (const key of Object.keys(errors)) {
-      if (errors[key] && refMap[key]?.current) {
-        refMap[key].current!.focus()
-        refMap[key].current!.scrollIntoView({ behavior: "smooth", block: "center" })
-        break
-      }
-    }
-  }
-
   const handleImport = async () => {
-    const errors: Record<string, boolean> = {}
-    if (!importProductId) errors.product = true
-    const contentError = validateCardContentColumns(importColumns)
-    if (contentError) errors.content = true
-    if (Object.keys(errors).length > 0) {
-      setImportErrors(errors)
-      const messages: string[] = []
-      if (errors.product) messages.push("商品")
-      if (contentError) messages.push(contentError)
-      toast.error(messages.join("、"))
-      focusFirstError(errors, { product: importProductRef })
+    const validationError = validateCardContentColumns(importColumns)
+    if (!importProductId || validationError) {
+      setImportErrors({ product: !importProductId, content: Boolean(validationError) })
+      if (!importProductId) {
+        toast.error(t("admin.selectProductReq"))
+        importProductRef.current?.focus()
+      } else if (validationError) {
+        toast.error(validationError)
+      }
       return
     }
-    setImportErrors({})
+
     setImporting(true)
     try {
       const result = await requestOrThrow(() => adminCardKeyApi.import({
-          product_id: importProductId,
-          spec_id: importSpecId || null,
-          content_columns: importColumns,
-          check_duplicate: checkDuplicate,
-        }))
-      toast.success(`读取 ${result.total_count}，成功 ${result.success_count}，重复 ${result.duplicate_count}，失败 ${result.fail_count}`)
-      setShowImportModal(false)
-      setImportColumns([""])
-      setCheckDuplicate(true)
-      setImportProductId("")
-      setImportSpecId("")
-      setImportErrors({})
-      await Promise.all([fetchStock(), fetchImportBatches()])
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "导入失败")
+        product_id: importProductId,
+        spec_id: importSpecId || null,
+        content_columns: importColumns,
+        check_duplicate: checkDuplicate,
+      }))
+      toast.success(
+        t("admin.importSummary")
+          .replace("{total}", String(result.total_count))
+          .replace("{success}", String(result.success_count))
+          .replace("{duplicate}", String(result.duplicate_count))
+          .replace("{failed}", String(result.fail_count)),
+      )
+      handleImportDialogChange(false)
+      await Promise.all([loadStock(), loadImportBatches()])
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.importFailed"))
     } finally {
       setImporting(false)
     }
   }
 
-  const fetchDetailKeys = async (item: CardKeyStockSummary, page: number) => {
+  const fetchDetailKeys = useCallback(async (item: CardKeyStockSummary, page: number) => {
     setDetailLoading(true)
+    setDetailError(false)
     try {
-      const data = await requestOrThrow(() => adminCardKeyApi.getList({
-          product_id: item.product_id,
-          spec_id: item.spec_id,
-          page,
-          page_size: 20,
-        }))
+      const data = await requestOrThrow(() => adminCardKeyApi.getList({ product_id: item.product_id, spec_id: item.spec_id, page, page_size: PAGE_SIZE }))
       setDetailKeys(data.list)
       setDetailTotal(data.pagination.total)
     } catch {
       setDetailKeys([])
       setDetailTotal(0)
+      setDetailError(true)
     } finally {
       setDetailLoading(false)
     }
-  }
+  }, [])
 
-  const handleViewDetail = (item: CardKeyStockSummary) => {
+  const openDetail = (item: CardKeyStockSummary) => {
     setDetailItem(item)
     setDetailPage(1)
-    setShowDetailModal(true)
-    fetchDetailKeys(item, 1)
+    void fetchDetailKeys(item, 1)
+  }
+
+  const closeDetail = (open: boolean) => {
+    if (!open) {
+      setDetailItem(null)
+      setDetailKeys([])
+      setDetailError(false)
+    }
   }
 
   const handleDetailPageChange = (page: number) => {
     setDetailPage(page)
-    if (detailItem) fetchDetailKeys(detailItem, page)
+    if (detailItem) void fetchDetailKeys(detailItem, page)
   }
 
-  // Batch invalidate confirmation state
-  const [showInvalidateConfirm, setShowInvalidateConfirm] = useState<CardKeyStockSummary | null>(null)
-  const [invalidating, setInvalidating] = useState(false)
-
-  // Single invalidate confirmation state
-  const [singleInvalidateTarget, setSingleInvalidateTarget] = useState<CardKeyListItem | null>(null)
-  const [singleInvalidating, setSingleInvalidating] = useState(false)
-
-  const handleBatchInvalidate = async () => {
-    if (!showInvalidateConfirm) return
-    setInvalidating(true)
-    try {
-      const result = await requestOrThrow(() => adminCardKeyApi.batchInvalidate({
-          product_id: showInvalidateConfirm.product_id,
-          spec_id: showInvalidateConfirm.spec_id,
-        }))
-      toast.success(`已作废 ${result.invalidated_count} 条可用卡密`)
-      setShowInvalidateConfirm(null)
-      await fetchStock()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "作废失败")
-    } finally {
-      setInvalidating(false)
+  const copyToClipboard = (value: string) => {
+    const cleanValue = stripInvisible(value)
+    const fallback = () => {
+      const textarea = document.createElement("textarea")
+      textarea.value = cleanValue
+      textarea.style.position = "fixed"
+      textarea.style.opacity = "0"
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand("copy")
+      document.body.removeChild(textarea)
+      toast.success(t("order.copied"))
     }
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(cleanValue).then(() => toast.success(t("order.copied")), fallback)
+    } else fallback()
   }
 
   const handleSingleInvalidate = async () => {
@@ -249,493 +262,245 @@ export default function AdminCardKeysPage() {
     setSingleInvalidating(true)
     try {
       await requestOrThrow(() => adminCardKeyApi.invalidate(singleInvalidateTarget.id))
-      toast.success("卡密已作废")
+      toast.success(t("admin.keyInvalidated"))
       setSingleInvalidateTarget(null)
-      if (detailItem) fetchDetailKeys(detailItem, detailPage)
-      await fetchStock()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "作废失败")
+      if (detailItem) await fetchDetailKeys(detailItem, detailPage)
+      await loadStock()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.invalidateFailed"))
     } finally {
       setSingleInvalidating(false)
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex flex-col gap-6">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("admin.cardKeys")}</h1>
-          <p className="text-sm text-muted-foreground">{t("admin.cardKeysDesc")}</p>
-        </div>
-        <div className="flex items-center justify-center py-24">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-        </div>
-      </div>
-    )
+  const handleBatchInvalidate = async () => {
+    if (!batchInvalidateTarget) return
+    setBatchInvalidating(true)
+    try {
+      const result = await requestOrThrow(() => adminCardKeyApi.batchInvalidate({ product_id: batchInvalidateTarget.product_id, spec_id: batchInvalidateTarget.spec_id }))
+      toast.success(t("admin.keysInvalidated").replace("{count}", String(result.invalidated_count)))
+      setBatchInvalidateTarget(null)
+      await loadStock()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.invalidateFailed"))
+    } finally {
+      setBatchInvalidating(false)
+    }
   }
 
-  return (
-    <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("admin.cardKeys")}</h1>
-          <p className="text-sm text-muted-foreground">{t("admin.cardKeysDesc")}</p>
-        </div>
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 transition-colors"
-          onClick={() => setShowImportModal(true)}
-        >
-          <Upload className="h-4 w-4" />
-          {t("admin.batchImport")}
-        </button>
-      </div>
+  const stockModeLabel = (item: CardKeyStockSummary) => {
+    if (item.unlimited || item.stock_mode === "UNLIMITED") return t("admin.inventoryUnlimited")
+    if (item.stock_mode === "MANUAL") return t("admin.inventoryManual")
+    return t("admin.inventoryCard")
+  }
 
-      {/* Stats */}
+  const cardStatusLabel = (status: CardKeyListItem["status"]) => ({
+    AVAILABLE: t("admin.cardAvailable"),
+    LOCKED: t("admin.cardLocked"),
+    SOLD: t("admin.cardSold"),
+    INVALID: t("admin.cardInvalid"),
+  })[status]
+
+  return (
+    <AdminPage>
+      <PageHeader
+        title={t("admin.cardKeys")}
+        description={t("admin.cardKeysDesc")}
+        actions={<Button type="button" onClick={() => handleImportDialogChange(true)} disabled={productsError || importableProducts.length === 0}><Upload className="h-4 w-4" aria-hidden="true" />{t("admin.batchImport")}</Button>}
+      />
+
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: t("admin.totalKeys"), value: String(totalKeys), icon: KeyRound, color: "text-blue-500" },
-          { label: t("admin.availableStock"), value: String(totalAvailable), icon: Package, color: "text-emerald-500" },
-          { label: t("admin.soldOut"), value: String(totalSold), icon: FileText, color: "text-muted-foreground" },
-          { label: t("admin.invalidKeys"), value: String(totalInvalid), icon: AlertCircle, color: "text-red-500" },
+          { label: t("admin.totalKeys"), value: totalKeys, icon: KeyRound, tone: "text-blue-500" },
+          { label: t("admin.availableStock"), value: totalAvailable, icon: Package, tone: "text-emerald-500" },
+          { label: t("admin.soldOut"), value: totalSold, icon: FileText, tone: "text-muted-foreground" },
+          { label: t("admin.invalidKeys"), value: totalInvalid, icon: Ban, tone: "text-destructive" },
         ].map((stat) => (
-          <div key={stat.label} className="rounded-xl border border-border bg-card p-4 shadow-sm">
-            <div className="flex items-center gap-2">
-              <stat.icon className={cn("h-4 w-4", stat.color)} />
-              <span className="text-sm text-muted-foreground">{stat.label}</span>
-            </div>
-            <p className="mt-1 text-2xl font-bold text-foreground">{stat.value}</p>
+          <div key={stat.label} className="rounded-xl border border-border bg-card p-4">
+            <div className="flex items-center gap-2"><stat.icon className={`h-4 w-4 ${stat.tone}`} aria-hidden="true" /><span className="text-sm text-muted-foreground">{stat.label}</span></div>
+            <p className="mt-1 text-2xl font-semibold text-foreground">{stat.value}</p>
           </div>
         ))}
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
-        {[
-          { key: "stock" as const, label: t("admin.stockOverview") },
-          { key: "import" as const, label: t("admin.importRecords") },
-        ].map((tabItem) => (
-          <button
-            key={tabItem.key}
-            type="button"
-            className={cn(
-              "px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
-              tab === tabItem.key
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            )}
-            onClick={() => setTab(tabItem.key)}
-          >
-            {tabItem.label}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={(value) => setTab(value as "stock" | "import")}>
+        <TabsList>
+          <TabsTrigger value="stock">{t("admin.stockOverview")}</TabsTrigger>
+          <TabsTrigger value="import">{t("admin.importRecords")}</TabsTrigger>
+        </TabsList>
 
-      {/* Stock Overview Tab */}
-      {tab === "stock" && (
-        <>
-          {/* Product filter */}
-          <div className="relative w-fit">
-            <select
-              className="h-10 appearance-none rounded-lg border border-input bg-background pl-3 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              value={filterProductId}
-              onChange={(e) => setFilterProductId(e.target.value)}
-            >
+        <TabsContent value="stock" className="flex flex-col gap-4">
+          <PageToolbar>
+            <select className="h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" value={filterProductId} onChange={(event) => setFilterProductId(event.target.value)} disabled={productsError} aria-label={t("admin.allProducts")}>
               <option value="">{t("admin.allProducts")}</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>{p.title}</option>
-              ))}
+              {products.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
             </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          </div>
+            {productsError && <Button type="button" variant="outline" size="sm" onClick={() => void loadProducts()}>{t("common.retry")}</Button>}
+          </PageToolbar>
 
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.productName2")}</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.specLabel")}</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">库存模式</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.totalKeys")}</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.soldKeys")}</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.availableKeys")}</th>
-                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.invalidKeys")}</th>
-                    <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stockList.map((item, idx) => (
-                    <tr key={`${item.product_id}-${item.spec_id}-${idx}`} className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors">
-                      <td className="px-4 py-3 font-medium text-foreground">{item.product_title}</td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {item.spec_name
-                          ? <>{item.spec_name}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-500">(已停用)</span>}</>
-                          : "-"
-                        }
-                      </td>
-                      <td className="px-4 py-3 text-foreground">
-                        {item.unlimited ? "无限" : item.stock_mode === "MANUAL" ? "手动" : "卡券"}
-                      </td>
-                      <td className="px-4 py-3 text-foreground">{item.unlimited ? "不限" : item.total}</td>
-                      <td className="px-4 py-3 text-foreground">{item.sold}</td>
-                      <td className="px-4 py-3">
-                         <span className={cn("font-medium", !item.unlimited && (item.available ?? 0) <= 5 ? "text-amber-500" : "text-foreground")}>
-                           {item.unlimited ? "不限" : item.available}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={cn(item.invalid > 0 ? "text-red-500" : "text-foreground")}>
-                          {item.invalid}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-1">
-                           {(item.stock_mode === "CARD_KEY" || !item.stock_mode) && <button
-                            type="button"
-                            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                            title={t("admin.viewDetail")}
-                            onClick={() => handleViewDetail(item)}
-                          >
-                            <Eye className="h-4 w-4" />
-                           </button>}
-                           {(item.stock_mode === "CARD_KEY" || !item.stock_mode) && <button
-                            type="button"
-                            className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                            title={t("admin.batchInvalidate")}
-                            onClick={() => setShowInvalidateConfirm(item)}
-                          >
-                            <Ban className="h-4 w-4" />
-                           </button>}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {stockList.length === 0 && (
-                    <tr>
-                    <td colSpan={8} className="py-8 text-center text-sm text-muted-foreground">{t("admin.noStockData")}</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Import Records Tab */}
-      {tab === "import" && (
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.batchId")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">列数</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.importCount")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.successCount")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">重复</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.failCount")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
-                </tr>
-              </thead>
+          <DataTableShell>
+            <table className="w-full min-w-[900px] text-sm">
+              <thead><tr className="border-b border-border bg-muted/30">
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.productName2")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.specLabel")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.inventoryMode")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.totalKeys")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.soldKeys")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.availableKeys")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.invalidKeys")}</th>
+                <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
+              </tr></thead>
               <tbody>
-                {importBatches.map((batch) => (
-                  <tr key={batch.id} className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs text-foreground">
-                      {batch.id.length > 16 ? `${batch.id.slice(0, 8)}...` : batch.id}
-                    </td>
-                    <td className="px-4 py-3 text-foreground">{batch.column_count ?? 1}</td>
-                    <td className="px-4 py-3 text-foreground">{batch.total_count}</td>
-                    <td className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
-                    <td className="px-4 py-3 text-amber-600">{batch.duplicate_count ?? batch.fail_count}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn(batch.fail_count > 0 ? "text-red-500" : "text-foreground")}>
-                        {batch.fail_count}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {new Date(batch.created_at).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
-                {importBatches.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-sm text-muted-foreground">{t("admin.noImportData")}</td>
-                  </tr>
-                )}
+                {stockLoading && <TableLoadingState colSpan={8} />}
+                {!stockLoading && stockError && <TableErrorState colSpan={8} onRetry={() => void loadStock()} />}
+                {!stockLoading && !stockError && stockList.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noStockData")}</TableEmptyState>}
+                {!stockLoading && !stockError && stockList.map((item, index) => {
+                  const isCardKey = item.stock_mode === "CARD_KEY" || !item.stock_mode
+                  return (
+                    <tr key={`${item.product_id}-${item.spec_id || "default"}-${index}`} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                      <td className="px-4 py-3 font-medium text-foreground">{item.product_title}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-600">· {t("admin.disabled")}</span>}</td>
+                      <td className="px-4 py-3"><StatusBadge label={stockModeLabel(item)} tone={item.stock_mode === "MANUAL" ? "warning" : item.stock_mode === "UNLIMITED" || item.unlimited ? "success" : "info"} /></td>
+                      <td className="px-4 py-3">{item.unlimited ? t("admin.unlimited") : item.total ?? 0}</td>
+                      <td className="px-4 py-3">{item.sold}</td>
+                      <td className="px-4 py-3 font-medium">{item.unlimited ? t("admin.unlimited") : item.available ?? 0}</td>
+                      <td className={item.invalid > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{item.invalid}</td>
+                      <td className="px-4 py-3"><div className="flex justify-end gap-1">
+                        {isCardKey && <>
+                          <Button type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")} onClick={() => openDetail(item)}><Eye className="h-4 w-4" aria-hidden="true" /></Button>
+                          <Button type="button" variant="ghost" size="icon" title={t("admin.batchInvalidate")} aria-label={t("admin.batchInvalidate")} disabled={(item.available ?? 0) <= 0} onClick={() => setBatchInvalidateTarget(item)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>
+                        </>}
+                      </div></td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
-          </div>
-          <div className="flex items-center justify-between border-t border-border px-4 py-3">
-            <span className="text-sm text-muted-foreground">{t("admin.totalRecords")} {importTotal} {t("admin.records")}</span>
-          </div>
-        </div>
-      )}
+          </DataTableShell>
+        </TabsContent>
 
-      {/* Import Modal */}
-      <Modal open={showImportModal} onClose={() => { setShowImportModal(false); setImportErrors({}) }} className="max-w-lg">
-            <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-foreground">{t("admin.batchImportKeys")}</h2>
-              <button
-                type="button"
-                onClick={() => { setShowImportModal(false); setImportErrors({}) }}
-                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="flex flex-col gap-4 p-6">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground">{t("admin.selectProductReq")}</label>
-                <select
-                  ref={importProductRef}
-                  className={cn("h-10 rounded-lg border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2", importErrors.product ? "border-destructive ring-destructive/20" : "border-input focus:ring-ring")}
-                  value={importProductId}
-                  onChange={(e) => { handleProductChange(e.target.value); setImportErrors(prev => ({ ...prev, product: false })) }}
-                >
-                  <option value="">{t("admin.selectProductPlaceholder")}</option>
-                  {importableProducts.map((p) => (
-                    <option key={p.id} value={p.id}>{p.title}</option>
-                  ))}
-                </select>
-              </div>
-              {importProductId && (loadingSpecs ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  加载规格...
-                </div>
-              ) : importSpecs.length > 0 ? (
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-sm font-medium text-foreground">{t("admin.selectSpec")}</label>
-                  <select
-                    className="h-10 rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={importSpecId}
-                    onChange={(e) => setImportSpecId(e.target.value)}
-                  >
-                    <option value="">默认规格</option>
-                    {importSpecs.map((spec) => (
-                      <option key={spec.id} value={spec.id}>{spec.name} — {spec.stock_available} 件库存</option>
-                    ))}
-                  </select>
-                </div>
-              ) : null)}
-              <div className={cn("rounded-lg", importErrors.content && "ring-1 ring-destructive") }>
-                <CardContentImportFields columns={importColumns} onChange={(columns) => { setImportColumns(columns); setImportErrors(prev => ({ ...prev, content: false })) }} disabled={importing} />
-              </div>
-              <label className="flex items-center gap-2 text-sm text-foreground">
-                <input type="checkbox" checked={checkDuplicate} onChange={(event) => setCheckDuplicate(event.target.checked)} disabled={importing} />
-                检测历史重复（本批次重复始终过滤）
-              </label>
-            </div>
-            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
-              <button
-                type="button"
-                className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-                onClick={() => setShowImportModal(false)}
-              >
-                {t("admin.cancel")}
-              </button>
-              <button
-                type="button"
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-                onClick={handleImport}
-                disabled={importing}
-              >
-                {importing ? t("admin.importing") : t("admin.import")}
-              </button>
-            </div>
-      </Modal>
-
-      {/* Detail Modal */}
-      <Modal open={showDetailModal} onClose={() => setShowDetailModal(false)} className="max-w-[90vw] w-[1100px]">
-        <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">卡密详情</h2>
-            {detailItem && (
-              <p className="text-sm text-muted-foreground">
-                {detailItem.product_title}
-                {detailItem.spec_name ? <>{` — ${detailItem.spec_name}`}{detailItem.spec_enabled === false && <span className="ml-1 text-amber-500">(已停用)</span>}</> : ""}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowDetailModal(false)}
-            className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="p-6">
-          {detailLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            </div>
-          ) : detailKeys.length === 0 ? (
-            <p className="py-12 text-center text-sm text-muted-foreground">暂无卡密数据</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm table-fixed" onCopy={(e) => { const t = window.getSelection()?.toString(); if (t) { e.clipboardData.setData("text/plain", stripInvisible(t)); e.preventDefault() } }}>
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="w-[36%] px-3 py-2 text-left font-medium text-muted-foreground">卡券内容</th>
-                    <th className="w-[8%] px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">状态</th>
-                    <th className="w-[16%] px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">创建时间</th>
-                    <th className="w-[16%] px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">订单号</th>
-                    <th className="w-[16%] px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">售出时间</th>
-                    <th className="w-[8%] px-3 py-2 text-right font-medium text-muted-foreground whitespace-nowrap">操作</th>
+        <TabsContent value="import" className="flex flex-col gap-4">
+          <DataTableShell footer={<AdminPagination page={importPage} total={importTotal} pageSize={PAGE_SIZE} onPageChange={setImportPage} />}>
+            <table className="w-full min-w-[850px] text-sm">
+              <thead><tr className="border-b border-border bg-muted/30">
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.batchId")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.product")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.columnCount")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.importCount")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.successCount")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.duplicateCount")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.failCount")}</th>
+                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
+              </tr></thead>
+              <tbody>
+                {importLoading && <TableLoadingState colSpan={8} />}
+                {!importLoading && importError && <TableErrorState colSpan={8} onRetry={() => void loadImportBatches()} />}
+                {!importLoading && !importError && importBatches.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noImportData")}</TableEmptyState>}
+                {!importLoading && !importError && importBatches.map((batch) => (
+                  <tr key={batch.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                    <td className="px-4 py-3 font-mono text-xs">{batch.id.length > 16 ? `${batch.id.slice(0, 8)}…` : batch.id}</td>
+                    <td className="px-4 py-3">{products.find((product) => product.id === batch.product_id)?.title || batch.product_id}</td>
+                    <td className="px-4 py-3">{batch.column_count ?? 1}</td>
+                    <td className="px-4 py-3">{batch.total_count}</td>
+                    <td className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
+                    <td className="px-4 py-3 text-amber-600">{batch.duplicate_count}</td>
+                    <td className={batch.fail_count > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{batch.fail_count}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(batch.created_at, locale)}</td>
                   </tr>
-                </thead>
+                ))}
+              </tbody>
+            </table>
+          </DataTableShell>
+        </TabsContent>
+      </Tabs>
+
+      <Dialog open={importDialogOpen} onOpenChange={handleImportDialogChange}>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+          <DialogHeader><DialogTitle>{t("admin.batchImportKeys")}</DialogTitle><DialogDescription>{t("admin.cardImportHint")}</DialogDescription></DialogHeader>
+          <div className="flex flex-col gap-4 py-2">
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              {t("admin.selectProductReq")}
+              <select ref={importProductRef} className={`h-10 rounded-md border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 ${importErrors.product ? "border-destructive ring-2 ring-destructive/20" : "border-input focus:ring-ring"}`} value={importProductId} onChange={(event) => void handleProductChange(event.target.value)} disabled={importing}>
+                <option value="">{t("admin.selectProductPlaceholder")}</option>
+                {importableProducts.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
+              </select>
+            </label>
+            {loadingSpecs && <p className="text-sm text-muted-foreground">{t("admin.loadingSpecs")}</p>}
+            {!loadingSpecs && importSpecs.length > 0 && <label className="flex flex-col gap-1.5 text-sm font-medium">
+              {t("admin.selectSpec")}
+              <select className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" value={importSpecId} onChange={(event) => setImportSpecId(event.target.value)} disabled={importing}>
+                <option value="">{t("admin.defaultSpec")}</option>
+                {importSpecs.map((spec) => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
+              </select>
+            </label>}
+            <div className={importErrors.content ? "rounded-lg ring-1 ring-destructive" : undefined}><CardContentImportFields columns={importColumns} onChange={(columns) => { setImportColumns(columns); setImportErrors((current) => ({ ...current, content: false })) }} disabled={importing} /></div>
+            <label className="flex items-start gap-2 text-sm text-foreground"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={checkDuplicate} onChange={(event) => setCheckDuplicate(event.target.checked)} disabled={importing} /><span>{t("admin.checkDuplicate")}</span></label>
+          </div>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => handleImportDialogChange(false)} disabled={importing}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleImport()} disabled={importing}>{importing ? t("admin.importing") : t("admin.import")}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Sheet open={detailItem !== null} onOpenChange={closeDetail}>
+        <SheetContent className="flex w-full flex-col p-0 sm:max-w-5xl">
+          <SheetHeader className="border-b border-border px-6 py-5 pr-14">
+            <SheetTitle>{t("admin.cardDetail")}</SheetTitle>
+            <SheetDescription>{detailItem ? `${detailItem.product_title} · ${detailItem.spec_name || t("admin.defaultSpec")}` : ""}</SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">
+            <DataTableShell footer={<AdminPagination page={detailPage} total={detailTotal} pageSize={PAGE_SIZE} onPageChange={handleDetailPageChange} />}>
+              <table className="w-full min-w-[900px] text-sm" onCopy={(event) => { const selected = window.getSelection()?.toString(); if (selected) { event.clipboardData.setData("text/plain", stripInvisible(selected)); event.preventDefault() } }}>
+                <thead><tr className="border-b border-border bg-muted/30">
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardContentColumnLabel")}</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardStatus")}</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardCreatedAt")}</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardOrderNo")}</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardSoldAt")}</th>
+                  <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
+                </tr></thead>
                 <tbody>
-                  {detailKeys.map((key) => (
-                    <tr key={key.id} className="border-b border-border/50 last:border-0">
-                      <td className="px-3 py-2 font-mono text-xs text-foreground break-all">
-                        <CardContentParts parts={key.content_parts} onCopy={copyToClipboard} />
-                      </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
-                        <span className={cn(
-                          "rounded-full px-2 py-0.5 text-xs font-medium",
-                          key.status === "AVAILABLE" && "bg-emerald-500/10 text-emerald-600",
-                          key.status === "SOLD" && "bg-blue-500/10 text-blue-600",
-                          key.status === "LOCKED" && "bg-amber-500/10 text-amber-600",
-                          key.status === "INVALID" && "bg-red-500/10 text-red-600",
-                        )}>
-                          {key.status === "AVAILABLE" ? "可用" : key.status === "SOLD" ? "已售" : key.status === "LOCKED" ? "锁定" : "已作废"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                        {new Date(key.created_at).toLocaleString()}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs text-muted-foreground whitespace-nowrap">
-                        {key.order_id ? key.order_id.slice(0, 8) + "..." : "-"}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                        {key.sold_at ? new Date(key.sold_at).toLocaleString() : "-"}
-                      </td>
-                      <td className="px-3 py-2 text-right whitespace-nowrap">
-                        {(key.status === "AVAILABLE" || key.status === "LOCKED") && (
-                          <button
-                            type="button"
-                            className="rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                            title="作废此卡密"
-                            onClick={() => setSingleInvalidateTarget(key)}
-                          >
-                            <Ban className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </td>
+                  {detailLoading && <TableLoadingState colSpan={6} />}
+                  {!detailLoading && detailError && <TableErrorState colSpan={6} onRetry={() => detailItem && void fetchDetailKeys(detailItem, detailPage)} />}
+                  {!detailLoading && !detailError && detailKeys.length === 0 && <TableEmptyState colSpan={6}>{t("admin.noCardData")}</TableEmptyState>}
+                  {!detailLoading && !detailError && detailKeys.map((key) => (
+                    <tr key={key.id} className="border-b border-border/60 last:border-0">
+                      <td className="px-4 py-3 align-top"><CardContentParts parts={key.content_parts} onCopy={copyToClipboard} /></td>
+                      <td className="px-4 py-3 align-top"><StatusBadge label={cardStatusLabel(key.status)} tone={cardStatusTone[key.status]} /></td>
+                      <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{formatDateTime(key.created_at, locale)}</td>
+                      <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_id ? `${key.order_id.slice(0, 8)}…` : t("admin.systemNoData")}</td>
+                      <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{key.sold_at ? formatDateTime(key.sold_at, locale) : t("admin.systemNoData")}</td>
+                      <td className="px-4 py-3 text-right align-top">{(key.status === "AVAILABLE" || key.status === "LOCKED") && <Button type="button" variant="ghost" size="icon" title={t("admin.invalidateCard")} aria-label={t("admin.invalidateCard")} onClick={() => setSingleInvalidateTarget(key)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-        {detailTotal > 20 && (
-          <div className="flex items-center justify-between border-t border-border px-6 py-3">
-            <span className="text-sm text-muted-foreground">共 {detailTotal} 条</span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent disabled:opacity-50"
-                disabled={detailPage <= 1}
-                onClick={() => handleDetailPageChange(detailPage - 1)}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="px-2 text-sm text-foreground">{detailPage} / {Math.ceil(detailTotal / 20)}</span>
-              <button
-                type="button"
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent disabled:opacity-50"
-                disabled={detailPage >= Math.ceil(detailTotal / 20)}
-                onClick={() => handleDetailPageChange(detailPage + 1)}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
+            </DataTableShell>
           </div>
-        )}
-      </Modal>
+        </SheetContent>
+      </Sheet>
 
-      {/* Single Invalidate Confirmation */}
-      <Modal open={singleInvalidateTarget !== null} onClose={() => setSingleInvalidateTarget(null)} className="max-w-md">
-        <div className="flex flex-col gap-4 p-6">
-          <div className="flex items-start gap-3">
-            <div className="rounded-full bg-destructive/10 p-2">
-              <AlertCircle className="h-5 w-5 text-destructive" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-base font-semibold text-foreground">确认作废卡密</h3>
-              {singleInvalidateTarget && (
-                <p className="mt-1 text-sm text-muted-foreground">
-                  确定要作废以下卡密吗？此操作不可撤销。
-                  <br />
-                  <code className="mt-1 inline-block rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground break-all">
-                    {singleInvalidateTarget.content_parts.join(" · ")}
-                  </code>
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-              onClick={() => setSingleInvalidateTarget(null)}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              onClick={handleSingleInvalidate}
-              disabled={singleInvalidating}
-            >
-              {singleInvalidating ? "作废中..." : "确认作废"}
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <ConfirmAlert
+        open={singleInvalidateTarget !== null}
+        onOpenChange={(open) => { if (!open && !singleInvalidating) setSingleInvalidateTarget(null) }}
+        title={t("admin.invalidateCardTitle")}
+        description={singleInvalidateTarget ? `${t("admin.invalidateCardDescription")} ${singleInvalidateTarget.content_parts.join(" · ")}` : undefined}
+        confirmLabel={singleInvalidating ? t("admin.invalidating") : t("admin.confirmInvalidate")}
+        cancelLabel={t("admin.cancel")}
+        destructive
+        loading={singleInvalidating}
+        onConfirm={() => void handleSingleInvalidate()}
+      />
 
-      {/* Batch Invalidate Confirmation */}
-      <Modal open={showInvalidateConfirm !== null} onClose={() => setShowInvalidateConfirm(null)} className="max-w-md">
-        <div className="flex flex-col gap-4 p-6">
-          <div className="flex items-start gap-3">
-            <div className="rounded-full bg-destructive/10 p-2">
-              <AlertCircle className="h-5 w-5 text-destructive" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-base font-semibold text-foreground">确认批量作废</h3>
-              {showInvalidateConfirm && (
-                <p className="mt-1 text-sm text-muted-foreground">
-                  确定要将「{showInvalidateConfirm.product_title}
-                  {showInvalidateConfirm.spec_name ? ` — ${showInvalidateConfirm.spec_name}` : ""}」
-                  的 <span className="font-medium text-foreground">{showInvalidateConfirm.available}</span> 条可用卡密全部作废吗？此操作不可撤销。
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-              onClick={() => setShowInvalidateConfirm(null)}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              className="rounded-lg bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
-              onClick={handleBatchInvalidate}
-              disabled={invalidating}
-            >
-              {invalidating ? "作废中..." : "确认作废"}
-            </button>
-          </div>
-        </div>
-      </Modal>
-    </div>
+      <ConfirmAlert
+        open={batchInvalidateTarget !== null}
+        onOpenChange={(open) => { if (!open && !batchInvalidating) setBatchInvalidateTarget(null) }}
+        title={t("admin.batchInvalidateTitle")}
+        description={batchInvalidateTarget ? t("admin.batchInvalidateDescription").replace("{name}", `${batchInvalidateTarget.product_title} · ${batchInvalidateTarget.spec_name || t("admin.defaultSpec")}`).replace("{count}", String(batchInvalidateTarget.available ?? 0)) : undefined}
+        confirmLabel={batchInvalidating ? t("admin.invalidating") : t("admin.confirmInvalidate")}
+        cancelLabel={t("admin.cancel")}
+        destructive
+        loading={batchInvalidating}
+        onConfirm={() => void handleBatchInvalidate()}
+      />
+    </AdminPage>
   )
 }

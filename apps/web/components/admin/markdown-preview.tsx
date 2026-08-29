@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown"
+import { useLocale } from "@/lib/context"
 import { cn } from "@/lib/utils"
 
 interface MarkdownPreviewProps {
@@ -7,11 +8,13 @@ interface MarkdownPreviewProps {
   className?: string
 }
 
-export function MarkdownPreview({ value, emptyMessage = "暂无内容，Markdown 预览会显示在这里。", className }: MarkdownPreviewProps) {
+export function MarkdownPreview({ value, emptyMessage, className }: MarkdownPreviewProps) {
+  const { t } = useLocale()
+  const resolvedEmptyMessage = emptyMessage || t("admin.markdownEmpty")
   if (!value.trim()) {
     return (
       <div className={cn("flex min-h-32 items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-4 text-center text-sm text-muted-foreground", className)}>
-        {emptyMessage}
+        {resolvedEmptyMessage}
       </div>
     )
   }

@@ -1,578 +1,287 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Search, ChevronDown, Eye, Download, ChevronLeft, ChevronRight, X, CheckCircle } from "lucide-react"
-import { cn, formatYuan, stripInvisible } from "@/lib/utils"
-import { useLocale } from "@/lib/context"
+import { useCallback, useEffect, useState } from "react"
+import { CheckCircle, Copy, Eye } from "lucide-react"
 import { toast } from "sonner"
-import { adminOrderApi, adminCardKeyApi, requestOrThrow } from "@/services/api"
+
+import { OrderDetailSheet } from "@/components/admin/orders/order-detail-sheet"
+import {
+  AdminPage,
+  AdminPagination,
+  ConfirmAlert,
+  DataTableShell,
+  PageHeader,
+  PageToolbar,
+  StatusBadge,
+  TableEmptyState,
+  TableErrorState,
+  TableLoadingState,
+} from "@/components/admin/shared"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
-import { PaymentIcon, getPaymentLabel } from "@/components/shared/payment-icon"
-import { Modal } from "@/components/ui/modal"
-import { CardContentParts } from "@/components/shared/card-content-parts"
+import { getPaymentLabel, PaymentIcon } from "@/components/shared/payment-icon"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { useLocale } from "@/lib/context"
+import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
+import { adminCardKeyApi, adminOrderApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItem, OrderCardKey } from "@/types"
 
-const ITEMS_PER_PAGE = 10
+const PAGE_SIZE = 20
 
 export default function AdminOrdersPage() {
-  const { t } = useLocale()
-
-  const copyToClipboard = (text: string) => {
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(
-        () => toast.success(t("order.copied")),
-        () => fallbackCopy(text)
-      )
-    } else {
-      fallbackCopy(text)
-    }
-    function fallbackCopy(val: string) {
-      const ta = document.createElement("textarea")
-      ta.value = val
-      ta.style.position = "fixed"
-      ta.style.opacity = "0"
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand("copy")
-      document.body.removeChild(ta)
-      toast.success(t("order.copied"))
-    }
-  }
-
+  const { t, locale } = useLocale()
   const [orders, setOrders] = useState<AdminOrderItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [search, setSearch] = useState("")
+  const [debouncedSearch, setDebouncedSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [paymentFilter, setPaymentFilter] = useState("")
   const [orderTypeFilter, setOrderTypeFilter] = useState("")
-  const [currentPage, setCurrentPage] = useState(1)
-  const [showDetail, setShowDetail] = useState<AdminOrderItem | null>(null)
-  const [detailCardKeys, setDetailCardKeys] = useState<OrderCardKey[]>([])
+  const [page, setPage] = useState(1)
 
-  const [debouncedSearch, setDebouncedSearch] = useState("")
-  const [markPaidConfirm, setMarkPaidConfirm] = useState<string | null>(null)
+  const [detailOrder, setDetailOrder] = useState<AdminOrderItem | null>(null)
+  const [detailOrderLoading, setDetailOrderLoading] = useState(false)
+  const [detailOrderError, setDetailOrderError] = useState(false)
+  const [detailCardKeys, setDetailCardKeys] = useState<OrderCardKey[]>([])
+  const [detailCardKeysLoading, setDetailCardKeysLoading] = useState(false)
+  const [detailCardKeysError, setDetailCardKeysError] = useState(false)
+  const [markPaidOrderId, setMarkPaidOrderId] = useState<string | null>(null)
   const [markPaidReason, setMarkPaidReason] = useState("")
+  const [markPaidLoading, setMarkPaidLoading] = useState(false)
   const [completingManualItem, setCompletingManualItem] = useState<string | null>(null)
 
-  const fetchOrders = async () => {
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim())
+      setPage(1)
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [search])
+
+  const loadOrders = useCallback(async () => {
     setLoading(true)
+    setError(false)
     try {
       const data = await requestOrThrow(() => adminOrderApi.getList({
-          page: currentPage,
-          page_size: ITEMS_PER_PAGE,
-          status: statusFilter || undefined,
-          order_type: orderTypeFilter || undefined,
-          payment_method: paymentFilter || undefined,
-          keyword: debouncedSearch || undefined,
-        }))
+        page,
+        page_size: PAGE_SIZE,
+        status: statusFilter || undefined,
+        order_type: orderTypeFilter || undefined,
+        payment_method: paymentFilter || undefined,
+        keyword: debouncedSearch || undefined,
+      }))
       setOrders(data.list)
       setTotal(data.pagination.total)
     } catch {
       setOrders([])
       setTotal(0)
+      setError(true)
     } finally {
       setLoading(false)
     }
+  }, [debouncedSearch, orderTypeFilter, page, paymentFilter, statusFilter])
+
+  useEffect(() => { void loadOrders() }, [loadOrders])
+
+  const loadDetailCardKeys = useCallback(async (orderId: string) => {
+    setDetailCardKeysLoading(true)
+    setDetailCardKeysError(false)
+    try {
+      setDetailCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
+    } catch {
+      setDetailCardKeys([])
+      setDetailCardKeysError(true)
+    } finally {
+      setDetailCardKeysLoading(false)
+    }
+  }, [])
+
+  const loadOrderDetail = useCallback(async (orderId: string) => {
+    setDetailOrderLoading(true)
+    setDetailOrderError(false)
+    try {
+      const detail = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
+      setDetailOrder(detail)
+      if (detail.status === "DELIVERED") await loadDetailCardKeys(orderId)
+      else {
+        setDetailCardKeys([])
+        setDetailCardKeysError(false)
+      }
+    } catch {
+      setDetailOrderError(true)
+    } finally {
+      setDetailOrderLoading(false)
+    }
+  }, [loadDetailCardKeys])
+
+  const openDetail = (order: AdminOrderItem) => {
+    setDetailOrder(order)
+    setDetailCardKeys([])
+    setDetailCardKeysError(false)
+    void loadOrderDetail(order.id)
   }
 
-  // Debounce search input → reset page + commit debounced value
-  useEffect(() => {
-    if (search === debouncedSearch) return
-    const timer = setTimeout(() => {
-      setCurrentPage(1)
-      setDebouncedSearch(search)
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [search])
-
-  // Single fetch effect for all filter/page/search dependencies
-  useEffect(() => { fetchOrders() }, [currentPage, statusFilter, paymentFilter, orderTypeFilter, debouncedSearch])
-
-  const totalPages = Math.ceil(total / ITEMS_PER_PAGE)
-
-  const handleViewDetail = async (order: AdminOrderItem) => {
-    setShowDetail(order)
-    if (order.status === "DELIVERED") {
-      try {
-        const keys = await requestOrThrow(() => adminCardKeyApi.getByOrder(order.id))
-        setDetailCardKeys(keys)
-      } catch {
-        setDetailCardKeys([])
-      }
-    } else {
+  const closeDetail = (open: boolean) => {
+    if (!open) {
+      setDetailOrder(null)
+      setDetailOrderLoading(false)
+      setDetailOrderError(false)
       setDetailCardKeys([])
     }
   }
 
-  const handleMarkPaid = async (orderId: string) => {
-    if (markPaidReason.trim().length < 3) {
-      toast.error("请填写至少 3 个字符的操作原因")
+  const handleMarkPaid = async () => {
+    if (!markPaidOrderId) return
+    const reason = markPaidReason.trim()
+    if (reason.length < 3) {
+      toast.error(t("admin.markPaidReasonTooShort"))
       return
     }
+    setMarkPaidLoading(true)
     try {
-      await requestOrThrow(() => adminOrderApi.markPaid(orderId, markPaidReason.trim()))
-      toast.success("已标记为已支付")
-      setMarkPaidConfirm(null)
+      await requestOrThrow(() => adminOrderApi.markPaid(markPaidOrderId, reason))
+      toast.success(t("admin.markedPaid"))
+      setMarkPaidOrderId(null)
       setMarkPaidReason("")
-      setShowDetail(null)
-      await fetchOrders()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "操作失败")
+      setDetailOrder(null)
+      await loadOrders()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      setMarkPaidLoading(false)
     }
   }
 
-  const handleCompleteManualItem = async (orderId: string, itemId: string) => {
-    setCompletingManualItem(itemId)
+  const handleCompleteManualItem = async (orderId: string, orderItemId: string) => {
+    setCompletingManualItem(orderItemId)
     try {
-      await requestOrThrow(() => adminOrderApi.completeManualItem(orderId, itemId))
-      toast.success("人工发货已完成")
-      const refreshed = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
-      setShowDetail(refreshed)
-      if (refreshed.status === "DELIVERED") {
-        setDetailCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
-      }
-      await fetchOrders()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "操作失败")
+      await requestOrThrow(() => adminOrderApi.completeManualItem(orderId, orderItemId))
+      toast.success(t("admin.manualDeliveryCompleted"))
+      await loadOrderDetail(orderId)
+      await loadOrders()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
       setCompletingManualItem(null)
     }
   }
 
+  const copyOrderNumber = (value: string) => {
+    const cleanValue = stripInvisible(value)
+    const fallback = () => {
+      const textarea = document.createElement("textarea")
+      textarea.value = cleanValue
+      textarea.style.position = "fixed"
+      textarea.style.opacity = "0"
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand("copy")
+      document.body.removeChild(textarea)
+      toast.success(t("order.copied"))
+    }
+    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(cleanValue).then(() => toast.success(t("order.copied")), fallback)
+    else fallback()
+  }
+
   return (
-    <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("admin.orders")}</h1>
-          <p className="text-sm text-muted-foreground">{t("admin.ordersDesc")}</p>
-        </div>
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded-lg border border-input bg-transparent px-4 py-2.5 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-          onClick={() => toast.info("导出功能开发中")}
-        >
-          <Download className="h-4 w-4" />
-          导出
-        </button>
-      </div>
+    <AdminPage>
+      <PageHeader title={t("admin.orders")} description={t("admin.ordersDesc")} />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={t("admin.searchOrder")}
-            className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-
-        <div className="relative">
-          <select
-            className="h-10 appearance-none rounded-lg border border-input bg-background pl-3 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1) }}
-          >
+      <PageToolbar>
+        <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row">
+          <Input className="min-w-0 lg:max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("admin.searchOrder")} aria-label={t("admin.searchOrder")} />
+          <select className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} aria-label={t("admin.statusLabel")}>
             <option value="">{t("admin.allStatus")}</option>
-            <option value="PENDING">待支付</option>
-            <option value="PAID">已支付</option>
-            <option value="DELIVERED">已发货</option>
-            <option value="EXPIRED">已过期</option>
+            <option value="PENDING">{t("status.PENDING")}</option>
+            <option value="PAID">{t("status.PAID")}</option>
+            <option value="DELIVERED">{t("status.DELIVERED")}</option>
+            <option value="EXPIRED">{t("status.EXPIRED")}</option>
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        </div>
-
-        <div className="relative">
-          <select
-            className="h-10 appearance-none rounded-lg border border-input bg-background pl-3 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            value={paymentFilter}
-            onChange={(e) => { setPaymentFilter(e.target.value); setCurrentPage(1) }}
-          >
+          <select className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={paymentFilter} onChange={(event) => { setPaymentFilter(event.target.value); setPage(1) }} aria-label={t("admin.paymentMethod")}>
             <option value="">{t("admin.allPayment")}</option>
-            <option value="alipay">支付宝</option>
-            <option value="wechat">微信支付</option>
+            <option value="alipay">{t("payment.alipay")}</option>
+            <option value="wechat">{t("payment.wechat")}</option>
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        </div>
-
-        <div className="relative">
-          <select
-            className="h-10 appearance-none rounded-lg border border-input bg-background pl-3 pr-8 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            value={orderTypeFilter}
-            onChange={(e) => { setOrderTypeFilter(e.target.value); setCurrentPage(1) }}
-          >
+          <select className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={orderTypeFilter} onChange={(event) => { setOrderTypeFilter(event.target.value); setPage(1) }} aria-label={t("admin.orderSource")}>
             <option value="">{t("admin.allOrderType")}</option>
             <option value="DIRECT">{t("admin.directOrder")}</option>
             <option value="CART">{t("admin.cartOrder")}</option>
           </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         </div>
-      </div>
+      </PageToolbar>
 
-      {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/30">
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">商品</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">数量</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.user")}</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderSource")}</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.paymentMethod")}</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
-                <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={10} className="py-12">
-                    <div className="flex items-center justify-center">
-                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                    </div>
-                  </td>
+      <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
+        <table className="w-full min-w-[1200px] text-sm">
+          <thead><tr className="border-b border-border bg-muted/30">
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderProducts")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.quantity")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.user")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderSource")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.paymentMethod")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
+            <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
+          </tr></thead>
+          <tbody>
+            {loading && <TableLoadingState colSpan={10} />}
+            {!loading && error && <TableErrorState colSpan={10} onRetry={() => void loadOrders()} />}
+            {!loading && !error && orders.length === 0 && <TableEmptyState colSpan={10}>{t("admin.noOrderData")}</TableEmptyState>}
+            {!loading && !error && orders.map((order) => {
+              const item = order.items[0]
+              const quantity = order.items.reduce((sum, current) => sum + current.quantity, 0)
+              return (
+                <tr key={order.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                  <td className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={order.id} onClick={() => copyOrderNumber(order.id)}>{order.id.length > 16 ? `${order.id.slice(0, 8)}…${order.id.slice(-4)}` : order.id}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
+                  <td className="max-w-[220px] truncate px-4 py-3">{item?.product_title || t("admin.systemNoData")}{item?.spec_name && <span className="text-muted-foreground"> · {item.spec_name}</span>}{order.items.length > 1 && <span className="ml-1 text-xs text-muted-foreground">+{order.items.length - 1}</span>}</td>
+                  <td className="px-4 py-3">{quantity}</td>
+                  <td className="px-4 py-3"><div className="flex min-w-[12rem] flex-col"><span>{order.username || t("admin.guest")}</span><span className="text-xs text-muted-foreground">{order.email}</span></div></td>
+                  <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
+                  <td className="px-4 py-3"><StatusBadge label={order.order_type === "CART" ? t("admin.cartOrder") : t("admin.directOrder")} tone={order.order_type === "CART" ? "purple" : "info"} /></td>
+                  <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.payment_method} className="h-4 w-4" />{getPaymentLabel(order.payment_method, t)}</span></td>
+                  <td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td>
+                  <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
+                  <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")} onClick={() => openDetail(order)}><Eye className="h-4 w-4" aria-hidden="true" /></Button>{order.status === "PENDING" && <Button type="button" variant="ghost" size="icon" title={t("admin.markPaid")} aria-label={t("admin.markPaid")} onClick={() => { setMarkPaidOrderId(order.id); setMarkPaidReason("") }}><CheckCircle className="h-4 w-4 text-emerald-600" aria-hidden="true" /></Button>}</div></td>
                 </tr>
-              ) : orders.length === 0 ? (
-                <tr>
-                  <td colSpan={10} className="py-8 text-center text-sm text-muted-foreground">{t("admin.noOrderData")}</td>
-                </tr>
-              ) : (
-                orders.map((order) => (
-                  <tr key={order.id} className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="cursor-pointer font-mono text-sm font-medium text-foreground underline-offset-4 transition-colors hover:underline hover:text-primary"
-                          title={order.id}
-                          onClick={() => copyToClipboard(order.id)}
-                        >
-                          {order.id.length > 16 ? `${order.id.slice(0, 8)}...${order.id.slice(-4)}` : order.id}
-                        </span>
-                        {order.is_risk_flagged && (
-                          <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-500">{t("admin.riskFlagged")}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-sm text-foreground">
-                        {order.items?.[0]?.product_title || "-"}
-                        {order.items?.[0]?.spec_name && (
-                          <span className="text-muted-foreground"> - {order.items[0].spec_name}</span>
-                        )}
-                        {(order.items?.length ?? 0) > 1 && (
-                          <span className="ml-1 text-xs text-muted-foreground">等{order.items.length}件</span>
-                        )}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-foreground">
-                      {order.items?.reduce((sum, item) => sum + item.quantity, 0) || 0}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="text-xs text-foreground">{order.username || t("admin.guest")}</span>
-                        <span className="text-xs text-muted-foreground">{order.email}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="font-medium text-foreground">{formatYuan(order.actual_amount)}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={cn(
-                        "rounded-full px-2.5 py-0.5 text-xs font-medium",
-                        order.order_type === "CART"
-                          ? "bg-purple-500/10 text-purple-600"
-                          : "bg-blue-500/10 text-blue-600"
-                      )}>
-                        {order.order_type === "CART" ? t("admin.cartOrder") : t("admin.directOrder")}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5 text-foreground">
-                        <PaymentIcon method={order.payment_method} className="h-4 w-4" />
-                        {getPaymentLabel(order.payment_method)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <OrderStatusBadge status={order.status} />
-                    </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                      {new Date(order.created_at).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleViewDetail(order)}
-                          className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                          title={t("admin.viewDetail")}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        {order.status === "PENDING" && (
-                          <button
-                            type="button"
-                            onClick={() => setMarkPaidConfirm(order.id)}
-                            className="rounded-md p-1.5 text-muted-foreground hover:bg-emerald-500/10 hover:text-emerald-600 transition-colors"
-                            title={t("admin.markPaid")}
-                          >
-                            <CheckCircle className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+              )
+            })}
+          </tbody>
+        </table>
+      </DataTableShell>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            {t("common.page")} {currentPage} / {totalPages}{t("admin.totalRecords")} {total} {t("admin.records")}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1)
-              .filter(page => page === 1 || page === totalPages || Math.abs(page - currentPage) <= 1)
-              .map((page, index, array) => (
-                <div key={page} className="flex items-center gap-1">
-                  {index > 0 && array[index - 1] !== page - 1 && (
-                    <span className="px-2 text-muted-foreground">...</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPage(page)}
-                    className={cn(
-                      "flex h-9 w-9 items-center justify-center rounded-lg text-sm font-medium transition-colors",
-                      currentPage === page
-                        ? "bg-primary text-primary-foreground"
-                        : "border border-input bg-transparent text-foreground hover:bg-accent"
-                    )}
-                  >
-                    {page}
-                  </button>
-                </div>
-              ))}
-            <button
-              type="button"
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-input bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      <OrderDetailSheet
+        order={detailOrder}
+        onOpenChange={closeDetail}
+        detailLoading={detailOrderLoading}
+        detailError={detailOrderError}
+        onRetryDetail={() => detailOrder && void loadOrderDetail(detailOrder.id)}
+        detailCardKeys={detailCardKeys}
+        detailCardKeysLoading={detailCardKeysLoading}
+        detailCardKeysError={detailCardKeysError}
+        onRetryCardKeys={() => detailOrder && void loadDetailCardKeys(detailOrder.id)}
+        completingManualItem={completingManualItem}
+        onCompleteManualItem={(orderId, orderItemId) => void handleCompleteManualItem(orderId, orderItemId)}
+        onMarkPaid={(orderId) => { setMarkPaidOrderId(orderId); setMarkPaidReason("") }}
+      />
 
-      {/* Detail Modal */}
-      <Modal open={showDetail !== null} onClose={() => setShowDetail(null)} className="max-w-lg">
-        {showDetail && (
-          <>
-            <div className="border-b border-border px-6 py-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-foreground">{t("admin.orderDetail")}</h2>
-                <p className="font-mono text-xs text-muted-foreground">{showDetail.id}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowDetail(null)}
-                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="flex flex-col gap-5 p-6">
-              {/* 商品明细 */}
-              <div>
-                <p className="text-xs text-muted-foreground mb-2">商品明细</p>
-                <div className="rounded-lg border border-border overflow-hidden">
-                  {showDetail.items.length > 0 ? showDetail.items.map((item, idx) => (
-                    <div key={item.id} className={cn("flex flex-wrap items-center justify-between gap-3 px-3 py-3 text-sm", idx > 0 && "border-t border-border/50")}>
-                      <div className="min-w-0">
-                        <div className="text-foreground">
-                          {item.product_title}
-                          {item.spec_name && <span className="text-muted-foreground"> - {item.spec_name}</span>}
-                          <span className="ml-2 text-muted-foreground">×{item.quantity}</span>
-                        </div>
-                        {item.customer_inputs.length > 0 && (
-                          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                            {item.customer_inputs.map(input => <div key={input.id}>客户填写 · {input.label}：{input.value}</div>)}
-                          </div>
-                        )}
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          <span>{item.delivery_type === "MANUAL" ? "人工发货" : "自动发货"}</span>
-                          <span>·</span>
-                          <span>{item.fulfillment_status === "WAITING_MANUAL" ? "待人工处理" : item.fulfillment_status === "DELIVERED" ? "已完成" : item.fulfillment_status === "CANCELLED" ? "已取消" : "待发货"}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-medium text-foreground">{formatYuan(item.subtotal)}</span>
-                        {item.delivery_type === "MANUAL" && item.fulfillment_status !== "DELIVERED" && item.fulfillment_status !== "CANCELLED" && showDetail.status === "PAID" && (
-                          <button
-                            type="button"
-                            disabled={completingManualItem === item.id}
-                            onClick={() => void handleCompleteManualItem(showDetail.id, item.id)}
-                            className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                          >
-                            {completingManualItem === item.id ? "处理中..." : "完成发货"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )) : (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">-</div>
-                  )}
-                </div>
-              </div>
+      <ConfirmAlert
+        open={markPaidOrderId !== null}
+        onOpenChange={(open) => { if (!open && !markPaidLoading) { setMarkPaidOrderId(null); setMarkPaidReason("") } }}
+        title={t("admin.markPaidConfirm")}
+        description={t("admin.markPaidReasonPlaceholder")}
+        confirmLabel={t("admin.markPaidBtn")}
+        cancelLabel={t("admin.cancel")}
+        loading={markPaidLoading}
+        confirmDisabled={markPaidReason.trim().length < 3}
+        onConfirm={() => void handleMarkPaid()}
+      >
+        <Textarea value={markPaidReason} onChange={(event) => setMarkPaidReason(event.target.value)} placeholder={t("admin.markPaidReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.markPaidReasonPlaceholder")} />
+      </ConfirmAlert>
 
-              <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">支付金额</span>
-                  <span className="text-sm font-medium text-foreground">{formatYuan(showDetail.actual_amount)}</span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">支付方式</span>
-                  <span className="inline-flex items-center gap-1.5 text-sm text-foreground">
-                    <PaymentIcon method={showDetail.payment_method} className="h-4 w-4" />
-                    {getPaymentLabel(showDetail.payment_method)}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">联系邮箱</span>
-                  <span className="text-sm text-foreground">{showDetail.email}</span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">创建时间</span>
-                  <span className="text-sm text-foreground">{new Date(showDetail.created_at).toLocaleString()}</span>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">支付时间</span>
-                  <span className="text-sm text-foreground">{showDetail.paid_at ? new Date(showDetail.paid_at).toLocaleString() : "-"}</span>
-                </div>
-              </div>
-
-              {/* 已发卡密 */}
-              {showDetail.status === "DELIVERED" && detailCardKeys.length > 0 && (
-                <div onCopy={(e) => { const t = window.getSelection()?.toString(); if (t) { e.clipboardData.setData("text/plain", stripInvisible(t)); e.preventDefault() } }}>
-                  <p className="text-xs text-muted-foreground mb-2">已交付卡券内容</p>
-                  {(() => {
-                    // 判断是否多商品：按 product_title + spec_name 去重
-                    const groups = new Map<string, typeof detailCardKeys>()
-                    for (const ck of detailCardKeys) {
-                      const key = ck.order_item_id || ck.product_title + (ck.spec_name ? ` - ${ck.spec_name}` : "")
-                      if (!groups.has(key)) groups.set(key, [])
-                      groups.get(key)!.push(ck)
-                    }
-                    const isMultiGroup = groups.size > 1
-
-                    if (!isMultiGroup) {
-                      // 单商品：直接平铺卡密
-                      return (
-                        <div className="flex flex-col gap-1.5">
-                          {detailCardKeys.map((ck) => (
-                              <div key={ck.card_key_id} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                                <CardContentParts parts={ck.content_parts} onCopy={copyToClipboard} />
-                              </div>
-                          ))}
-                        </div>
-                      )
-                    }
-                    // 多商品：按商品分组
-                    return (
-                      <div className="flex flex-col gap-3">
-                        {Array.from(groups.entries()).map(([groupName, keys]) => (
-                          <div key={groupName}>
-                            <p className="mb-1.5 text-xs font-medium text-muted-foreground">{groupName}</p>
-                            <div className="flex flex-col gap-1.5">
-                              {keys.map((ck) => (
-                                <div key={ck.card_key_id} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                                  <CardContentParts parts={ck.content_parts} onCopy={copyToClipboard} />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )
-                  })()}
-                </div>
-              )}
-            </div>
-            <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
-              <button
-                type="button"
-                className="rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-                onClick={() => setShowDetail(null)}
-              >
-                {t("common.close")}
-              </button>
-              {showDetail.status === "PENDING" && (
-                <button
-                  type="button"
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-                  onClick={() => setMarkPaidConfirm(showDetail.id)}
-                >
-                  {t("admin.markPaid")}
-                </button>
-              )}
-            </div>
-          </>
-        )}
-      </Modal>
-
-      {/* Mark Paid Confirmation */}
-      <Modal open={markPaidConfirm !== null} onClose={() => setMarkPaidConfirm(null)} className="max-w-sm">
-        <div className="flex flex-col items-center gap-4 p-6 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10">
-            <CheckCircle className="h-6 w-6 text-emerald-600" />
-          </div>
-          <h3 className="text-base font-semibold text-foreground">{t("admin.markPaidConfirm")}</h3>
-          <textarea
-            value={markPaidReason}
-            onChange={(event) => setMarkPaidReason(event.target.value)}
-            placeholder="请填写人工核验依据（必填）"
-            maxLength={500}
-            rows={3}
-            className="w-full rounded-lg border border-input bg-background px-3 py-2 text-left text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <div className="flex w-full gap-3">
-            <button
-              type="button"
-              className="flex-1 rounded-lg border border-input bg-transparent px-4 py-2 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-              onClick={() => setMarkPaidConfirm(null)}
-            >
-              {t("admin.cancel")}
-            </button>
-            <button
-              type="button"
-              className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-              onClick={() => markPaidConfirm && handleMarkPaid(markPaidConfirm)}
-            >
-              {t("admin.markPaidBtn")}
-            </button>
-          </div>
-        </div>
-      </Modal>
-    </div>
+    </AdminPage>
   )
 }
