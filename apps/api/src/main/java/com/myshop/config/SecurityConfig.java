@@ -60,8 +60,8 @@ public class SecurityConfig {
                         .requestMatchers("/auth/logout").authenticated()
                         .requestMatchers("/user/**").authenticated()
                         // Admin endpoints
-                        .requestMatchers("/admin/**").hasRole("ADMIN")
-                        .requestMatchers("/upload/**").hasRole("ADMIN")
+                        .requestMatchers("/admin/administrators/**").hasRole("SUPER_ADMIN")
+                        .requestMatchers("/admin/**", "/upload/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                         // Default
                         .anyRequest().authenticated())
                 .addFilterBefore(csrfCookieFilter, UsernamePasswordAuthenticationFilter.class)

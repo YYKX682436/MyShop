@@ -53,6 +53,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             WHERE o.userId IN :userIds
               AND o.status IN (com.myshop.constant.OrderStatus.PAID,
                                com.myshop.constant.OrderStatus.DELIVERED)
+              AND o.orderType = com.myshop.constant.OrderType.NORMAL
             GROUP BY o.userId
             """)
     List<UserOrderMetricsProjection> findSuccessfulMetricsByUserIdIn(
@@ -71,20 +72,22 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     Page<Order> findRiskFlaggedOrders(Pageable pageable);
 
     // Dashboard aggregate queries
-    @Query("SELECT COALESCE(SUM(o.actualAmount), 0) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) AND o.paidAt >= :since")
+    @Query("SELECT COALESCE(SUM(o.actualAmount), 0) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) AND o.orderType = com.myshop.constant.OrderType.NORMAL AND o.paidAt >= :since")
     BigDecimal sumSalesSince(@Param("since") LocalDateTime since);
 
     @Query("SELECT COALESCE(SUM(o.actualAmount), 0) FROM Order o WHERE " +
             "(o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) " +
+            "AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
             "AND o.paidAt >= :start AND o.paidAt < :end")
     BigDecimal sumSalesBetween(@Param("start") LocalDateTime start,
                                @Param("end") LocalDateTime end);
 
-    @Query("SELECT COUNT(o) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) AND o.paidAt >= :since")
+    @Query("SELECT COUNT(o) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) AND o.orderType = com.myshop.constant.OrderType.NORMAL AND o.paidAt >= :since")
     long countPaidOrdersSince(@Param("since") LocalDateTime since);
 
     @Query("SELECT COUNT(o) FROM Order o WHERE " +
             "(o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) " +
+            "AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
             "AND o.paidAt >= :start AND o.paidAt < :end")
     long countPaidOrdersBetween(@Param("start") LocalDateTime start,
                                 @Param("end") LocalDateTime end);
@@ -92,6 +95,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     long countByStatus(OrderStatus status);
 
     @Query("SELECT COUNT(o) FROM Order o WHERE o.status = com.myshop.constant.OrderStatus.DELIVERED " +
+            "AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
             "AND o.deliveredAt >= :start AND o.deliveredAt < :end")
     long countDeliveredBetween(@Param("start") LocalDateTime start,
                                @Param("end") LocalDateTime end);
@@ -100,6 +104,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             "AND (o.status = com.myshop.constant.OrderStatus.PAID " +
             "OR o.status = com.myshop.constant.OrderStatus.DELIVERED " +
             "OR o.status = com.myshop.constant.OrderStatus.EXPIRED) " +
+            "AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
             "GROUP BY o.status")
     List<Object[]> countPaymentOutcomesBetween(@Param("start") LocalDateTime start,
                                                @Param("end") LocalDateTime end);
@@ -108,6 +113,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             "WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR " +
             "o.status = com.myshop.constant.OrderStatus.DELIVERED) " +
             "AND o.paidAt >= :start AND o.paidAt < :end " +
+            "AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
             "AND o.email IS NOT NULL AND TRIM(o.email) <> ''")
     long countDistinctBuyersBetween(@Param("start") LocalDateTime start,
                                     @Param("end") LocalDateTime end);
@@ -118,6 +124,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                    COUNT(o.id) AS order_count
             FROM orders o
             WHERE o.status IN ('PAID', 'DELIVERED')
+              AND o.order_type = 'NORMAL'
               AND o.paid_at >= :start
               AND o.paid_at < :end
             GROUP BY DATE_TRUNC('day', o.paid_at)
@@ -132,6 +139,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                    COUNT(o.id) AS order_count
             FROM orders o
             WHERE o.status IN ('PAID', 'DELIVERED')
+              AND o.order_type = 'NORMAL'
               AND o.paid_at >= :start
               AND o.paid_at < :end
             GROUP BY DATE_TRUNC('month', o.paid_at)
@@ -140,7 +148,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     List<Object[]> findMonthlySalesTrend(@Param("start") LocalDateTime start,
                                          @Param("end") LocalDateTime end);
 
-    @Query("SELECT COUNT(o) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED)")
+    @Query("SELECT COUNT(o) FROM Order o WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED) AND o.orderType = com.myshop.constant.OrderType.NORMAL")
     long countTotalPaidOrders();
 
     long count();

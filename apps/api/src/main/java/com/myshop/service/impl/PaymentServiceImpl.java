@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentChannel;
@@ -64,6 +65,30 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public Map<String, Object> createPayment(UUID orderId, String paymentMethod, BigDecimal amount, String device) {
+        // The admin pickup path is already paid and must never resolve a
+        // channel or call an external provider. Keep this guard here as a
+        // second boundary for direct/internal callers.
+        Order order = orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        if (order.getOrderType() == OrderType.ADMIN_PICKUP
+                || "ADMIN_PICKUP".equalsIgnoreCase(order.getPaymentMethod())) {
+            if (order.getOrderType() != OrderType.ADMIN_PICKUP
+                    || !"ADMIN_PICKUP".equalsIgnoreCase(paymentMethod)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员提卡订单不支持外部支付");
+            }
+            if (order.getActualAmount() == null || amount == null
+                    || order.getActualAmount().compareTo(amount) != 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("order_id", order.getId());
+            result.put("order_type", OrderType.ADMIN_PICKUP);
+            result.put("admin_pickup", true);
+            result.put("paid", true);
+            result.put("expires_at", order.getExpiresAt());
+            return result;
+        }
+
         PaymentChannel channel = paymentChannelRepository.findByChannelCodeAndIsDeleted(paymentMethod, 0)
                 .filter(PaymentChannel::isEnabled)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道不可用"));
@@ -78,8 +103,6 @@ public class PaymentServiceImpl implements PaymentService {
 
         // Lock the order before reading/writing cached gateway fields. Retries
         // for the same order therefore cannot create two remote payments.
-        Order order = orderRepository.findByIdForUpdate(orderId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单状态不允许发起支付");
         }
@@ -129,6 +152,10 @@ public class PaymentServiceImpl implements PaymentService {
         boolean owner = requestUserId != null && requestUserId.equals(order.getUserId());
         if (!owner && !LookupTokens.matches(lookupToken, order.getLookupTokenHash())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作此订单");
+        }
+        if (order.getOrderType() == OrderType.ADMIN_PICKUP
+                || "ADMIN_PICKUP".equalsIgnoreCase(order.getPaymentMethod())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员提卡订单不支持重新支付");
         }
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单状态不允许重新支付");

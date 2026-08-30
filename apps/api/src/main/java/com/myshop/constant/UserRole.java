@@ -2,5 +2,6 @@ package com.myshop.constant;
 
 public enum UserRole {
     USER,
-    ADMIN
+    ADMIN,
+    SUPER_ADMIN
 }

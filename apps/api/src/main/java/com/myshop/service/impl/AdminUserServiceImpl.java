@@ -45,6 +45,7 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -53,6 +54,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     private static final int MAX_PAGE_SIZE = 100;
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2);
     private static final BigDecimal MAX_BALANCE = new BigDecimal("9999999999.99");
+    private static final Pattern PASSWORD_PATTERN = Pattern.compile("^[!-~]{6,72}$");
 
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
@@ -215,8 +217,8 @@ public class AdminUserServiceImpl implements AdminUserService {
     public void resetPassword(UUID id, AdminResetPasswordRequest request) {
         User user = requireRegularUser(id, true);
         String newPassword = request == null ? null : request.getNewPassword();
-        if (newPassword == null || newPassword.length() < 12) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "新密码至少需要 12 个字符");
+        if (newPassword == null || !PASSWORD_PATTERN.matcher(newPassword).matches()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "新密码必须为 6-72 位 ASCII 可见字符");
         }
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         user.setFailedLoginAttempts(0);
@@ -299,7 +301,7 @@ public class AdminUserServiceImpl implements AdminUserService {
                 .toList();
         return new AdminUserOrderResponse(
                 order.getId(), order.getTotalAmount(), order.getActualAmount(), order.getStatus(),
-                order.getPaymentMethod(), order.getEmail(), order.getCreatedAt(),
+                order.getOrderType(), order.getPaymentMethod(), order.getEmail(), order.getCreatedAt(),
                 order.getPaidAt(), order.getDeliveredAt(), items);
     }
 

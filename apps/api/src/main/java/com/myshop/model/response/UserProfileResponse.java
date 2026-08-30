@@ -19,6 +19,8 @@ public class UserProfileResponse {
     private String role;
     private Long userNo;
     private BigDecimal balance;
+    /** True for both administrator roles; the UI renders the balance as ∞. */
+    private boolean unlimited;
     private LocalDateTime createdAt;
 
     public static UserProfileResponse from(User user) {
@@ -29,6 +31,8 @@ public class UserProfileResponse {
         r.setRole(user.getRole().name());
         r.setUserNo(user.getUserNo());
         r.setBalance(user.getBalance());
+        r.setUnlimited(user.getRole() == com.myshop.constant.UserRole.ADMIN
+                || user.getRole() == com.myshop.constant.UserRole.SUPER_ADMIN);
         r.setCreatedAt(user.getCreatedAt());
         return r;
     }

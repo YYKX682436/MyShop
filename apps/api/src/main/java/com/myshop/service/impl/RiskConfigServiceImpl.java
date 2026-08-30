@@ -81,6 +81,7 @@ public class RiskConfigServiceImpl implements RiskConfigService {
             map.put("total_amount", o.getTotalAmount());
             map.put("actual_amount", o.getActualAmount());
             map.put("status", o.getStatus().name());
+            map.put("order_type", o.getOrderType());
             map.put("payment_method", o.getPaymentMethod());
             map.put("created_at", o.getCreatedAt());
             map.put("email", o.getEmail());

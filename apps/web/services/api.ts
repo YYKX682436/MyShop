@@ -35,6 +35,8 @@ import type {
   WholesaleRule,
   CaptchaResult,
   AuthResult,
+  AdministratorItem,
+  AdministratorOperationLog,
 } from "@/types"
 
 // ============================================================
@@ -355,7 +357,7 @@ export const orderApi = {
     return request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) })
   },
   getStatus: (orderId: string, lookupToken?: string) =>
-    request<{ order_id: string; status: OrderStatus; expires_at: string; remaining_seconds: number; payment_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`),
+    request<{ order_id: string; status: OrderStatus; expires_at: string | null; remaining_seconds: number; payment_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`),
   refreshStatus: (orderId: string, lookupToken?: string) =>
     request<{ status: OrderStatus }>(`/orders/${orderId}/refresh?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`, { method: "POST" }),
   query: (data: { orders: { order_id: string; lookup_token?: string }[] }) =>
@@ -592,6 +594,35 @@ export const adminConfigApi = {
     request<UserNumberConfig>("/admin/site-config/user-numbering"),
   updateUserNumbering: (data: Pick<UserNumberConfig, "start_user_no" | "next_user_no">) =>
     request<null>("/admin/site-config/user-numbering", { method: "PUT", body: JSON.stringify(data) }),
+}
+
+// ============================================================
+// Super administrator management
+// ============================================================
+
+export const adminAdministratorApi = {
+  getList: (params: { page?: number; page_size?: number; keyword?: string; is_deleted?: 0 | 1 }) => {
+    const qs = buildQuery(params)
+    return request<PaginatedData<AdministratorItem>>(`/admin/administrators?${qs}`)
+  },
+  get: (id: string) =>
+    request<AdministratorItem>(`/admin/administrators/${id}`),
+  create: (data: { username: string; password: string; email?: string; phone?: string }) =>
+    request<AdministratorItem>("/admin/administrators", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: { email?: string; phone?: string }) =>
+    request<AdministratorItem>(`/admin/administrators/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  toggleStatus: (id: string, isDeleted: 0 | 1) =>
+    request<null>(`/admin/administrators/${id}/toggle`, {
+      method: "POST", body: JSON.stringify({ is_deleted: isDeleted }),
+    }),
+  resetPassword: (id: string, newPassword: string) =>
+    request<null>(`/admin/administrators/${id}/reset-password`, {
+      method: "POST", body: JSON.stringify({ new_password: newPassword }),
+    }),
+  getOperationLogs: (id: string, params: { page?: number; page_size?: number } = {}) => {
+    const qs = buildQuery(params)
+    return request<PaginatedData<AdministratorOperationLog>>(`/admin/administrators/${id}/operation-logs?${qs}`)
+  },
 }
 
 // ============================================================

@@ -7,6 +7,7 @@ import { ClipboardList, Copy, Download, KeyRound, Loader2, Search, ShieldCheck }
 import { toast } from "sonner"
 import { getApiErrorMessage, getOrderLookupToken, orderApi, saveOrderLookupToken } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
+import { getPaymentLabel } from "@/components/shared/payment-icon"
 import { formatYuan } from "@/lib/utils"
 import type { DeliverResult, OrderBrief } from "@/types"
 
@@ -120,7 +121,7 @@ export default function OrderQueryPage() {
           </div>
           <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
             <span>创建于 {new Date(order.created_at).toLocaleString()}</span>
-            <span>支付方式：{order.payment_method}</span>
+            <span>支付方式：{getPaymentLabel(order.payment_method)}</span>
           </div>
           {order.items?.some(item => item.customer_inputs.length > 0) && (
             <div className="mt-5 rounded-lg border border-border bg-muted/20 p-3">

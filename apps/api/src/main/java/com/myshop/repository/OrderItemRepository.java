@@ -15,7 +15,8 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, UUID> {
     List<OrderItem> findByOrderIdIn(List<UUID> orderIds);
 
     @Query("SELECT COALESCE(SUM(oi.quantity), 0) FROM OrderItem oi JOIN Order o ON oi.orderId = o.id " +
-            "WHERE oi.productId = :productId AND (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED)")
+            "WHERE oi.productId = :productId AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
+            "AND (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED)")
     int sumQuantityByProductId(@Param("productId") UUID productId);
 
     /** One PostgreSQL aggregate supplies the recent best sellers. */
@@ -27,6 +28,7 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, UUID> {
             FROM order_items oi
             JOIN orders o ON o.id = oi.order_id
             WHERE o.status IN ('PAID', 'DELIVERED')
+              AND o.order_type = 'NORMAL'
               AND o.paid_at >= :since
               AND o.paid_at < :until
             GROUP BY oi.product_id

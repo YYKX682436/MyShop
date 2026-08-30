@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.exception.BusinessException;
@@ -32,6 +33,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
 
@@ -88,6 +90,46 @@ class PaymentServiceImplTest {
 
         assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
         verify(provider, never()).create(any(PaymentProvider.PaymentRequest.class));
+    }
+
+    @Test
+    void adminPickupReturnsPaidResultWithoutResolvingChannelOrCallingProvider() {
+        UUID orderId = UUID.randomUUID();
+        Order order = new Order();
+        order.setId(orderId);
+        order.setOrderType(OrderType.ADMIN_PICKUP);
+        order.setPaymentMethod("ADMIN_PICKUP");
+        order.setActualAmount(new BigDecimal("0.00"));
+        order.setTotalAmount(new BigDecimal("10.00"));
+        order.setStatus(OrderStatus.PAID);
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+
+        Map<String, Object> result = service.createPayment(orderId, "ADMIN_PICKUP",
+                new BigDecimal("0.00"), "pc");
+
+        assertEquals(true, result.get("paid"));
+        assertEquals(OrderType.ADMIN_PICKUP, result.get("order_type"));
+        verifyNoInteractions(paymentChannelRepository, provider);
+    }
+
+    @Test
+    void repayRejectsAdminPickupBeforeAnyExternalPayment() {
+        UUID orderId = UUID.randomUUID();
+        String lookupToken = "admin-pickup-lookup-token";
+        Order order = new Order();
+        order.setId(orderId);
+        order.setOrderType(OrderType.ADMIN_PICKUP);
+        order.setPaymentMethod("ADMIN_PICKUP");
+        order.setActualAmount(BigDecimal.ZERO.setScale(2));
+        order.setStatus(OrderStatus.PAID);
+        order.setLookupTokenHash(LookupTokens.hash(lookupToken));
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.repay(orderId, "pc", null, lookupToken));
+
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
+        verifyNoInteractions(paymentChannelRepository, provider);
     }
 
     @Test

@@ -6,6 +6,7 @@ import Link from "next/link"
 import { User, LogIn, Menu, X, Globe, Moon, Sun, Package, Search, Settings, ChevronDown, SlidersHorizontal, LogOut, ClipboardList } from "lucide-react"
 import { useAuth, useLocale, useTheme, useColorScheme, useSearch, useSiteConfig, COLOR_SCHEMES, type SortKey } from "@/lib/context"
 import { cn } from "@/lib/utils"
+import { isAdminRole } from "@/lib/hooks"
 
 interface StoreHeaderProps {
   siteName?: string
@@ -230,7 +231,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                     <Link href="/my/orders" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent">
                       <Search className="h-4 w-4" />{t("nav.myOrders")}
                     </Link>
-                    {user?.role === "ADMIN" && (
+                    {isAdminRole(user?.role) && (
                       <Link href="/admin/dashboard" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent">
                         <Settings className="h-4 w-4" />{t("nav.admin")}
                       </Link>

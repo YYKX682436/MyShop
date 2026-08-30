@@ -10,6 +10,7 @@ import { VisitTracker } from "@/components/store/visit-tracker"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
 import { ContactSupport } from "@/components/shared/contact-methods"
+import { isAdminRole } from "@/lib/hooks"
 
 function AnnouncementBar() {
   const { config } = useSiteConfig()
@@ -127,7 +128,7 @@ export function StoreShell({ siteName, children }: StoreShellProps) {
   // 维护模式判断需要 config + auth 都就绪才能准确决策
   const configReady = !isLoading && !!config
   const isExempt = MAINTENANCE_EXEMPT_PATHS.includes(pathname)
-  const isAdmin = authLoaded && isLoggedIn && user?.role === "ADMIN"
+  const isAdmin = authLoaded && isLoggedIn && isAdminRole(user?.role)
   const isMaintenance = configReady && config?.maintenance_enabled
 
   // Maintenance mode: block non-admin users on non-exempt pages

@@ -49,8 +49,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     String role = claims.get("role", String.class);
 
                     // 管理员请求：必须校验数据库中用户状态和角色
-                    String path = request.getRequestURI();
-                    if ("ADMIN".equals(role) && path.startsWith("/api/admin")) {
+                    String requestUri = request.getRequestURI();
+                    String contextPath = request.getContextPath();
+                    String path = contextPath != null && !contextPath.isBlank()
+                            && requestUri.startsWith(contextPath)
+                            ? requestUri.substring(contextPath.length()) : requestUri;
+                    boolean adminRole = "ADMIN".equals(role) || "SUPER_ADMIN".equals(role);
+                    boolean privilegedPath = path.startsWith("/admin") || path.startsWith("/upload");
+                    if (adminRole && privilegedPath) {
                         User user = userRepository.findById(userId).orElse(null);
                         if (user == null || user.getIsDeleted() == 1
                                 || !user.getRole().name().equals(role)) {

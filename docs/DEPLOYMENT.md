@@ -37,7 +37,7 @@ Prometheus or Grafana for this dashboard.
 1. Provision a supported Linux host with Docker Engine and Compose v2.
 2. Copy the repository and `.env.example` to a protected deployment directory.
 3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, and `UPLOAD_HOST_PATH`.
-4. Set all bootstrap admin variables only for the first startup. Use a password of at least 12 characters, then remove `BOOTSTRAP_ADMIN_PASSWORD` after successful login.
+4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
 6. Create the configured upload directory with owner `10001:10001` and mode `0750`, then run `docker compose up -d --build` and inspect `docker compose ps` and API logs. The API performs a write/delete probe during startup and refuses to become healthy when the path is not usable.
 

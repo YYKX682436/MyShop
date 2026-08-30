@@ -21,7 +21,7 @@ public class User extends BaseEntity {
     @Column(nullable = false)
     private String username;
 
-    @Column(nullable = false)
+    @Column
     private String email;
 
     /** Mainland China mobile number, stored without the +86 country code. */

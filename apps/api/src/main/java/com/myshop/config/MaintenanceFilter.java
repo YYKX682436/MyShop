@@ -62,7 +62,7 @@ public class MaintenanceFilter implements Filter {
         }
 
         if (cachedMaintenanceEnabled) {
-            // Allow requests from authenticated ADMIN users (full access during maintenance)
+            // Allow requests from authenticated administrators (full access during maintenance)
             if (isAdminRequest(httpRequest)) {
                 chain.doFilter(request, response);
                 return;
@@ -81,7 +81,7 @@ public class MaintenanceFilter implements Filter {
     }
 
     /**
-     * Check if the request carries a valid JWT with ADMIN role.
+     * Check if the request carries a valid JWT with either administrator role.
      */
     private boolean isAdminRequest(HttpServletRequest request) {
         try {
@@ -91,7 +91,9 @@ public class MaintenanceFilter implements Filter {
                     continue;
                 }
                 Claims claims = jwtUtils.parseTokenSafe(cookie.getValue());
-                return claims != null && "ADMIN".equals(claims.get("role", String.class));
+                if (claims == null) return false;
+                String role = claims.get("role", String.class);
+                return "ADMIN".equals(role) || "SUPER_ADMIN".equals(role);
             }
             return false;
         } catch (Exception e) {

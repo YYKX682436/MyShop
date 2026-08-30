@@ -4,7 +4,8 @@ import { useState, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Zap, Minus, Plus, Package, TrendingUp } from "lucide-react"
 import { toast } from "sonner"
-import { useLocale } from "@/lib/context"
+import { useAuth, useLocale } from "@/lib/context"
+import { isAdminRole } from "@/lib/hooks"
 import { orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, validateEmail, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
@@ -21,11 +22,13 @@ interface ProductActionsProps {
 
 export function ProductActions({ product, channels }: ProductActionsProps) {
   const { t } = useLocale()
+  const { user } = useAuth()
   const router = useRouter()
   const emailInputRef = useRef<HTMLInputElement>(null)
   const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const enabledChannels = useMemo(() => channels.filter(c => c.is_enabled), [channels])
+  const adminPickup = isAdminRole(user?.role)
 
   const [selectedSpec, setSelectedSpec] = useState<ProductSpec | null>(
     product.specs?.[0] || null
@@ -75,18 +78,18 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const handleBuyNow = async () => {
     const normalizedCustomerInputs = validateCustomerInputsForAction()
     if (!normalizedCustomerInputs) return
-    if (!email.trim()) {
+    if (!adminPickup && !email.trim()) {
       toast.error(t("product.emailRequired"))
       emailInputRef.current?.focus()
       emailInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
       return
     }
-    if (!validateEmail(email)) {
+    if (!adminPickup && !validateEmail(email)) {
       toast.error(t("product.emailInvalid"))
       emailInputRef.current?.focus()
       return
     }
-    if (!selectedPayment) {
+    if (!adminPickup && !selectedPayment) {
       toast.error(t("product.paymentMethod"))
       return
     }
@@ -102,8 +105,9 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       spec_id: selectedSpec?.id ?? null,
       quantity,
       customer_inputs: normalizedCustomerInputs,
-      email: email.trim().toLowerCase(),
-      payment_method: selectedPayment,
+      email: adminPickup ? undefined : email.trim().toLowerCase(),
+      payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
+      admin_pickup: adminPickup,
     })
     try {
       setTurnstileHeaders(turnstileToken)
@@ -112,15 +116,21 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           product_id: product.id,
           spec_id: selectedSpec?.id ?? null,
           quantity,
-          email,
+          email: adminPickup ? undefined : email,
           customer_inputs: normalizedCustomerInputs,
-          payment_method: selectedPayment,
+          payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
+          admin_pickup: adminPickup,
           idempotency_key: intent.key,
           idempotency_fingerprint: intent.fingerprint,
           device,
         }))
       saveOrderLookupToken(result.payment.order_id, result.lookup_token)
       clearIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, intent.key)
+      if (adminPickup || result.payment.admin_pickup || result.order.order_type === "ADMIN_PICKUP") {
+        toast.success(t("payment.adminPickupSuccess"))
+        router.push(`/order/query?orderId=${encodeURIComponent(result.payment.order_id)}`)
+        return
+      }
       toast.success(t("payment.redirectingToPay"))
       const payUrlH5 = result.payment.pay_url || ""
       const qr = result.payment.qrcode_url || result.payment.payment_url || ""
@@ -312,12 +322,12 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         {/* Email input */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">
-            {t("product.email")}
+            {adminPickup ? t("product.adminPickupEmailOptional") : t("product.email")}
           </label>
           <input
             ref={emailInputRef}
             type="email"
-            placeholder={t("product.emailPlaceholder")}
+              placeholder={adminPickup ? t("product.adminPickupEmailPlaceholder") : t("product.emailPlaceholder")}
             value={email}
             onChange={(e) => handleEmailChange(e.target.value)}
             className={cn(
@@ -327,7 +337,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           />
           <div className="mt-1.5">
             <p className="text-xs text-muted-foreground">
-              {t("product.emailFullHint")}
+              {adminPickup ? t("product.adminPickupEmailHint") : t("product.emailFullHint")}
             </p>
             {emailError && (
               <p className="mt-1 text-xs text-destructive">{emailError}</p>
@@ -340,11 +350,17 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           <label className="mb-2 block text-sm font-medium text-foreground">
             {t("product.paymentMethod")}
           </label>
-          <PaymentSelector
-            channels={enabledChannels}
-            selected={selectedPayment}
-            onSelect={setSelectedPayment}
-          />
+          {adminPickup ? (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 text-sm font-medium text-primary">
+              {t("payment.adminPickup")}
+            </div>
+          ) : (
+            <PaymentSelector
+              channels={enabledChannels}
+              selected={selectedPayment}
+              onSelect={setSelectedPayment}
+            />
+          )}
         </div>
 
         {/* Total */}
@@ -371,7 +387,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             ) : (
               <Zap className="h-4 w-4" />
             )}
-            {isOutOfStock ? t("product.outOfStock") : t("product.buyNow")}
+            {isOutOfStock ? t("product.outOfStock") : adminPickup ? t("product.adminPickup") : t("product.buyNow")}
           </button>
         </div>
       </div>

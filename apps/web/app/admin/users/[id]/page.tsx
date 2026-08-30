@@ -197,7 +197,7 @@ export default function AdminUserDetailPage() {
   }
 
   const handleReset = async () => {
-    if (newPassword.length < 12) {
+    if (newPassword.length < 6 || newPassword.length > 72 || !/^[!-~]+$/.test(newPassword)) {
       toast.error(t("admin.passwordMinLength"))
       return
     }
@@ -314,8 +314,8 @@ export default function AdminUserDetailPage() {
       <Dialog open={resetOpen} onOpenChange={(open) => { if (!resetLoading) setResetOpen(open) }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{t("admin.resetPasswordTitle")}</DialogTitle><DialogDescription>{t("admin.resetPasswordDescription").replace("{username}", user.username)}</DialogDescription></DialogHeader>
-          <Input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder={t("admin.newPasswordPlaceholder")} minLength={12} autoComplete="new-password" />
-          <DialogFooter><Button type="button" variant="outline" onClick={() => setResetOpen(false)} disabled={resetLoading}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleReset()} disabled={resetLoading || newPassword.length < 12}>{resetLoading ? t("admin.processing") : t("admin.confirmReset")}</Button></DialogFooter>
+          <Input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder={t("admin.newPasswordPlaceholder")} minLength={6} maxLength={72} autoComplete="new-password" />
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setResetOpen(false)} disabled={resetLoading}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleReset()} disabled={resetLoading || newPassword.length < 6}>{resetLoading ? t("admin.processing") : t("admin.confirmReset")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

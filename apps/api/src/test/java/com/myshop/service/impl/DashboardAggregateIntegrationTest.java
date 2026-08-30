@@ -97,6 +97,8 @@ class DashboardAggregateIntegrationTest {
         insertOrderItem(paidOrder, product, "Popular", 2, "10.00", start.plusHours(3));
         UUID deliveredOrder = insertOrder("DELIVERED", "buyer@example.com", start.plusHours(4), start.plusHours(5), "5.00");
         insertOrderItem(deliveredOrder, product, "Popular", 1, "5.00", start.plusHours(5));
+        UUID adminPickupOrder = insertOrder("DELIVERED", "admin@example.com", start.plusHours(4), start.plusHours(5), "100.00", "ADMIN_PICKUP");
+        insertOrderItem(adminPickupOrder, product, "Popular", 99, "9900.00", start.plusHours(5));
         insertOrder("EXPIRED", "expired@example.com", start.plusHours(6), null, "3.00");
         insertOrder("PENDING", "pending@example.com", start.plusHours(7), null, "7.00");
         insertOrder("PAID", "old@example.com", start.minusDays(10), start.minusDays(9), "99.00");
@@ -166,13 +168,20 @@ class DashboardAggregateIntegrationTest {
 
     private UUID insertOrder(String status, String email, LocalDateTime createdAt,
                              LocalDateTime paidAt, String amount) {
+        return insertOrder(status, email, createdAt, paidAt, amount, "NORMAL");
+    }
+
+    private UUID insertOrder(String status, String email, LocalDateTime createdAt,
+                             LocalDateTime paidAt, String amount, String orderType) {
         UUID id = UUID.randomUUID();
         LocalDateTime deliveredAt = "DELIVERED".equals(status) ? paidAt : null;
         jdbcTemplate.update("""
                 INSERT INTO orders(id, created_at, updated_at, email, actual_amount, total_amount,
-                                   status, paid_at, delivered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, id, createdAt, createdAt, email, new BigDecimal(amount), new BigDecimal(amount), status, paidAt, deliveredAt);
+                                   status, order_type, paid_at, delivered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, id, createdAt, createdAt, email,
+                "ADMIN_PICKUP".equals(orderType) ? BigDecimal.ZERO : new BigDecimal(amount),
+                new BigDecimal(amount), status, orderType, paidAt, deliveredAt);
         return id;
     }
 

@@ -6,7 +6,7 @@ import { User, Lock, Eye, EyeOff, Save } from "lucide-react"
 import { toast } from "sonner"
 import { useLocale } from "@/lib/context"
 import { useAuth } from "@/lib/context"
-import { useRequireAuth } from "@/lib/hooks"
+import { isAdminRole, useRequireAuth } from "@/lib/hooks"
 import { userApi, requestOrThrow, getApiErrorMessage } from "@/services/api"
 import { cn, formatYuan } from "@/lib/utils"
 
@@ -69,12 +69,12 @@ export default function ProfilePage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground">{t("profile.balance")}</p>
-                <p className="text-2xl font-bold text-foreground">{formatYuan(user?.balance ?? 0)}</p>
+                <p className="text-2xl font-bold text-foreground">{user?.unlimited ? "∞" : formatYuan(user?.balance ?? 0)}</p>
               </div>
               <div className="rounded-lg bg-muted/50 p-3">
                 <p className="text-xs text-muted-foreground">{t("profile.userNumber")}</p>
                 <p className="text-sm font-medium text-foreground">
-                  {user?.user_no ?? "-"}
+                  {isAdminRole(user?.role) ? t("profile.administrator") : user?.user_no ?? "-"}
                 </p>
               </div>
             </div>

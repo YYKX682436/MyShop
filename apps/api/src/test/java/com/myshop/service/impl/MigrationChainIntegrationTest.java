@@ -53,8 +53,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("6", flyway.info().current().getVersion().getVersion());
-        assertEquals(6, flyway.info().all().length);
+        assertEquals("7", flyway.info().current().getVersion().getVersion());
+        assertEquals(7, flyway.info().all().length);
         for (String table : List.of(
                 "users", "product_categories", "products", "product_specs", "wholesale_rules",
                 "card_import_batches", "orders", "order_items", "card_keys",
@@ -63,7 +63,11 @@ class MigrationChainIntegrationTest {
             assertTrue(tableExists(table), "missing table: " + table);
         }
         assertFalse(tableExists("cart_items"));
-        assertFalse(columnExists("orders", "order_type"));
+        assertTrue(columnExists("orders", "order_type"));
+        assertEquals("NO", nullableValue("orders", "order_type"));
+        assertTrue(defaultValue("orders", "order_type").contains("NORMAL"));
+        assertTrue(checkConstraintExists("orders_order_type_check"));
+        assertTrue(indexExists("idx_orders_type_created"));
         assertFalse(tableExists("currencies"));
         assertFalse(tableExists("points_logs"));
 
@@ -84,6 +88,8 @@ class MigrationChainIntegrationTest {
         assertTrue(checkConstraintExists("users_phone_format_check"));
         assertTrue(columnExists("users", "phone"));
         assertEquals("YES", nullableValue("users", "phone"));
+        assertEquals("YES", nullableValue("users", "email"));
+        assertTrue(indexExists("uq_users_single_super_admin"));
         assertEquals("character varying", dataType("users", "phone"));
         assertEquals(11, jdbcTemplate.queryForObject("""
                 SELECT character_maximum_length
@@ -120,6 +126,25 @@ class MigrationChainIntegrationTest {
                 VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?)
                 """, UUID.randomUUID(), "duplicate-phone-user", "duplicate-phone@example.com", 10001L,
                 "13800138000"));
+        UUID superAdminId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO users(id, username, password_hash, role)
+                VALUES (?, 'migration-super-admin', 'test-hash', 'SUPER_ADMIN')
+                """, superAdminId);
+        assertEquals("SUPER_ADMIN", jdbcTemplate.queryForObject(
+                "SELECT role FROM users WHERE id = ?", String.class, superAdminId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, password_hash, role, user_no)
+                VALUES (?, 'invalid-super-admin', 'test-hash', 'SUPER_ADMIN', 10002)
+                """, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, password_hash, role)
+                VALUES (?, 'invalid-user-without-number', 'test-hash', 'USER')
+                """, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, password_hash, role)
+                VALUES (?, 'second-super-admin', 'test-hash', 'SUPER_ADMIN')
+                """, UUID.randomUUID()));
 
         assertFalse(columnExists("users", "points"));
         assertFalse(columnExists("orders", "points_deducted"));
@@ -232,14 +257,14 @@ class MigrationChainIntegrationTest {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
-                VALUES (?, 10.00, 10.00, 'PENDING', 'DIRECT')
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL')
                 """, orderId);
         jdbcTemplate.update("""
                 INSERT INTO cart_items(id, session_token, product_id, quantity)
                 VALUES (?, 'legacy-session', ?, 2)
                 """, UUID.randomUUID(), UUID.randomUUID());
 
-        flyway().migrate();
+        flyway("6").migrate();
 
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM orders WHERE id = ?", Integer.class, orderId));

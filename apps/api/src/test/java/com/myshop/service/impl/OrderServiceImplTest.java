@@ -3,10 +3,13 @@ package com.myshop.service.impl;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
+import com.myshop.constant.UserRole;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
+import com.myshop.entity.User;
 import com.myshop.entity.WholesaleRule;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
@@ -20,6 +23,7 @@ import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.WholesaleRuleRepository;
 import com.myshop.service.ManualStockService;
+import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.PaymentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +49,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceImplTest {
@@ -59,6 +65,8 @@ class OrderServiceImplTest {
     @Mock private PaymentChannelRepository paymentChannelRepository;
     @Mock private PaymentService paymentService;
     @Mock private ManualStockService manualStockService;
+    @Mock private com.myshop.repository.UserRepository userRepository;
+    @Mock private AutoFulfillmentService autoFulfillmentService;
 
     private OrderServiceImpl service;
 
@@ -66,7 +74,8 @@ class OrderServiceImplTest {
     void setUp() {
         service = new OrderServiceImpl(orderRepository, orderItemRepository, productRepository,
                 productSpecRepository, wholesaleRuleRepository, cardKeyRepository,
-                siteConfigRepository, paymentChannelRepository, paymentService, manualStockService);
+                siteConfigRepository, paymentChannelRepository, paymentService, manualStockService,
+                userRepository, autoFulfillmentService);
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
         lenient().when(orderRepository.countByClientIpAndStatus(anyString(), eq(OrderStatus.PENDING))).thenReturn(0L);
@@ -213,6 +222,64 @@ class OrderServiceImplTest {
         order.setUserId(userId);
         Map<String, Object> ownerResult = service.getOrderStatus(orderId, null, userId);
         assertEquals("PENDING", ownerResult.get("status"));
+    }
+
+    @Test
+    void enabledAdminPickupKeepsNormalAmountAndUsesTheRealFulfillmentBoundary() {
+        UUID adminId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        User admin = user(adminId, "store-admin", "admin@example.com");
+        when(userRepository.findById(adminId)).thenReturn(Optional.of(admin));
+        stubProduct(product(productId, "12.50"), 1);
+
+        Map<String, Object> request = request(productId, null, 1);
+        request.put("admin_pickup", true);
+        request.put("payment_method", "alipay");
+
+        Map<String, Object> result = service.createDirectOrder(request, adminId,
+                "203.0.113.20", "admin-session");
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        Order saved = orderCaptor.getValue();
+        assertEquals(OrderType.ADMIN_PICKUP, saved.getOrderType());
+        assertEquals("ADMIN_PICKUP", saved.getPaymentMethod());
+        assertEquals(new BigDecimal("12.50"), saved.getTotalAmount());
+        assertEquals(new BigDecimal("0.00"), saved.getActualAmount());
+        assertEquals(OrderStatus.PAID, saved.getStatus());
+        assertNotNull(saved.getPaidAt());
+        assertEquals(OrderType.ADMIN_PICKUP, ((Map<?, ?>) result.get("payment")).get("order_type"));
+        assertEquals(true, ((Map<?, ?>) result.get("payment")).get("admin_pickup"));
+        verify(paymentService, never()).createPayment(any(), anyString(), any(BigDecimal.class), nullable(String.class));
+        verify(autoFulfillmentService).trigger(saved.getId());
+    }
+
+    @Test
+    void ordinaryUserCannotForgeAdminPickupEvenWhenTheClientSendsTheFlag() {
+        UUID userId = UUID.randomUUID();
+        User user = user(userId, "buyer", "buyer@example.com");
+        user.setRole(UserRole.USER);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        Map<String, Object> request = request(UUID.randomUUID(), null, 1);
+        request.put("admin_pickup", true);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.createDirectOrder(request, userId, "203.0.113.21", "user-session"));
+
+        assertEquals(ErrorCode.FORBIDDEN, exception.getCode());
+        verify(orderRepository, never()).save(any(Order.class));
+        verify(autoFulfillmentService, never()).trigger(any());
+    }
+
+    private User user(UUID id, String username, String email) {
+        User user = new User();
+        user.setId(id);
+        user.setUsername(username);
+        user.setEmail(email);
+        user.setRole(UserRole.ADMIN);
+        user.setIsDeleted(0);
+        return user;
     }
 
     private void stubProduct(Product product, long available) {

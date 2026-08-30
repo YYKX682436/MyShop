@@ -70,6 +70,9 @@ bootstrap:
     username: ${BOOTSTRAP_ADMIN_USERNAME:}
     email: ${BOOTSTRAP_ADMIN_EMAIL:}
     password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+  super-admin:
+    username: ${BOOTSTRAP_SUPER_ADMIN_USERNAME:}
+    password: ${BOOTSTRAP_SUPER_ADMIN_PASSWORD:}
 
 # Upload
 upload:

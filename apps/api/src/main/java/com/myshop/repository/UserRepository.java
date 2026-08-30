@@ -76,4 +76,34 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Page<User> findAdminUsers(@Param("keyword") String keyword,
                                @Param("isDeleted") Integer isDeleted,
                                Pageable pageable);
+
+    @Query(value = """
+            SELECT u.*
+            FROM users u
+            WHERE u.role IN ('ADMIN', 'SUPER_ADMIN')
+              AND (CAST(:isDeleted AS integer) IS NULL OR u.is_deleted = CAST(:isDeleted AS integer))
+              AND (
+                  CAST(:keyword AS text) IS NULL
+                  OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.phone ILIKE '%' || CAST(:keyword AS text) || '%'
+              )
+            ORDER BY u.created_at DESC, u.id DESC
+            """,
+            countQuery = """
+            SELECT COUNT(*)
+            FROM users u
+            WHERE u.role IN ('ADMIN', 'SUPER_ADMIN')
+              AND (CAST(:isDeleted AS integer) IS NULL OR u.is_deleted = CAST(:isDeleted AS integer))
+              AND (
+                  CAST(:keyword AS text) IS NULL
+                  OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.phone ILIKE '%' || CAST(:keyword AS text) || '%'
+              )
+            """,
+            nativeQuery = true)
+    Page<User> findAdministrators(@Param("keyword") String keyword,
+                                   @Param("isDeleted") Integer isDeleted,
+                                   Pageable pageable);
 }

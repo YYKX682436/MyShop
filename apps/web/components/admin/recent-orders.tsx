@@ -66,8 +66,8 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                     <td className="py-3 text-sm text-foreground">
                       <ProductSummary order={order} />
                     </td>
-                    <td className="truncate py-3 text-foreground" title={order.username || order.email}>
-                      {order.username || order.email}
+                    <td className="truncate py-3 text-foreground" title={order.username || order.email || t("admin.guest")}>
+                      {order.username || order.email || t("admin.guest")}
                     </td>
                     <td className="py-3 font-medium text-foreground">{formatYuan(order.actual_amount)}</td>
                     <td className="py-3"><OrderStatusBadge status={order.status} /></td>
@@ -92,7 +92,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">{t("admin.user")}</p>
-                    <p className="truncate text-foreground" title={order.username || order.email}>{order.username || order.email}</p>
+                    <p className="truncate text-foreground" title={order.username || order.email || t("admin.guest")}>{order.username || order.email || t("admin.guest")}</p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">{t("admin.amount")}</p>

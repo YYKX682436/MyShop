@@ -2,6 +2,7 @@ package com.myshop.model.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -14,6 +15,7 @@ public record AdminUserOrderResponse(
         BigDecimal totalAmount,
         BigDecimal actualAmount,
         OrderStatus status,
+        OrderType orderType,
         String paymentMethod,
         String email,
         LocalDateTime createdAt,

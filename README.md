@@ -57,10 +57,13 @@ Compose 默认只有 PostgreSQL、API、Web 和 Caddy：数据库有持久化卷
 ```text
 BOOTSTRAP_ADMIN_USERNAME
 BOOTSTRAP_ADMIN_EMAIL
-BOOTSTRAP_ADMIN_PASSWORD   # 至少 12 个字符
+BOOTSTRAP_ADMIN_PASSWORD   # 6-72 位 ASCII 可见字符
+
+BOOTSTRAP_SUPER_ADMIN_USERNAME
+BOOTSTRAP_SUPER_ADMIN_PASSWORD  # 6-72 位 ASCII 可见字符；仅首次初始化使用
 ```
 
-启动成功后应立即登录并移除 bootstrap 密码变量。管理员也可以在后台重置用户密码；所有密码只以 BCrypt 哈希保存。
+启动成功后应立即登录并移除 bootstrap 密码变量。超级管理员创建后不会因环境变量变化而重置密码；所有密码只以 BCrypt 哈希保存。
 
 ## 订单凭证与发货不变量
 

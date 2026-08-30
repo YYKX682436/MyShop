@@ -99,14 +99,22 @@ class RegistrationValidationTest {
     }
 
     @Test
-    void adminResetPasswordKeepsItsIndependentTwelveCharacterRule() {
+    void adminResetPasswordUsesTheSharedSixToSeventyTwoVisibleAsciiRule() {
         AdminResetPasswordRequest valid = new AdminResetPasswordRequest();
-        valid.setNewPassword("abcdefghijkl");
+        valid.setNewPassword("abcdef");
         assertTrue(validator.validate(valid).isEmpty());
 
         AdminResetPasswordRequest tooShort = new AdminResetPasswordRequest();
-        tooShort.setNewPassword("abcdefghijk");
+        tooShort.setNewPassword("abcde");
         assertFalse(validator.validate(tooShort).isEmpty());
+
+        AdminResetPasswordRequest tooLong = new AdminResetPasswordRequest();
+        tooLong.setNewPassword("a".repeat(73));
+        assertFalse(validator.validate(tooLong).isEmpty());
+
+        AdminResetPasswordRequest nonAscii = new AdminResetPasswordRequest();
+        nonAscii.setNewPassword("中文密码");
+        assertFalse(validator.validate(nonAscii).isEmpty());
     }
 
     private RegisterRequest request(String username, String password, String phone) {

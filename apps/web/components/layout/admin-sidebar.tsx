@@ -11,6 +11,7 @@ import {
   ScrollText,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   ClipboardList,
   Users,
   type LucideIcon,
@@ -30,13 +31,14 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { useLocale, useSiteConfig } from "@/lib/context"
+import { useAuth, useLocale, useSiteConfig } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
 
 interface AdminNavItem {
   labelKey: TranslationKey
   href: string
   icon: LucideIcon
+  superAdminOnly?: boolean
 }
 
 interface AdminNavGroup {
@@ -77,7 +79,10 @@ const navGroups: AdminNavGroup[] = [
   },
   {
     labelKey: "admin.navSystem",
-    items: [{ labelKey: "admin.siteConfig", href: "/admin/site-config", icon: Settings }],
+    items: [
+      { labelKey: "admin.siteConfig", href: "/admin/site-config", icon: Settings },
+      { labelKey: "admin.administrators", href: "/admin/administrators", icon: ShieldCheck, superAdminOnly: true },
+    ],
   },
 ]
 
@@ -105,6 +110,8 @@ function AdminNavLink({ item }: { item: AdminNavItem }) {
 export function AdminSidebar() {
   const { t } = useLocale()
   const { config } = useSiteConfig()
+  const { user } = useAuth()
+  const superAdmin = user?.role === "SUPER_ADMIN"
 
   return (
     <Sidebar collapsible="icon" variant="sidebar">
@@ -133,7 +140,7 @@ export function AdminSidebar() {
             <SidebarGroupLabel>{t(group.labelKey)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((item) => (
+                {group.items.filter((item) => !item.superAdminOnly || superAdmin).map((item) => (
                   <SidebarMenuItem key={item.href}>
                     <AdminNavLink item={item} />
                   </SidebarMenuItem>

@@ -1,6 +1,7 @@
 package com.myshop.service.impl;
 
 import com.myshop.exception.BusinessException;
+import com.myshop.constant.OrderType;
 import com.myshop.entity.Product;
 import com.myshop.payment.EpayPaymentProvider;
 import com.myshop.payment.PaymentProvider;
@@ -46,6 +47,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -109,6 +111,41 @@ class PostgresDeliveryIntegrationTest {
         registry.add("bootstrap.admin.username", () -> "");
         registry.add("bootstrap.admin.email", () -> "");
         registry.add("bootstrap.admin.password", () -> "");
+    }
+
+    @Test
+    void adminPickupUsesDatabaseRoleAndConsumesCardThroughNormalFulfillment() {
+        UUID adminId = insertAdminUser("pickup-admin", "pickup-admin@example.com");
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID cardId = insertCard(productId, "admin-pickup-card");
+
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("product_id", productId.toString());
+        request.put("quantity", 1);
+        request.put("payment_method", "alipay");
+        request.put("admin_pickup", true);
+
+        Map<String, Object> result = orderService.createDirectOrder(request, adminId,
+                "203.0.113.30", "admin-pickup-session");
+        Map<?, ?> orderResult = (Map<?, ?>) result.get("order");
+        Map<?, ?> paymentResult = (Map<?, ?>) result.get("payment");
+        UUID orderId = (UUID) orderResult.get("id");
+
+        assertEquals(OrderType.ADMIN_PICKUP, orderResult.get("order_type"));
+        assertEquals("ADMIN_PICKUP", orderResult.get("payment_method"));
+        assertEquals(new BigDecimal("10.00"), orderResult.get("total_amount"));
+        assertEquals(new BigDecimal("0.00"), orderResult.get("actual_amount"));
+        assertEquals(true, paymentResult.get("paid"));
+        assertEquals(true, paymentResult.get("admin_pickup"));
+        assertTrue(!paymentResult.containsKey("payment_url"));
+        assertTrue(!paymentResult.containsKey("qrcode_url"));
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("ADMIN_PICKUP", scalar("select order_type from orders where id = ?", String.class, orderId));
+        assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
+        assertEquals(orderId, scalar("select order_id from card_keys where id = ?", UUID.class, cardId));
+        assertTrue(number("select count(*) from card_keys where id = ? and order_item_id is not null and sold_at is not null", cardId) == 1);
+        verify(epayPaymentProvider, never()).create(any(PaymentProvider.PaymentRequest.class));
     }
 
     @Test
@@ -467,6 +504,16 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PAID', ?)
                 """, orderId, com.myshop.utils.LookupTokens.hash(lookupToken));
         return orderId;
+    }
+
+    private UUID insertAdminUser(String username, String email) {
+        UUID userId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into users (id, created_at, updated_at, username, email, password_hash,
+                    role, is_deleted, user_no)
+                values (?, current_timestamp, current_timestamp, ?, ?, 'integration-hash', 'ADMIN', 0, null)
+                """, userId, username, email);
+        return userId;
     }
 
     private UUID insertPendingOrder(String paymentMethod) {

@@ -1,4 +1,4 @@
-import { CreditCard } from "lucide-react"
+import { CreditCard, KeyRound } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface PaymentIconProps {
@@ -35,6 +35,7 @@ export function getPaymentBrandColor(method: string): string | undefined {
 const PAYMENT_LABELS: Record<string, string> = {
   alipay: "支付宝",
   wechat: "微信支付",
+  admin_pickup: "管理员提卡",
 }
 
 /** 获取支付方式显示名称（优先 i18n t() 翻译，无翻译时回退到内置映射；大小写不敏感） */
@@ -44,6 +45,7 @@ export function getPaymentLabel(method: string, t?: (key: any) => string): strin
   if (t) {
     if (m === "alipay") return t("payment.alipay")
     if (m === "wechat") return t("payment.wechat")
+    if (m === "admin_pickup") return t("payment.adminPickup")
   }
   return PAYMENT_LABELS[m] || method
 }
@@ -54,11 +56,20 @@ export function getPaymentScanHint(method: string, t: (key: any) => string): str
   const m = normalize(method)
   if (m === "alipay") return t("payment.scanWithAlipay")
   if (m === "wechat") return t("payment.scanWithWechat")
+  if (m === "admin_pickup") return t("payment.adminPickup")
   return t("payment.scanToPay")
 }
 
 export function PaymentIcon({ method, className = "h-5 w-5", variant = "badge" }: PaymentIconProps) {
   const src = getLogoSrc(method)
+
+  if (normalize(method) === "admin_pickup") {
+    return (
+      <span className={cn("inline-flex items-center justify-center rounded bg-primary/10 text-primary", className)}>
+        <KeyRound className="h-3/5 w-3/5" aria-hidden="true" />
+      </span>
+    )
+  }
 
   if (!src) {
     return (

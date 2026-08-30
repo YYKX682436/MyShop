@@ -49,10 +49,11 @@ export interface AuthResult {
 export interface UserProfile {
   id: string
   username: string
-  email: string
-  role: 'USER' | 'ADMIN'
+  email: string | null
+  role: 'USER' | 'ADMIN' | 'SUPER_ADMIN'
   user_no: number | null
   balance: number
+  unlimited: boolean
   created_at: string
 }
 
@@ -133,12 +134,14 @@ export interface ProductDetail extends ProductCard {
 // ============================================================
 
 export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED'
+export type OrderType = 'NORMAL' | 'ADMIN_PICKUP'
 
 export interface OrderBrief {
   id: string
   total_amount: number
   actual_amount: number
   status: OrderStatus
+  order_type: OrderType
   payment_method: string
   created_at: string
   items?: OrderItemDetail[]
@@ -161,8 +164,8 @@ export interface OrderItemDetail {
 }
 
 export interface OrderDetail extends OrderBrief {
-  email: string
-  expires_at: string
+  email: string | null
+  expires_at: string | null
   paid_at: string | null
   delivered_at: string | null
   items: OrderItemDetail[]
@@ -170,10 +173,13 @@ export interface OrderDetail extends OrderBrief {
 
 export interface PaymentCreateResult {
   order_id: string
-  payment_url: string
+  payment_url?: string
   qrcode_url?: string
   pay_url?: string
-  expires_at: string
+  expires_at: string | null
+  order_type?: OrderType
+  admin_pickup?: boolean
+  paid?: boolean
 }
 
 export interface CreateOrderResult {
@@ -288,8 +294,9 @@ export interface CreateOrderRequest {
   product_id: string
   spec_id: string | null
   quantity: number
-  email: string
+  email?: string
   payment_method: string
+  admin_pickup?: boolean
   idempotency_key: string
   idempotency_fingerprint?: string
   device?: string
@@ -496,12 +503,39 @@ export interface AdminUserOrder {
   total_amount: number | null
   actual_amount: number | null
   status: OrderStatus
+  order_type: OrderType
   payment_method: string | null
   email: string | null
   created_at: string
   paid_at: string | null
   delivered_at: string | null
   items: AdminUserOrderItem[]
+}
+
+// ============================================================
+// Administrator management
+// ============================================================
+
+export interface AdministratorItem {
+  id: string
+  username: string
+  email: string | null
+  phone: string | null
+  role: "ADMIN" | "SUPER_ADMIN"
+  is_deleted: 0 | 1
+  created_at: string
+}
+
+export interface AdministratorOperationLog {
+  id: string
+  user_id: string
+  username: string
+  action: string
+  target_type: string
+  target_id: string
+  detail: string | null
+  ip_address: string
+  created_at: string
 }
 
 export type BalanceTransactionType = 'ADMIN_ADJUSTMENT' | 'RECHARGE' | 'ORDER_PAYMENT' | 'REFUND'
