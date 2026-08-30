@@ -14,7 +14,7 @@ public class CreateAdministratorRequest {
 
     @NotBlank(message = "管理员用户名不能为空")
     @Size(min = 3, max = 20, message = "管理员用户名长度必须为 3 至 20 位")
-    @Pattern(regexp = "^[A-Za-z0-9]{3,20}$", message = "管理员用户名只能使用英文字母和数字")
+    @Pattern(regexp = "^[A-Za-z0-9_-]{3,20}$", message = "管理员用户名只能使用英文字母、数字、下划线和连字符")
     private String username;
 
     @NotBlank(message = "管理员密码不能为空")

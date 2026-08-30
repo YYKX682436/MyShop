@@ -85,10 +85,7 @@ public class OrderServiceImpl implements OrderService {
     public Map<String, Object> createDirectOrder(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
         String device = (String) req.get("device");
         User currentUser = reloadAuthenticatedUser(userId);
-        boolean adminPickup = isAdminPickupRequested(req);
-        if (adminPickup && !isEnabledAdministrator(currentUser)) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "只有启用中的管理员可以管理员提卡");
-        }
+        boolean adminPickup = isEnabledAdministrator(currentUser);
         String idempotencyKey = clean((String) req.get("idempotency_key"));
         String idempotencyFingerprint = clean((String) req.get("idempotency_fingerprint"));
         if (idempotencyKey != null) {
@@ -410,12 +407,6 @@ public class OrderServiceImpl implements OrderService {
         return userRepository.findById(userId)
                 .filter(user -> user.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "登录账号不存在或已被禁用"));
-    }
-
-    private boolean isAdminPickupRequested(Map<String, Object> request) {
-        Object value = request.get("admin_pickup");
-        if (value instanceof Boolean booleanValue) return booleanValue;
-        return value instanceof String stringValue && Boolean.parseBoolean(stringValue);
     }
 
     private boolean isEnabledAdministrator(User user) {

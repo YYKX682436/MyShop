@@ -44,6 +44,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.times;
@@ -124,7 +125,7 @@ class PostgresDeliveryIntegrationTest {
         request.put("product_id", productId.toString());
         request.put("quantity", 1);
         request.put("payment_method", "alipay");
-        request.put("admin_pickup", true);
+        request.put("admin_pickup", false);
 
         Map<String, Object> result = orderService.createDirectOrder(request, adminId,
                 "203.0.113.30", "admin-pickup-session");
@@ -146,6 +147,7 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(orderId, scalar("select order_id from card_keys where id = ?", UUID.class, cardId));
         assertTrue(number("select count(*) from card_keys where id = ? and order_item_id is not null and sold_at is not null", cardId) == 1);
         verify(epayPaymentProvider, never()).create(any(PaymentProvider.PaymentRequest.class));
+        verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
     }
 
     @Test

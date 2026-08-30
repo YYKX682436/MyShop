@@ -96,14 +96,17 @@ class OrderServiceImplTest {
         UUID productId = UUID.randomUUID();
         Product product = product(productId, "10.00");
         stubProduct(product, 3);
+        Map<String, Object> request = request(productId, null, 2);
+        request.put("admin_pickup", true);
 
-        Map<String, Object> first = service.createDirectOrder(request(productId, null, 2),
+        Map<String, Object> first = service.createDirectOrder(request,
                 null, "203.0.113.10", "guest-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         org.mockito.Mockito.verify(orderRepository).save(orderCaptor.capture());
         Order saved = orderCaptor.getValue();
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
+        assertEquals(OrderType.NORMAL, saved.getOrderType());
         assertEquals(OrderStatus.PENDING, saved.getStatus());
         assertNotNull(first.get("lookup_token"));
         assertTrue(String.valueOf(first.get("lookup_token")).length() >= 40);
@@ -233,7 +236,7 @@ class OrderServiceImplTest {
         stubProduct(product(productId, "12.50"), 1);
 
         Map<String, Object> request = request(productId, null, 1);
-        request.put("admin_pickup", true);
+        request.put("admin_pickup", false);
         request.put("payment_method", "alipay");
 
         Map<String, Object> result = service.createDirectOrder(request, adminId,
@@ -255,21 +258,54 @@ class OrderServiceImplTest {
     }
 
     @Test
-    void ordinaryUserCannotForgeAdminPickupEvenWhenTheClientSendsTheFlag() {
+    void ordinaryUserStaysOnNormalPaymentEvenWhenTheClientSendsTheFlag() {
         UUID userId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
         User user = user(userId, "buyer", "buyer@example.com");
         user.setRole(UserRole.USER);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        stubProduct(product(productId, "12.50"), 1);
 
-        Map<String, Object> request = request(UUID.randomUUID(), null, 1);
+        Map<String, Object> request = request(productId, null, 1);
         request.put("admin_pickup", true);
 
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.createDirectOrder(request, userId, "203.0.113.21", "user-session"));
+        Map<String, Object> result = service.createDirectOrder(request, userId,
+                "203.0.113.21", "user-session");
 
-        assertEquals(ErrorCode.FORBIDDEN, exception.getCode());
-        verify(orderRepository, never()).save(any(Order.class));
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        Order saved = orderCaptor.getValue();
+        assertEquals(OrderType.NORMAL, saved.getOrderType());
+        assertEquals(OrderStatus.PENDING, saved.getStatus());
+        assertEquals("alipay", saved.getPaymentMethod());
+        assertEquals(new BigDecimal("12.50"), saved.getActualAmount());
+        assertEquals("https://pay.example/1", ((Map<?, ?>) result.get("payment")).get("payment_url"));
+        verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
         verify(autoFulfillmentService, never()).trigger(any());
+    }
+
+    @Test
+    void superAdminAlwaysGetsAdminPickupWithoutClientFlag() {
+        UUID superAdminId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        User superAdmin = user(superAdminId, "super-admin", "super@example.com");
+        superAdmin.setRole(UserRole.SUPER_ADMIN);
+        when(userRepository.findById(superAdminId)).thenReturn(Optional.of(superAdmin));
+        stubProduct(product(productId, "8.00"), 1);
+
+        Map<String, Object> result = service.createDirectOrder(request(productId, null, 1),
+                superAdminId, "203.0.113.22", "super-session");
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        Order saved = orderCaptor.getValue();
+        assertEquals(OrderType.ADMIN_PICKUP, saved.getOrderType());
+        assertEquals("ADMIN_PICKUP", saved.getPaymentMethod());
+        assertEquals(OrderStatus.PAID, saved.getStatus());
+        assertEquals(new BigDecimal("0.00"), saved.getActualAmount());
+        assertEquals(OrderType.ADMIN_PICKUP, ((Map<?, ?>) result.get("payment")).get("order_type"));
+        verify(paymentService, never()).createPayment(any(), anyString(), any(BigDecimal.class), nullable(String.class));
+        verify(autoFulfillmentService).trigger(saved.getId());
     }
 
     private User user(UUID id, String username, String email) {

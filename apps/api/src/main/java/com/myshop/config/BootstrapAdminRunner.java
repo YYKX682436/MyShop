@@ -34,6 +34,7 @@ public class BootstrapAdminRunner implements ApplicationRunner {
     private final String superAdminPassword;
 
     private static final String FIXED_SUPER_ADMIN_USERNAME = "muchen-admin";
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,20}$");
     private static final Pattern PASSWORD_PATTERN = Pattern.compile("^[!-~]{6,72}$");
 
     @Autowired
@@ -75,6 +76,9 @@ public class BootstrapAdminRunner implements ApplicationRunner {
             throw new IllegalStateException("Bootstrap admin requires username, email, and a 6-72 character ASCII visible password");
         }
         String normalizedUsername = username.trim();
+        if (!USERNAME_PATTERN.matcher(normalizedUsername).matches()) {
+            throw new IllegalStateException("Bootstrap admin username must be 3-20 characters using English letters, numbers, underscores, and hyphens");
+        }
         String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
         if (userRepository.existsByUsernameIgnoreCase(normalizedUsername)
                 || userRepository.existsByEmailIgnoreCase(normalizedEmail)) {

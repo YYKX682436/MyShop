@@ -296,7 +296,6 @@ export interface CreateOrderRequest {
   quantity: number
   email?: string
   payment_method: string
-  admin_pickup?: boolean
   idempotency_key: string
   idempotency_fingerprint?: string
   device?: string

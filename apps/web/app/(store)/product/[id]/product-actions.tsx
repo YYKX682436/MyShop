@@ -107,7 +107,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       customer_inputs: normalizedCustomerInputs,
       email: adminPickup ? undefined : email.trim().toLowerCase(),
       payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
-      admin_pickup: adminPickup,
     })
     try {
       setTurnstileHeaders(turnstileToken)
@@ -119,7 +118,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           email: adminPickup ? undefined : email,
           customer_inputs: normalizedCustomerInputs,
           payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
-          admin_pickup: adminPickup,
           idempotency_key: intent.key,
           idempotency_fingerprint: intent.fingerprint,
           device,

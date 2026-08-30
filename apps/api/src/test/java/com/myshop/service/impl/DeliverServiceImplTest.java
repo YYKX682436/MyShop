@@ -3,6 +3,7 @@ package com.myshop.service.impl;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
@@ -12,7 +13,6 @@ import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.service.EmailService;
-import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
 import com.myshop.utils.LookupTokens;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +31,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -45,10 +47,11 @@ class DeliverServiceImplTest {
     @Mock private ManualStockService manualStockService;
 
     private DeliverServiceImpl service;
+    private FulfillmentTransactionService fulfillmentService;
 
     @BeforeEach
     void setUp() {
-        FulfillmentService fulfillmentService = new FulfillmentTransactionService(orderRepository, orderItemRepository,
+        fulfillmentService = new FulfillmentTransactionService(orderRepository, orderItemRepository,
                 cardKeyRepository, emailService, manualStockService);
         service = new DeliverServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
                 fulfillmentService, manualStockService);
@@ -131,6 +134,88 @@ class DeliverServiceImplTest {
         Map<?, ?> response = (Map<?, ?>) result.get(0);
         assertEquals("DELIVERED", response.get("status"));
         verify(cardKeyRepository, never()).findAndLockAvailable(any(), any(), anyInt());
+    }
+
+    @Test
+    void adminPickupAutomaticFulfillmentDoesNotSendDeliveryEmail() {
+        UUID orderId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        Order order = paidOrder(orderId, OrderType.ADMIN_PICKUP);
+        OrderItem item = item(orderId, productId, 1);
+        item.setId(itemId);
+        CardKey card = new CardKey();
+        card.setId(UUID.randomUUID());
+        card.setProductId(productId);
+        card.setContentParts(List.of("admin-card"));
+        card.setStatus(CardKeyStatus.AVAILABLE);
+
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findAndLockAvailable(productId, null, 1)).thenReturn(List.of(card));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of(card));
+
+        fulfillmentService.fulfillOrder(orderId);
+
+        assertEquals(OrderStatus.DELIVERED, order.getStatus());
+        assertEquals(CardKeyStatus.SOLD, card.getStatus());
+        verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
+    }
+
+    @Test
+    void adminPickupManualCompletionDoesNotSendDeliveryEmail() {
+        UUID orderId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        Order order = paidOrder(orderId, OrderType.ADMIN_PICKUP);
+        OrderItem item = item(orderId, productId, 1);
+        item.setId(itemId);
+        item.setDeliveryType("MANUAL");
+        item.setStockMode(StockMode.MANUAL);
+        item.setManualStockReserved(0);
+
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findById(itemId)).thenReturn(Optional.of(item));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of());
+
+        fulfillmentService.completeManualItem(orderId, itemId);
+
+        assertEquals(OrderStatus.DELIVERED, order.getStatus());
+        assertEquals(FulfillmentStatus.DELIVERED, item.getFulfillmentStatus());
+        verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
+    }
+
+    @Test
+    void normalAutomaticFulfillmentStillSendsDeliveryEmail() {
+        UUID orderId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        Order order = paidOrder(orderId, OrderType.NORMAL);
+        OrderItem item = item(orderId, productId, 1);
+        item.setId(itemId);
+        CardKey card = new CardKey();
+        card.setId(UUID.randomUUID());
+        card.setProductId(productId);
+        card.setContentParts(List.of("normal-card"));
+        card.setStatus(CardKeyStatus.AVAILABLE);
+
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findAndLockAvailable(productId, null, 1)).thenReturn(List.of(card));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of(card));
+
+        fulfillmentService.fulfillOrder(orderId);
+
+        verify(emailService).sendDeliveryEmail(eq(orderId), isNull(), eq(List.of(itemId)));
+    }
+
+    private Order paidOrder(UUID orderId, OrderType orderType) {
+        Order order = new Order();
+        order.setId(orderId);
+        order.setStatus(OrderStatus.PAID);
+        order.setOrderType(orderType);
+        return order;
     }
 
     private OrderItem item(UUID orderId, UUID productId, int quantity) {

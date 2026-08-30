@@ -61,7 +61,7 @@ class AdministratorServiceImplTest {
     @Test
     void createsAdminWithoutContactsAndAcceptsSixCharacterPassword() {
         CreateAdministratorRequest request = new CreateAdministratorRequest();
-        request.setUsername(" Ops123 ");
+        request.setUsername(" Ops_12-3 ");
         request.setPassword("abc123");
         request.setEmail("  ");
         request.setPhone("  ");
@@ -77,7 +77,7 @@ class AdministratorServiceImplTest {
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).saveAndFlush(captor.capture());
         User saved = captor.getValue();
-        assertEquals("Ops123", saved.getUsername());
+        assertEquals("Ops_12-3", saved.getUsername());
         assertNull(saved.getEmail());
         assertNull(saved.getPhone());
         assertEquals("bcrypt-hash", saved.getPasswordHash());
@@ -88,7 +88,7 @@ class AdministratorServiceImplTest {
         assertNull(response.phone());
         verify(operationLogService).logCurrentRequest(
                 "administrator.create", "ADMINISTRATOR", saved.getId().toString(),
-                "创建普通管理员：Ops123");
+                "创建普通管理员：Ops_12-3");
     }
 
     @Test

@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
 public class AdministratorServiceImpl implements AdministratorService {
 
     private static final int MAX_PAGE_SIZE = 100;
-    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9]{3,20}$");
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,20}$");
     private static final Pattern PASSWORD_PATTERN = Pattern.compile("^[!-~]{6,72}$");
     private static final Pattern PHONE_PATTERN = Pattern.compile("^1[3-9]\\d{9}$");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
@@ -224,7 +224,8 @@ public class AdministratorServiceImpl implements AdministratorService {
 
     private void validateUsername(String username) {
         if (!USERNAME_PATTERN.matcher(username).matches()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员用户名必须为 3-20 位英文字母或数字");
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "管理员用户名必须为 3-20 位，只能使用英文字母、数字、下划线和连字符");
         }
     }
 

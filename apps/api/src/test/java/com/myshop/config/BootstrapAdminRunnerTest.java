@@ -70,12 +70,12 @@ class BootstrapAdminRunnerTest {
 
     @Test
     void sixCharacterOrdinaryAdminPasswordIsAccepted() throws Exception {
-        when(userRepository.existsByUsernameIgnoreCase("firstadmin")).thenReturn(false);
+        when(userRepository.existsByUsernameIgnoreCase("first_admin-1")).thenReturn(false);
         when(userRepository.existsByEmailIgnoreCase("first@example.com")).thenReturn(false);
         when(passwordEncoder.encode("abc123")).thenReturn("ordinary-hash");
 
         BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, passwordEncoder,
-                "firstadmin", "FIRST@EXAMPLE.COM", "abc123");
+                "first_admin-1", "FIRST@EXAMPLE.COM", "abc123");
         runner.run(null);
 
         ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
@@ -83,6 +83,17 @@ class BootstrapAdminRunnerTest {
         assertEquals(UserRole.ADMIN, captor.getValue().getRole());
         assertEquals("first@example.com", captor.getValue().getEmail());
         assertEquals("ordinary-hash", captor.getValue().getPasswordHash());
+    }
+
+    @Test
+    void ordinaryAdminBootstrapRejectsUsernameOutsideUserRule() {
+        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, passwordEncoder,
+                "first.admin", "first@example.com", "abc123");
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class, () -> runner.run(null));
+
+        assertTrue(exception.getMessage().contains("3-20 characters"));
+        verifyNoInteractions(userRepository, passwordEncoder);
     }
 
     @Test

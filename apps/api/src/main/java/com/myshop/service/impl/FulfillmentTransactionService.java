@@ -4,6 +4,7 @@ import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
@@ -222,6 +223,9 @@ public class FulfillmentTransactionService implements FulfillmentService {
     }
 
     private void notifyAfterCommit(Order order, List<UUID> orderItemIds) {
+        if (order.getOrderType() == OrderType.ADMIN_PICKUP) {
+            return;
+        }
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             UUID orderId = order.getId();
             String lookupToken = order.getGuestLookupToken();
