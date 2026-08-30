@@ -24,11 +24,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
-import { formatDateTime, formatYuan } from "@/lib/utils"
+import { formatDateTime } from "@/lib/utils"
+import { formatCents, formatYuanFromCents, formatYuanValue, MAX_BALANCE_CENTS, parseMoneyValueToCents, parsePositiveMoneyToCents } from "@/lib/money"
 import { adminUserApi, requestOrThrow } from "@/services/api"
 import type { AdminOperationLogDetail, AdminUserDetail, AdminUserOrder, BalanceTransaction } from "@/types"
 
 type DetailTab = "overview" | "orders" | "balance" | "logs"
+type RecordTab = Exclude<DetailTab, "overview">
 const PAGE_SIZE = 10
 
 export default function AdminUserDetailPage() {
@@ -77,44 +79,57 @@ export default function AdminUserDetailPage() {
     }
   }, [userId])
 
-  const loadRecords = useCallback(async () => {
-    if (activeTab === "overview") return
+  const loadRecords = useCallback(async (tab: RecordTab, page: number) => {
     setRecordsLoading(true)
     setRecordsError(false)
     try {
-      if (activeTab === "orders") {
-        const data = await requestOrThrow(() => adminUserApi.getOrders(userId, { page: recordPage, page_size: PAGE_SIZE }))
+      if (tab === "orders") {
+        const data = await requestOrThrow(() => adminUserApi.getOrders(userId, { page, page_size: PAGE_SIZE }))
         setOrders(data.list)
         setRecordTotal(data.pagination.total)
-      } else if (activeTab === "balance") {
-        const data = await requestOrThrow(() => adminUserApi.getBalanceTransactions(userId, { page: recordPage, page_size: PAGE_SIZE }))
+      } else if (tab === "balance") {
+        const data = await requestOrThrow(() => adminUserApi.getBalanceTransactions(userId, { page, page_size: PAGE_SIZE }))
         setTransactions(data.list)
         setRecordTotal(data.pagination.total)
       } else {
-        const data = await requestOrThrow(() => adminUserApi.getOperationLogs(userId, { page: recordPage, page_size: PAGE_SIZE }))
+        const data = await requestOrThrow(() => adminUserApi.getOperationLogs(userId, { page, page_size: PAGE_SIZE }))
         setLogs(data.list)
         setRecordTotal(data.pagination.total)
       }
     } catch {
-      setOrders([])
-      setTransactions([])
-      setLogs([])
+      if (tab === "orders") setOrders([])
+      if (tab === "balance") setTransactions([])
+      if (tab === "logs") setLogs([])
       setRecordTotal(0)
       setRecordsError(true)
     } finally {
       setRecordsLoading(false)
     }
-  }, [activeTab, recordPage, userId])
+  }, [userId])
 
   useEffect(() => { void loadUser() }, [loadUser])
-  useEffect(() => { void loadRecords() }, [loadRecords])
+  useEffect(() => {
+    if (activeTab !== "overview") void loadRecords(activeTab, recordPage)
+  }, [activeTab, loadRecords, recordPage])
 
-  const previewBalance = useMemo(() => {
-    const current = user?.balance ?? 0
-    const amount = Number(balanceAmount)
-    if (!Number.isFinite(amount) || amount <= 0) return current
+  const previewBalanceCents = useMemo(() => {
+    const current = parseMoneyValueToCents(user?.balance ?? 0) ?? 0
+    const amount = parsePositiveMoneyToCents(balanceAmount)
+    if (amount === null) return current
     return current + (balanceType === "INCREASE" ? amount : -amount)
   }, [balanceAmount, balanceType, user?.balance])
+
+  const refreshRecords = useCallback(async (tab: RecordTab) => {
+    // The request is intentionally explicit: changing the selected tab/page
+    // is only a display concern and must not be the refresh trigger.
+    await loadRecords(tab, 1)
+    setActiveTab(tab)
+    setRecordPage(1)
+  }, [loadRecords])
+
+  const retryActiveRecords = () => {
+    if (activeTab !== "overview") void loadRecords(activeTab, recordPage)
+  }
 
   const openEdit = () => {
     if (!user) return
@@ -133,6 +148,7 @@ export default function AdminUserDetailPage() {
       const data = await requestOrThrow(() => adminUserApi.updateProfile(userId, { email }))
       setUser(data)
       setEditOpen(false)
+      await refreshRecords("logs")
       toast.success(t("admin.userProfileSaved"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -142,9 +158,9 @@ export default function AdminUserDetailPage() {
   }
 
   const handleBalance = async () => {
-    const amount = Number(balanceAmount)
+    const amountCents = parsePositiveMoneyToCents(balanceAmount)
     const reason = balanceReason.trim()
-    if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100) {
+    if (amountCents === null) {
       toast.error(t("admin.balanceAmountInvalid"))
       return
     }
@@ -152,19 +168,26 @@ export default function AdminUserDetailPage() {
       toast.error(t("admin.balanceReasonRequired"))
       return
     }
-    if (previewBalance < 0) {
+    if (previewBalanceCents < 0) {
       toast.error(t("admin.balanceNegative"))
+      return
+    }
+    if (previewBalanceCents > MAX_BALANCE_CENTS) {
+      toast.error(t("admin.balanceExceedsMax"))
       return
     }
     setBalanceLoading(true)
     try {
-      await requestOrThrow(() => adminUserApi.adjustBalance(userId, { type: balanceType, amount, reason }))
+      await requestOrThrow(() => adminUserApi.adjustBalance(userId, {
+        type: balanceType,
+        amount: formatCents(amountCents),
+        reason,
+      }))
       await loadUser()
+      await refreshRecords("balance")
       setBalanceOpen(false)
       setBalanceAmount("")
       setBalanceReason("")
-      setActiveTab("balance")
-      setRecordPage(1)
       toast.success(t("admin.balanceAdjusted"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -183,8 +206,7 @@ export default function AdminUserDetailPage() {
       await requestOrThrow(() => adminUserApi.resetPassword(userId, newPassword))
       setResetOpen(false)
       setNewPassword("")
-      setActiveTab("logs")
-      setRecordPage(1)
+      await refreshRecords("logs")
       toast.success(t("admin.passwordReset"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -200,8 +222,7 @@ export default function AdminUserDetailPage() {
       await requestOrThrow(() => adminUserApi.toggleStatus(userId, user.is_deleted === 0 ? 1 : 0))
       await loadUser()
       setStatusOpen(false)
-      setActiveTab("logs")
-      setRecordPage(1)
+      await refreshRecords("logs")
       toast.success(user.is_deleted === 0 ? t("admin.userDisabled") : t("admin.userEnabled"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -261,9 +282,9 @@ export default function AdminUserDetailPage() {
       </div>
 
       {activeTab === "overview" && <Overview user={user} t={t} locale={locale} />}
-      {activeTab === "orders" && <OrdersTab orders={orders} loading={recordsLoading} error={recordsError} onRetry={() => void loadRecords()} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
-      {activeTab === "balance" && <BalanceTab transactions={transactions} loading={recordsLoading} error={recordsError} onRetry={() => void loadRecords()} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
-      {activeTab === "logs" && <LogsTab logs={logs} loading={recordsLoading} error={recordsError} onRetry={() => void loadRecords()} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
+      {activeTab === "orders" && <OrdersTab orders={orders} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
+      {activeTab === "balance" && <BalanceTab transactions={transactions} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
+      {activeTab === "logs" && <LogsTab logs={logs} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
 
       <Dialog open={editOpen} onOpenChange={(open) => { if (!editLoading) setEditOpen(open) }}>
         <DialogContent className="max-w-md">
@@ -278,15 +299,15 @@ export default function AdminUserDetailPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{t("admin.adjustBalance")}</DialogTitle><DialogDescription>{t("admin.balanceAdjustmentDesc")}</DialogDescription></DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">{t("admin.currentBalance")}</p><p className="mt-1 text-xl font-semibold">{formatYuan(user.balance)}</p></div>
-            <div className={`rounded-lg p-3 ${previewBalance < 0 ? "bg-destructive/10 text-destructive" : "bg-primary/10"}`}><p className="text-xs text-muted-foreground">{t("admin.balancePreview")}</p><p className="mt-1 text-xl font-semibold">{formatYuan(previewBalance)}</p></div>
+            <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">{t("admin.currentBalance")}</p><p className="mt-1 text-xl font-semibold">{formatYuanValue(user.balance)}</p></div>
+            <div className={`rounded-lg p-3 ${previewBalanceCents < 0 ? "bg-destructive/10 text-destructive" : "bg-primary/10"}`}><p className="text-xs text-muted-foreground">{t("admin.balancePreview")}</p><p className="mt-1 text-xl font-semibold">{formatYuanFromCents(previewBalanceCents)}</p></div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAdjustmentType")}</span><select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={balanceType} onChange={(event) => setBalanceType(event.target.value as "INCREASE" | "DECREASE")}><option value="INCREASE">{t("admin.balanceIncrease")}</option><option value="DECREASE">{t("admin.balanceDecrease")}</option></select></label>
-            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAmount")}</span><Input type="number" min="0.01" step="0.01" value={balanceAmount} onChange={(event) => setBalanceAmount(event.target.value)} placeholder="0.00" /></label>
+            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAmount")}</span><Input type="text" inputMode="decimal" value={balanceAmount} onChange={(event) => setBalanceAmount(event.target.value)} placeholder="0.00" /></label>
           </div>
           <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceReason")}</span><Textarea value={balanceReason} onChange={(event) => setBalanceReason(event.target.value)} placeholder={t("admin.balanceReasonPlaceholder")} maxLength={500} rows={4} /></label>
-          <DialogFooter><Button type="button" variant="outline" onClick={() => setBalanceOpen(false)} disabled={balanceLoading}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleBalance()} disabled={balanceLoading || previewBalance < 0 || !balanceAmount || !balanceReason.trim()}>{balanceLoading ? t("admin.processing") : t("admin.confirmAdjustment")}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setBalanceOpen(false)} disabled={balanceLoading}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleBalance()} disabled={balanceLoading || previewBalanceCents < 0 || previewBalanceCents > MAX_BALANCE_CENTS || !balanceAmount || !balanceReason.trim()}>{balanceLoading ? t("admin.processing") : t("admin.confirmAdjustment")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -306,7 +327,7 @@ export default function AdminUserDetailPage() {
 type Translator = (key: Parameters<ReturnType<typeof useLocale>["t"]>[0]) => string
 
 function Overview({ user, t, locale }: { user: AdminUserDetail; t: Translator; locale: string }) {
-  return <div className="grid gap-6 lg:grid-cols-2"><FormSection title={t("admin.accountOverview")} description={t("admin.accountOverviewDesc")}><div className="grid gap-3 sm:grid-cols-2"><Info label={t("admin.userNumber")} value={String(user.user_no)} mono /><Info label={t("admin.usernameLabel")} value={user.username} /><Info label={t("admin.emailLabel")} value={user.email} /><Info label={t("admin.registeredAt")} value={formatDateTime(user.created_at, locale)} /></div></FormSection><FormSection title={t("admin.accountMetrics")}><div className="grid gap-3 sm:grid-cols-3"><Metric label={t("admin.currentBalance")} value={formatYuan(user.balance)} /><Metric label={t("admin.successfulOrders")} value={String(user.successful_order_count)} /><Metric label={t("admin.totalSpent")} value={formatYuan(user.total_spent)} /></div></FormSection></div>
+  return <div className="grid gap-6 lg:grid-cols-2"><FormSection title={t("admin.accountOverview")} description={t("admin.accountOverviewDesc")}><div className="grid gap-3 sm:grid-cols-2"><Info label={t("admin.userNumber")} value={String(user.user_no)} mono /><Info label={t("admin.usernameLabel")} value={user.username} /><Info label={t("admin.emailLabel")} value={user.email} /><Info label={t("admin.registeredAt")} value={formatDateTime(user.created_at, locale)} /></div></FormSection><FormSection title={t("admin.accountMetrics")}><div className="grid gap-3 sm:grid-cols-3"><Metric label={t("admin.currentBalance")} value={formatYuanValue(user.balance)} /><Metric label={t("admin.successfulOrders")} value={String(user.successful_order_count)} /><Metric label={t("admin.totalSpent")} value={formatYuanValue(user.total_spent)} /></div></FormSection></div>
 }
 
 function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 break-all text-sm font-medium ${mono ? "font-mono" : ""}`}>{value}</p></div> }
@@ -317,12 +338,12 @@ function RecordShell({ children, loading, error, empty, onRetry, footer, colSpan
 }
 
 function OrdersTab({ orders, loading, error, onRetry, page, total, onPageChange, t, locale }: { orders: AdminUserOrder[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {
-  return <RecordShell loading={loading} error={error} empty={orders.length === 0} onRetry={onRetry} colSpan={6} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderProducts")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{orders.map((order) => <tr key={order.id} className="border-b border-border/60 last:border-0"><td className="px-4 py-3 font-mono text-xs">{order.id.slice(0, 8)}…</td><td className="max-w-[260px] truncate px-4 py-3">{order.items.map((item) => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、") || t("admin.systemNoData")}</td><td className="whitespace-nowrap px-4 py-3">{formatYuan(order.actual_amount ?? order.total_amount ?? 0)}</td><td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td><td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td><td className="px-4 py-3 text-right"><Button asChild type="button" variant="ghost" size="sm"><Link href={`/admin/orders?order_id=${encodeURIComponent(order.id)}`}>{t("admin.viewDetail")}</Link></Button></td></tr>)}</RecordShell>
+  return <RecordShell loading={loading} error={error} empty={orders.length === 0} onRetry={onRetry} colSpan={6} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderProducts")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{orders.map((order) => <tr key={order.id} className="border-b border-border/60 last:border-0"><td className="px-4 py-3 font-mono text-xs">{order.id.slice(0, 8)}…</td><td className="max-w-[260px] truncate px-4 py-3">{order.items.map((item) => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、") || t("admin.systemNoData")}</td><td className="whitespace-nowrap px-4 py-3">{formatYuanValue(order.actual_amount ?? order.total_amount ?? 0)}</td><td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td><td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td><td className="px-4 py-3 text-right"><Button asChild type="button" variant="ghost" size="sm"><Link href={`/admin/orders?order_id=${encodeURIComponent(order.id)}`}>{t("admin.viewDetail")}</Link></Button></td></tr>)}</RecordShell>
 }
 
 function BalanceTab({ transactions, loading, error, onRetry, page, total, onPageChange, t, locale }: { transactions: BalanceTransaction[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {
   const typeLabel = (type: BalanceTransaction["type"]) => type === "ADMIN_ADJUSTMENT" ? t("admin.balanceAdminAdjustment") : type === "RECHARGE" ? t("admin.balanceRecharge") : type === "ORDER_PAYMENT" ? t("admin.balanceOrderPayment") : t("admin.balanceRefund")
-  return <RecordShell loading={loading} error={error} empty={transactions.length === 0} onRetry={onRetry} colSpan={7} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceType")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceDelta")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceBeforeAfter")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceReason")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.operator")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{transactions.map((transaction) => <tr key={transaction.id} className="border-b border-border/60 last:border-0"><td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(transaction.created_at, locale)}</td><td className="px-4 py-3"><StatusBadge label={typeLabel(transaction.type)} tone="info" /></td><td className={`whitespace-nowrap px-4 py-3 font-medium ${transaction.delta >= 0 ? "text-emerald-600" : "text-destructive"}`}>{transaction.delta >= 0 ? "+" : "-"}{formatYuan(Math.abs(transaction.delta))}</td><td className="whitespace-nowrap px-4 py-3">{formatYuan(transaction.balance_before)} → {formatYuan(transaction.balance_after)}</td><td className="max-w-[260px] truncate px-4 py-3" title={transaction.reason}>{transaction.reason}</td><td className="px-4 py-3 font-mono text-xs">{transaction.operator_id.slice(0, 8)}…</td><td className="px-4 py-3">—</td></tr>)}</RecordShell>
+  return <RecordShell loading={loading} error={error} empty={transactions.length === 0} onRetry={onRetry} colSpan={7} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceType")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceDelta")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceBeforeAfter")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceReason")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.operator")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{transactions.map((transaction) => { const deltaCents = parseMoneyValueToCents(transaction.delta) ?? 0; return <tr key={transaction.id} className="border-b border-border/60 last:border-0"><td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(transaction.created_at, locale)}</td><td className="px-4 py-3"><StatusBadge label={typeLabel(transaction.type)} tone="info" /></td><td className={`whitespace-nowrap px-4 py-3 font-medium ${deltaCents >= 0 ? "text-emerald-600" : "text-destructive"}`}>{deltaCents >= 0 ? "+" : "-"}{formatYuanFromCents(Math.abs(deltaCents))}</td><td className="whitespace-nowrap px-4 py-3">{formatYuanValue(transaction.balance_before)} → {formatYuanValue(transaction.balance_after)}</td><td className="max-w-[260px] truncate px-4 py-3" title={transaction.reason}>{transaction.reason}</td><td className="px-4 py-3 font-mono text-xs">{transaction.operator_id.slice(0, 8)}…</td><td className="px-4 py-3">—</td></tr> })}</RecordShell>
 }
 
 function LogsTab({ logs, loading, error, onRetry, page, total, onPageChange, t, locale }: { logs: AdminOperationLogDetail[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {

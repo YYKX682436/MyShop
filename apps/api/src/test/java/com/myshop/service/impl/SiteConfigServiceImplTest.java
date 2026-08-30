@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -106,10 +107,11 @@ class SiteConfigServiceImplTest {
 
         assertEquals(10000L, result.startUserNo());
         assertEquals(10000L, result.nextUserNo());
+        assertFalse(result.hasExistingUsers());
     }
 
     @Test
-    void updatesCounterWithoutRewritingExistingUsers() {
+    void updatesNextCounterWithoutRewritingExistingStartAfterUsersExist() {
         UserNumberSequence sequence = new UserNumberSequence(1, 10000L, 10000L);
         when(userNumberSequenceRepository.findByIdForUpdate(1)).thenReturn(sequence);
         when(userRepository.countByRole(com.myshop.constant.UserRole.USER)).thenReturn(1L);
@@ -118,18 +120,36 @@ class SiteConfigServiceImplTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         UserNumberConfigUpdateRequest request = new UserNumberConfigUpdateRequest();
-        request.setStartUserNo(20000L);
+        request.setStartUserNo(10000L);
         request.setNextUserNo(20000L);
 
         service.updateUserNumberConfig(request);
 
-        assertEquals(20000L, sequence.getStartUserNo());
+        assertEquals(10000L, sequence.getStartUserNo());
         assertEquals(20000L, sequence.getNextUserNo());
         verify(userNumberSequenceRepository).save(sequence);
     }
 
     @Test
-    void rejectsCounterValueThatCollidesWithExistingUser() {
+    void rejectsStartChangeAfterOrdinaryUsersExist() {
+        UserNumberSequence sequence = new UserNumberSequence(1, 10000L, 10001L);
+        when(userNumberSequenceRepository.findByIdForUpdate(1)).thenReturn(sequence);
+        when(userRepository.countByRole(com.myshop.constant.UserRole.USER)).thenReturn(1L);
+        when(userRepository.findMaxUserNoByRole(com.myshop.constant.UserRole.USER)).thenReturn(10000L);
+
+        UserNumberConfigUpdateRequest request = new UserNumberConfigUpdateRequest();
+        request.setStartUserNo(20000L);
+        request.setNextUserNo(20001L);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.updateUserNumberConfig(request));
+
+        assertTrue(exception.getMessage().contains("只读"));
+        verify(userNumberSequenceRepository, never()).save(any(UserNumberSequence.class));
+    }
+
+    @Test
+    void rejectsNextValueThatIsNotStrictlyAboveExistingMaximum() {
         UserNumberSequence sequence = new UserNumberSequence(1, 10000L, 10001L);
         when(userNumberSequenceRepository.findByIdForUpdate(1)).thenReturn(sequence);
         when(userRepository.countByRole(com.myshop.constant.UserRole.USER)).thenReturn(1L);
@@ -142,8 +162,27 @@ class SiteConfigServiceImplTest {
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.updateUserNumberConfig(request));
 
-        assertTrue(exception.getMessage().contains("冲突"));
+        assertTrue(exception.getMessage().contains("严格大于"));
         verify(userNumberSequenceRepository, never()).save(any(UserNumberSequence.class));
+    }
+
+    @Test
+    void allowsSettingTheFirstNumberOnlyWhenStartAndNextMatchWithoutUsers() {
+        UserNumberSequence sequence = new UserNumberSequence(1, 10000L, 10000L);
+        when(userNumberSequenceRepository.findByIdForUpdate(1)).thenReturn(sequence);
+        when(userRepository.countByRole(com.myshop.constant.UserRole.USER)).thenReturn(0L);
+        when(userRepository.findMaxUserNoByRole(com.myshop.constant.UserRole.USER)).thenReturn(null);
+        when(userNumberSequenceRepository.save(any(UserNumberSequence.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        UserNumberConfigUpdateRequest request = new UserNumberConfigUpdateRequest();
+        request.setStartUserNo(20000L);
+        request.setNextUserNo(20000L);
+
+        service.updateUserNumberConfig(request);
+
+        assertEquals(20000L, sequence.getStartUserNo());
+        assertEquals(20000L, sequence.getNextUserNo());
     }
 
     private void saveContactItems(String raw) {

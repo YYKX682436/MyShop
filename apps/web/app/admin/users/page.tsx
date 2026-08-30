@@ -18,7 +18,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useLocale } from "@/lib/context"
-import { formatDateTime, formatYuan } from "@/lib/utils"
+import { formatDateTime } from "@/lib/utils"
+import { formatYuanValue } from "@/lib/money"
 import { adminUserApi, requestOrThrow } from "@/services/api"
 import type { AdminUserItem } from "@/types"
 
@@ -120,9 +121,9 @@ export default function AdminUsersPage() {
                   <td className="whitespace-nowrap px-4 py-3 font-mono font-medium">{user.user_no}</td>
                   <td className="px-4 py-3 font-medium">{user.username}</td>
                   <td className="px-4 py-3 text-muted-foreground">{user.email}</td>
-                  <td className="whitespace-nowrap px-4 py-3">{formatYuan(user.balance)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">{formatYuanValue(user.balance)}</td>
                   <td className="px-4 py-3">{user.order_count}</td>
-                  <td className="whitespace-nowrap px-4 py-3">{formatYuan(user.total_spent)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">{formatYuanValue(user.total_spent)}</td>
                   <td className="px-4 py-3"><StatusBadge label={enabled ? t("admin.normal") : t("admin.banned")} tone={enabled ? "success" : "danger"} /></td>
                   <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(user.created_at, locale)}</td>
                   <td className="px-4 py-3 text-right">

@@ -45,13 +45,19 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     long countByUserIdAndStatus(UUID userId, OrderStatus status);
 
-    @Query("SELECT COUNT(o) FROM Order o WHERE o.userId = :userId "
-            + "AND o.status IN (com.myshop.constant.OrderStatus.PAID, com.myshop.constant.OrderStatus.DELIVERED)")
-    long countSuccessfulByUserId(@Param("userId") UUID userId);
-
-    @Query("SELECT COALESCE(SUM(o.actualAmount), 0) FROM Order o WHERE o.userId = :userId "
-            + "AND o.status IN (com.myshop.constant.OrderStatus.PAID, com.myshop.constant.OrderStatus.DELIVERED)")
-    BigDecimal sumSuccessfulActualAmountByUserId(@Param("userId") UUID userId);
+    /** One aggregate query supplies successful-order metrics for a user page. */
+    @Query("""
+            SELECT o.userId AS userId,
+                   COUNT(o) AS orderCount,
+                   COALESCE(SUM(o.actualAmount), 0) AS totalSpent
+            FROM Order o
+            WHERE o.userId IN :userIds
+              AND o.status IN (com.myshop.constant.OrderStatus.PAID,
+                               com.myshop.constant.OrderStatus.DELIVERED)
+            GROUP BY o.userId
+            """)
+    List<UserOrderMetricsProjection> findSuccessfulMetricsByUserIdIn(
+            @Param("userIds") List<UUID> userIds);
 
     long countByClientIpAndStatus(String clientIp, OrderStatus status);
 

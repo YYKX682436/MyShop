@@ -574,7 +574,7 @@ export const adminUserApi = {
   },
   updateProfile: (id: string, data: { email: string }) =>
     request<AdminUserDetail>(`/admin/users/${id}/profile`, { method: "PUT", body: JSON.stringify(data) }),
-  adjustBalance: (id: string, data: { type: "INCREASE" | "DECREASE"; amount: number; reason: string }) =>
+  adjustBalance: (id: string, data: { type: "INCREASE" | "DECREASE"; amount: string; reason: string }) =>
     request<BalanceTransaction>(`/admin/users/${id}/balance`, { method: "POST", body: JSON.stringify(data) }),
   toggleStatus: (id: string, isDeleted: 0 | 1) =>
     request<null>(`/admin/users/${id}/toggle`, { method: "POST", body: JSON.stringify({ is_deleted: isDeleted }) }),
@@ -613,7 +613,7 @@ export const adminConfigApi = {
     request<null>("/admin/site-config/maintenance", { method: "POST", body: JSON.stringify({ enabled }) }),
   getUserNumbering: () =>
     request<UserNumberConfig>("/admin/site-config/user-numbering"),
-  updateUserNumbering: (data: UserNumberConfig) =>
+  updateUserNumbering: (data: Pick<UserNumberConfig, "start_user_no" | "next_user_no">) =>
     request<null>("/admin/site-config/user-numbering", { method: "PUT", body: JSON.stringify(data) }),
 }
 

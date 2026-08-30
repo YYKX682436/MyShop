@@ -511,6 +511,7 @@ export interface AdminUserItem {
 export interface UserNumberConfig {
   start_user_no: number
   next_user_no: number
+  has_existing_users: boolean
 }
 
 export interface AdminUserDetail extends Omit<AdminUserItem, "order_count" | "total_spent"> {

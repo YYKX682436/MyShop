@@ -288,7 +288,8 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @Transactional(readOnly = true)
     public UserNumberConfigResponse getUserNumberConfig() {
         UserNumberSequence sequence = requireUserNumberSequence(false);
-        return new UserNumberConfigResponse(sequence.getStartUserNo(), sequence.getNextUserNo());
+        return new UserNumberConfigResponse(sequence.getStartUserNo(), sequence.getNextUserNo(),
+                userRepository.countByRole(UserRole.USER) > 0);
     }
 
     @Override
@@ -307,9 +308,19 @@ public class SiteConfigServiceImpl implements SiteConfigService {
         UserNumberSequence sequence = requireUserNumberSequence(true);
         long existingUsers = userRepository.countByRole(UserRole.USER);
         Long maxUserNo = userRepository.findMaxUserNoByRole(UserRole.USER);
-        if (existingUsers > 0 && maxUserNo != null && next <= maxUserNo) {
+        if (existingUsers == 0 && next != start) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "下一个用户编号不能与已有用户编号冲突");
+                    "还没有普通用户时，起始编号和下一个用户编号必须一致");
+        }
+        if (existingUsers > 0) {
+            if (start != sequence.getStartUserNo()) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "已有普通用户后，起始编号是历史值，只读且不允许修改");
+            }
+            if (maxUserNo == null || next <= maxUserNo) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "下一个用户编号必须严格大于当前最大用户编号");
+            }
         }
 
         sequence.setStartUserNo(start);

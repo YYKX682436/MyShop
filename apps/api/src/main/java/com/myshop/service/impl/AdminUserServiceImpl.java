@@ -23,6 +23,7 @@ import com.myshop.model.response.BalanceTransactionResponse;
 import com.myshop.repository.OperationLogRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.UserOrderMetricsProjection;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.AdminUserService;
 import com.myshop.service.BalanceTransactionService;
@@ -36,9 +37,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -66,8 +72,9 @@ public class AdminUserServiceImpl implements AdminUserService {
         String normalizedKeyword = keyword == null || keyword.isBlank() ? null : keyword.trim();
         Page<User> userPage = userRepository.findAdminUsers(
                 normalizedKeyword, isDeleted, PageRequest.of(page - 1, pageSize));
+        Map<UUID, UserOrderMetricsProjection> metricsByUserId = loadOrderMetrics(userPage.getContent());
         List<AdminUserListResponse> list = userPage.getContent().stream()
-                .map(this::toListResponse)
+                .map(user -> toListResponse(user, metricsByUserId.get(user.getId())))
                 .toList();
         return PageResult.of(userPage, list);
     }
@@ -75,7 +82,8 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional(readOnly = true)
     public AdminUserDetailResponse getUserDetail(UUID id) {
-        return toDetailResponse(requireRegularUser(id, false));
+        User user = requireRegularUser(id, false);
+        return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()));
     }
 
     @Override
@@ -85,8 +93,10 @@ public class AdminUserServiceImpl implements AdminUserService {
         requireRegularUser(id, false);
         Page<Order> orderPage = orderRepository.findByUserIdOrderByCreatedAtDesc(
                 id, PageRequest.of(page - 1, pageSize));
+        Map<UUID, List<OrderItem>> itemsByOrderId = loadOrderItems(orderPage.getContent());
         List<AdminUserOrderResponse> list = orderPage.getContent().stream()
-                .map(this::toOrderResponse)
+                .map(order -> toOrderResponse(order,
+                        itemsByOrderId.getOrDefault(order.getId(), List.of())))
                 .toList();
         return PageResult.of(orderPage, list);
     }
@@ -135,7 +145,7 @@ public class AdminUserServiceImpl implements AdminUserService {
         userRepository.save(user);
         logUserOperation("user.update_profile", id,
                 "管理员修改用户邮箱：" + oldEmail + " -> " + email);
-        return toDetailResponse(user);
+        return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()));
     }
 
     @Override
@@ -228,27 +238,63 @@ public class AdminUserServiceImpl implements AdminUserService {
         return user;
     }
 
-    private AdminUserListResponse toListResponse(User user) {
+    private Map<UUID, UserOrderMetricsProjection> loadOrderMetrics(Collection<User> users) {
+        if (users.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<UUID> userIds = users.stream().map(User::getId).toList();
+        return loadOrderMetrics(userIds);
+    }
+
+    private Map<UUID, UserOrderMetricsProjection> loadOrderMetrics(List<UUID> userIds) {
+        if (userIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<UserOrderMetricsProjection> metrics = orderRepository.findSuccessfulMetricsByUserIdIn(userIds);
+        if (metrics == null || metrics.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return metrics.stream().collect(Collectors.toMap(
+                UserOrderMetricsProjection::getUserId, Function.identity()));
+    }
+
+    private Map<UUID, List<OrderItem>> loadOrderItems(List<Order> orders) {
+        if (orders.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<UUID> orderIds = orders.stream().map(Order::getId).toList();
+        return orderItemRepository.findByOrderIdIn(orderIds).stream()
+                .collect(Collectors.groupingBy(OrderItem::getOrderId));
+    }
+
+    private AdminUserListResponse toListResponse(User user, UserOrderMetricsProjection metrics) {
         return new AdminUserListResponse(
                 user.getId(), user.getUserNo(), user.getUsername(), user.getEmail(),
                 normalizeMoney(user.getBalance()),
-                orderRepository.countSuccessfulByUserId(user.getId()),
-                nonNullMoney(orderRepository.sumSuccessfulActualAmountByUserId(user.getId())),
+                orderCount(metrics),
+                totalSpent(metrics),
                 user.getIsDeleted(), user.getCreatedAt());
     }
 
-    private AdminUserDetailResponse toDetailResponse(User user) {
+    private AdminUserDetailResponse toDetailResponse(User user, UserOrderMetricsProjection metrics) {
         return new AdminUserDetailResponse(
                 user.getId(), user.getUserNo(), user.getUsername(), user.getEmail(),
                 normalizeMoney(user.getBalance()),
-                orderRepository.countSuccessfulByUserId(user.getId()),
-                nonNullMoney(orderRepository.sumSuccessfulActualAmountByUserId(user.getId())),
+                orderCount(metrics),
+                totalSpent(metrics),
                 user.getIsDeleted(), user.getCreatedAt());
     }
 
-    private AdminUserOrderResponse toOrderResponse(Order order) {
-        List<AdminUserOrderResponse.AdminUserOrderItemResponse> items = orderItemRepository
-                .findByOrderId(order.getId()).stream()
+    private long orderCount(UserOrderMetricsProjection metrics) {
+        return metrics == null || metrics.getOrderCount() == null ? 0L : metrics.getOrderCount();
+    }
+
+    private BigDecimal totalSpent(UserOrderMetricsProjection metrics) {
+        return metrics == null ? ZERO : nonNullMoney(metrics.getTotalSpent());
+    }
+
+    private AdminUserOrderResponse toOrderResponse(Order order, List<OrderItem> orderItems) {
+        List<AdminUserOrderResponse.AdminUserOrderItemResponse> items = orderItems.stream()
                 .map(this::toOrderItemResponse)
                 .toList();
         return new AdminUserOrderResponse(

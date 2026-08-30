@@ -4,9 +4,13 @@ import com.myshop.common.PageResult;
 import com.myshop.constant.BalanceAdjustmentType;
 import com.myshop.constant.BalanceTransactionType;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.BalanceTransaction;
+import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
@@ -14,10 +18,12 @@ import com.myshop.model.request.AdminResetPasswordRequest;
 import com.myshop.model.request.AdminToggleUserStatusRequest;
 import com.myshop.model.request.AdminUpdateUserProfileRequest;
 import com.myshop.model.response.AdminUserListResponse;
+import com.myshop.model.response.AdminUserOrderResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
 import com.myshop.repository.OperationLogRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.UserOrderMetricsProjection;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OperationLogService;
@@ -41,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -82,8 +89,9 @@ class AdminUserServiceImplTest {
         PageRequest pageable = PageRequest.of(0, 20);
         when(userRepository.findAdminUsers(null, null, pageable))
                 .thenReturn(new PageImpl<>(List.of(user), pageable, 1));
-        when(orderRepository.countSuccessfulByUserId(id)).thenReturn(2L);
-        when(orderRepository.sumSuccessfulActualAmountByUserId(id)).thenReturn(new BigDecimal("25.50"));
+        UserOrderMetricsProjection userMetrics = metrics(id, 2L, "25.50");
+        when(orderRepository.findSuccessfulMetricsByUserIdIn(List.of(id)))
+                .thenReturn(List.of(userMetrics));
 
         PageResult<AdminUserListResponse> result = service.listUsers(null, null, 1, 20);
 
@@ -92,6 +100,55 @@ class AdminUserServiceImplTest {
         assertEquals(2L, row.orderCount());
         assertEquals(new BigDecimal("25.50"), row.totalSpent());
         verify(userRepository).findAdminUsers(null, null, pageable);
+        verify(orderRepository).findSuccessfulMetricsByUserIdIn(List.of(id));
+    }
+
+    @Test
+    void listUsersMapsAllPageMetricsThroughOneBatchQuery() {
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        User first = user(firstId, "buyer-one", "one@example.com", 10000L, "0.00");
+        User second = user(secondId, "buyer-two", "two@example.com", 10001L, "0.00");
+        PageRequest pageable = PageRequest.of(0, 20);
+        when(userRepository.findAdminUsers(null, null, pageable))
+                .thenReturn(new PageImpl<>(List.of(first, second), pageable, 2));
+        UserOrderMetricsProjection firstMetrics = metrics(firstId, 3L, "12.30");
+        UserOrderMetricsProjection secondMetrics = metrics(secondId, 1L, "4.56");
+        when(orderRepository.findSuccessfulMetricsByUserIdIn(List.of(firstId, secondId)))
+                .thenReturn(List.of(firstMetrics, secondMetrics));
+
+        PageResult<AdminUserListResponse> result = service.listUsers(null, null, 1, 20);
+
+        assertEquals(3L, result.getList().get(0).orderCount());
+        assertEquals(new BigDecimal("12.30"), result.getList().get(0).totalSpent());
+        assertEquals(1L, result.getList().get(1).orderCount());
+        assertEquals(new BigDecimal("4.56"), result.getList().get(1).totalSpent());
+        verify(orderRepository).findSuccessfulMetricsByUserIdIn(List.of(firstId, secondId));
+    }
+
+    @Test
+    void listUserOrdersMapsItemsWithOneBatchQuery() {
+        UUID userId = UUID.randomUUID();
+        User user = user(userId, "buyer", "buyer@example.com", 10000L, "0.00");
+        UUID firstOrderId = UUID.randomUUID();
+        UUID secondOrderId = UUID.randomUUID();
+        Order firstOrder = order(firstOrderId, userId);
+        Order secondOrder = order(secondOrderId, userId);
+        OrderItem firstItem = orderItem(UUID.randomUUID(), firstOrderId, "第一商品");
+        OrderItem secondItem = orderItem(UUID.randomUUID(), secondOrderId, "第二商品");
+        PageRequest pageable = PageRequest.of(0, 10);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(orderRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable))
+                .thenReturn(new PageImpl<>(List.of(firstOrder, secondOrder), pageable, 2));
+        when(orderItemRepository.findByOrderIdIn(List.of(firstOrderId, secondOrderId)))
+                .thenReturn(List.of(firstItem, secondItem));
+
+        PageResult<AdminUserOrderResponse> result = service.listUserOrders(userId, 1, 10);
+
+        assertEquals("第一商品", result.getList().get(0).items().get(0).productTitle());
+        assertEquals("第二商品", result.getList().get(1).items().get(0).productTitle());
+        verify(orderItemRepository).findByOrderIdIn(List.of(firstOrderId, secondOrderId));
+        verify(orderItemRepository, never()).findByOrderId(any());
     }
 
     @Test
@@ -194,7 +251,6 @@ class AdminUserServiceImplTest {
         User user = user(userId, "buyer", "old@example.com", 10000L, "0.00");
         when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
         when(userRepository.existsByEmailIgnoreCase("new@example.com")).thenReturn(false);
-        when(orderRepository.sumSuccessfulActualAmountByUserId(userId)).thenReturn(BigDecimal.ZERO);
 
         AdminUpdateUserProfileRequest request = new AdminUpdateUserProfileRequest();
         request.setEmail("  NEW@Example.COM ");
@@ -265,6 +321,37 @@ class AdminUserServiceImplTest {
                     transaction.setId(UUID.randomUUID());
                     return transaction;
                 });
+    }
+
+    private UserOrderMetricsProjection metrics(UUID userId, long orderCount, String totalSpent) {
+        UserOrderMetricsProjection metrics = mock(UserOrderMetricsProjection.class);
+        when(metrics.getUserId()).thenReturn(userId);
+        when(metrics.getOrderCount()).thenReturn(orderCount);
+        when(metrics.getTotalSpent()).thenReturn(new BigDecimal(totalSpent));
+        return metrics;
+    }
+
+    private Order order(UUID id, UUID userId) {
+        Order order = new Order();
+        order.setId(id);
+        order.setUserId(userId);
+        order.setStatus(OrderStatus.PAID);
+        order.setOrderType(OrderType.DIRECT);
+        order.setTotalAmount(new BigDecimal("1.00"));
+        order.setActualAmount(new BigDecimal("1.00"));
+        return order;
+    }
+
+    private OrderItem orderItem(UUID id, UUID orderId, String title) {
+        OrderItem item = new OrderItem();
+        item.setId(id);
+        item.setOrderId(orderId);
+        item.setProductId(UUID.randomUUID());
+        item.setProductTitle(title);
+        item.setQuantity(1);
+        item.setUnitPrice(new BigDecimal("1.00"));
+        item.setSubtotal(new BigDecimal("1.00"));
+        return item;
     }
 
     private User user(UUID id, String username, String email, Long userNo, String balance) {

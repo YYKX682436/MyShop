@@ -33,7 +33,7 @@ export default function AdminSiteConfigPage() {
   const [logoUploading, setLogoUploading] = useState(false)
   const [qrUploadingIndex, setQrUploadingIndex] = useState<number | null>(null)
   const [maintenanceToggling, setMaintenanceToggling] = useState(false)
-  const [userNumberConfig, setUserNumberConfig] = useState<UserNumberConfig>({ start_user_no: 10000, next_user_no: 10000 })
+  const [userNumberConfig, setUserNumberConfig] = useState<UserNumberConfig>({ start_user_no: 10000, next_user_no: 10000, has_existing_users: false })
   const [userNumberLoading, setUserNumberLoading] = useState(true)
   const [userNumberSaving, setUserNumberSaving] = useState(false)
   const popupContent = getValueFromMap(configMap, "popup_content")
@@ -153,7 +153,7 @@ export default function AdminSiteConfigPage() {
     }
   }
 
-  const updateUserNumber = (key: keyof UserNumberConfig, value: string) => {
+  const updateUserNumber = (key: "start_user_no" | "next_user_no", value: string) => {
     const parsed = Number(value)
     setUserNumberConfig((current) => ({ ...current, [key]: Number.isFinite(parsed) ? parsed : 0 }))
   }
@@ -163,13 +163,19 @@ export default function AdminSiteConfigPage() {
       toast.error(t("admin.userNumberPositive"))
       return
     }
-    if (!Number.isSafeInteger(userNumberConfig.next_user_no) || userNumberConfig.next_user_no < userNumberConfig.start_user_no) {
+    if (!Number.isSafeInteger(userNumberConfig.next_user_no)
+      || (userNumberConfig.has_existing_users
+        ? userNumberConfig.next_user_no <= userNumberConfig.start_user_no
+        : userNumberConfig.next_user_no !== userNumberConfig.start_user_no)) {
       toast.error(t("admin.userNumberNextInvalid"))
       return
     }
     setUserNumberSaving(true)
     try {
-      await requestOrThrow(() => adminConfigApi.updateUserNumbering(userNumberConfig))
+      await requestOrThrow(() => adminConfigApi.updateUserNumbering({
+        start_user_no: userNumberConfig.start_user_no,
+        next_user_no: userNumberConfig.next_user_no,
+      }))
       toast.success(t("admin.settingsSaved"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -239,7 +245,8 @@ export default function AdminSiteConfigPage() {
                 <div className="grid gap-5 sm:grid-cols-2">
                   <label className="flex flex-col gap-1.5 text-sm font-medium">
                     <span>{t("admin.userNumberStart")}</span>
-                    <Input type="number" min={1} step={1} value={userNumberConfig.start_user_no} onChange={(event) => updateUserNumber("start_user_no", event.target.value)} disabled={userNumberSaving} />
+                    <Input type="number" min={1} step={1} value={userNumberConfig.start_user_no} onChange={(event) => updateUserNumber("start_user_no", event.target.value)} disabled={userNumberSaving || userNumberConfig.has_existing_users} />
+                    {userNumberConfig.has_existing_users && <span className="text-xs font-normal text-muted-foreground">{t("admin.userNumberStartReadonly")}</span>}
                   </label>
                   <label className="flex flex-col gap-1.5 text-sm font-medium">
                     <span>{t("admin.userNumberNext")}</span>
