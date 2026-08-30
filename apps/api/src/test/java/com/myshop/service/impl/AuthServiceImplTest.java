@@ -14,6 +14,7 @@ import com.myshop.utils.JwtUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -28,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -187,23 +189,42 @@ class AuthServiceImplTest {
     }
 
     @Test
-    void loginSelectsExactPhoneWhenAccountMatchesMainlandMobilePattern() {
-        User user = user("buyer", "buyer-phone@example.com", "13800138002");
-        when(userRepository.findByPhone("13800138002")).thenReturn(Optional.of(user));
+    void loginFallsBackToCaseInsensitiveUsernameWhenPhoneLookupMisses() {
+        User user = user("13800138000", "numeric-username@example.com", "13900139000");
+        when(userRepository.findByPhone("13800138000")).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameIgnoreCase("13800138000")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login(" 13800138002 ", "abcdef"), null);
+        service.login(login("13800138000", "abcdef"), null);
 
-        verify(userRepository).findByPhone("13800138002");
+        InOrder lookupOrder = inOrder(userRepository);
+        lookupOrder.verify(userRepository).findByPhone("13800138000");
+        lookupOrder.verify(userRepository).findByUsernameIgnoreCase("13800138000");
+        verify(userRepository, never()).findByEmailIgnoreCase(anyString());
+    }
+
+    @Test
+    void loginPrefersExactPhoneWhenPhoneLookupHits() {
+        User user = user("buyer", "buyer-phone@example.com", "13800138000");
+        when(userRepository.findByPhone("13800138000")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
+
+        service.login(login(" 13800138000 ", "abcdef"), null);
+
+        verify(userRepository).findByPhone("13800138000");
         verify(userRepository, never()).findByUsernameIgnoreCase(anyString());
         verify(userRepository, never()).findByEmailIgnoreCase(anyString());
     }
 
     @Test
     void loginUsesOneCredentialMessageForUnknownAccountsAndWrongPasswords() {
+        BusinessException blankAccount = assertThrows(BusinessException.class,
+                () -> service.login(login("  ", "abcdef"), null));
+        assertEquals("账号或密码错误", blankAccount.getMessage());
+
         BusinessException unknownAccount = assertThrows(BusinessException.class,
                 () -> service.login(login("missing-user", "abcdef"), null));
-        assertEquals("用户名或密码错误", unknownAccount.getMessage());
+        assertEquals("账号或密码错误", unknownAccount.getMessage());
 
         User user = user("buyer", "buyer@example.com", "13800138003");
         when(userRepository.findByUsernameIgnoreCase("buyer")).thenReturn(Optional.of(user));
@@ -211,7 +232,7 @@ class AuthServiceImplTest {
 
         BusinessException wrongPassword = assertThrows(BusinessException.class,
                 () -> service.login(login("buyer", "wrong-password"), null));
-        assertEquals("用户名或密码错误", wrongPassword.getMessage());
+        assertEquals("账号或密码错误", wrongPassword.getMessage());
     }
 
     private RegisterRequest request(String email) {

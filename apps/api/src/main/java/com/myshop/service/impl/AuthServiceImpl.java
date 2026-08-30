@@ -130,7 +130,7 @@ public class AuthServiceImpl implements AuthService {
         String account = request == null ? null : request.getAccount();
         account = account == null ? null : account.trim();
         if (!StringUtils.hasText(account)) {
-            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "用户名或密码错误");
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误");
         }
 
         Optional<User> userLookup;
@@ -138,11 +138,14 @@ public class AuthServiceImpl implements AuthService {
             userLookup = userRepository.findByEmailIgnoreCase(normalizeEmail(account));
         } else if (PHONE_PATTERN.matcher(account).matches()) {
             userLookup = userRepository.findByPhone(account);
+            if (userLookup.isEmpty()) {
+                userLookup = userRepository.findByUsernameIgnoreCase(account);
+            }
         } else {
             userLookup = userRepository.findByUsernameIgnoreCase(account);
         }
         User user = userLookup
-                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS, "用户名或密码错误"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误"));
 
         if (user.getIsDeleted() == 1) {
             throw new BusinessException(ErrorCode.ACCOUNT_DISABLED, "该账号已被禁用");
@@ -171,7 +174,7 @@ public class AuthServiceImpl implements AuthService {
                         "连续登录失败 " + MAX_FAILED_ATTEMPTS + " 次，账号已锁定 " + LOCK_DURATION_MINUTES + " 分钟");
             }
             userRepository.save(user);
-            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "用户名或密码错误");
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误");
         }
 
         // 登录成功：重置失败计数和锁定状态
