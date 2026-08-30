@@ -35,10 +35,10 @@ test("mismatched confirmation fails before a request payload can be built", () =
 })
 
 test("frontend validation covers the requested identifier and password examples", () => {
-  for (const username of ["abc", "123", "abc123", "abcdefghijklmnopqrst"]) {
+  for (const username of ["abc", "123", "abc123", "abc_def", "abc-def", "abcdefghijklmnopqrst"]) {
     assert.equal(validateRegistrationForm({ ...validForm, username }), null, username)
   }
-  for (const username of ["ab", "abcdefghijklmnopqrstu", "中文", "ab c", "abc_def", "abc-def", "abc@def"]) {
+  for (const username of ["ab", "abcdefghijklmnopqrstu", "中文", "ab c", "abc@def", "abc.def"]) {
     assert.equal(validateRegistrationForm({ ...validForm, username }), "auth.usernameRule", username)
   }
   for (const password of ["666666", "abcdef", "abc123", "Abc@12", "Abc@123"]) {

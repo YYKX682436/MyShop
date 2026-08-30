@@ -30,7 +30,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
-    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9]{3,20}$");
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,20}$");
     private static final Pattern PASSWORD_PATTERN = Pattern.compile("^[!-~]{6,72}$");
     private static final Pattern PHONE_PATTERN = Pattern.compile("^1[3-9]\\d{9}$");
 
@@ -204,7 +204,7 @@ public class AuthServiceImpl implements AuthService {
 
     private void validateRegistrationFields(String username, String email, String password, String phone) {
         if (username == null || !USERNAME_PATTERN.matcher(username).matches()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名必须为 3-20 位，只能使用英文字母和数字");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名必须为 3-20 位，只能使用英文字母、数字、下划线和连字符");
         }
         if (email == null || email.isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "邮箱不能为空");

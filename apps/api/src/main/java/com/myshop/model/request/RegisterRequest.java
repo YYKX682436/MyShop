@@ -13,7 +13,7 @@ public class RegisterRequest {
 
     @NotBlank(message = "Username is required")
     @Size(min = 3, max = 20, message = "用户名长度必须为 3 至 20 位")
-    @Pattern(regexp = "^[A-Za-z0-9]{3,20}$", message = "用户名只能使用英文字母和数字")
+    @Pattern(regexp = "^[A-Za-z0-9_-]{3,20}$", message = "用户名只能使用英文字母、数字、下划线和连字符")
     private String username;
 
     @NotBlank(message = "Password is required")

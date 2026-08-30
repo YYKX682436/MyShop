@@ -30,15 +30,15 @@ class RegistrationValidationTest {
     }
 
     @Test
-    void acceptedUsernamesCoverLettersDigitsMixedCaseAndTheTwentyCharacterLimit() {
-        for (String username : new String[]{"abc", "123", "abc123", "abcdefghijklmnopqrst"}) {
+    void acceptedUsernamesCoverLettersDigitsSimpleSeparatorsAndTheTwentyCharacterLimit() {
+        for (String username : new String[]{"abc", "123", "abc123", "abc_def", "abc-def", "abcdefghijklmnopqrst"}) {
             assertValid(request(username, "abcdef", "13800138000"), username);
         }
     }
 
     @Test
-    void usernamesOutsideAsciiThreeToTwentyCharactersAreRejected() {
-        for (String username : new String[]{"ab", "abcdefghijklmnopqrstu", "中文", "ab c", "abc_def", "abc-def", "abc@def"}) {
+    void usernamesOutsideAllowedAsciiThreeToTwentyCharactersAreRejected() {
+        for (String username : new String[]{"ab", "abcdefghijklmnopqrstu", "中文", "ab c", "abc@def", "abc.def"}) {
             assertInvalid(request(username, "abcdef", "13800138000"), username);
         }
     }

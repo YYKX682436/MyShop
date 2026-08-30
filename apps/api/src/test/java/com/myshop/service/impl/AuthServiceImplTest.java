@@ -102,6 +102,16 @@ class AuthServiceImplTest {
     }
 
     @Test
+    void registrationAcceptsHyphenAndUnderscoreInUsername() {
+        RegisterRequest request = request("simple-username@example.com");
+        request.setUsername("buyer_test-1");
+
+        AuthResult result = service.register(request);
+
+        assertEquals("buyer_test-1", result.user().getUsername());
+    }
+
+    @Test
     void registrationRejectsUsernameThatMatchesAnExistingPhone() {
         RegisterRequest request = request("username-phone@example.com");
         request.setUsername("13800138000");
