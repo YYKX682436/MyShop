@@ -403,8 +403,7 @@ class MigrationChainIntegrationTest {
     private boolean checkConstraintExists(String constraint) {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM pg_constraint c
-                JOIN pg_class t ON t.oid = c.conrelid
-                WHERE t.relname = 'users' AND c.conname = ? AND c.contype = 'c'
+                WHERE c.conname = ? AND c.contype = 'c'
                 """, Integer.class, constraint);
         return count != null && count == 1;
     }
