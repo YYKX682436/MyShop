@@ -117,7 +117,7 @@ public class DeviceRateLimitFilter implements Filter {
 
         // POST 精确匹配
         if ("POST".equalsIgnoreCase(method)) {
-            if ("/api/orders".equals(path) || "/api/orders/from-cart".equals(path)) {
+            if ("/api/orders".equals(path)) {
                 return Category.ORDER;
             }
             if ("/api/orders/query".equals(path) || "/api/orders/deliver".equals(path)) {

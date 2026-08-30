@@ -7,8 +7,8 @@ import java.util.UUID;
 
 public interface AdminOrderService {
 
-    PageResult<?> listOrders(String status, String orderType, String paymentMethod,
-                             Boolean isRiskFlagged, String keyword, int page, int pageSize);
+    PageResult<?> listOrders(String status, String paymentMethod, Boolean isRiskFlagged,
+                             String keyword, int page, int pageSize);
 
     Object getOrderDetail(UUID id);
 

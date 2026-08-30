@@ -41,9 +41,8 @@ public class AuthController {
 
     @PostMapping("/login")
     public ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request,
-                                           @RequestHeader(value = "X-Session-Token", required = false) String sessionToken,
                                            HttpServletResponse response) {
-        AuthResult result = authService.login(request, sessionToken);
+        AuthResult result = authService.login(request);
         writeAuthCookies(response, result.token());
         return ApiResponse.success(new AuthResponse(result.user()));
     }

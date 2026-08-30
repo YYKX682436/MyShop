@@ -40,7 +40,6 @@ public final class ErrorCode {
     public static final int ORDER_ALREADY_DELIVERED = 40005;
     public static final int PURCHASE_LIMIT = 40006;
     public static final int UNPAID_ORDER_EXISTS = 40007;
-    public static final int CART_EMPTY = 40008;
 
     // ── Payment 50001~50099 ──
     public static final int CHANNEL_UNAVAILABLE = 50001;

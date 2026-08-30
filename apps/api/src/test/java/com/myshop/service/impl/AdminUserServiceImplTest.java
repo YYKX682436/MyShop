@@ -5,7 +5,6 @@ import com.myshop.constant.BalanceAdjustmentType;
 import com.myshop.constant.BalanceTransactionType;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.BalanceTransaction;
@@ -362,7 +361,6 @@ class AdminUserServiceImplTest {
         order.setId(id);
         order.setUserId(userId);
         order.setStatus(OrderStatus.PAID);
-        order.setOrderType(OrderType.DIRECT);
         order.setTotalAmount(new BigDecimal("1.00"));
         order.setActualAmount(new BigDecimal("1.00"));
         return order;

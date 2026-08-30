@@ -3,8 +3,8 @@
 import { useCallback, useRef, useState, useEffect } from "react"
 import { usePathname } from "next/navigation"
 import Link from "next/link"
-import { ShoppingCart, User, LogIn, Menu, X, Globe, Moon, Sun, Package, Search, Settings, ChevronDown, SlidersHorizontal, LogOut, ClipboardList } from "lucide-react"
-import { useAuth, useLocale, useTheme, useColorScheme, useSearch, useCart, useSiteConfig, COLOR_SCHEMES, type SortKey } from "@/lib/context"
+import { User, LogIn, Menu, X, Globe, Moon, Sun, Package, Search, Settings, ChevronDown, SlidersHorizontal, LogOut, ClipboardList } from "lucide-react"
+import { useAuth, useLocale, useTheme, useColorScheme, useSearch, useSiteConfig, COLOR_SCHEMES, type SortKey } from "@/lib/context"
 import { cn } from "@/lib/utils"
 
 interface StoreHeaderProps {
@@ -16,7 +16,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
   const { setTheme, resolvedTheme } = useTheme()
   const { isLoggedIn, user, logout, authLoaded } = useAuth()
   const { colorScheme, setColorScheme } = useColorScheme()
-  const { itemCount: cartItemCount } = useCart()
   const { config: siteConfig } = useSiteConfig()
   const {
     searchQuery, setSearchQuery,
@@ -66,7 +65,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
 
   const navLinks = [
     { href: "/", label: t("nav.home") },
-    { href: "/cart", label: t("nav.cart") },
     { href: "/order/query", label: t("nav.orders") },
   ]
 
@@ -108,7 +106,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
         {/* Desktop Nav -- absolute center */}
         <nav className="hidden items-center gap-1 md:flex" aria-label="Main navigation">
           {navLinks.map((link) => {
-            const isCart = link.href === "/cart"
             return (
               <Link
                 key={link.href}
@@ -120,20 +117,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                     : "text-muted-foreground"
                 )}
               >
-                {isCart ? (
-                  <span className="flex items-center gap-1.5">
-                    <ShoppingCart className="h-3.5 w-3.5" />
-                    {link.label}
-                    {cartItemCount > 0 && (
-                      <span className="relative flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-none text-primary-foreground shadow-sm">
-                        {cartItemCount > 99 ? "99+" : cartItemCount}
-                        <span className="absolute inset-0 animate-ping rounded-full bg-primary opacity-20" />
-                      </span>
-                    )}
-                  </span>
-                ) : (
-                  link.label
-                )}
+                {link.label}
               </Link>
             )
           })}
@@ -222,20 +206,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
             aria-label={t("nav.orders")}
           >
             <ClipboardList className="h-4 w-4" />
-          </Link>
-
-          {/* Cart (tablet only, mobile in hamburger menu) */}
-          <Link
-            href="/cart"
-            className="relative hidden h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground sm:inline-flex md:hidden"
-            aria-label={t("nav.cart")}
-          >
-            <ShoppingCart className="h-4 w-4" />
-            {cartItemCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                {cartItemCount > 99 ? "99+" : cartItemCount}
-              </span>
-            )}
           </Link>
 
           {/* User / Auth — auth 未就绪时显示占位，避免登录按钮闪烁 */}
@@ -394,9 +364,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
       {mobileMenuOpen && (
         <nav className="border-t border-border px-4 py-3 md:hidden" aria-label="Mobile navigation">
           <div className="flex flex-col gap-1">
-            {navLinks.map((link) => {
-              const isCart = link.href === "/cart"
-              return (
+            {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
@@ -408,16 +376,9 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                       : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                   )}
                 >
-                  {isCart && <ShoppingCart className="h-4 w-4" />}
                   {link.label}
-                  {isCart && cartItemCount > 0 && (
-                    <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
-                      {cartItemCount > 99 ? "99+" : cartItemCount}
-                    </span>
-                  )}
                 </Link>
-              )
-            })}
+            ))}
             {/* Color scheme (mobile only) */}
             <hr className="my-1 border-border sm:hidden" />
             <div className="flex items-center gap-2 px-3 py-2 sm:hidden">

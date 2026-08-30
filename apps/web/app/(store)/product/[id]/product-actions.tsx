@@ -2,9 +2,9 @@
 
 import { useState, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { Zap, Minus, Plus, ShoppingCart, Package, TrendingUp } from "lucide-react"
+import { Zap, Minus, Plus, Package, TrendingUp } from "lucide-react"
 import { toast } from "sonner"
-import { useLocale, useCart } from "@/lib/context"
+import { useLocale } from "@/lib/context"
 import { orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, validateEmail, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
@@ -21,7 +21,6 @@ interface ProductActionsProps {
 
 export function ProductActions({ product, channels }: ProductActionsProps) {
   const { t } = useLocale()
-  const { addItem } = useCart()
   const router = useRouter()
   const emailInputRef = useRef<HTMLInputElement>(null)
   const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
@@ -122,7 +121,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         }))
       saveOrderLookupToken(result.payment.order_id, result.lookup_token)
       clearIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, intent.key)
-      toast.success(t("checkout.processingOrder"))
+      toast.success(t("payment.redirectingToPay"))
       const payUrlH5 = result.payment.pay_url || ""
       const qr = result.payment.qrcode_url || result.payment.payment_url || ""
       const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
@@ -144,27 +143,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       handleTurnstileReset()
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  const handleAddToCart = async () => {
-    const normalizedCustomerInputs = validateCustomerInputsForAction()
-    if (!normalizedCustomerInputs) return
-    if (product.specs.length > 0 && !selectedSpec) return
-    if (isOutOfStock) {
-      toast.error(t("product.outOfStock"))
-      return
-    }
-    try {
-      await addItem({
-        product_id: product.id,
-        spec_id: selectedSpec?.id ?? null,
-        quantity,
-        customer_inputs: normalizedCustomerInputs,
-      })
-      toast.success(t("product.addToCart"))
-    } catch (err: unknown) {
-      toast.error(getApiErrorMessage(err, t))
     }
   }
 
@@ -382,11 +360,11 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mb-3" />
 
         {/* Action Buttons */}
-        <div className="flex gap-3">
+        <div>
           <button
             onClick={handleBuyNow}
             disabled={submitting || isOutOfStock}
-            className="scheme-glow inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
+            className="scheme-glow inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
           >
             {submitting ? (
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
@@ -394,14 +372,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
               <Zap className="h-4 w-4" />
             )}
             {isOutOfStock ? t("product.outOfStock") : t("product.buyNow")}
-          </button>
-          <button
-            onClick={handleAddToCart}
-            disabled={isOutOfStock}
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border bg-transparent px-5 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
-          >
-            <ShoppingCart className="h-4 w-4" />
-            {t("product.addToCart")}
           </button>
         </div>
       </div>

@@ -39,14 +39,6 @@ public class OrderController {
                 request, RequestContext.getUserId(), clientIpResolver.resolve(httpRequest), sessionToken));
     }
 
-    @PostMapping("/from-cart")
-    public ApiResponse<?> createCartOrder(@RequestBody Map<String, Object> request,
-                                          @RequestHeader(value = "X-Session-Token", required = false) String sessionToken,
-                                          HttpServletRequest httpRequest) {
-        return ApiResponse.success(orderService.createCartOrder(
-                request, RequestContext.getUserId(), clientIpResolver.resolve(httpRequest), sessionToken));
-    }
-
     @GetMapping("/{id}/status")
     public ApiResponse<?> getOrderStatus(@PathVariable UUID id,
                                          @RequestParam(value = "lookup_token", required = false) String lookupToken) {

@@ -106,34 +106,11 @@ class ProductRulesTest {
     }
 
     @Test
-    void currentLabelsAreUsedAndCartCompletenessDetectsProductFieldChanges() {
+    void currentLabelsAreUsedInOrderInputSnapshots() {
         Product renamed = product(List.of(new CustomerInputField("account", "充值账号")));
-        List<CustomerInputValue> renamedValue = ProductRules.normalizeCustomerInputs(renamed, Map.of(
+        List<CustomerInputValue> normalized = ProductRules.normalizeCustomerInputs(renamed, Map.of(
                 "customer_inputs", List.of(Map.of("id", "account", "label", "伪造标签", "value", "123"))));
-        assertEquals(List.of(new CustomerInputValue("account", "充值账号", "123")), renamedValue);
-
-        Product expanded = product(List.of(
-                new CustomerInputField("account", "充值账号"),
-                new CustomerInputField("zone", "游戏区服")));
-        assertFalse(ProductRules.hasCompleteCustomerInputs(expanded, renamedValue));
-        assertEquals(List.of(new CustomerInputValue("account", "充值账号", "123")),
-                ProductRules.knownCustomerInputs(expanded, renamedValue));
-    }
-
-    @Test
-    void inputEqualityUsesFieldIdAndValueInsteadOfJsonOrderOrSubmittedLabels() {
-        List<CustomerInputValue> first = List.of(
-                new CustomerInputValue("account", "账号", "123"),
-                new CustomerInputValue("zone", "区服", "艾欧尼亚"));
-        List<CustomerInputValue> sameValuesInDifferentOrder = List.of(
-                new CustomerInputValue("zone", "改名后的区服", "艾欧尼亚"),
-                new CustomerInputValue("account", "伪造标签", "123"));
-        List<CustomerInputValue> differentValue = List.of(
-                new CustomerInputValue("account", "账号", "456"),
-                new CustomerInputValue("zone", "区服", "艾欧尼亚"));
-
-        assertTrue(ProductRules.sameCustomerInputs(first, sameValuesInDifferentOrder));
-        assertFalse(ProductRules.sameCustomerInputs(first, differentValue));
+        assertEquals(List.of(new CustomerInputValue("account", "充值账号", "123")), normalized);
     }
 
     @Test

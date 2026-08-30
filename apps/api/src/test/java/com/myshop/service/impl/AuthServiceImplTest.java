@@ -6,7 +6,6 @@ import com.myshop.exception.BusinessException;
 import com.myshop.model.request.LoginRequest;
 import com.myshop.model.request.RegisterRequest;
 import com.myshop.model.response.AuthResult;
-import com.myshop.repository.CartItemRepository;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.utils.CaptchaUtils;
@@ -42,8 +41,6 @@ class AuthServiceImplTest {
     @Mock
     private UserNumberSequenceRepository userNumberSequenceRepository;
     @Mock
-    private CartItemRepository cartItemRepository;
-    @Mock
     private PasswordEncoder passwordEncoder;
     @Mock
     private JwtUtils jwtUtils;
@@ -55,7 +52,7 @@ class AuthServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new AuthServiceImpl(userRepository, userNumberSequenceRepository, cartItemRepository,
+        service = new AuthServiceImpl(userRepository, userNumberSequenceRepository,
                 passwordEncoder, jwtUtils, captchaUtils);
         sequence = new UserNumberSequence(1, 10000L, 10000L);
         lenient().when(captchaUtils.verify(anyString(), anyString())).thenReturn(true);
@@ -81,7 +78,6 @@ class AuthServiceImplTest {
         assertEquals("buyer@example.com", result.user().getEmail());
         assertEquals(10001L, sequence.getNextUserNo());
         verify(userRepository).saveAndFlush(argThat(user -> "13800138000".equals(user.getPhone())));
-        verify(cartItemRepository, never()).findBySessionToken(anyString());
     }
 
     @Test
@@ -168,7 +164,7 @@ class AuthServiceImplTest {
         when(userRepository.findByUsernameIgnoreCase("ToM123")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login("ToM123", "abcdef"), null);
+        service.login(login("ToM123", "abcdef"));
 
         verify(userRepository).findByUsernameIgnoreCase("ToM123");
         verify(userRepository, never()).findByPhone(anyString());
@@ -181,7 +177,7 @@ class AuthServiceImplTest {
         when(userRepository.findByEmailIgnoreCase("buyer@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login("  Buyer@Example.COM ", "abcdef"), null);
+        service.login(login("  Buyer@Example.COM ", "abcdef"));
 
         verify(userRepository).findByEmailIgnoreCase("buyer@example.com");
         verify(userRepository, never()).findByUsernameIgnoreCase(anyString());
@@ -195,7 +191,7 @@ class AuthServiceImplTest {
         when(userRepository.findByUsernameIgnoreCase("13800138000")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login("13800138000", "abcdef"), null);
+        service.login(login("13800138000", "abcdef"));
 
         InOrder lookupOrder = inOrder(userRepository);
         lookupOrder.verify(userRepository).findByPhone("13800138000");
@@ -209,7 +205,7 @@ class AuthServiceImplTest {
         when(userRepository.findByPhone("13800138000")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login(" 13800138000 ", "abcdef"), null);
+        service.login(login(" 13800138000 ", "abcdef"));
 
         verify(userRepository).findByPhone("13800138000");
         verify(userRepository, never()).findByUsernameIgnoreCase(anyString());
@@ -219,11 +215,11 @@ class AuthServiceImplTest {
     @Test
     void loginUsesOneCredentialMessageForUnknownAccountsAndWrongPasswords() {
         BusinessException blankAccount = assertThrows(BusinessException.class,
-                () -> service.login(login("  ", "abcdef"), null));
+                () -> service.login(login("  ", "abcdef")));
         assertEquals("账号或密码错误", blankAccount.getMessage());
 
         BusinessException unknownAccount = assertThrows(BusinessException.class,
-                () -> service.login(login("missing-user", "abcdef"), null));
+                () -> service.login(login("missing-user", "abcdef")));
         assertEquals("账号或密码错误", unknownAccount.getMessage());
 
         User user = user("buyer", "buyer@example.com", "13800138003");
@@ -231,7 +227,7 @@ class AuthServiceImplTest {
         when(passwordEncoder.matches("wrong-password", user.getPasswordHash())).thenReturn(false);
 
         BusinessException wrongPassword = assertThrows(BusinessException.class,
-                () -> service.login(login("buyer", "wrong-password"), null));
+                () -> service.login(login("buyer", "wrong-password")));
         assertEquals("账号或密码错误", wrongPassword.getMessage());
     }
 

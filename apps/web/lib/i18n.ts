@@ -3,7 +3,6 @@ export type Locale = "zh" | "en"
 const zh = {
   // Nav
   "nav.home": "首页",
-  "nav.cart": "购物车",
   "nav.orders": "订单查询",
   "nav.login": "登录",
   "nav.register": "注册",
@@ -41,7 +40,6 @@ const zh = {
 
   // Product Detail
   "product.buyNow": "立即购买",
-  "product.addToCart": "加入购物车",
   "product.selectSpec": "选择规格",
   "product.quantity": "数量",
   "product.unitPrice": "单价",
@@ -68,33 +66,6 @@ const zh = {
   "product.tierHint": "买 ≥{qty} 件",
   "product.perPiece": "件",
   "product.notFound": "商品未找到",
-
-  // Cart
-  "cart.title": "购物车",
-  "cart.empty": "购物车是空的",
-  "cart.goShopping": "去逛逛",
-  "cart.selectAll": "全选",
-  "cart.selected": "已选",
-  "cart.items": "件",
-  "cart.total": "合计",
-  "cart.checkout": "去支付",
-  "cart.remove": "删除",
-  "cart.clear": "清空",
-  "cart.tierPrice": "阶梯价",
-  "cart.bulkDiscount": "批量优惠",
-  "cart.pieces": "件",
-
-  // Checkout
-  "checkout.title": "订单确认",
-  "checkout.summary": "订单摘要",
-  "checkout.itemCount": "商品数量",
-  "checkout.totalAmount": "订单金额",
-  "checkout.deliveryEmail": "收货邮箱",
-  "checkout.paymentMethod": "支付方式",
-  "checkout.confirmOrder": "确认订单",
-  "checkout.processingOrder": "订单已创建，正在跳转支付...",
-  "checkout.securePayment": "安全支付",
-  "checkout.securePaymentDesc": "您的支付信息将通过加密传输，我们承诺保护您的隐私安全",
 
   // Order
   "order.query": "订单查询",
@@ -213,8 +184,6 @@ const zh = {
   // My Orders
   "myOrders.title": "购买记录",
   "myOrders.all": "全部",
-  "myOrders.cartOrder": "购物车订单",
-  "myOrders.directOrder": "直接购买",
   "myOrders.pending": "待支付",
   "myOrders.paid": "已支付",
   "myOrders.delivered": "已发货",
@@ -622,13 +591,9 @@ const zh = {
 
   // Admin Orders
   "admin.paymentMethod": "支付方式",
-  "admin.orderSource": "来源",
   "admin.ordersDesc": "管理平台订单",
   "admin.searchOrder": "搜索订单号/商品/邮箱...",
   "admin.allPayment": "全部支付方式",
-  "admin.allOrderType": "全部类型",
-  "admin.directOrder": "直接购买",
-  "admin.cartOrder": "购物车",
   "admin.riskFlagged": "风险",
   "admin.markPaid": "标记已付",
   "admin.markPaidConfirm": "确认标记已付？",
@@ -940,14 +905,12 @@ const zh = {
   "error.orderProcessing": "订单正在处理中，请稍候",
   "error.purchaseLimitPerUser": "超出个人最大购买数量限制",
   "error.unpaidOrderExists": "您有未支付的订单，请先完成支付或等待过期",
-  "error.cartEmpty": "购物车为空",
   "error.channelUnavailable": "支付渠道不可用",
 } as const
 
 const en: Record<keyof typeof zh, string> = {
   // Nav
   "nav.home": "Home",
-  "nav.cart": "Cart",
   "nav.orders": "Order Query",
   "nav.login": "Login",
   "nav.register": "Register",
@@ -985,7 +948,6 @@ const en: Record<keyof typeof zh, string> = {
 
   // Product Detail
   "product.buyNow": "Buy Now",
-  "product.addToCart": "Add to Cart",
   "product.selectSpec": "Select Spec",
   "product.quantity": "Quantity",
   "product.unitPrice": "Unit Price",
@@ -1012,33 +974,6 @@ const en: Record<keyof typeof zh, string> = {
   "product.tierHint": "Buy ≥{qty} pcs",
   "product.perPiece": "pcs",
   "product.notFound": "Product not found",
-
-  // Cart
-  "cart.title": "Shopping Cart",
-  "cart.empty": "Your cart is empty",
-  "cart.goShopping": "Go Shopping",
-  "cart.selectAll": "Select All",
-  "cart.selected": "Selected",
-  "cart.items": "items",
-  "cart.total": "Total",
-  "cart.checkout": "Proceed to Pay",
-  "cart.remove": "Remove",
-  "cart.clear": "Clear",
-  "cart.tierPrice": "Tier Price",
-  "cart.bulkDiscount": "Bulk Discount",
-  "cart.pieces": "pcs",
-
-  // Checkout
-  "checkout.title": "Order Confirmation",
-  "checkout.summary": "Order Summary",
-  "checkout.itemCount": "Item Count",
-  "checkout.totalAmount": "Total Amount",
-  "checkout.deliveryEmail": "Delivery Email",
-  "checkout.paymentMethod": "Payment Method",
-  "checkout.confirmOrder": "Confirm Order",
-  "checkout.processingOrder": "Order created, redirecting to payment...",
-  "checkout.securePayment": "Secure Payment",
-  "checkout.securePaymentDesc": "Your payment is encrypted and secure. We are committed to protecting your privacy",
 
   // Order
   "order.query": "Order Query",
@@ -1157,8 +1092,6 @@ const en: Record<keyof typeof zh, string> = {
   // My Orders
   "myOrders.title": "My Orders",
   "myOrders.all": "All",
-  "myOrders.cartOrder": "Cart Order",
-  "myOrders.directOrder": "Direct Purchase",
   "myOrders.pending": "Pending",
   "myOrders.paid": "Paid",
   "myOrders.delivered": "Delivered",
@@ -1433,7 +1366,7 @@ const en: Record<keyof typeof zh, string> = {
   "admin.stockModeHint": "Automatic delivery uses card keys; manual delivery can use limited or unlimited stock.",
   "admin.defaultManualStock": "Default manual stock (enter per-spec stock below)",
   "admin.availableManualStock": "Available manual stock",
-  "admin.manualStockHint": "Stock is reserved atomically at checkout and restored once when an order expires; unlimited stock does not create virtual quantities.",
+  "admin.manualStockHint": "Stock is reserved atomically when an order is created and restored once when an order expires; unlimited stock does not create virtual quantities.",
   "admin.productSpecs": "Product Specifications",
   "admin.enableMultiSpec": "Enable multiple specifications",
   "admin.specNamePlaceholder": "Spec name (for example: 1 month, 6 months)",
@@ -1566,13 +1499,9 @@ const en: Record<keyof typeof zh, string> = {
 
   // Admin Orders
   "admin.paymentMethod": "Payment Method",
-  "admin.orderSource": "Source",
   "admin.ordersDesc": "Manage platform orders",
   "admin.searchOrder": "Search order/product/email...",
   "admin.allPayment": "All Payment",
-  "admin.allOrderType": "All Types",
-  "admin.directOrder": "Direct",
-  "admin.cartOrder": "Cart",
   "admin.riskFlagged": "Risk",
   "admin.markPaid": "Mark Paid",
   "admin.markPaidConfirm": "Confirm mark as paid?",
@@ -1884,7 +1813,6 @@ const en: Record<keyof typeof zh, string> = {
   "error.orderProcessing": "Order is being processed, please wait",
   "error.purchaseLimitPerUser": "Exceeded personal purchase limit",
   "error.unpaidOrderExists": "You have an unpaid order, please complete payment or wait for expiration",
-  "error.cartEmpty": "Shopping cart is empty",
   "error.channelUnavailable": "Payment channel unavailable",
 }
 

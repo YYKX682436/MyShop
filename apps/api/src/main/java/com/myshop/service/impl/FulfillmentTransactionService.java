@@ -107,7 +107,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
         // Lock each product/spec pool once. A PostgreSQL transaction can see
         // rows it already locked with FOR UPDATE SKIP LOCKED, so taking keys
         // item-by-item while leaving them AVAILABLE would allocate the same
-        // key twice when two cart items share a pool (for example, different
+        // key twice when two order items share a pool (for example, different
         // customer-input values). Aggregate first, then slice the
         // locked list back into the original order-item boundaries.
         Map<StockPoolKey, List<CardKey>> lockedKeysByPool = new LinkedHashMap<>();

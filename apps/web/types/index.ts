@@ -129,47 +129,16 @@ export interface ProductDetail extends ProductCard {
 }
 
 // ============================================================
-// Cart
-// ============================================================
-
-export interface CartItem {
-  id: string
-  product_id: string
-  spec_id: string | null
-  product_title: string
-  spec_name: string | null
-  cover_url?: string
-  unit_price: number
-  quantity: number
-  subtotal: number
-  stock_available?: number | null
-  unlimited?: boolean
-  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
-  customer_input_fields: CustomerInputField[]
-  customer_inputs: CustomerInputValue[]
-  customer_inputs_complete?: boolean
-  customer_input_error?: string
-}
-
-export interface Cart {
-  items: CartItem[]
-  total_amount: number
-}
-
-// ============================================================
 // Order
 // ============================================================
 
 export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED'
-
-export type OrderType = 'DIRECT' | 'CART'
 
 export interface OrderBrief {
   id: string
   total_amount: number
   actual_amount: number
   status: OrderStatus
-  order_type: OrderType
   payment_method: string
   created_at: string
   items?: OrderItemDetail[]
@@ -325,14 +294,6 @@ export interface CreateOrderRequest {
   idempotency_fingerprint?: string
   device?: string
   customer_inputs?: { id: string; value: string }[]
-}
-
-export interface CreateCartOrderRequest {
-  email: string
-  payment_method: string
-  idempotency_key: string
-  idempotency_fingerprint?: string
-  device?: string
 }
 
 // ============================================================
@@ -535,7 +496,6 @@ export interface AdminUserOrder {
   total_amount: number | null
   actual_amount: number | null
   status: OrderStatus
-  order_type: OrderType
   payment_method: string | null
   email: string | null
   created_at: string

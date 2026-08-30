@@ -170,8 +170,8 @@ class DashboardAggregateIntegrationTest {
         LocalDateTime deliveredAt = "DELIVERED".equals(status) ? paidAt : null;
         jdbcTemplate.update("""
                 INSERT INTO orders(id, created_at, updated_at, email, actual_amount, total_amount,
-                                   status, order_type, paid_at, delivered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'DIRECT', ?, ?)
+                                   status, paid_at, delivered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id, createdAt, createdAt, email, new BigDecimal(amount), new BigDecimal(amount), status, paidAt, deliveredAt);
         return id;
     }

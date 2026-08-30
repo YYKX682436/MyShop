@@ -66,7 +66,7 @@ export default function RegisterPage() {
     try {
       setTurnstileHeaders(turnstileToken)
       const result = await authApi.register(buildRegisterRequest(form, captchaId))
-      setUser(result.user, { skipCartRefresh: true })
+      setUser(result.user)
       toast.success(t("auth.registerSuccess"))
       router.replace("/")
     } catch (err: unknown) {

@@ -1,7 +1,6 @@
 package com.myshop.repository;
 
 import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -149,12 +148,10 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     // 管理后台订单列表 — 无搜索词
     @Query("SELECT o FROM Order o WHERE " +
             "(:status IS NULL OR o.status = :status) " +
-            "AND (:orderType IS NULL OR o.orderType = :orderType) " +
             "AND (:paymentMethod IS NULL OR o.paymentMethod = :paymentMethod) " +
             "AND (:isRiskFlagged IS NULL OR o.riskFlagged = :isRiskFlagged) " +
             "ORDER BY o.createdAt DESC")
     Page<Order> findAdminOrders(@Param("status") OrderStatus status,
-                                @Param("orderType") OrderType orderType,
                                 @Param("paymentMethod") String paymentMethod,
                                 @Param("isRiskFlagged") Boolean isRiskFlagged,
                                 Pageable pageable);
@@ -162,13 +159,11 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     // 管理后台订单列表 — 带搜索词（按订单ID、邮箱或商品名称搜索，keyword 保证非 null）
     @Query("SELECT DISTINCT o FROM Order o LEFT JOIN OrderItem oi ON oi.orderId = o.id WHERE " +
             "(:status IS NULL OR o.status = :status) " +
-            "AND (:orderType IS NULL OR o.orderType = :orderType) " +
             "AND (:paymentMethod IS NULL OR o.paymentMethod = :paymentMethod) " +
             "AND (:isRiskFlagged IS NULL OR o.riskFlagged = :isRiskFlagged) " +
             "AND (str(o.id) LIKE :keywordPattern OR o.email LIKE :keywordPattern OR oi.productTitle LIKE :keywordPattern) " +
             "ORDER BY o.createdAt DESC")
     Page<Order> findAdminOrdersByKeyword(@Param("status") OrderStatus status,
-                                         @Param("orderType") OrderType orderType,
                                          @Param("paymentMethod") String paymentMethod,
                                          @Param("isRiskFlagged") Boolean isRiskFlagged,
                                          @Param("keywordPattern") String keywordPattern,

@@ -5,14 +5,13 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Eye, EyeOff, LogIn } from "lucide-react"
 import { toast } from "sonner"
-import { useLocale, useAuth, useCart } from "@/lib/context"
+import { useLocale, useAuth } from "@/lib/context"
 import { authApi, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 
 export default function LoginPage() {
   const { t } = useLocale()
   const { setUser } = useAuth()
-  const { refreshCart } = useCart()
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirectTo = searchParams.get("redirect")
@@ -40,9 +39,6 @@ export default function LoginPage() {
       } else {
         localStorage.removeItem("rememberMe")
       }
-
-      // Refresh cart after login (merges session cart)
-      await refreshCart()
 
       toast.success(t("auth.loginSuccess"))
       router.push(redirectTo || "/")

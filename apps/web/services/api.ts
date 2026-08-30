@@ -9,9 +9,7 @@ import type {
   ProductDetail,
   ProductSpec,
   Category,
-  Cart,
   CreateOrderRequest,
-  CreateCartOrderRequest,
   CreateOrderResult,
   DeliverResult,
   SiteConfig,
@@ -78,7 +76,7 @@ function handleUnauthorized() {
 }
 
 // ============================================================
-// Session Token (guest cart)
+// Session Token (guest order)
 // ============================================================
 
 function getSessionToken(): string | null {
@@ -198,7 +196,7 @@ async function request<T>(
     const csrf = getCsrfToken()
     if (csrf) headers["X-CSRF-Token"] = csrf
   }
-  // Session token only owns the guest cart/order flow; authentication remains
+  // Session token only owns the guest order flow; authentication remains
   // exclusively in the HttpOnly access cookie.
   const sessionToken = getSessionToken()
   if (sessionToken) {
@@ -348,24 +346,6 @@ export const productApi = {
 }
 
 // ============================================================
-// Cart
-// ============================================================
-
-export const cartApi = {
-  get: () =>
-    request<Cart>("/cart"),
-  addItem: (data: { product_id: string; spec_id: string | null; quantity: number; customer_inputs?: { id: string; value: string }[] }) =>
-    request<null>("/cart/items", { method: "POST", body: JSON.stringify(data) }),
-  updateItem: (itemId: string, quantity: number, customer_inputs?: { id: string; value: string }[]) =>
-    request<null>(`/cart/items/${itemId}`, {
-      method: "PUT",
-      body: JSON.stringify({ quantity, ...(customer_inputs !== undefined ? { customer_inputs } : {}) }),
-    }),
-  removeItem: (itemId: string) =>
-    request<null>(`/cart/items/${itemId}`, { method: "DELETE" }),
-}
-
-// ============================================================
 // Order
 // ============================================================
 
@@ -373,10 +353,6 @@ export const orderApi = {
   create: (data: CreateOrderRequest) => {
     getOrCreateGuestSessionToken()
     return request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) })
-  },
-  createFromCart: (data: CreateCartOrderRequest) => {
-    getOrCreateGuestSessionToken()
-    return request<CreateOrderResult>("/orders/from-cart", { method: "POST", body: JSON.stringify(data) })
   },
   getStatus: (orderId: string, lookupToken?: string) =>
     request<{ order_id: string; status: OrderStatus; expires_at: string; remaining_seconds: number; payment_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`),
@@ -531,7 +507,7 @@ export const adminCardKeyApi = {
 
 export const adminOrderApi = {
   getList: (params: {
-    page?: number; page_size?: number; status?: string; order_type?: string;
+    page?: number; page_size?: number; status?: string;
     payment_method?: string; is_risk_flagged?: number; keyword?: string
   }, options?: RequestInit) => {
     const qs = buildQuery(params)
@@ -682,7 +658,6 @@ const ERROR_CODE_I18N: Record<number, string> = {
   40005: "error.orderProcessing",
   40006: "error.purchaseLimitPerUser",
   40007: "error.unpaidOrderExists",
-  40008: "error.cartEmpty",
   // Payment
   50001: "error.channelUnavailable",
 }

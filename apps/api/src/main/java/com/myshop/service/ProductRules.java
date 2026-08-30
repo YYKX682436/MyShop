@@ -101,68 +101,9 @@ public final class ProductRules {
         return List.copyOf(result);
     }
 
-    /** Render stored cart values after product fields change; checkout remains strict. */
-    public static List<CustomerInputValue> knownCustomerInputs(Product product, Object rawInputs) {
-        List<CustomerInputField> fields = currentFields(product);
-        if (!(rawInputs instanceof List<?> list) || list.isEmpty()) return List.of();
-        Map<String, String> valuesById = new HashMap<>();
-        for (Object rawValue : list) {
-            String id;
-            Object value;
-            if (rawValue instanceof CustomerInputValue inputValue) {
-                id = inputValue.id();
-                value = inputValue.value();
-            } else if (rawValue instanceof Map<?, ?> map) {
-                id = text(map.get("id"));
-                value = map.get("value");
-            } else continue;
-            if (id == null || valuesById.containsKey(id)) continue;
-            try {
-                valuesById.put(id, validateValue(value));
-            } catch (BusinessException ignored) {
-                // Invalid stored values are intentionally rendered as incomplete.
-            }
-        }
-        List<CustomerInputValue> result = new ArrayList<>();
-        for (CustomerInputField field : fields) {
-            String value = valuesById.get(field.id());
-            if (value != null) result.add(new CustomerInputValue(field.id(), field.label(), value));
-        }
-        return List.copyOf(result);
-    }
-
-    public static boolean hasCompleteCustomerInputs(Product product, Object rawInputs) {
-        try {
-            normalizeCustomerInputs(product, rawInputs, true);
-            return true;
-        } catch (BusinessException exception) {
-            return false;
-        }
-    }
-
     public static List<CustomerInputField> currentFields(Product product) {
         return product == null || product.getCustomerInputFields() == null
                 ? List.of() : List.copyOf(product.getCustomerInputFields());
-    }
-
-    /** Equality is based on id/value pairs, not raw JSON or array order. */
-    public static boolean sameCustomerInputs(Object left, Object right) {
-        return inputMap(left).equals(inputMap(right));
-    }
-
-    private static Map<String, String> inputMap(Object rawInputs) {
-        if (!(rawInputs instanceof List<?> list)) return Map.of();
-        Map<String, String> result = new HashMap<>();
-        for (Object rawValue : list) {
-            if (rawValue instanceof CustomerInputValue inputValue) {
-                result.put(inputValue.id(), inputValue.value());
-            } else if (rawValue instanceof Map<?, ?> map) {
-                String id = text(map.get("id"));
-                String value = text(map.get("value"));
-                if (id != null && value != null) result.put(id, value);
-            }
-        }
-        return result;
     }
 
     public static StockMode parseStockMode(Object raw, StockMode fallback) {

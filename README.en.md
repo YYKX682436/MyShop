@@ -1,12 +1,12 @@
 # MyShop
 
-MyShop Phase 1 is a digital-goods (card-key) storefront. It keeps the mature storefront, cart, order, admin, and theme surfaces from the reference baseline while making order credentials, payment callbacks, and automated delivery explicit security boundaries.
+MyShop Phase 1 is a digital-goods (card-key) storefront. It provides product details, direct purchase, order lookup, admin, and theme surfaces while making order credentials, payment callbacks, and automated delivery explicit security boundaries.
 
 The source and license boundary is recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Orion Key is the primary code baseline; ACG-Faka is used only for behavior and UI design reference. This repository does not run PHP or copy ACG runtime code.
 
 ## Phase 1 scope
 
-- Storefront: products/specifications, cart, guest/member checkout, Alipay/WeChat payment, order lookup, and card-key display/export.
+- Storefront: products/specifications, guest/member direct purchase, Alipay/WeChat payment, order lookup, and card-key display/export.
 - Admin: products, categories, card pools, orders, users, site settings, operation logs, and payment-channel management.
 - Payments: extensible `PaymentProvider` SPI with Epay built in; only Alipay and WeChat are enabled in this phase.
 - Data: PostgreSQL with versioned Flyway migrations; non-test `ddl-auto=validate`; no `data.sql` seed path.

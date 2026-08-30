@@ -2,7 +2,6 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.UserRole;
-import com.myshop.entity.CartItem;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.LoginRequest;
@@ -10,11 +9,9 @@ import com.myshop.model.request.RegisterRequest;
 import com.myshop.model.response.AuthResult;
 import com.myshop.model.response.CaptchaResponse;
 import com.myshop.model.response.UserProfileResponse;
-import com.myshop.repository.CartItemRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.service.AuthService;
-import com.myshop.service.ProductRules;
 import com.myshop.utils.CaptchaUtils;
 import com.myshop.utils.JwtUtils;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +21,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -40,7 +36,6 @@ public class AuthServiceImpl implements AuthService {
 
     private final UserRepository userRepository;
     private final UserNumberSequenceRepository userNumberSequenceRepository;
-    private final CartItemRepository cartItemRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtils jwtUtils;
     private final CaptchaUtils captchaUtils;
@@ -126,7 +121,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional(noRollbackFor = BusinessException.class)
-    public AuthResult login(LoginRequest request, String sessionToken) {
+    public AuthResult login(LoginRequest request) {
         String account = request == null ? null : request.getAccount();
         account = account == null ? null : account.trim();
         if (!StringUtils.hasText(account)) {
@@ -184,11 +179,6 @@ public class AuthServiceImpl implements AuthService {
             userRepository.save(user);
         }
 
-        // Merge guest cart on login
-        if (StringUtils.hasText(sessionToken)) {
-            mergeCart(sessionToken, user.getId());
-        }
-
         String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());
         return new AuthResult(token, UserProfileResponse.from(user));
     }
@@ -197,30 +187,6 @@ public class AuthServiceImpl implements AuthService {
     public void logout() {
         // Stateless JWT - client discards token
         log.debug("User logged out");
-    }
-
-    private void mergeCart(String sessionToken, java.util.UUID userId) {
-        List<CartItem> guestItems = cartItemRepository.findBySessionToken(sessionToken);
-        for (CartItem guestItem : guestItems) {
-            Optional<CartItem> existing = cartItemRepository.findByUserIdAndProductId(userId, guestItem.getProductId())
-                    .stream()
-                    .filter(item -> item.getSpecId() == null
-                            ? guestItem.getSpecId() == null
-                            : item.getSpecId().equals(guestItem.getSpecId()))
-                    .filter(item -> ProductRules.sameCustomerInputs(item.getCustomerInputs(), guestItem.getCustomerInputs()))
-                    .findFirst();
-            if (existing.isPresent()) {
-                // Merge quantity into user's existing item, then delete the guest item
-                existing.get().setQuantity(existing.get().getQuantity() + guestItem.getQuantity());
-                cartItemRepository.save(existing.get());
-                cartItemRepository.delete(guestItem);
-            } else {
-                // Reassign guest item to user
-                guestItem.setUserId(userId);
-                guestItem.setSessionToken(null);
-                cartItemRepository.save(guestItem);
-            }
-        }
     }
 
     private String normalizeEmail(String email) {

@@ -2,8 +2,8 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
 import { type Locale, getDictionary, type TranslationKey } from "./i18n"
-import type { UserProfile, CartItem, SiteConfig } from "@/types"
-import { cartApi, siteApi, userApi, authApi, requestOrThrow } from "@/services/api"
+import type { UserProfile, SiteConfig } from "@/types"
+import { siteApi, userApi, authApi, requestOrThrow } from "@/services/api"
 
 // ============================================================
 // Theme
@@ -126,7 +126,7 @@ export function useColorScheme() {
 
 interface AuthContextValue {
   user: UserProfile | null
-  setUser: (u: UserProfile | null, options?: { skipCartRefresh?: boolean }) => void
+  setUser: (u: UserProfile | null) => void
   isLoggedIn: boolean
   authLoaded: boolean
   logout: () => void
@@ -142,36 +142,6 @@ const AuthContext = createContext<AuthContextValue>({
 
 export function useAuth() {
   return useContext(AuthContext)
-}
-
-// ============================================================
-// Cart
-// ============================================================
-
-interface CartContextValue {
-  items: CartItem[]
-  totalAmount: number
-  itemCount: number
-  isLoading: boolean
-  addItem: (data: { product_id: string; spec_id: string | null; quantity: number; customer_inputs?: { id: string; value: string }[] }) => Promise<void>
-  updateItem: (itemId: string, quantity: number, customerInputs?: { id: string; value: string }[]) => Promise<void>
-  removeItem: (itemId: string) => Promise<void>
-  refreshCart: () => Promise<void>
-}
-
-const CartContext = createContext<CartContextValue>({
-  items: [],
-  totalAmount: 0,
-  itemCount: 0,
-  isLoading: false,
-  addItem: async () => {},
-  updateItem: async () => {},
-  removeItem: async () => {},
-  refreshCart: async () => {},
-})
-
-export function useCart() {
-  return useContext(CartContext)
 }
 
 // ============================================================
@@ -301,7 +271,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<UserProfile | null>(null)
   const [authLoaded, setAuthLoaded] = useState(false)
   const authVersionRef = useRef(0)
-  const skipCartRefreshRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -319,9 +288,8 @@ export function AppProviders({ children }: { children: ReactNode }) {
     return () => { cancelled = true }
   }, [])
 
-  const setUser = useCallback((u: UserProfile | null, options?: { skipCartRefresh?: boolean }) => {
+  const setUser = useCallback((u: UserProfile | null) => {
     authVersionRef.current += 1
-    if (options?.skipCartRefresh) skipCartRefreshRef.current = true
     setUserState(u)
     setAuthLoaded(true)
   }, [])
@@ -332,78 +300,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
     void authApi.logout().catch(() => undefined)
     setUser(null)
   }, [setUser])
-
-  // ---------- Cart ----------
-  const [cartItems, setCartItems] = useState<CartItem[]>([])
-  const [cartTotal, setCartTotal] = useState(0)
-  const [cartLoading, setCartLoading] = useState(false)
-
-  const refreshCart = useCallback(async () => {
-    setCartLoading(true)
-    try {
-      const cart = await requestOrThrow(() => cartApi.get())
-      setCartItems(cart.items)
-      setCartTotal(cart.total_amount)
-    } catch {
-      // silently fail — cart is not critical
-    } finally {
-      setCartLoading(false)
-    }
-  }, [])
-
-  // Fetch cart on mount (if logged in or has session token)
-  useEffect(() => {
-    if (skipCartRefreshRef.current) {
-      skipCartRefreshRef.current = false
-      return
-    }
-    const hasSession = localStorage.getItem("session_token")
-    if (user || hasSession) {
-      refreshCart()
-    }
-  }, [refreshCart, user])
-
-  const addItem = useCallback(async (data: { product_id: string; spec_id: string | null; quantity: number; customer_inputs?: { id: string; value: string }[] }) => {
-    await requestOrThrow(() => cartApi.addItem(data))
-    await refreshCart()
-  }, [refreshCart])
-
-  const updateItem = useCallback(async (itemId: string, quantity: number, customerInputs?: { id: string; value: string }[]) => {
-    // Optimistic update: 立即更新本地状态，避免等待 API 往返导致页面刷新
-    const prevItems = [...cartItems]
-    const prevTotal = cartTotal
-    const optimisticItems = cartItems.map(item => {
-      if (item.id !== itemId) return item
-      const nextInputs = customerInputs?.map(input => ({
-        ...input,
-        label: item.customer_input_fields.find(field => field.id === input.id)?.label ?? input.id,
-      }))
-      return {
-        ...item,
-        quantity,
-        subtotal: item.unit_price * quantity,
-        ...(nextInputs ? { customer_inputs: nextInputs, customer_inputs_complete: true, customer_input_error: undefined } : {}),
-      }
-    })
-    setCartItems(optimisticItems)
-    setCartTotal(optimisticItems.reduce((sum, item) => sum + item.subtotal, 0))
-
-    try {
-      await requestOrThrow(() => cartApi.updateItem(itemId, quantity, customerInputs))
-    } catch (err) {
-      // API 失败（如库存不足）→ 回滚到之前的状态
-      setCartItems(prevItems)
-      setCartTotal(prevTotal)
-      throw err
-    }
-  }, [cartItems, cartTotal])
-
-  const removeItem = useCallback(async (itemId: string) => {
-    await requestOrThrow(() => cartApi.removeItem(itemId))
-    await refreshCart()
-  }, [refreshCart])
-
-  const cartItemCount = useMemo(() => cartItems.reduce((sum, item) => sum + item.quantity, 0), [cartItems])
 
   // ---------- Site Config ----------
   const [siteConfig, setSiteConfig] = useState<SiteConfig | null>(null)
@@ -439,41 +335,28 @@ export function AppProviders({ children }: { children: ReactNode }) {
       <ColorSchemeContext.Provider value={{ colorScheme, setColorScheme }}>
         <LocaleContext.Provider value={{ locale, setLocale, t }}>
           <AuthContext.Provider value={{ user, setUser, isLoggedIn, authLoaded, logout }}>
-            <CartContext.Provider
-              value={{
-                items: cartItems,
-                totalAmount: cartTotal,
-                itemCount: cartItemCount,
-                isLoading: cartLoading,
-                addItem,
-                updateItem,
-                removeItem,
-                refreshCart,
-              }}
-            >
-              <SiteConfigContext.Provider value={{ config: siteConfig, isLoading: siteConfigLoading }}>
-                <SearchContext.Provider
-                  value={{
-                    searchQuery,
-                    setSearchQuery,
-                    searchOpen,
-                    setSearchOpen,
-                    sortBy,
-                    setSortBy,
-                    filterOpen,
-                    setFilterOpen,
-                    inStockOnly,
-                    setInStockOnly,
-                    priceMin,
-                    setPriceMin,
-                    priceMax,
-                    setPriceMax,
-                  }}
-                >
-                  {children}
-                </SearchContext.Provider>
-              </SiteConfigContext.Provider>
-            </CartContext.Provider>
+            <SiteConfigContext.Provider value={{ config: siteConfig, isLoading: siteConfigLoading }}>
+              <SearchContext.Provider
+                value={{
+                  searchQuery,
+                  setSearchQuery,
+                  searchOpen,
+                  setSearchOpen,
+                  sortBy,
+                  setSortBy,
+                  filterOpen,
+                  setFilterOpen,
+                  inStockOnly,
+                  setInStockOnly,
+                  priceMin,
+                  setPriceMin,
+                  priceMax,
+                  setPriceMax,
+                }}
+              >
+                {children}
+              </SearchContext.Provider>
+            </SiteConfigContext.Provider>
           </AuthContext.Provider>
         </LocaleContext.Provider>
       </ColorSchemeContext.Provider>

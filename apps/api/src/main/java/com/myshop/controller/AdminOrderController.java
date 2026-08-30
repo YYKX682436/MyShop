@@ -18,13 +18,12 @@ public class AdminOrderController {
     @GetMapping
     public ApiResponse<?> listOrders(
             @RequestParam(required = false) String status,
-            @RequestParam(value = "order_type", required = false) String orderType,
             @RequestParam(value = "payment_method", required = false) String paymentMethod,
             @RequestParam(value = "is_risk_flagged", required = false) Boolean isRiskFlagged,
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
-        return ApiResponse.success(adminOrderService.listOrders(status, orderType, paymentMethod,
+        return ApiResponse.success(adminOrderService.listOrders(status, paymentMethod,
                 isRiskFlagged, keyword, page, pageSize));
     }
 

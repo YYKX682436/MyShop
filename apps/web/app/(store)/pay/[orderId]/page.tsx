@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { ArrowRight, CheckCircle2, Clock, Copy, Loader2, RefreshCw, Smartphone, XCircle } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
 import { toast } from "sonner"
-import { useCart, useLocale, useSiteConfig } from "@/lib/context"
+import { useLocale, useSiteConfig } from "@/lib/context"
 import { orderApi } from "@/services/api"
 import type { OrderStatus } from "@/types"
 import { cn, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
@@ -20,7 +20,6 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const { orderId } = use(params)
   const { t } = useLocale()
   const { config } = useSiteConfig()
-  const { refreshCart } = useCart()
   const searchParams = useSearchParams()
   const router = useRouter()
   const [status, setStatus] = useState<OrderStatus>("PENDING")
@@ -43,9 +42,8 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
     if (result.payment_url && !qrcodeUrl) setQrcodeUrl(result.payment_url)
     if (result.status !== "PENDING") {
       setStatus(result.status)
-      if (result.status === "PAID" || result.status === "DELIVERED") await refreshCart()
     }
-  }, [orderId, qrcodeUrl, refreshCart])
+  }, [orderId, qrcodeUrl])
 
   useEffect(() => { void fetchStatus().catch(() => undefined) }, [fetchStatus])
 

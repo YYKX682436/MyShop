@@ -3,7 +3,6 @@ package com.myshop.service.impl;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.entity.Product;
@@ -13,7 +12,6 @@ import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
 import com.myshop.model.CustomerInputValue;
 import com.myshop.repository.CardKeyRepository;
-import com.myshop.repository.CartItemRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
@@ -56,7 +54,6 @@ class OrderServiceImplTest {
     @Mock private ProductRepository productRepository;
     @Mock private ProductSpecRepository productSpecRepository;
     @Mock private WholesaleRuleRepository wholesaleRuleRepository;
-    @Mock private CartItemRepository cartItemRepository;
     @Mock private CardKeyRepository cardKeyRepository;
     @Mock private SiteConfigRepository siteConfigRepository;
     @Mock private PaymentChannelRepository paymentChannelRepository;
@@ -68,7 +65,7 @@ class OrderServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderServiceImpl(orderRepository, orderItemRepository, productRepository,
-                productSpecRepository, wholesaleRuleRepository, cartItemRepository, cardKeyRepository,
+                productSpecRepository, wholesaleRuleRepository, cardKeyRepository,
                 siteConfigRepository, paymentChannelRepository, paymentService, manualStockService);
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
@@ -197,7 +194,6 @@ class OrderServiceImplTest {
         Order order = new Order();
         order.setId(orderId);
         order.setStatus(OrderStatus.PENDING);
-        order.setOrderType(OrderType.DIRECT);
         order.setExpiresAt(LocalDateTime.now().plusMinutes(10));
         order.setLookupTokenHash(com.myshop.utils.LookupTokens.hash(lookupToken));
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));

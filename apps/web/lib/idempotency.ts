@@ -9,7 +9,7 @@ export interface StoredIdempotencyKey {
   fingerprint: string
 }
 
-/** Stable JSON-like serialization used for checkout intent fingerprints. */
+/** Stable JSON-like serialization used for direct-order intent fingerprints. */
 export function stableSerialize(value: unknown): string {
   if (value === undefined) return "undefined"
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "undefined"

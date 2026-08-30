@@ -41,7 +41,6 @@ export default function AdminOrdersPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [paymentFilter, setPaymentFilter] = useState("")
-  const [orderTypeFilter, setOrderTypeFilter] = useState("")
   const [page, setPage] = useState(1)
 
   const [detailOrder, setDetailOrder] = useState<AdminOrderItem | null>(null)
@@ -74,7 +73,6 @@ export default function AdminOrdersPage() {
         page,
         page_size: PAGE_SIZE,
         status: statusFilter || undefined,
-        order_type: orderTypeFilter || undefined,
         payment_method: paymentFilter || undefined,
         keyword: debouncedSearch || undefined,
       }))
@@ -87,7 +85,7 @@ export default function AdminOrdersPage() {
     } finally {
       setLoading(false)
     }
-  }, [debouncedSearch, orderTypeFilter, page, paymentFilter, statusFilter])
+  }, [debouncedSearch, page, paymentFilter, statusFilter])
 
   useEffect(() => { void loadOrders() }, [loadOrders])
 
@@ -244,11 +242,6 @@ export default function AdminOrdersPage() {
             <option value="alipay">{t("payment.alipay")}</option>
             <option value="wechat">{t("payment.wechat")}</option>
           </select>
-          <select className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground" value={orderTypeFilter} onChange={(event) => { setOrderTypeFilter(event.target.value); setPage(1) }} aria-label={t("admin.orderSource")}>
-            <option value="">{t("admin.allOrderType")}</option>
-            <option value="DIRECT">{t("admin.directOrder")}</option>
-            <option value="CART">{t("admin.cartOrder")}</option>
-          </select>
         </div>
       </PageToolbar>
 
@@ -260,16 +253,15 @@ export default function AdminOrdersPage() {
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.quantity")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.user")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderSource")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.paymentMethod")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
             <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
           </tr></thead>
           <tbody>
-            {loading && <TableLoadingState colSpan={10} />}
-            {!loading && error && <TableErrorState colSpan={10} onRetry={() => void loadOrders()} />}
-            {!loading && !error && orders.length === 0 && <TableEmptyState colSpan={10}>{t("admin.noOrderData")}</TableEmptyState>}
+            {loading && <TableLoadingState colSpan={9} />}
+            {!loading && error && <TableErrorState colSpan={9} onRetry={() => void loadOrders()} />}
+            {!loading && !error && orders.length === 0 && <TableEmptyState colSpan={9}>{t("admin.noOrderData")}</TableEmptyState>}
             {!loading && !error && orders.map((order) => {
               const item = order.items[0]
               const quantity = order.items.reduce((sum, current) => sum + current.quantity, 0)
@@ -280,7 +272,6 @@ export default function AdminOrdersPage() {
                   <td className="px-4 py-3">{quantity}</td>
                   <td className="px-4 py-3"><div className="flex min-w-[12rem] flex-col"><span>{order.username || t("admin.guest")}</span><span className="text-xs text-muted-foreground">{order.email}</span></div></td>
                   <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
-                  <td className="px-4 py-3"><StatusBadge label={order.order_type === "CART" ? t("admin.cartOrder") : t("admin.directOrder")} tone={order.order_type === "CART" ? "purple" : "info"} /></td>
                   <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.payment_method} className="h-4 w-4" />{getPaymentLabel(order.payment_method, t)}</span></td>
                   <td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td>
                   <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>

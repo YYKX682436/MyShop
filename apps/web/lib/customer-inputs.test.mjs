@@ -34,7 +34,7 @@ test("all configured customer fields are required and ordinary text is allowed",
   assert.equal(invalid.field, "account")
 })
 
-test("customer input changes rotate the checkout intent fingerprint", () => {
+test("customer input changes rotate the direct-order intent fingerprint", () => {
   const base = { product_id: "product-1", customer_inputs: canonicalCustomerInputs(
     [{ id: "account", label: "账号" }],
     [{ id: "account", value: "111" }],

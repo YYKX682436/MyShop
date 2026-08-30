@@ -1,7 +1,6 @@
 package com.myshop.entity;
 
 import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -33,10 +32,6 @@ public class Order extends BaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private OrderStatus status = OrderStatus.PENDING;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private OrderType orderType;
 
     private String paymentMethod;
 

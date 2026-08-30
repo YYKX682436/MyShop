@@ -197,7 +197,6 @@ public class DeliverServiceImpl implements DeliverService {
         map.put("total_amount", order.getTotalAmount());
         map.put("actual_amount", order.getActualAmount());
         map.put("status", order.getStatus().name());
-        map.put("order_type", order.getOrderType().name());
         map.put("payment_method", order.getPaymentMethod());
         map.put("created_at", order.getCreatedAt());
         map.put("items", orderItemRepository.findByOrderId(order.getId()).stream().map(item -> {

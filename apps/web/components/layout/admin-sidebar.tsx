@@ -11,7 +11,7 @@ import {
   ScrollText,
   Settings,
   ShieldAlert,
-  ShoppingCart,
+  ClipboardList,
   Users,
   type LucideIcon,
 } from "lucide-react"
@@ -60,7 +60,7 @@ const navGroups: AdminNavGroup[] = [
   {
     labelKey: "admin.navTransactions",
     items: [
-      { labelKey: "admin.orders", href: "/admin/orders", icon: ShoppingCart },
+      { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList },
       { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
     ],
   },

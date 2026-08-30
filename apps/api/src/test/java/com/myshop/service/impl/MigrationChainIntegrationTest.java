@@ -53,15 +53,17 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("5", flyway.info().current().getVersion().getVersion());
-        assertEquals(5, flyway.info().all().length);
+        assertEquals("6", flyway.info().current().getVersion().getVersion());
+        assertEquals(6, flyway.info().all().length);
         for (String table : List.of(
                 "users", "product_categories", "products", "product_specs", "wholesale_rules",
-                "card_import_batches", "orders", "order_items", "card_keys", "cart_items",
+                "card_import_batches", "orders", "order_items", "card_keys",
                 "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
+        assertFalse(tableExists("cart_items"));
+        assertFalse(columnExists("orders", "order_type"));
         assertFalse(tableExists("currencies"));
         assertFalse(tableExists("points_logs"));
 
@@ -129,14 +131,12 @@ class MigrationChainIntegrationTest {
         assertTrue(columnExists("products", "delivery_type"));
         assertTrue(columnExists("products", "customer_input_fields"));
         assertTrue(columnExists("products", "stock_mode"));
-        assertTrue(columnExists("cart_items", "customer_inputs"));
         assertTrue(columnExists("order_items", "customer_inputs"));
         assertTrue(columnExists("order_items", "delivery_notified_at"));
         assertTrue(columnExists("card_keys", "content_parts"));
         assertTrue(columnExists("card_keys", "content_fingerprint"));
 
         assertFalse(columnExists("products", "customer_input_type"));
-        assertFalse(columnExists("cart_items", "customer_input_value"));
         assertFalse(columnExists("order_items", "customer_input_type"));
         assertFalse(columnExists("order_items", "customer_input_value"));
         assertFalse(columnExists("card_keys", "content"));
@@ -148,8 +148,7 @@ class MigrationChainIntegrationTest {
                 new String[]{"order_items", "delivery_type"},
                 new String[]{"order_items", "customer_inputs"},
                 new String[]{"order_items", "stock_mode"},
-                new String[]{"order_items", "fulfillment_status"},
-                new String[]{"cart_items", "customer_inputs"})) {
+                new String[]{"order_items", "fulfillment_status"})) {
             assertEquals("NO", nullableValue(column[0], column[1]),
                     column[0] + "." + column[1] + " must be required");
         }
@@ -157,7 +156,6 @@ class MigrationChainIntegrationTest {
         assertNotNull(defaultValue("products", "customer_input_fields"));
         assertNotNull(defaultValue("products", "stock_mode"));
         assertNotNull(defaultValue("order_items", "customer_inputs"));
-        assertNotNull(defaultValue("cart_items", "customer_inputs"));
 
         assertTrue(indexExists("idx_card_keys_pool_fingerprint"));
         assertTrue(indexExists("idx_card_keys_available_pool"));
@@ -229,6 +227,27 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
+    void v6RemovesCartSchemaButPreservesHistoricalOrders() {
+        flyway("5").migrate();
+        UUID orderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'DIRECT')
+                """, orderId);
+        jdbcTemplate.update("""
+                INSERT INTO cart_items(id, session_token, product_id, quantity)
+                VALUES (?, 'legacy-session', ?, 2)
+                """, UUID.randomUUID(), UUID.randomUUID());
+
+        flyway().migrate();
+
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM orders WHERE id = ?", Integer.class, orderId));
+        assertFalse(tableExists("cart_items"));
+        assertFalse(columnExists("orders", "order_type"));
+    }
+
+    @Test
     void currentJsonColumnsStoreEmptySingleAndMultipleValuesWithoutCompactingOrder() {
         flyway().migrate();
         UUID categoryId = UUID.randomUUID();
@@ -246,24 +265,14 @@ class MigrationChainIntegrationTest {
                 """, productId, categoryId,
                 "[{\"id\":\"account\",\"label\":\"账号\"},{\"id\":\"zone\",\"label\":\"区服\"}]");
         jdbcTemplate.update("""
-                INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
-                VALUES (?, 10.00, 10.00, 'PENDING', 'DIRECT')
+                INSERT INTO orders(id, total_amount, actual_amount, status)
+                VALUES (?, 10.00, 10.00, 'PENDING')
                 """, orderId);
         jdbcTemplate.update("""
                 INSERT INTO order_items(id, order_id, product_id, product_title, quantity, unit_price, subtotal,
                                         customer_inputs)
                 VALUES (?, ?, ?, 'baseline-product', 1, 10.00, 10.00, ?::jsonb)
                 """, orderItemId, orderId, productId, "[]");
-        jdbcTemplate.update("""
-                INSERT INTO cart_items(id, session_token, product_id, customer_inputs, quantity)
-                VALUES (?, 'baseline-session', ?, ?::jsonb, 1)
-                """, UUID.randomUUID(), productId, "[{\"id\":\"account\",\"label\":\"账号\",\"value\":\"A\"}]");
-        jdbcTemplate.update("""
-                INSERT INTO cart_items(id, session_token, product_id, customer_inputs, quantity)
-                VALUES (?, 'baseline-session-2', ?, ?::jsonb, 1)
-                """, UUID.randomUUID(), productId,
-                "[{\"id\":\"account\",\"label\":\"账号\",\"value\":\"A\"},\n {\"id\":\"zone\",\"label\":\"区服\",\"value\":\"Z\"}]");
-
         jdbcTemplate.update("""
                 INSERT INTO card_keys(id, product_id, content_parts, content_fingerprint, status)
                 VALUES (?, ?, ?::jsonb, 'single-fingerprint', 'AVAILABLE')
@@ -279,8 +288,6 @@ class MigrationChainIntegrationTest {
         assertEquals(2, jdbcTemplate.queryForObject(
                 "SELECT jsonb_array_length(customer_input_fields) FROM products WHERE id = ?",
                 Integer.class, productId));
-        assertEquals(2, jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM cart_items WHERE product_id = ?", Integer.class, productId));
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT jsonb_array_length(content_parts) FROM card_keys WHERE content_fingerprint = 'single-fingerprint'",
                 Integer.class));

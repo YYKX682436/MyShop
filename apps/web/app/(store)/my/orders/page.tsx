@@ -113,8 +113,6 @@ export default function MyOrdersPage() {
 
               {/* Order Summary */}
               <div className="mb-3 flex items-center gap-3 text-sm text-muted-foreground">
-                <span>{order.order_type === "CART" ? t("myOrders.cartOrder") : t("myOrders.directOrder")}</span>
-                <span>·</span>
                 <span className="inline-flex items-center gap-1">
                   <PaymentIcon method={order.payment_method} className="h-4 w-4" />
                   {getPaymentLabel(order.payment_method, t)}

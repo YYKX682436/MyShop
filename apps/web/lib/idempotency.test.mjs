@@ -24,11 +24,11 @@ class MemoryStorage {
   }
 }
 
-test("reuses a checkout key for the same intent and rotates after a material change", () => {
+test("reuses a direct-order key for the same intent and rotates after a material change", () => {
   const storage = new MemoryStorage()
-  const first = getOrCreateIdempotencyKey("checkout", { productId: "p1", quantity: 1 }, storage)
-  const replay = getOrCreateIdempotencyKey("checkout", { quantity: 1, productId: "p1" }, storage)
-  const changed = getOrCreateIdempotencyKey("checkout", { productId: "p1", quantity: 2 }, storage)
+  const first = getOrCreateIdempotencyKey("direct-order", { productId: "p1", quantity: 1 }, storage)
+  const replay = getOrCreateIdempotencyKey("direct-order", { quantity: 1, productId: "p1" }, storage)
+  const changed = getOrCreateIdempotencyKey("direct-order", { productId: "p1", quantity: 2 }, storage)
 
   assert.deepEqual(replay, first)
   assert.notEqual(changed.key, first.key)
@@ -37,21 +37,21 @@ test("reuses a checkout key for the same intent and rotates after a material cha
 
 test("only a successful request clears the matching persisted key", () => {
   const storage = new MemoryStorage()
-  const intent = getOrCreateIdempotencyKey("checkout", { productId: "p1" }, storage)
+  const intent = getOrCreateIdempotencyKey("direct-order", { productId: "p1" }, storage)
 
   // A network error does not call clearIdempotencyKey, so a retry sees the same key.
   assert.deepEqual(
-    getOrCreateIdempotencyKey("checkout", { productId: "p1" }, storage),
+    getOrCreateIdempotencyKey("direct-order", { productId: "p1" }, storage),
     intent,
   )
 
-  clearIdempotencyKey("checkout", "different-key", storage)
+  clearIdempotencyKey("direct-order", "different-key", storage)
   assert.deepEqual(
-    getOrCreateIdempotencyKey("checkout", { productId: "p1" }, storage),
+    getOrCreateIdempotencyKey("direct-order", { productId: "p1" }, storage),
     intent,
   )
 
-  clearIdempotencyKey("checkout", intent.key, storage)
-  const next = getOrCreateIdempotencyKey("checkout", { productId: "p1" }, storage)
+  clearIdempotencyKey("direct-order", intent.key, storage)
+  const next = getOrCreateIdempotencyKey("direct-order", { productId: "p1" }, storage)
   assert.notEqual(next.key, intent.key)
 })

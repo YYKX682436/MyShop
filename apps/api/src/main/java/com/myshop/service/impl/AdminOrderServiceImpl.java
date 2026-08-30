@@ -3,7 +3,6 @@ package com.myshop.service.impl;
 import com.myshop.common.PageResult;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
@@ -32,22 +31,20 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final FulfillmentService fulfillmentService;
 
     @Override
-    public PageResult<?> listOrders(String status, String orderType, String paymentMethod,
-                                     Boolean isRiskFlagged, String keyword, int page, int pageSize) {
+    public PageResult<?> listOrders(String status, String paymentMethod, Boolean isRiskFlagged,
+                                     String keyword, int page, int pageSize) {
         var pageable = PageRequest.of(page - 1, pageSize);
         OrderStatus os = null;
-        OrderType ot = null;
         try {
             if (status != null) os = OrderStatus.valueOf(status);
-            if (orderType != null) ot = OrderType.valueOf(orderType);
         } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的筛选参数: " + e.getMessage());
         }
         Page<Order> orderPage;
         if (keyword != null && !keyword.isBlank()) {
-            orderPage = orderRepository.findAdminOrdersByKeyword(os, ot, paymentMethod, isRiskFlagged, "%" + keyword + "%", pageable);
+            orderPage = orderRepository.findAdminOrdersByKeyword(os, paymentMethod, isRiskFlagged, "%" + keyword + "%", pageable);
         } else {
-            orderPage = orderRepository.findAdminOrders(os, ot, paymentMethod, isRiskFlagged, pageable);
+            orderPage = orderRepository.findAdminOrders(os, paymentMethod, isRiskFlagged, pageable);
         }
 
         var list = orderPage.getContent().stream().map(this::toAdminOrder).toList();
@@ -92,7 +89,6 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
-        map.put("order_type", o.getOrderType().name());
         map.put("payment_method", o.getPaymentMethod());
         map.put("created_at", o.getCreatedAt());
         map.put("email", o.getEmail());

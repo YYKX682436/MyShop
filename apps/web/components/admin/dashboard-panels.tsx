@@ -16,7 +16,7 @@ import {
   Minus,
   Package,
   Server,
-  ShoppingCart,
+  ClipboardList,
   TrendingUp,
   UserPlus,
   Users,
@@ -188,7 +188,7 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
       <KpiCard
         label={t("admin.todayOrders")}
         value={formatNumber(stats.today_orders, locale)}
-        icon={ShoppingCart}
+        icon={ClipboardList}
         change={stats.today_orders_change_pct}
       />
       <KpiCard
@@ -239,7 +239,7 @@ export function BusinessOverview({ stats }: { stats: DashboardStats }) {
 export function OrderHealthCard({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
   return (
-    <Panel title={t("admin.orderHealth")} icon={ShoppingCart}>
+    <Panel title={t("admin.orderHealth")} icon={ClipboardList}>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         <MetricTile label={t("admin.pendingOrders")} value={formatNumber(stats.pending_orders, locale)} />
         <MetricTile label={t("admin.paidWaitingDelivery")} value={formatNumber(stats.paid_waiting_delivery, locale)} />

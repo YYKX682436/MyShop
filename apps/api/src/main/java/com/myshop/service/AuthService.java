@@ -11,7 +11,7 @@ public interface AuthService {
 
     AuthResult register(RegisterRequest request);
 
-    AuthResult login(LoginRequest request, String sessionToken);
+    AuthResult login(LoginRequest request);
 
     void logout();
 }
