@@ -278,7 +278,7 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     private AdminUserDetailResponse toDetailResponse(User user, UserOrderMetricsProjection metrics) {
         return new AdminUserDetailResponse(
-                user.getId(), user.getUserNo(), user.getUsername(), user.getEmail(),
+                user.getId(), user.getUserNo(), user.getUsername(), user.getEmail(), user.getPhone(),
                 normalizeMoney(user.getBalance()),
                 orderCount(metrics),
                 totalSpent(metrics),

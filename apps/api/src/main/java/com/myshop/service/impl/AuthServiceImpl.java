@@ -27,11 +27,16 @@ import org.springframework.util.StringUtils;
 import java.util.List;
 import java.util.Optional;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
+
+    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9]{3,20}$");
+    private static final Pattern PASSWORD_PATTERN = Pattern.compile("^[!-~]{6,72}$");
+    private static final Pattern PHONE_PATTERN = Pattern.compile("^1[3-9]\\d{9}$");
 
     private final UserRepository userRepository;
     private final UserNumberSequenceRepository userNumberSequenceRepository;
@@ -52,18 +57,39 @@ public class AuthServiceImpl implements AuthService {
         if (!captchaUtils.verify(request.getCaptchaId(), request.getCaptcha())) {
             throw new BusinessException(ErrorCode.CAPTCHA_INVALID, "验证码错误或已过期");
         }
+        String username = normalizeUsername(request.getUsername());
         String normalizedEmail = normalizeEmail(request.getEmail());
-        if (userRepository.existsByUsername(request.getUsername())) {
+        String phone = normalizePhone(request.getPhone());
+        validateRegistrationFields(username, normalizedEmail, request.getPassword(), phone);
+
+        if (username.equals(phone)) {
+            throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "用户名和手机号不能相同");
+        }
+
+        // Every registration locks this singleton row before checking the
+        // cross-field identifier rules. That keeps two concurrent requests
+        // from passing the application-level username/phone checks together.
+        var sequence = userNumberSequenceRepository.findByIdForUpdate(1);
+        if (sequence == null || sequence.getNextUserNo() == null) {
+            throw new IllegalStateException("user_number_sequences is not initialized");
+        }
+
+        if (userRepository.existsByUsernameIgnoreCase(username)) {
             throw new BusinessException(ErrorCode.USERNAME_EXISTS, "用户名已存在");
         }
         if (userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
             throw new BusinessException(ErrorCode.EMAIL_EXISTS, "该邮箱已注册");
         }
-
-        var sequence = userNumberSequenceRepository.findByIdForUpdate(1);
-        if (sequence == null || sequence.getNextUserNo() == null) {
-            throw new IllegalStateException("user_number_sequences is not initialized");
+        if (userRepository.existsByPhone(phone)) {
+            throw new BusinessException(ErrorCode.PHONE_EXISTS, "该手机号已注册");
         }
+        if (userRepository.existsByPhone(username)) {
+            throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "用户名不能与现有手机号相同");
+        }
+        if (userRepository.existsByUsernameIgnoreCase(phone)) {
+            throw new BusinessException(ErrorCode.PHONE_EXISTS, "该手机号已注册");
+        }
+
         long userNo = sequence.getNextUserNo();
         if (userNo <= 0 || userNo == Long.MAX_VALUE) {
             throw new IllegalStateException("No user number is available");
@@ -81,8 +107,9 @@ public class AuthServiceImpl implements AuthService {
         userNumberSequenceRepository.save(sequence);
 
         User user = new User();
-        user.setUsername(request.getUsername());
+        user.setUsername(username);
         user.setEmail(normalizedEmail);
+        user.setPhone(phone);
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setRole(UserRole.USER);
         user.setUserNo(userNo);
@@ -100,9 +127,21 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional(noRollbackFor = BusinessException.class)
     public AuthResult login(LoginRequest request, String sessionToken) {
-        String account = request.getAccount().trim();
-        User user = userRepository.findByUsername(account)
-                .or(() -> userRepository.findByEmailIgnoreCase(normalizeEmailIfEmailLike(account)))
+        String account = request == null ? null : request.getAccount();
+        account = account == null ? null : account.trim();
+        if (!StringUtils.hasText(account)) {
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "用户名或密码错误");
+        }
+
+        Optional<User> userLookup;
+        if (account.contains("@")) {
+            userLookup = userRepository.findByEmailIgnoreCase(normalizeEmail(account));
+        } else if (PHONE_PATTERN.matcher(account).matches()) {
+            userLookup = userRepository.findByPhone(account);
+        } else {
+            userLookup = userRepository.findByUsernameIgnoreCase(account);
+        }
+        User user = userLookup
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS, "用户名或密码错误"));
 
         if (user.getIsDeleted() == 1) {
@@ -186,9 +225,26 @@ public class AuthServiceImpl implements AuthService {
         return email.trim().toLowerCase(Locale.ROOT);
     }
 
-    private String normalizeEmailIfEmailLike(String account) {
-        // findByEmailIgnoreCase is safe for usernames too, but keeping the
-        // normalized path explicit documents the one canonical email form.
-        return normalizeEmail(account);
+    private String normalizeUsername(String username) {
+        return username == null ? null : username.trim();
+    }
+
+    private String normalizePhone(String phone) {
+        return phone == null ? null : phone.trim();
+    }
+
+    private void validateRegistrationFields(String username, String email, String password, String phone) {
+        if (username == null || !USERNAME_PATTERN.matcher(username).matches()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名必须为 3-20 位，只能使用英文字母和数字");
+        }
+        if (email == null || email.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "邮箱不能为空");
+        }
+        if (password == null || !PASSWORD_PATTERN.matcher(password).matches()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "密码必须为 6-72 位 ASCII 可见字符");
+        }
+        if (phone == null || !PHONE_PATTERN.matcher(phone).matches()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "手机号格式不正确");
+        }
     }
 }

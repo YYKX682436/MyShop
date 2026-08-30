@@ -92,9 +92,11 @@ class UserNumberConcurrencyIntegrationTest {
                     ready.countDown();
                     assertTrue(start.await(10, TimeUnit.SECONDS));
                     RegisterRequest request = new RegisterRequest();
-                    request.setUsername("concurrent-buyer-" + registrationIndex + "-" + UUID.randomUUID());
+                    request.setUsername("c" + registrationIndex
+                            + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
                     request.setEmail("concurrent-" + registrationIndex + "-" + UUID.randomUUID() + "@example.com");
                     request.setPassword("a-secure-password");
+                    request.setPhone(String.format("1380013%04d", registrationIndex));
                     request.setCaptchaId("captcha-" + registrationIndex);
                     request.setCaptcha("1234");
                     return authService.register(request).user().getUserNo();

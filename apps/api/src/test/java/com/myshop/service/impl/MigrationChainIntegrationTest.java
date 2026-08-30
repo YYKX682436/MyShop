@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.core.api.FlywayException;
 import org.springframework.dao.DataAccessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,8 +53,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("4", flyway.info().current().getVersion().getVersion());
-        assertEquals(4, flyway.info().all().length);
+        assertEquals("5", flyway.info().current().getVersion().getVersion());
+        assertEquals(5, flyway.info().all().length);
         for (String table : List.of(
                 "users", "product_categories", "products", "product_specs", "wholesale_rules",
                 "card_import_batches", "orders", "order_items", "card_keys", "cart_items",
@@ -76,6 +77,17 @@ class MigrationChainIntegrationTest {
         assertEquals("bigint", dataType("users", "user_no"));
         assertTrue(indexExists("uq_users_user_no_user"));
         assertTrue(indexExists("uq_users_email_normalized"));
+        assertTrue(indexExists("uq_users_username_ci"));
+        assertTrue(indexExists("uq_users_phone"));
+        assertTrue(checkConstraintExists("users_phone_format_check"));
+        assertTrue(columnExists("users", "phone"));
+        assertEquals("YES", nullableValue("users", "phone"));
+        assertEquals("character varying", dataType("users", "phone"));
+        assertEquals(11, jdbcTemplate.queryForObject("""
+                SELECT character_maximum_length
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'phone'
+                """, Integer.class));
         assertEquals(10000L, jdbcTemplate.queryForObject(
                 "SELECT next_user_no FROM user_number_sequences WHERE id = 1", Long.class));
         for (String column : List.of(
@@ -91,6 +103,7 @@ class MigrationChainIntegrationTest {
                 INSERT INTO users(id, username, email, password_hash, role, user_no)
                 VALUES (?, ?, ?, 'test-hash', 'USER', ?)
                 """, defaultBalanceUserId, "balance-default-user", "balance-default@example.com", 10000L);
+        jdbcTemplate.update("UPDATE users SET phone = '13800138000' WHERE id = ?", defaultBalanceUserId);
         BigDecimal defaultBalance = jdbcTemplate.queryForObject(
                 "SELECT balance FROM users WHERE id = ?", BigDecimal.class, defaultBalanceUserId);
         assertNotNull(defaultBalance);
@@ -100,6 +113,11 @@ class MigrationChainIntegrationTest {
                 VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?)
                 """, UUID.randomUUID(), "negative-balance-user", "negative-balance@example.com", 10001L,
                 new BigDecimal("-0.01")));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role, user_no, phone)
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?)
+                """, UUID.randomUUID(), "duplicate-phone-user", "duplicate-phone@example.com", 10001L,
+                "13800138000"));
 
         assertFalse(columnExists("users", "points"));
         assertFalse(columnExists("orders", "points_deducted"));
@@ -169,6 +187,27 @@ class MigrationChainIntegrationTest {
                 "SELECT user_no FROM users WHERE id = ?", Long.class, legacyUserId));
         assertEquals(10001L, jdbcTemplate.queryForObject(
                 "SELECT next_user_no FROM user_number_sequences WHERE id = 1", Long.class));
+    }
+
+    @Test
+    void v5FailsFastBeforeCreatingUsernameIndexWhenExistingNamesConflictIgnoringCase() {
+        flyway("4").migrate();
+        jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role, user_no)
+                VALUES (?, 'Tom123', 'tom-one@example.com', 'test-hash', 'USER', 10000)
+                """, UUID.randomUUID());
+        jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role, user_no)
+                VALUES (?, 'tom123', 'tom-two@example.com', 'test-hash', 'USER', 10001)
+                """, UUID.randomUUID());
+
+        assertThrows(FlywayException.class, () -> flyway().migrate());
+        assertFalse(indexExists("uq_users_username_ci"));
+        assertFalse(columnExists("users", "phone"));
+        assertEquals("Tom123", jdbcTemplate.queryForObject(
+                "SELECT username FROM users WHERE email = 'tom-one@example.com'", String.class));
+        assertEquals("tom123", jdbcTemplate.queryForObject(
+                "SELECT username FROM users WHERE email = 'tom-two@example.com'", String.class));
     }
 
     @Test

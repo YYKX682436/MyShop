@@ -13,6 +13,7 @@ public record AdminUserDetailResponse(
         Long userNo,
         String username,
         String email,
+        String phone,
         BigDecimal balance,
         long successfulOrderCount,
         BigDecimal totalSpent,

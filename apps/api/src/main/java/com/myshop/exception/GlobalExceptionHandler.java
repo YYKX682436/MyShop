@@ -67,6 +67,16 @@ public class GlobalExceptionHandler {
                     .body(ApiResponse.error(ErrorCode.EMAIL_EXISTS,
                             "该邮箱已被其他用户使用"));
         }
+        if (detail.contains("uq_users_phone")) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(ErrorCode.PHONE_EXISTS,
+                            "该手机号已注册"));
+        }
+        if (detail.contains("uq_users_username_ci")) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(ErrorCode.USERNAME_EXISTS,
+                            "用户名已存在"));
+        }
         log.warn("Data integrity violation");
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "数据校验失败"));

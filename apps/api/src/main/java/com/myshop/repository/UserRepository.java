@@ -17,11 +17,15 @@ import java.util.List;
 
 public interface UserRepository extends JpaRepository<User, UUID> {
 
-    Optional<User> findByUsername(String username);
+    Optional<User> findByUsernameIgnoreCase(String username);
 
     Optional<User> findByEmailIgnoreCase(String email);
 
-    boolean existsByUsername(String username);
+    boolean existsByUsernameIgnoreCase(String username);
+
+    Optional<User> findByPhone(String phone);
+
+    boolean existsByPhone(String phone);
 
     boolean existsByEmailIgnoreCase(String email);
 

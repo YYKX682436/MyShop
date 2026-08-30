@@ -5,21 +5,26 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Eye, EyeOff, UserPlus, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
-import { useLocale } from "@/lib/context"
+import { useAuth, useLocale } from "@/lib/context"
 import { authApi, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
+import { buildRegisterRequest, validateRegistrationForm } from "@/lib/auth-validation"
 
 export default function RegisterPage() {
   const { t } = useLocale()
+  const { setUser } = useAuth()
   const router = useRouter()
 
   const [form, setForm] = useState({
     username: "",
     email: "",
+    phone: "",
     password: "",
+    confirmPassword: "",
     captcha: "",
   })
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [captchaId, setCaptchaId] = useState("")
   const [captchaImage, setCaptchaImage] = useState("")
@@ -51,26 +56,19 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.username.trim() || !form.email.trim() || !form.password.trim() || !form.captcha.trim()) {
-      return
-    }
-    if (form.password.length < 12) {
-      toast.error("密码至少需要 12 个字符")
+    const validationMessage = validateRegistrationForm(form)
+    if (validationMessage) {
+      toast.error(t(validationMessage))
       return
     }
 
     setIsLoading(true)
     try {
       setTurnstileHeaders(turnstileToken)
-      await authApi.register({
-          username: form.username.trim(),
-          password: form.password,
-          email: form.email.trim(),
-          captcha_id: captchaId,
-          captcha: form.captcha.trim(),
-        })
+      const result = await authApi.register(buildRegisterRequest(form, captchaId))
+      setUser(result.user, { skipCartRefresh: true })
       toast.success(t("auth.registerSuccess"))
-      router.push("/login")
+      router.replace("/")
     } catch (err: unknown) {
       toast.error(getApiErrorMessage(err, t))
       // Refresh captcha after failed attempt
@@ -102,9 +100,12 @@ export default function RegisterPage() {
                 value={form.username}
                 onChange={(e) => update("username", e.target.value)}
                 autoComplete="username"
+                minLength={3}
+                maxLength={20}
                 className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
               />
+              <p className="mt-1 text-xs text-muted-foreground">{t("auth.usernameRule")}</p>
             </div>
 
             {/* Email */}
@@ -118,9 +119,29 @@ export default function RegisterPage() {
                 value={form.email}
                 onChange={(e) => update("email", e.target.value)}
                 autoComplete="email"
+                maxLength={255}
                 className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
               />
+            </div>
+
+            {/* Phone */}
+            <div>
+              <label htmlFor="reg-phone" className="mb-1.5 block text-sm font-medium text-foreground">
+                {t("auth.phone")}
+              </label>
+              <input
+                id="reg-phone"
+                type="tel"
+                inputMode="tel"
+                value={form.phone}
+                onChange={(e) => update("phone", e.target.value)}
+                autoComplete="tel"
+                maxLength={11}
+                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                required
+              />
+              <p className="mt-1 text-xs text-muted-foreground">{t("auth.phoneRule")}</p>
             </div>
 
             {/* Password */}
@@ -135,18 +156,52 @@ export default function RegisterPage() {
                   value={form.password}
                   onChange={(e) => update("password", e.target.value)}
                   autoComplete="new-password"
-                  minLength={12}
+                  minLength={6}
+                  maxLength={72}
                   className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={t("auth.togglePassword")}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
+              <p className="mt-1 text-xs text-muted-foreground">{t("auth.passwordRule")}</p>
+            </div>
+
+            {/* Confirm password */}
+            <div>
+              <label htmlFor="reg-confirm-password" className="mb-1.5 block text-sm font-medium text-foreground">
+                {t("auth.confirmPassword")}
+              </label>
+              <div className="relative">
+                <input
+                  id="reg-confirm-password"
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={form.confirmPassword}
+                  onChange={(e) => update("confirmPassword", e.target.value)}
+                  autoComplete="new-password"
+                  minLength={6}
+                  maxLength={72}
+                  className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  aria-label={t("auth.togglePassword")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {form.confirmPassword && form.password !== form.confirmPassword && (
+                <p className="mt-1 text-xs text-destructive" role="alert">{t("auth.passwordMismatch")}</p>
+              )}
             </div>
 
             {/* Image Captcha */}

@@ -51,7 +51,8 @@ public class BootstrapAdminRunner implements ApplicationRunner {
             throw new IllegalStateException("Bootstrap admin requires username, email, and a password of at least 12 characters");
         }
         String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
-        if (userRepository.existsByUsername(username) || userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
+        if (userRepository.existsByUsernameIgnoreCase(username.trim())
+                || userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
             log.info("Admin bootstrap skipped because the configured account already exists.");
             return;
         }

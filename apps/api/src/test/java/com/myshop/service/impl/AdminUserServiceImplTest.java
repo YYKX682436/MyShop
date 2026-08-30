@@ -17,6 +17,7 @@ import com.myshop.model.request.AdminAdjustBalanceRequest;
 import com.myshop.model.request.AdminResetPasswordRequest;
 import com.myshop.model.request.AdminToggleUserStatusRequest;
 import com.myshop.model.request.AdminUpdateUserProfileRequest;
+import com.myshop.model.response.AdminUserDetailResponse;
 import com.myshop.model.response.AdminUserListResponse;
 import com.myshop.model.response.AdminUserOrderResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
@@ -100,6 +101,31 @@ class AdminUserServiceImplTest {
         assertEquals(2L, row.orderCount());
         assertEquals(new BigDecimal("25.50"), row.totalSpent());
         verify(userRepository).findAdminUsers(null, null, pageable);
+        verify(orderRepository).findSuccessfulMetricsByUserIdIn(List.of(id));
+    }
+
+    @Test
+    void detailIncludesPhoneAndBusinessMetricsWithoutPasswordFields() {
+        UUID id = UUID.randomUUID();
+        User user = user(id, "buyer", "buyer@example.com", 10000L, "12.30");
+        user.setPhone("13800138000");
+        user.setPasswordHash("must-never-leave-the-entity");
+        when(userRepository.findById(id)).thenReturn(Optional.of(user));
+        UserOrderMetricsProjection userMetrics = metrics(id, 2L, "25.50");
+        when(orderRepository.findSuccessfulMetricsByUserIdIn(List.of(id)))
+                .thenReturn(List.of(userMetrics));
+
+        AdminUserDetailResponse result = service.getUserDetail(id);
+
+        assertEquals(id, result.id());
+        assertEquals(10000L, result.userNo());
+        assertEquals("buyer", result.username());
+        assertEquals("buyer@example.com", result.email());
+        assertEquals("13800138000", result.phone());
+        assertEquals(new BigDecimal("12.30"), result.balance());
+        assertEquals(2L, result.successfulOrderCount());
+        assertEquals(new BigDecimal("25.50"), result.totalSpent());
+        assertEquals(0, result.isDeleted());
         verify(orderRepository).findSuccessfulMetricsByUserIdIn(List.of(id));
     }
 

@@ -32,6 +32,7 @@ export interface RegisterRequest {
   username: string
   password: string
   email: string
+  phone: string
   captcha_id: string
   captcha: string
 }
@@ -515,6 +516,7 @@ export interface UserNumberConfig {
 }
 
 export interface AdminUserDetail extends Omit<AdminUserItem, "order_count" | "total_spent"> {
+  phone: string | null
   successful_order_count: number
   total_spent: number
 }

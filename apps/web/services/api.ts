@@ -2,6 +2,7 @@ import type {
   ApiResponse,
   PaginatedData,
   UserProfile,
+  RegisterRequest,
   OrderBrief,
   OrderStatus,
   ProductCard,
@@ -308,7 +309,7 @@ export async function requestOrThrow<T>(apiCall: () => Promise<T>): Promise<T> {
 export const authApi = {
   getCaptcha: () =>
     request<CaptchaResult>("/auth/captcha"),
-  register: (data: { username: string; password: string; email: string; captcha_id: string; captcha: string }) =>
+  register: (data: RegisterRequest) =>
     request<AuthResult>("/auth/register", { method: "POST", body: JSON.stringify(data) }),
   login: (data: { account: string; password: string }) =>
     request<AuthResult>("/auth/login", { method: "POST", body: JSON.stringify(data) }),
@@ -664,6 +665,8 @@ const ERROR_CODE_I18N: Record<number, string> = {
   20004: "error.invalidCredentials",
   20005: "error.oldPasswordWrong",
   20006: "error.accountDisabled",
+  20008: "error.phoneExists",
+  20009: "error.identifierConflict",
   // Product
   30001: "error.productNotFound",
   30002: "error.insufficientStock",

@@ -18,11 +18,15 @@ import java.time.LocalDateTime;
 @Table(name = "users")
 public class User extends BaseEntity {
 
-    @Column(unique = true, nullable = false)
+    @Column(nullable = false)
     private String username;
 
     @Column(nullable = false)
     private String email;
+
+    /** Mainland China mobile number, stored without the +86 country code. */
+    @Column(length = 11)
+    private String phone;
 
     @Column(nullable = false)
     private String passwordHash;

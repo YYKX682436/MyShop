@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
 import { type Locale, getDictionary, type TranslationKey } from "./i18n"
 import type { UserProfile, CartItem, SiteConfig } from "@/types"
 import { cartApi, siteApi, userApi, authApi, requestOrThrow } from "@/services/api"
@@ -126,7 +126,7 @@ export function useColorScheme() {
 
 interface AuthContextValue {
   user: UserProfile | null
-  setUser: (u: UserProfile | null) => void
+  setUser: (u: UserProfile | null, options?: { skipCartRefresh?: boolean }) => void
   isLoggedIn: boolean
   authLoaded: boolean
   logout: () => void
@@ -300,18 +300,30 @@ export function AppProviders({ children }: { children: ReactNode }) {
   // ---------- Auth ----------
   const [user, setUserState] = useState<UserProfile | null>(null)
   const [authLoaded, setAuthLoaded] = useState(false)
+  const authVersionRef = useRef(0)
+  const skipCartRefreshRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
+    const requestVersion = authVersionRef.current
     userApi.getProfile()
-      .then(profile => { if (!cancelled) setUserState(profile) })
-      .catch(() => { if (!cancelled) setUserState(null) })
-      .finally(() => { if (!cancelled) setAuthLoaded(true) })
+      .then(profile => {
+        if (!cancelled && requestVersion === authVersionRef.current) setUserState(profile)
+      })
+      .catch(() => {
+        if (!cancelled && requestVersion === authVersionRef.current) setUserState(null)
+      })
+      .finally(() => {
+        if (!cancelled && requestVersion === authVersionRef.current) setAuthLoaded(true)
+      })
     return () => { cancelled = true }
   }, [])
 
-  const setUser = useCallback((u: UserProfile | null) => {
+  const setUser = useCallback((u: UserProfile | null, options?: { skipCartRefresh?: boolean }) => {
+    authVersionRef.current += 1
+    if (options?.skipCartRefresh) skipCartRefreshRef.current = true
     setUserState(u)
+    setAuthLoaded(true)
   }, [])
 
   const isLoggedIn = useMemo(() => !!user, [user])
@@ -341,6 +353,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   // Fetch cart on mount (if logged in or has session token)
   useEffect(() => {
+    if (skipCartRefreshRef.current) {
+      skipCartRefreshRef.current = false
+      return
+    }
     const hasSession = localStorage.getItem("session_token")
     if (user || hasSession) {
       refreshCart()
