@@ -116,8 +116,6 @@ public class OrderServiceImpl implements OrderService {
                     Map.of("max", maxQuantity));
         }
 
-        // F14: 提前提取 email，用于 pending 订单限制（email + IP 双维度防刷）
-        checkPendingOrderLimits(userId, clientIp, email);
         String paymentMethod = clean(asString(req.get("payment_method")));
         if (adminPickup) {
             paymentMethod = "ADMIN_PICKUP";
@@ -269,31 +267,6 @@ public class OrderServiceImpl implements OrderService {
             }
         }
         return basePrice;
-    }
-
-    private void checkPendingOrderLimits(UUID userId, String clientIp, String email) {
-        // 邮箱和 IP 共用同一配置值（面板"最大待支付订单数"）
-        int maxPending = getConfigInt("max_pending_orders_per_user", 5);
-
-        if (userId != null) {
-            long pending = orderRepository.countByUserIdAndStatus(userId, OrderStatus.PENDING);
-            if (pending >= maxPending) {
-                throw new BusinessException(ErrorCode.UNPAID_ORDER_EXISTS, "您有未支付的订单，请先完成支付或等待过期");
-            }
-        }
-        if (clientIp != null) {
-            long pending = orderRepository.countByClientIpAndStatus(clientIp, OrderStatus.PENDING);
-            if (pending >= maxPending) {
-                throw new BusinessException(ErrorCode.UNPAID_ORDER_EXISTS, "您有未支付的订单，请先完成支付或等待过期");
-            }
-        }
-        // F14: 邮箱维度 pending 订单限制 — 防止通过 IP 轮换绕过限制
-        if (email != null && !email.isBlank()) {
-            long pending = orderRepository.countByEmailAndStatus(email, OrderStatus.PENDING);
-            if (pending >= maxPending) {
-                throw new BusinessException(ErrorCode.UNPAID_ORDER_EXISTS, "该邮箱有未支付的订单，请先完成支付或等待过期");
-            }
-        }
     }
 
     private Map<String, Object> buildOrderResult(Order order, String device, String lookupToken) {

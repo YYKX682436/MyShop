@@ -877,9 +877,6 @@ const zh = {
   "admin.orderLimit": "下单限制",
   "admin.maxPurchasePerUser": "每用户最大购买数量（每次）",
   "admin.orderExpire": "订单过期时间（分钟）",
-  "admin.pendingOrderLimit": "待支付订单限制",
-  "admin.maxPendingPerIp": "同 IP 最大待支付订单数",
-  "admin.maxPendingPerUser": "最大待支付订单数（每邮箱/每IP）",
   "admin.saveRiskConfig": "保存风控配置",
   "admin.noFlaggedOrders": "暂无高风险订单",
   "admin.turnstileTitle": "人机验证（Cloudflare Turnstile）",
@@ -946,7 +943,6 @@ const zh = {
   "error.orderOutOfStock": "缺货补货中，请联系客服",
   "error.orderProcessing": "订单正在处理中，请稍候",
   "error.purchaseLimitPerUser": "超出个人最大购买数量限制",
-  "error.unpaidOrderExists": "您有未支付的订单，请先完成支付或等待过期",
   "error.channelUnavailable": "支付渠道不可用",
 } as const
 
@@ -1827,9 +1823,6 @@ const en: Record<keyof typeof zh, string> = {
   "admin.orderLimit": "Order Limits",
   "admin.maxPurchasePerUser": "Max purchase per user (per order)",
   "admin.orderExpire": "Order expiry (minutes)",
-  "admin.pendingOrderLimit": "Pending Order Limits",
-  "admin.maxPendingPerIp": "Max pending per IP",
-  "admin.maxPendingPerUser": "Max pending orders (per email/IP)",
   "admin.saveRiskConfig": "Save Risk Config",
   "admin.noFlaggedOrders": "No flagged orders",
   "admin.turnstileTitle": "Human verification (Cloudflare Turnstile)",
@@ -1896,7 +1889,6 @@ const en: Record<keyof typeof zh, string> = {
   "error.orderOutOfStock": "Out of stock, please contact support",
   "error.orderProcessing": "Order is being processed, please wait",
   "error.purchaseLimitPerUser": "Exceeded personal purchase limit",
-  "error.unpaidOrderExists": "You have an unpaid order, please complete payment or wait for expiration",
   "error.channelUnavailable": "Payment channel unavailable",
 }
 

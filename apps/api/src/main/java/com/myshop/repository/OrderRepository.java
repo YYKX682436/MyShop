@@ -42,8 +42,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query("SELECT o FROM Order o WHERE o.status = com.myshop.constant.OrderStatus.PENDING AND o.expiresAt < :now")
     List<Order> findExpiredOrders(@Param("now") LocalDateTime now);
 
-    long countByUserIdAndStatus(UUID userId, OrderStatus status);
-
     /** One aggregate query supplies successful-order metrics for a user page. */
     @Query("""
             SELECT o.userId AS userId,
@@ -58,10 +56,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             """)
     List<UserOrderMetricsProjection> findSuccessfulMetricsByUserIdIn(
             @Param("userIds") List<UUID> userIds);
-
-    long countByClientIpAndStatus(String clientIp, OrderStatus status);
-
-    long countByEmailAndStatus(String email, OrderStatus status);
 
     /** 悲观写锁：SELECT ... FOR UPDATE，用于防止并发发货等竞态条件 */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

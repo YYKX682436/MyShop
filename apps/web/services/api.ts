@@ -688,7 +688,6 @@ const ERROR_CODE_I18N: Record<number, string> = {
   40004: "error.orderOutOfStock",
   40005: "error.orderProcessing",
   40006: "error.purchaseLimitPerUser",
-  40007: "error.unpaidOrderExists",
   // Payment
   50001: "error.channelUnavailable",
 }

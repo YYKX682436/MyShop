@@ -61,8 +61,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             // 自定义样式
             "custom_css",
             // 系统参数
-            "order_expire_minutes", "max_pending_orders_per_user", "max_pending_orders_per_ip",
-            "rate_limit_per_second"
+            "order_expire_minutes", "rate_limit_per_second"
     );
 
     /** F15: CSS 危险模式 — 用于过滤 custom_css 中的 XSS 向量 */

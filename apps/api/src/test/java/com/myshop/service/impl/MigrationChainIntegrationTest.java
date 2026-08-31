@@ -53,8 +53,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("7", flyway.info().current().getVersion().getVersion());
-        assertEquals(7, flyway.info().all().length);
+        assertEquals("8", flyway.info().current().getVersion().getVersion());
+        assertEquals(8, flyway.info().all().length);
         for (String table : List.of(
                 "users", "product_categories", "products", "product_specs", "wholesale_rules",
                 "card_import_batches", "orders", "order_items", "card_keys",
@@ -270,6 +270,30 @@ class MigrationChainIntegrationTest {
                 "SELECT count(*) FROM orders WHERE id = ?", Integer.class, orderId));
         assertFalse(tableExists("cart_items"));
         assertFalse(columnExists("orders", "order_type"));
+    }
+
+    @Test
+    void v8RemovesRetiredPendingOrderLimitConfigsFromAnExistingV7Database() {
+        flyway("7").migrate();
+        for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
+            jdbcTemplate.update("""
+                    INSERT INTO site_configs(config_key, config_value, config_group)
+                    VALUES (?, '5', 'risk')
+                    """, retiredKey);
+        }
+        jdbcTemplate.update("""
+                INSERT INTO site_configs(config_key, config_value, config_group)
+                VALUES ('rate_limit_per_second', '25', 'risk')
+                """);
+
+        flyway().migrate();
+
+        assertEquals("8", flyway().info().current().getVersion().getVersion());
+        for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
+            assertEquals(0, configCount(retiredKey),
+                    "retired pending-order config must be removed: " + retiredKey);
+        }
+        assertEquals("25", configValue("rate_limit_per_second"));
     }
 
     @Test

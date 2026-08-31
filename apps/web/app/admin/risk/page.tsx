@@ -28,8 +28,6 @@ const DEFAULT_CONFIG: RiskConfig = {
   rate_limit_per_second: 25,
   login_attempt_limit: 5,
   max_purchase_per_user: 50,
-  max_pending_orders_per_ip: 5,
-  max_pending_orders_per_user: 5,
   order_expire_minutes: 15,
 }
 
@@ -194,9 +192,6 @@ export default function AdminRiskPage() {
               </SettingsSection>
               <SettingsSection title={t("admin.generalLimits")}>
                 <div className="grid gap-4 sm:grid-cols-2">{configNumber("rate_limit_per_second", t("admin.ratePerSecond"))}{configNumber("login_attempt_limit", t("admin.loginAttemptLimit"))}{configNumber("max_purchase_per_user", t("admin.maxPurchasePerUser"))}{configNumber("order_expire_minutes", t("admin.orderExpire"))}</div>
-              </SettingsSection>
-              <SettingsSection title={t("admin.pendingOrderLimit")}>
-                <div className="grid gap-4 sm:grid-cols-2">{configNumber("max_pending_orders_per_ip", t("admin.maxPendingPerIp"))}{configNumber("max_pending_orders_per_user", t("admin.maxPendingPerUser"))}</div>
               </SettingsSection>
             </div>
             <SettingsSection title={t("admin.deviceRateLimitTitle")} description={t("admin.deviceRateLimitDescription")}>

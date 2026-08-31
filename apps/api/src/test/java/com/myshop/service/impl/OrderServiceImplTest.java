@@ -78,7 +78,6 @@ class OrderServiceImplTest {
                 userRepository, autoFulfillmentService);
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
-        lenient().when(orderRepository.countByClientIpAndStatus(anyString(), eq(OrderStatus.PENDING))).thenReturn(0L);
         lenient().when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))
                 .thenReturn(Optional.of(enabledChannel()));
         lenient().when(paymentService.createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class)))

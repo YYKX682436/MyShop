@@ -31,8 +31,7 @@ public class RiskConfigServiceImpl implements RiskConfigService {
             "device_order_limit_per_hour", "device_query_limit_per_hour",
             "device_login_limit_per_hour", "device_register_limit_per_hour",
             // 已有配置
-            "rate_limit_per_second", "login_attempt_limit", "max_purchase_per_user",
-            "max_pending_orders_per_ip", "max_pending_orders_per_user", "order_expire_minutes"
+            "rate_limit_per_second", "login_attempt_limit", "max_purchase_per_user", "order_expire_minutes"
     );
 
     @Override

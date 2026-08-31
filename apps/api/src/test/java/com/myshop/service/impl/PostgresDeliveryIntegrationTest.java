@@ -151,6 +151,73 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
+    void loggedInUserCanCreateNormalPaymentOrderDespiteMultiplePendingOrders() {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        UUID userId = insertUser("pending-user-" + suffix, "pending-user-" + suffix + "@example.com");
+        UUID productId = UUID.randomUUID();
+        String email = "pending-user-order-" + suffix + "@example.com";
+        String clientIp = "203.0.113.40";
+        String channel = "pending-user-" + suffix;
+        insertProduct(productId);
+        insertCard(productId, "pending-user-card-" + suffix);
+        insertPaymentChannel(channel);
+        for (int i = 0; i < 5; i++) {
+            insertPendingOrder(channel, userId, email, clientIp);
+        }
+        configurePaymentCreation("pending-user-trade-" + suffix);
+
+        Map<String, Object> result = orderService.createDirectOrder(
+                directOrderRequest(productId, email, channel), userId, clientIp, "pending-user-session-" + suffix);
+
+        assertNormalPendingPaymentOrder(result);
+        verify(epayPaymentProvider, times(1)).create(any(PaymentProvider.PaymentRequest.class));
+    }
+
+    @Test
+    void guestCanCreateNormalPaymentOrderDespiteMultiplePendingOrdersFromSameIp() {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        UUID productId = UUID.randomUUID();
+        String clientIp = "203.0.113.41";
+        String channel = "pending-guest-" + suffix;
+        insertProduct(productId);
+        insertCard(productId, "pending-guest-card-" + suffix);
+        insertPaymentChannel(channel);
+        for (int i = 0; i < 5; i++) {
+            insertPendingOrder(channel, null, "previous-guest-" + i + "-" + suffix + "@example.com", clientIp);
+        }
+        configurePaymentCreation("pending-guest-trade-" + suffix);
+
+        Map<String, Object> result = orderService.createDirectOrder(
+                directOrderRequest(productId, "new-guest-" + suffix + "@example.com", channel),
+                null, clientIp, "pending-guest-session-" + suffix);
+
+        assertNormalPendingPaymentOrder(result);
+        verify(epayPaymentProvider, times(1)).create(any(PaymentProvider.PaymentRequest.class));
+    }
+
+    @Test
+    void sameEmailCanCreateNormalPaymentOrderDespiteMultiplePendingOrders() {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        UUID productId = UUID.randomUUID();
+        String email = "pending-email-" + suffix + "@example.com";
+        String channel = "pending-email-" + suffix;
+        insertProduct(productId);
+        insertCard(productId, "pending-email-card-" + suffix);
+        insertPaymentChannel(channel);
+        for (int i = 0; i < 5; i++) {
+            insertPendingOrder(channel, null, email, "198.51.100." + (40 + i));
+        }
+        configurePaymentCreation("pending-email-trade-" + suffix);
+
+        Map<String, Object> result = orderService.createDirectOrder(
+                directOrderRequest(productId, email, channel), null, "198.51.100.50",
+                "pending-email-session-" + suffix);
+
+        assertNormalPendingPaymentOrder(result);
+        verify(epayPaymentProvider, times(1)).create(any(PaymentProvider.PaymentRequest.class));
+    }
+
+    @Test
     void shortageRollsBackAllEarlierCardPoolMutations() {
         UUID orderId = insertOrder("rollback-token");
         UUID firstProductId = UUID.randomUUID();
@@ -518,6 +585,18 @@ class PostgresDeliveryIntegrationTest {
         return userId;
     }
 
+    private UUID insertUser(String username, String email) {
+        UUID userId = UUID.randomUUID();
+        Long userNo = jdbcTemplate.queryForObject(
+                "select coalesce(max(user_no), 9999) + 1 from users", Long.class);
+        jdbcTemplate.update("""
+                insert into users (id, created_at, updated_at, username, email, password_hash,
+                    role, is_deleted, user_no)
+                values (?, current_timestamp, current_timestamp, ?, ?, 'integration-hash', 'USER', 0, ?)
+                """, userId, username, email, userNo);
+        return userId;
+    }
+
     private UUID insertPendingOrder(String paymentMethod) {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
@@ -526,6 +605,17 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING', ?,
                     current_timestamp + interval '15 minutes')
                 """, orderId, paymentMethod);
+        return orderId;
+    }
+
+    private UUID insertPendingOrder(String paymentMethod, UUID userId, String email, String clientIp) {
+        UUID orderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into orders (id, created_at, updated_at, user_id, email, actual_amount, total_amount,
+                    status, payment_method, expires_at, client_ip)
+                values (?, current_timestamp, current_timestamp, ?, ?, 10.00, 10.00, 'PENDING', ?,
+                    current_timestamp + interval '15 minutes', ?)
+                """, orderId, userId, email, paymentMethod, clientIp);
         return orderId;
     }
 
@@ -567,6 +657,32 @@ class PostgresDeliveryIntegrationTest {
         when(epayPaymentProvider.verifyCallback(any(PaymentProvider.CallbackRequest.class))).thenReturn(true);
         when(epayPaymentProvider.query(any(PaymentProvider.PaymentQueryRequest.class)))
                 .thenReturn(new PaymentProvider.PaymentQueryResult("TRADE_SUCCESS", "10.00", tradeNo));
+    }
+
+    private void configurePaymentCreation(String tradeNo) {
+        when(epayPaymentProvider.create(any(PaymentProvider.PaymentRequest.class)))
+                .thenReturn(new PaymentProvider.PaymentResult(
+                        tradeNo, "https://pay.example/" + tradeNo, null));
+    }
+
+    private Map<String, Object> directOrderRequest(UUID productId, String email, String paymentMethod) {
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("product_id", productId.toString());
+        request.put("quantity", 1);
+        request.put("email", email);
+        request.put("payment_method", paymentMethod);
+        return request;
+    }
+
+    private void assertNormalPendingPaymentOrder(Map<String, Object> result) {
+        Map<?, ?> order = (Map<?, ?>) result.get("order");
+        Map<?, ?> payment = (Map<?, ?>) result.get("payment");
+        UUID orderId = (UUID) order.get("id");
+
+        assertEquals(OrderType.NORMAL, order.get("order_type"));
+        assertEquals("PENDING", order.get("status"));
+        assertEquals("PENDING", scalar("select status from orders where id = ?", String.class, orderId));
+        assertTrue(String.valueOf(payment.get("payment_url")).startsWith("https://pay.example/"));
     }
 
     private Map<String, String> callback(UUID orderId, String tradeNo) {

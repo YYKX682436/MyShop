@@ -597,7 +597,5 @@ export interface RiskConfig {
   rate_limit_per_second: number
   login_attempt_limit: number
   max_purchase_per_user: number
-  max_pending_orders_per_ip: number
-  max_pending_orders_per_user: number
   order_expire_minutes: number
 }
