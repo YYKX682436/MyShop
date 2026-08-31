@@ -10,12 +10,14 @@ import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
+import com.myshop.model.pricing.PriceResolution;
 import com.myshop.repository.*;
 import com.myshop.service.OrderService;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import com.myshop.service.ProductRules;
+import com.myshop.service.PricingService;
 import com.myshop.utils.LookupTokens;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +48,7 @@ public class OrderServiceImpl implements OrderService {
     private final UserRepository userRepository;
     private final UserLevelRepository userLevelRepository;
     private final AutoFulfillmentService autoFulfillmentService;
+    private final PricingService pricingService;
 
     @Autowired
     public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
@@ -55,7 +58,8 @@ public class OrderServiceImpl implements OrderService {
                             ManualStockService manualStockService,
                             UserRepository userRepository,
                             UserLevelRepository userLevelRepository,
-                            AutoFulfillmentService autoFulfillmentService) {
+                            AutoFulfillmentService autoFulfillmentService,
+                            PricingService pricingService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.productRepository = productRepository;
@@ -68,6 +72,22 @@ public class OrderServiceImpl implements OrderService {
         this.userRepository = userRepository;
         this.userLevelRepository = userLevelRepository;
         this.autoFulfillmentService = autoFulfillmentService;
+        this.pricingService = pricingService;
+    }
+
+    /** Test/source compatibility constructor; production uses the injected pricing boundary. */
+    public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
+                            ProductRepository productRepository, ProductSpecRepository productSpecRepository,
+                            CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
+                            PaymentChannelRepository paymentChannelRepository, PaymentService paymentService,
+                            ManualStockService manualStockService,
+                            UserRepository userRepository,
+                            UserLevelRepository userLevelRepository,
+                            AutoFulfillmentService autoFulfillmentService) {
+        this(orderRepository, orderItemRepository, productRepository, productSpecRepository, cardKeyRepository,
+                siteConfigRepository, paymentChannelRepository, paymentService, manualStockService, userRepository,
+                userLevelRepository, autoFulfillmentService,
+                new PricingServiceImpl(userRepository, userLevelRepository, null));
     }
 
     @Override
@@ -117,8 +137,7 @@ public class OrderServiceImpl implements OrderService {
                 .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
 
-        // F18: 规格模式安全校验 — 防止通过伪造 spec_id 访问非当前模式的库存池或获取不同价格
-        validateSpecConsistency(product, specId);
+        ProductSpec spec = resolveSellableSpec(product, specId);
 
         List<com.myshop.model.CustomerInputValue> customerInputs =
                 ProductRules.normalizeCustomerInputs(product, req);
@@ -129,8 +148,17 @@ public class OrderServiceImpl implements OrderService {
                     Map.of("available", stock.available()));
         }
 
-        PriceSnapshot priceSnapshot = getPriceSnapshot(product, specId);
-        BigDecimal unitPrice = priceSnapshot.retailPrice();
+        UserLevel userLevel = null;
+        if (!adminPickup && currentUser != null && currentUser.getRole() == UserRole.USER) {
+            userLevel = pricingService.requireActiveLevel(currentUser);
+        }
+        PriceResolution price = pricingService.resolve(product, spec, userLevel);
+        BigDecimal unitPrice = price.price();
+        BigDecimal expectedUnitPrice = parseExpectedUnitPrice(req.get("expected_unit_price"));
+        if (expectedUnitPrice != null && expectedUnitPrice.compareTo(unitPrice) != 0) {
+            throw new BusinessException(ErrorCode.PRICE_CHANGED, "商品价格已变化，请刷新后重新确认",
+                    Map.of("reason", "PRICE_CHANGED", "current_unit_price", unitPrice));
+        }
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
@@ -153,17 +181,14 @@ public class OrderServiceImpl implements OrderService {
         order.setIdempotencyFingerprint(idempotencyFingerprint);
         order.setClientIp(clientIp);
         order.setSessionToken(sessionToken);
-        setUserLevelSnapshot(order, currentUser, adminPickup);
+        setUserLevelSnapshot(order, userLevel, adminPickup);
         LookupTokens.Issued lookupToken = LookupTokens.issue();
         order.setLookupTokenHash(lookupToken.hash());
         if (userId == null) order.setGuestLookupToken(lookupToken.plaintext());
         orderRepository.save(order);
 
         String specName = null;
-        if (specId != null) {
-            ProductSpec spec = productSpecRepository.findById(specId).orElse(null);
-            specName = spec != null ? spec.getName() : null;
-        }
+        if (spec != null) specName = spec.getName();
 
         OrderItem item = new OrderItem();
         item.setOrderId(order.getId());
@@ -173,9 +198,9 @@ public class OrderServiceImpl implements OrderService {
         item.setSpecName(specName);
         item.setQuantity(quantity);
         item.setUnitPrice(unitPrice);
-        item.setCostPrice(priceSnapshot.costPrice());
-        item.setRetailPrice(priceSnapshot.retailPrice());
-        item.setPricingSource(PricingSource.RETAIL);
+        item.setCostPriceSnapshot(price.costPrice());
+        item.setRetailPriceSnapshot(price.retailPrice());
+        item.setPricingSource(price.pricingSource());
         item.setSubtotal(totalAmount);
         setItemSnapshot(item, product, customerInputs, quantity, stockMode);
         orderItemRepository.save(item);
@@ -237,34 +262,12 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private PriceSnapshot getPriceSnapshot(Product product, UUID specId) {
-        BigDecimal costPrice = product.getCostPrice();
-        BigDecimal retailPrice = product.getRetailPrice();
-        if (specId != null) {
-            // F1: 严格校验规格归属 — 防止用低价规格 ID 篡改高价商品的价格
-            ProductSpec spec = productSpecRepository.findById(specId)
-                    .filter(s -> s.getProductId().equals(product.getId()) && s.getIsDeleted() == 0)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.SPEC_NOT_FOUND, "商品规格不存在或与商品不匹配"));
-            costPrice = spec.getCostPrice();
-            retailPrice = spec.getRetailPrice();
-        }
-        return new PriceSnapshot(costPrice, retailPrice);
-    }
-
-    private void setUserLevelSnapshot(Order order, User user, boolean adminPickup) {
-        if (adminPickup || user == null || user.getRole() != UserRole.USER) {
+    private void setUserLevelSnapshot(Order order, UserLevel level, boolean adminPickup) {
+        if (adminPickup || level == null) {
             return;
         }
-        UUID userLevelId = user.getUserLevelId();
-        if (userLevelId == null) {
-            throw new IllegalStateException("Ordinary user has no user level");
-        }
-        UserLevel level = userLevelRepository.findById(userLevelId)
-                .orElseThrow(() -> new IllegalStateException("Assigned user level does not exist"));
-        order.setUserLevelId(level.getId());
-        order.setUserLevelName(level.getName());
-        order.setUserLevelPricingType(level.getPricingType());
-        order.setUserLevelMarkupRate(level.getMarkupRate());
+        order.setUserLevelIdSnapshot(level.getId());
+        order.setUserLevelNameSnapshot(level.getName());
     }
 
     private Map<String, Object> buildOrderResult(Order order, String device, String lookupToken) {
@@ -335,17 +338,31 @@ public class OrderServiceImpl implements OrderService {
      * - specEnabled=true 且有规格时，必须提供 spec_id（防止跨池分配卡密）
      * - specEnabled=false 时，不允许传 spec_id（防止绕过模式获取规格价格）
      */
-    private void validateSpecConsistency(Product product, UUID specId) {
+    private ProductSpec resolveSellableSpec(Product product, UUID specId) {
         if (product.isSpecEnabled()) {
-            List<ProductSpec> activeSpecs = productSpecRepository
-                    .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
-            if (!activeSpecs.isEmpty() && specId == null) {
+            if (specId == null) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "该商品需要选择规格");
             }
+            return productSpecRepository.findById(specId)
+                    .filter(spec -> product.getId().equals(spec.getProductId())
+                            && spec.getIsDeleted() == 0 && spec.isVisible())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.SPEC_NOT_FOUND, "商品规格不存在、已隐藏或与商品不匹配"));
         } else {
             if (specId != null) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "该商品不支持规格选择");
             }
+            return null;
+        }
+    }
+
+    private BigDecimal parseExpectedUnitPrice(Object raw) {
+        if (raw == null || String.valueOf(raw).isBlank()) return null;
+        try {
+            BigDecimal value = new BigDecimal(String.valueOf(raw));
+            if (value.scale() > 2) throw new NumberFormatException();
+            return value.setScale(2);
+        } catch (NumberFormatException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "expected_unit_price 无效");
         }
     }
 
@@ -489,9 +506,6 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private record StockView(long available, boolean unlimited) {
-    }
-
-    private record PriceSnapshot(BigDecimal costPrice, BigDecimal retailPrice) {
     }
 
 }

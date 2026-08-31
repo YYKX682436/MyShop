@@ -39,6 +39,7 @@ public final class ErrorCode {
     public static final int ORDER_OUT_OF_STOCK = 40004;
     public static final int ORDER_ALREADY_DELIVERED = 40005;
     public static final int PURCHASE_LIMIT = 40006;
+    public static final int PRICE_CHANGED = 40007;
 
     // ── Payment 50001~50099 ──
     public static final int CHANNEL_UNAVAILABLE = 50001;
@@ -54,4 +55,8 @@ public final class ErrorCode {
     public static final int CARD_KEY_DUPLICATE = 70004;
     public static final int PAYMENT_CONFIG_INCOMPLETE = 70005;
     public static final int CHANNEL_CODE_CONFLICT = 70006;
+    public static final int USER_LEVEL_NOT_FOUND = 70007;
+    public static final int USER_LEVEL_INVALID = 70008;
+    public static final int USER_LEVEL_HAS_USERS = 70009;
+    public static final int PRICE_OVERRIDE_CONFLICT = 70010;
 }

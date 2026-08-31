@@ -26,8 +26,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { formatDateTime } from "@/lib/utils"
 import { formatCents, formatYuanFromCents, formatYuanValue, MAX_BALANCE_CENTS, parseMoneyValueToCents, parsePositiveMoneyToCents } from "@/lib/money"
-import { adminUserApi, requestOrThrow } from "@/services/api"
-import type { AdminOperationLogDetail, AdminUserDetail, AdminUserOrder, BalanceTransaction } from "@/types"
+import { adminUserApi, adminUserLevelApi, requestOrThrow } from "@/services/api"
+import type { AdminOperationLogDetail, AdminUserDetail, AdminUserOrder, BalanceTransaction, UserLevel } from "@/types"
 
 type DetailTab = "overview" | "orders" | "balance" | "logs"
 type RecordTab = Exclude<DetailTab, "overview">
@@ -63,6 +63,8 @@ export default function AdminUserDetailPage() {
   const [resetLoading, setResetLoading] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
+  const [levels, setLevels] = useState<UserLevel[]>([])
+  const [levelLoading, setLevelLoading] = useState(false)
 
   const loadUser = useCallback(async () => {
     setLoading(true)
@@ -108,6 +110,7 @@ export default function AdminUserDetailPage() {
   }, [userId])
 
   useEffect(() => { void loadUser() }, [loadUser])
+  useEffect(() => { void adminUserLevelApi.getList().then(setLevels).catch(() => setLevels([])) }, [])
   useEffect(() => {
     if (activeTab !== "overview") void loadRecords(activeTab, recordPage)
   }, [activeTab, loadRecords, recordPage])
@@ -154,6 +157,21 @@ export default function AdminUserDetailPage() {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
       setEditLoading(false)
+    }
+  }
+
+  const handleChangeLevel = async (userLevelId: string) => {
+    if (!user || !userLevelId || userLevelId === user.user_level_id) return
+    setLevelLoading(true)
+    try {
+      const level = await requestOrThrow(() => adminUserApi.changeLevel(user.id, userLevelId))
+      setUser((current) => current ? { ...current, user_level_id: level.id, user_level_name: level.name } : current)
+      await refreshRecords("logs")
+      toast.success(t("admin.userLevelChanged"))
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      setLevelLoading(false)
     }
   }
 
@@ -274,6 +292,16 @@ export default function AdminUserDetailPage() {
             <Button type="button" variant="outline" onClick={() => { setNewPassword(""); setResetOpen(true) }}><KeyRound className="h-4 w-4" aria-hidden="true" />{t("admin.resetPassword")}</Button>
             <Button type="button" variant={enabled ? "destructive" : "outline"} onClick={() => setStatusOpen(true)}>{enabled ? <UserX className="h-4 w-4" aria-hidden="true" /> : <UserCheck className="h-4 w-4" aria-hidden="true" />}{enabled ? t("admin.ban") : t("admin.unban")}</Button>
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 className="font-semibold">{t("admin.userLevel")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("admin.userLevelImmediateHint")}</p></div>
+          <select className="h-10 min-w-52 rounded-md border border-input bg-background px-3 text-sm" value={user.user_level_id || ""} onChange={(event) => void handleChangeLevel(event.target.value)} disabled={levelLoading} aria-label={t("admin.userLevel")}>
+            <option value="">{user.user_level_name || t("admin.systemNoData")}</option>
+            {levels.filter((level) => level.enabled).map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
+          </select>
         </div>
       </section>
 

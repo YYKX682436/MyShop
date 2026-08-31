@@ -1,7 +1,7 @@
 package com.myshop.constant;
 
-/** Describes how a user level derives its price when pricing is enabled. */
+/** Describes how a user level derives its effective purchase price. */
 public enum PricingType {
     RETAIL,
-    MARKUP
+    COST_MARKUP
 }

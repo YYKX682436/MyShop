@@ -1,4 +1,4 @@
-import { getProducts, getCategories, getSiteConfig } from "@/services/api-server"
+import { getCategories, getSiteConfig, getProducts } from "@/services/api-server"
 import { HomeContent } from "./home-content"
 import type { Metadata } from "next"
 

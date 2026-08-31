@@ -2,7 +2,9 @@ package com.myshop.controller;
 
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
-import com.myshop.service.ProductService;
+import com.myshop.model.request.AdminProductUpsertRequest;
+import com.myshop.model.request.AdminProductStatusRequest;
+import com.myshop.service.AdminProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,7 +16,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AdminProductController {
 
-    private final ProductService productService;
+    private final AdminProductService productService;
 
     @GetMapping
     public ApiResponse<?> listProducts(
@@ -23,25 +25,30 @@ public class AdminProductController {
             @RequestParam(value = "is_enabled", required = false) Boolean isEnabled,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
-        return ApiResponse.success(productService.listAdminProducts(categoryId, keyword, isEnabled, page, pageSize));
+        return ApiResponse.success(productService.listProducts(categoryId, keyword, isEnabled, page, pageSize));
     }
 
     @LogOperation(action = "product.create", targetType = "PRODUCT", detail = "'创建商品'")
     @PostMapping
-    public ApiResponse<?> createProduct(@RequestBody Map<String, Object> request) {
+    public ApiResponse<?> createProduct(@RequestBody AdminProductUpsertRequest request) {
         return ApiResponse.success(productService.createProduct(request));
     }
 
     @GetMapping("/{id}")
     public ApiResponse<?> getProduct(@PathVariable UUID id) {
-        return ApiResponse.success(productService.getAdminProductDetail(id));
+        return ApiResponse.success(productService.getProduct(id));
     }
 
     @LogOperation(action = "product.update", targetType = "PRODUCT", targetId = "#id", detail = "'修改商品'")
     @PutMapping("/{id}")
-    public ApiResponse<Void> updateProduct(@PathVariable UUID id, @RequestBody Map<String, Object> request) {
-        productService.updateProduct(id, request);
-        return ApiResponse.success();
+    public ApiResponse<?> updateProduct(@PathVariable UUID id, @RequestBody AdminProductUpsertRequest request) {
+        return ApiResponse.success(productService.updateProduct(id, request));
+    }
+
+    @LogOperation(action = "product.status", targetType = "PRODUCT", targetId = "#id", detail = "'修改商品状态'")
+    @PostMapping("/{id}/status")
+    public ApiResponse<?> setStatus(@PathVariable UUID id, @RequestBody AdminProductStatusRequest request) {
+        return ApiResponse.success(productService.setStatus(id, request));
     }
 
     @LogOperation(action = "product.delete", targetType = "PRODUCT", targetId = "#id", detail = "'删除商品'")
@@ -56,22 +63,8 @@ public class AdminProductController {
         return ApiResponse.success(productService.listSpecs(id));
     }
 
-    @PostMapping("/{id}/specs")
-    public ApiResponse<Void> createSpec(@PathVariable UUID id, @RequestBody Map<String, Object> request) {
-        productService.createSpec(id, request);
-        return ApiResponse.success();
-    }
-
-    @PutMapping("/{productId}/specs/{specId}")
-    public ApiResponse<Void> updateSpec(@PathVariable UUID productId, @PathVariable UUID specId,
-                                        @RequestBody Map<String, Object> request) {
-        productService.updateSpec(productId, specId, request);
-        return ApiResponse.success();
-    }
-
-    @DeleteMapping("/{productId}/specs/{specId}")
-    public ApiResponse<Void> deleteSpec(@PathVariable UUID productId, @PathVariable UUID specId) {
-        productService.deleteSpec(productId, specId);
-        return ApiResponse.success();
+    @PostMapping("/pricing-preview")
+    public ApiResponse<?> previewPricing(@RequestBody AdminProductUpsertRequest request) {
+        return ApiResponse.success(productService.previewPricing(request));
     }
 }

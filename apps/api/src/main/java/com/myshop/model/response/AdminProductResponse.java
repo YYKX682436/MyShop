@@ -1,0 +1,40 @@
+package com.myshop.model.response;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.myshop.model.CustomerInputField;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+
+public record AdminProductResponse(
+        UUID id,
+        String title,
+        String description,
+        String detailMd,
+        String coverUrl,
+        BigDecimal costPrice,
+        BigDecimal retailPrice,
+        UUID categoryId,
+        String categoryName,
+        Long stockAvailable,
+        boolean unlimited,
+        boolean hasSpecs,
+        String deliveryType,
+        List<CustomerInputField> customerInputFields,
+        String stockMode,
+        long salesCount,
+        int initialSales,
+        boolean specEnabled,
+        @JsonProperty("is_enabled") boolean enabled,
+        int sortOrder,
+        int lowStockThreshold,
+        List<AdminProductSpecResponse> specs,
+        List<AdminPriceOverrideResponse> overrides,
+        List<AdminPricingMatrixResponse> pricingMatrix,
+        List<String> warnings,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt
+) {
+}

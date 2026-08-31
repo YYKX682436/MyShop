@@ -1,71 +1,66 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
 import { MarkdownEditor } from "@/components/admin/markdown-editor"
-import { ConfirmAlert, FormSection } from "@/components/admin/shared"
+import { FormSection } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { useLocale } from "@/lib/context"
-import { adminProductApi, requestOrThrow } from "@/services/api"
+import { adminProductApi, adminUserLevelApi, requestOrThrow, type AdminProductUpsertPayload } from "@/services/api"
 import { cn, formatYuan } from "@/lib/utils"
-import type { Category, ProductDetail } from "@/types"
+import type { AdminProductDetail, Category, UserLevel } from "@/types"
+
+type DeliveryType = "AUTO" | "MANUAL"
+type StockMode = "CARD_KEY" | "MANUAL" | "UNLIMITED"
 
 type ProductFormData = {
   title: string
   description: string
   detail_md: string
   category_id: string
-  base_price: string
+  cost_price: string
+  retail_price: string
   cover_url: string
   low_stock_threshold: string
-  wholesale_enabled: boolean
+  spec_enabled: boolean
   is_enabled: boolean
   initial_sales: string
   sort_order: string
-  delivery_type: "AUTO" | "MANUAL"
+  delivery_type: DeliveryType
   customer_input_fields: { id: string; label: string }[]
-  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  stock_mode: StockMode
   manual_stock: string
 }
 
 type ProductSpecDraft = {
   id?: string
   name: string
-  price: string
-  manual_stock?: string
+  cost_price: string
+  retail_price: string
+  visible: boolean
+  sort_order: string
+  manual_stock: string
   card_key_count?: number
 }
 
-type SpecSyncOperation = "load" | "delete" | "update" | "add"
-
-type SpecSyncFailure = {
-  productId: string
-  operation: SpecSyncOperation
-  specName: string
-  message: string
+type OverrideDraft = {
+  user_level_id: string
+  spec_id: string | null
+  price: string
 }
 
-class SpecSyncError extends Error {
-  constructor(
-    readonly operation: SpecSyncOperation,
-    readonly specName: string,
-    message: string,
-  ) {
-    super(message)
-    this.name = "SpecSyncError"
-  }
-}
-
-function getErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message) return error.message
-  if (typeof error === "string" && error.trim()) return error
-  return fallback
+function createId() {
+  return globalThis.crypto?.randomUUID?.()
+    || `xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`.replace(/[xy]/g, (character) => {
+      const random = Math.random() * 16 | 0
+      const value = character === "x" ? random : (random & 0x3 | 0x8)
+      return value.toString(16)
+    })
 }
 
 function emptyForm(): ProductFormData {
@@ -74,13 +69,14 @@ function emptyForm(): ProductFormData {
     description: "",
     detail_md: "",
     category_id: "",
-    base_price: "",
+    cost_price: "",
+    retail_price: "",
     cover_url: "",
     low_stock_threshold: "10",
-    wholesale_enabled: false,
+    spec_enabled: false,
     is_enabled: true,
-    initial_sales: "",
-    sort_order: "",
+    initial_sales: "0",
+    sort_order: "0",
     delivery_type: "AUTO",
     customer_input_fields: [],
     stock_mode: "CARD_KEY",
@@ -88,39 +84,63 @@ function emptyForm(): ProductFormData {
   }
 }
 
-function getFormData(product: ProductDetail | null): ProductFormData {
+function getFormData(product: AdminProductDetail | null): ProductFormData {
   if (!product) return emptyForm()
   return {
     title: product.title,
     description: product.description || "",
     detail_md: product.detail_md || "",
     category_id: product.category_id,
-    base_price: String(product.base_price),
+    cost_price: product.cost_price == null ? "" : String(product.cost_price),
+    retail_price: String(product.retail_price),
     cover_url: product.cover_url || "",
     low_stock_threshold: String(product.low_stock_threshold ?? 10),
-    wholesale_enabled: product.wholesale_enabled === true,
-    is_enabled: product.is_enabled !== false,
-    initial_sales: String(product.initial_sales ?? ""),
-    sort_order: String(product.sort_order ?? ""),
+    spec_enabled: product.spec_enabled,
+    is_enabled: product.is_enabled,
+    initial_sales: String(product.initial_sales ?? 0),
+    sort_order: String(product.sort_order ?? 0),
     delivery_type: product.delivery_type === "MANUAL" ? "MANUAL" : "AUTO",
     customer_input_fields: (product.customer_input_fields || []).map((field) => ({ id: field.id, label: field.label })),
     stock_mode: product.stock_mode || (product.delivery_type === "MANUAL" ? "MANUAL" : "CARD_KEY"),
-    manual_stock: product.stock_mode === "MANUAL" && product.stock_available != null ? String(product.stock_available) : "",
+    manual_stock: product.stock_mode === "MANUAL" && !product.has_specs && product.stock_available != null
+      ? String(product.stock_available) : "",
   }
 }
 
-function getSpecs(product: ProductDetail | null): ProductSpecDraft[] {
+function getSpecs(product: AdminProductDetail | null): ProductSpecDraft[] {
   return (product?.specs || []).map((spec) => ({
     id: spec.id,
     name: spec.name,
-    price: String(spec.price),
-    manual_stock: spec.manual_stock != null ? String(spec.manual_stock) : "",
+    cost_price: String(spec.cost_price),
+    retail_price: String(spec.retail_price),
+    visible: spec.is_visible,
+    sort_order: String(spec.sort_order ?? 0),
+    manual_stock: spec.manual_stock == null ? "" : String(spec.manual_stock),
     card_key_count: spec.card_key_count,
   }))
 }
 
+function getOverrides(product: AdminProductDetail | null): OverrideDraft[] {
+  return (product?.overrides || []).map((override) => ({
+    user_level_id: override.user_level_id,
+    spec_id: override.spec_id,
+    price: String(override.price),
+  }))
+}
+
+function asNumber(value: string, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function isMoney(value: string, positive: boolean) {
+  if (!value.trim() || !/^\d+(\.\d{1,2})?$/.test(value.trim())) return false
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && (positive ? parsed > 0 : parsed >= 0)
+}
+
 interface ProductFormProps {
-  product: ProductDetail | null
+  product: AdminProductDetail | null
   categories: Category[]
   onSaved: () => void | Promise<void>
   onCancel: () => void
@@ -130,270 +150,215 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
   const { t } = useLocale()
   const [formData, setFormData] = useState<ProductFormData>(() => getFormData(product))
   const [formSpecs, setFormSpecs] = useState<ProductSpecDraft[]>(() => getSpecs(product))
-  const [specsEnabled, setSpecsEnabled] = useState(product?.spec_enabled === true)
-  const [persistedProductId, setPersistedProductId] = useState<string | null>(() => product?.id ?? null)
-  const [formErrors, setFormErrors] = useState<Record<string, boolean>>({})
+  const [overrides, setOverrides] = useState<OverrideDraft[]>(() => getOverrides(product))
+  const [levels, setLevels] = useState<UserLevel[]>([])
+  const [levelsLoading, setLevelsLoading] = useState(true)
+  const [preview, setPreview] = useState<{ pricing_matrix: AdminProductDetail["pricing_matrix"]; warnings: string[] } | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [retryingSpecSync, setRetryingSpecSync] = useState(false)
-  const [specSyncFailure, setSpecSyncFailure] = useState<SpecSyncFailure | null>(null)
-  const [specDeleteConfirm, setSpecDeleteConfirm] = useState<{ idx: number; name: string; count: number } | null>(null)
-  const titleRef = useRef<HTMLInputElement>(null)
-  const categoryRef = useRef<HTMLSelectElement>(null)
-  const basePriceRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setFormData(getFormData(product))
     setFormSpecs(getSpecs(product))
-    setSpecsEnabled(product?.spec_enabled === true)
-    setPersistedProductId(product?.id ?? null)
-    setFormErrors({})
-    setSpecSyncFailure(null)
+    setOverrides(getOverrides(product))
+    setPreview(product?.pricing_matrix?.length ? { pricing_matrix: product.pricing_matrix, warnings: product.warnings || [] } : null)
   }, [product])
 
-  const uploadImage = useCallback(async (file: File) => {
-    const result = await adminProductApi.uploadImage(file)
-    return result.url
+  useEffect(() => {
+    let active = true
+    setLevelsLoading(true)
+    void adminUserLevelApi.getList().then((data) => {
+      if (active) setLevels(data)
+    }).catch(() => {
+      if (active) setLevels([])
+    }).finally(() => {
+      if (active) setLevelsLoading(false)
+    })
+    return () => { active = false }
   }, [])
+
+  const uploadImage = async (file: File) => (await adminProductApi.uploadImage(file)).url
 
   const setField = <K extends keyof ProductFormData>(key: K, value: ProductFormData[K]) => {
     setFormData((current) => ({ ...current, [key]: value }))
   }
 
-  const focusFirstError = (errors: Record<string, boolean>, refMap: Record<string, RefObject<HTMLElement | null>>) => {
-    for (const key of Object.keys(errors)) {
-      if (errors[key] && refMap[key]?.current) {
-        refMap[key].current.focus()
-        refMap[key].current.scrollIntoView({ behavior: "smooth", block: "center" })
-        break
-      }
+  const payload = useMemo<AdminProductUpsertPayload>(() => {
+    const validSpecPrices = formSpecs.map((spec) => asNumber(spec.retail_price)).filter((price) => price > 0)
+    return {
+      title: formData.title.trim(),
+      description: formData.description || undefined,
+      detail_md: formData.detail_md || undefined,
+      cover_url: formData.cover_url || undefined,
+      cost_price: formData.spec_enabled ? null : asNumber(formData.cost_price),
+      retail_price: formData.spec_enabled ? (validSpecPrices.length ? Math.min(...validSpecPrices) : 0) : asNumber(formData.retail_price),
+      category_id: formData.category_id,
+      low_stock_threshold: Math.max(0, Math.trunc(asNumber(formData.low_stock_threshold, 10))),
+      spec_enabled: formData.spec_enabled,
+      is_enabled: formData.is_enabled,
+      initial_sales: Math.max(0, Math.trunc(asNumber(formData.initial_sales))),
+      sort_order: Math.trunc(asNumber(formData.sort_order)),
+      delivery_type: formData.delivery_type,
+      customer_input_fields: formData.customer_input_fields,
+      stock_mode: formData.stock_mode,
+      manual_stock: formData.stock_mode === "MANUAL" && !formData.spec_enabled
+        ? Math.max(0, Math.trunc(asNumber(formData.manual_stock))) : undefined,
+      specs: formSpecs.map((spec) => ({
+        id: spec.id,
+        name: spec.name.trim(),
+        cost_price: asNumber(spec.cost_price),
+        retail_price: asNumber(spec.retail_price),
+        visible: spec.visible,
+        sort_order: Math.trunc(asNumber(spec.sort_order)),
+        manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, Math.trunc(asNumber(spec.manual_stock))) : undefined,
+      })),
+      overrides: overrides.map((override) => ({
+        user_level_id: override.user_level_id,
+        spec_id: override.spec_id,
+        price: asNumber(override.price),
+      })),
     }
+  }, [formData, formSpecs, overrides])
+
+  const previewReady = useMemo(() => {
+    if (!payload.title || !payload.category_id) return false
+    if (!payload.spec_enabled) return isMoney(formData.cost_price, false) && isMoney(formData.retail_price, true)
+    return payload.specs.length > 0 && payload.specs.some((spec) => spec.visible)
+      && payload.specs.every((spec) => isMoney(String(spec.cost_price), false) && isMoney(String(spec.retail_price), true))
+  }, [formData.cost_price, formData.retail_price, payload])
+
+  useEffect(() => {
+    if (!previewReady || levelsLoading) return
+    const timer = window.setTimeout(() => {
+      setPreviewLoading(true)
+      void adminProductApi.previewPricing(payload).then(setPreview).catch(() => {
+        // Invalid drafts are still validated by the save action; a preview
+        // failure must never turn the editor into a broken state.
+        setPreview(null)
+      }).finally(() => setPreviewLoading(false))
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [levelsLoading, payload, previewReady])
+
+  const updateSpec = (index: number, patch: Partial<ProductSpecDraft>) => {
+    setFormSpecs((current) => current.map((spec, currentIndex) => currentIndex === index ? { ...spec, ...patch } : spec))
   }
 
-  const syncProductSpecs = async (productId: string) => {
-    if (!specsEnabled) return
+  const removeSpec = (index: number) => {
+    const spec = formSpecs[index]
+    if (spec?.card_key_count && spec.card_key_count > 0
+      && !window.confirm(t("admin.deleteSpecDescription").replace("{name}", spec.name).replace("{count}", String(spec.card_key_count)))) return
+    setFormSpecs((current) => current.filter((_, currentIndex) => currentIndex !== index))
+    if (spec?.id) setOverrides((current) => current.filter((override) => override.spec_id !== spec.id))
+  }
 
-    let existingSpecs: ProductDetail["specs"]
-    try {
-      existingSpecs = await requestOrThrow(() => adminProductApi.getSpecs(productId))
-    } catch (error: unknown) {
-      throw new SpecSyncError("load", t("admin.productSpecs"), getErrorMessage(error, t("admin.saveFailed")))
-    }
-    const existingIds = new Set(existingSpecs.map((spec) => spec.id))
-    const keepIds = new Set(formSpecs.filter((spec) => spec.id).map((spec) => spec.id as string))
-    const keepDraftNames = new Set(formSpecs.filter((spec) => !spec.id).map((spec) => spec.name.trim()))
-    const runSpecOperation = async (operation: SpecSyncOperation, specName: string, action: () => Promise<unknown>) => {
-      try {
-        await requestOrThrow(action)
-      } catch (error: unknown) {
-        throw new SpecSyncError(operation, specName, getErrorMessage(error, t("admin.saveFailed")))
-      }
-    }
+  const updateOverride = (userLevelId: string, specId: string | null, value: string) => {
+    setOverrides((current) => {
+      const index = current.findIndex((override) => override.user_level_id === userLevelId && override.spec_id === specId)
+      if (!value.trim()) return index < 0 ? current : current.filter((_, currentIndex) => currentIndex !== index)
+      const next = { user_level_id: userLevelId, spec_id: specId, price: value }
+      if (index < 0) return [...current, next]
+      return current.map((override, currentIndex) => currentIndex === index ? next : override)
+    })
+  }
 
-    for (const oldSpec of existingSpecs) {
-      if (!keepIds.has(oldSpec.id) && !keepDraftNames.has(oldSpec.name.trim())) {
-        await runSpecOperation("delete", oldSpec.name, () => adminProductApi.deleteSpec(productId, oldSpec.id))
-      }
-    }
+  const overrideValue = (userLevelId: string, specId: string | null) =>
+    overrides.find((override) => override.user_level_id === userLevelId && override.spec_id === specId)?.price || ""
 
-    for (const spec of formSpecs) {
-      const manualStock = formData.stock_mode === "MANUAL"
-        ? Math.max(0, Number.parseInt(spec.manual_stock || "0", 10) || 0)
-        : undefined
-      if (spec.id && existingIds.has(spec.id)) {
-        const old = existingSpecs.find((candidate) => candidate.id === spec.id)
-        if (old && (old.name !== spec.name || String(old.price) !== spec.price || String(old.manual_stock ?? "") !== String(spec.manual_stock ?? ""))) {
-          await runSpecOperation("update", spec.name, () => adminProductApi.updateSpec(productId, spec.id as string, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
+  const validateCustomerFields = () => {
+    if (formData.customer_input_fields.length > 20) return t("admin.customerInputLimit")
+    const labels = new Set<string>()
+    for (const field of formData.customer_input_fields) {
+      const label = field.label.trim()
+      if (!label) return t("admin.customerInputNameRequired")
+      if (label.length > 50) return t("admin.customerInputNameLength")
+      if ([...label].some((character) => /\p{C}/u.test(character))) return t("admin.customerInputNameControl")
+      const normalized = label.toLocaleLowerCase()
+      if (!labels.add(normalized)) return t("admin.customerInputDuplicate").replace("{label}", label)
+    }
+    return null
+  }
+
+  const validate = () => {
+    if (!formData.title.trim()) return t("admin.productNameRequired")
+    if (!formData.category_id) return t("admin.categoryRequired")
+    const customerError = validateCustomerFields()
+    if (customerError) return customerError
+    if (!formData.spec_enabled) {
+      if (!isMoney(formData.cost_price, false)) return t("admin.costPriceRequired")
+      if (!isMoney(formData.retail_price, true)) return t("admin.retailPriceRequired")
+    } else {
+      if (formSpecs.length === 0 || !formSpecs.some((spec) => spec.visible)) return t("admin.visibleSpecRequired")
+      const names = new Set<string>()
+      for (const spec of formSpecs) {
+        if (!spec.name.trim()) return t("admin.specNameRequired")
+        if (!names.add(spec.name.trim().toLocaleLowerCase())) {
+          return t("admin.specNameDuplicate").replace("{name}", spec.name.trim())
         }
-      } else {
-        const existingDraft = existingSpecs.find((candidate) => candidate.name.trim() === spec.name.trim())
-        if (existingDraft) {
-          if (String(existingDraft.price) !== spec.price || String(existingDraft.manual_stock ?? "") !== String(spec.manual_stock ?? "")) {
-            await runSpecOperation("update", spec.name, () => adminProductApi.updateSpec(productId, existingDraft.id, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
-          }
-        } else {
-          await runSpecOperation("add", spec.name, () => adminProductApi.addSpec(productId, { name: spec.name.trim(), price: Number.parseFloat(spec.price), manual_stock: manualStock }))
+        if (!isMoney(spec.cost_price, false)) return t("admin.specCostInvalid").replace("{name}", spec.name || t("admin.unnamed"))
+        if (!isMoney(spec.retail_price, true)) return t("admin.specRetailInvalid").replace("{name}", spec.name || t("admin.unnamed"))
+        if (formData.stock_mode === "MANUAL" && (!/^\d+$/.test(spec.manual_stock) || Number(spec.manual_stock) < 0)) {
+          return t("admin.specManualStockInvalid").replace("{name}", spec.name || t("admin.unnamed"))
         }
       }
     }
-  }
-
-  const buildSpecSyncFailure = (productId: string, error: unknown): SpecSyncFailure => {
-    if (error instanceof SpecSyncError) {
-      return { productId, operation: error.operation, specName: error.specName, message: error.message }
+    if (formData.stock_mode === "MANUAL" && !formData.spec_enabled
+      && (!/^\d+$/.test(formData.manual_stock) || Number(formData.manual_stock) < 0)) return t("admin.manualStockInvalid")
+    const specIds = new Set(formSpecs.filter((spec) => spec.id).map((spec) => spec.id))
+    const keys = new Set<string>()
+    for (const override of overrides) {
+      if (!override.user_level_id || !isMoney(override.price, true)) return t("admin.overridePriceInvalid")
+      if (formData.spec_enabled && (!override.spec_id || !specIds.has(override.spec_id))) return t("admin.overrideSpecInvalid")
+      if (!formData.spec_enabled && override.spec_id) return t("admin.overrideSpecInvalid")
+      const target = formData.spec_enabled ? formSpecs.find((spec) => spec.id === override.spec_id) : null
+      const retail = target ? Number(target.retail_price) : Number(formData.retail_price)
+      if (Number(override.price) > retail) return t("admin.overrideAboveRetail")
+      const key = `${override.user_level_id}:${override.spec_id || ""}`
+      if (!keys.add(key)) return t("admin.overrideDuplicate")
     }
-    return { productId, operation: "update", specName: t("admin.unnamed"), message: getErrorMessage(error, t("admin.saveFailed")) }
-  }
-
-  const specSyncOperationLabel = (operation: SpecSyncOperation) => {
-    if (operation === "load") return t("admin.specSyncLoad")
-    if (operation === "delete") return t("admin.specSyncDelete")
-    if (operation === "add") return t("admin.specSyncAdd")
-    return t("admin.specSyncUpdate")
-  }
-
-  const reportSpecSyncFailure = (productId: string, error: unknown) => {
-    const failure = buildSpecSyncFailure(productId, error)
-    setSpecSyncFailure(failure)
-    toast.error(`${t("admin.productBaseSavedSpecSyncFailed")} · ${t("admin.specSyncStep").replace("{action}", specSyncOperationLabel(failure.operation)).replace("{name}", failure.specName)} · ${failure.message}`)
+    return null
   }
 
   const handleSave = async () => {
-    const errors: Record<string, boolean> = {}
-    if (!formData.title.trim()) errors.title = true
-    if (!formData.category_id) errors.category_id = true
-    if (!specsEnabled && (!formData.base_price || Number.parseFloat(formData.base_price) <= 0)) errors.base_price = true
-
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors)
-      const messages: string[] = []
-      if (errors.title) messages.push(t("admin.productNameRequired"))
-      if (errors.category_id) messages.push(t("admin.categoryRequired"))
-      if (errors.base_price) messages.push(t("admin.basePriceRequired"))
-      toast.error(messages.join("; "))
-      focusFirstError(errors, { title: titleRef, category_id: categoryRef, base_price: basePriceRef })
+    const error = validate()
+    if (error) {
+      toast.error(error)
       return
     }
-    setFormErrors({})
-
-    if (formData.customer_input_fields.length > 20) {
-      toast.error(t("admin.customerInputLimit"))
-      return
-    }
-    const customerInputLabels = new Set<string>()
-    for (const field of formData.customer_input_fields) {
-      const label = field.label.trim()
-      if (!label) {
-        toast.error(t("admin.customerInputNameRequired"))
-        return
-      }
-      if (label.length > 50) {
-        toast.error(t("admin.customerInputNameLength"))
-        return
-      }
-      if ([...label].some((character) => /\p{C}/u.test(character))) {
-        toast.error(t("admin.customerInputNameControl"))
-        return
-      }
-      const normalizedLabel = label.toLocaleLowerCase()
-      if (customerInputLabels.has(normalizedLabel)) {
-        toast.error(t("admin.customerInputDuplicate").replace("{label}", label))
-        return
-      }
-      customerInputLabels.add(normalizedLabel)
-    }
-
-    if (specsEnabled) {
-      const specNames = new Set<string>()
-      for (const spec of formSpecs) {
-        if (!spec.name.trim()) {
-          toast.error(t("admin.specNameRequired"))
-          return
-        }
-        if (!spec.price || Number.parseFloat(spec.price) <= 0) {
-          toast.error(t("admin.specPriceInvalid").replace("{name}", spec.name || t("admin.unnamed")))
-          return
-        }
-        const normalizedName = spec.name.trim()
-        if (specNames.has(normalizedName)) {
-          toast.error(t("admin.specNameDuplicate").replace("{name}", normalizedName))
-          return
-        }
-        specNames.add(normalizedName)
-      }
-    }
-
-    if (formData.stock_mode === "MANUAL") {
-      const rootStock = Number(formData.manual_stock || 0)
-      if (!Number.isInteger(rootStock) || rootStock < 0) {
-        toast.error(t("admin.manualStockInvalid"))
-        return
-      }
-      for (const spec of formSpecs) {
-        if (spec.manual_stock && (!Number.isInteger(Number(spec.manual_stock)) || Number(spec.manual_stock) < 0)) {
-          toast.error(t("admin.specManualStockInvalid").replace("{name}", spec.name || t("admin.unnamed")))
-          return
-        }
-      }
-    }
-
     setSaving(true)
     try {
-      let basePrice = Number.parseFloat(formData.base_price) || 0
-      if (specsEnabled && formSpecs.length > 0) {
-        const specPrices = formSpecs.map((spec) => Number.parseFloat(spec.price)).filter((price) => price > 0)
-        if (specPrices.length > 0) basePrice = Math.min(...specPrices)
-      }
-
-      const payload = {
-        title: formData.title.trim(),
-        description: formData.description || undefined,
-        detail_md: formData.detail_md || undefined,
-        category_id: formData.category_id,
-        base_price: basePrice,
-        cover_url: formData.cover_url || undefined,
-        low_stock_threshold: Number.parseInt(formData.low_stock_threshold, 10) || 10,
-        wholesale_enabled: false,
-        spec_enabled: specsEnabled,
-        is_enabled: formData.is_enabled,
-        initial_sales: Number.parseInt(formData.initial_sales, 10) || 0,
-        sort_order: Number.parseInt(formData.sort_order, 10) || undefined,
-        delivery_type: formData.delivery_type,
-        customer_input_fields: formData.customer_input_fields.map((field) => ({ id: field.id, label: field.label.trim() })),
-        stock_mode: formData.stock_mode,
-        manual_stock: formData.stock_mode === "MANUAL" ? Math.max(0, Number.parseInt(formData.manual_stock, 10) || 0) : undefined,
-      }
-
-      const existingProductId = persistedProductId ?? product?.id ?? null
-      let productId: string
-      if (existingProductId) {
-        await requestOrThrow(() => adminProductApi.update(existingProductId, payload))
-        productId = existingProductId
-      } else {
-        const created = await requestOrThrow(() => adminProductApi.create(payload))
-        productId = created.id
-        setPersistedProductId(productId)
-      }
-
-      if (specsEnabled) {
-        try {
-          await syncProductSpecs(productId)
-        } catch (specError: unknown) {
-          reportSpecSyncFailure(productId, specError)
-          return
-        }
-      }
-
-      setSpecSyncFailure(null)
+      if (product) await requestOrThrow(() => adminProductApi.update(product.id, payload))
+      else await requestOrThrow(() => adminProductApi.create(payload))
       toast.success(t("admin.productSaved"))
       await onSaved()
-    } catch (error: unknown) {
-      toast.error(error instanceof Error ? error.message : t("admin.saveFailed"))
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
       setSaving(false)
     }
   }
 
-  const retrySpecSync = async () => {
-    const failure = specSyncFailure
-    if (!failure) return
-    if (!specsEnabled) {
-      toast.error(t("admin.specSyncRetryRequiresSpecs"))
-      return
-    }
-    if (!persistedProductId || persistedProductId !== failure.productId) return
-
-    setRetryingSpecSync(true)
-    try {
-      await syncProductSpecs(persistedProductId)
-      setSpecSyncFailure(null)
-      toast.success(t("admin.specSyncCompleted"))
-      await onSaved()
-    } catch (specError: unknown) {
-      reportSpecSyncFailure(failure.productId, specError)
-    } finally {
-      setRetryingSpecSync(false)
-    }
+  const handleDeliveryChange = (deliveryType: DeliveryType) => {
+    setFormData((current) => ({
+      ...current,
+      delivery_type: deliveryType,
+      stock_mode: deliveryType === "AUTO" ? "CARD_KEY" : current.stock_mode === "CARD_KEY" ? "MANUAL" : current.stock_mode,
+    }))
   }
+
+  const toggleSpecMode = (checked: boolean) => {
+    if (checked !== formData.spec_enabled && product
+      && !window.confirm(t("admin.specModeSwitchWarning"))) return
+    setField("spec_enabled", checked)
+    if (checked && formSpecs.length === 0) setFormSpecs([{ id: createId(), name: "", cost_price: "", retail_price: "", visible: true, sort_order: "0", manual_stock: "" }])
+  }
+
+  const rootCost = Number(formData.cost_price)
+  const rootRetail = Number(formData.retail_price)
+  const rootMargin = Number.isFinite(rootCost) && Number.isFinite(rootRetail) ? rootRetail - rootCost : null
+  const rootMarginRate = rootMargin !== null && rootCost > 0 ? (rootMargin / rootCost) * 100 : null
+  const targets = formData.spec_enabled ? formSpecs : [{ id: undefined, name: t("admin.product"), retail_price: formData.retail_price }]
+  const matrixRow = (levelId: string, specId: string | null) => preview?.pricing_matrix.find((row) => row.user_level_id === levelId && row.spec_id === specId)
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -401,259 +366,161 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
         <div className="grid gap-5 lg:grid-cols-2">
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
             {t("admin.productNameReq")}
-            <Input
-              ref={titleRef}
-              className={cn(formErrors.title && "border-destructive ring-2 ring-destructive/20")}
-              placeholder={t("admin.productNamePlaceholder")}
-              value={formData.title}
-              onChange={(event) => {
-                setField("title", event.target.value)
-                setFormErrors((current) => ({ ...current, title: false }))
-              }}
-            />
+            <Input value={formData.title} onChange={(event) => setField("title", event.target.value)} placeholder={t("admin.productNamePlaceholder")} />
           </label>
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
             {t("admin.productBrief")}
-            <Input placeholder={t("admin.productBriefPlaceholder")} value={formData.description} onChange={(event) => setField("description", event.target.value)} />
+            <Input value={formData.description} onChange={(event) => setField("description", event.target.value)} placeholder={t("admin.productBriefPlaceholder")} />
           </label>
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
             {t("admin.categoryReq")}
-            <select
-              ref={categoryRef}
-              className={cn("h-10 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring", formErrors.category_id && "border-destructive ring-2 ring-destructive/20")}
-              value={formData.category_id}
-              onChange={(event) => {
-                setField("category_id", event.target.value)
-                setFormErrors((current) => ({ ...current, category_id: false }))
-              }}
-            >
+            <select className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal" value={formData.category_id} onChange={(event) => setField("category_id", event.target.value)}>
               <option value="">{t("admin.categoryPlaceholder")}</option>
               {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
             </select>
           </label>
-          <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
-            {t("admin.basePriceReq")}
-            <Input
-              ref={basePriceRef}
-              type="number"
-              min="0"
-              step="0.01"
-              className={cn(formErrors.base_price && "border-destructive ring-2 ring-destructive/20")}
-              placeholder="0.00"
-              value={formData.base_price}
-              onChange={(event) => {
-                setField("base_price", event.target.value)
-                setFormErrors((current) => ({ ...current, base_price: false }))
-              }}
-              disabled={specsEnabled}
-            />
-            {specsEnabled && <span className="text-xs font-normal text-muted-foreground">{t("admin.basePriceFromSpecs")}</span>}
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
+              {t("admin.costPriceReq")}
+              <Input type="number" min="0" step="0.01" value={formData.cost_price} disabled={formData.spec_enabled} onChange={(event) => setField("cost_price", event.target.value)} placeholder="0.00" />
+              {formData.spec_enabled && <span className="text-xs font-normal text-muted-foreground">{t("admin.costFromSpecs")}</span>}
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
+              {t("admin.retailPriceReq")}
+              <Input type="number" min="0" step="0.01" value={formData.retail_price} disabled={formData.spec_enabled} onChange={(event) => setField("retail_price", event.target.value)} placeholder="0.00" />
+              {formData.spec_enabled && <span className="text-xs font-normal text-muted-foreground">{t("admin.retailFromSpecs")}</span>}
+            </label>
+          </div>
+          {!formData.spec_enabled && rootMargin !== null && (
+            <div className="grid grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm lg:col-span-2">
+              <div><div className="text-xs text-muted-foreground">{t("admin.marginAmount")}</div><div className={cn("mt-1 font-semibold", rootMargin < 0 && "text-amber-600")}>{formatYuan(rootMargin)}</div></div>
+              <div><div className="text-xs text-muted-foreground">{t("admin.marginRate")}</div><div className={cn("mt-1 font-semibold", rootMarginRate !== null && rootMarginRate < 0 && "text-amber-600")}>{rootMarginRate === null ? "—" : `${rootMarginRate.toFixed(2)}%`}</div></div>
+            </div>
+          )}
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
             {t("admin.coverUrl")}
-            <ImageUploadDropzone value={formData.cover_url} onChange={(value) => setField("cover_url", value)} uploadImage={uploadImage} disabled={saving || retryingSpecSync} />
+            <ImageUploadDropzone value={formData.cover_url} onChange={(value) => setField("cover_url", value)} uploadImage={uploadImage} disabled={saving} />
           </label>
         </div>
       </FormSection>
 
       <FormSection title={t("admin.inventorySettings")} description={t("admin.inventorySettingsHint")}>
         <div className="grid gap-5 lg:grid-cols-2">
-          <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
+          <div className="flex flex-col gap-1.5 text-sm font-medium">
             {t("admin.deliveryMethod")}
             <div className="grid grid-cols-2 gap-2">
               {(["AUTO", "MANUAL"] as const).map((deliveryType) => (
-                <Button
-                  key={deliveryType}
-                  type="button"
-                  variant={formData.delivery_type === deliveryType ? "default" : "outline"}
-                  className="h-10"
-                  onClick={() => setFormData((current) => ({ ...current, delivery_type: deliveryType, stock_mode: deliveryType === "AUTO" ? "CARD_KEY" : current.stock_mode === "UNLIMITED" ? "UNLIMITED" : "MANUAL" }))}
-                >
+                <Button key={deliveryType} type="button" variant={formData.delivery_type === deliveryType ? "default" : "outline"} onClick={() => handleDeliveryChange(deliveryType)}>
                   {deliveryType === "AUTO" ? t("admin.autoDelivery") : t("admin.manualDelivery")}
                 </Button>
               ))}
             </div>
-          </label>
-          <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
-            {t("admin.stockMode")}
-            <Select value={formData.stock_mode} onValueChange={(value) => setField("stock_mode", value as ProductFormData["stock_mode"])}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {formData.delivery_type === "AUTO" && <SelectItem value="CARD_KEY">{t("admin.cardKeyStock")}</SelectItem>}
-                {formData.delivery_type === "MANUAL" && (
-                  <>
-                    <SelectItem value="MANUAL">{t("admin.manualStock")}</SelectItem>
-                    <SelectItem value="UNLIMITED">{t("admin.unlimitedStock")}</SelectItem>
-                  </>
-                )}
-              </SelectContent>
-            </Select>
-            <span className="text-xs font-normal text-muted-foreground">{t("admin.stockModeHint")}</span>
-          </label>
-          <div className="grid gap-5 sm:grid-cols-2 lg:col-span-2">
-            <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
-              {t("admin.sortOrderLabel")}
-              <Input type="number" placeholder="0" value={formData.sort_order} onChange={(event) => setField("sort_order", event.target.value)} />
-              <span className="text-xs font-normal text-muted-foreground">{t("admin.sortOrderDefaultHint")}</span>
-            </label>
-            <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
-              {t("admin.lowStockAlert")}
-              <Input type="number" min="0" placeholder="10" value={formData.low_stock_threshold} onChange={(event) => setField("low_stock_threshold", event.target.value)} />
-            </label>
-            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 sm:col-span-2">
-              <div>
-                <p className="text-sm font-medium text-foreground">{t("admin.listingStatus")}</p>
-                <p className="text-xs text-muted-foreground">{formData.is_enabled ? t("admin.active") : t("admin.inactive")}</p>
-              </div>
-              <Switch checked={formData.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
-            </div>
-            <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium sm:col-span-2">
-              {t("admin.initialSales")}
-              <Input type="number" min="0" placeholder="0" value={formData.initial_sales} onChange={(event) => setField("initial_sales", event.target.value)} />
-              <span className="text-xs font-normal text-muted-foreground">{t("admin.initialSalesHint")}</span>
-            </label>
           </div>
-          {formData.delivery_type === "MANUAL" && formData.stock_mode === "MANUAL" && (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 lg:col-span-2">
-              <label className="flex flex-col gap-1.5 text-sm font-medium">
-                {specsEnabled ? t("admin.defaultManualStock") : t("admin.availableManualStock")}
-                <Input type="number" min="0" step="1" placeholder="0" value={formData.manual_stock} onChange={(event) => setField("manual_stock", event.target.value)} />
-              </label>
-              <p className="mt-2 text-xs text-muted-foreground">{t("admin.manualStockHint")}</p>
-            </div>
+          <label className="flex flex-col gap-1.5 text-sm font-medium">
+            {t("admin.stockMode")}
+            <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={formData.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
+              {formData.delivery_type === "AUTO" && <option value="CARD_KEY">{t("admin.cardKeyStock")}</option>}
+              {formData.delivery_type === "MANUAL" && <><option value="MANUAL">{t("admin.manualStock")}</option><option value="UNLIMITED">{t("admin.unlimitedStock")}</option></>}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5 text-sm font-medium">
+            {t("admin.sortOrderLabel")}
+            <Input type="number" value={formData.sort_order} onChange={(event) => setField("sort_order", event.target.value)} />
+          </label>
+          <label className="flex flex-col gap-1.5 text-sm font-medium">
+            {t("admin.lowStockAlert")}
+            <Input type="number" min="0" value={formData.low_stock_threshold} onChange={(event) => setField("low_stock_threshold", event.target.value)} />
+          </label>
+          {formData.stock_mode === "MANUAL" && !formData.spec_enabled && (
+            <label className="flex flex-col gap-1.5 text-sm font-medium lg:col-span-2">
+              {t("admin.availableManualStock")}
+              <Input type="number" min="0" step="1" value={formData.manual_stock} onChange={(event) => setField("manual_stock", event.target.value)} placeholder="0" />
+            </label>
           )}
+          <label className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 lg:col-span-2">
+            <span className="text-sm font-medium">{t("admin.listingStatus")}</span>
+            <Switch checked={formData.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
+          </label>
         </div>
       </FormSection>
 
       <FormSection title={t("admin.customerInputFields")} description={`${formData.customer_input_fields.length}/20`}>
         <div className="space-y-2">
           {formData.customer_input_fields.map((field, index) => (
-            <div key={field.id} className="flex items-center gap-2">
-              <Input
-                maxLength={50}
-                value={field.label}
-                placeholder={t("admin.customerInputPlaceholder")}
-                onChange={(event) => setFormData((current) => ({
-                  ...current,
-                  customer_input_fields: current.customer_input_fields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item),
-                }))}
-              />
-              <Button type="button" variant="ghost" size="icon" onClick={() => setFormData((current) => ({ ...current, customer_input_fields: current.customer_input_fields.filter((_, itemIndex) => itemIndex !== index) }))} title={t("admin.removeCustomerInput")} aria-label={t("admin.removeCustomerInput")}>
-                <Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" />
-              </Button>
+            <div className="flex items-center gap-2" key={field.id}>
+              <Input maxLength={50} value={field.label} onChange={(event) => setFormData((current) => ({ ...current, customer_input_fields: current.customer_input_fields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) }))} placeholder={t("admin.customerInputPlaceholder")} />
+              <Button type="button" variant="ghost" size="icon" onClick={() => setFormData((current) => ({ ...current, customer_input_fields: current.customer_input_fields.filter((_, itemIndex) => itemIndex !== index) }))} aria-label={t("admin.removeCustomerInput")}><Trash2 className="h-4 w-4 text-destructive" /></Button>
             </div>
           ))}
-          <Button
-            type="button"
-            variant="outline"
-            className="border-dashed"
-            disabled={formData.customer_input_fields.length >= 20}
-            onClick={() => setFormData((current) => ({
-              ...current,
-              customer_input_fields: [...current.customer_input_fields, { id: globalThis.crypto?.randomUUID?.() || `field-${Date.now()}-${current.customer_input_fields.length}`, label: "" }],
-            }))}
-          >
-            <Plus className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.addCustomerInput")}
+          <Button type="button" variant="outline" onClick={() => setFormData((current) => ({ ...current, customer_input_fields: [...current.customer_input_fields, { id: createId(), label: "" }] }))} disabled={formData.customer_input_fields.length >= 20}>
+            <Plus className="mr-2 h-4 w-4" />{t("admin.addCustomerInput")}
           </Button>
-          {formData.customer_input_fields.length === 0 && <p className="text-xs text-muted-foreground">{t("admin.noCustomerInputFields")}</p>}
         </div>
       </FormSection>
 
       <FormSection title={t("admin.productSpecs")} description={t("admin.specsHint")}>
         <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
-          <span className="text-sm font-medium text-foreground">{t("admin.enableMultiSpec")}</span>
-          <Switch
-            checked={specsEnabled}
-            onCheckedChange={(checked) => {
-              setSpecsEnabled(checked)
-              if (checked && formSpecs.length === 0) setFormSpecs([{ name: "", price: "" }])
-            }}
-            aria-label={t("admin.enableMultiSpec")}
-          />
+          <span className="text-sm font-medium">{t("admin.enableMultiSpec")}</span>
+          <Switch checked={formData.spec_enabled} onCheckedChange={toggleSpecMode} aria-label={t("admin.enableMultiSpec")} />
         </div>
-        {specsEnabled && (
-          <div className="mt-4 space-y-2 rounded-lg border border-border bg-muted/20 p-3">
-            {formSpecs.map((spec, index) => (
-              <div key={spec.id || index} className="flex flex-wrap items-center gap-2">
-                <Input className="min-w-[12rem] flex-1" placeholder={t("admin.specNamePlaceholder")} value={spec.name} onChange={(event) => setFormSpecs((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />
-                <Input className="w-36" type="number" step="0.01" placeholder={t("admin.specPricePlaceholder")} value={spec.price} onChange={(event) => setFormSpecs((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, price: event.target.value } : item))} />
-                {formData.stock_mode === "MANUAL" && <Input className="w-28" type="number" min="0" step="1" placeholder={t("admin.specStockPlaceholder")} value={spec.manual_stock || ""} onChange={(event) => setFormSpecs((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, manual_stock: event.target.value } : item))} />}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  title={t("admin.removeSpec")}
-                  aria-label={t("admin.removeSpec")}
-                  onClick={() => {
-                    const current = formSpecs[index]
-                    if (current.id && current.card_key_count && current.card_key_count > 0) setSpecDeleteConfirm({ idx: index, name: current.name, count: current.card_key_count })
-                    else setFormSpecs((items) => items.filter((_, itemIndex) => itemIndex !== index))
-                  }}
-                >
-                  <Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" />
-                </Button>
-              </div>
-            ))}
-            <Button type="button" variant="outline" className="w-full border-dashed" onClick={() => setFormSpecs((current) => [...current, { name: "", price: "" }])}>
-              <Plus className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.addSpec")}
-            </Button>
-          </div>
-        )}
-        {!specsEnabled && formSpecs.length > 0 && formSpecs.some((spec) => spec.id) && (
-          <div className="mt-4 space-y-2 rounded-lg border border-border bg-muted/30 p-3 opacity-70">
-            <p className="text-xs text-muted-foreground">{t("admin.storedSpecsHint")}</p>
-            {formSpecs.filter((spec) => spec.id).map((spec) => (
-              <div key={spec.id} className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span className="min-w-0 flex-1 truncate rounded-md border border-border bg-muted px-3 py-2">{spec.name}</span>
-                <span className="w-36 rounded-md border border-border bg-muted px-3 py-2">{formatYuan(Number.parseFloat(spec.price) || 0)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className={cn("mt-4 overflow-x-auto rounded-lg border border-border", !formData.spec_enabled && "opacity-70")}>
+          <table className="w-full min-w-[820px] text-sm">
+            <thead className="bg-muted/40"><tr><th className="px-3 py-2 text-left">{t("admin.specName")}</th><th className="px-3 py-2 text-left">{t("admin.specCost")}</th><th className="px-3 py-2 text-left">{t("admin.specRetail")}</th><th className="px-3 py-2 text-left">{t("admin.specMargin")}</th><th className="px-3 py-2 text-left">{t("admin.specVisible")}</th><th className="px-3 py-2 text-left">{t("admin.stockLabel")}</th><th className="px-3 py-2" /></tr></thead>
+            <tbody>
+              {formSpecs.map((spec, index) => {
+                const cost = Number(spec.cost_price)
+                const retail = Number(spec.retail_price)
+                const margin = Number.isFinite(cost) && Number.isFinite(retail) ? retail - cost : 0
+                return <tr key={spec.id || `new-${index}`} className="border-t border-border/60">
+                  <td className="px-3 py-2"><Input value={spec.name} onChange={(event) => updateSpec(index, { name: event.target.value })} placeholder={t("admin.specNamePlaceholder")} /></td>
+                  <td className="px-3 py-2"><Input type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(index, { cost_price: event.target.value })} placeholder="0.00" /></td>
+                  <td className="px-3 py-2"><Input type="number" min="0" step="0.01" value={spec.retail_price} onChange={(event) => updateSpec(index, { retail_price: event.target.value })} placeholder="0.00" /></td>
+                  <td className="whitespace-nowrap px-3 py-2 font-medium">{formatYuan(margin)}</td>
+                  <td className="px-3 py-2"><Switch checked={spec.visible} onCheckedChange={(checked) => updateSpec(index, { visible: checked })} aria-label={t("admin.specVisible")} /></td>
+                  <td className="px-3 py-2">{formData.stock_mode === "MANUAL" ? <Input type="number" min="0" step="1" value={spec.manual_stock} onChange={(event) => updateSpec(index, { manual_stock: event.target.value })} placeholder="0" /> : <span className="text-muted-foreground">{spec.card_key_count ?? 0}</span>}</td>
+                  <td className="px-3 py-2"><Button type="button" variant="ghost" size="icon" onClick={() => removeSpec(index)} aria-label={t("admin.removeSpec")}><Trash2 className="h-4 w-4 text-destructive" /></Button></td>
+                </tr>
+              })}
+            </tbody>
+          </table>
+          <div className="border-t border-border/60 p-3"><Button type="button" variant="outline" onClick={() => setFormSpecs((current) => [...current, { id: createId(), name: "", cost_price: "", retail_price: "", visible: true, sort_order: String(current.length), manual_stock: "" }])}><Plus className="mr-2 h-4 w-4" />{t("admin.addSpec")}</Button></div>
+        </div>
+        {!formData.spec_enabled && formSpecs.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{t("admin.storedSpecsHint")}</p>}
       </FormSection>
 
-      {specSyncFailure && (
-        <div role="alert" className="flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-800 dark:text-amber-200">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <div className="min-w-0 space-y-1">
-              <p className="font-medium">{t("admin.productBaseSavedSpecSyncFailed")}</p>
-              <p>{t("admin.specSyncStep").replace("{action}", specSyncOperationLabel(specSyncFailure.operation)).replace("{name}", specSyncFailure.specName)}</p>
-              <p className="break-words text-xs opacity-80">{specSyncFailure.message}</p>
-            </div>
+      <FormSection title={t("admin.priceMatrix")} description={t("admin.priceMatrixHint")}>
+        {levelsLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div> : levels.length === 0 ? <p className="text-sm text-muted-foreground">{t("admin.noUserLevels")}</p> : (
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[960px] text-sm">
+              <thead className="bg-muted/40"><tr><th className="px-3 py-2 text-left">{t("admin.userLevel")}</th><th className="px-3 py-2 text-left">{t("admin.target")}</th><th className="px-3 py-2 text-left">{t("admin.defaultPrice")}</th><th className="px-3 py-2 text-left">{t("admin.overridePrice")}</th><th className="px-3 py-2 text-left">{t("admin.finalPrice")}</th><th className="px-3 py-2 text-left">{t("admin.pricingSource")}</th></tr></thead>
+              <tbody>{levels.filter((level) => level.enabled).flatMap((level) => targets.map((target) => {
+                const specId = target.id || null
+                const row = matrixRow(level.id, specId)
+                const isMarkup = level.pricing_type === "COST_MARKUP"
+                return <tr key={`${level.id}:${specId || "product"}`} className="border-t border-border/60">
+                  <td className="px-3 py-2"><div className="font-medium">{level.name}</div><div className="text-xs text-muted-foreground">{isMarkup ? `${t("admin.costMarkup")} ${level.markup_rate}%` : t("admin.retailPricing")}</div></td>
+                  <td className="px-3 py-2">{target.name}</td>
+                  <td className="px-3 py-2">{row ? formatYuan(row.default_price) : "—"}</td>
+                  <td className="px-3 py-2"><Input className="w-32" type="number" min="0.01" step="0.01" value={overrideValue(level.id, specId)} onChange={(event) => updateOverride(level.id, specId, event.target.value)} placeholder={t("admin.noOverride")} /></td>
+                  <td className={cn("whitespace-nowrap px-3 py-2 font-medium", row?.below_cost && "text-amber-600")}>{row ? formatYuan(row.final_price) : "—"}{row?.retail_capped && <span className="ml-1 text-xs text-muted-foreground">({t("admin.retailCap")})</span>}</td>
+                  <td className="px-3 py-2">{row?.pricing_source === "LEVEL_OVERRIDE" ? t("admin.pricingSourceOverride") : row?.pricing_source === "LEVEL_MARKUP" ? t("admin.pricingSourceMarkup") : t("admin.pricingSourceRetail")}</td>
+                </tr>
+              }))}</tbody>
+            </table>
           </div>
-          <div className="flex justify-end">
-            <Button type="button" variant="outline" onClick={() => void retrySpecSync()} disabled={saving || retryingSpecSync || !specsEnabled}>
-              {retryingSpecSync && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
-              {retryingSpecSync ? t("admin.retryingSpecSync") : t("admin.retrySpecSync")}
-            </Button>
-          </div>
-        </div>
-      )}
+        )}
+        {previewLoading && <p className="mt-2 text-xs text-muted-foreground">{t("admin.previewUpdating")}</p>}
+        {preview?.warnings.map((warning) => <div key={warning} className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{warning}</div>)}
+      </FormSection>
 
       <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
         <MarkdownEditor value={formData.detail_md} onChange={(value) => setField("detail_md", value)} uploadImage={uploadImage} />
       </FormSection>
 
       <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={saving || retryingSpecSync}>{t("admin.cancel")}</Button>
-        <Button type="button" onClick={() => void handleSave()} disabled={saving || retryingSpecSync}>{saving ? t("admin.saving") : t("admin.save")}</Button>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
+        <Button type="button" onClick={() => void handleSave()} disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button>
       </div>
-
-      <ConfirmAlert
-        open={specDeleteConfirm !== null}
-        onOpenChange={(open) => { if (!open) setSpecDeleteConfirm(null) }}
-        title={t("admin.deleteSpecConfirm")}
-        description={specDeleteConfirm ? t("admin.deleteSpecDescription").replace("{name}", specDeleteConfirm.name).replace("{count}", String(specDeleteConfirm.count)) : undefined}
-        confirmLabel={t("admin.delete")}
-        cancelLabel={t("admin.cancel")}
-        destructive
-        onConfirm={() => {
-          if (!specDeleteConfirm) return
-          setFormSpecs((current) => current.filter((_, index) => index !== specDeleteConfirm.idx))
-          setSpecDeleteConfirm(null)
-        }}
-      />
     </div>
   )
 }

@@ -1,12 +1,12 @@
 "use client"
 
-import { useState, useMemo, useRef } from "react"
+import { useState, useMemo, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Zap, Minus, Plus, Package, TrendingUp } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
-import { orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
+import { ApiError, orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, validateEmail, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
@@ -33,6 +33,9 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const [selectedSpec, setSelectedSpec] = useState<ProductSpec | null>(
     product.specs?.[0] || null
   )
+  useEffect(() => {
+    setSelectedSpec((current) => product.specs?.find((spec) => spec.id === current?.id) || product.specs?.[0] || null)
+  }, [product])
   const [quantity, setQuantity] = useState(1)
   const [email, setEmail] = useState("")
   const [emailError, setEmailError] = useState("")
@@ -47,7 +50,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const [submitting, setSubmitting] = useState(false)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
 
-  const currentPrice = selectedSpec ? selectedSpec.price : product.base_price
+  const currentPrice = selectedSpec ? selectedSpec.price : product.price
   const totalPrice = currentPrice * quantity
   const unlimited = selectedSpec?.unlimited ?? product.unlimited ?? false
   const currentStock = selectedSpec?.stock_available ?? product.stock_available ?? 0
@@ -107,6 +110,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       customer_inputs: normalizedCustomerInputs,
       email: adminPickup ? undefined : email.trim().toLowerCase(),
       payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
+      expected_unit_price: Number(currentPrice.toFixed(2)),
     })
     try {
       setTurnstileHeaders(turnstileToken)
@@ -118,6 +122,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           email: adminPickup ? undefined : email,
           customer_inputs: normalizedCustomerInputs,
           payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
+          expected_unit_price: Number(currentPrice.toFixed(2)),
           idempotency_key: intent.key,
           idempotency_fingerprint: intent.fingerprint,
           device,
@@ -147,7 +152,14 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       }
       router.push(payUrl)
     } catch (err: unknown) {
-      toast.error(getApiErrorMessage(err, t))
+      if (err instanceof ApiError && err.code === 40007) {
+        const current = err.params?.current_unit_price
+        const suffix = current === undefined ? "" : `（当前价格：${formatYuan(Number(current))}）`
+        toast.error(`${t("error.priceChanged")}${suffix}`)
+        router.refresh()
+      } else {
+        toast.error(getApiErrorMessage(err, t))
+      }
       handleTurnstileReset()
     } finally {
       setSubmitting(false)

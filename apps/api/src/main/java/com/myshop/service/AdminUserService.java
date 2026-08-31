@@ -17,6 +17,9 @@ public interface AdminUserService {
 
     PageResult<AdminUserListResponse> listUsers(String keyword, Integer isDeleted, int page, int pageSize);
 
+    PageResult<AdminUserListResponse> listUsers(String keyword, Integer isDeleted, UUID userLevelId,
+                                                int page, int pageSize);
+
     AdminUserDetailResponse getUserDetail(UUID id);
 
     PageResult<AdminUserOrderResponse> listUserOrders(UUID id, int page, int pageSize);

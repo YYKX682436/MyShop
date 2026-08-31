@@ -2,7 +2,6 @@ package com.myshop.entity;
 
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
-import com.myshop.constant.PricingType;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -40,18 +39,11 @@ public class Order extends BaseEntity {
     private OrderType orderType = OrderType.NORMAL;
 
     /** Pricing context captured when the order was created; it is not a live relation. */
-    @Column(name = "user_level_id")
-    private UUID userLevelId;
+    @Column(name = "user_level_id_snapshot")
+    private UUID userLevelIdSnapshot;
 
-    @Column(name = "user_level_name", length = 100)
-    private String userLevelName;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "user_level_pricing_type", length = 32)
-    private PricingType userLevelPricingType;
-
-    @Column(name = "user_level_markup_rate", precision = 7, scale = 4)
-    private BigDecimal userLevelMarkupRate;
+    @Column(name = "user_level_name_snapshot", length = 100)
+    private String userLevelNameSnapshot;
 
     private String paymentMethod;
 

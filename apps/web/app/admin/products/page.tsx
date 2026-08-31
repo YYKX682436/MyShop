@@ -24,13 +24,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useLocale } from "@/lib/context"
 import { cn, formatYuan } from "@/lib/utils"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
-import type { Category, ProductDetail } from "@/types"
+import type { AdminProductDetail, Category } from "@/types"
 
 const PAGE_SIZE = 20
 
 export default function AdminProductsPage() {
   const { t } = useLocale()
-  const [products, setProducts] = useState<ProductDetail[]>([])
+  const [products, setProducts] = useState<AdminProductDetail[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -41,9 +41,9 @@ export default function AdminProductsPage() {
   const [statusFilter, setStatusFilter] = useState("")
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
-  const [deleteProduct, setDeleteProduct] = useState<ProductDetail | null>(null)
+  const [deleteProduct, setDeleteProduct] = useState<AdminProductDetail | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [importProduct, setImportProduct] = useState<ProductDetail | null>(null)
+  const [importProduct, setImportProduct] = useState<AdminProductDetail | null>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -85,12 +85,12 @@ export default function AdminProductsPage() {
   useEffect(() => { void loadProducts() }, [loadProducts])
 
   const getCategoryName = (categoryId: string) => categories.find((category) => category.id === categoryId)?.name || "—"
-  const isUnlimited = (product: ProductDetail) => product.unlimited === true || product.stock_mode === "UNLIMITED"
-  const isCardKeyStock = (product: ProductDetail) => product.stock_mode !== "MANUAL" && product.stock_mode !== "UNLIMITED"
+  const isUnlimited = (product: AdminProductDetail) => product.unlimited === true || product.stock_mode === "UNLIMITED"
+  const isCardKeyStock = (product: AdminProductDetail) => product.stock_mode !== "MANUAL" && product.stock_mode !== "UNLIMITED"
 
-  const handleToggleStatus = async (product: ProductDetail) => {
+  const handleToggleStatus = async (product: AdminProductDetail) => {
     try {
-      await requestOrThrow(() => adminProductApi.update(product.id, { is_enabled: product.is_enabled === false }))
+      await requestOrThrow(() => adminProductApi.setStatus(product.id, product.is_enabled === false))
       toast.success(product.is_enabled === false ? t("admin.productPublished") : t("admin.productUnpublished"))
       await loadProducts()
     } catch (requestError: unknown) {
@@ -168,7 +168,7 @@ export default function AdminProductsPage() {
             <TableRow>
               <TableHead>{t("admin.product")}</TableHead>
               <TableHead>{t("admin.category")}</TableHead>
-              <TableHead>{t("admin.basePrice")}</TableHead>
+              <TableHead>{t("admin.retailPrice")}</TableHead>
               <TableHead>{t("admin.stockLabel")}</TableHead>
               <TableHead>{t("admin.sold")}</TableHead>
               <TableHead>{t("admin.statusLabel")}</TableHead>
@@ -197,7 +197,7 @@ export default function AdminProductsPage() {
                     </div>
                   </TableCell>
                   <TableCell><StatusBadge label={getCategoryName(product.category_id)} /></TableCell>
-                  <TableCell className="whitespace-nowrap font-medium">{formatYuan(product.base_price)}</TableCell>
+                  <TableCell className="whitespace-nowrap font-medium">{formatYuan(product.retail_price)}</TableCell>
                   <TableCell>
                     <span className={cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-600" : "text-foreground")}>
                       {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}

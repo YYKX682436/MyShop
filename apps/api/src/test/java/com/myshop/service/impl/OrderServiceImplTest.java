@@ -144,8 +144,6 @@ class OrderServiceImplTest {
         Product product = product(productId, "20.00");
         product.setSpecEnabled(true);
         ProductSpec ownedSpec = spec(specId, productId, "5.00");
-        when(productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0))
-                .thenReturn(List.of(ownedSpec));
         when(productSpecRepository.findById(specId)).thenReturn(Optional.of(ownedSpec));
         when(cardKeyRepository.countByProductIdAndSpecIdAndStatus(productId, specId, CardKeyStatus.AVAILABLE))
                 .thenReturn(2L);
@@ -181,9 +179,26 @@ class OrderServiceImplTest {
         ArgumentCaptor<com.myshop.entity.OrderItem> itemCaptor =
                 ArgumentCaptor.forClass(com.myshop.entity.OrderItem.class);
         verify(orderItemRepository).save(itemCaptor.capture());
-        assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getCostPrice());
-        assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getRetailPrice());
+        assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getCostPriceSnapshot());
+        assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getRetailPriceSnapshot());
         assertEquals(com.myshop.constant.PricingSource.RETAIL, itemCaptor.getValue().getPricingSource());
+    }
+
+    @Test
+    void rejectsChangedExpectedPriceBeforeCreatingAnOrderOrReservingStock() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, "10.00");
+        stubProduct(product, 5);
+        Map<String, Object> request = request(productId, null, 1);
+        request.put("expected_unit_price", 9.99);
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.createDirectOrder(request, null, "203.0.113.15", "price-session"));
+
+        assertEquals(ErrorCode.PRICE_CHANGED, exception.getCode());
+        assertEquals(new BigDecimal("10.00"), exception.getParams().get("current_unit_price"));
+        verify(orderRepository, never()).save(any(Order.class));
+        verify(manualStockService, never()).reserveOrThrow(any(), any(), any(Integer.class));
     }
 
     @Test
@@ -282,8 +297,8 @@ class OrderServiceImplTest {
         assertEquals(OrderStatus.PENDING, saved.getStatus());
         assertEquals("alipay", saved.getPaymentMethod());
         assertEquals(new BigDecimal("12.50"), saved.getActualAmount());
-        assertEquals(levelId, saved.getUserLevelId());
-        assertEquals("普通会员", saved.getUserLevelName());
+        assertEquals(levelId, saved.getUserLevelIdSnapshot());
+        assertEquals("普通会员", saved.getUserLevelNameSnapshot());
         assertEquals("https://pay.example/1", ((Map<?, ?>) result.get("payment")).get("payment_url"));
         verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
         verify(autoFulfillmentService, never()).trigger(any());

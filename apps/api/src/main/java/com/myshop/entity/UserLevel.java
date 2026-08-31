@@ -28,13 +28,19 @@ public class UserLevel extends BaseEntity {
     @Column(name = "pricing_type", nullable = false, length = 32)
     private PricingType pricingType = PricingType.RETAIL;
 
-    /** Percentage points: 10.0000 means a 10% markup. */
-    @Column(name = "markup_rate", nullable = false, precision = 7, scale = 4)
-    private BigDecimal markupRate = BigDecimal.ZERO.setScale(4);
+    /** Percentage points: 10.0000 means a 10% markup; RETAIL is null. */
+    @Column(name = "markup_rate", precision = 7, scale = 4)
+    private BigDecimal markupRate;
 
     @Column(nullable = false)
     private boolean enabled = true;
 
     @Column(name = "is_default", nullable = false)
     private boolean isDefault = false;
+
+    @Column(name = "sort_order", nullable = false)
+    private int sortOrder = 0;
+
+    @Column(length = 500)
+    private String remark;
 }

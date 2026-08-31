@@ -16,10 +16,10 @@ import {
 import { useLocale } from "@/lib/context"
 import { validateCardContentColumns } from "@/lib/card-content"
 import { adminCardKeyApi, requestOrThrow } from "@/services/api"
-import type { ProductDetail } from "@/types"
+import type { AdminProductDetail } from "@/types"
 
 interface CardKeyImportDialogProps {
-  product: ProductDetail | null
+  product: AdminProductDetail | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onImported: () => void | Promise<void>

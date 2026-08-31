@@ -51,18 +51,18 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
 
     const min = Number.parseFloat(priceMin)
     const max = Number.parseFloat(priceMax)
-    if (!Number.isNaN(min)) result = result.filter((p) => p.base_price >= min)
-    if (!Number.isNaN(max)) result = result.filter((p) => p.base_price <= max)
+    if (!Number.isNaN(min)) result = result.filter((p) => p.price >= min)
+    if (!Number.isNaN(max)) result = result.filter((p) => p.price <= max)
 
     switch (sortBy) {
       case "hot":
         result.sort((a, b) => ((b.sales_count ?? 0) + (b.initial_sales ?? 0)) - ((a.sales_count ?? 0) + (a.initial_sales ?? 0)))
         break
       case "price_low":
-        result.sort((a, b) => a.base_price - b.base_price)
+        result.sort((a, b) => a.price - b.price)
         break
       case "price_high":
-        result.sort((a, b) => b.base_price - a.base_price)
+        result.sort((a, b) => b.price - a.price)
         break
       case "new":
         result.sort(

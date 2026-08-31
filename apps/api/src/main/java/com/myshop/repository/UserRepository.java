@@ -5,6 +5,7 @@ import com.myshop.entity.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
@@ -32,6 +33,14 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     boolean existsByRoleAndUserNo(UserRole role, Long userNo);
 
     long countByRole(UserRole role);
+
+    long countByUserLevelId(UUID userLevelId);
+
+    @Modifying
+    @Query("UPDATE User u SET u.userLevelId = :targetLevelId "
+            + "WHERE u.userLevelId = :sourceLevelId AND u.role = com.myshop.constant.UserRole.USER")
+    int moveUsersToLevel(@Param("sourceLevelId") UUID sourceLevelId,
+                         @Param("targetLevelId") UUID targetLevelId);
 
     @Query("SELECT MAX(u.userNo) FROM User u WHERE u.role = :role")
     Long findMaxUserNoByRole(@Param("role") UserRole role);
@@ -76,6 +85,39 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Page<User> findAdminUsers(@Param("keyword") String keyword,
                                @Param("isDeleted") Integer isDeleted,
                                Pageable pageable);
+
+    @Query(value = """
+            SELECT u.*
+            FROM users u
+            WHERE u.role = 'USER'
+              AND (CAST(:isDeleted AS integer) IS NULL OR u.is_deleted = CAST(:isDeleted AS integer))
+              AND u.user_level_id = :userLevelId
+              AND (
+                  CAST(:keyword AS text) IS NULL
+                  OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
+              )
+            ORDER BY u.created_at DESC, u.id DESC
+            """,
+            countQuery = """
+            SELECT COUNT(*)
+            FROM users u
+            WHERE u.role = 'USER'
+              AND (CAST(:isDeleted AS integer) IS NULL OR u.is_deleted = CAST(:isDeleted AS integer))
+              AND u.user_level_id = :userLevelId
+              AND (
+                  CAST(:keyword AS text) IS NULL
+                  OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
+              )
+            """,
+            nativeQuery = true)
+    Page<User> findAdminUsersByLevel(@Param("keyword") String keyword,
+                                     @Param("isDeleted") Integer isDeleted,
+                                     @Param("userLevelId") UUID userLevelId,
+                                     Pageable pageable);
 
     @Query(value = """
             SELECT u.*

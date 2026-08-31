@@ -19,6 +19,15 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, UUID> {
             "AND (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED)")
     int sumQuantityByProductId(@Param("productId") UUID productId);
 
+    @Query("SELECT oi.productId AS productId, COALESCE(SUM(oi.quantity), 0) AS quantity "
+            + "FROM OrderItem oi JOIN Order o ON oi.orderId = o.id "
+            + "WHERE oi.productId IN :productIds "
+            + "AND o.orderType = com.myshop.constant.OrderType.NORMAL "
+            + "AND (o.status = com.myshop.constant.OrderStatus.PAID "
+            + "OR o.status = com.myshop.constant.OrderStatus.DELIVERED) "
+            + "GROUP BY oi.productId")
+    List<ProductSalesProjection> sumQuantityByProductIds(@Param("productIds") List<UUID> productIds);
+
     /** One PostgreSQL aggregate supplies the recent best sellers. */
     @Query(value = """
             SELECT oi.product_id,

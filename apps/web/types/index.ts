@@ -52,6 +52,8 @@ export interface UserProfile {
   email: string | null
   role: 'USER' | 'ADMIN' | 'SUPER_ADMIN'
   user_no: number | null
+  user_level_id: string | null
+  user_level_name: string | null
   balance: number
   unlimited: boolean
   created_at: string
@@ -71,6 +73,7 @@ export interface ProductSpec {
   id: string
   name: string
   price: number
+  retail_price: number
   stock_available: number | null
   unlimited?: boolean
   stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
@@ -80,10 +83,8 @@ export interface ProductSpec {
   sort_order?: number
 }
 
-export interface WholesaleRule {
-  min_quantity: number
-  unit_price: number
-}
+export type PricingType = "RETAIL" | "COST_MARKUP"
+export type PricingSource = "RETAIL" | "LEVEL_MARKUP" | "LEVEL_OVERRIDE"
 
 export interface CustomerInputField {
   id: string
@@ -102,7 +103,8 @@ export interface ProductCard {
   title: string
   description?: string
   cover_url?: string
-  base_price: number
+  price: number
+  retail_price: number
   category_id: string
   stock_available: number | null
   unlimited?: boolean
@@ -122,11 +124,95 @@ export interface ProductDetail extends ProductCard {
   detail_md?: string
   specs: ProductSpec[]
   spec_enabled?: boolean
-  wholesale_enabled: boolean
-  wholesale_rules: WholesaleRule[]
   low_stock_threshold?: number
   category_name?: string
   updated_at?: string
+}
+
+export interface AdminProductSpec {
+  id: string
+  name: string
+  cost_price: number
+  retail_price: number
+  margin: number
+  margin_rate: number | null
+  is_visible: boolean
+  is_deleted: 0 | 1
+  sort_order: number
+  stock_available: number | null
+  unlimited: boolean
+  manual_stock: number | null
+  card_key_count: number
+}
+
+export interface AdminPriceOverride {
+  id: string
+  user_level_id: string
+  spec_id: string | null
+  price: number
+}
+
+export interface AdminPricingMatrixRow {
+  user_level_id: string
+  user_level_name: string
+  pricing_type: PricingType
+  markup_rate: number | null
+  spec_id: string | null
+  default_price: number
+  override_price: number | null
+  final_price: number
+  pricing_source: PricingSource
+  retail_capped: boolean
+  below_cost: boolean
+}
+
+export interface AdminPricingPreview {
+  pricing_matrix: AdminPricingMatrixRow[]
+  warnings: string[]
+}
+
+export interface AdminProductDetail {
+  id: string
+  title: string
+  description: string | null
+  detail_md: string | null
+  cover_url: string | null
+  cost_price: number | null
+  retail_price: number
+  category_id: string
+  category_name: string | null
+  stock_available: number | null
+  unlimited: boolean
+  has_specs: boolean
+  delivery_type: "AUTO" | "MANUAL"
+  customer_input_fields: CustomerInputField[]
+  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  sales_count: number
+  initial_sales: number
+  spec_enabled: boolean
+  is_enabled: boolean
+  sort_order: number
+  low_stock_threshold: number
+  specs: AdminProductSpec[]
+  overrides: AdminPriceOverride[]
+  pricing_matrix: AdminPricingMatrixRow[]
+  warnings: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface UserLevel {
+  id: string
+  name: string
+  pricing_type: PricingType
+  markup_rate: number | null
+  is_default: boolean
+  enabled: boolean
+  sort_order: number
+  remark: string | null
+  user_count: number
+  created_at: string
+  updated_at: string
 }
 
 // ============================================================
@@ -298,6 +384,7 @@ export interface CreateOrderRequest {
   payment_method: string
   idempotency_key: string
   idempotency_fingerprint?: string
+  expected_unit_price?: number
   device?: string
   customer_inputs?: { id: string; value: string }[]
 }
@@ -469,6 +556,8 @@ export interface AdminUserItem {
   user_no: number
   username: string
   email: string
+  user_level_id: string | null
+  user_level_name: string | null
   balance: number
   order_count: number
   total_spent: number

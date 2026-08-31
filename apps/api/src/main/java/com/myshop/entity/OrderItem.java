@@ -44,11 +44,11 @@ public class OrderItem extends BaseEntity {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal unitPrice;
 
-    @Column(name = "cost_price", nullable = false, precision = 10, scale = 2)
-    private BigDecimal costPrice;
+    @Column(name = "cost_price_snapshot", nullable = false, precision = 10, scale = 2)
+    private BigDecimal costPriceSnapshot;
 
-    @Column(name = "retail_price", nullable = false, precision = 10, scale = 2)
-    private BigDecimal retailPrice;
+    @Column(name = "retail_price_snapshot", nullable = false, precision = 10, scale = 2)
+    private BigDecimal retailPriceSnapshot;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "pricing_source", nullable = false, length = 32)
@@ -80,4 +80,12 @@ public class OrderItem extends BaseEntity {
 
     @Column(name = "manual_stock_reserved", nullable = false)
     private int manualStockReserved = 0;
+
+    public BigDecimal getCostPriceSnapshot() { return costPriceSnapshot; }
+
+    public void setCostPriceSnapshot(BigDecimal value) { this.costPriceSnapshot = value; }
+
+    public BigDecimal getRetailPriceSnapshot() { return retailPriceSnapshot; }
+
+    public void setRetailPriceSnapshot(BigDecimal value) { this.retailPriceSnapshot = value; }
 }

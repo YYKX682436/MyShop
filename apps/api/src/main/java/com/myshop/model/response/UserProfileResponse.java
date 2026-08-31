@@ -1,6 +1,7 @@
 package com.myshop.model.response;
 
 import com.myshop.entity.User;
+import com.myshop.entity.UserLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -18,18 +19,26 @@ public class UserProfileResponse {
     private String email;
     private String role;
     private Long userNo;
+    private UUID userLevelId;
+    private String userLevelName;
     private BigDecimal balance;
     /** True for both administrator roles; the UI renders the balance as ∞. */
     private boolean unlimited;
     private LocalDateTime createdAt;
 
     public static UserProfileResponse from(User user) {
+        return from(user, null);
+    }
+
+    public static UserProfileResponse from(User user, UserLevel level) {
         UserProfileResponse r = new UserProfileResponse();
         r.setId(user.getId());
         r.setUsername(user.getUsername());
         r.setEmail(user.getEmail());
         r.setRole(user.getRole().name());
         r.setUserNo(user.getUserNo());
+        r.setUserLevelId(user.getUserLevelId());
+        r.setUserLevelName(level == null ? null : level.getName());
         r.setBalance(user.getBalance());
         r.setUnlimited(user.getRole() == com.myshop.constant.UserRole.ADMIN
                 || user.getRole() == com.myshop.constant.UserRole.SUPER_ADMIN);

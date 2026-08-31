@@ -10,5 +10,11 @@ public interface ProductSpecRepository extends JpaRepository<ProductSpec, UUID> 
 
     List<ProductSpec> findByProductIdAndIsDeletedOrderBySortOrderAsc(UUID productId, int isDeleted);
 
+    List<ProductSpec> findByProductIdInAndIsDeletedAndVisibleOrderByProductIdAscSortOrderAsc(
+            List<UUID> productIds, int isDeleted, boolean visible);
+
+    List<ProductSpec> findByProductIdInAndIsDeletedOrderByProductIdAscSortOrderAsc(
+            List<UUID> productIds, int isDeleted);
+
     boolean existsByProductIdAndNameAndIsDeleted(UUID productId, String name, int isDeleted);
 }

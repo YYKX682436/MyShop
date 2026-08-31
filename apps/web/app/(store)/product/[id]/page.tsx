@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation"
 import { Package } from "lucide-react"
-import { getProductDetail, getPaymentChannels } from "@/services/api-server"
+import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels } from "@/services/api-server"
 import { ProductActions } from "./product-actions"
 import { ProductBreadcrumb } from "./product-breadcrumb"
 import { ProductDescription } from "./product-description"
@@ -11,7 +11,7 @@ import type { PaymentChannelItem } from "@/types"
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
   try {
-    const product = await getProductDetail(id)
+    const product = await getAnonymousProductDetail(id)
     return {
       title: product.title,
       description: product.description || product.title,
@@ -39,7 +39,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   const { id } = await params
 
   const [product, channels] = await Promise.all([
-    getProductDetail(id).catch(() => null),
+    getViewerProductDetail(id).catch(() => null),
     getPaymentChannels().catch(() => [] as PaymentChannelItem[]),
   ])
 
@@ -68,7 +68,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     ...(product.cover_url ? { image: product.cover_url } : {}),
     offers: {
       "@type": "Offer",
-      price: product.base_price,
+      price: product.retail_price,
       priceCurrency: "CNY",
       availability: inStock
         ? "https://schema.org/InStock"

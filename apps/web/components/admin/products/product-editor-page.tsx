@@ -9,13 +9,13 @@ import { AdminPage, PageHeader } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
-import type { Category, ProductDetail } from "@/types"
+import type { AdminProductDetail, Category } from "@/types"
 
 export function ProductEditorPage({ productId }: { productId?: string }) {
   const { t } = useLocale()
   const router = useRouter()
   const [categories, setCategories] = useState<Category[]>([])
-  const [product, setProduct] = useState<ProductDetail | null>(null)
+  const [product, setProduct] = useState<AdminProductDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 

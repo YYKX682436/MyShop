@@ -33,7 +33,7 @@ import { useLocale } from "@/lib/context"
 import { validateCardContentColumns } from "@/lib/card-content"
 import { formatDateTime, stripInvisible } from "@/lib/utils"
 import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
-import type { CardImportBatch, CardKeyListItem, CardKeyStockSummary, ProductCard, ProductSpec } from "@/types"
+import type { AdminProductDetail, AdminProductSpec, CardImportBatch, CardKeyListItem, CardKeyStockSummary } from "@/types"
 
 const PAGE_SIZE = 20
 
@@ -47,7 +47,7 @@ const cardStatusTone = {
 export default function AdminCardKeysPage() {
   const { t, locale } = useLocale()
   const [tab, setTab] = useState<"stock" | "import">("stock")
-  const [products, setProducts] = useState<ProductCard[]>([])
+  const [products, setProducts] = useState<AdminProductDetail[]>([])
   const [productsError, setProductsError] = useState(false)
   const [stockList, setStockList] = useState<CardKeyStockSummary[]>([])
   const [stockLoading, setStockLoading] = useState(true)
@@ -62,7 +62,7 @@ export default function AdminCardKeysPage() {
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importProductId, setImportProductId] = useState("")
   const [importSpecId, setImportSpecId] = useState("")
-  const [importSpecs, setImportSpecs] = useState<ProductSpec[]>([])
+  const [importSpecs, setImportSpecs] = useState<AdminProductSpec[]>([])
   const [loadingSpecs, setLoadingSpecs] = useState(false)
   const [importColumns, setImportColumns] = useState([""])
   const [checkDuplicate, setCheckDuplicate] = useState(true)

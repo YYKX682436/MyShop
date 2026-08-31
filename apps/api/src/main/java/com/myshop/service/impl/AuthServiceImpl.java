@@ -117,7 +117,7 @@ public class AuthServiceImpl implements AuthService {
         userRepository.saveAndFlush(user);
 
         String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());
-        return new AuthResult(token, UserProfileResponse.from(user));
+        return new AuthResult(token, UserProfileResponse.from(user, defaultLevel));
     }
 
     /** 连续登录失败上限 */
@@ -185,8 +185,10 @@ public class AuthServiceImpl implements AuthService {
             userRepository.save(user);
         }
 
+        UserLevel currentLevel = user.getRole() == UserRole.USER && user.getUserLevelId() != null
+                ? userLevelRepository.findById(user.getUserLevelId()).orElse(null) : null;
         String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());
-        return new AuthResult(token, UserProfileResponse.from(user));
+        return new AuthResult(token, UserProfileResponse.from(user, currentLevel));
     }
 
     @Override

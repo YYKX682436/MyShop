@@ -37,7 +37,7 @@ public class Product extends BaseEntity {
     @Column(name = "retail_price", nullable = false, precision = 10, scale = 2)
     private BigDecimal retailPrice;
 
-    @Column(name = "cost_price", nullable = false, precision = 10, scale = 2)
+    @Column(name = "cost_price", precision = 10, scale = 2)
     private BigDecimal costPrice;
 
     @Column(nullable = false)

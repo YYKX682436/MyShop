@@ -85,7 +85,7 @@ export function ProductCard({ product }: ProductCardProps) {
         <div className="mt-auto flex items-center justify-between border-t border-border/40 pt-2">
           <div className="flex items-baseline gap-0.5">
             <span className="text-xl font-extrabold tracking-tight text-primary">
-              {formatYuan(product.base_price)}
+              {formatYuan(product.price)}
             </span>
             {product.has_specs && (
               <span className="ml-0.5 text-xs text-muted-foreground">

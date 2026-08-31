@@ -1,4 +1,4 @@
--- V1 already owns orders.order_type. Keep that column available for V7 to
--- normalize into the current NORMAL / ADMIN_PICKUP model; this migration only
--- removes the retired cart table without deleting orders or order items.
+-- The V1 table and column are historical migration state. Remove them from
+-- the current schema without deleting any orders or order items.
 DROP TABLE IF EXISTS cart_items;
+ALTER TABLE orders DROP COLUMN IF EXISTS order_type;

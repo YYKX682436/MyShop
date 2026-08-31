@@ -12,37 +12,8 @@ ALTER TABLE users
         OR (role IN ('ADMIN', 'SUPER_ADMIN') AND user_no IS NULL)
     );
 
--- V1 already created this column. Older data may use the former direct/cart
--- source values, so normalize those values before narrowing the type. Unknown
--- values fail closed instead of being silently reclassified.
-DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM orders
-        WHERE order_type IS NULL
-           OR upper(btrim(order_type)) NOT IN ('NORMAL', 'DIRECT', 'CART', 'ADMIN_PICKUP')
-    ) THEN
-        RAISE EXCEPTION
-            'Cannot normalize orders.order_type: unsupported historical value exists';
-    END IF;
-END
-$$;
-
 ALTER TABLE orders
-    DROP CONSTRAINT IF EXISTS orders_order_type_check;
-
-UPDATE orders
-SET order_type = CASE
-    WHEN upper(btrim(order_type)) = 'ADMIN_PICKUP' THEN 'ADMIN_PICKUP'
-    ELSE 'NORMAL'
-END;
-
-ALTER TABLE orders
-    ALTER COLUMN order_type TYPE varchar(32)
-        USING order_type::varchar(32),
-    ALTER COLUMN order_type SET DEFAULT 'NORMAL',
-    ALTER COLUMN order_type SET NOT NULL;
+    ADD COLUMN order_type varchar(32) NOT NULL DEFAULT 'NORMAL';
 
 ALTER TABLE orders
     ADD CONSTRAINT orders_order_type_check CHECK (order_type IN ('NORMAL', 'ADMIN_PICKUP'));
@@ -51,6 +22,5 @@ CREATE UNIQUE INDEX uq_users_single_super_admin
     ON users (role)
     WHERE role = 'SUPER_ADMIN';
 
-DROP INDEX IF EXISTS idx_orders_type_created;
 CREATE INDEX idx_orders_type_created
     ON orders (order_type, created_at DESC);

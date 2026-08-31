@@ -6,12 +6,14 @@ import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
+import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.ChangePasswordRequest;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.UserService;
 import com.myshop.service.ManualStockService;
 import lombok.RequiredArgsConstructor;
@@ -36,12 +38,15 @@ public class UserServiceImpl implements UserService {
     private final OrderItemRepository orderItemRepository;
     private final PasswordEncoder passwordEncoder;
     private final ManualStockService manualStockService;
+    private final UserLevelRepository userLevelRepository;
 
     @Override
     public UserProfileResponse getProfile(UUID userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
-        return UserProfileResponse.from(user);
+        UserLevel level = user.getUserLevelId() == null ? null
+                : userLevelRepository.findById(user.getUserLevelId()).orElse(null);
+        return UserProfileResponse.from(user, level);
     }
 
     @Override

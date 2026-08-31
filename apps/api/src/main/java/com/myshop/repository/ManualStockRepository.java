@@ -7,9 +7,14 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface ManualStockRepository extends JpaRepository<ManualStock, UUID> {
+
+    @Query(value = "SELECT product_id, spec_id, available_quantity FROM manual_stocks "
+            + "WHERE product_id IN (:productIds)", nativeQuery = true)
+    List<Object[]> findAvailableByProductIds(@Param("productIds") List<UUID> productIds);
 
     @Query("SELECT m FROM ManualStock m WHERE m.productId = :productId "
             + "AND ((:specId IS NULL AND m.specId IS NULL) OR m.specId = :specId)")

@@ -6,12 +6,15 @@ import com.myshop.model.request.AdminAdjustBalanceRequest;
 import com.myshop.model.request.AdminResetPasswordRequest;
 import com.myshop.model.request.AdminToggleUserStatusRequest;
 import com.myshop.model.request.AdminUpdateUserProfileRequest;
+import com.myshop.model.request.UserLevelAssignmentRequest;
 import com.myshop.model.response.AdminOperationLogResponse;
 import com.myshop.model.response.AdminUserDetailResponse;
 import com.myshop.model.response.AdminUserListResponse;
 import com.myshop.model.response.AdminUserOrderResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
+import com.myshop.model.response.UserLevelResponse;
 import com.myshop.service.AdminUserService;
+import com.myshop.service.UserLevelService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,14 +34,16 @@ import java.util.UUID;
 public class AdminUserController {
 
     private final AdminUserService adminUserService;
+    private final UserLevelService userLevelService;
 
     @GetMapping
     public ApiResponse<PageResult<AdminUserListResponse>> listUsers(
             @RequestParam(required = false) String keyword,
             @RequestParam(value = "is_deleted", required = false) Integer isDeleted,
+            @RequestParam(value = "user_level_id", required = false) UUID userLevelId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
-        return ApiResponse.success(adminUserService.listUsers(keyword, isDeleted, page, pageSize));
+        return ApiResponse.success(adminUserService.listUsers(keyword, isDeleted, userLevelId, page, pageSize));
     }
 
     @GetMapping("/{id}")
@@ -98,5 +103,12 @@ public class AdminUserController {
             @Valid @RequestBody AdminResetPasswordRequest request) {
         adminUserService.resetPassword(id, request);
         return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/level")
+    public ApiResponse<UserLevelResponse> changeLevel(
+            @PathVariable UUID id,
+            @RequestBody UserLevelAssignmentRequest request) {
+        return ApiResponse.success(userLevelService.assignUser(id, request));
     }
 }

@@ -706,7 +706,7 @@ class PostgresDeliveryIntegrationTest {
         UUID itemId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into order_items (id, created_at, updated_at, order_id, product_id,
-                    product_title, quantity, unit_price, cost_price, retail_price, pricing_source, subtotal, delivery_type,
+                    product_title, quantity, unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source, subtotal, delivery_type,
                     stock_mode, fulfillment_status, manual_stock_reserved)
                 values (?, current_timestamp, current_timestamp, ?, ?, 'Integration product', ?, 10.00, 10.00, 10.00,
                     'RETAIL', ?, ?, ?, 'PENDING', ?)

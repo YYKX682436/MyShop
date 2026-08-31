@@ -7,7 +7,9 @@ import type {
   OrderStatus,
   ProductCard,
   ProductDetail,
-  ProductSpec,
+  AdminProductDetail,
+  AdminProductSpec,
+  AdminPricingPreview,
   Category,
   CreateOrderRequest,
   CreateOrderResult,
@@ -32,7 +34,7 @@ import type {
   PaymentProviderMetadata,
   OperationLog,
   RiskConfig,
-  WholesaleRule,
+  UserLevel,
   CaptchaResult,
   AuthResult,
   AdministratorItem,
@@ -415,42 +417,29 @@ export const adminDashboardApi = {
 export const adminProductApi = {
   getList: (params: { page?: number; page_size?: number; category_id?: string; is_enabled?: number; keyword?: string }) => {
     const qs = buildQuery(params)
-    return request<PaginatedData<ProductDetail>>(`/admin/products?${qs}`)
+    return request<PaginatedData<AdminProductDetail>>(`/admin/products?${qs}`)
   },
   getDetail: (id: string) =>
-    request<ProductDetail>(`/admin/products/${id}`),
-  create: (data: {
-    title: string; description?: string; detail_md?: string; cover_url?: string;
-    base_price: number; category_id: string; low_stock_threshold?: number;
-    wholesale_enabled?: boolean; is_enabled?: boolean; sort_order?: number;
-    delivery_type?: "AUTO" | "MANUAL"; customer_input_fields?: { id?: string; label: string }[];
-    stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"; manual_stock?: number
-  }) =>
-    request<ProductDetail>("/admin/products", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: Partial<{
-    title: string; description: string; detail_md: string; cover_url: string;
-    base_price: number; category_id: string; low_stock_threshold: number;
-    wholesale_enabled: boolean; is_enabled: boolean; sort_order: number;
-    delivery_type: "AUTO" | "MANUAL"; customer_input_fields?: { id?: string; label: string }[];
-    stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"; manual_stock: number
-  }>) =>
-    request<null>(`/admin/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    request<AdminProductDetail>(`/admin/products/${id}`),
+  create: (data: AdminProductUpsertPayload) =>
+    request<AdminProductDetail>("/admin/products", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: AdminProductUpsertPayload) =>
+    request<AdminProductDetail>(`/admin/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  setStatus: (id: string, enabled: boolean) =>
+    request<AdminProductDetail>(`/admin/products/${id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
   delete: (id: string) =>
     request<null>(`/admin/products/${id}`, { method: "DELETE" }),
   // Specs
   getSpecs: (productId: string) =>
-    request<ProductSpec[]>(`/admin/products/${productId}/specs`),
-  addSpec: (productId: string, data: { name: string; price: number; is_visible?: boolean; sort_order?: number; manual_stock?: number }) =>
-    request<ProductSpec>(`/admin/products/${productId}/specs`, { method: "POST", body: JSON.stringify(data) }),
-  updateSpec: (productId: string, specId: string, data: Partial<{ name: string; price: number; is_visible: boolean; sort_order: number; manual_stock: number }>) =>
-    request<null>(`/admin/products/${productId}/specs/${specId}`, { method: "PUT", body: JSON.stringify(data) }),
-  deleteSpec: (productId: string, specId: string) =>
-    request<null>(`/admin/products/${productId}/specs/${specId}`, { method: "DELETE" }),
-  // Wholesale rules
-  getWholesaleRules: (productId: string) =>
-    request<WholesaleRule[]>(`/admin/products/${productId}/wholesale-rules`),
-  setWholesaleRules: (productId: string, data: { spec_id?: string | null; rules: { min_quantity: number; unit_price: number }[] }) =>
-    request<null>(`/admin/products/${productId}/wholesale-rules`, { method: "POST", body: JSON.stringify(data) }),
+    request<AdminProductSpec[]>(`/admin/products/${productId}/specs`),
+  previewPricing: (data: AdminProductUpsertPayload) =>
+    request<AdminPricingPreview>("/admin/products/pricing-preview", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   // Image upload
   uploadImage: (file: File) => {
     const formData = new FormData()
@@ -528,12 +517,45 @@ export const adminOrderApi = {
     }),
 }
 
+export interface AdminProductUpsertPayload {
+  title: string
+  description?: string
+  detail_md?: string
+  cover_url?: string
+  cost_price: number | null
+  retail_price?: number
+  category_id: string
+  low_stock_threshold?: number
+  spec_enabled: boolean
+  is_enabled: boolean
+  initial_sales?: number
+  sort_order?: number
+  delivery_type: "AUTO" | "MANUAL"
+  customer_input_fields?: { id?: string; label: string }[]
+  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  manual_stock?: number
+  specs: {
+    id?: string
+    name: string
+    cost_price: number
+    retail_price: number
+    visible: boolean
+    sort_order: number
+    manual_stock?: number
+  }[]
+  overrides: {
+    user_level_id: string
+    spec_id: string | null
+    price: number
+  }[]
+}
+
 // ============================================================
 // Admin User
 // ============================================================
 
 export const adminUserApi = {
-  getList: (params: { page?: number; page_size?: number; keyword?: string; is_deleted?: 0 | 1 }) => {
+  getList: (params: { page?: number; page_size?: number; keyword?: string; is_deleted?: 0 | 1; user_level_id?: string }) => {
     const qs = buildQuery(params)
     return request<PaginatedData<AdminUserItem>>(`/admin/users?${qs}`)
   },
@@ -557,6 +579,11 @@ export const adminUserApi = {
     request<BalanceTransaction>(`/admin/users/${id}/balance`, { method: "POST", body: JSON.stringify(data) }),
   toggleStatus: (id: string, isDeleted: 0 | 1) =>
     request<null>(`/admin/users/${id}/toggle`, { method: "POST", body: JSON.stringify({ is_deleted: isDeleted }) }),
+  changeLevel: (id: string, userLevelId: string) =>
+    request<UserLevel>(`/admin/users/${id}/level`, {
+      method: "POST",
+      body: JSON.stringify({ user_level_id: userLevelId }),
+    }),
   resetPassword: (id: string, newPassword: string) =>
     request<null>(`/admin/users/${id}/reset-password`, {
       method: "POST",
@@ -594,6 +621,41 @@ export const adminConfigApi = {
     request<UserNumberConfig>("/admin/site-config/user-numbering"),
   updateUserNumbering: (data: Pick<UserNumberConfig, "start_user_no" | "next_user_no">) =>
     request<null>("/admin/site-config/user-numbering", { method: "PUT", body: JSON.stringify(data) }),
+}
+
+// ============================================================
+// Admin User Levels
+// ============================================================
+
+export interface UserLevelUpsertPayload {
+  name: string
+  pricing_type: "RETAIL" | "COST_MARKUP"
+  markup_rate?: number | null
+  is_default?: boolean
+  enabled?: boolean
+  sort_order?: number
+  remark?: string | null
+}
+
+export const adminUserLevelApi = {
+  getList: () => request<UserLevel[]>("/admin/user-levels"),
+  create: (data: UserLevelUpsertPayload) =>
+    request<UserLevel>("/admin/user-levels", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: UserLevelUpsertPayload) =>
+    request<UserLevel>(`/admin/user-levels/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  setStatus: (id: string, enabled: boolean) =>
+    request<UserLevel>(`/admin/user-levels/${id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+  setDefault: (id: string) =>
+    request<UserLevel>(`/admin/user-levels/${id}/default`, { method: "POST" }),
+  delete: (id: string) => request<null>(`/admin/user-levels/${id}`, { method: "DELETE" }),
+  migrate: (id: string, targetLevelId: string) =>
+    request<number>(`/admin/user-levels/${id}/migrate`, {
+      method: "POST",
+      body: JSON.stringify({ target_level_id: targetLevelId }),
+    }),
 }
 
 // ============================================================
@@ -688,6 +750,7 @@ const ERROR_CODE_I18N: Record<number, string> = {
   40004: "error.orderOutOfStock",
   40005: "error.orderProcessing",
   40006: "error.purchaseLimitPerUser",
+  40007: "error.priceChanged",
   // Payment
   50001: "error.channelUnavailable",
 }

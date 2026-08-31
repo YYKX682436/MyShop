@@ -47,6 +47,11 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
 
     long countByProductIdAndSpecIdIsNullAndStatus(UUID productId, CardKeyStatus status);
 
+    @Query(value = "SELECT product_id, spec_id, COUNT(*) "
+            + "FROM card_keys WHERE product_id IN (:productIds) AND status = 'AVAILABLE' "
+            + "GROUP BY product_id, spec_id", nativeQuery = true)
+    List<Object[]> countAvailableByProductIds(@Param("productIds") List<UUID> productIds);
+
     List<CardKey> findByOrderIdOrderByCreatedAtAsc(UUID orderId);
 
     @Query(value = "SELECT content_fingerprint FROM card_keys WHERE product_id = :productId "

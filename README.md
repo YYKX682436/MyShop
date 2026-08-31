@@ -7,13 +7,14 @@ MyShop 是 Phase 1 的数字商品（卡密）商店。它提供商品详情、�
 ## Phase 1 范围
 
 - 前台：商品/规格、游客或会员立即购买、支付宝/微信支付、订单查询和卡密展示/导出。
-- 后台：商品、分类、卡密池、订单、用户、站点配置、操作日志和支付渠道管理。
+- 后台：商品、分类、卡密池、订单、用户、用户等级、站点配置、操作日志和支付渠道管理。
+- 定价：零售价/成本价、等级成本加价、等级特殊价、公开个性化报价，以及订单价格快照。
 - 支付：可扩展 `PaymentProvider` SPI；本阶段内置 Epay，且只开放支付宝和微信支付。
 - 数据：PostgreSQL + Flyway 版本化迁移；非测试环境 `ddl-auto=validate`，不执行 `data.sql`。
 - 安全：BCrypt、只在 HttpOnly Cookie 中传输 JWT、CSRF 双提交保护、固定 Caddy 代理 IP 解析，以及游客订单随机凭证的 hash + 受控可恢复值。
 - 交付：支付回调提交 `PAID` 后由服务端直接触发独立 fulfillment 事务；按订单行逐池 `FOR UPDATE SKIP LOCKED` 锁定，先检查全部库存，再统一修改，任何一个池缺货都会回滚整笔发货并由 1 分钟补偿任务重试。
 
-商店统一使用人民币（CNY）计价。明确不在 Phase 1：优惠券/自定义字段/会员等级、Kafka/RabbitMQ/Elasticsearch/Kubernetes、Redis 默认限流、微服务拆分和生产部署。
+商店统一使用人民币（CNY）计价。明确不在 Phase 1：优惠券、Kafka/RabbitMQ/Elasticsearch/Kubernetes、Redis 默认限流和微服务拆分。
 
 ## 目录
 

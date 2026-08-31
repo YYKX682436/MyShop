@@ -10,6 +10,7 @@ import com.myshop.entity.OperationLog;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
+import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
 import com.myshop.model.request.AdminResetPasswordRequest;
@@ -25,6 +26,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserOrderMetricsProjection;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.AdminUserService;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OperationLogService;
@@ -34,6 +36,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -48,7 +51,6 @@ import java.util.stream.Collectors;
 import java.util.regex.Pattern;
 
 @Service
-@RequiredArgsConstructor
 public class AdminUserServiceImpl implements AdminUserService {
 
     private static final int MAX_PAGE_SIZE = 100;
@@ -63,20 +65,65 @@ public class AdminUserServiceImpl implements AdminUserService {
     private final OperationLogService operationLogService;
     private final OperationLogRepository operationLogRepository;
     private final PasswordEncoder passwordEncoder;
+    private final UserLevelRepository userLevelRepository;
+
+    @Autowired
+    public AdminUserServiceImpl(UserRepository userRepository, OrderRepository orderRepository,
+                                OrderItemRepository orderItemRepository,
+                                BalanceTransactionService balanceTransactionService,
+                                OperationLogService operationLogService,
+                                OperationLogRepository operationLogRepository,
+                                PasswordEncoder passwordEncoder,
+                                UserLevelRepository userLevelRepository) {
+        this.userRepository = userRepository;
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.balanceTransactionService = balanceTransactionService;
+        this.operationLogService = operationLogService;
+        this.operationLogRepository = operationLogRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.userLevelRepository = userLevelRepository;
+    }
+
+    /** Test-friendly constructor retained for the pre-level admin service tests. */
+    public AdminUserServiceImpl(UserRepository userRepository, OrderRepository orderRepository,
+                                OrderItemRepository orderItemRepository,
+                                BalanceTransactionService balanceTransactionService,
+                                OperationLogService operationLogService,
+                                OperationLogRepository operationLogRepository,
+                                PasswordEncoder passwordEncoder) {
+        this(userRepository, orderRepository, orderItemRepository, balanceTransactionService,
+                operationLogService, operationLogRepository, passwordEncoder, null);
+    }
 
     @Override
     @Transactional(readOnly = true)
     public PageResult<AdminUserListResponse> listUsers(String keyword, Integer isDeleted, int page, int pageSize) {
+        return listUsersInternal(keyword, isDeleted, null, page, pageSize);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<AdminUserListResponse> listUsers(String keyword, Integer isDeleted, UUID userLevelId,
+                                                       int page, int pageSize) {
+        return listUsersInternal(keyword, isDeleted, userLevelId, page, pageSize);
+    }
+
+    private PageResult<AdminUserListResponse> listUsersInternal(String keyword, Integer isDeleted,
+                                                                UUID userLevelId, int page, int pageSize) {
         requirePage(page, pageSize);
         if (isDeleted != null && isDeleted != 0 && isDeleted != 1) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "用户状态只能为 0 或 1");
         }
         String normalizedKeyword = keyword == null || keyword.isBlank() ? null : keyword.trim();
-        Page<User> userPage = userRepository.findAdminUsers(
-                normalizedKeyword, isDeleted, PageRequest.of(page - 1, pageSize));
+        PageRequest pageable = PageRequest.of(page - 1, pageSize);
+        Page<User> userPage = userLevelId == null
+                ? userRepository.findAdminUsers(normalizedKeyword, isDeleted, pageable)
+                : userRepository.findAdminUsersByLevel(normalizedKeyword, isDeleted, userLevelId, pageable);
         Map<UUID, UserOrderMetricsProjection> metricsByUserId = loadOrderMetrics(userPage.getContent());
+        Map<UUID, UserLevel> levelsById = loadLevels(userPage.getContent());
         List<AdminUserListResponse> list = userPage.getContent().stream()
-                .map(user -> toListResponse(user, metricsByUserId.get(user.getId())))
+                .map(user -> toListResponse(user, metricsByUserId.get(user.getId()), levelsById.get(user.getUserLevelId())))
                 .toList();
         return PageResult.of(userPage, list);
     }
@@ -85,7 +132,9 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Transactional(readOnly = true)
     public AdminUserDetailResponse getUserDetail(UUID id) {
         User user = requireRegularUser(id, false);
-        return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()));
+        UserLevel level = userLevelRepository == null || user.getUserLevelId() == null
+                ? null : userLevelRepository.findById(user.getUserLevelId()).orElse(null);
+        return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()), level);
     }
 
     @Override
@@ -147,7 +196,9 @@ public class AdminUserServiceImpl implements AdminUserService {
         userRepository.save(user);
         logUserOperation("user.update_profile", id,
                 "管理员修改用户邮箱：" + oldEmail + " -> " + email);
-        return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()));
+        UserLevel level = userLevelRepository == null || user.getUserLevelId() == null
+                ? null : userLevelRepository.findById(user.getUserLevelId()).orElse(null);
+        return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()), level);
     }
 
     @Override
@@ -269,22 +320,33 @@ public class AdminUserServiceImpl implements AdminUserService {
                 .collect(Collectors.groupingBy(OrderItem::getOrderId));
     }
 
-    private AdminUserListResponse toListResponse(User user, UserOrderMetricsProjection metrics) {
+    private AdminUserListResponse toListResponse(User user, UserOrderMetricsProjection metrics, UserLevel level) {
         return new AdminUserListResponse(
                 user.getId(), user.getUserNo(), user.getUsername(), user.getEmail(),
+                user.getUserLevelId(), level == null ? null : level.getName(),
                 normalizeMoney(user.getBalance()),
                 orderCount(metrics),
                 totalSpent(metrics),
                 user.getIsDeleted(), user.getCreatedAt());
     }
 
-    private AdminUserDetailResponse toDetailResponse(User user, UserOrderMetricsProjection metrics) {
+    private AdminUserDetailResponse toDetailResponse(User user, UserOrderMetricsProjection metrics, UserLevel level) {
         return new AdminUserDetailResponse(
                 user.getId(), user.getUserNo(), user.getUsername(), user.getEmail(), user.getPhone(),
+                user.getUserLevelId(), level == null ? null : level.getName(),
                 normalizeMoney(user.getBalance()),
                 orderCount(metrics),
                 totalSpent(metrics),
                 user.getIsDeleted(), user.getCreatedAt());
+    }
+
+    private Map<UUID, UserLevel> loadLevels(Collection<User> users) {
+        if (userLevelRepository == null || users.isEmpty()) return Collections.emptyMap();
+        List<UUID> ids = users.stream().map(User::getUserLevelId)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return Collections.emptyMap();
+        return userLevelRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(UserLevel::getId, Function.identity()));
     }
 
     private long orderCount(UserOrderMetricsProjection metrics) {

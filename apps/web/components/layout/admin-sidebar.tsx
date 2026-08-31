@@ -68,7 +68,10 @@ const navGroups: AdminNavGroup[] = [
   },
   {
     labelKey: "admin.navCustomers",
-    items: [{ labelKey: "admin.users", href: "/admin/users", icon: Users }],
+    items: [
+      { labelKey: "admin.users", href: "/admin/users", icon: Users },
+      { labelKey: "admin.userLevels", href: "/admin/user-levels", icon: ShieldCheck },
+    ],
   },
   {
     labelKey: "admin.navSecurityAudit",

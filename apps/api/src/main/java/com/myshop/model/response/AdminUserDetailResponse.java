@@ -14,10 +14,18 @@ public record AdminUserDetailResponse(
         String username,
         String email,
         String phone,
+        UUID userLevelId,
+        String userLevelName,
         BigDecimal balance,
         long successfulOrderCount,
         BigDecimal totalSpent,
         int isDeleted,
         LocalDateTime createdAt
 ) {
+    public AdminUserDetailResponse(UUID id, Long userNo, String username, String email,
+                                   String phone, BigDecimal balance, long successfulOrderCount,
+                                   BigDecimal totalSpent, int isDeleted, LocalDateTime createdAt) {
+        this(id, userNo, username, email, phone, null, null, balance, successfulOrderCount,
+                totalSpent, isDeleted, createdAt);
+    }
 }
