@@ -23,8 +23,11 @@ public class ProductSpec extends BaseEntity {
     @Column(nullable = false)
     private String name;
 
-    @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal price;
+    @Column(name = "retail_price", nullable = false, precision = 10, scale = 2)
+    private BigDecimal retailPrice;
+
+    @Column(name = "cost_price", nullable = false, precision = 10, scale = 2)
+    private BigDecimal costPrice;
 
     @Column(name = "is_visible")
     private boolean visible = true;

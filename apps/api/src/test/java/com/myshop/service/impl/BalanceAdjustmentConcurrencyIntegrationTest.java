@@ -101,6 +101,8 @@ class BalanceAdjustmentConcurrencyIntegrationTest {
         target.setPasswordHash("test-password-hash");
         target.setRole(UserRole.USER);
         target.setUserNo(10000L);
+        target.setUserLevelId(jdbcTemplate.queryForObject(
+                "SELECT id FROM user_levels WHERE is_default = true", UUID.class));
         target.setBalance(new BigDecimal("0.00"));
         target.setIsDeleted(0);
         target = userRepository.saveAndFlush(target);

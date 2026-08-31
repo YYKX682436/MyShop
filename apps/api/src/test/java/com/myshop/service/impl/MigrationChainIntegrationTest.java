@@ -53,16 +53,18 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("8", flyway.info().current().getVersion().getVersion());
-        assertEquals(8, flyway.info().all().length);
+        assertEquals("9", flyway.info().current().getVersion().getVersion());
+        assertEquals(9, flyway.info().all().length);
         for (String table : List.of(
-                "users", "product_categories", "products", "product_specs", "wholesale_rules",
+                "users", "user_levels", "product_categories", "products", "product_specs",
+                "product_level_price_overrides",
                 "card_import_batches", "orders", "order_items", "card_keys",
                 "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
         assertFalse(tableExists("cart_items"));
+        assertFalse(tableExists("wholesale_rules"));
         assertTrue(columnExists("orders", "order_type"));
         assertEquals("NO", nullableValue("orders", "order_type"));
         assertTrue(defaultValue("orders", "order_type").contains("NORMAL"));
@@ -90,6 +92,19 @@ class MigrationChainIntegrationTest {
         assertEquals("YES", nullableValue("users", "phone"));
         assertEquals("YES", nullableValue("users", "email"));
         assertTrue(indexExists("uq_users_single_super_admin"));
+        assertTrue(columnExists("users", "user_level_id"));
+        assertTrue(checkConstraintExists("users_user_level_role_check"));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM user_levels WHERE is_default = true", Integer.class));
+        assertEquals("普通会员", jdbcTemplate.queryForObject(
+                "SELECT name FROM user_levels WHERE is_default = true", String.class));
+        assertEquals("RETAIL", jdbcTemplate.queryForObject(
+                "SELECT pricing_type FROM user_levels WHERE is_default = true", String.class));
+        assertEquals(true, jdbcTemplate.queryForObject(
+                "SELECT enabled FROM user_levels WHERE is_default = true", Boolean.class));
+        assertEquals("7", numericPrecision("user_levels", "markup_rate"));
+        assertEquals("4", numericScale("user_levels", "markup_rate"));
+        assertTrue(indexExists("uq_user_levels_single_default"));
         assertEquals("character varying", dataType("users", "phone"));
         assertEquals(11, jdbcTemplate.queryForObject("""
                 SELECT character_maximum_length
@@ -106,26 +121,40 @@ class MigrationChainIntegrationTest {
         }
         assertTrue(indexExists("idx_balance_transactions_user_created"));
 
+        UUID defaultLevelId = defaultUserLevelId();
         UUID defaultBalanceUserId = UUID.randomUUID();
         jdbcTemplate.update("""
-                INSERT INTO users(id, username, email, password_hash, role, user_no)
-                VALUES (?, ?, ?, 'test-hash', 'USER', ?)
-                """, defaultBalanceUserId, "balance-default-user", "balance-default@example.com", 10000L);
+                INSERT INTO users(id, username, email, password_hash, role, user_no, user_level_id)
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?)
+                """, defaultBalanceUserId, "balance-default-user", "balance-default@example.com", 10000L,
+                defaultLevelId);
         jdbcTemplate.update("UPDATE users SET phone = '13800138000' WHERE id = ?", defaultBalanceUserId);
         BigDecimal defaultBalance = jdbcTemplate.queryForObject(
                 "SELECT balance FROM users WHERE id = ?", BigDecimal.class, defaultBalanceUserId);
         assertNotNull(defaultBalance);
         assertEquals(0, defaultBalance.compareTo(BigDecimal.ZERO));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
-                INSERT INTO users(id, username, email, password_hash, role, user_no, balance)
-                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?)
+                INSERT INTO users(id, username, email, password_hash, role, user_no, user_level_id, balance)
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?, ?)
                 """, UUID.randomUUID(), "negative-balance-user", "negative-balance@example.com", 10001L,
-                new BigDecimal("-0.01")));
+                defaultLevelId, new BigDecimal("-0.01")));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
-                INSERT INTO users(id, username, email, password_hash, role, user_no, phone)
-                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?)
+                INSERT INTO users(id, username, email, password_hash, role, user_no, user_level_id, phone)
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?, ?)
                 """, UUID.randomUUID(), "duplicate-phone-user", "duplicate-phone@example.com", 10001L,
-                "13800138000"));
+                defaultLevelId, "13800138000"));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, password_hash, role, user_no)
+                VALUES (?, 'invalid-user-without-level', 'test-hash', 'USER', 10002)
+                """, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, password_hash, role, user_level_id)
+                VALUES (?, 'invalid-admin-with-level', 'test-hash', 'ADMIN', ?)
+                """, UUID.randomUUID(), defaultLevelId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO users(id, username, password_hash, role, user_level_id)
+                VALUES (?, 'invalid-super-admin-with-level', 'test-hash', 'SUPER_ADMIN', ?)
+                """, UUID.randomUUID(), defaultLevelId));
         UUID superAdminId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO users(id, username, password_hash, role)
@@ -145,6 +174,10 @@ class MigrationChainIntegrationTest {
                 INSERT INTO users(id, username, password_hash, role)
                 VALUES (?, 'second-super-admin', 'test-hash', 'SUPER_ADMIN')
                 """, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO user_levels(name, pricing_type, markup_rate, enabled, is_default)
+                VALUES ('另一个默认等级', 'RETAIL', 0.0000, true, true)
+                """));
 
         assertFalse(columnExists("users", "points"));
         assertFalse(columnExists("orders", "points_deducted"));
@@ -156,6 +189,32 @@ class MigrationChainIntegrationTest {
         assertTrue(columnExists("products", "delivery_type"));
         assertTrue(columnExists("products", "customer_input_fields"));
         assertTrue(columnExists("products", "stock_mode"));
+        assertTrue(columnExists("products", "retail_price"));
+        assertTrue(columnExists("products", "cost_price"));
+        assertFalse(columnExists("products", "base_price"));
+        assertFalse(columnExists("products", "wholesale_enabled"));
+        assertEquals("10", numericPrecision("products", "retail_price"));
+        assertEquals("2", numericScale("products", "retail_price"));
+        assertEquals("10", numericPrecision("products", "cost_price"));
+        assertEquals("2", numericScale("products", "cost_price"));
+        assertTrue(columnExists("product_specs", "retail_price"));
+        assertTrue(columnExists("product_specs", "cost_price"));
+        assertFalse(columnExists("product_specs", "price"));
+        assertTrue(columnExists("orders", "user_level_id"));
+        assertTrue(columnExists("orders", "user_level_name"));
+        assertTrue(columnExists("orders", "user_level_pricing_type"));
+        assertTrue(columnExists("orders", "user_level_markup_rate"));
+        assertTrue(columnExists("order_items", "cost_price"));
+        assertTrue(columnExists("order_items", "retail_price"));
+        assertTrue(columnExists("order_items", "pricing_source"));
+        assertEquals("NO", nullableValue("order_items", "cost_price"));
+        assertEquals("NO", nullableValue("order_items", "retail_price"));
+        assertEquals("NO", nullableValue("order_items", "pricing_source"));
+        assertTrue(indexExists("uq_product_level_price_overrides_no_spec"));
+        assertTrue(indexExists("uq_product_level_price_overrides_with_spec"));
+        assertTrue(checkConstraintExists("orders_user_level_pricing_type_check"));
+        assertTrue(checkConstraintExists("orders_user_level_markup_rate_check"));
+        assertTrue(checkConstraintExists("order_items_pricing_source_check"));
         assertTrue(columnExists("order_items", "customer_inputs"));
         assertTrue(columnExists("order_items", "delivery_notified_at"));
         assertTrue(columnExists("card_keys", "content_parts"));
@@ -252,7 +311,7 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
-    void v6RemovesCartSchemaButPreservesHistoricalOrders() {
+    void v6RemovesCartSchemaAndKeepsOrderTypeForV7Normalization() {
         flyway("5").migrate();
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
@@ -269,7 +328,44 @@ class MigrationChainIntegrationTest {
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM orders WHERE id = ?", Integer.class, orderId));
         assertFalse(tableExists("cart_items"));
-        assertFalse(columnExists("orders", "order_type"));
+        assertTrue(columnExists("orders", "order_type"));
+        assertEquals("NORMAL", jdbcTemplate.queryForObject(
+                "SELECT order_type FROM orders WHERE id = ?", String.class, orderId));
+    }
+
+    @Test
+    void v7NormalizesHistoricalOrderTypesWithoutReaddingTheExistingColumn() {
+        flyway("6").migrate();
+        UUID normalId = UUID.randomUUID();
+        UUID directId = UUID.randomUUID();
+        UUID cartId = UUID.randomUUID();
+        UUID pickupId = UUID.randomUUID();
+        for (String[] order : List.of(
+                new String[]{normalId.toString(), "NORMAL"},
+                new String[]{directId.toString(), "DIRECT"},
+                new String[]{cartId.toString(), "CART"},
+                new String[]{pickupId.toString(), "ADMIN_PICKUP"})) {
+            jdbcTemplate.update("""
+                    INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
+                    VALUES (?::uuid, 10.00, 10.00, 'PENDING', ?)
+                    """, order[0], order[1]);
+        }
+
+        flyway("7").migrate();
+
+        assertTrue(columnExists("orders", "order_type"));
+        assertEquals("NORMAL", jdbcTemplate.queryForObject(
+                "SELECT order_type FROM orders WHERE id = ?", String.class, directId));
+        assertEquals("NORMAL", jdbcTemplate.queryForObject(
+                "SELECT order_type FROM orders WHERE id = ?", String.class, cartId));
+        assertEquals("ADMIN_PICKUP", jdbcTemplate.queryForObject(
+                "SELECT order_type FROM orders WHERE id = ?", String.class, pickupId));
+        assertEquals("character varying", dataType("orders", "order_type"));
+        assertEquals(32, jdbcTemplate.queryForObject("""
+                SELECT character_maximum_length
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'order_type'
+                """, Integer.class));
     }
 
     @Test
@@ -288,12 +384,116 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("8", flyway().info().current().getVersion().getVersion());
+        assertEquals("9", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
         }
         assertEquals("25", configValue("rate_limit_per_second"));
+    }
+
+    @Test
+    void v9BackfillsLegacyV8PricesAndOrderSnapshots() {
+        flyway("8").migrate();
+        UUID userId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID specId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role, user_no)
+                VALUES (?, 'legacy-v8-user', 'legacy-v8@example.com', 'test-hash', 'USER', 10000)
+                """, userId);
+        jdbcTemplate.update("""
+                INSERT INTO product_categories(id, name)
+                VALUES (?, 'legacy-v8-category')
+                """, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, base_price, category_id, customer_input_fields)
+                VALUES (?, 'legacy-v8-product', 12.34, ?, '[]'::jsonb)
+                """, productId, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO product_specs(id, product_id, name, price)
+                VALUES (?, ?, 'legacy-v8-spec', 15.67)
+                """, specId, productId);
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, user_id, total_amount, actual_amount, status, order_type)
+                VALUES (?, ?, 15.67, 15.67, 'PENDING', 'NORMAL')
+                """, orderId, userId);
+        jdbcTemplate.update("""
+                INSERT INTO order_items(id, order_id, product_id, product_title, spec_id, spec_name,
+                                        quantity, unit_price, subtotal, customer_inputs)
+                VALUES (?, ?, ?, 'legacy-v8-product', ?, 'legacy-v8-spec', 1, 15.67, 15.67, '[]'::jsonb)
+                """, itemId, orderId, productId, specId);
+
+        flyway().migrate();
+
+        assertEquals("9", flyway().info().current().getVersion().getVersion());
+        UUID levelId = defaultUserLevelId();
+        assertEquals(levelId, jdbcTemplate.queryForObject(
+                "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));
+        assertEquals(new BigDecimal("12.34"), jdbcTemplate.queryForObject(
+                "SELECT retail_price FROM products WHERE id = ?", BigDecimal.class, productId));
+        assertEquals(new BigDecimal("12.34"), jdbcTemplate.queryForObject(
+                "SELECT cost_price FROM products WHERE id = ?", BigDecimal.class, productId));
+        assertEquals(new BigDecimal("15.67"), jdbcTemplate.queryForObject(
+                "SELECT retail_price FROM product_specs WHERE id = ?", BigDecimal.class, specId));
+        assertEquals(new BigDecimal("15.67"), jdbcTemplate.queryForObject(
+                "SELECT cost_price FROM product_specs WHERE id = ?", BigDecimal.class, specId));
+        assertEquals("普通会员", jdbcTemplate.queryForObject(
+                "SELECT user_level_name FROM orders WHERE id = ?", String.class, orderId));
+        assertEquals("RETAIL", jdbcTemplate.queryForObject(
+                "SELECT user_level_pricing_type FROM orders WHERE id = ?", String.class, orderId));
+        assertEquals(new BigDecimal("0.0000"), jdbcTemplate.queryForObject(
+                "SELECT user_level_markup_rate FROM orders WHERE id = ?", BigDecimal.class, orderId));
+        assertEquals(new BigDecimal("15.67"), jdbcTemplate.queryForObject(
+                "SELECT cost_price FROM order_items WHERE id = ?", BigDecimal.class, itemId));
+        assertEquals(new BigDecimal("15.67"), jdbcTemplate.queryForObject(
+                "SELECT retail_price FROM order_items WHERE id = ?", BigDecimal.class, itemId));
+        assertEquals("RETAIL", jdbcTemplate.queryForObject(
+                "SELECT pricing_source FROM order_items WHERE id = ?", String.class, itemId));
+        assertFalse(tableExists("wholesale_rules"));
+        assertFalse(columnExists("products", "base_price"));
+        assertFalse(columnExists("products", "wholesale_enabled"));
+        assertFalse(columnExists("product_specs", "price"));
+    }
+
+    @Test
+    void v9EnforcesDefaultLevelRoleAndOverrideConstraints() {
+        flyway().migrate();
+        UUID levelId = defaultUserLevelId();
+        UUID productId = UUID.randomUUID();
+        UUID otherProductId = UUID.randomUUID();
+        UUID productSpecId = UUID.randomUUID();
+        UUID otherProductSpecId = UUID.randomUUID();
+        insertCurrentProduct(productId, "override-product");
+        insertCurrentProduct(otherProductId, "other-override-product");
+        insertCurrentSpec(productSpecId, productId, "override-spec");
+        insertCurrentSpec(otherProductSpecId, otherProductId, "other-spec");
+
+        jdbcTemplate.update("""
+                INSERT INTO product_level_price_overrides(product_id, user_level_id, price)
+                VALUES (?, ?, 8.00)
+                """, productId, levelId);
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO product_level_price_overrides(product_id, user_level_id, price)
+                VALUES (?, ?, 7.00)
+                """, productId, levelId));
+
+        jdbcTemplate.update("""
+                INSERT INTO product_level_price_overrides(product_id, spec_id, user_level_id, price)
+                VALUES (?, ?, ?, 9.00)
+                """, productId, productSpecId, levelId);
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO product_level_price_overrides(product_id, spec_id, user_level_id, price)
+                VALUES (?, ?, ?, 8.50)
+                """, productId, productSpecId, levelId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO product_level_price_overrides(product_id, spec_id, user_level_id, price)
+                VALUES (?, ?, ?, 8.50)
+                """, productId, otherProductSpecId, levelId));
     }
 
     @Test
@@ -309,8 +509,8 @@ class MigrationChainIntegrationTest {
                 VALUES (?, 'baseline-category')
                 """, categoryId);
         jdbcTemplate.update("""
-                INSERT INTO products(id, title, base_price, category_id, customer_input_fields)
-                VALUES (?, 'baseline-product', 10.00, ?, ?::jsonb)
+                INSERT INTO products(id, title, retail_price, cost_price, category_id, customer_input_fields)
+                VALUES (?, 'baseline-product', 10.00, 10.00, ?, ?::jsonb)
                 """, productId, categoryId,
                 "[{\"id\":\"account\",\"label\":\"账号\"},{\"id\":\"zone\",\"label\":\"区服\"}]");
         jdbcTemplate.update("""
@@ -318,9 +518,9 @@ class MigrationChainIntegrationTest {
                 VALUES (?, 10.00, 10.00, 'PENDING')
                 """, orderId);
         jdbcTemplate.update("""
-                INSERT INTO order_items(id, order_id, product_id, product_title, quantity, unit_price, subtotal,
-                                        customer_inputs)
-                VALUES (?, ?, ?, 'baseline-product', 1, 10.00, 10.00, ?::jsonb)
+                INSERT INTO order_items(id, order_id, product_id, product_title, quantity, unit_price,
+                                        cost_price, retail_price, pricing_source, subtotal, customer_inputs)
+                VALUES (?, ?, ?, 'baseline-product', 1, 10.00, 10.00, 10.00, 'RETAIL', 10.00, ?::jsonb)
                 """, orderItemId, orderId, productId, "[]");
         jdbcTemplate.update("""
                 INSERT INTO card_keys(id, product_id, content_parts, content_fingerprint, status)
@@ -349,6 +549,25 @@ class MigrationChainIntegrationTest {
         assertEquals("password", jdbcTemplate.queryForObject(
                 "SELECT content_parts->>1 FROM card_keys WHERE content_fingerprint = 'multi-fingerprint'",
                 String.class));
+    }
+
+    private UUID defaultUserLevelId() {
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM user_levels WHERE is_default = true", UUID.class);
+    }
+
+    private void insertCurrentProduct(UUID productId, String title) {
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, retail_price, cost_price, category_id)
+                VALUES (?, ?, 10.00, 10.00, ?)
+                """, productId, title, UUID.randomUUID());
+    }
+
+    private void insertCurrentSpec(UUID specId, UUID productId, String name) {
+        jdbcTemplate.update("""
+                INSERT INTO product_specs(id, product_id, name, retail_price, cost_price)
+                VALUES (?, ?, ?, 10.00, 10.00)
+                """, specId, productId, name);
     }
 
     private Flyway flyway() {

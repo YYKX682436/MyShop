@@ -1,6 +1,7 @@
 package com.myshop.entity;
 
 import com.myshop.constant.FulfillmentStatus;
+import com.myshop.constant.PricingSource;
 import com.myshop.constant.StockMode;
 import com.myshop.model.CustomerInputValue;
 import jakarta.persistence.*;
@@ -42,6 +43,16 @@ public class OrderItem extends BaseEntity {
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal unitPrice;
+
+    @Column(name = "cost_price", nullable = false, precision = 10, scale = 2)
+    private BigDecimal costPrice;
+
+    @Column(name = "retail_price", nullable = false, precision = 10, scale = 2)
+    private BigDecimal retailPrice;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pricing_source", nullable = false, length = 32)
+    private PricingSource pricingSource = PricingSource.RETAIL;
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal subtotal;

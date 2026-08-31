@@ -142,18 +142,23 @@ class DashboardAggregateIntegrationTest {
 
     private void insertUser(String username, String email, String role, int deleted, LocalDateTime createdAt) {
         Long userNo = "USER".equals(role) ? nextUserNo++ : null;
+        UUID userLevelId = "USER".equals(role)
+                ? jdbcTemplate.queryForObject("SELECT id FROM user_levels WHERE is_default = true", UUID.class)
+                : null;
         jdbcTemplate.update("""
-                INSERT INTO users(id, created_at, updated_at, username, email, password_hash, role, is_deleted, user_no)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), createdAt, createdAt, username, email, "hash", role, deleted, userNo);
+                INSERT INTO users(id, created_at, updated_at, username, email, password_hash, role, is_deleted,
+                                  user_no, user_level_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), createdAt, createdAt, username, email, "hash", role, deleted, userNo,
+                userLevelId);
     }
 
     private void insertProduct(UUID id, String title, int threshold, boolean enabled, int deleted,
                                LocalDateTime createdAt) {
         jdbcTemplate.update("""
-                INSERT INTO products(id, created_at, updated_at, title, base_price, category_id,
+                INSERT INTO products(id, created_at, updated_at, title, retail_price, cost_price, category_id,
                                      low_stock_threshold, is_enabled, is_deleted)
-                VALUES (?, ?, ?, ?, 10.00, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 10.00, 10.00, ?, ?, ?, ?)
                 """, id, createdAt, createdAt, title, UUID.randomUUID(), threshold, enabled, deleted);
     }
 
@@ -189,8 +194,8 @@ class DashboardAggregateIntegrationTest {
                                  LocalDateTime createdAt) {
         jdbcTemplate.update("""
                 INSERT INTO order_items(id, created_at, updated_at, order_id, product_id, product_title,
-                                        quantity, unit_price, subtotal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 5.00, ?)
+                                        quantity, unit_price, cost_price, retail_price, pricing_source, subtotal)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 5.00, 5.00, 5.00, 'RETAIL', ?)
                 """, UUID.randomUUID(), createdAt, createdAt, orderId, productId, title, quantity,
                 new BigDecimal(subtotal));
     }

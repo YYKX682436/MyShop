@@ -28,8 +28,4 @@ public interface ProductService {
     void updateSpec(UUID productId, UUID specId, Map<String, Object> request);
 
     void deleteSpec(UUID productId, UUID specId);
-
-    Object listWholesaleRules(UUID productId);
-
-    void setWholesaleRules(UUID productId, Map<String, Object> request);
 }

@@ -9,6 +9,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Getter
 @Setter
@@ -38,6 +39,9 @@ public class User extends BaseEntity {
     /** Ordinary-member business number. Administrators intentionally have no number. */
     @Column(name = "user_no", updatable = false)
     private Long userNo;
+
+    @Column(name = "user_level_id")
+    private UUID userLevelId;
 
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal balance = BigDecimal.ZERO;

@@ -74,15 +74,4 @@ public class AdminProductController {
         productService.deleteSpec(productId, specId);
         return ApiResponse.success();
     }
-
-    @GetMapping("/{id}/wholesale-rules")
-    public ApiResponse<?> listWholesaleRules(@PathVariable UUID id) {
-        return ApiResponse.success(productService.listWholesaleRules(id));
-    }
-
-    @PostMapping("/{id}/wholesale-rules")
-    public ApiResponse<Void> setWholesaleRules(@PathVariable UUID id, @RequestBody Map<String, Object> request) {
-        productService.setWholesaleRules(id, request);
-        return ApiResponse.success();
-    }
 }

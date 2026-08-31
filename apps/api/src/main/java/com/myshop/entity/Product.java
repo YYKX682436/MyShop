@@ -34,8 +34,11 @@ public class Product extends BaseEntity {
 
     private String coverUrl;
 
-    @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal basePrice;
+    @Column(name = "retail_price", nullable = false, precision = 10, scale = 2)
+    private BigDecimal retailPrice;
+
+    @Column(name = "cost_price", nullable = false, precision = 10, scale = 2)
+    private BigDecimal costPrice;
 
     @Column(nullable = false)
     private UUID categoryId;
@@ -52,8 +55,6 @@ public class Product extends BaseEntity {
     private StockMode stockMode = StockMode.CARD_KEY;
 
     private int lowStockThreshold = 10;
-
-    private boolean wholesaleEnabled = false;
 
     @Column(name = "spec_enabled", columnDefinition = "boolean not null default false")
     private boolean specEnabled = false;

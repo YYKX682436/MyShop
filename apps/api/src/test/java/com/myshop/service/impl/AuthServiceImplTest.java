@@ -2,12 +2,14 @@ package com.myshop.service.impl;
 
 import com.myshop.entity.User;
 import com.myshop.entity.UserNumberSequence;
+import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.LoginRequest;
 import com.myshop.model.request.RegisterRequest;
 import com.myshop.model.response.AuthResult;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserLevelRepository;
 import com.myshop.utils.CaptchaUtils;
 import com.myshop.utils.JwtUtils;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +43,8 @@ class AuthServiceImplTest {
     @Mock
     private UserNumberSequenceRepository userNumberSequenceRepository;
     @Mock
+    private UserLevelRepository userLevelRepository;
+    @Mock
     private PasswordEncoder passwordEncoder;
     @Mock
     private JwtUtils jwtUtils;
@@ -49,18 +53,23 @@ class AuthServiceImplTest {
 
     private AuthServiceImpl service;
     private UserNumberSequence sequence;
+    private UserLevel defaultLevel;
 
     @BeforeEach
     void setUp() {
         service = new AuthServiceImpl(userRepository, userNumberSequenceRepository,
-                passwordEncoder, jwtUtils, captchaUtils);
+                userLevelRepository, passwordEncoder, jwtUtils, captchaUtils);
         sequence = new UserNumberSequence(1, 10000L, 10000L);
+        defaultLevel = new UserLevel();
+        defaultLevel.setId(UUID.randomUUID());
+        defaultLevel.setName("普通会员");
         lenient().when(captchaUtils.verify(anyString(), anyString())).thenReturn(true);
         lenient().when(userRepository.existsByUsernameIgnoreCase(anyString())).thenReturn(false);
         lenient().when(userRepository.existsByEmailIgnoreCase(anyString())).thenReturn(false);
         lenient().when(userRepository.existsByPhone(anyString())).thenReturn(false);
         lenient().when(userRepository.existsByRoleAndUserNo(any(), anyLong())).thenReturn(false);
         lenient().when(userNumberSequenceRepository.findByIdForUpdate(1)).thenReturn(sequence);
+        lenient().when(userLevelRepository.findActiveDefault()).thenReturn(Optional.of(defaultLevel));
         lenient().when(passwordEncoder.encode(anyString())).thenReturn("bcrypt-hash");
         lenient().when(userRepository.saveAndFlush(any(User.class))).thenAnswer(invocation -> {
             User user = invocation.getArgument(0);
@@ -77,7 +86,9 @@ class AuthServiceImplTest {
         assertEquals(10000L, result.user().getUserNo());
         assertEquals("buyer@example.com", result.user().getEmail());
         assertEquals(10001L, sequence.getNextUserNo());
-        verify(userRepository).saveAndFlush(argThat(user -> "13800138000".equals(user.getPhone())));
+        verify(userRepository).saveAndFlush(argThat(user ->
+                "13800138000".equals(user.getPhone())
+                        && defaultLevel.getId().equals(user.getUserLevelId())));
     }
 
     @Test

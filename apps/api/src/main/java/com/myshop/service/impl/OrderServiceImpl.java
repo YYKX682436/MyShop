@@ -5,7 +5,9 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.PricingSource;
 import com.myshop.constant.StockMode;
+import com.myshop.constant.UserRole;
 import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.*;
@@ -36,48 +38,36 @@ public class OrderServiceImpl implements OrderService {
     private final OrderItemRepository orderItemRepository;
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
-    private final WholesaleRuleRepository wholesaleRuleRepository;
     private final CardKeyRepository cardKeyRepository;
     private final SiteConfigRepository siteConfigRepository;
     private final PaymentChannelRepository paymentChannelRepository;
     private final PaymentService paymentService;
     private final ManualStockService manualStockService;
     private final UserRepository userRepository;
+    private final UserLevelRepository userLevelRepository;
     private final AutoFulfillmentService autoFulfillmentService;
 
     @Autowired
     public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
                             ProductRepository productRepository, ProductSpecRepository productSpecRepository,
-                            WholesaleRuleRepository wholesaleRuleRepository,
                             CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
                             PaymentChannelRepository paymentChannelRepository, PaymentService paymentService,
                             ManualStockService manualStockService,
                             UserRepository userRepository,
+                            UserLevelRepository userLevelRepository,
                             AutoFulfillmentService autoFulfillmentService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.productRepository = productRepository;
         this.productSpecRepository = productSpecRepository;
-        this.wholesaleRuleRepository = wholesaleRuleRepository;
         this.cardKeyRepository = cardKeyRepository;
         this.siteConfigRepository = siteConfigRepository;
         this.paymentChannelRepository = paymentChannelRepository;
         this.paymentService = paymentService;
         this.manualStockService = manualStockService;
         this.userRepository = userRepository;
+        this.userLevelRepository = userLevelRepository;
         this.autoFulfillmentService = autoFulfillmentService;
-    }
-
-    /** Compatibility constructor for focused tests that exercise guest/normal orders only. */
-    public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
-                            ProductRepository productRepository, ProductSpecRepository productSpecRepository,
-                            WholesaleRuleRepository wholesaleRuleRepository,
-                            CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
-                            PaymentChannelRepository paymentChannelRepository, PaymentService paymentService,
-                            ManualStockService manualStockService) {
-        this(orderRepository, orderItemRepository, productRepository, productSpecRepository,
-                wholesaleRuleRepository, cardKeyRepository, siteConfigRepository,
-                paymentChannelRepository, paymentService, manualStockService, null, null);
     }
 
     @Override
@@ -139,7 +129,8 @@ public class OrderServiceImpl implements OrderService {
                     Map.of("available", stock.available()));
         }
 
-        BigDecimal unitPrice = getUnitPrice(product, specId, quantity);
+        PriceSnapshot priceSnapshot = getPriceSnapshot(product, specId);
+        BigDecimal unitPrice = priceSnapshot.retailPrice();
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
@@ -162,6 +153,7 @@ public class OrderServiceImpl implements OrderService {
         order.setIdempotencyFingerprint(idempotencyFingerprint);
         order.setClientIp(clientIp);
         order.setSessionToken(sessionToken);
+        setUserLevelSnapshot(order, currentUser, adminPickup);
         LookupTokens.Issued lookupToken = LookupTokens.issue();
         order.setLookupTokenHash(lookupToken.hash());
         if (userId == null) order.setGuestLookupToken(lookupToken.plaintext());
@@ -181,6 +173,9 @@ public class OrderServiceImpl implements OrderService {
         item.setSpecName(specName);
         item.setQuantity(quantity);
         item.setUnitPrice(unitPrice);
+        item.setCostPrice(priceSnapshot.costPrice());
+        item.setRetailPrice(priceSnapshot.retailPrice());
+        item.setPricingSource(PricingSource.RETAIL);
         item.setSubtotal(totalAmount);
         setItemSnapshot(item, product, customerInputs, quantity, stockMode);
         orderItemRepository.save(item);
@@ -242,31 +237,34 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private BigDecimal getUnitPrice(Product product, UUID specId, int quantity) {
-        BigDecimal basePrice = product.getBasePrice();
+    private PriceSnapshot getPriceSnapshot(Product product, UUID specId) {
+        BigDecimal costPrice = product.getCostPrice();
+        BigDecimal retailPrice = product.getRetailPrice();
         if (specId != null) {
             // F1: 严格校验规格归属 — 防止用低价规格 ID 篡改高价商品的价格
             ProductSpec spec = productSpecRepository.findById(specId)
                     .filter(s -> s.getProductId().equals(product.getId()) && s.getIsDeleted() == 0)
                     .orElseThrow(() -> new BusinessException(ErrorCode.SPEC_NOT_FOUND, "商品规格不存在或与商品不匹配"));
-            basePrice = spec.getPrice();
+            costPrice = spec.getCostPrice();
+            retailPrice = spec.getRetailPrice();
         }
+        return new PriceSnapshot(costPrice, retailPrice);
+    }
 
-        if (product.isWholesaleEnabled()) {
-            List<WholesaleRule> rules;
-            if (specId != null) {
-                rules = wholesaleRuleRepository.findByProductIdAndSpecIdOrderByMinQuantityAsc(product.getId(), specId);
-            } else {
-                rules = wholesaleRuleRepository.findByProductIdAndSpecIdIsNullOrderByMinQuantityAsc(product.getId());
-            }
-            // Find matching tier (highest minQuantity <= quantity)
-            for (int i = rules.size() - 1; i >= 0; i--) {
-                if (quantity >= rules.get(i).getMinQuantity()) {
-                    return rules.get(i).getUnitPrice();
-                }
-            }
+    private void setUserLevelSnapshot(Order order, User user, boolean adminPickup) {
+        if (adminPickup || user == null || user.getRole() != UserRole.USER) {
+            return;
         }
-        return basePrice;
+        UUID userLevelId = user.getUserLevelId();
+        if (userLevelId == null) {
+            throw new IllegalStateException("Ordinary user has no user level");
+        }
+        UserLevel level = userLevelRepository.findById(userLevelId)
+                .orElseThrow(() -> new IllegalStateException("Assigned user level does not exist"));
+        order.setUserLevelId(level.getId());
+        order.setUserLevelName(level.getName());
+        order.setUserLevelPricingType(level.getPricingType());
+        order.setUserLevelMarkupRate(level.getMarkupRate());
     }
 
     private Map<String, Object> buildOrderResult(Order order, String device, String lookupToken) {
@@ -491,6 +489,9 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private record StockView(long available, boolean unlimited) {
+    }
+
+    private record PriceSnapshot(BigDecimal costPrice, BigDecimal retailPrice) {
     }
 
 }

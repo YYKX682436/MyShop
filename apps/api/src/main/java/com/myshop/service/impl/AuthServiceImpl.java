@@ -3,6 +3,7 @@ package com.myshop.service.impl;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.User;
+import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.LoginRequest;
 import com.myshop.model.request.RegisterRequest;
@@ -11,6 +12,7 @@ import com.myshop.model.response.CaptchaResponse;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserNumberSequenceRepository;
+import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.AuthService;
 import com.myshop.utils.CaptchaUtils;
 import com.myshop.utils.JwtUtils;
@@ -36,6 +38,7 @@ public class AuthServiceImpl implements AuthService {
 
     private final UserRepository userRepository;
     private final UserNumberSequenceRepository userNumberSequenceRepository;
+    private final UserLevelRepository userLevelRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtils jwtUtils;
     private final CaptchaUtils captchaUtils;
@@ -68,6 +71,8 @@ public class AuthServiceImpl implements AuthService {
         if (sequence == null || sequence.getNextUserNo() == null) {
             throw new IllegalStateException("user_number_sequences is not initialized");
         }
+        UserLevel defaultLevel = userLevelRepository.findActiveDefault()
+                .orElseThrow(() -> new IllegalStateException("No active default user level is configured"));
 
         if (userRepository.existsByUsernameIgnoreCase(username)) {
             throw new BusinessException(ErrorCode.USERNAME_EXISTS, "用户名已存在");
@@ -108,6 +113,7 @@ public class AuthServiceImpl implements AuthService {
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setRole(UserRole.USER);
         user.setUserNo(userNo);
+        user.setUserLevelId(defaultLevel.getId());
         userRepository.saveAndFlush(user);
 
         String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());

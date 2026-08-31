@@ -10,7 +10,7 @@ import com.myshop.entity.PaymentChannel;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.User;
-import com.myshop.entity.WholesaleRule;
+import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
 import com.myshop.model.CustomerInputValue;
@@ -21,7 +21,7 @@ import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SiteConfigRepository;
-import com.myshop.repository.WholesaleRuleRepository;
+import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.PaymentService;
@@ -59,13 +59,13 @@ class OrderServiceImplTest {
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private ProductRepository productRepository;
     @Mock private ProductSpecRepository productSpecRepository;
-    @Mock private WholesaleRuleRepository wholesaleRuleRepository;
     @Mock private CardKeyRepository cardKeyRepository;
     @Mock private SiteConfigRepository siteConfigRepository;
     @Mock private PaymentChannelRepository paymentChannelRepository;
     @Mock private PaymentService paymentService;
     @Mock private ManualStockService manualStockService;
     @Mock private com.myshop.repository.UserRepository userRepository;
+    @Mock private UserLevelRepository userLevelRepository;
     @Mock private AutoFulfillmentService autoFulfillmentService;
 
     private OrderServiceImpl service;
@@ -73,9 +73,9 @@ class OrderServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderServiceImpl(orderRepository, orderItemRepository, productRepository,
-                productSpecRepository, wholesaleRuleRepository, cardKeyRepository,
+                productSpecRepository, cardKeyRepository,
                 siteConfigRepository, paymentChannelRepository, paymentService, manualStockService,
-                userRepository, autoFulfillmentService);
+                userRepository, userLevelRepository, autoFulfillmentService);
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
         lenient().when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))
@@ -167,25 +167,23 @@ class OrderServiceImplTest {
     }
 
     @Test
-    void appliesHighestMatchingWholesaleTier() {
+    void usesRetailPriceAndStoresRetailSnapshotsUntilLevelPricingIsImplemented() {
         UUID productId = UUID.randomUUID();
         Product product = product(productId, "10.00");
-        product.setWholesaleEnabled(true);
         stubProduct(product, 5);
-        WholesaleRule first = new WholesaleRule();
-        first.setMinQuantity(1);
-        first.setUnitPrice(new BigDecimal("9.00"));
-        WholesaleRule second = new WholesaleRule();
-        second.setMinQuantity(5);
-        second.setUnitPrice(new BigDecimal("7.50"));
-        when(wholesaleRuleRepository.findByProductIdAndSpecIdIsNullOrderByMinQuantityAsc(productId))
-                .thenReturn(List.of(first, second));
 
         service.createDirectOrder(request(productId, null, 5), null, "203.0.113.12", "guest-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.atLeastOnce()).save(orderCaptor.capture());
-        assertEquals(new BigDecimal("37.50"), orderCaptor.getAllValues().get(0).getActualAmount());
+        assertEquals(new BigDecimal("50.00"), orderCaptor.getAllValues().get(0).getActualAmount());
+
+        ArgumentCaptor<com.myshop.entity.OrderItem> itemCaptor =
+                ArgumentCaptor.forClass(com.myshop.entity.OrderItem.class);
+        verify(orderItemRepository).save(itemCaptor.capture());
+        assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getCostPrice());
+        assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getRetailPrice());
+        assertEquals(com.myshop.constant.PricingSource.RETAIL, itemCaptor.getValue().getPricingSource());
     }
 
     @Test
@@ -262,7 +260,13 @@ class OrderServiceImplTest {
         UUID productId = UUID.randomUUID();
         User user = user(userId, "buyer", "buyer@example.com");
         user.setRole(UserRole.USER);
+        UUID levelId = UUID.randomUUID();
+        UserLevel level = new UserLevel();
+        level.setId(levelId);
+        level.setName("普通会员");
+        user.setUserLevelId(levelId);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userLevelRepository.findById(levelId)).thenReturn(Optional.of(level));
         stubProduct(product(productId, "12.50"), 1);
 
         Map<String, Object> request = request(productId, null, 1);
@@ -278,6 +282,8 @@ class OrderServiceImplTest {
         assertEquals(OrderStatus.PENDING, saved.getStatus());
         assertEquals("alipay", saved.getPaymentMethod());
         assertEquals(new BigDecimal("12.50"), saved.getActualAmount());
+        assertEquals(levelId, saved.getUserLevelId());
+        assertEquals("普通会员", saved.getUserLevelName());
         assertEquals("https://pay.example/1", ((Map<?, ?>) result.get("payment")).get("payment_url"));
         verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
         verify(autoFulfillmentService, never()).trigger(any());
@@ -327,7 +333,8 @@ class OrderServiceImplTest {
         Product product = new Product();
         product.setId(id);
         product.setTitle("Test product");
-        product.setBasePrice(new BigDecimal(price));
+        product.setRetailPrice(new BigDecimal(price));
+        product.setCostPrice(new BigDecimal(price));
         product.setEnabled(true);
         product.setIsDeleted(0);
         return product;
@@ -338,7 +345,8 @@ class OrderServiceImplTest {
         spec.setId(id);
         spec.setProductId(productId);
         spec.setName("Test spec");
-        spec.setPrice(new BigDecimal(price));
+        spec.setRetailPrice(new BigDecimal(price));
+        spec.setCostPrice(new BigDecimal(price));
         spec.setIsDeleted(0);
         return spec;
     }

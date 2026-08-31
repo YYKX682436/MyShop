@@ -589,11 +589,13 @@ class PostgresDeliveryIntegrationTest {
         UUID userId = UUID.randomUUID();
         Long userNo = jdbcTemplate.queryForObject(
                 "select coalesce(max(user_no), 9999) + 1 from users", Long.class);
+        UUID userLevelId = jdbcTemplate.queryForObject(
+                "select id from user_levels where is_default = true", UUID.class);
         jdbcTemplate.update("""
                 insert into users (id, created_at, updated_at, username, email, password_hash,
-                    role, is_deleted, user_no)
-                values (?, current_timestamp, current_timestamp, ?, ?, 'integration-hash', 'USER', 0, ?)
-                """, userId, username, email, userNo);
+                    role, is_deleted, user_no, user_level_id)
+                values (?, current_timestamp, current_timestamp, ?, ?, 'integration-hash', 'USER', 0, ?, ?)
+                """, userId, username, email, userNo, userLevelId);
         return userId;
     }
 
@@ -637,9 +639,9 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, ?, 0, 0)
                 """, categoryId, "Integration category " + productId);
         jdbcTemplate.update("""
-                insert into products (id, created_at, updated_at, title, base_price, category_id,
+                insert into products (id, created_at, updated_at, title, retail_price, cost_price, category_id,
                     delivery_type, is_enabled, is_deleted)
-                values (?, current_timestamp, current_timestamp, 'Integration product', 10.00, ?,
+                values (?, current_timestamp, current_timestamp, 'Integration product', 10.00, 10.00, ?,
                     'AUTO', true, 0)
                 """, productId, categoryId);
     }
@@ -704,9 +706,10 @@ class PostgresDeliveryIntegrationTest {
         UUID itemId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into order_items (id, created_at, updated_at, order_id, product_id,
-                    product_title, quantity, unit_price, subtotal, delivery_type,
+                    product_title, quantity, unit_price, cost_price, retail_price, pricing_source, subtotal, delivery_type,
                     stock_mode, fulfillment_status, manual_stock_reserved)
-                values (?, current_timestamp, current_timestamp, ?, ?, 'Integration product', ?, 10.00, ?, ?, ?, 'PENDING', ?)
+                values (?, current_timestamp, current_timestamp, ?, ?, 'Integration product', ?, 10.00, 10.00, 10.00,
+                    'RETAIL', ?, ?, ?, 'PENDING', ?)
                 """, itemId, orderId, productId, quantity,
                 BigDecimal.TEN.multiply(BigDecimal.valueOf(quantity)), deliveryType,
                 stockMode, manualStockReserved);

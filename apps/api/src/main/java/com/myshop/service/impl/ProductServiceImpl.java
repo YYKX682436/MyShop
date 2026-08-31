@@ -6,13 +6,11 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
-import com.myshop.entity.WholesaleRule;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
-import com.myshop.repository.WholesaleRuleRepository;
 import com.myshop.service.ProductService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.ProductRules;
@@ -32,7 +30,6 @@ public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
-    private final WholesaleRuleRepository wholesaleRuleRepository;
     private final CardKeyRepository cardKeyRepository;
     private final OrderItemRepository orderItemRepository;
     private final ManualStockService manualStockService;
@@ -108,7 +105,9 @@ public class ProductServiceImpl implements ProductService {
         product.setDescription((String) req.get("description"));
         product.setDetailMd((String) req.get("detail_md"));
         product.setCoverUrl((String) req.get("cover_url"));
-        product.setBasePrice(new BigDecimal(req.get("base_price").toString()));
+        BigDecimal retailPrice = new BigDecimal(req.get("base_price").toString());
+        product.setRetailPrice(retailPrice);
+        product.setCostPrice(retailPrice);
         String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), "AUTO");
         StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
                 "AUTO".equals(deliveryType) ? StockMode.CARD_KEY : StockMode.MANUAL);
@@ -119,7 +118,6 @@ public class ProductServiceImpl implements ProductService {
         product.setStockMode(stockMode);
         product.setCategoryId(UUID.fromString((String) req.get("category_id")));
         if (req.containsKey("low_stock_threshold")) product.setLowStockThreshold(((Number) req.get("low_stock_threshold")).intValue());
-        if (req.containsKey("wholesale_enabled")) product.setWholesaleEnabled((boolean) req.get("wholesale_enabled"));
         if (req.containsKey("spec_enabled")) product.setSpecEnabled((boolean) req.get("spec_enabled"));
         if (req.containsKey("is_enabled")) product.setEnabled((boolean) req.get("is_enabled"));
         if (req.containsKey("initial_sales")) product.setInitialSales(((Number) req.get("initial_sales")).intValue());
@@ -141,7 +139,7 @@ public class ProductServiceImpl implements ProductService {
         if (req.containsKey("description")) product.setDescription((String) req.get("description"));
         if (req.containsKey("detail_md")) product.setDetailMd((String) req.get("detail_md"));
         if (req.containsKey("cover_url")) product.setCoverUrl((String) req.get("cover_url"));
-        if (req.containsKey("base_price")) product.setBasePrice(new BigDecimal(req.get("base_price").toString()));
+        if (req.containsKey("base_price")) product.setRetailPrice(new BigDecimal(req.get("base_price").toString()));
         String deliveryType = ProductRules.normalizeDeliveryType(req.get("delivery_type"), product.getDeliveryType());
         StockMode previousStockMode = product.getStockMode();
         StockMode stockMode = ProductRules.parseStockMode(req.get("stock_mode"),
@@ -156,7 +154,6 @@ public class ProductServiceImpl implements ProductService {
         product.setStockMode(stockMode);
         if (req.containsKey("category_id")) product.setCategoryId(UUID.fromString((String) req.get("category_id")));
         if (req.containsKey("low_stock_threshold")) product.setLowStockThreshold(((Number) req.get("low_stock_threshold")).intValue());
-        if (req.containsKey("wholesale_enabled")) product.setWholesaleEnabled((boolean) req.get("wholesale_enabled"));
         if (req.containsKey("spec_enabled")) product.setSpecEnabled((boolean) req.get("spec_enabled"));
         if (req.containsKey("is_enabled")) product.setEnabled((boolean) req.get("is_enabled"));
         if (req.containsKey("initial_sales")) product.setInitialSales(((Number) req.get("initial_sales")).intValue());
@@ -204,7 +201,9 @@ public class ProductServiceImpl implements ProductService {
         ProductSpec spec = new ProductSpec();
         spec.setProductId(productId);
         spec.setName(name);
-        spec.setPrice(new BigDecimal(req.get("price").toString()));
+        BigDecimal retailPrice = new BigDecimal(req.get("price").toString());
+        spec.setRetailPrice(retailPrice);
+        spec.setCostPrice(retailPrice);
         if (req.containsKey("is_visible")) spec.setVisible((boolean) req.get("is_visible"));
         if (req.containsKey("sort_order")) spec.setSortOrder(((Number) req.get("sort_order")).intValue());
         productSpecRepository.save(spec);
@@ -229,7 +228,7 @@ public class ProductServiceImpl implements ProductService {
             }
             spec.setName(newName);
         }
-        if (req.containsKey("price")) spec.setPrice(new BigDecimal(req.get("price").toString()));
+        if (req.containsKey("price")) spec.setRetailPrice(new BigDecimal(req.get("price").toString()));
         if (req.containsKey("is_visible")) spec.setVisible((boolean) req.get("is_visible"));
         if (req.containsKey("sort_order")) spec.setSortOrder(((Number) req.get("sort_order")).intValue());
         productSpecRepository.save(spec);
@@ -256,39 +255,6 @@ public class ProductServiceImpl implements ProductService {
         productSpecRepository.save(spec);
     }
 
-    @Override
-    public Object listWholesaleRules(UUID productId) {
-        return wholesaleRuleRepository.findByProductIdOrderByMinQuantityAsc(productId).stream()
-                .map(r -> {
-                    Map<String, Object> m = new HashMap<>();
-                    m.put("min_quantity", r.getMinQuantity());
-                    m.put("unit_price", r.getUnitPrice());
-                    return m;
-                }).toList();
-    }
-
-    @Override
-    @Transactional
-    @SuppressWarnings("unchecked")
-    public void setWholesaleRules(UUID productId, Map<String, Object> req) {
-        UUID specId = req.containsKey("spec_id") && req.get("spec_id") != null
-                ? UUID.fromString((String) req.get("spec_id")) : null;
-        if (specId != null) {
-            wholesaleRuleRepository.deleteByProductIdAndSpecId(productId, specId);
-        } else {
-            wholesaleRuleRepository.deleteByProductIdAndSpecIdIsNull(productId);
-        }
-        List<Map<String, Object>> rules = (List<Map<String, Object>>) req.get("rules");
-        for (Map<String, Object> r : rules) {
-            WholesaleRule rule = new WholesaleRule();
-            rule.setProductId(productId);
-            rule.setSpecId(specId);
-            rule.setMinQuantity(((Number) r.get("min_quantity")).intValue());
-            rule.setUnitPrice(new BigDecimal(r.get("unit_price").toString()));
-            wholesaleRuleRepository.save(rule);
-        }
-    }
-
     private StockView getStock(Product product, UUID specId) {
         StockMode stockMode = product.getStockMode();
         if (stockMode == StockMode.UNLIMITED) return new StockView(null, true);
@@ -307,7 +273,7 @@ public class ProductServiceImpl implements ProductService {
         map.put("title", p.getTitle());
         map.put("description", p.getDescription());
         map.put("cover_url", p.getCoverUrl());
-        map.put("base_price", p.getBasePrice());
+        map.put("base_price", p.getRetailPrice());
         map.put("category_id", p.getCategoryId());
         List<ProductSpec> specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(p.getId(), 0);
         boolean hasSpecs = p.isSpecEnabled() && !specs.isEmpty();
@@ -345,16 +311,8 @@ public class ProductServiceImpl implements ProductService {
         map.put("specs", specs.stream().map(spec -> toSpecMap(p, spec)).toList());
         StockMode stockMode = p.getStockMode();
         map.put("spec_enabled", p.isSpecEnabled());
-        map.put("wholesale_enabled", p.isWholesaleEnabled());
         map.put("customer_input_fields", ProductRules.currentFields(p));
         map.put("stock_mode", stockMode);
-        map.put("wholesale_rules", wholesaleRuleRepository.findByProductIdOrderByMinQuantityAsc(p.getId()).stream()
-                .map(r -> {
-                    Map<String, Object> m = new HashMap<>();
-                    m.put("min_quantity", r.getMinQuantity());
-                    m.put("unit_price", r.getUnitPrice());
-                    return m;
-                }).toList());
         return map;
     }
 
@@ -362,7 +320,7 @@ public class ProductServiceImpl implements ProductService {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", s.getId());
         map.put("name", s.getName());
-        map.put("price", s.getPrice());
+        map.put("price", s.getRetailPrice());
         StockMode stockMode = product.getStockMode();
         StockView stock = getStock(product, s.getId());
         map.put("stock_available", stock.available());
