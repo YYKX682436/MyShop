@@ -410,6 +410,7 @@ class PostgresDeliveryIntegrationTest {
         request.put("quantity", 1);
         request.put("email", "buyer@example.com");
         request.put("payment_method", "idempotent-channel");
+        request.put("expected_unit_price", "10.00");
         request.put("idempotency_key", "guest-idempotency-key");
         request.put("idempotency_fingerprint", "fingerprint-1");
 
@@ -673,6 +674,7 @@ class PostgresDeliveryIntegrationTest {
         request.put("quantity", 1);
         request.put("email", email);
         request.put("payment_method", paymentMethod);
+        request.put("expected_unit_price", "10.00");
         return request;
     }
 
