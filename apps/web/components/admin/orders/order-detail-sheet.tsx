@@ -12,7 +12,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { useLocale } from "@/lib/context"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import type { TranslationKey } from "@/lib/i18n"
-import type { AdminOrderItem, OrderCardKey, OrderItemDetail } from "@/types"
+import type { AdminOrderItem, AdminOrderItemDetail, OrderCardKey, OrderItemDetail } from "@/types"
 
 interface OrderDetailSheetProps {
   order: AdminOrderItem | null
@@ -34,6 +34,12 @@ function fulfillmentLabel(item: OrderItemDetail, t: (key: TranslationKey) => str
   if (item.fulfillment_status === "DELIVERED") return t("admin.fulfillmentDelivered")
   if (item.fulfillment_status === "CANCELLED") return t("admin.fulfillmentCancelled")
   return t("admin.fulfillmentPending")
+}
+
+function pricingSourceLabel(source: AdminOrderItemDetail["pricing_source"], t: (key: TranslationKey) => string) {
+  if (source === "LEVEL_OVERRIDE") return t("admin.pricingSourceOverride")
+  if (source === "LEVEL_MARKUP") return t("admin.pricingSourceMarkup")
+  return t("admin.pricingSourceRetail")
 }
 
 export function OrderDetailSheet({
@@ -100,6 +106,14 @@ export function OrderDetailSheet({
                               <span aria-hidden="true">·</span>
                               <span>{fulfillmentLabel(item, t)}</span>
                             </div>
+                            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-muted-foreground sm:grid-cols-3">
+                              <div><span className="block">{t("admin.unitPrice")}</span><span className="font-medium text-foreground">{formatYuan(item.unit_price)}</span></div>
+                              <div><span className="block">{t("admin.retailPriceSnapshot")}</span><span className="font-medium text-foreground">{formatYuan(item.retail_price_snapshot)}</span></div>
+                              <div><span className="block">{t("admin.costPriceSnapshot")}</span><span className="font-medium text-foreground">{formatYuan(item.cost_price_snapshot)}</span></div>
+                              <div><span className="block">{t("admin.pricingSource")}</span><span className="font-medium text-foreground">{pricingSourceLabel(item.pricing_source, t)}</span></div>
+                              <div><span className="block">{t("admin.marginAmount")}</span><span className="font-medium text-foreground">{item.gross_profit === null ? t("admin.systemNoData") : formatYuan(item.gross_profit)}</span></div>
+                              <div><span className="block">{t("admin.marginRate")}</span><span className="font-medium text-foreground">{item.gross_margin === null ? t("admin.systemNoData") : `${item.gross_margin.toFixed(2)}%`}</span></div>
+                            </div>
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="whitespace-nowrap text-sm font-medium text-foreground">{formatYuan(item.subtotal)}</span>
@@ -121,6 +135,7 @@ export function OrderDetailSheet({
                   <div><p className="text-xs text-muted-foreground">{t("admin.statusLabel")}</p><div className="mt-1"><OrderStatusBadge status={order.status} /></div></div>
                   <div><p className="text-xs text-muted-foreground">{t("admin.createdAt")}</p><p className="mt-1 text-sm text-foreground">{formatDateTime(order.created_at, locale)}</p></div>
                   <div><p className="text-xs text-muted-foreground">{t("admin.paidAt")}</p><p className="mt-1 text-sm text-foreground">{order.paid_at ? formatDateTime(order.paid_at, locale) : t("admin.systemNoData")}</p></div>
+                  <div><p className="text-xs text-muted-foreground">{t("admin.userLevelSnapshot")}</p><p className="mt-1 break-all text-sm text-foreground">{order.user_level_name_snapshot || t("admin.systemNoData")}</p></div>
                 </section>
 
                 {order.status === "DELIVERED" && (

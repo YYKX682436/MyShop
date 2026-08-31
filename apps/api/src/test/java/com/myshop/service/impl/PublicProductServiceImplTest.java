@@ -2,6 +2,8 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.PricingSource;
 import com.myshop.entity.Product;
+import com.myshop.entity.ProductSpec;
+import com.myshop.entity.UserLevel;
 import com.myshop.model.pricing.PriceResolution;
 import com.myshop.model.pricing.PriceTarget;
 import com.myshop.model.response.PublicProductResponse;
@@ -25,6 +27,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyIterable;
@@ -78,6 +81,46 @@ class PublicProductServiceImplTest {
         verify(categoryRepository, times(1)).findAllById(anyIterable());
     }
 
+    @Test
+    void publicSpecPricesAndRetailStartingPriceUseOnlyVisibleActiveSpecs() {
+        Product product = product(0);
+        product.setRetailPrice(money("1.00"));
+        product.setSpecEnabled(true);
+        ProductSpec visibleHundred = spec(product, "Visible 100", "80.00", "100.00");
+        ProductSpec visibleTwoHundred = spec(product, "Visible 200", "150.00", "200.00");
+        when(productRepository.findById(product.getId())).thenReturn(java.util.Optional.of(product));
+        when(productSpecRepository.findByProductIdInAndIsDeletedAndVisibleOrderByProductIdAscSortOrderAsc(
+                any(), eq(0), eq(true))).thenReturn(List.of(visibleHundred, visibleTwoHundred));
+        when(pricingService.resolvePublicLevel(null)).thenReturn(null);
+        Map<PriceTarget, PriceResolution> prices = Map.of(
+                new PriceTarget(product.getId(), visibleHundred.getId()),
+                new PriceResolution(money("90.00"), money("80.00"), money("100.00"), PricingSource.LEVEL_MARKUP,
+                        false, money("90.00"), null, null),
+                new PriceTarget(product.getId(), visibleTwoHundred.getId()),
+                new PriceResolution(money("150.00"), money("150.00"), money("200.00"), PricingSource.RETAIL,
+                        false, null, null, null));
+        when(pricingService.resolveBatch(anyCollection(), anyMap(), isNull())).thenReturn(prices);
+        when(pricingService.resolve(any(Product.class), isNull(ProductSpec.class), isNull(UserLevel.class)))
+                .thenReturn(new PriceResolution(money("1.00"), money("0.00"), money("1.00"), PricingSource.RETAIL,
+                        false, null, null, null));
+        when(inventoryBatchService.load(anyCollection(), anyMap())).thenReturn(Map.of());
+        when(orderItemRepository.sumQuantityByProductIds(any())).thenReturn(List.of());
+        when(categoryRepository.findAllById(anyIterable())).thenReturn(List.of());
+
+        PublicProductResponse response = new PublicProductServiceImpl(productRepository, productSpecRepository,
+                categoryRepository, orderItemRepository, inventoryBatchService, pricingService)
+                .getProduct(product.getId(), null);
+
+        assertEquals(money("90.00"), response.price());
+        assertEquals(money("100.00"), response.retailPrice());
+        assertEquals(List.of("Visible 100", "Visible 200"),
+                response.specs().stream().map(com.myshop.model.response.PublicProductSpecResponse::name).toList());
+        assertIterableEquals(List.of(visibleHundred.getId(), visibleTwoHundred.getId()),
+                response.specs().stream().map(com.myshop.model.response.PublicProductSpecResponse::id).toList());
+        verify(productSpecRepository).findByProductIdInAndIsDeletedAndVisibleOrderByProductIdAscSortOrderAsc(
+                any(), eq(0), eq(true));
+    }
+
     private Product product(int index) {
         Product product = new Product();
         product.setId(UUID.randomUUID());
@@ -88,6 +131,18 @@ class PublicProductServiceImplTest {
         product.setIsDeleted(0);
         product.setEnabled(true);
         return product;
+    }
+
+    private ProductSpec spec(Product product, String name, String cost, String retail) {
+        ProductSpec spec = new ProductSpec();
+        spec.setId(UUID.randomUUID());
+        spec.setProductId(product.getId());
+        spec.setName(name);
+        spec.setCostPrice(money(cost));
+        spec.setRetailPrice(money(retail));
+        spec.setVisible(true);
+        spec.setIsDeleted(0);
+        return spec;
     }
 
     private BigDecimal money(String value) {

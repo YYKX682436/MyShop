@@ -184,14 +184,14 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
   }
 
   const payload = useMemo<AdminProductUpsertPayload>(() => {
-    const validSpecPrices = formSpecs.map((spec) => asNumber(spec.retail_price)).filter((price) => price > 0)
+    const validSpecPrices = formSpecs.filter((spec) => spec.visible).map((spec) => asNumber(spec.retail_price)).filter((price) => price > 0)
     return {
       title: formData.title.trim(),
       description: formData.description || undefined,
       detail_md: formData.detail_md || undefined,
       cover_url: formData.cover_url || undefined,
       cost_price: formData.spec_enabled ? null : asNumber(formData.cost_price),
-      retail_price: formData.spec_enabled ? (validSpecPrices.length ? Math.min(...validSpecPrices) : 0) : asNumber(formData.retail_price),
+      retail_price: formData.spec_enabled ? (validSpecPrices.length ? Math.min(...validSpecPrices) : asNumber(formData.retail_price)) : asNumber(formData.retail_price),
       category_id: formData.category_id,
       low_stock_threshold: Math.max(0, Math.trunc(asNumber(formData.low_stock_threshold, 10))),
       spec_enabled: formData.spec_enabled,
@@ -223,9 +223,9 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
   const previewReady = useMemo(() => {
     if (!payload.title || !payload.category_id) return false
     if (!payload.spec_enabled) return isMoney(formData.cost_price, false) && isMoney(formData.retail_price, true)
-    return payload.specs.length > 0 && payload.specs.some((spec) => spec.visible)
+    return payload.specs.length > 0 && (!formData.is_enabled || payload.specs.some((spec) => spec.visible))
       && payload.specs.every((spec) => isMoney(String(spec.cost_price), false) && isMoney(String(spec.retail_price), true))
-  }, [formData.cost_price, formData.retail_price, payload])
+  }, [formData.cost_price, formData.is_enabled, formData.retail_price, payload])
 
   useEffect(() => {
     if (!previewReady || levelsLoading) return
@@ -288,7 +288,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
       if (!isMoney(formData.cost_price, false)) return t("admin.costPriceRequired")
       if (!isMoney(formData.retail_price, true)) return t("admin.retailPriceRequired")
     } else {
-      if (formSpecs.length === 0 || !formSpecs.some((spec) => spec.visible)) return t("admin.visibleSpecRequired")
+      if (formData.is_enabled && (formSpecs.length === 0 || !formSpecs.some((spec) => spec.visible))) return t("admin.visibleSpecRequired")
       const names = new Set<string>()
       for (const spec of formSpecs) {
         if (!spec.name.trim()) return t("admin.specNameRequired")
@@ -356,7 +356,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
   const rootCost = Number(formData.cost_price)
   const rootRetail = Number(formData.retail_price)
   const rootMargin = Number.isFinite(rootCost) && Number.isFinite(rootRetail) ? rootRetail - rootCost : null
-  const rootMarginRate = rootMargin !== null && rootCost > 0 ? (rootMargin / rootCost) * 100 : null
+  const rootMarginRate = rootMargin !== null && rootRetail > 0 ? (rootMargin / rootRetail) * 100 : null
   const targets = formData.spec_enabled ? formSpecs : [{ id: undefined, name: t("admin.product"), retail_price: formData.retail_price }]
   const matrixRow = (levelId: string, specId: string | null) => preview?.pricing_matrix.find((row) => row.user_level_id === levelId && row.spec_id === specId)
 
@@ -387,7 +387,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
             </label>
             <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
               {t("admin.retailPriceReq")}
-              <Input type="number" min="0" step="0.01" value={formData.retail_price} disabled={formData.spec_enabled} onChange={(event) => setField("retail_price", event.target.value)} placeholder="0.00" />
+              <Input type="number" min="0" step="0.01" value={formData.retail_price} disabled={formData.spec_enabled && (formData.is_enabled || formSpecs.some((spec) => spec.visible))} onChange={(event) => setField("retail_price", event.target.value)} placeholder="0.00" />
               {formData.spec_enabled && <span className="text-xs font-normal text-muted-foreground">{t("admin.retailFromSpecs")}</span>}
             </label>
           </div>

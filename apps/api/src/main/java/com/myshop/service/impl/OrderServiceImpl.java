@@ -141,12 +141,6 @@ public class OrderServiceImpl implements OrderService {
 
         List<com.myshop.model.CustomerInputValue> customerInputs =
                 ProductRules.normalizeCustomerInputs(product, req);
-        StockMode stockMode = product.getStockMode();
-        StockView stock = getStock(product, specId);
-        if (!stock.unlimited() && stock.available() < quantity) {
-            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "库存不足",
-                    Map.of("available", stock.available()));
-        }
 
         UserLevel userLevel = null;
         if (!adminPickup && currentUser != null && currentUser.getRole() == UserRole.USER) {
@@ -154,10 +148,22 @@ public class OrderServiceImpl implements OrderService {
         }
         PriceResolution price = pricingService.resolve(product, spec, userLevel);
         BigDecimal unitPrice = price.price();
-        BigDecimal expectedUnitPrice = parseExpectedUnitPrice(req.get("expected_unit_price"));
-        if (expectedUnitPrice != null && expectedUnitPrice.compareTo(unitPrice) != 0) {
-            throw new BusinessException(ErrorCode.PRICE_CHANGED, "商品价格已变化，请刷新后重新确认",
-                    Map.of("reason", "PRICE_CHANGED", "current_unit_price", unitPrice));
+        if (!adminPickup) {
+            BigDecimal expectedUnitPrice = parseExpectedUnitPrice(req.get("expected_unit_price"));
+            if (expectedUnitPrice == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "expected_unit_price 必填");
+            }
+            if (expectedUnitPrice.compareTo(unitPrice) != 0) {
+                throw new BusinessException(ErrorCode.PRICE_CHANGED, "商品价格已变化，请刷新后重新确认",
+                        Map.of("reason", "PRICE_CHANGED", "current_unit_price", unitPrice));
+            }
+        }
+
+        StockMode stockMode = product.getStockMode();
+        StockView stock = getStock(product, specId);
+        if (!stock.unlimited() && stock.available() < quantity) {
+            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "库存不足",
+                    Map.of("available", stock.available()));
         }
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
@@ -356,10 +362,12 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private BigDecimal parseExpectedUnitPrice(Object raw) {
-        if (raw == null || String.valueOf(raw).isBlank()) return null;
+        if (raw == null) return null;
+        String text = String.valueOf(raw).trim();
+        if (text.isBlank()) return null;
         try {
-            BigDecimal value = new BigDecimal(String.valueOf(raw));
-            if (value.scale() > 2) throw new NumberFormatException();
+            BigDecimal value = new BigDecimal(text);
+            if (value.signum() <= 0 || value.scale() > 2) throw new NumberFormatException();
             return value.setScale(2);
         } catch (NumberFormatException exception) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "expected_unit_price 无效");

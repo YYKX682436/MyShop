@@ -4,8 +4,10 @@ import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.PricingType;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
@@ -40,6 +42,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -95,7 +98,7 @@ class OrderServiceImplTest {
         UUID productId = UUID.randomUUID();
         Product product = product(productId, "10.00");
         stubProduct(product, 3);
-        Map<String, Object> request = request(productId, null, 2);
+        Map<String, Object> request = request(productId, null, 2, "10.00");
         request.put("admin_pickup", true);
 
         Map<String, Object> first = service.createDirectOrder(request,
@@ -121,7 +124,7 @@ class OrderServiceImplTest {
                 new CustomerInputField("zone", "游戏区服")));
         stubProduct(product, 3);
 
-        Map<String, Object> request = request(productId, null, 1);
+        Map<String, Object> request = request(productId, null, 1, "10.00");
         request.put("customer_inputs", List.of(
                 Map.of("id", "zone", "label", "伪造区服", "value", "艾欧尼亚"),
                 Map.of("id", "account", "value", "123456")));
@@ -149,7 +152,7 @@ class OrderServiceImplTest {
                 .thenReturn(2L);
         when(productRepository.findById(productId)).thenReturn(Optional.of(product));
 
-        service.createDirectOrder(request(productId, specId, 2), null, "203.0.113.11", "guest-session");
+        service.createDirectOrder(request(productId, specId, 2, "5.00"), null, "203.0.113.11", "guest-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.atLeastOnce()).save(orderCaptor.capture());
@@ -159,7 +162,7 @@ class OrderServiceImplTest {
         ProductSpec foreignSpec = spec(UUID.randomUUID(), otherProductId, "1.00");
         when(productSpecRepository.findById(specId)).thenReturn(Optional.of(foreignSpec));
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.createDirectOrder(request(productId, specId, 1), null,
+                () -> service.createDirectOrder(request(productId, specId, 1, "5.00"), null,
                         "203.0.113.11", "guest-session-2"));
         assertEquals(ErrorCode.SPEC_NOT_FOUND, exception.getCode());
     }
@@ -170,7 +173,7 @@ class OrderServiceImplTest {
         Product product = product(productId, "10.00");
         stubProduct(product, 5);
 
-        service.createDirectOrder(request(productId, null, 5), null, "203.0.113.12", "guest-session");
+        service.createDirectOrder(request(productId, null, 5, "10.00"), null, "203.0.113.12", "guest-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
         org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.atLeastOnce()).save(orderCaptor.capture());
@@ -188,7 +191,7 @@ class OrderServiceImplTest {
     void rejectsChangedExpectedPriceBeforeCreatingAnOrderOrReservingStock() {
         UUID productId = UUID.randomUUID();
         Product product = product(productId, "10.00");
-        stubProduct(product, 5);
+        stubProductWithoutStock(product);
         Map<String, Object> request = request(productId, null, 1);
         request.put("expected_unit_price", 9.99);
 
@@ -197,6 +200,26 @@ class OrderServiceImplTest {
 
         assertEquals(ErrorCode.PRICE_CHANGED, exception.getCode());
         assertEquals(new BigDecimal("10.00"), exception.getParams().get("current_unit_price"));
+        verify(orderRepository, never()).save(any(Order.class));
+        verify(manualStockService, never()).reserveOrThrow(any(), any(), any(Integer.class));
+    }
+
+    @Test
+    void normalOrderRejectsMissingBlankNonPositiveAndOverPrecisionExpectedPrice() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, "10.00");
+        stubProductWithoutStock(product);
+
+        List<Object> invalidValues = java.util.Arrays.asList(null, " ", BigDecimal.ZERO, new BigDecimal("-0.01"), new BigDecimal("10.001"));
+        for (int index = 0; index < invalidValues.size(); index++) {
+            final int caseIndex = index;
+            Map<String, Object> request = request(productId, null, 1);
+            if (invalidValues.get(index) != null) request.put("expected_unit_price", invalidValues.get(index));
+            BusinessException exception = assertThrows(BusinessException.class,
+                    () -> service.createDirectOrder(request, null, "203.0.113.16", "invalid-price-session-" + caseIndex));
+            assertEquals(ErrorCode.BAD_REQUEST, exception.getCode(), "invalid value at index " + index);
+        }
+
         verify(orderRepository, never()).save(any(Order.class));
         verify(manualStockService, never()).reserveOrThrow(any(), any(), any(Integer.class));
     }
@@ -284,7 +307,7 @@ class OrderServiceImplTest {
         when(userLevelRepository.findById(levelId)).thenReturn(Optional.of(level));
         stubProduct(product(productId, "12.50"), 1);
 
-        Map<String, Object> request = request(productId, null, 1);
+        Map<String, Object> request = request(productId, null, 1, "12.50");
         request.put("admin_pickup", true);
 
         Map<String, Object> result = service.createDirectOrder(request, userId,
@@ -302,6 +325,68 @@ class OrderServiceImplTest {
         assertEquals("https://pay.example/1", ((Map<?, ?>) result.get("payment")).get("payment_url"));
         verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
         verify(autoFulfillmentService, never()).trigger(any());
+    }
+
+    @Test
+    void ordinaryUserExpectedPriceMustMatchTheCurrentEffectiveLevelPrice() {
+        UUID userId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID levelId = UUID.randomUUID();
+        User buyer = user(userId, "markup-buyer", "markup@example.com");
+        buyer.setRole(UserRole.USER);
+        buyer.setUserLevelId(levelId);
+        UserLevel level = new UserLevel();
+        level.setId(levelId);
+        level.setName("成本加价会员");
+        level.setPricingType(PricingType.COST_MARKUP);
+        level.setMarkupRate(new BigDecimal("10.0000"));
+        level.setEnabled(true);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(buyer));
+        when(userLevelRepository.findById(levelId)).thenReturn(Optional.of(level));
+
+        Product product = product(productId, "100.00");
+        product.setCostPrice(new BigDecimal("80.00"));
+        stubProduct(product, 1);
+
+        Map<String, Object> result = service.createDirectOrder(request(productId, null, 1, "88.00"),
+                userId, "203.0.113.23", "markup-session");
+
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).save(orderCaptor.capture());
+        assertEquals(new BigDecimal("88.00"), orderCaptor.getValue().getActualAmount());
+        assertEquals(new BigDecimal("88.00"), ((Map<?, ?>) result.get("order")).get("actual_amount"));
+    }
+
+    @Test
+    void userOrderDetailDoesNotExposePricingSnapshotsOrLevelContext() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, "10.00");
+        stubProduct(product, 1);
+        OrderItem item = new OrderItem();
+        item.setId(UUID.randomUUID());
+        item.setProductId(productId);
+        item.setProductTitle(product.getTitle());
+        item.setQuantity(1);
+        item.setUnitPrice(new BigDecimal("10.00"));
+        item.setSubtotal(new BigDecimal("10.00"));
+        item.setCostPriceSnapshot(new BigDecimal("5.00"));
+        item.setRetailPriceSnapshot(new BigDecimal("10.00"));
+        item.setPricingSource(com.myshop.constant.PricingSource.RETAIL);
+        when(orderItemRepository.findByOrderId(any())).thenReturn(List.of(item));
+
+        Map<String, Object> result = service.createDirectOrder(request(productId, null, 1, "10.00"),
+                null, "203.0.113.24", "user-detail-session");
+
+        Map<?, ?> order = (Map<?, ?>) result.get("order");
+        assertFalse(order.containsKey("user_level_id_snapshot"));
+        assertFalse(order.containsKey("user_level_name_snapshot"));
+        Map<?, ?> itemDetail = (Map<?, ?>) ((List<?>) order.get("items")).get(0);
+        assertFalse(itemDetail.containsKey("cost_price_snapshot"));
+        assertFalse(itemDetail.containsKey("retail_price_snapshot"));
+        assertFalse(itemDetail.containsKey("pricing_source"));
+        assertFalse(itemDetail.containsKey("gross_profit"));
+        assertFalse(itemDetail.containsKey("gross_margin"));
+        assertEquals(new BigDecimal("10.00"), itemDetail.get("unit_price"));
     }
 
     @Test
@@ -344,6 +429,10 @@ class OrderServiceImplTest {
                 .thenReturn(available);
     }
 
+    private void stubProductWithoutStock(Product product) {
+        when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
+    }
+
     private Product product(UUID id, String price) {
         Product product = new Product();
         product.setId(id);
@@ -378,11 +467,16 @@ class OrderServiceImplTest {
     }
 
     private Map<String, Object> request(UUID productId, UUID specId, int quantity) {
+        return request(productId, specId, quantity, null);
+    }
+
+    private Map<String, Object> request(UUID productId, UUID specId, int quantity, String expectedUnitPrice) {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
         request.put("quantity", quantity);
         request.put("payment_method", "alipay");
         if (specId != null) request.put("spec_id", specId.toString());
+        if (expectedUnitPrice != null) request.put("expected_unit_price", expectedUnitPrice);
         return request;
     }
 }

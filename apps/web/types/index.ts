@@ -541,10 +541,21 @@ export interface OrderCardKey {
 // Admin Orders
 // ============================================================
 
-export interface AdminOrderItem extends OrderDetail {
+export interface AdminOrderItemDetail extends OrderItemDetail {
+  cost_price_snapshot: number
+  retail_price_snapshot: number
+  pricing_source: PricingSource
+  gross_profit: number | null
+  gross_margin: number | null
+}
+
+export interface AdminOrderItem extends Omit<OrderDetail, "items"> {
+  items: AdminOrderItemDetail[]
   user_id: string | null
   username: string | null
   is_risk_flagged: boolean
+  user_level_id_snapshot: string | null
+  user_level_name_snapshot: string | null
 }
 
 // ============================================================

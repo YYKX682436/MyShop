@@ -28,6 +28,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -110,6 +111,9 @@ public class PublicProductServiceImpl implements PublicProductService {
                     .min(java.util.Comparator.comparing(PriceResolution::price))
                     .orElse(rootPrice);
         }
+        BigDecimal retailStartingPrice = hasSpecs
+                ? specs.stream().map(ProductSpec::getRetailPrice).min(java.util.Comparator.naturalOrder()).orElse(product.getRetailPrice())
+                : product.getRetailPrice();
         ProductInventoryBatchService.StockSnapshot rootStock = stock.getOrDefault(
                 new PriceTarget(product.getId(), null), new ProductInventoryBatchService.StockSnapshot(0L, false));
         List<PublicProductSpecResponse> specResponses = detail && hasSpecs
@@ -118,7 +122,7 @@ public class PublicProductServiceImpl implements PublicProductService {
         return new PublicProductResponse(
                 product.getId(), product.getTitle(), product.getDescription(),
                 detail ? product.getDetailMd() : null, product.getCoverUrl(),
-                effectivePrice.price(), product.getRetailPrice(), product.getCategoryId(), categoryName,
+                effectivePrice.price(), retailStartingPrice, product.getCategoryId(), categoryName,
                 rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
                 ProductRules.currentFields(product), product.getStockMode().name(), salesCount,
                 product.getInitialSales(), product.isSpecEnabled(), specResponses,

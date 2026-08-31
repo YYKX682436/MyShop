@@ -18,12 +18,16 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
 @RequiredArgsConstructor
 public class AdminOrderServiceImpl implements AdminOrderService {
+
+    private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
@@ -97,6 +101,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("paid_at", o.getPaidAt());
         map.put("delivered_at", o.getDeliveredAt());
         map.put("user_id", o.getUserId());
+        map.put("user_level_id_snapshot", o.getUserLevelIdSnapshot());
+        map.put("user_level_name_snapshot", o.getUserLevelNameSnapshot());
         map.put("is_risk_flagged", o.isRiskFlagged());
 
         if (o.getUserId() != null) {
@@ -113,6 +119,11 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             im.put("quantity", i.getQuantity());
             im.put("unit_price", i.getUnitPrice());
             im.put("subtotal", i.getSubtotal());
+            im.put("cost_price_snapshot", i.getCostPriceSnapshot());
+            im.put("retail_price_snapshot", i.getRetailPriceSnapshot());
+            im.put("pricing_source", i.getPricingSource());
+            im.put("gross_profit", grossProfit(i));
+            im.put("gross_margin", grossMargin(i));
             im.put("delivery_type", i.getDeliveryType());
             im.put("customer_inputs", i.getCustomerInputs() == null ? List.of() : i.getCustomerInputs());
             im.put("stock_mode", i.getStockMode());
@@ -122,5 +133,20 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             return im;
         }).toList());
         return map;
+    }
+
+    private BigDecimal grossProfit(OrderItem item) {
+        if (item.getUnitPrice() == null || item.getCostPriceSnapshot() == null) return null;
+        return item.getUnitPrice().subtract(item.getCostPriceSnapshot())
+                .multiply(BigDecimal.valueOf(item.getQuantity()))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal grossMargin(OrderItem item) {
+        if (item.getUnitPrice() == null || item.getCostPriceSnapshot() == null
+                || item.getUnitPrice().signum() <= 0) return null;
+        return item.getUnitPrice().subtract(item.getCostPriceSnapshot())
+                .multiply(ONE_HUNDRED)
+                .divide(item.getUnitPrice(), 2, RoundingMode.HALF_UP);
     }
 }

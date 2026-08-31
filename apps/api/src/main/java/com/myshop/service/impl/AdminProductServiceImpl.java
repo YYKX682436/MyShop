@@ -63,6 +63,7 @@ public class AdminProductServiceImpl implements AdminProductService {
 
     private static final int MAX_PAGE_SIZE = 100;
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
+    private static final String VISIBLE_SPEC_REQUIRED_MESSAGE = "启用规格的商品至少需要一个可见可售规格";
 
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
@@ -123,6 +124,10 @@ public class AdminProductServiceImpl implements AdminProductService {
         Product product = productRepository.findByIdForUpdate(id)
                 .filter(candidate -> candidate.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
+        if (request.enabled() && !product.isEnabled() && product.isSpecEnabled()) {
+            validateVisibleSpecRequirement(product.isSpecEnabled(), request.enabled(),
+                    productSpecRepository.existsByProductIdAndIsDeletedAndVisible(product.getId(), 0, true));
+        }
         product.setEnabled(request.enabled());
         Product saved = productRepository.saveAndFlush(product);
         return buildResponse(saved, true, null, null);
@@ -198,10 +203,9 @@ public class AdminProductServiceImpl implements AdminProductService {
         if (request.categoryId() == null && (creating || product.getCategoryId() == null)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "商品分类不能为空");
         }
-        if (specEnabled && enabledForValidation(product, request, creating)) {
-            if (preparedSpecs.isEmpty() || preparedSpecs.stream().noneMatch(spec -> spec.request().visible() == null || spec.request().visible())) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "启用规格的商品至少需要一个可见可售规格");
-            }
+        boolean enabled = request.isEnabled() == null ? (creating || product.isEnabled()) : request.isEnabled();
+        if (specEnabled) {
+            validateVisibleSpecRequirement(specEnabled, enabled, preparedSpecs.stream().anyMatch(this::isVisibleSpec));
         }
         validateMoney(retailPrice, true, "零售价");
         if (!specEnabled) validateMoney(costPrice, false, "成本价");
@@ -221,7 +225,6 @@ public class AdminProductServiceImpl implements AdminProductService {
                 ? (creating ? 0 : product.getInitialSales()) : request.initialSales();
         if (initialSales < 0) throw new BusinessException(ErrorCode.BAD_REQUEST, "初始销量不能小于 0");
         int sortOrder = request.sortOrder() == null ? (creating ? 0 : product.getSortOrder()) : request.sortOrder();
-        boolean enabled = request.isEnabled() == null ? (creating || product.isEnabled()) : request.isEnabled();
         UUID categoryId = request.categoryId() == null ? product.getCategoryId() : request.categoryId();
         List<String> warnings = new ArrayList<>();
         return new PreparedAggregate(request.title().trim(), request.description(), request.detailMd(), request.coverUrl(),
@@ -230,8 +233,14 @@ public class AdminProductServiceImpl implements AdminProductService {
                 request.manualStock(), preparedSpecs, warnings);
     }
 
-    private boolean enabledForValidation(Product product, AdminProductUpsertRequest request, boolean creating) {
-        return request.isEnabled() == null ? creating || product.isEnabled() : request.isEnabled();
+    private void validateVisibleSpecRequirement(boolean specEnabled, boolean enabled, boolean hasVisibleSpec) {
+        if (specEnabled && enabled && !hasVisibleSpec) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, VISIBLE_SPEC_REQUIRED_MESSAGE);
+        }
+    }
+
+    private boolean isVisibleSpec(PreparedSpec spec) {
+        return spec.request().visible() == null || spec.request().visible();
     }
 
     private List<PreparedSpec> prepareSpecs(List<AdminProductSpecRequest> requests,
@@ -276,9 +285,23 @@ public class AdminProductServiceImpl implements AdminProductService {
     }
 
     private BigDecimal resolveRetailPrice(Product product, AdminProductUpsertRequest request,
-                                          List<PreparedSpec> specs, boolean specEnabled, boolean creating) {
+                                           List<PreparedSpec> specs, boolean specEnabled, boolean creating) {
         if (specEnabled) {
-            return specs.stream().map(PreparedSpec::retailPrice).min(Comparator.naturalOrder()).orElse(null);
+            BigDecimal visibleRetail = specs.stream()
+                    .filter(this::isVisibleSpec)
+                    .map(PreparedSpec::retailPrice)
+                    .min(Comparator.naturalOrder())
+                    .orElse(null);
+            if (visibleRetail != null) return visibleRetail;
+            // A disabled spec product may temporarily have no sellable spec. Keep
+            // the persisted root value (or an explicit positive draft value) so
+            // admins can edit hidden specs without making the required DB column
+            // invalid. The value is never used as a public starting price while
+            // the product remains disabled.
+            if (request.retailPrice() != null && request.retailPrice().signum() > 0) {
+                return request.retailPrice();
+            }
+            return creating ? null : product.getRetailPrice();
         }
         return request.retailPrice() != null ? request.retailPrice() : (creating ? null : product.getRetailPrice());
     }
@@ -474,8 +497,8 @@ public class AdminProductServiceImpl implements AdminProductService {
                                                               Map<com.myshop.model.pricing.PriceTarget, ProductInventoryBatchService.StockSnapshot> stock) {
         return specs.stream().map(spec -> {
             BigDecimal margin = spec.getRetailPrice().subtract(spec.getCostPrice()).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal marginRate = spec.getCostPrice().signum() == 0 ? null
-                    : margin.multiply(ONE_HUNDRED).divide(spec.getCostPrice(), 2, RoundingMode.HALF_UP);
+            BigDecimal marginRate = margin.multiply(ONE_HUNDRED)
+                    .divide(spec.getRetailPrice(), 2, RoundingMode.HALF_UP);
             ProductInventoryBatchService.StockSnapshot snapshot = stock == null ? null : stock.get(
                     new com.myshop.model.pricing.PriceTarget(product.getId(), spec.getId()));
             if (snapshot == null) snapshot = new ProductInventoryBatchService.StockSnapshot(
