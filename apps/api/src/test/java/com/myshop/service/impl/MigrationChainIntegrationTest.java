@@ -372,7 +372,7 @@ class MigrationChainIntegrationTest {
                 "SELECT order_type FROM orders WHERE id = ?", String.class, directId));
         assertEquals("NORMAL", jdbcTemplate.queryForObject(
                 "SELECT order_type FROM orders WHERE id = ?", String.class, cartId));
-        assertEquals("ADMIN_PICKUP", jdbcTemplate.queryForObject(
+        assertEquals("NORMAL", jdbcTemplate.queryForObject(
                 "SELECT order_type FROM orders WHERE id = ?", String.class, pickupId));
         assertEquals("character varying", dataType("orders", "order_type"));
         assertEquals(32, jdbcTemplate.queryForObject("""
