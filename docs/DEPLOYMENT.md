@@ -40,6 +40,7 @@ Prometheus or Grafana for this dashboard.
 4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
 6. Create the configured upload directory with owner `10001:10001` and mode `0750`, then run `docker compose up -d --build` and inspect `docker compose ps` and API logs. The API performs a write/delete probe during startup and refuses to become healthy when the path is not usable.
+7. After API and Web health checks pass, run `bash /opt/myshop/scripts/cleanup-docker-retention.sh` to retain only the active release and two rollback releases and to remove unused Docker build cache. The script never touches Docker volumes, uploads, or database backups.
 
 Before startup, `bash scripts/check-compose.sh` verifies that Compose receives
 `SITE_DOMAIN`, `ACME_EMAIL`, `DB_PASSWORD`, and `JWT_SECRET`, and that missing
@@ -72,7 +73,8 @@ system and release files on the root filesystem, and mount the data disk at
 `/data` before Docker starts. The recommended production layout is:
 
 ```text
-/data/docker             Docker images, build cache, containers, and named volumes
+/data/docker             Docker metadata, containers, and named volumes
+/data/containerd         Docker image layers and BuildKit/containerd snapshots
 /data/myshop/uploads     Product and site uploads
 /data/myshop/backups     PostgreSQL backups
 /opt/myshop              Releases, Compose files, and runtime configuration
@@ -195,6 +197,31 @@ change `API_IMAGE`/`WEB_IMAGE` to the previous immutable tags and run
 `docker compose up -d`; never roll back a database migration by deleting rows
 or editing Flyway history. A migration requiring rollback must ship a new
 forward migration after a reviewed backup.
+
+## Docker retention
+
+Production keeps exactly three application versions: the active version and
+the two most recent rollback candidates. The retention boundary applies to
+both `/opt/myshop/releases/<SHA>` directories and the matching
+`myshop-api:<SHA>`/`myshop-web:<SHA>` image tags.
+
+After every successful deployment, run:
+
+```bash
+bash /opt/myshop/scripts/cleanup-docker-retention.sh
+```
+
+The script removes unused application images, dangling images, and all unused
+BuildKit cache, then removes release directories outside the three-version
+window. It verifies `DEPLOYED_SHA`, the `current` symlink, and the running
+API/Web image before deleting anything. It must not be replaced with
+`docker volume prune` or `docker system prune --volumes`; PostgreSQL, Caddy,
+uploads, and backups are outside the cleanup scope.
+
+Install `ops/systemd/myshop-docker-retention.service` and
+`ops/systemd/myshop-docker-retention.timer` on the production host as a daily
+fallback. The deployment hook remains required so fast release iteration does
+not leave a full day's build cache on the data disk.
 
 ## Operational boundaries
 

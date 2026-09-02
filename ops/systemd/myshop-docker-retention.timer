@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily MyShop Docker retention cleanup
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=myshop-docker-retention.service
+
+[Install]
+WantedBy=timers.target
