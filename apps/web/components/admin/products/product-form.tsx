@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -144,9 +144,11 @@ interface ProductFormProps {
   categories: Category[]
   onSaved: () => void | Promise<void>
   onCancel: () => void
+  onDirtyChange?: (dirty: boolean) => void
+  stickyActions?: boolean
 }
 
-export function ProductForm({ product, categories, onSaved, onCancel }: ProductFormProps) {
+export function ProductForm({ product, categories, onSaved, onCancel, onDirtyChange, stickyActions = false }: ProductFormProps) {
   const { t } = useLocale()
   const [formData, setFormData] = useState<ProductFormData>(() => getFormData(product))
   const [formSpecs, setFormSpecs] = useState<ProductSpecDraft[]>(() => getSpecs(product))
@@ -156,13 +158,30 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
   const [preview, setPreview] = useState<{ pricing_matrix: AdminProductDetail["pricing_matrix"]; warnings: string[] } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const initialSnapshotRef = useRef("")
+  const onDirtyChangeRef = useRef(onDirtyChange)
+
+  const snapshot = useMemo(() => JSON.stringify({ formData, formSpecs, overrides }), [formData, formSpecs, overrides])
 
   useEffect(() => {
-    setFormData(getFormData(product))
-    setFormSpecs(getSpecs(product))
-    setOverrides(getOverrides(product))
+    onDirtyChangeRef.current = onDirtyChange
+  }, [onDirtyChange])
+
+  useEffect(() => {
+    const nextFormData = getFormData(product)
+    const nextFormSpecs = getSpecs(product)
+    const nextOverrides = getOverrides(product)
+    setFormData(nextFormData)
+    setFormSpecs(nextFormSpecs)
+    setOverrides(nextOverrides)
+    initialSnapshotRef.current = JSON.stringify({ formData: nextFormData, formSpecs: nextFormSpecs, overrides: nextOverrides })
     setPreview(product?.pricing_matrix?.length ? { pricing_matrix: product.pricing_matrix, warnings: product.warnings || [] } : null)
   }, [product])
+
+  useEffect(() => {
+    if (!initialSnapshotRef.current) return
+    onDirtyChangeRef.current?.(snapshot !== initialSnapshotRef.current)
+  }, [snapshot])
 
   useEffect(() => {
     let active = true
@@ -374,7 +393,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
           </label>
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
             {t("admin.categoryReq")}
-            <select className="h-10 rounded-md border border-input bg-background px-3 text-sm font-normal" value={formData.category_id} onChange={(event) => setField("category_id", event.target.value)}>
+            <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal" value={formData.category_id} onChange={(event) => setField("category_id", event.target.value)}>
               <option value="">{t("admin.categoryPlaceholder")}</option>
               {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
             </select>
@@ -392,7 +411,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
             </label>
           </div>
           {!formData.spec_enabled && rootMargin !== null && (
-            <div className="grid grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/30 p-3 text-sm lg:col-span-2">
+            <div className="grid grid-cols-2 gap-3 rounded-card border border-border-subtle bg-surface-muted p-3.5 text-sm lg:col-span-2">
               <div><div className="text-xs text-muted-foreground">{t("admin.marginAmount")}</div><div className={cn("mt-1 font-semibold", rootMargin < 0 && "text-amber-600")}>{formatYuan(rootMargin)}</div></div>
               <div><div className="text-xs text-muted-foreground">{t("admin.marginRate")}</div><div className={cn("mt-1 font-semibold", rootMarginRate !== null && rootMarginRate < 0 && "text-amber-600")}>{rootMarginRate === null ? "—" : `${rootMarginRate.toFixed(2)}%`}</div></div>
             </div>
@@ -418,7 +437,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
           </div>
           <label className="flex flex-col gap-1.5 text-sm font-medium">
             {t("admin.stockMode")}
-            <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={formData.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
+            <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={formData.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
               {formData.delivery_type === "AUTO" && <option value="CARD_KEY">{t("admin.cardKeyStock")}</option>}
               {formData.delivery_type === "MANUAL" && <><option value="MANUAL">{t("admin.manualStock")}</option><option value="UNLIMITED">{t("admin.unlimitedStock")}</option></>}
             </select>
@@ -437,7 +456,7 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
               <Input type="number" min="0" step="1" value={formData.manual_stock} onChange={(event) => setField("manual_stock", event.target.value)} placeholder="0" />
             </label>
           )}
-          <label className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 lg:col-span-2">
+          <label className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 lg:col-span-2">
             <span className="text-sm font-medium">{t("admin.listingStatus")}</span>
             <Switch checked={formData.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
           </label>
@@ -459,19 +478,19 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
       </FormSection>
 
       <FormSection title={t("admin.productSpecs")} description={t("admin.specsHint")}>
-        <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
+        <div className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5">
           <span className="text-sm font-medium">{t("admin.enableMultiSpec")}</span>
           <Switch checked={formData.spec_enabled} onCheckedChange={toggleSpecMode} aria-label={t("admin.enableMultiSpec")} />
         </div>
-        <div className={cn("mt-4 overflow-x-auto rounded-lg border border-border", !formData.spec_enabled && "opacity-70")}>
+        <div className={cn("mt-4 overflow-x-auto rounded-card border border-border-subtle bg-surface", !formData.spec_enabled && "opacity-70")}>
           <table className="w-full min-w-[820px] text-sm">
-            <thead className="bg-muted/40"><tr><th className="px-3 py-2 text-left">{t("admin.specName")}</th><th className="px-3 py-2 text-left">{t("admin.specCost")}</th><th className="px-3 py-2 text-left">{t("admin.specRetail")}</th><th className="px-3 py-2 text-left">{t("admin.specMargin")}</th><th className="px-3 py-2 text-left">{t("admin.specVisible")}</th><th className="px-3 py-2 text-left">{t("admin.stockLabel")}</th><th className="px-3 py-2" /></tr></thead>
+            <thead className="bg-surface-muted"><tr><th className="px-3 py-2 text-left">{t("admin.specName")}</th><th className="px-3 py-2 text-left">{t("admin.specCost")}</th><th className="px-3 py-2 text-left">{t("admin.specRetail")}</th><th className="px-3 py-2 text-left">{t("admin.specMargin")}</th><th className="px-3 py-2 text-left">{t("admin.specVisible")}</th><th className="px-3 py-2 text-left">{t("admin.stockLabel")}</th><th className="px-3 py-2" /></tr></thead>
             <tbody>
               {formSpecs.map((spec, index) => {
                 const cost = Number(spec.cost_price)
                 const retail = Number(spec.retail_price)
                 const margin = Number.isFinite(cost) && Number.isFinite(retail) ? retail - cost : 0
-                return <tr key={spec.id || `new-${index}`} className="border-t border-border/60">
+                return <tr key={spec.id || `new-${index}`} className="border-t border-border-subtle">
                   <td className="px-3 py-2"><Input value={spec.name} onChange={(event) => updateSpec(index, { name: event.target.value })} placeholder={t("admin.specNamePlaceholder")} /></td>
                   <td className="px-3 py-2"><Input type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(index, { cost_price: event.target.value })} placeholder="0.00" /></td>
                   <td className="px-3 py-2"><Input type="number" min="0" step="0.01" value={spec.retail_price} onChange={(event) => updateSpec(index, { retail_price: event.target.value })} placeholder="0.00" /></td>
@@ -483,21 +502,21 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
               })}
             </tbody>
           </table>
-          <div className="border-t border-border/60 p-3"><Button type="button" variant="outline" onClick={() => setFormSpecs((current) => [...current, { id: createId(), name: "", cost_price: "", retail_price: "", visible: true, sort_order: String(current.length), manual_stock: "" }])}><Plus className="mr-2 h-4 w-4" />{t("admin.addSpec")}</Button></div>
+          <div className="border-t border-border-subtle bg-surface-muted/45 p-3"><Button type="button" variant="outline" onClick={() => setFormSpecs((current) => [...current, { id: createId(), name: "", cost_price: "", retail_price: "", visible: true, sort_order: String(current.length), manual_stock: "" }])}><Plus className="mr-2 h-4 w-4" />{t("admin.addSpec")}</Button></div>
         </div>
         {!formData.spec_enabled && formSpecs.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{t("admin.storedSpecsHint")}</p>}
       </FormSection>
 
       <FormSection title={t("admin.priceMatrix")} description={t("admin.priceMatrixHint")}>
         {levelsLoading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div> : levels.length === 0 ? <p className="text-sm text-muted-foreground">{t("admin.noUserLevels")}</p> : (
-          <div className="overflow-x-auto rounded-lg border border-border">
+          <div className="overflow-x-auto rounded-card border border-border-subtle bg-surface">
             <table className="w-full min-w-[960px] text-sm">
-              <thead className="bg-muted/40"><tr><th className="px-3 py-2 text-left">{t("admin.userLevel")}</th><th className="px-3 py-2 text-left">{t("admin.target")}</th><th className="px-3 py-2 text-left">{t("admin.defaultPrice")}</th><th className="px-3 py-2 text-left">{t("admin.overridePrice")}</th><th className="px-3 py-2 text-left">{t("admin.finalPrice")}</th><th className="px-3 py-2 text-left">{t("admin.pricingSource")}</th></tr></thead>
+              <thead className="bg-surface-muted"><tr><th className="px-3 py-2 text-left">{t("admin.userLevel")}</th><th className="px-3 py-2 text-left">{t("admin.target")}</th><th className="px-3 py-2 text-left">{t("admin.defaultPrice")}</th><th className="px-3 py-2 text-left">{t("admin.overridePrice")}</th><th className="px-3 py-2 text-left">{t("admin.finalPrice")}</th><th className="px-3 py-2 text-left">{t("admin.pricingSource")}</th></tr></thead>
               <tbody>{levels.filter((level) => level.enabled).flatMap((level) => targets.map((target) => {
                 const specId = target.id || null
                 const row = matrixRow(level.id, specId)
                 const isMarkup = level.pricing_type === "COST_MARKUP"
-                return <tr key={`${level.id}:${specId || "product"}`} className="border-t border-border/60">
+                return <tr key={`${level.id}:${specId || "product"}`} className="border-t border-border-subtle">
                   <td className="px-3 py-2"><div className="font-medium">{level.name}</div><div className="text-xs text-muted-foreground">{isMarkup ? `${t("admin.costMarkup")} ${level.markup_rate}%` : t("admin.retailPricing")}</div></td>
                   <td className="px-3 py-2">{target.name}</td>
                   <td className="px-3 py-2">{row ? formatYuan(row.default_price) : "—"}</td>
@@ -510,14 +529,17 @@ export function ProductForm({ product, categories, onSaved, onCancel }: ProductF
           </div>
         )}
         {previewLoading && <p className="mt-2 text-xs text-muted-foreground">{t("admin.previewUpdating")}</p>}
-        {preview?.warnings.map((warning) => <div key={warning} className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{warning}</div>)}
+        {preview?.warnings.map((warning) => <div key={warning} className="mt-3 flex items-start gap-2 rounded-card border border-amber-500/20 bg-amber-500/[0.07] p-3 text-sm text-amber-800 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{warning}</div>)}
       </FormSection>
 
       <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
         <MarkdownEditor value={formData.detail_md} onChange={(value) => setField("detail_md", value)} uploadImage={uploadImage} />
       </FormSection>
 
-      <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">
+      <div className={cn(
+        "flex flex-col-reverse gap-3 border-t border-border-subtle bg-surface-raised pt-5 sm:flex-row sm:justify-end",
+        stickyActions && "sticky bottom-0 z-10 -mx-5 px-5 pb-1 sm:-mx-7 sm:px-7",
+      )}>
         <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
         <Button type="button" onClick={() => void handleSave()} disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button>
       </div>

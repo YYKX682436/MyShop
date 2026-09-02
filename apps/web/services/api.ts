@@ -76,7 +76,9 @@ function handleUnauthorized() {
     redirecting = false
     return
   }
-  window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`
+  // This shared API module needs a hard redirect when an HttpOnly session has expired.
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+  window.location.assign(`/login?redirect=${encodeURIComponent(currentPath)}`)
 }
 
 // ============================================================

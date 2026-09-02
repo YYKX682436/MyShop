@@ -2,13 +2,26 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
 import {
+  ArrowUpRight,
   ChevronDown,
   Globe2,
+  LayoutDashboard,
   LogOut,
   Moon,
   Palette,
+  Package,
+  Search,
   Sun,
+  Users,
+  ClipboardList,
+  ShieldAlert,
+  ScrollText,
+  CreditCard,
+  FolderTree,
+  KeyRound,
+  Settings,
 } from "lucide-react"
 
 import {
@@ -31,6 +44,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from "@/components/ui/command"
 import { useAuth, useColorScheme, useLocale, useTheme, COLOR_SCHEMES, type ColorScheme } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
 
@@ -42,6 +64,21 @@ const colorSchemeKeys: Record<ColorScheme, TranslationKey> = {
   pink: "admin.colorPink",
   purple: "admin.colorPurple",
 }
+
+const commandItems: Array<{ labelKey: TranslationKey; href: string; icon: typeof LayoutDashboard; superAdminOnly?: boolean }> = [
+  { labelKey: "admin.dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
+  { labelKey: "admin.products", href: "/admin/products", icon: Package },
+  { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
+  { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
+  { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList },
+  { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
+  { labelKey: "admin.users", href: "/admin/users", icon: Users },
+  { labelKey: "admin.userLevels", href: "/admin/user-levels", icon: ShieldAlert },
+  { labelKey: "admin.risk", href: "/admin/risk", icon: ShieldAlert },
+  { labelKey: "admin.logs", href: "/admin/operation-logs", icon: ScrollText },
+  { labelKey: "admin.siteConfig", href: "/admin/site-config", icon: Settings },
+  { labelKey: "admin.administrators", href: "/admin/administrators", icon: Users, superAdminOnly: true },
+]
 
 function getPageLabel(pathname: string): TranslationKey {
   if (pathname === "/admin" || pathname === "/admin/dashboard") return "admin.dashboard"
@@ -67,7 +104,19 @@ export function AdminHeader() {
   const { resolvedTheme, setTheme } = useTheme()
   const { colorScheme, setColorScheme } = useColorScheme()
   const { user, logout } = useAuth()
+  const [commandOpen, setCommandOpen] = useState(false)
   const pageLabel = t(getPageLabel(pathname))
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault()
+        setCommandOpen(true)
+      }
+    }
+    window.addEventListener("keydown", handleShortcut)
+    return () => window.removeEventListener("keydown", handleShortcut)
+  }, [])
 
   const toggleLocale = () => setLocale(locale === "zh" ? "en" : "zh")
   const toggleTheme = () => setTheme(resolvedTheme === "dark" ? "light" : "dark")
@@ -77,9 +126,9 @@ export function AdminHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex min-h-16 items-center border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-6">
+    <header className="sticky top-0 z-30 flex min-h-16 items-center border-b border-border-subtle bg-background/90 px-4 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75 sm:px-6">
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <SidebarTrigger className="shrink-0" aria-label={t("admin.toggleSidebar")} />
+        <SidebarTrigger className="shrink-0 rounded-control" aria-label={t("admin.toggleSidebar")} />
         <Breadcrumb className="min-w-0" aria-label={t("admin.breadcrumb")}>
           <BreadcrumbList className="flex-nowrap overflow-hidden">
             <BreadcrumbItem className="hidden sm:inline-flex">
@@ -95,7 +144,20 @@ export function AdminHeader() {
         </Breadcrumb>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+      <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          className="hidden h-9 w-48 justify-between gap-3 border-border-subtle bg-surface-muted/65 px-3 text-muted-foreground shadow-none hover:bg-surface md:inline-flex lg:w-60"
+          onClick={() => setCommandOpen(true)}
+          aria-label={t("admin.commandBar")}
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <Search className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="truncate text-xs font-normal">{t("admin.commandBar")}</span>
+          </span>
+          <kbd className="hidden rounded border border-border-subtle bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground lg:inline-block">⌘ K</kbd>
+        </Button>
         <Button asChild variant="ghost" size="sm" className="hidden gap-2 sm:inline-flex">
           <Link href="/">
             <span>{t("admin.backToSite")}</span>
@@ -167,6 +229,32 @@ export function AdminHeader() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <CommandDialog open={commandOpen} onOpenChange={setCommandOpen}>
+        <CommandInput placeholder={t("admin.commandBar")} />
+        <CommandList>
+          <CommandEmpty>{t("admin.noCommandResults")}</CommandEmpty>
+          <CommandGroup heading={t("admin.quickNavigation")}>
+            {commandItems
+              .filter((item) => !item.superAdminOnly || user?.role === "SUPER_ADMIN")
+              .map((item) => (
+                <CommandItem
+                  key={item.href}
+                  value={t(item.labelKey)}
+                  onSelect={() => {
+                    setCommandOpen(false)
+                    router.push(item.href)
+                  }}
+                >
+                  <item.icon className="text-muted-foreground" aria-hidden="true" />
+                  <span>{t(item.labelKey)}</span>
+                  <ArrowUpRight className="ml-auto size-3.5 text-muted-foreground" aria-hidden="true" />
+                  <CommandShortcut>↵</CommandShortcut>
+                </CommandItem>
+              ))}
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
     </header>
   )
 }

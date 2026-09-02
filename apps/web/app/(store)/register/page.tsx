@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { Eye, EyeOff, UserPlus, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
@@ -81,12 +82,15 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-[60vh] items-center justify-center">
+    <div className="flex min-h-[calc(100vh-13rem)] items-center justify-center py-8">
       <div className="w-full max-w-sm">
-        <div className="rounded-lg border border-border bg-card p-6 shadow-sm">
-          <h1 className="mb-6 text-center text-xl font-bold text-card-foreground">
+        <div className="surface p-6 sm:p-8">
+          <div className="mb-7 text-center">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
             {t("auth.register")}
-          </h1>
+            </h1>
+          </div>
 
           <form onSubmit={handleRegister} className="flex flex-col gap-4">
             {/* Username */}
@@ -102,7 +106,7 @@ export default function RegisterPage() {
                 autoComplete="username"
                 minLength={3}
                 maxLength={20}
-                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
               />
               <p className="mt-1 text-xs text-muted-foreground">{t("auth.usernameRule")}</p>
@@ -120,7 +124,7 @@ export default function RegisterPage() {
                 onChange={(e) => update("email", e.target.value)}
                 autoComplete="email"
                 maxLength={255}
-                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
               />
             </div>
@@ -138,7 +142,7 @@ export default function RegisterPage() {
                 onChange={(e) => update("phone", e.target.value)}
                 autoComplete="tel"
                 maxLength={11}
-                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
               />
               <p className="mt-1 text-xs text-muted-foreground">{t("auth.phoneRule")}</p>
@@ -158,14 +162,14 @@ export default function RegisterPage() {
                   autoComplete="new-password"
                   minLength={6}
                   maxLength={72}
-                  className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={t("auth.togglePassword")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -187,14 +191,14 @@ export default function RegisterPage() {
                   autoComplete="new-password"
                   minLength={6}
                   maxLength={72}
-                  className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   aria-label={t("auth.togglePassword")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
                 >
                   {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -217,18 +221,18 @@ export default function RegisterPage() {
                   onChange={(e) => update("captcha", e.target.value.toUpperCase())}
                   maxLength={6}
                   placeholder="请输入验证码"
-                  className="h-10 flex-1 rounded-lg border border-input bg-background px-3 text-sm uppercase text-foreground tracking-wider focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="h-11 flex-1 rounded-control border border-input bg-surface-muted px-3 text-sm uppercase tracking-wider text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   required
                 />
                 <div
-                  className="relative flex h-10 w-24 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border bg-muted overflow-hidden"
+                  className="relative flex h-11 w-24 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted"
                   onClick={fetchCaptcha}
                   title={t("auth.clickToRefresh")}
                 >
                   {captchaLoading ? (
                     <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
                   ) : captchaImage ? (
-                    <img src={captchaImage} alt="captcha" className="h-full w-full object-contain" />
+                    <Image src={captchaImage} alt="captcha" fill unoptimized sizes="96px" className="object-contain" />
                   ) : (
                     <span className="select-none text-lg font-bold tracking-wider text-foreground/60">
                       ----
@@ -248,7 +252,7 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
             >
               {isLoading ? (
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />

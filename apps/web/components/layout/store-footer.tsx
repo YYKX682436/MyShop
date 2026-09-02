@@ -7,8 +7,8 @@ export function StoreFooter() {
   const { config } = useSiteConfig()
 
   return (
-    <footer className="border-t border-border bg-muted/40">
-      <div className="mx-auto flex min-h-14 w-full max-w-7xl flex-wrap items-center justify-center gap-x-4 gap-y-2 px-4 py-3 lg:px-6">
+    <footer className="border-t border-border-subtle bg-surface-muted/55">
+      <div className="mx-auto flex min-h-16 w-full max-w-[1440px] flex-wrap items-center justify-center gap-x-5 gap-y-2 px-4 py-4 sm:justify-between sm:px-6 lg:px-8">
         {config?.footer_text && (
           <p className="max-w-full break-words text-center text-sm text-muted-foreground">
             {config.footer_text}

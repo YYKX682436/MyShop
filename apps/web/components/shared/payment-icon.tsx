@@ -1,4 +1,5 @@
 import { CreditCard, KeyRound } from "lucide-react"
+import Image from "next/image"
 import { cn } from "@/lib/utils"
 
 interface PaymentIconProps {
@@ -81,9 +82,12 @@ export function PaymentIcon({ method, className = "h-5 w-5", variant = "badge" }
 
   return (
     <span className={cn("inline-flex shrink-0 items-center justify-center", className)}>
-      <img
+      <Image
         src={src}
         alt={method}
+        width={24}
+        height={24}
+        unoptimized
         className={cn("h-full w-full object-contain", variant === "plain" && "brightness-0 invert")}
         draggable={false}
       />

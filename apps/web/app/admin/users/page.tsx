@@ -101,7 +101,7 @@ export default function AdminUsersPage() {
             aria-label={t("admin.searchUser")}
           />
           <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
             value={statusFilter}
             onChange={(event) => {
               setStatusFilter(event.target.value as "" | "0" | "1")
@@ -114,7 +114,7 @@ export default function AdminUsersPage() {
             <option value="1">{t("admin.banned")}</option>
           </select>
           <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
             value={levelFilter}
             onChange={(event) => { setLevelFilter(event.target.value); setPage(1) }}
             aria-label={t("admin.userLevel")}
@@ -128,7 +128,7 @@ export default function AdminUsersPage() {
       <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
         <table className="w-full min-w-[1240px] text-sm">
           <thead>
-            <tr className="border-b border-border bg-muted/30">
+            <tr className="border-b border-border-subtle bg-surface-muted">
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.userNumber")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.user")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.emailLabel")}</th>
@@ -148,13 +148,13 @@ export default function AdminUsersPage() {
             {!loading && !error && users.map((user) => {
               const enabled = user.is_deleted === 0
               return (
-                <tr key={user.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                <tr key={user.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                   <td className="whitespace-nowrap px-4 py-3 font-mono font-medium">{user.user_no}</td>
                   <td className="px-4 py-3 font-medium">{user.username}</td>
                   <td className="px-4 py-3 text-muted-foreground">{user.email}</td>
                   <td className="px-4 py-3">
                     <select
-                      className="h-9 max-w-44 rounded-md border border-input bg-background px-2 text-sm"
+                      className="h-10 max-w-44 rounded-control border border-input bg-surface px-2 text-sm"
                       value={user.user_level_id || ""}
                       onChange={(event) => void changeLevel(user, event.target.value)}
                       aria-label={`${t("admin.userLevel")} · ${user.username}`}

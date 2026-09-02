@@ -28,14 +28,14 @@ export function CardContentImportFields({ columns, onChange, disabled = false }:
           type="button"
           disabled={disabled}
           onClick={() => onChange([...columns, ""])}
-          className="inline-flex items-center gap-1 rounded-md border border-input px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted disabled:opacity-50"
         >
           <Plus className="h-3.5 w-3.5" />{t("admin.addColumn")}
         </button>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {columns.map((column, index) => (
-          <div key={index} className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-border bg-muted/20 p-3">
+          <div key={index} className="flex min-w-0 flex-col gap-1.5 rounded-card border border-border-subtle bg-surface-muted/45 p-3">
             <div className="flex items-center justify-between gap-2">
               <label htmlFor={`card-content-column-${index}`} className="text-sm font-medium text-foreground">
                 {t("admin.cardContentColumn").replace("{index}", String(index + 1))} <span className="text-destructive">*</span>
@@ -55,7 +55,7 @@ export function CardContentImportFields({ columns, onChange, disabled = false }:
               value={column}
               disabled={disabled}
               onChange={(event) => update(index, event.target.value)}
-              className="min-h-32 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+              className="min-h-32 w-full resize-y rounded-control border border-input bg-surface px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
               placeholder={t("admin.cardContentColumnPlaceholder").replace("{index}", String(index + 1))}
             />
             <p className="text-right text-xs text-muted-foreground">{t("admin.recognizedCount").replace("{count}", String(recognizedCardContentCount(column)))}</p>
@@ -63,7 +63,7 @@ export function CardContentImportFields({ columns, onChange, disabled = false }:
         ))}
       </div>
       {validationError && (
-        <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <p role="alert" className="rounded-control border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {validationError}
         </p>
       )}

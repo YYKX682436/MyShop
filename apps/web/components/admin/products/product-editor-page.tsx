@@ -11,9 +11,18 @@ import { useLocale } from "@/lib/context"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
 
-export function ProductEditorPage({ productId }: { productId?: string }) {
+interface ProductEditorPageProps {
+  productId?: string
+  presentation?: "full" | "workspace"
+  onSaved?: () => void | Promise<void>
+  onCancel?: () => void
+  onDirtyChange?: (dirty: boolean) => void
+}
+
+export function ProductEditorPage({ productId, presentation = "full", onSaved, onCancel, onDirtyChange }: ProductEditorPageProps) {
   const { t } = useLocale()
   const router = useRouter()
+  const isWorkspace = presentation === "workspace"
   const [categories, setCategories] = useState<Category[]>([])
   const [product, setProduct] = useState<AdminProductDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,11 +53,27 @@ export function ProductEditorPage({ productId }: { productId?: string }) {
 
   useEffect(() => { void load() }, [load])
 
+  const handleSaved = onSaved || (() => router.push("/admin/products"))
+  const handleCancel = onCancel || (() => router.push("/admin/products"))
+
+  if (isWorkspace && loading) {
+    return <div className="h-full min-h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} />
+  }
+
+  if (isWorkspace && (error || (productId && !product))) {
+    return (
+      <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center" role="alert">
+        <p className="text-sm text-destructive">{productId ? t("admin.loadProductFailed") : t("admin.loadCategoriesFailed")}</p>
+        <Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <AdminPage>
         <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} description={t("admin.productEditorHint")} />
-        <div className="h-64 animate-pulse rounded-xl border border-border bg-muted" role="status" aria-label={t("common.loading")} />
+        <div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} />
       </AdminPage>
     )
   }
@@ -57,11 +82,24 @@ export function ProductEditorPage({ productId }: { productId?: string }) {
     return (
       <AdminPage>
         <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} description={t("admin.productEditorHint")} />
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-12 text-center" role="alert">
+        <div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center" role="alert">
           <p className="text-sm text-destructive">{productId ? t("admin.loadProductFailed") : t("admin.loadCategoriesFailed")}</p>
           <Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button>
         </div>
       </AdminPage>
+    )
+  }
+
+  if (isWorkspace) {
+    return (
+      <ProductForm
+        product={product}
+        categories={categories}
+        onSaved={handleSaved}
+        onCancel={handleCancel}
+        onDirtyChange={onDirtyChange}
+        stickyActions
+      />
     )
   }
 
@@ -77,7 +115,7 @@ export function ProductEditorPage({ productId }: { productId?: string }) {
           </Button>
         }
       />
-      <ProductForm product={product} categories={categories} onSaved={() => router.push("/admin/products")} onCancel={() => router.push("/admin/products")} />
+      <ProductForm product={product} categories={categories} onSaved={handleSaved} onCancel={handleCancel} onDirtyChange={onDirtyChange} />
     </AdminPage>
   )
 }

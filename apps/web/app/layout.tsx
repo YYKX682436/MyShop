@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import { Toaster } from "sonner"
 import { AppProviders } from "@/lib/context"
+import { MotionProvider } from "@/components/ui/motion"
 import { ThemeScript } from "./theme-script"
 import { DynamicFavicon } from "@/components/dynamic-favicon"
 import "./globals.css"
@@ -38,11 +39,13 @@ export default function RootLayout({
         <ThemeScript />
       </head>
       <body className={`${inter.variable} font-sans antialiased`} suppressHydrationWarning>
-        <AppProviders>
-          <DynamicFavicon />
-          {children}
-          <Toaster position="top-center" richColors closeButton />
-        </AppProviders>
+        <MotionProvider>
+          <AppProviders>
+            <DynamicFavicon />
+            {children}
+            <Toaster position="top-center" richColors closeButton />
+          </AppProviders>
+        </MotionProvider>
       </body>
     </html>
   )

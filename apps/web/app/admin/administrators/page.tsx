@@ -239,7 +239,7 @@ export default function AdministratorsPage() {
             aria-label={t("admin.searchUser")}
           />
           <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
             value={statusFilter}
             onChange={(event) => {
               setStatusFilter(event.target.value as "" | "0" | "1")
@@ -257,7 +257,7 @@ export default function AdministratorsPage() {
       <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
         <table className="w-full min-w-[1080px] text-sm">
           <thead>
-            <tr className="border-b border-border bg-muted/30">
+            <tr className="border-b border-border-subtle bg-surface-muted">
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.administratorUsername")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.administratorEmail")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.administratorPhone")}</th>
@@ -275,7 +275,7 @@ export default function AdministratorsPage() {
               const isSuperAdmin = administrator.role === "SUPER_ADMIN"
               const enabled = administrator.is_deleted === 0
               return (
-                <tr key={administrator.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                <tr key={administrator.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                   <td className="px-4 py-3 font-medium">{administrator.username}</td>
                   <td className="px-4 py-3 text-muted-foreground">{administrator.email || "—"}</td>
                   <td className="px-4 py-3 text-muted-foreground">{administrator.phone || "—"}</td>
@@ -400,14 +400,14 @@ export default function AdministratorsPage() {
             <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />{t("admin.administratorOperationLogs")}</DialogTitle>
             <DialogDescription>{logsTarget?.username || ""} · {logsTarget?.role === "SUPER_ADMIN" ? t("admin.administratorSuperAdminReadonly") : t("admin.administratorOrdinary")}</DialogDescription>
           </DialogHeader>
-          <div className="max-h-[55vh] overflow-auto rounded-lg border border-border">
+          <div className="max-h-[55vh] overflow-auto rounded-card border border-border-subtle bg-surface">
             <table className="w-full min-w-[720px] text-sm">
-              <thead><tr className="border-b border-border bg-muted/30"><th className="px-3 py-2 text-left">{t("admin.time")}</th><th className="px-3 py-2 text-left">{t("admin.actionType")}</th><th className="px-3 py-2 text-left">{t("admin.detailLabel")}</th><th className="px-3 py-2 text-left">{t("admin.ipLabel")}</th></tr></thead>
+              <thead><tr className="border-b border-border-subtle bg-surface-muted"><th className="px-3 py-2 text-left">{t("admin.time")}</th><th className="px-3 py-2 text-left">{t("admin.actionType")}</th><th className="px-3 py-2 text-left">{t("admin.detailLabel")}</th><th className="px-3 py-2 text-left">{t("admin.ipLabel")}</th></tr></thead>
               <tbody>
                 {logsLoading && <TableLoadingState colSpan={4} />}
                 {!logsLoading && logsError && <TableErrorState colSpan={4} onRetry={() => logsTarget && void loadLogs(logsTarget, logsPage)} />}
                 {!logsLoading && !logsError && logs.length === 0 && <TableEmptyState colSpan={4}>{t("admin.administratorNoLogs")}</TableEmptyState>}
-                {!logsLoading && !logsError && logs.map((log) => <tr key={log.id} className="border-b border-border/60 last:border-0"><td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td className="px-3 py-2">{log.action}</td><td className="max-w-[28rem] truncate px-3 py-2" title={log.detail || ""}>{log.detail || "—"}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr>)}
+                {!logsLoading && !logsError && logs.map((log) => <tr key={log.id} className="border-b border-border-subtle last:border-0"><td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td className="px-3 py-2">{log.action}</td><td className="max-w-[28rem] truncate px-3 py-2" title={log.detail || ""}>{log.detail || "—"}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr>)}
               </tbody>
             </table>
           </div>

@@ -83,30 +83,30 @@ export default function OrderQueryPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto w-full max-w-3xl space-y-7">
       <div>
         <div className="mb-2 flex items-center gap-3">
-          <ClipboardList className="h-6 w-6 text-primary" />
-          <h1 className="text-xl font-bold text-foreground">查询订单与卡密</h1>
+          <span className="flex size-9 items-center justify-center rounded-control bg-primary/10 text-primary"><ClipboardList className="size-5" aria-hidden="true" /></span>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">查询订单与卡密</h1>
         </div>
         <p className="text-sm text-muted-foreground">订单号本身不能访问订单；请同时输入下单后得到的查询凭证。服务器会在支付成功后自动尝试发货。</p>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+      <div className="surface p-5 sm:p-6">
         <div className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
           <label className="text-sm font-medium text-foreground">
             订单号
-            <input value={orderId} onChange={event => setOrderId(event.target.value)} placeholder="UUID" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm" />
+            <input value={orderId} onChange={event => setOrderId(event.target.value)} placeholder="UUID" className="mt-1.5 h-11 w-full rounded-control border border-input bg-surface-muted px-3 font-mono text-sm" />
           </label>
           <label className="text-sm font-medium text-foreground">
             订单查询凭证
-            <input value={lookupToken} onChange={event => setLookupToken(event.target.value)} placeholder="仅在下单结果中显示一次" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm" />
+            <input value={lookupToken} onChange={event => setLookupToken(event.target.value)} placeholder="仅在下单结果中显示一次" className="mt-1.5 h-11 w-full rounded-control border border-input bg-surface-muted px-3 font-mono text-sm" />
           </label>
-          <button onClick={() => void search()} disabled={loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+          <button onClick={() => void search()} disabled={loading} className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition-[filter,transform] duration-180 hover:brightness-105 active:scale-[.99] disabled:opacity-50">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} 查询
           </button>
         </div>
-        <div className="mt-4 flex items-start gap-2 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+        <div className="mt-4 flex items-start gap-2 rounded-card border border-border-subtle bg-surface-muted p-3.5 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
           <span>查询凭证只在本机订单记录中保存；服务端日志不会记录明文凭证。为支持站长恢复，数据库中的 guest token 字段属于敏感凭证。</span>
         </div>
@@ -114,7 +114,7 @@ export default function OrderQueryPage() {
 
       {orders.map(order => {
         const delivery = deliveries.find(item => item.order_id === order.id)
-        return <section key={order.id} className="rounded-xl border border-border bg-card p-5 shadow-sm">
+        return <section key={order.id} className="surface p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3"><span className="font-mono text-sm">{order.id}</span><OrderStatusBadge status={order.status} /></div>
             <span className="text-sm font-semibold">{formatYuan(order.actual_amount)}</span>
@@ -124,7 +124,7 @@ export default function OrderQueryPage() {
             <span>支付方式：{getPaymentLabel(order.payment_method)}</span>
           </div>
           {order.items?.some(item => item.customer_inputs.length > 0) && (
-            <div className="mt-5 rounded-lg border border-border bg-muted/20 p-3">
+            <div className="mt-5 rounded-card border border-border-subtle bg-surface-muted p-3.5">
               <p className="mb-2 text-xs font-medium text-muted-foreground">购买填写信息</p>
               <div className="space-y-3">
                 {order.items.filter(item => item.customer_inputs.length > 0).map(item => (
@@ -142,10 +142,10 @@ export default function OrderQueryPage() {
               </div>
             </div>
           )}
-          {order.status === "PENDING" && <Link href={`/pay/${order.id}?method=${encodeURIComponent(order.payment_method)}`} className="mt-4 inline-flex rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">继续支付</Link>}
+          {order.status === "PENDING" && <Link href={`/pay/${order.id}?method=${encodeURIComponent(order.payment_method)}`} className="mt-4 inline-flex rounded-control bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-[filter,transform] duration-180 hover:brightness-105 active:scale-[.98]">继续支付</Link>}
           {(order.items?.some(item => item.fulfillment_status === "WAITING_MANUAL")
             || delivery?.item_statuses?.some(item => item.fulfillment_status === "WAITING_MANUAL")) && (
-            <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="mt-5 rounded-card border border-amber-500/20 bg-amber-500/[0.07] p-3 text-sm text-amber-800 dark:text-amber-200">
               订单中包含人工发货商品，商家完成处理后会更新订单状态。请保留订单查询凭证。
             </div>
           )}
@@ -154,18 +154,18 @@ export default function OrderQueryPage() {
             {delivery.groups.map((group, index) => {
               const deliveryItems = group.delivery_items ?? []
               const allParts = deliveryItems.flatMap(item => item.content_parts)
-              return <div key={`${group.product_title}-${index}`} className="rounded-lg border border-border p-3">
+              return <div key={`${group.product_title}-${index}`} className="rounded-card border border-border-subtle bg-surface-muted/45 p-3.5">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-sm font-medium">{group.product_title}{group.spec_name ? ` · ${group.spec_name}` : ""}</div>
                   <button onClick={() => void copy(allParts.join("\n"))} className="text-xs text-muted-foreground hover:text-foreground">复制全部</button>
                 </div>
                 <div className="space-y-3">
                   {deliveryItems.map((deliveryItem, itemIndex) => (
-                    <div key={`${group.product_title}-${index}-${itemIndex}`} className="rounded-md bg-muted/30 p-2">
+                    <div key={`${group.product_title}-${index}-${itemIndex}`} className="rounded-control border border-border-subtle bg-surface p-2">
                       <div className="mb-1 text-xs text-muted-foreground">卡券 {itemIndex + 1}</div>
                       <div className="space-y-1.5">
                         {deliveryItem.content_parts.map((part, partIndex) => (
-                          <div key={`${itemIndex}-${partIndex}`} className="flex items-center justify-between gap-3 rounded bg-background px-3 py-2 font-mono text-xs">
+                          <div key={`${itemIndex}-${partIndex}`} className="flex items-center justify-between gap-3 rounded-control border border-border-subtle bg-surface-muted px-3 py-2 font-mono text-xs">
                             <span className="break-all">卡券内容 {partIndex + 1}：{part}</span>
                             <button onClick={() => void copy(part)} aria-label="复制内容" className="shrink-0 text-muted-foreground hover:text-foreground"><Copy className="h-3.5 w-3.5" /></button>
                           </div>

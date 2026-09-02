@@ -18,8 +18,8 @@ function AnnouncementBar() {
   if (!config?.announcement_enabled || !config.announcement) return null
 
   return (
-    <div className="overflow-hidden bg-primary/10 text-primary">
-      <div className="animate-marquee whitespace-nowrap py-1.5 text-xs font-medium sm:text-sm">
+    <div className="overflow-hidden border-b border-primary/15 bg-primary/[0.06] text-primary">
+      <div className="animate-marquee whitespace-nowrap py-2 text-xs font-medium sm:text-sm">
         <span className="mx-8">{config.announcement}</span>
         <span className="mx-8">{config.announcement}</span>
       </div>
@@ -56,8 +56,8 @@ function MaintenanceAdminBanner() {
   const { t } = useLocale()
 
   return (
-    <div className="bg-amber-500/10 text-amber-700 dark:text-amber-400">
-      <div className="mx-auto max-w-7xl px-4 py-1.5 text-center text-xs font-medium">
+    <div className="border-b border-amber-500/15 bg-amber-500/[0.07] text-amber-800 dark:text-amber-300">
+      <div className="mx-auto max-w-[1440px] px-4 py-2 text-center text-xs font-medium">
         {t("maintenance.adminBanner")}
       </div>
     </div>
@@ -139,12 +139,12 @@ export function StoreShell({ siteName, children }: StoreShellProps) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col bg-background">
       <VisitTracker />
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
       <AnnouncementBar />
       <StoreHeader siteName={siteName} />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 lg:px-6">{children}</main>
+      <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-8 sm:px-6 lg:px-8">{children}</main>
       <StoreFooter />
       <PopupAnnouncement />
     </div>

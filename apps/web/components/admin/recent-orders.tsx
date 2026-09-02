@@ -31,7 +31,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
   }
 
   return (
-    <section className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
+    <section className="min-w-0 rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5">
       <h2 className="mb-4 font-semibold text-foreground">{t("admin.recentOrders")}</h2>
       {orders.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{t("admin.noOrderData")}</p>
@@ -48,7 +48,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                 <col className="w-[16%]" />
               </colgroup>
               <thead>
-                <tr className="border-b border-border text-left">
+                <tr className="border-b border-border-subtle text-left">
                   <th className="pb-3 font-medium text-muted-foreground">{t("admin.orderNo")}</th>
                   <th className="pb-3 font-medium text-muted-foreground">{t("admin.product")}</th>
                   <th className="pb-3 font-medium text-muted-foreground">{t("admin.user")}</th>
@@ -59,7 +59,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
               </thead>
               <tbody>
                 {orders.map((order) => (
-                  <tr key={order.id} className="border-b border-border/50 last:border-0">
+                  <tr key={order.id} className="border-b border-border-subtle last:border-0">
                     <td className="py-3 font-mono text-sm text-foreground">
                       <CopyOrderButton id={order.id} onCopy={copyToClipboard} />
                     </td>
@@ -80,7 +80,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
 
           <div className="space-y-2 md:hidden">
             {orders.map((order) => (
-              <article key={order.id} className="min-w-0 rounded-lg border border-border/70 p-3">
+              <article key={order.id} className="min-w-0 rounded-control border border-border-subtle bg-surface-muted/45 p-3">
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <CopyOrderButton id={order.id} onCopy={copyToClipboard} mobile />
                   <OrderStatusBadge status={order.status} />

@@ -26,19 +26,22 @@ export default function ProfilePage() {
   if (!currentUser) return null
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <h1 className="mb-6 text-xl font-bold text-foreground">{t("profile.title")}</h1>
+    <div className="mx-auto w-full max-w-2xl space-y-6">
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("profile.title")}</h1>
+      </div>
 
       {/* Tab Navigation */}
-      <div className="mb-6 flex rounded-lg bg-muted p-1">
+      <div className="flex rounded-card border border-border-subtle bg-surface-muted p-1.5">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={cn(
-              "flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "flex flex-1 items-center justify-center gap-2 rounded-control px-3 py-2.5 text-sm font-medium transition-colors duration-180",
               activeTab === tab.key
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-surface text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
@@ -50,7 +53,7 @@ export default function ProfilePage() {
 
       {/* Info Tab */}
       {activeTab === "info" && (
-        <div className="rounded-lg border border-border bg-card p-5">
+        <div className="surface p-5 sm:p-6">
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
@@ -65,13 +68,13 @@ export default function ProfilePage() {
                 </p>
               </div>
             </div>
-            <hr className="border-border" />
+            <hr className="border-border-subtle" />
             <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-lg bg-muted/50 p-3">
+              <div className="rounded-card border border-border-subtle bg-surface-muted p-3.5">
                 <p className="text-xs text-muted-foreground">{t("profile.balance")}</p>
                 <p className="text-2xl font-bold text-foreground">{user?.unlimited ? "∞" : formatYuan(user?.balance ?? 0)}</p>
               </div>
-              <div className="rounded-lg bg-muted/50 p-3">
+              <div className="rounded-card border border-border-subtle bg-surface-muted p-3.5">
                 <p className="text-xs text-muted-foreground">{t("profile.userNumber")}</p>
                 <p className="text-sm font-medium text-foreground">
                   {isAdminRole(user?.role) ? t("profile.administrator") : user?.user_no ?? "-"}
@@ -122,7 +125,7 @@ function ChangePasswordForm() {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
+    <div className="surface p-5 sm:p-6">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">
@@ -133,13 +136,13 @@ function ChangePasswordForm() {
               type={showOld ? "text" : "password"}
               value={form.oldPassword}
               onChange={(e) => setForm({ ...form, oldPassword: e.target.value })}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               required
             />
             <button
               type="button"
               onClick={() => setShowOld(!showOld)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface"
             >
               {showOld ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -154,13 +157,13 @@ function ChangePasswordForm() {
               type={showNew ? "text" : "password"}
               value={form.newPassword}
               onChange={(e) => setForm({ ...form, newPassword: e.target.value })}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               required
             />
             <button
               type="button"
               onClick={() => setShowNew(!showNew)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface"
             >
               {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -174,14 +177,14 @@ function ChangePasswordForm() {
             type="password"
             value={form.confirmNew}
             onChange={(e) => setForm({ ...form, confirmNew: e.target.value })}
-            className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             required
           />
         </div>
         <button
           type="submit"
           disabled={isLoading}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 active:scale-[.99] disabled:opacity-50"
         >
           {isLoading ? (
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />

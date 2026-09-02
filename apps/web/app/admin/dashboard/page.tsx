@@ -254,7 +254,7 @@ export default function AdminDashboardPage() {
 
 function DashboardRegion({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
+    <section className="min-w-0 rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5">
       <h2 className="mb-4 font-semibold text-foreground">{title}</h2>
       {children}
     </section>

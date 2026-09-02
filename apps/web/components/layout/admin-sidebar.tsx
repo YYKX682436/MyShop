@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import { usePathname } from "next/navigation"
 import {
   CreditCard,
@@ -118,28 +119,28 @@ export function AdminSidebar() {
 
   return (
     <Sidebar collapsible="icon" variant="sidebar">
-      <SidebarHeader className="border-b border-sidebar-border">
+      <SidebarHeader className="border-b border-sidebar-border/70 px-2 py-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" tooltip={config?.site_name || t("admin.brand")}>
-              <Link href="/admin/dashboard">
+              <Link href="/admin/dashboard" className="group/brand">
                 {config?.logo_url ? (
-                  <img src={config.logo_url} alt={config.site_name || t("admin.brand")} className="size-8 rounded-md object-contain" />
+                  <Image src={config.logo_url} alt={config.site_name || t("admin.brand")} width={32} height={32} unoptimized className="size-8 rounded-control object-contain" />
                 ) : (
-                  <span className="flex size-8 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
+                  <span className="flex size-8 items-center justify-center rounded-control bg-sidebar-primary text-sidebar-primary-foreground shadow-sm transition-transform duration-180 group-hover/brand:scale-[1.03]">
                     <Package className="size-4" aria-hidden="true" />
                   </span>
                 )}
-                <span className="truncate font-semibold">{config?.site_name || t("admin.brand")}</span>
+                <span className="truncate text-sm font-semibold tracking-tight">{config?.site_name || t("admin.brand")}</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="px-2 py-3">
         {navGroups.map((group) => (
-          <SidebarGroup key={group.labelKey}>
+          <SidebarGroup key={group.labelKey} className="px-0 py-1">
             <SidebarGroupLabel>{t(group.labelKey)}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
@@ -154,7 +155,7 @@ export function AdminSidebar() {
         ))}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border">
+      <SidebarFooter className="border-t border-sidebar-border/70 px-2 py-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild tooltip={t("admin.backToSite")}>

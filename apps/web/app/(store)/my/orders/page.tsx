@@ -65,20 +65,23 @@ export default function MyOrdersPage() {
   if (!user) return null
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <h1 className="mb-6 text-xl font-bold text-foreground">{t("myOrders.title")}</h1>
+    <div className="mx-auto w-full max-w-3xl space-y-6">
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
+      </div>
 
       {/* Status Filter */}
-      <div className="mb-6 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
             onClick={() => { setStatusFilter(s); setPage(1) }}
             className={cn(
-              "rounded-full px-3 py-1.5 text-sm font-medium transition-colors",
+              "rounded-control px-3 py-2 text-sm font-medium transition-colors duration-180",
               statusFilter === s
                 ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-accent"
+                : "bg-surface-muted text-muted-foreground hover:bg-surface hover:text-foreground"
             )}
           >
             {getFilterLabel(s)}
@@ -96,12 +99,12 @@ export default function MyOrdersPage() {
           {orders.map((order) => (
             <div
               key={order.id}
-              className="rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/20"
+              className="surface p-4 transition-[transform,border-color,box-shadow] duration-180 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-sm"
             >
               {/* Order Header */}
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-xs font-medium text-card-foreground">
+                  <span className="font-mono text-xs font-medium text-foreground">
                     {order.id.length > 20 ? `${order.id.slice(0, 8)}...${order.id.slice(-8)}` : order.id}
                   </span>
                   <OrderStatusBadge status={order.status} />
@@ -120,7 +123,7 @@ export default function MyOrdersPage() {
               </div>
 
               {order.items?.some(item => item.customer_inputs.length > 0) && (
-                <div className="mb-3 rounded-md bg-muted/30 p-3 text-xs">
+                <div className="mb-3 rounded-card border border-border-subtle bg-surface-muted p-3 text-xs">
                   <p className="mb-2 font-medium text-muted-foreground">购买填写信息</p>
                   <div className="space-y-2">
                     {order.items.filter(item => item.customer_inputs.length > 0).map(item => (
@@ -136,7 +139,7 @@ export default function MyOrdersPage() {
               )}
 
               {/* Footer */}
-              <div className="flex items-center justify-between border-t border-border pt-3">
+              <div className="flex items-center justify-between border-t border-border-subtle pt-3">
                 <span className="text-sm text-muted-foreground">
                   {t("order.amount")}:{" "}
                   <span className="font-semibold text-foreground">
@@ -147,7 +150,7 @@ export default function MyOrdersPage() {
                   {order.status === "PENDING" && order.payment_method && (
                     <Link
                       href={`/pay/${order.id}?method=${order.payment_method}`}
-                      className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                      className="inline-flex h-9 items-center gap-1 rounded-control bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-[filter,transform] duration-180 hover:brightness-105 active:scale-[.98]"
                     >
                       {t("payment.continuePay")}
                     </Link>
@@ -155,7 +158,7 @@ export default function MyOrdersPage() {
                   {order.status === "DELIVERED" && (
                     <Link
                       href={`/order/query?orderId=${order.id}`}
-                      className="inline-flex h-8 items-center gap-1 rounded-md border border-border px-3 text-xs font-medium text-foreground hover:bg-accent"
+                      className="inline-flex h-9 items-center gap-1 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
                     >
                       <ExternalLink className="h-3 w-3" />
                       {t("order.cardKeys")}

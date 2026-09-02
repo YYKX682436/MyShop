@@ -9,8 +9,10 @@ import {
   ShieldCheck,
   RefreshCw,
 } from "lucide-react"
+import { motion } from "motion/react"
 import { useLocale, useSearch } from "@/lib/context"
 import { ProductCard } from "@/components/store/product-card"
+import { FadeIn, Stagger, StaggerItem } from "@/components/ui/motion"
 import { cn } from "@/lib/utils"
 import type { ProductCard as ProductCardType, Category } from "@/types"
 
@@ -29,10 +31,10 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
 
   const trustBadges = [
-    { icon: SquareCheckBig, label: t("home.trustAuto"), color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-100 dark:bg-emerald-900/40" },
-    { icon: Zap, label: t("home.trustInstant"), color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-100 dark:bg-amber-900/40" },
-    { icon: ClipboardList, label: t("home.trustTrack"), color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-100 dark:bg-blue-900/40" },
-    { icon: ShieldCheck, label: t("home.trustSecure"), color: "text-teal-600 dark:text-teal-400", bg: "bg-teal-100 dark:bg-teal-900/40" },
+    { icon: SquareCheckBig, label: t("home.trustAuto") },
+    { icon: Zap, label: t("home.trustInstant") },
+    { icon: ClipboardList, label: t("home.trustTrack") },
+    { icon: ShieldCheck, label: t("home.trustSecure") },
   ]
 
   const filteredProducts = useMemo(() => {
@@ -76,77 +78,72 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
   }, [products, selectedCategory, searchQuery, sortBy, inStockOnly, priceMin, priceMax])
 
   return (
-    <div className="mx-auto w-full max-w-7xl 2xl:max-w-[1600px] flex flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-8">
       {/* Hero */}
-      <section className="relative overflow-hidden rounded-xl border border-border/60 bg-card px-5 py-5 sm:px-8 sm:py-6">
-        {/* Subtle radial glow behind text */}
-        <div className="scheme-blob pointer-events-none absolute -left-10 -top-10 h-48 w-64 rounded-full blur-3xl" />
-        <div className="scheme-blob pointer-events-none absolute -right-16 bottom-0 h-32 w-48 rounded-full blur-3xl opacity-60" />
-        <div className="relative">
-          <h1 className="text-balance text-2xl font-extrabold tracking-tight sm:text-3xl">
-            <span className="scheme-gradient-text">
-              {siteSlogan}
-            </span>
-          </h1>
-          <p className="mt-3 text-sm text-muted-foreground">
-            {siteDescription}
-          </p>
-        </div>
-      </section>
-
-      {/* Controls */}
-      <div className="flex flex-col gap-5">
-        {/* Trust badges */}
-        <div className="flex justify-center py-3 sm:block">
-          <div className="grid grid-cols-2 gap-x-10 gap-y-2 sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-x-7">
-          {trustBadges.map((badge, i) => (
-            <div key={badge.label} className="flex items-center gap-1.5">
-              <div
-                className={cn(
-                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-md",
-                  badge.bg
-                )}
-              >
-                <badge.icon className={cn("h-3.5 w-3.5", badge.color)} />
-              </div>
-              <span className="text-xs font-semibold text-foreground sm:text-sm">
-                {badge.label}
-              </span>
-              {i < trustBadges.length - 1 && (
-                <span className="ml-2 hidden text-border sm:inline">|</span>
-              )}
+      <FadeIn>
+        <section className="surface relative overflow-hidden px-5 py-6 sm:px-8 sm:py-8 lg:px-10">
+          <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-1/3 bg-primary/[0.035] sm:block" />
+          <div className="relative flex flex-col gap-7 sm:flex-row sm:items-end sm:justify-between">
+            <div className="max-w-2xl">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-primary">MyShop</p>
+              <h1 className="text-balance text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl lg:text-5xl">
+                {siteSlogan}
+              </h1>
+              <p className="mt-4 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
+                {siteDescription}
+              </p>
             </div>
-          ))}
+            <a
+              href="#products"
+              className="inline-flex w-fit items-center justify-center rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[.98]"
+            >
+              {t("home.exploreProducts")}
+            </a>
           </div>
-        </div>
+        </section>
+      </FadeIn>
 
-        {/* Category tabs */}
+      {/* Trust + category controls */}
+      <div className="flex flex-col gap-5">
+        <FadeIn delay={0.04}>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-border-subtle py-3.5 text-sm text-muted-foreground">
+            {trustBadges.map((badge) => (
+              <div key={badge.label} className="inline-flex items-center gap-2">
+                <span className="flex size-6 items-center justify-center rounded-control bg-surface-muted text-primary">
+                  <badge.icon className="size-3.5" aria-hidden="true" />
+                </span>
+                <span className="font-medium">{badge.label}</span>
+              </div>
+            ))}
+          </div>
+        </FadeIn>
+
         <div className="flex flex-wrap items-center gap-2">
           <button
+            type="button"
             onClick={() => setSelectedCategory(null)}
+            aria-pressed={selectedCategory === null}
             className={cn(
-              "rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-all duration-200",
-              selectedCategory === null
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              "relative rounded-control px-3.5 py-2 text-sm font-semibold transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              selectedCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
             )}
           >
-            {t("home.allCategories")}
+            {selectedCategory === null && <motion.span layoutId="active-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+            <span className="relative z-10">{t("home.allCategories")}</span>
           </button>
           {categories.map((cat) => (
             <button
+              type="button"
               key={cat.id}
-              onClick={() =>
-                setSelectedCategory(cat.id === selectedCategory ? null : cat.id)
-              }
+              onClick={() => setSelectedCategory(cat.id === selectedCategory ? null : cat.id)}
+              aria-pressed={selectedCategory === cat.id}
               className={cn(
-                "rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-all duration-200",
-                selectedCategory === cat.id
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                "relative rounded-control px-3.5 py-2 text-sm font-semibold transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                selectedCategory === cat.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
               )}
             >
-              {cat.name}
+              {selectedCategory === cat.id && <motion.span layoutId="active-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+              <span className="relative z-10">{cat.name}</span>
             </button>
           ))}
         </div>
@@ -154,26 +151,28 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
 
       {/* Product Grid */}
       {productsError ? (
-        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed border-border py-24 text-muted-foreground">
+        <div id="products" className="flex flex-col items-center justify-center gap-4 rounded-card border border-dashed border-border-strong bg-surface-muted/50 py-24 text-muted-foreground">
           <Search className="h-10 w-10 opacity-20" />
           <p className="text-sm">商品暂时无法加载，请检查网络后重试。</p>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
+            className="inline-flex items-center gap-2 rounded-control border border-border-strong bg-surface px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted"
           >
             <RefreshCw className="h-4 w-4" />
             重试
           </button>
         </div>
       ) : filteredProducts.length > 0 ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3 lg:gap-8 2xl:grid-cols-4">
+        <Stagger id="products" className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredProducts.map((product) => (
-            <ProductCard key={product.id} product={product} />
+            <StaggerItem key={product.id} className="min-w-0">
+              <ProductCard product={product} />
+            </StaggerItem>
           ))}
-        </div>
+        </Stagger>
       ) : (
-        <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
+        <div id="products" className="flex flex-col items-center justify-center rounded-card border border-dashed border-border-subtle bg-surface-muted/40 py-24 text-muted-foreground">
           <Search className="mb-3 h-10 w-10 opacity-20" />
           <p className="text-sm">{t("home.noProducts")}</p>
         </div>

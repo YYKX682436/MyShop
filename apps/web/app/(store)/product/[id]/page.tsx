@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation"
+import Image from "next/image"
 import { Package } from "lucide-react"
 import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels } from "@/services/api-server"
 import { ProductActions } from "./product-actions"
@@ -77,7 +78,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -90,19 +91,22 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       {/* Breadcrumb */}
       <ProductBreadcrumb title={product.title} />
 
-      <div className="grid gap-6 lg:grid-cols-5">
+      <div className="grid gap-7 lg:grid-cols-5 lg:items-start">
         {/* Left: Image — server rendered */}
         <div className="lg:col-span-2">
-          <div className="relative aspect-square overflow-hidden rounded-lg border border-border bg-muted">
+          <div className="surface relative aspect-square overflow-hidden bg-surface-muted">
             {product.cover_url ? (
-              <img
+              <Image
                 src={product.cover_url}
                 alt={product.title}
-                className="h-full w-full object-cover"
+                fill
+                unoptimized
+                sizes="(min-width: 1024px) 60vw, 100vw"
+                className="object-cover"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center">
-                <Package className="h-20 w-20 text-muted-foreground/20" />
+                <Package className="size-20 text-muted-foreground/20" aria-hidden="true" />
               </div>
             )}
           </div>

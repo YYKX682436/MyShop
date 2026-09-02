@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useState, type DragEvent, type KeyboardEvent } from "react"
+import Image from "next/image"
 import { AlertCircle, ImagePlus, Loader2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -112,10 +113,10 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
         aria-disabled={busy}
         aria-busy={uploading}
         className={cn(
-          "relative flex min-h-52 w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed bg-muted/20 p-4 text-center transition-colors",
+          "relative flex min-h-52 w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-card border-2 border-dashed bg-surface-muted/45 p-4 text-center transition-colors",
           isDragActive
             ? "border-primary bg-primary/10 ring-4 ring-primary/10"
-            : "border-border hover:border-primary/60 hover:bg-primary/5",
+            : "border-border-subtle hover:border-primary/60 hover:bg-primary/5",
           busy && "cursor-not-allowed opacity-70",
         )}
         onClick={openFilePicker}
@@ -126,10 +127,13 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
         onDrop={handleDrop}
       >
         {normalizedValue && !previewFailed ? (
-          <img
+          <Image
             src={normalizedValue}
             alt={t("admin.coverPreviewAlt")}
-            className="max-h-64 max-w-full rounded-lg object-contain"
+            width={512}
+            height={512}
+            unoptimized
+            className="max-h-64 max-w-full rounded-card object-contain"
             onLoad={() => setFailedUrl(null)}
             onError={() => setFailedUrl(normalizedValue)}
           />
@@ -154,7 +158,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
           </div>
         )}
         {uploading && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 bg-background/75 text-sm font-medium text-foreground backdrop-blur-[1px]">
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 bg-surface/80 text-sm font-medium text-foreground backdrop-blur-[1px]">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
             {t("admin.uploading")}
           </div>
@@ -174,7 +178,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-md border border-input px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted disabled:pointer-events-none disabled:opacity-50"
             onClick={openFilePicker}
             disabled={busy}
           >
@@ -183,7 +187,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
           </button>
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
             onClick={() => {
               setFailedUrl(null)
               onChange("")
@@ -200,7 +204,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
         {t("admin.imageUrl")}
         <input
           type="text"
-          className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="h-11 w-full rounded-control border border-input bg-surface px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           placeholder="https://..."
           value={value}
           onChange={(event) => handleUrlChange(event.target.value)}

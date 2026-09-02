@@ -1,10 +1,10 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Eye, Save, ShieldAlert, ShieldCheck } from "lucide-react"
+import Link from "next/link"
 import { toast } from "sonner"
 
-import { OrderDetailSheet } from "@/components/admin/orders/order-detail-sheet"
 import { AdminPage, AdminPagination, DataTableShell, PageHeader, SettingsSection, TableEmptyState, TableErrorState, TableLoadingState } from "@/components/admin/shared"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { Button } from "@/components/ui/button"
@@ -13,8 +13,8 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
 import { formatDateTime, formatYuan } from "@/lib/utils"
-import { adminCardKeyApi, adminOrderApi, adminRiskApi, requestOrThrow } from "@/services/api"
-import type { AdminOrderItem, OrderCardKey, RiskConfig } from "@/types"
+import { adminRiskApi, requestOrThrow } from "@/services/api"
+import type { AdminOrderItem, RiskConfig } from "@/types"
 
 const PAGE_SIZE = 20
 
@@ -43,14 +43,6 @@ export default function AdminRiskPage() {
   const [flaggedPage, setFlaggedPage] = useState(1)
   const [flaggedLoading, setFlaggedLoading] = useState(false)
   const [flaggedError, setFlaggedError] = useState(false)
-  const [detailOrder, setDetailOrder] = useState<AdminOrderItem | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-  const [detailError, setDetailError] = useState(false)
-  const [detailCardKeys, setDetailCardKeys] = useState<OrderCardKey[]>([])
-  const [detailCardKeysLoading, setDetailCardKeysLoading] = useState(false)
-  const [detailCardKeysError, setDetailCardKeysError] = useState(false)
-  const detailRequestRef = useRef(0)
-  const detailCardKeysRequestRef = useRef(0)
 
   const loadConfig = useCallback(async () => {
     setConfigLoading(true)
@@ -107,77 +99,10 @@ export default function AdminRiskPage() {
     }
   }
 
-  const invalidateDetailRequests = () => {
-    detailRequestRef.current += 1
-    detailCardKeysRequestRef.current += 1
-  }
-
-  const loadDetailCardKeys = useCallback(async (orderId: string, detailRequestId = detailRequestRef.current) => {
-    const cardKeysRequestId = ++detailCardKeysRequestRef.current
-    setDetailCardKeysLoading(true)
-    setDetailCardKeysError(false)
-    try {
-      const cardKeys = await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId))
-      if (detailRequestRef.current !== detailRequestId || detailCardKeysRequestRef.current !== cardKeysRequestId) return
-      setDetailCardKeys(cardKeys)
-    } catch {
-      if (detailRequestRef.current !== detailRequestId || detailCardKeysRequestRef.current !== cardKeysRequestId) return
-      setDetailCardKeys([])
-      setDetailCardKeysError(true)
-    } finally {
-      if (detailRequestRef.current === detailRequestId && detailCardKeysRequestRef.current === cardKeysRequestId) {
-        setDetailCardKeysLoading(false)
-      }
-    }
-  }, [])
-
-  const loadOrderDetail = useCallback(async (orderId: string) => {
-    const detailRequestId = ++detailRequestRef.current
-    detailCardKeysRequestRef.current += 1
-    setDetailLoading(true)
-    setDetailError(false)
-    try {
-      const detail = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
-      if (detailRequestRef.current !== detailRequestId) return
-      setDetailOrder(detail)
-      if (detail.status === "DELIVERED") await loadDetailCardKeys(orderId, detailRequestId)
-      else {
-        setDetailCardKeys([])
-        setDetailCardKeysLoading(false)
-        setDetailCardKeysError(false)
-      }
-    } catch {
-      if (detailRequestRef.current !== detailRequestId) return
-      setDetailError(true)
-    } finally {
-      if (detailRequestRef.current === detailRequestId) setDetailLoading(false)
-    }
-  }, [loadDetailCardKeys])
-
-  const openDetail = (order: AdminOrderItem) => {
-    setDetailOrder(order)
-    setDetailCardKeys([])
-    setDetailCardKeysLoading(false)
-    setDetailCardKeysError(false)
-    void loadOrderDetail(order.id)
-  }
-
-  const closeDetail = (open: boolean) => {
-    if (!open) {
-      invalidateDetailRequests()
-      setDetailOrder(null)
-      setDetailLoading(false)
-      setDetailError(false)
-      setDetailCardKeys([])
-      setDetailCardKeysLoading(false)
-      setDetailCardKeysError(false)
-    }
-  }
-
   const configNumber = (key: keyof RiskConfig, label: string) => <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{label}</span><Input type="number" min="0" value={Number(config[key])} onChange={(event) => setConfig((current) => ({ ...current, [key]: Number.parseInt(event.target.value, 10) || 0 }))} /></label>
 
-  if (configLoading) return <AdminPage><PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} /><div className="h-64 animate-pulse rounded-xl border border-border bg-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
-  if (configError) return <AdminPage><PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} /><div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void loadConfig()}>{t("common.retry")}</Button></div></AdminPage>
+  if (configLoading) return <AdminPage><PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} /><div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
+  if (configError) return <AdminPage><PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} /><div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void loadConfig()}>{t("common.retry")}</Button></div></AdminPage>
 
   return (
     <AdminPage>
@@ -203,17 +128,16 @@ export default function AdminRiskPage() {
 
         <TabsContent value="flagged">
           <DataTableShell footer={<AdminPagination page={flaggedPage} total={flaggedTotal} pageSize={PAGE_SIZE} onPageChange={setFlaggedPage} />}>
-            <table className="w-full min-w-[850px] text-sm"><thead><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.user")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.emailLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th></tr></thead><tbody>
+            <table className="w-full min-w-[850px] text-sm"><thead><tr className="border-b border-border-subtle bg-surface-muted"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.user")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.emailLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th></tr></thead><tbody>
               {flaggedLoading && <TableLoadingState colSpan={7} />}
               {!flaggedLoading && flaggedError && <TableErrorState colSpan={7} onRetry={() => void loadFlaggedOrders()} />}
               {!flaggedLoading && !flaggedError && flaggedOrders.length === 0 && <TableEmptyState colSpan={7}>{t("admin.noFlaggedOrders")}</TableEmptyState>}
-              {!flaggedLoading && !flaggedError && flaggedOrders.map((order) => <tr key={order.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30"><td className="px-4 py-3 font-mono text-xs">{order.id.length > 16 ? `${order.id.slice(0, 8)}…${order.id.slice(-4)}` : order.id}</td><td className="px-4 py-3">{order.username || t("admin.guest")}</td><td className="px-4 py-3 text-muted-foreground">{order.email}</td><td className="px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td><td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td><td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td><td className="px-4 py-3 text-right"><Button type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")} onClick={() => openDetail(order)}><Eye className="h-4 w-4" aria-hidden="true" /></Button></td></tr>)}
+              {!flaggedLoading && !flaggedError && flaggedOrders.map((order) => <tr key={order.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60"><td className="px-4 py-3 font-mono text-xs">{order.id.length > 16 ? `${order.id.slice(0, 8)}…${order.id.slice(-4)}` : order.id}</td><td className="px-4 py-3">{order.username || t("admin.guest")}</td><td className="px-4 py-3 text-muted-foreground">{order.email}</td><td className="px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td><td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td><td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td><td className="px-4 py-3 text-right"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button></td></tr>)}
             </tbody></table>
           </DataTableShell>
         </TabsContent>
       </Tabs>
 
-      <OrderDetailSheet order={detailOrder} onOpenChange={closeDetail} detailLoading={detailLoading} detailError={detailError} onRetryDetail={() => detailOrder && void loadOrderDetail(detailOrder.id)} detailCardKeys={detailCardKeys} detailCardKeysLoading={detailCardKeysLoading} detailCardKeysError={detailCardKeysError} onRetryCardKeys={() => detailOrder && void loadDetailCardKeys(detailOrder.id)} />
     </AdminPage>
   )
 }

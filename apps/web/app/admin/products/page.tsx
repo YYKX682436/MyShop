@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Image from "next/image"
 import { AlertCircle, Edit, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -135,7 +136,7 @@ export default function AdminProductsPage() {
             aria-label={t("admin.searchProduct")}
           />
           <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
             value={categoryFilter}
             onChange={(event) => { setCategoryFilter(event.target.value); setPage(1) }}
             aria-label={t("admin.category")}
@@ -145,7 +146,7 @@ export default function AdminProductsPage() {
             {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
           </select>
           <select
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
             value={statusFilter}
             onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }}
             aria-label={t("admin.statusLabel")}
@@ -187,8 +188,8 @@ export default function AdminProductsPage() {
                 <TableRow key={product.id}>
                   <TableCell className="min-w-[16rem]">
                     <div className="flex items-center gap-3">
-                      <Link href={`/product/${product.id}`} className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-muted" aria-label={product.title}>
-                        {product.cover_url ? <img src={product.cover_url} alt={product.title} className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{t("admin.systemNoData")}</span>}
+                      <Link href={`/product/${product.id}`} className="relative h-10 w-10 shrink-0 overflow-hidden rounded-control border border-border-subtle bg-surface-muted" aria-label={product.title}>
+                        {product.cover_url ? <Image src={product.cover_url} alt={product.title} fill unoptimized sizes="40px" className="object-cover" /> : <span className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{t("admin.systemNoData")}</span>}
                       </Link>
                       <div className="min-w-0">
                         <Link href={`/product/${product.id}`} className="block truncate font-medium text-foreground hover:text-primary hover:underline">{product.title}</Link>

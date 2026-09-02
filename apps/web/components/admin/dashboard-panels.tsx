@@ -37,6 +37,7 @@ import {
   type SystemStatusLevel,
 } from "@/lib/dashboard"
 import { cn, formatYuan } from "@/lib/utils"
+import { Stagger, StaggerItem } from "@/components/ui/motion"
 import type {
   DashboardRecentUser,
   DashboardStats,
@@ -65,7 +66,7 @@ function Panel({
   action?: ReactNode
 }) {
   return (
-    <section className={cn("min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5", className)}>
+    <section className={cn("min-w-0 rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5", className)}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {Icon && <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
@@ -115,7 +116,7 @@ export function DashboardPanelState({
 export function DashboardInlineError({ onRetry }: { onRetry: () => void }) {
   const { t } = useLocale()
   return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-foreground" role="alert">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-control border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-foreground" role="alert">
       <span>{t("admin.loadFailedRetry")}</span>
       <button type="button" onClick={onRetry} className="font-medium text-primary underline-offset-4 hover:underline">
         {t("admin.refresh")}
@@ -136,13 +137,13 @@ function KpiCard({ label, value, icon: Icon, change, helper }: KpiCardProps) {
   const { t } = useLocale()
   const hasChange = change !== undefined
   return (
-    <article className="min-w-0 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
+    <article className="min-w-0 rounded-card border border-border-subtle bg-surface p-4 shadow-sm transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm text-muted-foreground">{label}</p>
           <p className="mt-2 truncate text-2xl font-bold tracking-tight text-foreground sm:text-3xl">{value}</p>
         </div>
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-primary/10 text-primary">
           <Icon className="h-5 w-5" aria-hidden="true" />
         </span>
       </div>
@@ -178,38 +179,46 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
   const money = formatYuan
   return (
-    <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 xl:grid-cols-4">
-      <KpiCard
+    <Stagger className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 xl:grid-cols-4">
+      <StaggerItem>
+        <KpiCard
         label={t("admin.todaySales")}
         value={money(stats.today_sales)}
         icon={TrendingUp}
         change={stats.today_sales_change_pct}
-      />
-      <KpiCard
+        />
+      </StaggerItem>
+      <StaggerItem>
+        <KpiCard
         label={t("admin.todayOrders")}
         value={formatNumber(stats.today_orders, locale)}
         icon={ClipboardList}
         change={stats.today_orders_change_pct}
-      />
-      <KpiCard
+        />
+      </StaggerItem>
+      <StaggerItem>
+        <KpiCard
         label={t("admin.todayNewUsers")}
         value={formatNumber(stats.today_new_users, locale)}
         icon={UserPlus}
         change={stats.today_new_users_change_pct}
-      />
-      <KpiCard
+        />
+      </StaggerItem>
+      <StaggerItem>
+        <KpiCard
         label={t("admin.conversionRate")}
         value={formatPercent(stats.conversion_rate, t("admin.systemNoData"))}
         icon={Gauge}
         helper={interpolate(t("admin.todayUv"), {}) + `: ${formatNumber(stats.today_uv, locale)}`}
-      />
-    </div>
+        />
+      </StaggerItem>
+    </Stagger>
   )
 }
 
 function MetricTile({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
-    <div className="min-w-0 rounded-lg border border-border/70 bg-muted/20 px-3 py-3">
+    <div className="min-w-0 rounded-control border border-border-subtle bg-surface-muted px-3 py-3">
       <p className="truncate text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 truncate text-lg font-semibold text-foreground">{value}</p>
       {note && <p className="mt-0.5 truncate text-xs text-muted-foreground">{note}</p>}
@@ -278,7 +287,7 @@ export function LowStockPanel({ products }: { products: LowStockProduct[] }) {
       ) : (
         <div className="space-y-2">
           {products.map((product) => (
-            <div key={product.product_id} className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-amber-500/5 px-3 py-2.5">
+            <div key={product.product_id} className="flex min-w-0 items-center justify-between gap-3 rounded-control border border-amber-500/15 bg-amber-500/[0.06] px-3 py-2.5">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-foreground" title={product.title}>{product.title}</p>
                 <p className="text-xs text-muted-foreground">
@@ -306,7 +315,7 @@ export function TopProductsPanel({ products }: { products: DashboardTopProduct[]
       ) : (
         <div className="space-y-2">
           {products.map((product, index) => (
-            <div key={product.product_id} className="flex min-w-0 items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5">
+            <div key={product.product_id} className="flex min-w-0 items-center gap-3 rounded-control border border-border-subtle px-3 py-2.5">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
                 {index + 1}
               </span>
@@ -332,7 +341,7 @@ export function RecentUsersPanel({ users }: { users: DashboardRecentUser[] }) {
       ) : (
         <div className="space-y-2">
           {users.map((user) => (
-            <div key={user.id} className="flex min-w-0 items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5">
+            <div key={user.id} className="flex min-w-0 items-center gap-3 rounded-control border border-border-subtle px-3 py-2.5">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <Users className="h-4 w-4" aria-hidden="true" />
               </span>
@@ -355,7 +364,7 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
   const { t } = useLocale()
   if (loading) {
     return (
-      <div className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground" role="status">
+      <div className="flex min-w-0 items-center gap-3 rounded-card border border-border-subtle bg-surface-muted px-4 py-3 text-sm text-muted-foreground" role="status">
         <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
         <span>{t("admin.dashboardLoading")}</span>
       </div>
@@ -363,14 +372,14 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
   }
   if (unavailable) {
     return (
-      <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-foreground" role="alert">
+      <div className="flex min-w-0 items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-foreground" role="alert">
         <span className="flex min-w-0 items-center gap-3"><AlertTriangle className="h-5 w-5 shrink-0 text-destructive" aria-hidden="true" /><span>{t("admin.loadFailedRetry")}</span></span>
       </div>
     )
   }
   if (items.length === 0) {
     return (
-      <div className="flex min-w-0 items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-foreground" role="status">
+      <div className="flex min-w-0 items-center gap-3 rounded-card border border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-3 text-sm text-foreground" role="status">
         <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
         <span>{t("admin.systemHealthy")} · {t("admin.noPendingIssues")}</span>
       </div>
@@ -378,7 +387,7 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
   }
   const visible = items.slice(0, 5)
   return (
-    <div className="min-w-0 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3" role="status">
+    <div className="min-w-0 rounded-card border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3" role="status">
       <div className="flex items-center gap-2">
         <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
         <h2 className="font-semibold text-foreground">{t("admin.needAttention")}</h2>
@@ -439,7 +448,7 @@ export function SystemStatusCard({
             <ResourceMetric label={t("admin.systemDataDisk")} icon={HardDrive} metric={system.data_disk} />
           </div>
 
-          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-lg border border-border/70 bg-muted/20 px-3 py-3 text-sm min-[520px]:grid-cols-2">
+          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-card border border-border-subtle bg-surface-muted px-3 py-3 text-sm min-[520px]:grid-cols-2">
             <InfoValue label={t("admin.systemUptime")} value={formatUptime(system.uptime_seconds, t)} icon={Clock3} />
             <InfoValue label={t("admin.systemLoad")} value={system.load_1m === null || system.load_1m === undefined ? t("admin.systemNoData") : system.load_1m.toFixed(2)} icon={Gauge} />
             <div className="col-span-1 min-w-0 min-[520px]:col-span-2">
@@ -480,7 +489,7 @@ function ResourceMetric({
       ? "bg-amber-500"
       : "bg-primary"
   return (
-    <div className="min-w-0 rounded-lg border border-border/70 px-3 py-3">
+    <div className="min-w-0 rounded-control border border-border-subtle px-3 py-3">
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-foreground">
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -489,7 +498,7 @@ function ResourceMetric({
         <span className="shrink-0 whitespace-nowrap text-sm font-semibold text-foreground">{formatPercent(usage, t("admin.systemNoData"))}</span>
       </div>
       <div
-        className="mt-3 h-2 overflow-hidden rounded-full bg-muted"
+        className="mt-3 h-2 overflow-hidden rounded-full bg-surface-muted"
         role="progressbar"
         aria-label={label}
         aria-valuemin={0}
@@ -554,7 +563,7 @@ function SystemLevelBadge({ level }: { level: SystemStatusLevel }) {
       ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
       : level === "critical"
         ? "border-destructive/30 bg-destructive/10 text-destructive"
-        : "border-border bg-muted text-muted-foreground"
+        : "border-border-subtle bg-surface-muted text-muted-foreground"
   return <span className={cn("shrink-0 rounded-full border px-2 py-1 text-xs font-medium", style)}>{label}</span>
 }
 

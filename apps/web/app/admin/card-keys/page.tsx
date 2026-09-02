@@ -327,7 +327,7 @@ export default function AdminCardKeysPage() {
           { label: t("admin.soldOut"), value: totalSold, icon: FileText, tone: "text-muted-foreground" },
           { label: t("admin.invalidKeys"), value: totalInvalid, icon: Ban, tone: "text-destructive" },
         ].map((stat) => (
-          <div key={stat.label} className="rounded-xl border border-border bg-card p-4">
+          <div key={stat.label} className="rounded-card border border-border-subtle bg-surface p-4 shadow-sm">
             <div className="flex items-center gap-2"><stat.icon className={`h-4 w-4 ${stat.tone}`} aria-hidden="true" /><span className="text-sm text-muted-foreground">{stat.label}</span></div>
             <p className="mt-1 text-2xl font-semibold text-foreground">{stat.value}</p>
           </div>
@@ -342,7 +342,7 @@ export default function AdminCardKeysPage() {
 
         <TabsContent value="stock" className="flex flex-col gap-4">
           <PageToolbar>
-            <select className="h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" value={filterProductId} onChange={(event) => setFilterProductId(event.target.value)} disabled={productsError} aria-label={t("admin.allProducts")}>
+            <select className="h-11 w-full max-w-xs rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring" value={filterProductId} onChange={(event) => setFilterProductId(event.target.value)} disabled={productsError} aria-label={t("admin.allProducts")}>
               <option value="">{t("admin.allProducts")}</option>
               {products.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
             </select>
@@ -351,7 +351,7 @@ export default function AdminCardKeysPage() {
 
           <DataTableShell>
             <table className="w-full min-w-[900px] text-sm">
-              <thead><tr className="border-b border-border bg-muted/30">
+              <thead><tr className="border-b border-border-subtle bg-surface-muted">
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.productName2")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.specLabel")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.inventoryMode")}</th>
@@ -368,7 +368,7 @@ export default function AdminCardKeysPage() {
                 {!stockLoading && !stockError && stockList.map((item, index) => {
                   const isCardKey = item.stock_mode === "CARD_KEY" || !item.stock_mode
                   return (
-                    <tr key={`${item.product_id}-${item.spec_id || "default"}-${index}`} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                    <tr key={`${item.product_id}-${item.spec_id || "default"}-${index}`} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                       <td className="px-4 py-3 font-medium text-foreground">{item.product_title}</td>
                       <td className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-600">· {t("admin.disabled")}</span>}</td>
                       <td className="px-4 py-3"><StatusBadge label={stockModeLabel(item)} tone={item.stock_mode === "MANUAL" ? "warning" : item.stock_mode === "UNLIMITED" || item.unlimited ? "success" : "info"} /></td>
@@ -393,7 +393,7 @@ export default function AdminCardKeysPage() {
         <TabsContent value="import" className="flex flex-col gap-4">
           <DataTableShell footer={<AdminPagination page={importPage} total={importTotal} pageSize={PAGE_SIZE} onPageChange={setImportPage} />}>
             <table className="w-full min-w-[850px] text-sm">
-              <thead><tr className="border-b border-border bg-muted/30">
+              <thead><tr className="border-b border-border-subtle bg-surface-muted">
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.batchId")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.product")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.columnCount")}</th>
@@ -408,7 +408,7 @@ export default function AdminCardKeysPage() {
                 {!importLoading && importError && <TableErrorState colSpan={8} onRetry={() => void loadImportBatches()} />}
                 {!importLoading && !importError && importBatches.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noImportData")}</TableEmptyState>}
                 {!importLoading && !importError && importBatches.map((batch) => (
-                  <tr key={batch.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+                  <tr key={batch.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                     <td className="px-4 py-3 font-mono text-xs">{batch.id.length > 16 ? `${batch.id.slice(0, 8)}…` : batch.id}</td>
                     <td className="px-4 py-3">{products.find((product) => product.id === batch.product_id)?.title || batch.product_id}</td>
                     <td className="px-4 py-3">{batch.column_count ?? 1}</td>
@@ -431,7 +431,7 @@ export default function AdminCardKeysPage() {
           <div className="flex flex-col gap-4 py-2">
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectProductReq")}
-              <select ref={importProductRef} className={`h-10 rounded-md border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 ${importErrors.product ? "border-destructive ring-2 ring-destructive/20" : "border-input focus:ring-ring"}`} value={importProductId} onChange={(event) => void handleProductChange(event.target.value)} disabled={importing}>
+              <select ref={importProductRef} className={`h-11 rounded-control border bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 ${importErrors.product ? "border-destructive ring-2 ring-destructive/20" : "border-input focus:ring-ring"}`} value={importProductId} onChange={(event) => void handleProductChange(event.target.value)} disabled={importing}>
                 <option value="">{t("admin.selectProductPlaceholder")}</option>
                 {importableProducts.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
               </select>
@@ -439,12 +439,12 @@ export default function AdminCardKeysPage() {
             {loadingSpecs && <p className="text-sm text-muted-foreground">{t("admin.loadingSpecs")}</p>}
             {!loadingSpecs && importSpecs.length > 0 && <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectSpec")}
-              <select className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" value={importSpecId} onChange={(event) => setImportSpecId(event.target.value)} disabled={importing}>
+              <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" value={importSpecId} onChange={(event) => setImportSpecId(event.target.value)} disabled={importing}>
                 <option value="">{t("admin.defaultSpec")}</option>
                 {importSpecs.map((spec) => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
               </select>
             </label>}
-            <div className={importErrors.content ? "rounded-lg ring-1 ring-destructive" : undefined}><CardContentImportFields columns={importColumns} onChange={(columns) => { setImportColumns(columns); setImportErrors((current) => ({ ...current, content: false })) }} disabled={importing} /></div>
+            <div className={importErrors.content ? "rounded-card ring-1 ring-destructive" : undefined}><CardContentImportFields columns={importColumns} onChange={(columns) => { setImportColumns(columns); setImportErrors((current) => ({ ...current, content: false })) }} disabled={importing} /></div>
             <label className="flex items-start gap-2 text-sm text-foreground"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={checkDuplicate} onChange={(event) => setCheckDuplicate(event.target.checked)} disabled={importing} /><span>{t("admin.checkDuplicate")}</span></label>
           </div>
           <DialogFooter><Button type="button" variant="outline" onClick={() => handleImportDialogChange(false)} disabled={importing}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleImport()} disabled={importing}>{importing ? t("admin.importing") : t("admin.import")}</Button></DialogFooter>
@@ -453,14 +453,14 @@ export default function AdminCardKeysPage() {
 
       <Sheet open={detailItem !== null} onOpenChange={closeDetail}>
         <SheetContent className="flex w-full flex-col p-0 sm:max-w-5xl">
-          <SheetHeader className="border-b border-border px-6 py-5 pr-14">
+          <SheetHeader className="border-b border-border-subtle px-6 py-5 pr-14">
             <SheetTitle>{t("admin.cardDetail")}</SheetTitle>
             <SheetDescription>{detailItem ? `${detailItem.product_title} · ${detailItem.spec_name || t("admin.defaultSpec")}` : ""}</SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto p-6">
             <DataTableShell footer={<AdminPagination page={detailPage} total={detailTotal} pageSize={PAGE_SIZE} onPageChange={handleDetailPageChange} />}>
               <table className="w-full min-w-[900px] text-sm" onCopy={(event) => { const selected = window.getSelection()?.toString(); if (selected) { event.clipboardData.setData("text/plain", stripInvisible(selected)); event.preventDefault() } }}>
-                <thead><tr className="border-b border-border bg-muted/30">
+                <thead><tr className="border-b border-border-subtle bg-surface-muted">
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardContentColumnLabel")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardStatus")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardCreatedAt")}</th>
@@ -473,7 +473,7 @@ export default function AdminCardKeysPage() {
                   {!detailLoading && detailError && <TableErrorState colSpan={6} onRetry={() => detailItem && void fetchDetailKeys(detailItem, detailPage)} />}
                   {!detailLoading && !detailError && detailKeys.length === 0 && <TableEmptyState colSpan={6}>{t("admin.noCardData")}</TableEmptyState>}
                   {!detailLoading && !detailError && detailKeys.map((key) => (
-                    <tr key={key.id} className="border-b border-border/60 last:border-0">
+                    <tr key={key.id} className="border-b border-border-subtle last:border-0">
                       <td className="px-4 py-3 align-top"><CardContentParts parts={key.content_parts} onCopy={copyToClipboard} /></td>
                       <td className="px-4 py-3 align-top"><StatusBadge label={cardStatusLabel(key.status)} tone={cardStatusTone[key.status]} /></td>
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{formatDateTime(key.created_at, locale)}</td>

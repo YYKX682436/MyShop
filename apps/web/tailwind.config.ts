@@ -13,6 +13,17 @@ const config: Config = {
       colors: {
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
+        surface: {
+          DEFAULT: 'hsl(var(--surface))',
+          raised: 'hsl(var(--surface-raised))',
+          muted: 'hsl(var(--surface-muted))',
+          inset: 'hsl(var(--surface-inset))',
+        },
+        'text-primary': 'hsl(var(--text-primary))',
+        'text-secondary': 'hsl(var(--text-secondary))',
+        'border-subtle': 'hsl(var(--border-subtle))',
+        'border-strong': 'hsl(var(--border-strong))',
+        overlay: 'hsl(var(--overlay))',
         card: {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
@@ -63,9 +74,28 @@ const config: Config = {
         },
       },
       borderRadius: {
+        control: '12px',
+        card: '18px',
+        surface: '24px',
+        sheet: '28px',
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+      },
+      boxShadow: {
+        sm: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+      },
+      fontFamily: {
+        sans: ['var(--font-inter)', 'Inter', 'ui-sans-serif', 'system-ui', '"Noto Sans SC"', '"Microsoft YaHei UI"', '"Microsoft YaHei"', 'sans-serif'],
+      },
+      transitionDuration: {
+        140: '140ms',
+        180: '180ms',
+        220: '220ms',
+        320: '320ms',
+        420: '420ms',
       },
       keyframes: {
         'accordion-down': {

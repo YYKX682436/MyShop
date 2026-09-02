@@ -33,7 +33,12 @@ type DetailTab = "overview" | "orders" | "balance" | "logs"
 type RecordTab = Exclude<DetailTab, "overview">
 const PAGE_SIZE = 10
 
-export default function AdminUserDetailPage() {
+interface AdminUserDetailPageProps {
+  embedded?: boolean
+  onDirtyChange?: (dirty: boolean) => void
+}
+
+export default function AdminUserDetailPage({ embedded = false, onDirtyChange }: AdminUserDetailPageProps = {}) {
   const { t, locale } = useLocale()
   const router = useRouter()
   const params = useParams<{ id: string }>()
@@ -249,11 +254,21 @@ export default function AdminUserDetailPage() {
     }
   }
 
+  const formDirty = Boolean(
+    (editOpen && user && editEmail !== user.email)
+    || (balanceOpen && (balanceAmount.trim() || balanceReason.trim()))
+    || (resetOpen && newPassword.trim())
+  )
+
+  useEffect(() => {
+    onDirtyChange?.(formDirty)
+  }, [formDirty, onDirtyChange])
+
   if (loading) {
-    return <AdminPage><PageHeader title={t("admin.userDetail")} /><div className="h-64 animate-pulse rounded-xl border border-border bg-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
+    return <AdminPage className={embedded ? "max-w-none" : undefined}>{!embedded && <PageHeader title={t("admin.userDetail")} />}<div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
   }
   if (error || !user) {
-    return <AdminPage><PageHeader title={t("admin.userDetail")} /><div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void loadUser()}>{t("common.retry")}</Button></div></AdminPage>
+    return <AdminPage className={embedded ? "max-w-none" : undefined}>{!embedded && <PageHeader title={t("admin.userDetail")} />}<div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void loadUser()}>{t("common.retry")}</Button></div></AdminPage>
   }
 
   const enabled = user.is_deleted === 0
@@ -265,8 +280,8 @@ export default function AdminUserDetailPage() {
   ]
 
   return (
-    <AdminPage>
-      <PageHeader
+    <AdminPage className={embedded ? "max-w-none gap-5" : undefined}>
+      {!embedded && <PageHeader
         title={t("admin.userDetail")}
         description={t("admin.userDetailDesc")}
         actions={
@@ -274,9 +289,9 @@ export default function AdminUserDetailPage() {
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />{t("admin.backToUsers")}
           </Button>
         }
-      />
+      />}
 
-      <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
+      <section className="surface p-5 sm:p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><ShieldCheck className="size-7" aria-hidden="true" /></div>
@@ -295,18 +310,18 @@ export default function AdminUserDetailPage() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
+      <section className="surface p-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="font-semibold">{t("admin.userLevel")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("admin.userLevelImmediateHint")}</p></div>
-          <select className="h-10 min-w-52 rounded-md border border-input bg-background px-3 text-sm" value={user.user_level_id || ""} onChange={(event) => void handleChangeLevel(event.target.value)} disabled={levelLoading} aria-label={t("admin.userLevel")}>
+          <select className="h-11 min-w-52 rounded-control border border-input bg-surface px-3 text-sm shadow-sm" value={user.user_level_id || ""} onChange={(event) => void handleChangeLevel(event.target.value)} disabled={levelLoading} aria-label={t("admin.userLevel")}>
             <option value="">{user.user_level_name || t("admin.systemNoData")}</option>
             {levels.filter((level) => level.enabled).map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
           </select>
         </div>
       </section>
 
-      <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1" role="tablist" aria-label={t("admin.userDetailTabs")}>
-        {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} onClick={() => { setActiveTab(tab.key); setRecordPage(1) }} className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${activeTab === tab.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{tab.label}</button>)}
+      <div className="flex max-w-full gap-1 overflow-x-auto rounded-card border border-border-subtle bg-surface-muted p-1.5" role="tablist" aria-label={t("admin.userDetailTabs")}>
+        {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} onClick={() => { setActiveTab(tab.key); setRecordPage(1) }} className={`whitespace-nowrap rounded-control px-3 py-2 text-sm font-medium transition-colors ${activeTab === tab.key ? "bg-surface text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{tab.label}</button>)}
       </div>
 
       {activeTab === "overview" && <Overview user={user} t={t} locale={locale} />}
@@ -327,11 +342,11 @@ export default function AdminUserDetailPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{t("admin.adjustBalance")}</DialogTitle><DialogDescription>{t("admin.balanceAdjustmentDesc")}</DialogDescription></DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg bg-muted/50 p-3"><p className="text-xs text-muted-foreground">{t("admin.currentBalance")}</p><p className="mt-1 text-xl font-semibold">{formatYuanValue(user.balance)}</p></div>
-            <div className={`rounded-lg p-3 ${previewBalanceCents < 0 ? "bg-destructive/10 text-destructive" : "bg-primary/10"}`}><p className="text-xs text-muted-foreground">{t("admin.balancePreview")}</p><p className="mt-1 text-xl font-semibold">{formatYuanFromCents(previewBalanceCents)}</p></div>
+            <div className="rounded-card border border-border-subtle bg-surface-muted p-3"><p className="text-xs text-muted-foreground">{t("admin.currentBalance")}</p><p className="mt-1 text-xl font-semibold">{formatYuanValue(user.balance)}</p></div>
+            <div className={`rounded-card border border-border-subtle p-3 ${previewBalanceCents < 0 ? "bg-destructive/10 text-destructive" : "bg-primary/10"}`}><p className="text-xs text-muted-foreground">{t("admin.balancePreview")}</p><p className="mt-1 text-xl font-semibold">{formatYuanFromCents(previewBalanceCents)}</p></div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAdjustmentType")}</span><select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={balanceType} onChange={(event) => setBalanceType(event.target.value as "INCREASE" | "DECREASE")}><option value="INCREASE">{t("admin.balanceIncrease")}</option><option value="DECREASE">{t("admin.balanceDecrease")}</option></select></label>
+            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAdjustmentType")}</span><select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={balanceType} onChange={(event) => setBalanceType(event.target.value as "INCREASE" | "DECREASE")}><option value="INCREASE">{t("admin.balanceIncrease")}</option><option value="DECREASE">{t("admin.balanceDecrease")}</option></select></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAmount")}</span><Input type="text" inputMode="decimal" value={balanceAmount} onChange={(event) => setBalanceAmount(event.target.value)} placeholder="0.00" /></label>
           </div>
           <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceReason")}</span><Textarea value={balanceReason} onChange={(event) => setBalanceReason(event.target.value)} placeholder={t("admin.balanceReasonPlaceholder")} maxLength={500} rows={4} /></label>
@@ -358,15 +373,15 @@ function Overview({ user, t, locale }: { user: AdminUserDetail; t: Translator; l
   return <div className="grid gap-6 lg:grid-cols-2"><FormSection title={t("admin.accountOverview")} description={t("admin.accountOverviewDesc")}><div className="grid gap-3 sm:grid-cols-2"><Info label={t("admin.userNumber")} value={String(user.user_no)} mono /><Info label={t("admin.usernameLabel")} value={user.username} /><Info label={t("admin.emailLabel")} value={user.email} /><Info label={t("admin.phoneLabel")} value={user.phone || t("admin.systemNoData")} /><Info label={t("admin.registeredAt")} value={formatDateTime(user.created_at, locale)} /></div></FormSection><FormSection title={t("admin.accountMetrics")}><div className="grid gap-3 sm:grid-cols-3"><Metric label={t("admin.currentBalance")} value={formatYuanValue(user.balance)} /><Metric label={t("admin.successfulOrders")} value={String(user.successful_order_count)} /><Metric label={t("admin.totalSpent")} value={formatYuanValue(user.total_spent)} /></div></FormSection></div>
 }
 
-function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 break-all text-sm font-medium ${mono ? "font-mono" : ""}`}>{value}</p></div> }
-function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-lg bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-xl font-semibold">{value}</p></div> }
+function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div className="rounded-card border border-border-subtle bg-surface-muted p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 break-all text-sm font-medium ${mono ? "font-mono" : ""}`}>{value}</p></div> }
+function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-card border border-border-subtle bg-surface-muted p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-xl font-semibold">{value}</p></div> }
 
 function RecordShell({ children, loading, error, empty, onRetry, footer, colSpan, t }: { children: React.ReactNode; loading: boolean; error: boolean; empty: boolean; onRetry: () => void; footer: React.ReactNode; colSpan: number; t: Translator }) {
   return <DataTableShell footer={footer}><table className="w-full min-w-[900px] text-sm"><tbody>{loading && <TableLoadingState colSpan={colSpan} />}{!loading && error && <TableErrorState colSpan={colSpan} onRetry={onRetry} />}{!loading && !error && empty && <TableEmptyState colSpan={colSpan}>{t("admin.noRecordData")}</TableEmptyState>}{!loading && !error && !empty && children}</tbody></table></DataTableShell>
 }
 
 function OrdersTab({ orders, loading, error, onRetry, page, total, onPageChange, t, locale }: { orders: AdminUserOrder[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {
-  return <RecordShell loading={loading} error={error} empty={orders.length === 0} onRetry={onRetry} colSpan={6} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderProducts")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{orders.map((order) => <tr key={order.id} className="border-b border-border/60 last:border-0"><td className="px-4 py-3 font-mono text-xs">{order.id.slice(0, 8)}…</td><td className="max-w-[260px] truncate px-4 py-3">{order.items.map((item) => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、") || t("admin.systemNoData")}</td><td className="whitespace-nowrap px-4 py-3">{formatYuanValue(order.actual_amount ?? order.total_amount ?? 0)}</td><td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td><td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td><td className="px-4 py-3 text-right"><Button asChild type="button" variant="ghost" size="sm"><Link href={`/admin/orders?order_id=${encodeURIComponent(order.id)}`}>{t("admin.viewDetail")}</Link></Button></td></tr>)}</RecordShell>
+  return <RecordShell loading={loading} error={error} empty={orders.length === 0} onRetry={onRetry} colSpan={6} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderProducts")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{orders.map((order) => <tr key={order.id} className="border-b border-border/60 last:border-0"><td className="px-4 py-3 font-mono text-xs">{order.id.slice(0, 8)}…</td><td className="max-w-[260px] truncate px-4 py-3">{order.items.map((item) => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、") || t("admin.systemNoData")}</td><td className="whitespace-nowrap px-4 py-3">{formatYuanValue(order.actual_amount ?? order.total_amount ?? 0)}</td><td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td><td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td><td className="px-4 py-3 text-right"><Button asChild type="button" variant="ghost" size="sm"><Link href={`/admin/orders/${order.id}`}>{t("admin.viewDetail")}</Link></Button></td></tr>)}</RecordShell>
 }
 
 function BalanceTab({ transactions, loading, error, onRetry, page, total, onPageChange, t, locale }: { transactions: BalanceTransaction[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {

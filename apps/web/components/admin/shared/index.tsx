@@ -25,7 +25,7 @@ interface AdminPageProps {
 
 export function AdminPage({ children, className }: AdminPageProps) {
   return (
-    <div className={cn("mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-6", className)}>
+    <div className={cn("mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-7", className)}>
       {children}
     </div>
   )
@@ -40,10 +40,10 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, actions, className }: PageHeaderProps) {
   return (
-    <header className={cn("flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between", className)}>
+    <header className={cn("flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between", className)}>
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{title}</h1>
-        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+        <h1 className="text-[1.75rem] font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">{title}</h1>
+        {description && <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
@@ -52,7 +52,7 @@ export function PageHeader({ title, description, actions, className }: PageHeade
 
 export function PageToolbar({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", className)}>
+    <div className={cn("flex flex-col gap-3 rounded-card border border-border-subtle bg-surface-muted/70 p-2.5 shadow-sm lg:flex-row lg:items-center lg:justify-between", className)}>
       {children}
     </div>
   )
@@ -60,7 +60,7 @@ export function PageToolbar({ children, className }: { children: ReactNode; clas
 
 export function DataTableShell({ children, footer, className }: { children: ReactNode; footer?: ReactNode; className?: string }) {
   return (
-    <div className={cn("min-w-0 overflow-hidden rounded-xl border border-border bg-card", className)}>
+    <div className={cn("min-w-0 overflow-hidden rounded-card border border-border-subtle bg-surface shadow-sm", className)}>
       <div className="min-w-0 overflow-x-auto">{children}</div>
       {footer}
     </div>
@@ -71,7 +71,7 @@ export function TableLoadingState({ colSpan, rows = 3 }: { colSpan: number; rows
   return (
     <>
       {Array.from({ length: rows }, (_, row) => (
-        <tr key={row} className="border-b border-border/60 last:border-0">
+        <tr key={row} className="border-b border-border-subtle last:border-0">
           <td colSpan={colSpan} className="px-4 py-3">
             <Skeleton className="h-8 w-full" />
           </td>
@@ -142,7 +142,7 @@ export function AdminPagination({
   const currentPage = Math.min(Math.max(page, 1), totalPages)
 
   return (
-    <div className={cn("flex flex-col gap-3 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between", className)}>
+    <div className={cn("flex flex-col gap-3 border-t border-border-subtle bg-surface-muted/45 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between", className)}>
       <span className="text-sm text-muted-foreground">
         {t("admin.totalRecords")} {total} {t("admin.records")}
       </span>
@@ -202,7 +202,7 @@ export function AdminPagination({
 type StatusTone = "neutral" | "success" | "info" | "warning" | "danger" | "purple"
 
 const statusToneClasses: Record<StatusTone, string> = {
-  neutral: "bg-muted text-muted-foreground",
+  neutral: "bg-surface-muted text-muted-foreground ring-1 ring-inset ring-border-subtle",
   success: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   info: "bg-blue-500/10 text-blue-700 dark:text-blue-300",
   warning: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
@@ -216,7 +216,7 @@ export function StatusBadge({ label, tone = "neutral" }: { label: ReactNode; ton
 
 export function FormSection({ title, description, children, className }: { title: ReactNode; description?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn("rounded-xl border border-border bg-card p-5 sm:p-6", className)}>
+    <section className={cn("rounded-surface border border-border-subtle bg-surface p-5 shadow-sm sm:p-6", className)}>
       <div className="mb-5">
         <h2 className="text-base font-semibold text-foreground">{title}</h2>
         {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}

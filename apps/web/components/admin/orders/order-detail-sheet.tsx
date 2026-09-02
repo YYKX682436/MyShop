@@ -27,6 +27,7 @@ interface OrderDetailSheetProps {
   completingManualItem?: string | null
   onCompleteManualItem?: (orderId: string, orderItemId: string) => void
   onMarkPaid?: (orderId: string) => void
+  embedded?: boolean
 }
 
 function fulfillmentLabel(item: OrderItemDetail, t: (key: TranslationKey) => string) {
@@ -55,6 +56,7 @@ export function OrderDetailSheet({
   completingManualItem = null,
   onCompleteManualItem,
   onMarkPaid,
+  embedded = false,
 }: OrderDetailSheetProps) {
   const { t, locale } = useLocale()
 
@@ -75,29 +77,26 @@ export function OrderDetailSheet({
     else fallback()
   }
 
-  return (
-    <Sheet open={order !== null} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col p-0 sm:max-w-2xl">
-        {order && (
+  const detailContent = order && (
           <>
-            <SheetHeader className="border-b border-border px-6 py-5 pr-14">
+            {!embedded && <SheetHeader className="border-b border-border-subtle px-5 py-5 pr-14 sm:px-6">
               <SheetTitle>{t("admin.orderDetail")}</SheetTitle>
               <SheetDescription className="break-all font-mono">{order.id}</SheetDescription>
-            </SheetHeader>
+            </SheetHeader>}
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-              {detailLoading && <div className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div>}
-              {detailError && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryDetail && <Button type="button" variant="outline" size="sm" onClick={onRetryDetail}>{t("common.retry")}</Button>}</div>}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+              {detailLoading && <div className="mb-4 flex items-center gap-2 rounded-control border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div>}
+              {detailError && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryDetail && <Button type="button" variant="outline" size="sm" onClick={onRetryDetail}>{t("common.retry")}</Button>}</div>}
               <div className="flex flex-col gap-6">
                 <section>
                   <h3 className="mb-3 text-sm font-semibold text-foreground">{t("admin.orderProducts")}</h3>
-                  <div className="overflow-hidden rounded-lg border border-border">
+                  <div className="overflow-hidden rounded-card border border-border-subtle bg-surface">
                     {order.items.length === 0 && <p className="px-3 py-4 text-sm text-muted-foreground">{t("admin.systemNoData")}</p>}
                     {order.items.map((item, index) => {
                       const manual = item.delivery_type === "MANUAL"
                       const canComplete = manual && order.status === "PAID" && item.fulfillment_status !== "DELIVERED" && item.fulfillment_status !== "CANCELLED" && Boolean(onCompleteManualItem)
                       return (
-                        <div key={item.id} className={`flex flex-wrap items-start justify-between gap-4 px-3 py-4 ${index > 0 ? "border-t border-border" : ""}`}>
+                        <div key={item.id} className={`flex flex-wrap items-start justify-between gap-4 px-3 py-4 ${index > 0 ? "border-t border-border-subtle" : ""}`}>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-foreground">{item.product_title}{item.spec_name && <span className="text-muted-foreground"> · {item.spec_name}</span>} <span className="text-muted-foreground">×{item.quantity}</span></p>
                             {item.customer_inputs.length > 0 && <div className="mt-2 space-y-1 text-xs text-muted-foreground">{item.customer_inputs.map((input) => <p key={input.id}>{input.label}: {input.value}</p>)}</div>}
@@ -128,7 +127,7 @@ export function OrderDetailSheet({
                   </div>
                 </section>
 
-                <section className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-lg border border-border p-4">
+                <section className="grid grid-cols-2 gap-x-5 gap-y-4 rounded-card border border-border-subtle bg-surface-muted/45 p-4">
                   <div><p className="text-xs text-muted-foreground">{t("admin.paymentAmount")}</p><p className="mt-1 text-sm font-medium text-foreground">{formatYuan(order.actual_amount)}</p></div>
                   <div><p className="text-xs text-muted-foreground">{t("admin.paymentMethod")}</p><p className="mt-1 inline-flex items-center gap-1.5 text-sm text-foreground"><PaymentIcon method={order.payment_method} className="h-4 w-4" />{getPaymentLabel(order.payment_method, t)}</p></div>
                   <div><p className="text-xs text-muted-foreground">{t("admin.contactEmailLabel")}</p><p className="mt-1 break-all text-sm text-foreground">{order.email}</p></div>
@@ -142,7 +141,7 @@ export function OrderDetailSheet({
                   <section>
                     <h3 className="mb-3 text-sm font-semibold text-foreground">{t("admin.deliveredCardContent")}</h3>
                     {detailCardKeysLoading && <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div>}
-                    {!detailCardKeysLoading && detailCardKeysError && <div className="flex flex-col items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryCardKeys && <Button type="button" variant="outline" size="sm" onClick={onRetryCardKeys}>{t("common.retry")}</Button>}</div>}
+                    {!detailCardKeysLoading && detailCardKeysError && <div className="flex flex-col items-start gap-2 rounded-card border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryCardKeys && <Button type="button" variant="outline" size="sm" onClick={onRetryCardKeys}>{t("common.retry")}</Button>}</div>}
                     {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length === 0 && <p className="text-sm text-muted-foreground">{t("admin.systemNoData")}</p>}
                     {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && (() => {
                       const groups = new Map<string, { title: string; cards: OrderCardKey[] }>()
@@ -153,19 +152,28 @@ export function OrderDetailSheet({
                         if (group) group.cards.push(card)
                         else groups.set(groupKey, { title, cards: [card] })
                       })
-                      return <div className="flex flex-col gap-3">{[...groups.entries()].map(([groupKey, group]) => <div key={groupKey} className="flex flex-col gap-2"><p className="text-xs font-medium text-muted-foreground">{groups.size > 1 ? group.title : t("admin.deliveredCardContent")}</p>{group.cards.map((card) => <DataTableShell key={card.card_key_id} className="rounded-lg"><div className="p-3"><CardContentParts parts={card.content_parts} onCopy={copyToClipboard} /></div></DataTableShell>)}</div>)}</div>
+                      return <div className="flex flex-col gap-3">{[...groups.entries()].map(([groupKey, group]) => <div key={groupKey} className="flex flex-col gap-2"><p className="text-xs font-medium text-muted-foreground">{groups.size > 1 ? group.title : t("admin.deliveredCardContent")}</p>{group.cards.map((card) => <DataTableShell key={card.card_key_id} className="rounded-card"><div className="p-3"><CardContentParts parts={card.content_parts} onCopy={copyToClipboard} /></div></DataTableShell>)}</div>)}</div>
                     })()}
                   </section>
                 )}
               </div>
             </div>
 
-            <SheetFooter className="border-t border-border px-6 py-4">
+            {!embedded && <SheetFooter className="border-t border-border-subtle bg-surface-muted/45 px-5 py-4 sm:px-6">
               {order.status === "PENDING" && onMarkPaid && <Button type="button" onClick={() => onMarkPaid(order.id)}><CheckCircle className="h-4 w-4" aria-hidden="true" />{t("admin.markPaid")}</Button>}
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("common.close")}</Button>
-            </SheetFooter>
+            </SheetFooter>}
           </>
-        )}
+  )
+
+  if (embedded) {
+    return <div className="flex min-h-full flex-col">{detailContent}</div>
+  }
+
+  return (
+    <Sheet open={order !== null} onOpenChange={onOpenChange}>
+      <SheetContent className="flex w-full flex-col p-0 sm:max-w-2xl">
+        {detailContent}
       </SheetContent>
     </Sheet>
   )

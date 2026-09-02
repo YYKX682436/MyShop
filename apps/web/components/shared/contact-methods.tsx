@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 import { ExternalLink, HelpCircle, Mail } from "lucide-react"
 import { useLocale } from "@/lib/context"
 import {
@@ -40,9 +41,12 @@ export function ContactQrDialog({ contact, open, onOpenChange }: ContactQrDialog
           </DialogHeader>
           <div className="flex flex-col items-center gap-5">
             <div className="flex max-h-[65vh] w-full items-center justify-center rounded-xl bg-white p-3 sm:p-5">
-              <img
+              <Image
                 src={contact.qr_url ?? ""}
                 alt={`${contact.name} ${t("footer.viewQr")}`}
+                width={800}
+                height={800}
+                unoptimized
                 className="max-h-[55vh] max-w-full object-contain"
               />
             </div>

@@ -220,14 +220,14 @@ export default function AdminUserLevelsPage() {
         actions={<Button type="button" onClick={openCreate}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addUserLevel")}</Button>}
       />
 
-      <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+      <p className="rounded-card border border-amber-500/20 bg-amber-500/[0.07] px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
         {t("admin.levelLifecycleHint")}
       </p>
 
       <DataTableShell>
         <table className="w-full min-w-[1100px] text-sm">
           <thead>
-            <tr className="border-b border-border bg-muted/30">
+            <tr className="border-b border-border-subtle bg-surface-muted">
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelName")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.pricingType")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.markupRate")}</th>
@@ -243,7 +243,7 @@ export default function AdminUserLevelsPage() {
             {!loading && error && <TableErrorState colSpan={8} onRetry={() => void loadLevels()} />}
             {!loading && !error && levels.length === 0 && <TableEmptyState colSpan={8}>{t("common.noData")}</TableEmptyState>}
             {!loading && !error && levels.map((level) => (
-              <tr key={level.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+              <tr key={level.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2 font-medium">
                     {level.is_default && <Star className="h-4 w-4 fill-amber-400 text-amber-500" aria-label={t("admin.defaultLabel")} />}
@@ -281,7 +281,7 @@ export default function AdminUserLevelsPage() {
           <div className="grid gap-4">
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.levelName")}<Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} maxLength={100} autoFocus /></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.pricingType")}
-              <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={form.pricing_type} onChange={(event) => setForm((current) => ({ ...current, pricing_type: event.target.value as PricingType, markup_rate: event.target.value === "RETAIL" ? "" : current.markup_rate }))}>
+              <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={form.pricing_type} onChange={(event) => setForm((current) => ({ ...current, pricing_type: event.target.value as PricingType, markup_rate: event.target.value === "RETAIL" ? "" : current.markup_rate }))}>
                 <option value="RETAIL">{t("admin.retailPricing")}</option>
                 <option value="COST_MARKUP">{t("admin.costMarkup")}</option>
               </select>
@@ -289,9 +289,9 @@ export default function AdminUserLevelsPage() {
             {form.pricing_type === "COST_MARKUP" && <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.markupRate")}<Input type="number" min="0" step="0.0001" value={form.markup_rate} onChange={(event) => setForm((current) => ({ ...current, markup_rate: event.target.value }))} placeholder="15" /><span className="text-xs font-normal text-muted-foreground">{t("admin.markupRateHint")}</span></label>}
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.sortOrderLabel")}<Input type="number" value={form.sort_order} onChange={(event) => setForm((current) => ({ ...current, sort_order: event.target.value }))} /></label>
-              <label className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-sm font-medium">{t("admin.enabledLevel")}<Switch checked={form.is_default || form.enabled} onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked }))} disabled={form.is_default} /></label>
+            <label className="flex items-center justify-between gap-3 rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 text-sm font-medium">{t("admin.enabledLevel")}<Switch checked={form.is_default || form.enabled} onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked }))} disabled={form.is_default} /></label>
             </div>
-            <label className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 text-sm font-medium">{t("admin.defaultLevel")}<Switch checked={form.is_default} onCheckedChange={(checked) => setForm((current) => ({ ...current, is_default: checked, enabled: checked || current.enabled }))} /></label>
+            <label className="flex items-center justify-between gap-3 rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 text-sm font-medium">{t("admin.defaultLevel")}<Switch checked={form.is_default} onCheckedChange={(checked) => setForm((current) => ({ ...current, is_default: checked, enabled: checked || current.enabled }))} /></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.levelRemark")}<Textarea value={form.remark} onChange={(event) => setForm((current) => ({ ...current, remark: event.target.value }))} placeholder={t("admin.levelRemarkPlaceholder")} maxLength={500} rows={3} /></label>
           </div>
           <DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleSave()} disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button></DialogFooter>
@@ -302,7 +302,7 @@ export default function AdminUserLevelsPage() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{t("admin.migrateUsersTitle")}</DialogTitle><DialogDescription>{t("admin.migrateUsersDescription")}</DialogDescription></DialogHeader>
           <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.migrateTarget")}
-            <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={migrateTargetId} onChange={(event) => setMigrateTargetId(event.target.value)}>
+            <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={migrateTargetId} onChange={(event) => setMigrateTargetId(event.target.value)}>
               <option value="">{t("admin.migrateTargetRequired")}</option>
               {migrationTargets.map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
             </select>

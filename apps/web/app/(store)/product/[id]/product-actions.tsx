@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Zap, Minus, Plus, Package, TrendingUp } from "lucide-react"
+import { motion } from "motion/react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
@@ -167,21 +168,22 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   }
 
   return (
-    <div className="lg:sticky lg:top-4 flex flex-col gap-4">
+    <div className="flex flex-col gap-5 lg:sticky lg:top-24">
       {/* Title */}
       <div>
-        <h1 className="text-xl font-bold text-foreground">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">{t("product.buyNow")}</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
           {product.title}
         </h1>
       </div>
 
       {/* Price + Specs + Stock */}
-      <div className="rounded-lg border border-border p-4 space-y-4">
+      <div className="surface-raised space-y-5 p-5">
         {/* Price row + delivery status */}
         <div className="flex flex-wrap items-baseline justify-between gap-y-2">
           <div className="flex items-baseline gap-3">
             <div className="flex items-baseline gap-0.5">
-              <span className="text-2xl font-extrabold text-primary">
+              <span className="text-3xl font-semibold tracking-tight text-foreground">
                 {formatYuan(currentPrice)}
               </span>
             </div>
@@ -191,8 +193,8 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           <div className={cn(
             "inline-flex items-center gap-1.5 rounded-full border px-3 py-1",
             deliveryType === "auto"
-              ? "border-emerald-200 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-900/20"
-              : "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20"
+              ? "border-emerald-500/20 bg-emerald-500/[0.08]"
+              : "border-amber-500/20 bg-amber-500/[0.08]"
           )}>
             <span className={cn(
               "relative inline-flex h-2 w-2 rounded-full",
@@ -242,14 +244,15 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
                     setQuantity(1)
                   }}
                   className={cn(
-                    "rounded-md border px-3 py-1.5 text-sm font-medium transition-colors",
+                    "relative rounded-control border px-3 py-2 text-sm font-medium transition-colors duration-180",
                     selectedSpec?.id === spec.id
                       ? "border-primary bg-primary/10 text-primary"
-                      : "border-border text-foreground hover:border-primary/30"
+                      : "border-border-subtle text-foreground hover:border-border-strong hover:bg-surface-muted"
                   )}
                   disabled={!spec.unlimited && spec.stock_available === 0}
                 >
-                  {spec.name}
+                  {selectedSpec?.id === spec.id && <motion.span layoutId="selected-spec" className="absolute inset-0 -z-0 rounded-control border border-primary/30 bg-primary/[0.06]" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
+                  <span className="relative z-10">{spec.name}</span>
                   {!spec.unlimited && spec.stock_available === 0 && (
                     <span className="ml-1 text-xs text-muted-foreground">
                       ({t("product.outOfStock")})
@@ -263,7 +266,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       </div>
 
       {/* Action area */}
-      <div className="rounded-lg border border-border p-4 space-y-4">
+      <div className="surface-raised space-y-5 p-5">
         {/* Quantity */}
         <div>
           <label className="mb-2 block text-sm font-medium text-foreground">
@@ -272,7 +275,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           <div className="inline-flex items-center rounded-md border border-border">
             <button
               onClick={() => setQuantity(Math.max(1, quantity - 1))}
-              className="inline-flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-accent"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-l-control text-muted-foreground transition-colors hover:bg-surface"
               disabled={quantity <= 1}
             >
               <Minus className="h-4 w-4" />
@@ -286,11 +289,11 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
                 const v = parseInt(e.target.value) || 1
                 setQuantity(unlimited ? Math.max(1, v) : Math.min(Math.max(1, v), finiteStock || 1))
               }}
-              className="h-9 w-16 border-x border-border bg-background text-center text-sm text-foreground [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              className="h-9 w-16 border-x border-border-subtle bg-surface text-center text-sm text-foreground [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
             <button
               onClick={() => setQuantity(unlimited ? quantity + 1 : Math.min(quantity + 1, finiteStock || 1))}
-              className="inline-flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-accent"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-r-control text-muted-foreground transition-colors hover:bg-surface"
               disabled={!unlimited && quantity >= finiteStock}
             >
               <Plus className="h-4 w-4" />
@@ -321,7 +324,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
               }}
               placeholder={`请输入${field.label}`}
               className={cn(
-                "h-10 w-full rounded-lg border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring",
+                "h-11 w-full rounded-control border bg-surface px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring",
                 customerInputErrors[field.id] ? "border-destructive" : "border-input"
               )}
             />
@@ -341,7 +344,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             value={email}
             onChange={(e) => handleEmailChange(e.target.value)}
             className={cn(
-              "h-10 w-full rounded-lg border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring",
+              "h-11 w-full rounded-control border bg-surface px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring",
               emailError ? "border-destructive" : "border-input"
             )}
           />
@@ -361,7 +364,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             {t("product.paymentMethod")}
           </label>
           {adminPickup ? (
-            <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5 text-sm font-medium text-primary">
+            <div className="rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-sm font-medium text-primary">
               {t("payment.adminPickup")}
             </div>
           ) : (
@@ -374,10 +377,10 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         </div>
 
         {/* Total */}
-        <div className="flex items-baseline justify-between border-t border-border pt-4">
+        <div className="flex items-baseline justify-between border-t border-border-subtle pt-4">
           <span className="text-sm text-muted-foreground">{t("product.totalPrice")}</span>
           <div className="flex items-baseline gap-0.5">
-            <span className="text-2xl font-bold text-primary">
+            <span className="text-2xl font-semibold text-foreground">
               {formatYuan(totalPrice)}
             </span>
           </div>
@@ -390,7 +393,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           <button
             onClick={handleBuyNow}
             disabled={submitting || isOutOfStock}
-            className="scheme-glow inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary text-sm font-semibold text-primary-foreground transition-all hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
           >
             {submitting ? (
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />

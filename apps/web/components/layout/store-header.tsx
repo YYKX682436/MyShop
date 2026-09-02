@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState, useEffect } from "react"
 import { usePathname } from "next/navigation"
 import Link from "next/link"
+import Image from "next/image"
 import { User, LogIn, Menu, X, Globe, Moon, Sun, Package, Search, Settings, ChevronDown, SlidersHorizontal, LogOut, ClipboardList } from "lucide-react"
 import { useAuth, useLocale, useTheme, useColorScheme, useSearch, useSiteConfig, COLOR_SCHEMES, type SortKey } from "@/lib/context"
 import { cn } from "@/lib/utils"
@@ -90,17 +91,17 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="mx-auto flex h-14 max-w-7xl items-center px-4 lg:px-6">
+    <header className="sticky top-0 z-50 border-b border-border-subtle bg-background/90 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75">
+      <div className="mx-auto flex h-16 max-w-[1440px] items-center px-4 sm:px-6 lg:px-8">
         {/* Logo -- fixed width to balance right actions */}
         <div className="flex min-w-0 flex-1 items-center">
-          <Link href="/" className="flex shrink-0 items-center gap-2.5 text-foreground">
+          <Link href="/" className="group/brand flex shrink-0 items-center gap-2.5 text-foreground">
             {siteConfig?.logo_url ? (
-              <img src={siteConfig.logo_url} alt={siteName || siteConfig?.site_name || ""} className="h-6 w-6 rounded object-contain" />
+              <Image src={siteConfig.logo_url} alt={siteName || siteConfig?.site_name || ""} width={24} height={24} unoptimized className="h-6 w-6 rounded object-contain" />
             ) : (
-              <Package className="h-6 w-6 text-primary" />
+              <span className="flex size-8 items-center justify-center rounded-control bg-primary/10 text-primary transition-transform duration-180 group-hover/brand:scale-[1.03]"><Package className="size-4" /></span>
             )}
-            <span className="hidden text-lg font-extrabold tracking-tight sm:inline">{siteName || siteConfig?.site_name}</span>
+            <span className="hidden text-[15px] font-semibold tracking-tight sm:inline">{siteName || siteConfig?.site_name}</span>
           </Link>
         </div>
 
@@ -112,9 +113,9 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  "relative rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                  "relative rounded-control px-3 py-2 text-sm font-medium transition-colors duration-180 hover:bg-surface-muted hover:text-foreground",
                   pathname === link.href
-                    ? "bg-accent text-accent-foreground"
+                    ? "bg-primary/10 text-foreground"
                     : "text-muted-foreground"
                 )}
               >
@@ -130,10 +131,10 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
           <button
             onClick={searchOpen ? closeSearch : openSearch}
             className={cn(
-              "inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium transition-colors",
+              "inline-flex h-9 items-center gap-1.5 rounded-control px-2.5 text-sm font-medium transition-colors duration-180",
               searchOpen
                 ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
             )}
             aria-label="Search"
           >
@@ -149,7 +150,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
           <div className="relative hidden sm:block">
             <button
               onClick={() => setColorPickerOpen(!colorPickerOpen)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-control text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground"
               aria-label="Color scheme"
             >
               <span className="h-4 w-4 rounded-full bg-primary" />
@@ -157,7 +158,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
             {colorPickerOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setColorPickerOpen(false)} />
-                <div className="absolute right-0 z-50 mt-1 flex gap-1.5 rounded-lg border border-border bg-popover p-2 shadow-lg">
+                <div className="absolute right-0 z-50 mt-2 flex gap-1.5 rounded-card border border-border-subtle bg-surface-raised p-2 shadow-md">
                   {COLOR_SCHEMES.map((scheme) => (
                     <button
                       key={scheme.key}
@@ -184,7 +185,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
           {/* Theme Toggle */}
           <button
             onClick={toggleTheme}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-control text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground"
             aria-label="Toggle theme"
           >
             <Sun className="h-4 w-4 dark:hidden" />
@@ -194,7 +195,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
           {/* Locale Toggle */}
           <button
             onClick={toggleLocale}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-control text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground"
             aria-label="Toggle language"
           >
             <Globe className="h-4 w-4" />
@@ -203,7 +204,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
           {/* Order Query (mobile only) */}
           <Link
             href="/order/query"
-            className="relative inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground md:hidden"
+            className="relative inline-flex h-9 w-9 items-center justify-center rounded-control text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground md:hidden"
             aria-label={t("nav.orders")}
           >
             <ClipboardList className="h-4 w-4" />
@@ -211,12 +212,12 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
 
           {/* User / Auth — auth 未就绪时显示占位，避免登录按钮闪烁 */}
           {!authLoaded ? (
-            <div className="h-9 w-9 animate-pulse rounded-md bg-muted" />
+            <div className="h-9 w-9 animate-pulse rounded-control bg-surface-muted" />
           ) : isLoggedIn ? (
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen(!userMenuOpen)}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="inline-flex h-9 items-center gap-1.5 rounded-control px-2 text-sm font-medium text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground"
               >
                 <User className="h-4 w-4" />
                 <span className="hidden sm:inline">{user?.username}</span>
@@ -224,20 +225,20 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
               {userMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 z-50 mt-1 w-48 rounded-md border border-border bg-popover p-1 shadow-lg">
-                    <Link href="/profile" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent">
+                  <div className="absolute right-0 z-50 mt-2 w-52 rounded-card border border-border-subtle bg-surface-raised p-1.5 shadow-md">
+                    <Link href="/profile" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-sm text-foreground transition-colors hover:bg-surface-muted">
                       <User className="h-4 w-4" />{t("nav.profile")}
                     </Link>
-                    <Link href="/my/orders" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent">
+                    <Link href="/my/orders" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-sm text-foreground transition-colors hover:bg-surface-muted">
                       <Search className="h-4 w-4" />{t("nav.myOrders")}
                     </Link>
                     {isAdminRole(user?.role) && (
-                      <Link href="/admin/dashboard" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-popover-foreground hover:bg-accent">
+                      <Link href="/admin/dashboard" onClick={() => setUserMenuOpen(false)} className="flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-sm text-foreground transition-colors hover:bg-surface-muted">
                         <Settings className="h-4 w-4" />{t("nav.admin")}
                       </Link>
                     )}
-                    <hr className="my-1 border-border" />
-                    <button onClick={() => { logout(); setUserMenuOpen(false) }} className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent">
+                    <hr className="my-1.5 border-border-subtle" />
+                    <button onClick={() => { logout(); setUserMenuOpen(false) }} className="flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10">
                       <LogOut className="h-4 w-4" />{t("nav.logout")}
                     </button>
                   </div>
@@ -245,7 +246,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
               )}
             </div>
           ) : (
-            <Link href="/login" className="inline-flex h-9 items-center rounded-md bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 px-2.5 sm:px-4">
+            <Link href="/login" className="inline-flex h-9 items-center rounded-control bg-primary px-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 active:scale-[.98] sm:px-4">
               <LogIn className="h-4 w-4 sm:hidden" />
               <span className="hidden sm:inline">{t("nav.login")}</span>
             </Link>
@@ -254,7 +255,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
           {/* Mobile Menu Toggle */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground md:hidden"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-control text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground md:hidden"
             aria-label="Toggle menu"
           >
             {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
@@ -264,8 +265,8 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
 
       {/* Expanded Search Bar + Sort/Filter */}
       {searchOpen && (
-        <div className="border-t border-border bg-background/95 backdrop-blur">
-          <div className="mx-auto max-w-7xl px-4 py-3 lg:px-6">
+        <div className="border-t border-border-subtle bg-surface-muted/60 backdrop-blur">
+          <div className="mx-auto max-w-[1440px] px-4 py-3.5 sm:px-6 lg:px-8">
             <div className="flex items-center gap-2">
               {/* Search Input */}
               <div className="relative flex-1">
@@ -276,7 +277,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                   placeholder={t("home.search")}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-10 w-full rounded-lg border border-input bg-background pl-9 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
+                  className="h-11 w-full rounded-control border border-input bg-surface pl-9 pr-10 text-sm text-foreground placeholder:text-muted-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background"
                 />
                 {searchQuery && (
                   <button
@@ -292,7 +293,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
               <div ref={sortRef} className="relative">
                 <button
                   onClick={() => setSortOpen(!sortOpen)}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                  className="inline-flex h-11 items-center gap-1.5 rounded-control border border-input bg-surface px-3 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted"
                 >
                   <span className="hidden sm:inline">
                     {sortOptions.find((s) => s.key === sortBy)?.label}
@@ -300,14 +301,14 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                   <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", sortOpen && "rotate-180")} />
                 </button>
                 {sortOpen && (
-                  <div className="absolute right-0 z-30 mt-1 w-40 overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
+                  <div className="absolute right-0 z-30 mt-2 w-44 overflow-hidden rounded-card border border-border-subtle bg-surface-raised p-1 shadow-md">
                     {sortOptions.map((opt) => (
                       <button
                         key={opt.key}
                         onClick={() => { setSortBy(opt.key); setSortOpen(false) }}
                         className={cn(
-                          "flex w-full items-center px-3 py-2 text-sm transition-colors hover:bg-accent",
-                          sortBy === opt.key ? "bg-accent/50 font-medium text-foreground" : "text-muted-foreground"
+                          "flex w-full items-center rounded-control px-3 py-2 text-sm transition-colors hover:bg-surface-muted",
+                          sortBy === opt.key ? "bg-primary/10 font-medium text-foreground" : "text-muted-foreground"
                         )}
                       >
                         {opt.label}
@@ -321,16 +322,16 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
               <button
                 onClick={() => setFilterOpen(!filterOpen)}
                 className={cn(
-                  "relative inline-flex h-10 items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors",
+                  "relative inline-flex h-11 items-center gap-1.5 rounded-control border px-3 text-sm font-medium transition-colors",
                   filterOpen || activeFilterCount > 0
-                    ? "border-foreground/20 bg-foreground/5 text-foreground"
-                    : "border-input bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
+                    ? "border-primary/25 bg-primary/10 text-foreground"
+                    : "border-input bg-surface text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                 )}
               >
                 <SlidersHorizontal className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{t("home.filterTitle")}</span>
                 {activeFilterCount > 0 && (
-                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-[10px] font-bold text-background">
+                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
                     {activeFilterCount}
                   </span>
                 )}
@@ -339,12 +340,12 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
 
             {/* Filter panel */}
             {filterOpen && (
-              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-3">
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-card border border-border-subtle bg-surface px-4 py-3.5 shadow-sm">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground">{t("home.filterPrice")}:</span>
-                  <input type="number" placeholder="Min" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <input type="number" placeholder="Min" value={priceMin} onChange={(e) => setPriceMin(e.target.value)} className="h-9 w-20 rounded-control border border-input bg-surface-muted px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
                   <span className="text-xs text-muted-foreground">-</span>
-                  <input type="number" placeholder="Max" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+                  <input type="number" placeholder="Max" value={priceMax} onChange={(e) => setPriceMax(e.target.value)} className="h-9 w-20 rounded-control border border-input bg-surface-muted px-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
                 </div>
                 <label className="flex cursor-pointer items-center gap-1.5">
                   <input type="checkbox" checked={inStockOnly} onChange={(e) => setInStockOnly(e.target.checked)} className="h-3.5 w-3.5 rounded border-input accent-foreground" />
@@ -371,10 +372,10 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                   href={link.href}
                   onClick={() => setMobileMenuOpen(false)}
                   className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    "flex items-center gap-2 rounded-control px-3 py-2.5 text-sm font-medium transition-colors",
                     pathname === link.href
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                      ? "bg-primary/10 text-foreground"
+                      : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                   )}
                 >
                   {link.label}

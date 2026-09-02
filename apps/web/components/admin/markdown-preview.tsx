@@ -13,7 +13,7 @@ export function MarkdownPreview({ value, emptyMessage, className }: MarkdownPrev
   const resolvedEmptyMessage = emptyMessage || t("admin.markdownEmpty")
   if (!value.trim()) {
     return (
-      <div className={cn("flex min-h-32 items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-4 text-center text-sm text-muted-foreground", className)}>
+      <div className={cn("flex min-h-32 items-center justify-center rounded-card border border-dashed border-border-subtle bg-surface-muted/45 px-4 text-center text-sm text-muted-foreground", className)}>
         {resolvedEmptyMessage}
       </div>
     )
@@ -23,7 +23,7 @@ export function MarkdownPreview({ value, emptyMessage, className }: MarkdownPrev
     <div
       className={cn(
         "min-w-0 max-w-full overflow-hidden break-words prose prose-sm text-muted-foreground dark:prose-invert",
-        "[&_img]:my-3 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-lg",
+        "[&_img]:my-3 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-card",
         className,
       )}
     >

@@ -135,7 +135,7 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
           <span className="text-xs text-muted-foreground">{t("admin.markdownHint")}</span>
           <button
             type="button"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
             onMouseDown={() => rememberSelection()}
             onClick={openFilePicker}
             disabled={uploading}
@@ -146,7 +146,7 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
         </div>
         <div
           className={cn(
-            "relative min-w-0 rounded-lg border border-input bg-background transition-colors",
+            "relative min-w-0 rounded-card border border-input bg-surface transition-colors",
             isDragActive && "border-primary bg-primary/5 ring-4 ring-primary/10",
           )}
           onDragEnter={handleDragEnter}
@@ -156,7 +156,7 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
         >
           <textarea
             ref={textareaRef}
-            className="block min-h-52 w-full resize-y rounded-lg border-0 bg-transparent px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="block min-h-52 w-full resize-y rounded-card border-0 bg-transparent px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             placeholder={t("admin.markdownPlaceholder")}
             value={value}
             onChange={(event) => {
@@ -172,12 +172,12 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
             aria-label={t("admin.markdownEditor")}
           />
           {isDragActive && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-primary/15 text-sm font-semibold text-primary">
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-card bg-primary/15 text-sm font-semibold text-primary">
               {t("admin.releaseToInsert")}
             </div>
           )}
           {uploading && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-lg bg-background/75 text-sm font-medium text-foreground backdrop-blur-[1px]">
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-card bg-surface/80 text-sm font-medium text-foreground backdrop-blur-[1px]">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
               {t("admin.uploadingAndInsert")}
             </div>
@@ -193,8 +193,8 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
         />
       </div>
 
-      <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
-        <div className="border-b border-border px-3 py-2 text-sm font-medium text-foreground">{t("admin.markdownPreview")}</div>
+      <div className="min-w-0 overflow-hidden rounded-card border border-border-subtle bg-surface">
+        <div className="border-b border-border-subtle px-3 py-2 text-sm font-medium text-foreground">{t("admin.markdownPreview")}</div>
         <div className="min-w-0 p-3">
           <MarkdownPreview value={value} emptyMessage={t("admin.markdownEmpty")} />
         </div>

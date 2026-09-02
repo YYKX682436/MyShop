@@ -17,16 +17,16 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
   const { t } = useLocale()
   const salesLabel = `${t("admin.salesAmount")} (¥)`
   return (
-    <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5 xl:h-full">
+    <div className="flex min-w-0 flex-col overflow-hidden rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5 xl:h-full">
       <div className="mb-4 flex items-center justify-between gap-3 sm:mb-6">
         <h3 className="font-semibold text-foreground">{t("admin.salesTrend")}</h3>
         <div className="hidden gap-4 text-xs text-muted-foreground sm:flex">
           <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-blue-500" />
+                  <span className="h-2 w-2 rounded-full bg-primary" />
             {t("admin.salesAmount")}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            <span className="h-2 w-2 rounded-full bg-chart-2" />
             {t("admin.orderCount")}
           </span>
         </div>
@@ -41,12 +41,12 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
             <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
             <defs>
               <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="hsl(217, 91%, 60%)" stopOpacity={0} />
+                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.16} />
+                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
               </linearGradient>
               <linearGradient id="ordersGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(160, 84%, 39%)" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="hsl(160, 84%, 39%)" stopOpacity={0} />
+                <stop offset="5%" stopColor="hsl(var(--chart-2))" stopOpacity={0.14} />
+                <stop offset="95%" stopColor="hsl(var(--chart-2))" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -67,9 +67,9 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
               />
               <Tooltip
                 contentStyle={{
-                  background: "hsl(var(--card))",
-                  border: "1px solid hsl(var(--border))",
-                  borderRadius: "8px",
+                  background: "hsl(var(--surface-raised))",
+                  border: "1px solid hsl(var(--border-subtle))",
+                  borderRadius: "12px",
                   fontSize: "12px",
                 }}
                 formatter={(value, name) =>
@@ -79,7 +79,7 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
               <Area
                 type="monotone"
                 dataKey="sales_amount"
-                stroke="hsl(217, 91%, 60%)"
+                stroke="hsl(var(--primary))"
                 strokeWidth={2}
                 fill="url(#salesGradient)"
                 name={salesLabel}
@@ -87,7 +87,7 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
               <Area
                 type="monotone"
                 dataKey="order_count"
-                stroke="hsl(160, 84%, 39%)"
+                stroke="hsl(var(--chart-2))"
                 strokeWidth={2}
                 fill="url(#ordersGradient)"
                 name={t("admin.orderCount")}
