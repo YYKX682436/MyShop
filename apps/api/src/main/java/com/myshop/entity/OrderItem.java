@@ -32,8 +32,8 @@ public class OrderItem extends BaseEntity {
     @Column(nullable = false)
     private UUID productId;
 
-    @Column(name = "product_code", nullable = false, updatable = false, length = 32)
-    private String productCode;
+    @Column(name = "product_no", nullable = false, updatable = false)
+    private Long productNo;
 
     @Column(nullable = false)
     private String productTitle;
@@ -94,10 +94,10 @@ public class OrderItem extends BaseEntity {
     public void setRetailPriceSnapshot(BigDecimal value) { this.retailPriceSnapshot = value; }
 
     /** The order snapshot may be initialized once but cannot be changed later. */
-    public void setProductCode(String value) {
-        if (productCode != null && !Objects.equals(productCode, value)) {
-            throw new IllegalStateException("order item productCode is immutable");
+    public void setProductNo(Long value) {
+        if (productNo != null && !Objects.equals(productNo, value)) {
+            throw new IllegalStateException("order item productNo is immutable");
         }
-        productCode = value;
+        productNo = value;
     }
 }

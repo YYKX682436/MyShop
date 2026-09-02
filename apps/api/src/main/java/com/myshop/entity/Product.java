@@ -24,8 +24,8 @@ import java.util.Objects;
 @Table(name = "products")
 public class Product extends BaseEntity {
 
-    @Column(name = "product_code", nullable = false, unique = true, updatable = false, length = 32)
-    private String productCode;
+    @Column(name = "product_no", nullable = false, unique = true, updatable = false)
+    private Long productNo;
 
     @Column(nullable = false)
     private String title;
@@ -75,10 +75,10 @@ public class Product extends BaseEntity {
     private int isDeleted = 0;
 
     /** The business number is assigned once and is never mutable afterwards. */
-    public void setProductCode(String value) {
-        if (productCode != null && !Objects.equals(productCode, value)) {
-            throw new IllegalStateException("productCode is immutable");
+    public void setProductNo(Long value) {
+        if (productNo != null && !Objects.equals(productNo, value)) {
+            throw new IllegalStateException("productNo is immutable");
         }
-        productCode = value;
+        productNo = value;
     }
 }

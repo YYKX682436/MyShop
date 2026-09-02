@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useLocale } from "@/lib/context"
+import { getAdminProductPriceRanges } from "@/lib/product-pricing"
 import { cn, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
@@ -33,7 +34,7 @@ const PRODUCT_SORT_OPTIONS = [
   { value: "weight_desc", sortBy: "sort_weight", sortDirection: "desc", labelKey: "admin.sortWeightDesc" },
   { value: "weight_asc", sortBy: "sort_weight", sortDirection: "asc", labelKey: "admin.sortWeightAsc" },
   { value: "created_desc", sortBy: "created_at", sortDirection: "desc", labelKey: "admin.sortNewest" },
-  { value: "code_asc", sortBy: "product_code", sortDirection: "asc", labelKey: "admin.sortProductCode" },
+  { value: "no_asc", sortBy: "product_no", sortDirection: "asc", labelKey: "admin.sortProductNo" },
   { value: "retail_asc", sortBy: "retail_price", sortDirection: "asc", labelKey: "admin.sortRetailPrice" },
   { value: "cost_asc", sortBy: "cost_price", sortDirection: "asc", labelKey: "admin.sortCostPrice" },
 ] as const
@@ -104,21 +105,15 @@ export default function AdminProductsPage() {
   const isUnlimited = (product: AdminProductDetail) => product.unlimited === true || product.stock_mode === "UNLIMITED"
   const isCardKeyStock = (product: AdminProductDetail) => product.stock_mode !== "MANUAL" && product.stock_mode !== "UNLIMITED"
 
-  const formatCostPrice = (product: AdminProductDetail) => {
-    if (!product.spec_enabled) return product.cost_price == null ? t("admin.systemNoData") : formatYuan(product.cost_price)
-    const specs = (product.specs || []).filter((spec) => spec.is_deleted === 0)
-    const visibleSpecs = specs.filter((spec) => spec.is_visible)
-    const costs = (visibleSpecs.length ? visibleSpecs : specs)
-      .map((spec) => spec.cost_price)
-      .filter((cost) => Number.isFinite(cost))
-    if (costs.length === 0) return t("admin.systemNoData")
-    const lowest = Math.min(...costs)
-    const highest = Math.max(...costs)
-    return lowest === highest ? formatYuan(lowest) : `${formatYuan(lowest)} – ${formatYuan(highest)}`
+  const formatPriceRange = (range: { min: number; max: number } | null) => {
+    if (range == null) return t("admin.systemNoData")
+    return range.min === range.max
+      ? formatYuan(range.min)
+      : `${formatYuan(range.min)} – ${formatYuan(range.max)}`
   }
 
-  const copyProductCode = (value: string) => {
-    const cleanValue = stripInvisible(value)
+  const copyProductNo = (value: number) => {
+    const cleanValue = stripInvisible(String(value))
     const fallback = () => {
       const textarea = document.createElement("textarea")
       textarea.value = cleanValue
@@ -280,6 +275,7 @@ export default function AdminProductsPage() {
               const unlimited = isUnlimited(product)
               const lowStock = !unlimited && product.stock_available != null && product.stock_available > 0 && product.stock_available <= (product.low_stock_threshold ?? 10)
               const cardKeyStock = isCardKeyStock(product)
+              const priceRanges = getAdminProductPriceRanges(product)
               return (
                 <TableRow key={product.id}>
                   <TableCell className="min-w-[16rem]">
@@ -290,8 +286,8 @@ export default function AdminProductsPage() {
                       <div className="min-w-0">
                         <Link href={`/product/${product.id}`} className="block truncate font-medium text-foreground hover:text-primary hover:underline">{product.title}</Link>
                         <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                          <span className="font-mono">{product.product_code}</span>
-                          <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground" title={t("admin.copyProductCode")} aria-label={`${t("admin.copyProductCode")}: ${product.product_code}`} onClick={() => copyProductCode(product.product_code)}>
+                          <span className="font-mono">{product.product_no}</span>
+                          <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground" title={t("admin.copyProductNo")} aria-label={`${t("admin.copyProductNo")}: ${product.product_no}`} onClick={() => copyProductNo(product.product_no)}>
                             <Copy className="h-3 w-3" aria-hidden="true" />
                           </button>
                         </div>
@@ -302,8 +298,8 @@ export default function AdminProductsPage() {
                   <TableCell><StatusBadge label={getCategoryName(product.category_id)} /></TableCell>
                   <TableCell className="whitespace-nowrap">
                     <div className="space-y-0.5 text-sm">
-                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.retailPriceShort")}</span><span className="font-medium">{formatYuan(product.retail_price)}</span></div>
-                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.costPriceShort")}</span><span className="font-medium">{formatCostPrice(product)}</span></div>
+                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.costPriceShort")}</span><span className="font-medium">{formatPriceRange(priceRanges.cost)}</span></div>
+                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.retailPriceShort")}</span><span className="font-medium">{formatPriceRange(priceRanges.retail)}</span></div>
                     </div>
                   </TableCell>
                   <TableCell className="px-2">

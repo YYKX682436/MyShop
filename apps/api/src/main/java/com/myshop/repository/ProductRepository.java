@@ -24,9 +24,10 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     // 首页商品列表 — 带搜索词（keyword 保证非 null）
     @Query("SELECT p FROM Product p WHERE p.isDeleted = 0 AND p.enabled = true " +
             "AND (:categoryId IS NULL OR p.categoryId = :categoryId) " +
-            "AND LOWER(p.title) LIKE :keywordPattern")
+            "AND (LOWER(p.title) LIKE :keywordPattern OR (:productNo IS NOT NULL AND p.productNo = :productNo))")
     Page<Product> findPublicProductsByKeyword(@Param("categoryId") UUID categoryId,
                                               @Param("keywordPattern") String keywordPattern,
+                                              @Param("productNo") Long productNo,
                                               Pageable pageable);
 
     // 管理后台商品列表 — 无搜索词
@@ -40,18 +41,19 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     // 管理后台商品列表 — 带搜索词（keyword 保证非 null）
     @Query("SELECT p FROM Product p WHERE p.isDeleted = 0 " +
             "AND (:categoryId IS NULL OR p.categoryId = :categoryId) " +
-            "AND (LOWER(p.title) LIKE :keywordPattern OR LOWER(p.productCode) LIKE :keywordPattern) " +
+            "AND (LOWER(p.title) LIKE :keywordPattern OR (:productNo IS NOT NULL AND p.productNo = :productNo)) " +
             "AND (:isEnabled IS NULL OR p.enabled = :isEnabled)")
     Page<Product> findAdminProductsByKeyword(@Param("categoryId") UUID categoryId,
                                              @Param("keywordPattern") String keywordPattern,
+                                             @Param("productNo") Long productNo,
                                              @Param("isEnabled") Boolean isEnabled,
                                              Pageable pageable);
 
-    Optional<Product> findByProductCode(String productCode);
+    Optional<Product> findByProductNo(Long productNo);
 
     /** PostgreSQL sequence-backed business number allocation. */
-    @Query(value = "SELECT nextval('product_code_sequence')", nativeQuery = true)
-    long nextProductCodeValue();
+    @Query(value = "SELECT nextval('product_no_sequence')", nativeQuery = true)
+    long nextProductNoValue();
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Product p WHERE p.id = :id")

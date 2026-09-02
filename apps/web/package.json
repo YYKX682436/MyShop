@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test:logic": "node --experimental-strip-types --test lib/idempotency.test.mjs lib/payment-channel.test.mjs lib/dashboard.test.mjs lib/card-content.test.mjs lib/customer-inputs.test.mjs lib/image-upload.test.mjs lib/contact-items.test.mjs lib/markdown-image.test.mjs lib/money.test.mjs lib/utils.test.mjs lib/auth-validation.test.mjs lib/risk-config-cleanup.test.mjs lib/route-overlay.test.mjs"
+    "test:logic": "node --experimental-strip-types --test lib/idempotency.test.mjs lib/payment-channel.test.mjs lib/dashboard.test.mjs lib/card-content.test.mjs lib/customer-inputs.test.mjs lib/image-upload.test.mjs lib/contact-items.test.mjs lib/markdown-image.test.mjs lib/money.test.mjs lib/utils.test.mjs lib/auth-validation.test.mjs lib/risk-config-cleanup.test.mjs lib/route-overlay.test.mjs lib/product-pricing.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

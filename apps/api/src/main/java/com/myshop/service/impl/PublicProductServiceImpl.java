@@ -57,8 +57,10 @@ public class PublicProductServiceImpl implements PublicProductService {
         validatePage(page, pageSize);
         PageRequest pageable = PageRequest.of(page - 1, pageSize,
                 ProductListSort.resolve("sort_weight", "desc"));
-        Page<Product> productPage = keyword != null && !keyword.isBlank()
-                ? productRepository.findPublicProductsByKeyword(categoryId, "%" + keyword.toLowerCase(Locale.ROOT) + "%", pageable)
+        String normalizedKeyword = keyword == null ? null : keyword.trim();
+        Long productNo = parseProductNo(normalizedKeyword);
+        Page<Product> productPage = normalizedKeyword != null && !normalizedKeyword.isBlank()
+                ? productRepository.findPublicProductsByKeyword(categoryId, "%" + normalizedKeyword.toLowerCase(Locale.ROOT) + "%", productNo, pageable)
                 : productRepository.findPublicProducts(categoryId, pageable);
         return PageResult.of(productPage, buildResponses(productPage.getContent(), requestUserId, false));
     }
@@ -151,6 +153,15 @@ public class PublicProductServiceImpl implements PublicProductService {
     private void validatePage(int page, int pageSize) {
         if (page < 1 || pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "分页参数无效");
+        }
+    }
+
+    private Long parseProductNo(String keyword) {
+        if (keyword == null || !keyword.matches("\\d+")) return null;
+        try {
+            return Long.valueOf(keyword);
+        } catch (NumberFormatException ignored) {
+            return null;
         }
     }
 }

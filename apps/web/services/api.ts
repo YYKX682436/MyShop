@@ -419,7 +419,7 @@ export const adminDashboardApi = {
 export const adminProductApi = {
   getList: (params: {
     page?: number; page_size?: number; category_id?: string; is_enabled?: number; keyword?: string;
-    sort_by?: "sort_weight" | "created_at" | "product_code" | "retail_price" | "cost_price";
+    sort_by?: "sort_weight" | "created_at" | "product_no" | "retail_price" | "cost_price";
     sort_direction?: "asc" | "desc";
   }) => {
     const qs = buildQuery(params)

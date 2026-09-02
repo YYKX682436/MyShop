@@ -83,8 +83,10 @@ public class AdminProductServiceImpl implements AdminProductService {
                                                          String sortBy, String sortDirection, int page, int pageSize) {
         validatePage(page, pageSize);
         PageRequest pageable = PageRequest.of(page - 1, pageSize, ProductListSort.resolve(sortBy, sortDirection));
-        Page<Product> productPage = keyword != null && !keyword.isBlank()
-                ? productRepository.findAdminProductsByKeyword(categoryId, "%" + keyword.toLowerCase(Locale.ROOT) + "%", isEnabled, pageable)
+        String normalizedKeyword = keyword == null ? null : keyword.trim();
+        Long productNo = parseProductNo(normalizedKeyword);
+        Page<Product> productPage = normalizedKeyword != null && !normalizedKeyword.isBlank()
+                ? productRepository.findAdminProductsByKeyword(categoryId, "%" + normalizedKeyword.toLowerCase(Locale.ROOT) + "%", productNo, isEnabled, pageable)
                 : productRepository.findAdminProducts(categoryId, isEnabled, pageable);
         List<AdminProductResponse> list = productPage.getContent().stream()
                 .map(product -> buildResponse(product, false, null, null)).toList();
@@ -104,7 +106,11 @@ public class AdminProductServiceImpl implements AdminProductService {
     @Transactional
     public AdminProductResponse createProduct(AdminProductUpsertRequest request) {
         Product product = new Product();
-        product.setProductCode(nextProductCode());
+        long productNo = productRepository.nextProductNoValue();
+        if (productNo < 1) {
+            throw new IllegalStateException("product_no_sequence returned an invalid value");
+        }
+        product.setProductNo(productNo);
         return saveAggregate(product, request, true);
     }
 
@@ -498,7 +504,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         ProductInventoryBatchService.StockSnapshot rootStock = stock
                 .getOrDefault(new com.myshop.model.pricing.PriceTarget(product.getId(), null),
                         new ProductInventoryBatchService.StockSnapshot(0L, false));
-        return new AdminProductResponse(product.getId(), product.getProductCode(), product.getTitle(), product.getDescription(), product.getDetailMd(),
+        return new AdminProductResponse(product.getId(), product.getProductNo(), product.getTitle(), product.getDescription(), product.getDetailMd(),
                 product.getCoverUrl(), product.getCostPrice(), product.getRetailPrice(), product.getCategoryId(),
                 categories.get(product.getCategoryId()) == null ? null : categories.get(product.getCategoryId()).getName(),
                 rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
@@ -592,12 +598,13 @@ public class AdminProductServiceImpl implements AdminProductService {
         }
     }
 
-    private String nextProductCode() {
-        long value = productRepository.nextProductCodeValue();
-        if (value < 1) {
-            throw new IllegalStateException("product_code_sequence returned an invalid value");
+    private Long parseProductNo(String keyword) {
+        if (keyword == null || !keyword.matches("\\d+")) return null;
+        try {
+            return Long.valueOf(keyword);
+        } catch (NumberFormatException ignored) {
+            return null;
         }
-        return String.format(Locale.ROOT, "P%06d", value);
     }
 
     private record PreparedSpec(AdminProductSpecRequest request, UUID id, ProductSpec existing,

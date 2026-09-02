@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("10", flyway.info().current().getVersion().getVersion());
-        assertEquals(10, flyway.info().all().length);
+        assertEquals("11", flyway.info().current().getVersion().getVersion());
+        assertEquals(11, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -72,12 +72,19 @@ class MigrationChainIntegrationTest {
         assertTrue(defaultValue("orders", "order_type").contains("NORMAL"));
         assertTrue(checkConstraintExists("orders_order_type_check"));
         assertTrue(indexExists("idx_orders_type_created"));
-        assertTrue(columnExists("products", "product_code"));
+        assertTrue(columnExists("products", "product_no"));
+        assertEquals("bigint", dataType("products", "product_no"));
+        assertEquals("NO", nullableValue("products", "product_no"));
         assertTrue(columnExists("products", "sort_weight"));
         assertFalse(columnExists("products", "sort_order"));
-        assertTrue(columnExists("order_items", "product_code"));
-        assertTrue(indexExists("products_product_code_key"));
-        assertTrue(sequenceExists("product_code_sequence"));
+        assertTrue(columnExists("order_items", "product_no"));
+        assertEquals("bigint", dataType("order_items", "product_no"));
+        assertEquals("NO", nullableValue("order_items", "product_no"));
+        assertTrue(indexExists("products_product_no_key"));
+        assertTrue(sequenceExists("product_no_sequence"));
+        assertFalse(columnExists("products", "product_code"));
+        assertFalse(columnExists("order_items", "product_code"));
+        assertFalse(sequenceExists("product_code_sequence"));
         assertFalse(tableExists("currencies"));
         assertFalse(tableExists("points_logs"));
 
@@ -265,7 +272,7 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
-    void v10RenamesProductWeightBackfillsCodesAndProtectsSnapshots() {
+    void v10ToV11RenamesProductWeightBackfillsNumbersAndProtectsSnapshots() {
         flyway("9").migrate();
         UUID categoryId = UUID.randomUUID();
         UUID firstProductId = UUID.randomUUID();
@@ -299,36 +306,104 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("10", flyway().info().current().getVersion().getVersion());
+        assertEquals("11", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
-        assertEquals("NO", nullableValue("products", "product_code"));
-        assertEquals("P000001", jdbcTemplate.queryForObject(
-                "SELECT product_code FROM products WHERE id = ?", String.class, firstProductId));
-        assertEquals("P000002", jdbcTemplate.queryForObject(
-                "SELECT product_code FROM products WHERE id = ?", String.class, secondProductId));
+        assertEquals("NO", nullableValue("products", "product_no"));
+        assertEquals("bigint", dataType("products", "product_no"));
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
+        assertEquals(2L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM products WHERE id = ?", Long.class, secondProductId));
         assertEquals(7, jdbcTemplate.queryForObject(
                 "SELECT sort_weight FROM products WHERE id = ?", Integer.class, firstProductId));
         assertEquals(-2, jdbcTemplate.queryForObject(
                 "SELECT sort_weight FROM products WHERE id = ?", Integer.class, secondProductId));
-        assertEquals("P000001", jdbcTemplate.queryForObject(
-                "SELECT product_code FROM order_items WHERE id = ?", String.class, orderItemId));
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM order_items WHERE id = ?", Long.class, orderItemId));
 
         UUID sequenceProductId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO products(id, title, retail_price, cost_price, category_id)
                 VALUES (?, 'v10-sequence-product', 10.00, 5.00, ?)
                 """, sequenceProductId, categoryId);
-        assertEquals("P000003", jdbcTemplate.queryForObject(
-                "SELECT product_code FROM products WHERE id = ?", String.class, sequenceProductId));
+        assertEquals(3L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM products WHERE id = ?", Long.class, sequenceProductId));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
-                INSERT INTO products(id, title, retail_price, cost_price, category_id, product_code)
-                VALUES (?, 'v10-duplicate-code', 10.00, 5.00, ?, 'P000001')
+                INSERT INTO products(id, title, retail_price, cost_price, category_id, product_no)
+                VALUES (?, 'v11-duplicate-number', 10.00, 5.00, ?, 1)
                 """, UUID.randomUUID(), categoryId));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
-                "UPDATE products SET product_code = 'P009999' WHERE id = ?", firstProductId));
+                "UPDATE products SET product_no = 9999 WHERE id = ?", firstProductId));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
-                "UPDATE order_items SET product_code = 'P009999' WHERE id = ?", orderItemId));
+                "UPDATE order_items SET product_no = 9999 WHERE id = ?", orderItemId));
+        assertFalse(columnExists("products", "product_code"));
+        assertFalse(columnExists("order_items", "product_code"));
+        assertFalse(sequenceExists("product_code_sequence"));
+    }
+
+    @Test
+    void v11ConvertsPaddedV10CodesAndKeepsProductAndOrderSnapshotNumbersAligned() {
+        flyway("10").migrate();
+        UUID categoryId = UUID.randomUUID();
+        UUID firstProductId = UUID.randomUUID();
+        UUID product138Id = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                INSERT INTO product_categories(id, name)
+                VALUES (?, 'v11-category')
+                """, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, retail_price, cost_price, category_id, product_code)
+                VALUES (?, 'v11-first', 10.00, 5.00, ?, 'P000001')
+                """, firstProductId, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, retail_price, cost_price, category_id, product_code)
+                VALUES (?, 'v11-138', 10.00, 5.00, ?, 'P000138')
+                """, product138Id, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL')
+                """, orderId);
+        jdbcTemplate.update("""
+                INSERT INTO order_items(id, order_id, product_id, product_code, product_title, quantity,
+                                        unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source, subtotal)
+                VALUES (?, ?, ?, (SELECT product_code FROM products WHERE id = ?), 'v11-138', 1,
+                        10.00, 5.00, 10.00, 'RETAIL', 10.00)
+                """, itemId, orderId, product138Id, product138Id);
+
+        flyway().migrate();
+
+        assertEquals("11", flyway().info().current().getVersion().getVersion());
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
+        assertEquals(138L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM products WHERE id = ?", Long.class, product138Id));
+        assertEquals(138L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM order_items WHERE id = ?", Long.class, itemId));
+        assertEquals("bigint", dataType("products", "product_no"));
+        assertEquals("bigint", dataType("order_items", "product_no"));
+        assertTrue(checkConstraintExists("products_product_no_positive"));
+        assertTrue(checkConstraintExists("order_items_product_no_positive"));
+        assertTrue(indexExists("products_product_no_key"));
+        assertEquals(139L, jdbcTemplate.queryForObject(
+                "SELECT nextval('product_no_sequence')", Long.class));
+        assertFalse(columnExists("products", "product_code"));
+        assertFalse(columnExists("order_items", "product_code"));
+        assertFalse(sequenceExists("product_code_sequence"));
+        assertFalse(functionExists("prevent_product_code_update"));
+        assertTrue(functionExists("prevent_product_no_update"));
+
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO products(id, title, retail_price, cost_price, category_id, product_no)
+                VALUES (?, 'v11-duplicate', 10.00, 5.00, ?, 1)
+                """, UUID.randomUUID(), categoryId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO products(id, title, retail_price, cost_price, category_id, product_no)
+                VALUES (?, 'v11-invalid', 10.00, 5.00, ?, 0)
+                """, UUID.randomUUID(), categoryId));
     }
 
     @Test
@@ -472,7 +547,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("10", flyway().info().current().getVersion().getVersion());
+        assertEquals("11", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -481,7 +556,7 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
-    void v10BackfillsLegacyV8PricesOrderSnapshotsAndProductCodes() {
+    void v10ToV11BackfillsLegacyV8PricesOrderSnapshotsAndProductNumbers() {
         flyway("8").migrate();
         UUID userId = UUID.randomUUID();
         UUID categoryId = UUID.randomUUID();
@@ -518,7 +593,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("10", flyway().info().current().getVersion().getVersion());
+        assertEquals("11", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));
@@ -540,10 +615,12 @@ class MigrationChainIntegrationTest {
                 "SELECT retail_price_snapshot FROM order_items WHERE id = ?", BigDecimal.class, itemId));
         assertEquals("RETAIL", jdbcTemplate.queryForObject(
                 "SELECT pricing_source FROM order_items WHERE id = ?", String.class, itemId));
-        assertEquals("P000001", jdbcTemplate.queryForObject(
-                "SELECT product_code FROM products WHERE id = ?", String.class, productId));
-        assertEquals("P000001", jdbcTemplate.queryForObject(
-                "SELECT product_code FROM order_items WHERE id = ?", String.class, itemId));
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM products WHERE id = ?", Long.class, productId));
+        assertEquals(1L, jdbcTemplate.queryForObject(
+                "SELECT product_no FROM order_items WHERE id = ?", Long.class, itemId));
+        assertFalse(columnExists("products", "product_code"));
+        assertFalse(columnExists("order_items", "product_code"));
         assertEquals(0, jdbcTemplate.queryForObject(
                 "SELECT sort_weight FROM products WHERE id = ?", Integer.class, productId));
         assertFalse(tableExists("wholesale_rules"));
@@ -672,9 +749,9 @@ class MigrationChainIntegrationTest {
                 VALUES (?, 10.00, 10.00, 'PENDING')
                 """, orderId);
         jdbcTemplate.update("""
-                INSERT INTO order_items(id, order_id, product_id, product_code, product_title, quantity, unit_price,
+                INSERT INTO order_items(id, order_id, product_id, product_no, product_title, quantity, unit_price,
                                         cost_price_snapshot, retail_price_snapshot, pricing_source, subtotal, customer_inputs)
-                VALUES (?, ?, ?, (SELECT product_code FROM products WHERE id = ?), 'baseline-product', 1, 10.00,
+                VALUES (?, ?, ?, (SELECT product_no FROM products WHERE id = ?), 'baseline-product', 1, 10.00,
                         10.00, 10.00, 'RETAIL', 10.00, ?::jsonb)
                 """, orderItemId, orderId, productId, productId, "[]");
         jdbcTemplate.update("""
@@ -767,6 +844,15 @@ class MigrationChainIntegrationTest {
                 SELECT count(*) FROM information_schema.sequences
                 WHERE sequence_schema = 'public' AND sequence_name = ?
                 """, Integer.class, sequence);
+        return count != null && count == 1;
+    }
+
+    private boolean functionExists(String functionName) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = ?
+                """, Integer.class, functionName);
         return count != null && count == 1;
     }
 

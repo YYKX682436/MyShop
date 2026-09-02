@@ -134,7 +134,7 @@ class PublicProductServiceImplTest {
     private Product product(int index) {
         Product product = new Product();
         product.setId(UUID.randomUUID());
-        product.setProductCode(String.format("P%06d", index + 1));
+        product.setProductNo((long) index + 1);
         product.setTitle("Product " + index);
         product.setRetailPrice(money("10.00"));
         product.setCostPrice(money("5.00"));

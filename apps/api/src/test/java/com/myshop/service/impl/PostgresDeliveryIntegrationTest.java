@@ -650,10 +650,10 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, ?, 0, 0)
                 """, categoryId, "Integration category " + productId);
         jdbcTemplate.update("""
-                insert into products (id, created_at, updated_at, title, product_code, retail_price, cost_price, category_id,
+                insert into products (id, created_at, updated_at, title, product_no, retail_price, cost_price, category_id,
                     delivery_type, is_enabled, is_deleted)
                 values (?, current_timestamp, current_timestamp, 'Integration product',
-                    'P' || lpad(nextval('product_code_sequence')::text, 6, '0'), 10.00, 10.00, ?,
+                    nextval('product_no_sequence'), 10.00, 10.00, ?,
                     'AUTO', true, 0)
                 """, productId, categoryId);
     }
@@ -718,10 +718,10 @@ class PostgresDeliveryIntegrationTest {
                                  String stockMode, int quantity, int manualStockReserved) {
         UUID itemId = UUID.randomUUID();
         jdbcTemplate.update("""
-                insert into order_items (id, created_at, updated_at, order_id, product_id, product_code,
+                insert into order_items (id, created_at, updated_at, order_id, product_id, product_no,
                     product_title, quantity, unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source, subtotal, delivery_type,
                     stock_mode, fulfillment_status, manual_stock_reserved)
-                values (?, current_timestamp, current_timestamp, ?, ?, (select product_code from products where id = ?), 'Integration product', ?, 10.00, 10.00, 10.00,
+                values (?, current_timestamp, current_timestamp, ?, ?, (select product_no from products where id = ?), 'Integration product', ?, 10.00, 10.00, 10.00,
                     'RETAIL', ?, ?, ?, 'PENDING', ?)
                 """, itemId, orderId, productId, productId, quantity,
                 BigDecimal.TEN.multiply(BigDecimal.valueOf(quantity)), deliveryType,

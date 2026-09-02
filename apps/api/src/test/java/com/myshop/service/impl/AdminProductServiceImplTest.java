@@ -64,8 +64,8 @@ class AdminProductServiceImplTest {
     @Mock private ManualStockService manualStockService;
 
     @BeforeEach
-    void defaultProductCodeSequence() {
-        lenient().when(productRepository.nextProductCodeValue()).thenReturn(1L);
+    void defaultProductNoSequence() {
+        lenient().when(productRepository.nextProductNoValue()).thenReturn(1L);
     }
 
     private AdminProductServiceImpl service() {
@@ -75,12 +75,12 @@ class AdminProductServiceImplTest {
     }
 
     @Test
-    void createsProductsWithUniqueServerGeneratedProductCodes() {
+    void createsProductsWithUniqueServerGeneratedProductNumbers() {
         UUID categoryId = UUID.randomUUID();
         Product responseProduct = product(UUID.randomUUID(), true, true);
         ProductSpecRequestData specData = new ProductSpecRequestData("one month", "8.00", "10.00", true);
         stubResponseData(responseProduct, List.of());
-        when(productRepository.nextProductCodeValue()).thenReturn(1L, 2L);
+        when(productRepository.nextProductNoValue()).thenReturn(1L, 2L);
         when(productRepository.saveAndFlush(any(Product.class))).thenAnswer(invocation -> {
             Product saved = invocation.getArgument(0);
             if (saved.getId() == null) saved.setId(UUID.randomUUID());
@@ -95,17 +95,17 @@ class AdminProductServiceImplTest {
         var second = productService.createProduct(request(categoryId, true, true, null,
                 List.of(specRequest(specData))));
 
-        assertEquals("P000001", first.productCode());
-        assertEquals("P000002", second.productCode());
-        verify(productRepository, org.mockito.Mockito.times(2)).nextProductCodeValue();
+        assertEquals(1L, first.productNo());
+        assertEquals(2L, second.productNo());
+        verify(productRepository, org.mockito.Mockito.times(2)).nextProductNoValue();
     }
 
     @Test
-    void updateRetainsProductCodeAndTheEntityRejectsASecondAssignment() {
+    void updateRetainsProductNoAndTheEntityRejectsASecondAssignment() {
         UUID productId = UUID.randomUUID();
         UUID categoryId = UUID.randomUUID();
         Product product = product(productId, true, true);
-        product.setProductCode("P000123");
+        product.setProductNo(123L);
         ProductSpec existingSpec = spec(UUID.randomUUID(), productId, "8.00", "10.00", true);
         when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
         stubResponseData(product, List.of(existingSpec));
@@ -116,24 +116,37 @@ class AdminProductServiceImplTest {
         var response = service().updateProduct(productId,
                 request(categoryId, true, true, null, List.of(specRequest(existingSpec))));
 
-        assertEquals("P000123", response.productCode());
-        assertEquals("P000123", product.getProductCode());
-        assertThrows(IllegalStateException.class, () -> product.setProductCode("P000124"));
+        assertEquals(123L, response.productNo());
+        assertEquals(123L, product.getProductNo());
+        assertThrows(IllegalStateException.class, () -> product.setProductNo(124L));
     }
 
     @Test
-    void adminKeywordUsesTheProductCodeAwareRepositoryQuery() {
+    void adminKeywordUsesTheProductNoAwareRepositoryQuery() {
         Product product = product(UUID.randomUUID(), false, true);
-        product.setProductCode("P000321");
-        when(productRepository.findAdminProductsByKeyword(eq(null), eq("%p000321%"), eq(null), any(Pageable.class)))
+        product.setProductNo(138L);
+        when(productRepository.findAdminProductsByKeyword(eq(null), eq("%138%"), eq(138L), eq(null), any(Pageable.class)))
                 .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(product)));
         stubListResponseData(product);
 
-        var result = service().listProducts(null, "P000321", null, null, null, 1, 20);
+        var result = service().listProducts(null, "138", null, null, null, 1, 20);
 
         assertEquals(1, result.getList().size());
-        assertEquals("P000321", result.getList().get(0).productCode());
-        verify(productRepository).findAdminProductsByKeyword(eq(null), eq("%p000321%"), eq(null), any(Pageable.class));
+        assertEquals(138L, result.getList().get(0).productNo());
+        verify(productRepository).findAdminProductsByKeyword(eq(null), eq("%138%"), eq(138L), eq(null), any(Pageable.class));
+    }
+
+    @Test
+    void nonNumericAdminKeywordStillUsesTitleSearchOnly() {
+        Product product = product(UUID.randomUUID(), false, true);
+        when(productRepository.findAdminProductsByKeyword(eq(null), eq("%searchable%"), eq(null), eq(null), any(Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(product)));
+        stubListResponseData(product);
+
+        var result = service().listProducts(null, " Searchable ", null, null, null, 1, 20);
+
+        assertEquals(1, result.getList().size());
+        verify(productRepository).findAdminProductsByKeyword(eq(null), eq("%searchable%"), eq(null), eq(null), any(Pageable.class));
     }
 
     @Test

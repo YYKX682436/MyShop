@@ -114,7 +114,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             Map<String, Object> im = new LinkedHashMap<>();
             im.put("id", i.getId());
             im.put("product_id", i.getProductId());
-            im.put("product_code", i.getProductCode());
+            im.put("product_no", i.getProductNo());
             im.put("product_title", i.getProductTitle());
             im.put("spec_name", i.getSpecName());
             im.put("quantity", i.getQuantity());

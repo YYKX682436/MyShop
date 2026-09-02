@@ -173,7 +173,7 @@ export interface AdminPricingPreview {
 
 export interface AdminProductDetail {
   id: string
-  product_code: string
+  product_no: number
   title: string
   description: string | null
   detail_md: string | null
@@ -237,7 +237,7 @@ export interface OrderBrief {
 export interface OrderItemDetail {
   id: string
   product_id: string
-  product_code: string
+  product_no: number
   product_title: string
   spec_name: string | null
   quantity: number
@@ -277,7 +277,7 @@ export interface CreateOrderResult {
 }
 
 export interface DeliverResultGroup {
-  product_code: string
+  product_no: number
   product_title: string
   spec_name: string | null
   quantity?: number
@@ -290,7 +290,7 @@ export interface DeliverResult {
   order_id: string
   status: OrderStatus
   groups: DeliverResultGroup[]
-  item_statuses?: { id: string; product_code: string; product_title: string; fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"; delivery_type: string }[]
+  item_statuses?: { id: string; product_no: number; product_title: string; fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"; delivery_type: string }[]
 }
 
 // ============================================================
@@ -535,7 +535,7 @@ export interface OrderCardKey {
   card_key_id: string
   order_item_id?: string | null
   content_parts: string[]
-  product_code?: string | null
+  product_no?: number | null
   product_title: string
   spec_name: string | null
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'
@@ -594,7 +594,7 @@ export interface AdminUserDetail extends Omit<AdminUserItem, "order_count" | "to
 
 export interface AdminUserOrderItem {
   id: string
-  product_code: string
+  product_no: number
   product_title: string
   spec_name: string | null
   quantity: number

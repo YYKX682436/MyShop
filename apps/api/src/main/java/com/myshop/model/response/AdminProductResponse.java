@@ -10,8 +10,8 @@ import java.util.UUID;
 
 public record AdminProductResponse(
         UUID id,
-        @JsonProperty("product_code")
-        String productCode,
+        @JsonProperty("product_no")
+        Long productNo,
         String title,
         String description,
         String detailMd,

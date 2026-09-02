@@ -100,9 +100,9 @@ export function OrderDetailSheet({
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-foreground">{item.product_title}{item.spec_name && <span className="text-muted-foreground"> · {item.spec_name}</span>} <span className="text-muted-foreground">×{item.quantity}</span></p>
                             <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                              <span>{t("admin.productCode")}:</span>
-                              <span className="font-mono">{item.product_code}</span>
-                              <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground" title={t("admin.copyProductCode")} aria-label={`${t("admin.copyProductCode")}: ${item.product_code}`} onClick={() => copyToClipboard(item.product_code)}>
+                              <span>{t("admin.productNo")}:</span>
+                              <span className="font-mono">{item.product_no}</span>
+                              <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground" title={t("admin.copyProductNo")} aria-label={`${t("admin.copyProductNo")}: ${item.product_no}`} onClick={() => copyToClipboard(String(item.product_no))}>
                                 <Copy className="h-3 w-3" aria-hidden="true" />
                               </button>
                             </div>

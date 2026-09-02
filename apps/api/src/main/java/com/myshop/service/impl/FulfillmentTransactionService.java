@@ -249,7 +249,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
         result.put("item_statuses", orderItemRepository.findByOrderId(order.getId()).stream().map(item -> {
             Map<String, Object> status = new LinkedHashMap<>();
             status.put("id", item.getId());
-            status.put("product_code", item.getProductCode());
+            status.put("product_no", item.getProductNo());
             status.put("product_title", item.getProductTitle());
             status.put("fulfillment_status", item.getFulfillmentStatus());
             status.put("delivery_type", item.getDeliveryType());
@@ -273,7 +273,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
             List<CardKey> itemKeys = byItem.getOrDefault(item.getId(), List.of());
             if (itemKeys.isEmpty()) continue;
             Map<String, Object> group = new LinkedHashMap<>();
-            group.put("product_code", item.getProductCode());
+            group.put("product_no", item.getProductNo());
             group.put("product_title", item.getProductTitle());
             group.put("spec_name", item.getSpecName());
             group.put("quantity", item.getQuantity());

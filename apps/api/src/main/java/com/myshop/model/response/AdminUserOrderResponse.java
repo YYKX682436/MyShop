@@ -1,6 +1,7 @@
 package com.myshop.model.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
 
@@ -27,7 +28,7 @@ public record AdminUserOrderResponse(
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AdminUserOrderItemResponse(
             UUID id,
-            String productCode,
+            @JsonProperty("product_no") Long productNo,
             String productTitle,
             String specName,
             int quantity,

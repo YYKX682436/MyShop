@@ -15,7 +15,7 @@ class ProductListSortTest {
                 "createdAt", Sort.Direction.DESC, "id", Sort.Direction.ASC);
         assertSort("created_at", "asc", "createdAt", Sort.Direction.ASC,
                 "id", Sort.Direction.ASC);
-        assertSort("product_code", "asc", "productCode", Sort.Direction.ASC,
+        assertSort("product_no", "asc", "productNo", Sort.Direction.ASC,
                 "createdAt", Sort.Direction.DESC, "id", Sort.Direction.ASC);
         assertSort("retail_price", "desc", "retailPrice", Sort.Direction.DESC,
                 "createdAt", Sort.Direction.DESC, "id", Sort.Direction.ASC);

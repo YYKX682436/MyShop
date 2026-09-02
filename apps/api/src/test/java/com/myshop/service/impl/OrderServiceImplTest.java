@@ -116,12 +116,12 @@ class OrderServiceImplTest {
     }
 
     @Test
-    void orderItemProductCodeIsAnImmutableSnapshot() {
+    void orderItemProductNoIsAnImmutableSnapshot() {
         OrderItem item = new OrderItem();
-        item.setProductCode("P000001");
+        item.setProductNo(1L);
 
-        assertEquals("P000001", item.getProductCode());
-        assertThrows(IllegalStateException.class, () -> item.setProductCode("P000002"));
+        assertEquals(1L, item.getProductNo());
+        assertThrows(IllegalStateException.class, () -> item.setProductNo(2L));
     }
 
     @Test
@@ -191,7 +191,7 @@ class OrderServiceImplTest {
         ArgumentCaptor<com.myshop.entity.OrderItem> itemCaptor =
                 ArgumentCaptor.forClass(com.myshop.entity.OrderItem.class);
         verify(orderItemRepository).save(itemCaptor.capture());
-        assertEquals("P000001", itemCaptor.getValue().getProductCode());
+        assertEquals(1L, itemCaptor.getValue().getProductNo());
         assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getCostPriceSnapshot());
         assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getRetailPriceSnapshot());
         assertEquals(com.myshop.constant.PricingSource.RETAIL, itemCaptor.getValue().getPricingSource());
@@ -375,7 +375,7 @@ class OrderServiceImplTest {
         OrderItem item = new OrderItem();
         item.setId(UUID.randomUUID());
         item.setProductId(productId);
-        item.setProductCode(product.getProductCode());
+        item.setProductNo(product.getProductNo());
         item.setProductTitle(product.getTitle());
         item.setQuantity(1);
         item.setUnitPrice(new BigDecimal("10.00"));
@@ -447,7 +447,7 @@ class OrderServiceImplTest {
     private Product product(UUID id, String price) {
         Product product = new Product();
         product.setId(id);
-        product.setProductCode("P000001");
+        product.setProductNo(1L);
         product.setTitle("Test product");
         product.setRetailPrice(new BigDecimal(price));
         product.setCostPrice(new BigDecimal(price));

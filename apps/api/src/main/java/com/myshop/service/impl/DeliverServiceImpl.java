@@ -204,7 +204,7 @@ public class DeliverServiceImpl implements DeliverService {
             Map<String, Object> itemMap = new LinkedHashMap<>();
             itemMap.put("id", item.getId());
             itemMap.put("product_id", item.getProductId());
-            itemMap.put("product_code", item.getProductCode());
+            itemMap.put("product_no", item.getProductNo());
             itemMap.put("product_title", item.getProductTitle());
             itemMap.put("spec_name", item.getSpecName());
             itemMap.put("quantity", item.getQuantity());

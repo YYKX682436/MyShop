@@ -23,7 +23,7 @@ public final class ProductListSort {
         String property = switch (requestedBy) {
             case "sort_weight" -> "sortWeight";
             case "created_at" -> "createdAt";
-            case "product_code" -> "productCode";
+            case "product_no" -> "productNo";
             case "retail_price" -> "retailPrice";
             case "cost_price" -> "costPrice";
             default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的商品排序字段");
