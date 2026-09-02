@@ -21,7 +21,7 @@ const SheetOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SheetPrimitive.Overlay
     className={cn(
-      'fixed inset-0 z-50 bg-overlay/45 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:duration-380 data-[state=closed]:duration-320',
+      'myshop-overlay fixed inset-0 z-50 bg-overlay/45',
       className,
     )}
     {...props}
@@ -31,16 +31,16 @@ const SheetOverlay = React.forwardRef<
 SheetOverlay.displayName = SheetPrimitive.Overlay.displayName
 
 const sheetVariants = cva(
-  'fixed z-50 gap-4 border-border-subtle bg-surface-raised shadow-lg outline-none transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-320 data-[state=open]:duration-420',
+  'fixed z-50 gap-4 border-border-subtle bg-surface-raised shadow-md outline-none',
   {
     variants: {
       side: {
-        top: 'inset-x-0 top-0 rounded-b-surface border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
+        top: 'myshop-sheet-top inset-x-0 top-0 rounded-b-surface border-b',
         bottom:
-          'inset-x-0 bottom-0 rounded-t-surface border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
-        left: 'inset-y-0 left-0 h-full w-3/4 rounded-r-surface border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm',
+          'myshop-sheet-bottom inset-x-0 bottom-0 rounded-t-surface border-t',
+        left: 'myshop-sheet-left inset-y-0 left-0 h-full w-3/4 rounded-r-surface border-r sm:max-w-sm',
         right:
-          'inset-y-0 right-0 h-full w-3/4 rounded-l-surface border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm',
+          'myshop-sheet-right inset-y-0 right-0 h-full w-3/4 rounded-l-surface border-l sm:max-w-sm',
       },
     },
     defaultVariants: {

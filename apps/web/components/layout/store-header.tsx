@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
 import { User, LogIn, Menu, X, Globe, Moon, Sun, Package, Search, Settings, ChevronDown, SlidersHorizontal, LogOut, ClipboardList } from "lucide-react"
-import { useAuth, useLocale, useTheme, useColorScheme, useSearch, useSiteConfig, COLOR_SCHEMES, type SortKey } from "@/lib/context"
+import { useAuth, useLocale, useTheme, useSearch, useSiteConfig, type SortKey } from "@/lib/context"
 import { cn } from "@/lib/utils"
 import { isAdminRole } from "@/lib/hooks"
 
@@ -17,7 +17,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
   const { t, locale, setLocale } = useLocale()
   const { setTheme, resolvedTheme } = useTheme()
   const { isLoggedIn, user, logout, authLoaded } = useAuth()
-  const { colorScheme, setColorScheme } = useColorScheme()
   const { config: siteConfig } = useSiteConfig()
   const {
     searchQuery, setSearchQuery,
@@ -31,19 +30,21 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
   const pathname = usePathname()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [colorPickerOpen, setColorPickerOpen] = useState(false)
   const [sortOpen, setSortOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const sortRef = useRef<HTMLDivElement>(null)
 
   const openSearch = useCallback(() => {
     setSearchOpen(true)
-    setTimeout(() => searchInputRef.current?.focus(), 80)
   }, [setSearchOpen])
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false)
   }, [setSearchOpen])
+
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus()
+  }, [searchOpen])
 
   // Escape to close search
   useEffect(() => {
@@ -91,7 +92,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
   }
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border-subtle bg-background/90 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75">
+    <header className="sticky top-0 z-50 border-b border-border-subtle bg-surface">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center px-4 sm:px-6 lg:px-8">
         {/* Logo -- fixed width to balance right actions */}
         <div className="flex min-w-0 flex-1 items-center">
@@ -145,42 +146,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
               </span>
             )}
           </button>
-
-          {/* Color Scheme Picker (hidden on mobile, in hamburger menu) */}
-          <div className="relative hidden sm:block">
-            <button
-              onClick={() => setColorPickerOpen(!colorPickerOpen)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-control text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground"
-              aria-label="Color scheme"
-            >
-              <span className="h-4 w-4 rounded-full bg-primary" />
-            </button>
-            {colorPickerOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setColorPickerOpen(false)} />
-                <div className="absolute right-0 z-50 mt-2 flex gap-1.5 rounded-card border border-border-subtle bg-surface-raised p-2 shadow-md">
-                  {COLOR_SCHEMES.map((scheme) => (
-                    <button
-                      key={scheme.key}
-                      onClick={() => {
-                        setColorScheme(scheme.key)
-                        setColorPickerOpen(false)
-                      }}
-                      style={{ backgroundColor: scheme.color }}
-                      className={cn(
-                        "h-6 w-6 rounded-full transition-all",
-                        colorScheme === scheme.key
-                          ? "scale-110 ring-2 ring-foreground ring-offset-2 ring-offset-background"
-                          : "hover:scale-110"
-                      )}
-                      aria-label={scheme.label}
-                      title={scheme.label}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
 
           {/* Theme Toggle */}
           <button
@@ -246,7 +211,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
               )}
             </div>
           ) : (
-            <Link href="/login" className="inline-flex h-9 items-center rounded-control bg-primary px-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 active:scale-[.98] sm:px-4">
+            <Link href="/login" className="inline-flex h-9 items-center rounded-control bg-primary px-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] sm:px-4">
               <LogIn className="h-4 w-4 sm:hidden" />
               <span className="hidden sm:inline">{t("nav.login")}</span>
             </Link>
@@ -265,7 +230,7 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
 
       {/* Expanded Search Bar + Sort/Filter */}
       {searchOpen && (
-        <div className="border-t border-border-subtle bg-surface-muted/60 backdrop-blur">
+        <div className="border-t border-border-subtle bg-surface-muted">
           <div className="mx-auto max-w-[1440px] px-4 py-3.5 sm:px-6 lg:px-8">
             <div className="flex items-center gap-2">
               {/* Search Input */}
@@ -381,27 +346,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
                   {link.label}
                 </Link>
             ))}
-            {/* Color scheme (mobile only) */}
-            <hr className="my-1 border-border sm:hidden" />
-            <div className="flex items-center gap-2 px-3 py-2 sm:hidden">
-              <span className="text-sm text-muted-foreground">{locale === "zh" ? "主题色" : "Theme"}</span>
-              <div className="flex gap-1.5">
-                {COLOR_SCHEMES.map((scheme) => (
-                  <button
-                    key={scheme.key}
-                    onClick={() => setColorScheme(scheme.key)}
-                    style={{ backgroundColor: scheme.color }}
-                    className={cn(
-                      "h-5 w-5 rounded-full transition-all",
-                      colorScheme === scheme.key
-                        ? "ring-2 ring-foreground ring-offset-1 ring-offset-background"
-                        : ""
-                    )}
-                    aria-label={scheme.label}
-                  />
-                ))}
-              </div>
-            </div>
           </div>
         </nav>
       )}

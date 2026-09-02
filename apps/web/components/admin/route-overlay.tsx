@@ -1,5 +1,6 @@
 "use client"
 
+import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef } from "react"
 import type { ReactNode } from "react"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -7,16 +8,18 @@ import { useLocale } from "@/lib/context"
 import { cn } from "@/lib/utils"
 
 /**
- * Intercepted admin routes get one extra history entry. This lets browser back
- * close the sheet first while preserving the list page underneath it. The
- * guard also covers Esc, the close affordance, and outside clicks through the
- * controlled Radix Sheet state.
+ * Intercepted admin routes already have the list route immediately behind
+ * them. Closing therefore uses one normal router.back(). The popstate guard is
+ * mounted only while the form is actually dirty, so clean inspectors never
+ * add sentinel entries or delay navigation.
  */
 export function useRouteOverlayClose(dirty = false, enabled = true) {
+  const router = useRouter()
   const { t } = useLocale()
   const dirtyRef = useRef(dirty)
   const promptRef = useRef(t("admin.unsavedChangesMessage"))
   const closingRef = useRef(false)
+  const restoringRef = useRef(false)
 
   useEffect(() => {
     dirtyRef.current = dirty
@@ -27,13 +30,7 @@ export function useRouteOverlayClose(dirty = false, enabled = true) {
   }, [t])
 
   useEffect(() => {
-    if (!enabled || typeof window === "undefined") return
-
-    window.history.pushState(
-      { ...(window.history.state || {}), __myshopAdminOverlay: true },
-      "",
-      window.location.href,
-    )
+    if (!enabled || !dirty || typeof window === "undefined") return
 
     const handlePopState = () => {
       if (closingRef.current) {
@@ -41,29 +38,28 @@ export function useRouteOverlayClose(dirty = false, enabled = true) {
         return
       }
 
-      if (dirtyRef.current && !window.confirm(promptRef.current)) {
-        window.history.pushState(
-          { ...(window.history.state || {}), __myshopAdminOverlay: true },
-          "",
-          window.location.href,
-        )
+      if (restoringRef.current) {
+        restoringRef.current = false
         return
       }
 
-      closingRef.current = true
-      window.history.back()
+      if (dirtyRef.current && !window.confirm(promptRef.current)) {
+        restoringRef.current = true
+        window.history.forward()
+        return
+      }
     }
 
     window.addEventListener("popstate", handlePopState)
     return () => window.removeEventListener("popstate", handlePopState)
-  }, [enabled])
+  }, [dirty, enabled])
 
   return useCallback(() => {
     if (!enabled) return
     if (dirtyRef.current && !window.confirm(promptRef.current)) return
     closingRef.current = true
-    window.history.go(-2)
-  }, [enabled])
+    router.back()
+  }, [enabled, router])
 }
 
 interface RouteSheetProps {

@@ -150,7 +150,7 @@ export default function MyOrdersPage() {
                   {order.status === "PENDING" && order.payment_method && (
                     <Link
                       href={`/pay/${order.id}?method=${order.payment_method}`}
-                      className="inline-flex h-9 items-center gap-1 rounded-control bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-[filter,transform] duration-180 hover:brightness-105 active:scale-[.98]"
+                      className="inline-flex h-9 items-center gap-1 rounded-control bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98]"
                     >
                       {t("payment.continuePay")}
                     </Link>

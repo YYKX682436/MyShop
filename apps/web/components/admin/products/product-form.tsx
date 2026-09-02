@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -158,10 +158,14 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   const [preview, setPreview] = useState<{ pricing_matrix: AdminProductDetail["pricing_matrix"]; warnings: string[] } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const initialSnapshotRef = useRef("")
+  const dirtyRef = useRef(false)
   const onDirtyChangeRef = useRef(onDirtyChange)
 
-  const snapshot = useMemo(() => JSON.stringify({ formData, formSpecs, overrides }), [formData, formSpecs, overrides])
+  const setDirty = useCallback((nextDirty: boolean) => {
+    if (dirtyRef.current === nextDirty) return
+    dirtyRef.current = nextDirty
+    onDirtyChangeRef.current?.(nextDirty)
+  }, [])
 
   useEffect(() => {
     onDirtyChangeRef.current = onDirtyChange
@@ -174,14 +178,9 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
     setFormData(nextFormData)
     setFormSpecs(nextFormSpecs)
     setOverrides(nextOverrides)
-    initialSnapshotRef.current = JSON.stringify({ formData: nextFormData, formSpecs: nextFormSpecs, overrides: nextOverrides })
+    setDirty(false)
     setPreview(product?.pricing_matrix?.length ? { pricing_matrix: product.pricing_matrix, warnings: product.warnings || [] } : null)
-  }, [product])
-
-  useEffect(() => {
-    if (!initialSnapshotRef.current) return
-    onDirtyChangeRef.current?.(snapshot !== initialSnapshotRef.current)
-  }, [snapshot])
+  }, [product, setDirty])
 
   useEffect(() => {
     let active = true
@@ -196,11 +195,15 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
     return () => { active = false }
   }, [])
 
-  const uploadImage = async (file: File) => (await adminProductApi.uploadImage(file)).url
+  const uploadImage = useCallback(async (file: File) => (await adminProductApi.uploadImage(file)).url, [])
 
-  const setField = <K extends keyof ProductFormData>(key: K, value: ProductFormData[K]) => {
-    setFormData((current) => ({ ...current, [key]: value }))
-  }
+  const setField = useCallback(function setField<K extends keyof ProductFormData>(key: K, value: ProductFormData[K]) {
+      setDirty(true)
+      setFormData((current) => ({ ...current, [key]: value }))
+    }, [setDirty])
+
+  const handleCoverChange = useCallback((value: string) => setField("cover_url", value), [setField])
+  const handleDetailChange = useCallback((value: string) => setField("detail_md", value), [setField])
 
   const payload = useMemo<AdminProductUpsertPayload>(() => {
     const validSpecPrices = formSpecs.filter((spec) => spec.visible).map((spec) => asNumber(spec.retail_price)).filter((price) => price > 0)
@@ -247,19 +250,34 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   }, [formData.cost_price, formData.is_enabled, formData.retail_price, payload])
 
   useEffect(() => {
-    if (!previewReady || levelsLoading) return
+    if (!previewReady || levelsLoading) {
+      setPreviewLoading(false)
+      return
+    }
+    setPreviewLoading(false)
+    const controller = new AbortController()
     const timer = window.setTimeout(() => {
       setPreviewLoading(true)
-      void adminProductApi.previewPricing(payload).then(setPreview).catch(() => {
-        // Invalid drafts are still validated by the save action; a preview
-        // failure must never turn the editor into a broken state.
-        setPreview(null)
-      }).finally(() => setPreviewLoading(false))
-    }, 350)
-    return () => window.clearTimeout(timer)
+      void adminProductApi.previewPricing(payload, controller.signal).then((nextPreview) => {
+        if (!controller.signal.aborted) setPreview(nextPreview)
+      }).catch(() => {
+        if (!controller.signal.aborted) {
+          // Invalid drafts are still validated by the save action; a preview
+          // failure must never turn the editor into a broken state.
+          setPreview(null)
+        }
+      }).finally(() => {
+        if (!controller.signal.aborted) setPreviewLoading(false)
+      })
+    }, 300)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
   }, [levelsLoading, payload, previewReady])
 
   const updateSpec = (index: number, patch: Partial<ProductSpecDraft>) => {
+    setDirty(true)
     setFormSpecs((current) => current.map((spec, currentIndex) => currentIndex === index ? { ...spec, ...patch } : spec))
   }
 
@@ -267,11 +285,13 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
     const spec = formSpecs[index]
     if (spec?.card_key_count && spec.card_key_count > 0
       && !window.confirm(t("admin.deleteSpecDescription").replace("{name}", spec.name).replace("{count}", String(spec.card_key_count)))) return
+    setDirty(true)
     setFormSpecs((current) => current.filter((_, currentIndex) => currentIndex !== index))
     if (spec?.id) setOverrides((current) => current.filter((override) => override.spec_id !== spec.id))
   }
 
   const updateOverride = (userLevelId: string, specId: string | null, value: string) => {
+    setDirty(true)
     setOverrides((current) => {
       const index = current.findIndex((override) => override.user_level_id === userLevelId && override.spec_id === specId)
       if (!value.trim()) return index < 0 ? current : current.filter((_, currentIndex) => currentIndex !== index)
@@ -349,6 +369,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
       if (product) await requestOrThrow(() => adminProductApi.update(product.id, payload))
       else await requestOrThrow(() => adminProductApi.create(payload))
       toast.success(t("admin.productSaved"))
+      setDirty(false)
       await onSaved()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -358,6 +379,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   }
 
   const handleDeliveryChange = (deliveryType: DeliveryType) => {
+    setDirty(true)
     setFormData((current) => ({
       ...current,
       delivery_type: deliveryType,
@@ -370,6 +392,35 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
       && !window.confirm(t("admin.specModeSwitchWarning"))) return
     setField("spec_enabled", checked)
     if (checked && formSpecs.length === 0) setFormSpecs([{ id: createId(), name: "", cost_price: "", retail_price: "", visible: true, sort_order: "0", manual_stock: "" }])
+  }
+
+  const updateCustomerField = (index: number, label: string) => {
+    setDirty(true)
+    setFormData((current) => ({
+      ...current,
+      customer_input_fields: current.customer_input_fields.map((item, itemIndex) => itemIndex === index ? { ...item, label } : item),
+    }))
+  }
+
+  const removeCustomerField = (index: number) => {
+    setDirty(true)
+    setFormData((current) => ({
+      ...current,
+      customer_input_fields: current.customer_input_fields.filter((_, itemIndex) => itemIndex !== index),
+    }))
+  }
+
+  const addCustomerField = () => {
+    setDirty(true)
+    setFormData((current) => ({
+      ...current,
+      customer_input_fields: [...current.customer_input_fields, { id: createId(), label: "" }],
+    }))
+  }
+
+  const addSpec = () => {
+    setDirty(true)
+    setFormSpecs((current) => [...current, { id: createId(), name: "", cost_price: "", retail_price: "", visible: true, sort_order: String(current.length), manual_stock: "" }])
   }
 
   const rootCost = Number(formData.cost_price)
@@ -418,7 +469,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
           )}
           <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
             {t("admin.coverUrl")}
-            <ImageUploadDropzone value={formData.cover_url} onChange={(value) => setField("cover_url", value)} uploadImage={uploadImage} disabled={saving} />
+            <ImageUploadDropzone value={formData.cover_url} onChange={handleCoverChange} uploadImage={uploadImage} disabled={saving} />
           </label>
         </div>
       </FormSection>
@@ -467,11 +518,11 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
         <div className="space-y-2">
           {formData.customer_input_fields.map((field, index) => (
             <div className="flex items-center gap-2" key={field.id}>
-              <Input maxLength={50} value={field.label} onChange={(event) => setFormData((current) => ({ ...current, customer_input_fields: current.customer_input_fields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) }))} placeholder={t("admin.customerInputPlaceholder")} />
-              <Button type="button" variant="ghost" size="icon" onClick={() => setFormData((current) => ({ ...current, customer_input_fields: current.customer_input_fields.filter((_, itemIndex) => itemIndex !== index) }))} aria-label={t("admin.removeCustomerInput")}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+              <Input maxLength={50} value={field.label} onChange={(event) => updateCustomerField(index, event.target.value)} placeholder={t("admin.customerInputPlaceholder")} />
+              <Button type="button" variant="ghost" size="icon" onClick={() => removeCustomerField(index)} aria-label={t("admin.removeCustomerInput")}><Trash2 className="h-4 w-4 text-destructive" /></Button>
             </div>
           ))}
-          <Button type="button" variant="outline" onClick={() => setFormData((current) => ({ ...current, customer_input_fields: [...current.customer_input_fields, { id: createId(), label: "" }] }))} disabled={formData.customer_input_fields.length >= 20}>
+          <Button type="button" variant="outline" onClick={addCustomerField} disabled={formData.customer_input_fields.length >= 20}>
             <Plus className="mr-2 h-4 w-4" />{t("admin.addCustomerInput")}
           </Button>
         </div>
@@ -502,7 +553,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
               })}
             </tbody>
           </table>
-          <div className="border-t border-border-subtle bg-surface-muted/45 p-3"><Button type="button" variant="outline" onClick={() => setFormSpecs((current) => [...current, { id: createId(), name: "", cost_price: "", retail_price: "", visible: true, sort_order: String(current.length), manual_stock: "" }])}><Plus className="mr-2 h-4 w-4" />{t("admin.addSpec")}</Button></div>
+          <div className="border-t border-border-subtle bg-surface-muted/45 p-3"><Button type="button" variant="outline" onClick={addSpec}><Plus className="mr-2 h-4 w-4" />{t("admin.addSpec")}</Button></div>
         </div>
         {!formData.spec_enabled && formSpecs.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{t("admin.storedSpecsHint")}</p>}
       </FormSection>
@@ -533,7 +584,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
       </FormSection>
 
       <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
-        <MarkdownEditor value={formData.detail_md} onChange={(value) => setField("detail_md", value)} uploadImage={uploadImage} />
+        <MarkdownEditor value={formData.detail_md} onChange={handleDetailChange} uploadImage={uploadImage} />
       </FormSection>
 
       <div className={cn(

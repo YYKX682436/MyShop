@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react"
+import { memo, useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react"
 import { ImagePlus, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -15,7 +15,7 @@ interface MarkdownEditorProps {
   uploadImage: (file: File) => Promise<string>
 }
 
-export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorProps) {
+export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorProps) {
   const { t } = useLocale()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -177,7 +177,7 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
             </div>
           )}
           {uploading && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-card bg-surface/80 text-sm font-medium text-foreground backdrop-blur-[1px]">
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-card bg-surface text-sm font-medium text-foreground">
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
               {t("admin.uploadingAndInsert")}
             </div>
@@ -201,4 +201,4 @@ export function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorP
       </div>
     </div>
   )
-}
+})

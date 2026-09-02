@@ -437,10 +437,11 @@ export const adminProductApi = {
   // Specs
   getSpecs: (productId: string) =>
     request<AdminProductSpec[]>(`/admin/products/${productId}/specs`),
-  previewPricing: (data: AdminProductUpsertPayload) =>
+  previewPricing: (data: AdminProductUpsertPayload, signal?: AbortSignal) =>
     request<AdminPricingPreview>("/admin/products/pricing-preview", {
       method: "POST",
       body: JSON.stringify(data),
+      signal,
     }),
   // Image upload
   uploadImage: (file: File) => {

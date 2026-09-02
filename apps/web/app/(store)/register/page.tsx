@@ -252,7 +252,7 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
             >
               {isLoading ? (
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />

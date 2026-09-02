@@ -94,8 +94,6 @@ const config: Config = {
         140: '140ms',
         180: '180ms',
         220: '220ms',
-        320: '320ms',
-        420: '420ms',
       },
       keyframes: {
         'accordion-down': {

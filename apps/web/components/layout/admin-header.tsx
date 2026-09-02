@@ -10,7 +10,6 @@ import {
   LayoutDashboard,
   LogOut,
   Moon,
-  Palette,
   Package,
   Search,
   Sun,
@@ -38,8 +37,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -53,17 +50,8 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command"
-import { useAuth, useColorScheme, useLocale, useTheme, COLOR_SCHEMES, type ColorScheme } from "@/lib/context"
+import { useAuth, useLocale, useTheme } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
-
-const colorSchemeKeys: Record<ColorScheme, TranslationKey> = {
-  orange: "admin.colorOrange",
-  coral: "admin.colorCoral",
-  emerald: "admin.colorEmerald",
-  blue: "admin.colorBlue",
-  pink: "admin.colorPink",
-  purple: "admin.colorPurple",
-}
 
 const commandItems: Array<{ labelKey: TranslationKey; href: string; icon: typeof LayoutDashboard; superAdminOnly?: boolean }> = [
   { labelKey: "admin.dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
@@ -102,7 +90,6 @@ export function AdminHeader() {
   const router = useRouter()
   const { locale, setLocale, t } = useLocale()
   const { resolvedTheme, setTheme } = useTheme()
-  const { colorScheme, setColorScheme } = useColorScheme()
   const { user, logout } = useAuth()
   const [commandOpen, setCommandOpen] = useState(false)
   const pageLabel = t(getPageLabel(pathname))
@@ -126,7 +113,7 @@ export function AdminHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex min-h-16 items-center border-b border-border-subtle bg-background/90 px-4 backdrop-blur-xl supports-[backdrop-filter]:bg-background/75 sm:px-6">
+    <header className="sticky top-0 z-30 flex min-h-16 items-center border-b border-border-subtle bg-surface px-4 sm:px-6">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <SidebarTrigger className="shrink-0 rounded-control" aria-label={t("admin.toggleSidebar")} />
         <Breadcrumb className="min-w-0" aria-label={t("admin.breadcrumb")}>
@@ -186,25 +173,6 @@ export function AdminHeader() {
         >
           {resolvedTheme === "dark" ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
         </Button>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon" title={t("admin.colorTheme")} aria-label={t("admin.colorTheme")}>
-              <Palette className="h-4 w-4" aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuLabel>{t("admin.colorTheme")}</DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={colorScheme} onValueChange={(value) => setColorScheme(value as ColorScheme)}>
-              {COLOR_SCHEMES.map((scheme) => (
-                <DropdownMenuRadioItem key={scheme.key} value={scheme.key}>
-                  <span className="mr-2 size-3 rounded-full" style={{ backgroundColor: scheme.color }} aria-hidden="true" />
-                  {t(colorSchemeKeys[scheme.key])}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

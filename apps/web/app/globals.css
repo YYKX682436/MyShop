@@ -2,114 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
-/* MyShop visual system: neutral surfaces first, the selected color is only an accent. */
+/* MyShop visual system: neutral surfaces first and one fixed graphite primary. */
 @layer base {
   :root {
-    --background: 30 16% 97%;
-    --foreground: 30 12% 12%;
+    --background: 0 0% 100%;
+    --foreground: 240 5.9% 10%;
     --surface: 0 0% 100%;
     --surface-raised: 0 0% 100%;
-    --surface-muted: 30 12% 94%;
-    --surface-inset: 30 12% 91%;
+    --surface-muted: 240 4.8% 97%;
+    --surface-inset: 220 14% 95%;
     --card: 0 0% 100%;
-    --card-foreground: 30 12% 12%;
+    --card-foreground: 240 5.9% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 30 12% 12%;
-    --primary: 12 74% 47%;
+    --popover-foreground: 240 5.9% 10%;
+    --primary: 240 5.9% 10%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 30 12% 94%;
-    --secondary-foreground: 30 12% 17%;
-    --muted: 30 12% 94%;
-    --muted-foreground: 30 8% 46%;
-    --accent: 30 12% 92%;
-    --accent-foreground: 30 12% 14%;
-    --destructive: 0 68% 48%;
+    --secondary: 240 4.8% 96.1%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 96.1%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 72.2% 50.6%;
     --destructive-foreground: 0 0% 100%;
-    --border: 30 9% 85%;
-    --border-subtle: 30 12% 90%;
-    --border-strong: 30 8% 73%;
-    --input: 30 9% 82%;
-    --ring: 12 74% 47%;
-    --text-primary: 30 12% 12%;
-    --text-secondary: 30 8% 46%;
-    --overlay: 30 12% 8%;
-    --chart-1: 12 74% 47%;
-    --chart-2: 30 8% 42%;
-    --chart-3: 30 8% 58%;
-    --chart-4: 30 8% 68%;
-    --chart-5: 30 8% 78%;
+    --border: 220 13% 88%;
+    --border-subtle: 228 10% 91.4%;
+    --border-strong: 220 9% 83.5%;
+    --input: 220 9% 83.5%;
+    --ring: 240 5.9% 10%;
+    --text-primary: 240 5.9% 10%;
+    --text-secondary: 240 3.8% 46.1%;
+    --overlay: 240 5.9% 10%;
+    --chart-1: 240 5.9% 10%;
+    --chart-2: 217 91% 60%;
+    --chart-3: 160 84% 39%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 0 72% 51%;
     --radius: 0.75rem;
-    --shadow-sm: 0 1px 2px hsl(30 20% 8% / 0.04), 0 1px 3px hsl(30 20% 8% / 0.03);
-    --shadow-md: 0 8px 24px hsl(30 20% 8% / 0.06), 0 2px 8px hsl(30 20% 8% / 0.04);
-    --shadow-lg: 0 20px 50px hsl(30 20% 8% / 0.12), 0 5px 18px hsl(30 20% 8% / 0.06);
-    --sidebar-background: 30 14% 95%;
-    --sidebar-foreground: 30 10% 30%;
-    --sidebar-primary: 12 74% 47%;
+    --shadow-sm: 0 1px 2px hsl(240 5.9% 10% / 0.04), 0 1px 3px hsl(240 5.9% 10% / 0.03);
+    --shadow-md: 0 8px 24px hsl(240 5.9% 10% / 0.06), 0 2px 8px hsl(240 5.9% 10% / 0.04);
+    --shadow-lg: 0 18px 44px hsl(240 5.9% 10% / 0.1), 0 4px 14px hsl(240 5.9% 10% / 0.05);
+    --sidebar-background: 240 4.8% 97%;
+    --sidebar-foreground: 240 3.8% 32%;
+    --sidebar-primary: 240 5.9% 10%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 30 12% 90%;
-    --sidebar-accent-foreground: 30 12% 14%;
-    --sidebar-border: 30 10% 87%;
-    --sidebar-ring: 12 74% 47%;
+    --sidebar-accent: 240 4.8% 93.5%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 228 10% 91.4%;
+    --sidebar-ring: 240 5.9% 10%;
   }
 
   .dark {
-    --background: 30 8% 5%;
-    --foreground: 30 12% 94%;
-    --surface: 30 7% 9%;
-    --surface-raised: 30 7% 12%;
-    --surface-muted: 30 7% 14%;
-    --surface-inset: 30 7% 4%;
-    --card: 30 7% 9%;
-    --card-foreground: 30 12% 94%;
-    --popover: 30 7% 12%;
-    --popover-foreground: 30 12% 94%;
-    --primary: 12 74% 58%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 30 7% 14%;
-    --secondary-foreground: 30 12% 94%;
-    --muted: 30 7% 14%;
-    --muted-foreground: 30 8% 65%;
-    --accent: 30 7% 17%;
-    --accent-foreground: 30 12% 94%;
-    --destructive: 0 64% 58%;
+    --background: 240 4.8% 4.3%;
+    --foreground: 240 4.8% 95.3%;
+    --surface: 240 4.8% 6.7%;
+    --surface-raised: 240 4.8% 9.4%;
+    --surface-muted: 240 4.3% 11%;
+    --surface-inset: 240 4.8% 3.5%;
+    --card: 240 4.8% 6.7%;
+    --card-foreground: 240 4.8% 95.3%;
+    --popover: 240 4.8% 9.4%;
+    --popover-foreground: 240 4.8% 95.3%;
+    --primary: 240 4.8% 95.3%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 4.3% 11%;
+    --secondary-foreground: 240 4.8% 95.3%;
+    --muted: 240 4.3% 11%;
+    --muted-foreground: 240 4.8% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 240 4.8% 95.3%;
+    --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 100%;
-    --border: 30 7% 19%;
-    --border-subtle: 30 7% 16%;
-    --border-strong: 30 7% 29%;
-    --input: 30 7% 24%;
-    --ring: 12 74% 58%;
-    --text-primary: 30 12% 94%;
-    --text-secondary: 30 8% 65%;
-    --overlay: 30 12% 2%;
-    --chart-1: 12 74% 58%;
-    --chart-2: 30 8% 70%;
-    --chart-3: 30 8% 58%;
-    --chart-4: 30 8% 42%;
-    --chart-5: 30 8% 29%;
+    --border: 240 3.7% 16.5%;
+    --border-subtle: 240 3.7% 14.5%;
+    --border-strong: 240 3.7% 25%;
+    --input: 240 3.7% 20%;
+    --ring: 240 4.8% 95.3%;
+    --text-primary: 240 4.8% 95.3%;
+    --text-secondary: 240 4.8% 64.9%;
+    --overlay: 240 4.8% 2%;
+    --chart-1: 240 4.8% 95.3%;
+    --chart-2: 217 91% 70%;
+    --chart-3: 160 84% 48%;
+    --chart-4: 38 92% 60%;
+    --chart-5: 0 72% 63%;
     --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.18), 0 1px 3px hsl(0 0% 0% / 0.12);
     --shadow-md: 0 10px 28px hsl(0 0% 0% / 0.28), 0 2px 10px hsl(0 0% 0% / 0.18);
     --shadow-lg: 0 24px 60px hsl(0 0% 0% / 0.4), 0 5px 18px hsl(0 0% 0% / 0.24);
-    --sidebar-background: 30 7% 8%;
-    --sidebar-foreground: 30 10% 88%;
-    --sidebar-primary: 12 74% 58%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 30 7% 14%;
-    --sidebar-accent-foreground: 30 12% 94%;
-    --sidebar-border: 30 7% 16%;
-    --sidebar-ring: 12 74% 58%;
+    --sidebar-background: 240 4.8% 7.5%;
+    --sidebar-foreground: 240 4.8% 88%;
+    --sidebar-primary: 240 4.8% 95.3%;
+    --sidebar-primary-foreground: 240 5.9% 10%;
+    --sidebar-accent: 240 3.7% 14%;
+    --sidebar-accent-foreground: 240 4.8% 95.3%;
+    --sidebar-border: 240 3.7% 14.5%;
+    --sidebar-ring: 240 4.8% 95.3%;
   }
-
-  /* Color schemes intentionally change only interaction accents. */
-  [data-color="orange"] { --primary: 24 82% 48%; --ring: 24 82% 48%; --chart-1: 24 82% 48%; --sidebar-primary: 24 82% 48%; --sidebar-ring: 24 82% 48%; }
-  [data-color="emerald"] { --primary: 160 62% 38%; --ring: 160 62% 38%; --chart-1: 160 62% 38%; --sidebar-primary: 160 62% 38%; --sidebar-ring: 160 62% 38%; }
-  [data-color="blue"] { --primary: 215 72% 49%; --ring: 215 72% 49%; --chart-1: 215 72% 49%; --sidebar-primary: 215 72% 49%; --sidebar-ring: 215 72% 49%; }
-  [data-color="pink"] { --primary: 340 68% 50%; --ring: 340 68% 50%; --chart-1: 340 68% 50%; --sidebar-primary: 340 68% 50%; --sidebar-ring: 340 68% 50%; }
-  [data-color="purple"] { --primary: 265 58% 50%; --ring: 265 58% 50%; --chart-1: 265 58% 50%; --sidebar-primary: 265 58% 50%; --sidebar-ring: 265 58% 50%; }
-  .dark[data-color="orange"] { --primary: 24 82% 60%; --ring: 24 82% 60%; --chart-1: 24 82% 60%; --sidebar-primary: 24 82% 60%; --sidebar-ring: 24 82% 60%; }
-  .dark[data-color="emerald"] { --primary: 160 62% 52%; --ring: 160 62% 52%; --chart-1: 160 62% 52%; --sidebar-primary: 160 62% 52%; --sidebar-ring: 160 62% 52%; }
-  .dark[data-color="blue"] { --primary: 215 72% 62%; --ring: 215 72% 62%; --chart-1: 215 72% 62%; --sidebar-primary: 215 72% 62%; --sidebar-ring: 215 72% 62%; }
-  .dark[data-color="pink"] { --primary: 340 68% 63%; --ring: 340 68% 63%; --chart-1: 340 68% 63%; --sidebar-primary: 340 68% 63%; --sidebar-ring: 340 68% 63%; }
-  .dark[data-color="purple"] { --primary: 265 58% 64%; --ring: 265 58% 64%; --chart-1: 265 58% 64%; --sidebar-primary: 265 58% 64%; --sidebar-ring: 265 58% 64%; }
 
   * { @apply border-border; }
 
@@ -135,13 +123,97 @@
   .surface-raised { @apply rounded-surface border border-border-subtle bg-surface-raised shadow-md; }
   .surface-muted { @apply rounded-card border border-border-subtle bg-surface-muted; }
   .hairline { border-color: hsl(var(--border-subtle)); }
-  .animate-marquee { display: inline-block; animation: marquee 24s linear infinite; }
 }
 
-@keyframes marquee {
-  0% { transform: translateX(0%); }
-  100% { transform: translateX(-50%); }
+@keyframes myshop-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
+
+@keyframes myshop-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes myshop-dialog-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes myshop-dialog-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(0.98); }
+}
+
+@keyframes myshop-sheet-right-in {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes myshop-sheet-right-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(100%); }
+}
+
+@keyframes myshop-sheet-left-in {
+  from { opacity: 0; transform: translateX(-100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes myshop-sheet-left-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-100%); }
+}
+
+@keyframes myshop-sheet-top-in {
+  from { opacity: 0; transform: translateY(-100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes myshop-sheet-top-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-100%); }
+}
+
+@keyframes myshop-sheet-bottom-in {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes myshop-sheet-bottom-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(100%); }
+}
+
+.myshop-overlay[data-state="open"] { animation: myshop-fade-in 180ms ease-out both; }
+.myshop-overlay[data-state="closed"] { animation: myshop-fade-out 140ms ease-in both; }
+.myshop-dialog[data-state="open"],
+.myshop-alert-dialog[data-state="open"] { animation: myshop-dialog-in 180ms ease-out both; }
+.myshop-dialog[data-state="closed"],
+.myshop-alert-dialog[data-state="closed"] { animation: myshop-dialog-out 140ms ease-in both; }
+.myshop-sheet-right[data-state="open"] { animation: myshop-sheet-right-in 200ms ease-out both; }
+.myshop-sheet-right[data-state="closed"] { animation: myshop-sheet-right-out 160ms ease-in both; }
+.myshop-sheet-left[data-state="open"] { animation: myshop-sheet-left-in 200ms ease-out both; }
+.myshop-sheet-left[data-state="closed"] { animation: myshop-sheet-left-out 160ms ease-in both; }
+.myshop-sheet-top[data-state="open"] { animation: myshop-sheet-top-in 200ms ease-out both; }
+.myshop-sheet-top[data-state="closed"] { animation: myshop-sheet-top-out 160ms ease-in both; }
+.myshop-sheet-bottom[data-state="open"] { animation: myshop-sheet-bottom-in 200ms ease-out both; }
+.myshop-sheet-bottom[data-state="closed"] { animation: myshop-sheet-bottom-out 160ms ease-in both; }
+.myshop-popup[data-state="open"] { animation: myshop-fade-in 140ms ease-out both; }
+.myshop-popup[data-state="closed"] { animation: myshop-fade-out 120ms ease-in both; }
+
+@keyframes myshop-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes myshop-toast-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(8px); }
+}
+
+.myshop-toast[data-state="open"] { animation: myshop-toast-in 140ms ease-out both; }
+.myshop-toast[data-state="closed"] { animation: myshop-toast-out 120ms ease-in both; }
 
 /* Override browser autofill styles to respect dark theme */
 input:-webkit-autofill,
@@ -173,5 +245,13 @@ select:-webkit-autofill {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
-  .animate-marquee { animation: none; }
+  .myshop-overlay,
+  .myshop-dialog,
+  .myshop-alert-dialog,
+  .myshop-sheet-right,
+  .myshop-sheet-left,
+  .myshop-sheet-top,
+  .myshop-sheet-bottom,
+  .myshop-popup,
+  .myshop-toast { animation: none !important; }
 }

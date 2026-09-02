@@ -19,9 +19,8 @@ function AnnouncementBar() {
 
   return (
     <div className="overflow-hidden border-b border-primary/15 bg-primary/[0.06] text-primary">
-      <div className="animate-marquee whitespace-nowrap py-2 text-xs font-medium sm:text-sm">
-        <span className="mx-8">{config.announcement}</span>
-        <span className="mx-8">{config.announcement}</span>
+      <div className="mx-auto max-w-[1440px] truncate px-4 py-2 text-center text-xs font-medium sm:px-6 sm:text-sm">
+        {config.announcement}
       </div>
     </div>
   )

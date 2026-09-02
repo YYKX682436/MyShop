@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, type DragEvent, type KeyboardEvent } from "react"
+import { memo, useRef, useState, type DragEvent, type KeyboardEvent } from "react"
 import Image from "next/image"
 import { AlertCircle, ImagePlus, Loader2, Upload, X } from "lucide-react"
 import { toast } from "sonner"
@@ -15,7 +15,7 @@ interface ImageUploadDropzoneProps {
   disabled?: boolean
 }
 
-export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = false }: ImageUploadDropzoneProps) {
+export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, onChange, uploadImage, disabled = false }: ImageUploadDropzoneProps) {
   const { t } = useLocale()
   const inputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
@@ -158,7 +158,7 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
           </div>
         )}
         {uploading && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 bg-surface/80 text-sm font-medium text-foreground backdrop-blur-[1px]">
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 bg-surface text-sm font-medium text-foreground">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
             {t("admin.uploading")}
           </div>
@@ -214,4 +214,4 @@ export function ImageUploadDropzone({ value, onChange, uploadImage, disabled = f
       <p className="mt-1.5 text-xs text-muted-foreground">{t("admin.imageUsageHint")}</p>
     </div>
   )
-}
+})

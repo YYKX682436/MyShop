@@ -17,7 +17,7 @@ export function ProductWorkspaceRoute({ productId }: { productId?: string }) {
       description={t("admin.productEditorHint")}
       dirty={dirty}
       onClose={close}
-      contentClassName="bg-surface-muted/35"
+      contentClassName="bg-surface"
     >
       <ProductEditorPage
         productId={productId}

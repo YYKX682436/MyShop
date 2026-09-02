@@ -102,7 +102,7 @@ export default function OrderQueryPage() {
             订单查询凭证
             <input value={lookupToken} onChange={event => setLookupToken(event.target.value)} placeholder="仅在下单结果中显示一次" className="mt-1.5 h-11 w-full rounded-control border border-input bg-surface-muted px-3 font-mono text-sm" />
           </label>
-          <button onClick={() => void search()} disabled={loading} className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition-[filter,transform] duration-180 hover:brightness-105 active:scale-[.99] disabled:opacity-50">
+          <button onClick={() => void search()} disabled={loading} className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} 查询
           </button>
         </div>
@@ -142,7 +142,7 @@ export default function OrderQueryPage() {
               </div>
             </div>
           )}
-          {order.status === "PENDING" && <Link href={`/pay/${order.id}?method=${encodeURIComponent(order.payment_method)}`} className="mt-4 inline-flex rounded-control bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-[filter,transform] duration-180 hover:brightness-105 active:scale-[.98]">继续支付</Link>}
+          {order.status === "PENDING" && <Link href={`/pay/${order.id}?method=${encodeURIComponent(order.payment_method)}`} className="mt-4 inline-flex rounded-control bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98]">继续支付</Link>}
           {(order.items?.some(item => item.fulfillment_status === "WAITING_MANUAL")
             || delivery?.item_statuses?.some(item => item.fulfillment_status === "WAITING_MANUAL")) && (
             <div className="mt-5 rounded-card border border-amber-500/20 bg-amber-500/[0.07] p-3 text-sm text-amber-800 dark:text-amber-200">

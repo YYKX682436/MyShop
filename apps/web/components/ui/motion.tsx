@@ -4,12 +4,12 @@ import type { ReactNode } from "react"
 import { AnimatePresence, MotionConfig, motion } from "motion/react"
 
 export const motionTokens = {
-  micro: { duration: 0.16, ease: "easeOut" as const },
-  popover: { duration: 0.2, ease: "easeOut" as const },
-  dialog: { duration: 0.28, ease: "easeOut" as const },
+  micro: { duration: 0.14, ease: "easeOut" as const },
+  popover: { duration: 0.14, ease: "easeOut" as const },
+  dialog: { duration: 0.18, ease: "easeOut" as const },
   inspector: { type: "spring" as const, stiffness: 340, damping: 34, mass: 0.8 },
   workspace: { type: "spring" as const, stiffness: 300, damping: 32, mass: 0.9 },
-  reveal: { duration: 0.52, ease: "easeOut" as const },
+  reveal: { duration: 0.28, ease: "easeOut" as const },
 }
 
 export function MotionProvider({ children }: { children: ReactNode }) {
@@ -32,7 +32,7 @@ export function FadeIn({
   return (
     <motion.div
       className={className}
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ ...motionTokens.reveal, delay }}
     >
@@ -53,7 +53,7 @@ export function Reveal({
   return (
     <motion.div
       className={className}
-      initial={{ opacity: 0, y: 14 }}
+      initial={{ opacity: 0, y: 6 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.12 }}
       transition={{ ...motionTokens.reveal, delay }}
@@ -68,7 +68,7 @@ export function Stagger({
   className,
   id,
   delayChildren = 0,
-  staggerChildren = 0.045,
+  staggerChildren = 0.02,
 }: {
   children: ReactNode
   className?: string
@@ -96,7 +96,7 @@ export function StaggerItem({ children, className }: { children: ReactNode; clas
   return (
     <motion.div
       className={className}
-      variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
+      variants={{ hidden: { opacity: 0, y: 4 }, show: { opacity: 1, y: 0 } }}
       transition={motionTokens.reveal}
     >
       {children}

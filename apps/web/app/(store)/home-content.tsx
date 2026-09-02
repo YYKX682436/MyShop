@@ -12,7 +12,7 @@ import {
 import { motion } from "motion/react"
 import { useLocale, useSearch } from "@/lib/context"
 import { ProductCard } from "@/components/store/product-card"
-import { FadeIn, Stagger, StaggerItem } from "@/components/ui/motion"
+import { FadeIn } from "@/components/ui/motion"
 import { cn } from "@/lib/utils"
 import type { ProductCard as ProductCardType, Category } from "@/types"
 
@@ -95,7 +95,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
             </div>
             <a
               href="#products"
-              className="inline-flex w-fit items-center justify-center rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[.98]"
+              className="inline-flex w-fit items-center justify-center rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[.98]"
             >
               {t("home.exploreProducts")}
             </a>
@@ -164,13 +164,13 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
           </button>
         </div>
       ) : filteredProducts.length > 0 ? (
-        <Stagger id="products" className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div id="products" className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filteredProducts.map((product) => (
-            <StaggerItem key={product.id} className="min-w-0">
+            <div key={product.id} className="min-w-0">
               <ProductCard product={product} />
-            </StaggerItem>
+            </div>
           ))}
-        </Stagger>
+        </div>
       ) : (
         <div id="products" className="flex flex-col items-center justify-center rounded-card border border-dashed border-border-subtle bg-surface-muted/40 py-24 text-muted-foreground">
           <Search className="mb-3 h-10 w-10 opacity-20" />

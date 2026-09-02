@@ -41,13 +41,13 @@ export function ProductCard({ product }: ProductCardProps) {
         )}
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between p-3">
           {product.delivery_type !== "MANUAL" ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface/90 px-2 py-1 text-[11px] font-semibold text-foreground shadow-sm backdrop-blur">
+            <span className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface px-2 py-1 text-[11px] font-semibold text-foreground shadow-sm">
               <Zap className="size-3 text-primary" aria-hidden="true" />
               {t("home.instantDelivery")}
             </span>
           ) : <span />}
           {!inStock && (
-            <span className="rounded-full border border-destructive/20 bg-surface/90 px-2 py-1 text-[11px] font-semibold text-destructive shadow-sm backdrop-blur">
+            <span className="rounded-full border border-destructive/20 bg-surface px-2 py-1 text-[11px] font-semibold text-destructive shadow-sm">
               {t("home.stock")} 0
             </span>
           )}
@@ -74,7 +74,7 @@ export function ProductCard({ product }: ProductCardProps) {
             <span className="truncate text-xl font-semibold tracking-tight text-foreground">{formatYuan(product.price)}</span>
             {product.has_specs && <span className="shrink-0 text-xs text-muted-foreground">{t("home.startFrom")}</span>}
           </div>
-          <span className="inline-flex shrink-0 items-center rounded-control bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 group-hover/card:brightness-105 group-active/card:scale-[.98]">
+          <span className="inline-flex shrink-0 items-center rounded-control bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 group-hover/card:bg-primary/90 group-active/card:scale-[.98]">
             {t("product.buyNow")}
           </span>
         </div>

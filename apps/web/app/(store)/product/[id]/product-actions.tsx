@@ -199,11 +199,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             <span className={cn(
               "relative inline-flex h-2 w-2 rounded-full",
               deliveryType === "auto" ? "bg-emerald-500" : "bg-amber-400"
-            )}>
-              {deliveryType === "auto" && (
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              )}
-            </span>
+            )} />
             <span className={cn(
               "text-xs font-semibold",
               deliveryType === "auto"
@@ -393,7 +389,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           <button
             onClick={handleBuyNow}
             disabled={submitting || isOutOfStock}
-            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[transform,filter] duration-180 hover:brightness-105 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
           >
             {submitting ? (
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />

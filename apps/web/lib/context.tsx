@@ -92,35 +92,6 @@ export function useSearch() {
 }
 
 // ============================================================
-// Color Scheme
-// ============================================================
-
-export type ColorScheme = "orange" | "coral" | "emerald" | "blue" | "pink" | "purple"
-
-export const COLOR_SCHEMES: { key: ColorScheme; label: string; color: string }[] = [
-  { key: "orange", label: "Amber", color: "hsl(24,85%,52%)" },
-  { key: "coral", label: "Coral", color: "hsl(12,85%,55%)" },
-  { key: "emerald", label: "Emerald", color: "hsl(160,75%,42%)" },
-  { key: "blue", label: "Blue", color: "hsl(215,90%,55%)" },
-  { key: "pink", label: "Pink", color: "hsl(340,82%,55%)" },
-  { key: "purple", label: "Purple", color: "hsl(265,70%,55%)" },
-]
-
-interface ColorSchemeContextValue {
-  colorScheme: ColorScheme
-  setColorScheme: (c: ColorScheme) => void
-}
-
-const ColorSchemeContext = createContext<ColorSchemeContextValue>({
-  colorScheme: "coral",
-  setColorScheme: () => {},
-})
-
-export function useColorScheme() {
-  return useContext(ColorSchemeContext)
-}
-
-// ============================================================
 // Auth
 // ============================================================
 
@@ -172,7 +143,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   //
   // 1. ThemeScript（在 <head> 中同步执行）：
   //    - 在 React hydration 之前读取 localStorage 并直接设置 DOM
-  //    - 设置 dark class、data-color 属性、lang 属性
+  //    - 设置 dark class、lang 属性
   //    - 确保首帧渲染就是正确的视觉状态
   //
   // 2. React State 初始化（本 Provider）：
@@ -229,20 +200,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
       document.documentElement.classList.toggle("dark", isDark)
       setResolvedTheme(isDark ? "dark" : "light")
     }
-  }, [])
-
-  // ---------- Color Scheme ----------
-  const [colorScheme, setColorSchemeState] = useState<ColorScheme>("coral")
-
-  useEffect(() => {
-    const saved = (localStorage.getItem("color-scheme") as ColorScheme) || "coral"
-    setColorSchemeState(saved)
-  }, [])
-
-  const setColorScheme = useCallback((c: ColorScheme) => {
-    setColorSchemeState(c)
-    localStorage.setItem("color-scheme", c)
-    document.documentElement.setAttribute("data-color", c)
   }, [])
 
   // ---------- Locale ----------
@@ -332,34 +289,32 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
-      <ColorSchemeContext.Provider value={{ colorScheme, setColorScheme }}>
-        <LocaleContext.Provider value={{ locale, setLocale, t }}>
-          <AuthContext.Provider value={{ user, setUser, isLoggedIn, authLoaded, logout }}>
-            <SiteConfigContext.Provider value={{ config: siteConfig, isLoading: siteConfigLoading }}>
-              <SearchContext.Provider
-                value={{
-                  searchQuery,
-                  setSearchQuery,
-                  searchOpen,
-                  setSearchOpen,
-                  sortBy,
-                  setSortBy,
-                  filterOpen,
-                  setFilterOpen,
-                  inStockOnly,
-                  setInStockOnly,
-                  priceMin,
-                  setPriceMin,
-                  priceMax,
-                  setPriceMax,
-                }}
-              >
-                {children}
-              </SearchContext.Provider>
-            </SiteConfigContext.Provider>
-          </AuthContext.Provider>
-        </LocaleContext.Provider>
-      </ColorSchemeContext.Provider>
+      <LocaleContext.Provider value={{ locale, setLocale, t }}>
+        <AuthContext.Provider value={{ user, setUser, isLoggedIn, authLoaded, logout }}>
+          <SiteConfigContext.Provider value={{ config: siteConfig, isLoading: siteConfigLoading }}>
+            <SearchContext.Provider
+              value={{
+                searchQuery,
+                setSearchQuery,
+                searchOpen,
+                setSearchOpen,
+                sortBy,
+                setSortBy,
+                filterOpen,
+                setFilterOpen,
+                inStockOnly,
+                setInStockOnly,
+                priceMin,
+                setPriceMin,
+                priceMax,
+                setPriceMax,
+              }}
+            >
+              {children}
+            </SearchContext.Provider>
+          </SiteConfigContext.Provider>
+        </AuthContext.Provider>
+      </LocaleContext.Provider>
     </ThemeContext.Provider>
   )
 }
