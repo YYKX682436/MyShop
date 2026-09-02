@@ -640,9 +640,10 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, ?, 0, 0)
                 """, categoryId, "Integration category " + productId);
         jdbcTemplate.update("""
-                insert into products (id, created_at, updated_at, title, retail_price, cost_price, category_id,
+                insert into products (id, created_at, updated_at, title, product_code, retail_price, cost_price, category_id,
                     delivery_type, is_enabled, is_deleted)
-                values (?, current_timestamp, current_timestamp, 'Integration product', 10.00, 10.00, ?,
+                values (?, current_timestamp, current_timestamp, 'Integration product',
+                    'P' || lpad(nextval('product_code_sequence')::text, 6, '0'), 10.00, 10.00, ?,
                     'AUTO', true, 0)
                 """, productId, categoryId);
     }
