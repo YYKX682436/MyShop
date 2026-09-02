@@ -25,7 +25,7 @@ export function ProductWorkspaceRoute({ productId }: { productId?: string }) {
         onDirtyChange={setDirty}
         onSaved={() => {
           setDirty(false)
-          close()
+          close({ skipDirtyCheck: true })
         }}
         onCancel={close}
       />

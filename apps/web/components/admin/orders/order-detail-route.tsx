@@ -171,7 +171,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         footer={
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             {markPaidButton}
-            <Button type="button" variant="outline" onClick={close}>{t("common.close")}</Button>
+            <Button type="button" variant="outline" onClick={() => close()}>{t("common.close")}</Button>
           </div>
         }
       >

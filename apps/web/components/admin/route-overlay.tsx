@@ -5,7 +5,10 @@ import { useCallback, useEffect, useRef } from "react"
 import type { ReactNode } from "react"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useLocale } from "@/lib/context"
+import { shouldConfirmRouteOverlayClose, type RouteOverlayCloseOptions } from "@/lib/route-overlay"
 import { cn } from "@/lib/utils"
+
+export type { RouteOverlayCloseOptions } from "@/lib/route-overlay"
 
 /**
  * Intercepted admin routes already have the list route immediately behind
@@ -54,9 +57,9 @@ export function useRouteOverlayClose(dirty = false, enabled = true) {
     return () => window.removeEventListener("popstate", handlePopState)
   }, [dirty, enabled])
 
-  return useCallback(() => {
+  return useCallback((options: RouteOverlayCloseOptions = {}) => {
     if (!enabled) return
-    if (dirtyRef.current && !window.confirm(promptRef.current)) return
+    if (shouldConfirmRouteOverlayClose(dirtyRef.current, options) && !window.confirm(promptRef.current)) return
     closingRef.current = true
     router.back()
   }, [enabled, router])

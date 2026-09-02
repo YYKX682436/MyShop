@@ -18,7 +18,7 @@ export function AdminUserDetailRoute({ userId }: { userId: string }) {
       dirty={dirty}
       onClose={close}
       contentClassName="bg-surface p-0 sm:p-0"
-      footer={<div className="flex justify-end"><Button type="button" variant="outline" onClick={close}>{t("common.close")}</Button></div>}
+      footer={<div className="flex justify-end"><Button type="button" variant="outline" onClick={() => close()}>{t("common.close")}</Button></div>}
     >
       <AdminUserDetailPage embedded onDirtyChange={setDirty} />
     </InspectorSheet>
