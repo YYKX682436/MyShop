@@ -222,6 +222,8 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = insertOrder("rollback-token");
         UUID firstProductId = UUID.randomUUID();
         UUID secondProductId = UUID.randomUUID();
+        insertProduct(firstProductId);
+        insertProduct(secondProductId);
         UUID firstItemId = insertOrderItem(orderId, firstProductId);
         insertOrderItem(orderId, secondProductId);
         UUID cardId = insertCard(firstProductId, "rollback-card");
@@ -239,6 +241,7 @@ class PostgresDeliveryIntegrationTest {
     void concurrentDeliveryOfOneOrderAllocatesExactlyOnce() throws Exception {
         UUID orderId = insertOrder("concurrent-token");
         UUID productId = UUID.randomUUID();
+        insertProduct(productId);
         insertOrderItem(orderId, productId);
         insertCard(productId, "concurrent-card");
 
@@ -265,6 +268,7 @@ class PostgresDeliveryIntegrationTest {
     void automaticItemsSharingOnePoolKeepTheirCardBoundaries() {
         UUID orderId = insertOrder("shared-pool-token");
         UUID productId = UUID.randomUUID();
+        insertProduct(productId);
         UUID firstItemId = insertOrderItem(orderId, productId);
         UUID secondItemId = insertOrderItem(orderId, productId);
         insertCard(productId, "shared-pool-card-1");
@@ -365,6 +369,7 @@ class PostgresDeliveryIntegrationTest {
     void verifiedCallbackAutomaticallyDeliversWithoutBrowserRequest() {
         UUID orderId = insertPendingOrder("auto-channel");
         UUID productId = UUID.randomUUID();
+        insertProduct(productId);
         insertOrderItem(orderId, productId);
         insertCard(productId, "auto-card");
         insertPaymentChannel("auto-channel");
@@ -382,6 +387,7 @@ class PostgresDeliveryIntegrationTest {
     void shortageKeepsPaidFactAndRetryDeliversAfterStockIsRestored() {
         UUID orderId = insertPendingOrder("retry-channel");
         UUID productId = UUID.randomUUID();
+        insertProduct(productId);
         insertOrderItem(orderId, productId);
         insertPaymentChannel("retry-channel");
         configureSuccessfulCallback("retry-trade");
@@ -460,6 +466,7 @@ class PostgresDeliveryIntegrationTest {
     void manualOnlyOrderWaitsForAdminAndIsNotSelectedByAutomaticRetry() {
         UUID orderId = insertOrder("manual-token");
         UUID productId = UUID.randomUUID();
+        insertProduct(productId);
         UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 1, 1);
         insertManualStock(productId, null, 0, 1);
 
@@ -492,6 +499,8 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = insertOrder("mixed-token");
         UUID autoProductId = UUID.randomUUID();
         UUID manualProductId = UUID.randomUUID();
+        insertProduct(autoProductId);
+        insertProduct(manualProductId);
         UUID autoItemId = insertOrderItem(orderId, autoProductId, "AUTO", "CARD_KEY", 1, 0);
         UUID manualItemId = insertOrderItem(orderId, manualProductId, "MANUAL", "MANUAL", 1, 1);
         insertCard(autoProductId, "mixed-auto-card");
@@ -519,6 +528,7 @@ class PostgresDeliveryIntegrationTest {
     void expiredManualOrderReleasesReservationOnce() {
         UUID orderId = insertExpiredOrder("expired-manual-token");
         UUID productId = UUID.randomUUID();
+        insertProduct(productId);
         UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 2, 2);
         insertManualStock(productId, null, 0, 2);
 
