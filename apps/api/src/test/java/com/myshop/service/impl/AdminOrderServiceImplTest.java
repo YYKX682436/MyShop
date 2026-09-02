@@ -53,6 +53,7 @@ class AdminOrderServiceImplTest {
         assertEquals(UUID.fromString("11111111-1111-1111-1111-111111111111"), response.get("user_level_id_snapshot"));
         assertEquals("黄金会员", response.get("user_level_name_snapshot"));
         Map<?, ?> itemResponse = (Map<?, ?>) ((List<?>) response.get("items")).get(0);
+        assertEquals("P000001", itemResponse.get("product_code"));
         assertEquals(new BigDecimal("30.00"), itemResponse.get("unit_price"));
         assertEquals(new BigDecimal("100.00"), itemResponse.get("retail_price_snapshot"));
         assertEquals(new BigDecimal("80.00"), itemResponse.get("cost_price_snapshot"));
@@ -106,6 +107,7 @@ class AdminOrderServiceImplTest {
         item.setId(UUID.randomUUID());
         item.setOrderId(orderId);
         item.setProductId(UUID.randomUUID());
+        item.setProductCode("P000001");
         item.setProductTitle("Test product");
         item.setQuantity(quantity);
         item.setUnitPrice(unitPrice);

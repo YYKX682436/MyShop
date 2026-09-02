@@ -10,6 +10,8 @@ import java.util.UUID;
 
 public record AdminProductResponse(
         UUID id,
+        @JsonProperty("product_code")
+        String productCode,
         String title,
         String description,
         String detailMd,
@@ -28,7 +30,8 @@ public record AdminProductResponse(
         int initialSales,
         boolean specEnabled,
         @JsonProperty("is_enabled") boolean enabled,
-        int sortOrder,
+        @JsonProperty("sort_weight")
+        int sortWeight,
         int lowStockThreshold,
         List<AdminProductSpecResponse> specs,
         List<AdminPriceOverrideResponse> overrides,

@@ -21,10 +21,12 @@ import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.ProductInventoryBatchService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.PricingService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -42,6 +44,7 @@ import static org.mockito.ArgumentMatchers.anyIterable;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -60,10 +63,94 @@ class AdminProductServiceImplTest {
     @Mock private PricingService pricingService;
     @Mock private ManualStockService manualStockService;
 
+    @BeforeEach
+    void defaultProductCodeSequence() {
+        lenient().when(productRepository.nextProductCodeValue()).thenReturn(1L);
+    }
+
     private AdminProductServiceImpl service() {
         return new AdminProductServiceImpl(productRepository, productSpecRepository, overrideRepository,
                 userLevelRepository, categoryRepository, cardKeyRepository, orderItemRepository,
                 inventoryBatchService, pricingService, manualStockService);
+    }
+
+    @Test
+    void createsProductsWithUniqueServerGeneratedProductCodes() {
+        UUID categoryId = UUID.randomUUID();
+        Product responseProduct = product(UUID.randomUUID(), true, true);
+        ProductSpecRequestData specData = new ProductSpecRequestData("one month", "8.00", "10.00", true);
+        stubResponseData(responseProduct, List.of());
+        when(productRepository.nextProductCodeValue()).thenReturn(1L, 2L);
+        when(productRepository.saveAndFlush(any(Product.class))).thenAnswer(invocation -> {
+            Product saved = invocation.getArgument(0);
+            if (saved.getId() == null) saved.setId(UUID.randomUUID());
+            return saved;
+        });
+        when(productSpecRepository.saveAndFlush(any(ProductSpec.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AdminProductServiceImpl productService = service();
+        var first = productService.createProduct(request(categoryId, true, true, null,
+                List.of(specRequest(specData))));
+        var second = productService.createProduct(request(categoryId, true, true, null,
+                List.of(specRequest(specData))));
+
+        assertEquals("P000001", first.productCode());
+        assertEquals("P000002", second.productCode());
+        verify(productRepository, org.mockito.Mockito.times(2)).nextProductCodeValue();
+    }
+
+    @Test
+    void updateRetainsProductCodeAndTheEntityRejectsASecondAssignment() {
+        UUID productId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        Product product = product(productId, true, true);
+        product.setProductCode("P000123");
+        ProductSpec existingSpec = spec(UUID.randomUUID(), productId, "8.00", "10.00", true);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        stubResponseData(product, List.of(existingSpec));
+        when(productRepository.saveAndFlush(product)).thenReturn(product);
+        when(productSpecRepository.saveAndFlush(any(ProductSpec.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = service().updateProduct(productId,
+                request(categoryId, true, true, null, List.of(specRequest(existingSpec))));
+
+        assertEquals("P000123", response.productCode());
+        assertEquals("P000123", product.getProductCode());
+        assertThrows(IllegalStateException.class, () -> product.setProductCode("P000124"));
+    }
+
+    @Test
+    void adminKeywordUsesTheProductCodeAwareRepositoryQuery() {
+        Product product = product(UUID.randomUUID(), false, true);
+        product.setProductCode("P000321");
+        when(productRepository.findAdminProductsByKeyword(eq(null), eq("%p000321%"), eq(null), any(Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(product)));
+        stubListResponseData(product);
+
+        var result = service().listProducts(null, "P000321", null, null, null, 1, 20);
+
+        assertEquals(1, result.getList().size());
+        assertEquals("P000321", result.getList().get(0).productCode());
+        verify(productRepository).findAdminProductsByKeyword(eq(null), eq("%p000321%"), eq(null), any(Pageable.class));
+    }
+
+    @Test
+    void defaultAdminProductSortIsWeightThenCreatedAtThenId() {
+        when(productRepository.findAdminProducts(eq(null), eq(null), any(Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+
+        service().listProducts(null, null, null, null, null, 1, 20);
+
+        org.mockito.ArgumentCaptor<Pageable> pageable = org.mockito.ArgumentCaptor.forClass(Pageable.class);
+        verify(productRepository).findAdminProducts(eq(null), eq(null), pageable.capture());
+        assertEquals(List.of("sortWeight", "createdAt", "id"),
+                pageable.getValue().getSort().stream().map(order -> order.getProperty()).toList());
+        assertTrue(pageable.getValue().getSort().stream()
+                .filter(order -> !"id".equals(order.getProperty()))
+                .allMatch(order -> order.isDescending()));
+        assertTrue(pageable.getValue().getSort().getOrderFor("id").isAscending());
     }
 
     @Test
@@ -203,6 +290,18 @@ class AdminProductServiceImplTest {
             when(cardKeyRepository.countByProductIdAndSpecIdExcludingStatus(any(), any(), eq(CardKeyStatus.INVALID)))
                     .thenReturn(0L);
         }
+    }
+
+    private void stubListResponseData(Product product) {
+        when(productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(nullable(UUID.class), eq(0)))
+                .thenReturn(List.of());
+        when(overrideRepository.findByProductId(nullable(UUID.class))).thenReturn(List.<ProductLevelPriceOverride>of());
+        when(inventoryBatchService.load(anyCollection(), anyMap())).thenReturn(Map.of());
+        ProductCategory category = new ProductCategory();
+        category.setId(product.getCategoryId());
+        category.setName("Test category");
+        when(categoryRepository.findAllById(anyIterable())).thenReturn(List.of(category));
+        when(orderItemRepository.sumQuantityByProductId(any())).thenReturn(0);
     }
 
     private Product product(UUID id, boolean specEnabled, boolean enabled) {

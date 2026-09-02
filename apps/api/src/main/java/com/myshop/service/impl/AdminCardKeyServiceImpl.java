@@ -228,6 +228,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             map.put("order_item_id", k.getOrderItemId());
             map.put("content_parts", List.copyOf(k.getContentParts()));
             OrderItem item = k.getOrderItemId() != null ? itemMap.get(k.getOrderItemId()) : null;
+            map.put("product_code", item != null ? item.getProductCode() : null);
             map.put("product_title", item != null ? item.getProductTitle() : null);
             map.put("spec_name", item != null ? item.getSpecName() : null);
             map.put("status", k.getStatus().name());

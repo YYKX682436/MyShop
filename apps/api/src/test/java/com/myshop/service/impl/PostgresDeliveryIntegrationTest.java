@@ -707,12 +707,12 @@ class PostgresDeliveryIntegrationTest {
                                  String stockMode, int quantity, int manualStockReserved) {
         UUID itemId = UUID.randomUUID();
         jdbcTemplate.update("""
-                insert into order_items (id, created_at, updated_at, order_id, product_id,
+                insert into order_items (id, created_at, updated_at, order_id, product_id, product_code,
                     product_title, quantity, unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source, subtotal, delivery_type,
                     stock_mode, fulfillment_status, manual_stock_reserved)
-                values (?, current_timestamp, current_timestamp, ?, ?, 'Integration product', ?, 10.00, 10.00, 10.00,
+                values (?, current_timestamp, current_timestamp, ?, ?, (select product_code from products where id = ?), 'Integration product', ?, 10.00, 10.00, 10.00,
                     'RETAIL', ?, ?, ?, 'PENDING', ?)
-                """, itemId, orderId, productId, quantity,
+                """, itemId, orderId, productId, productId, quantity,
                 BigDecimal.TEN.multiply(BigDecimal.valueOf(quantity)), deliveryType,
                 stockMode, manualStockReserved);
         return itemId;

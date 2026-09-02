@@ -32,12 +32,12 @@ import com.myshop.repository.ProductSalesProjection;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.AdminProductService;
 import com.myshop.service.ProductInventoryBatchService;
+import com.myshop.service.ProductListSort;
 import com.myshop.service.ProductRules;
 import com.myshop.service.PricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,6 +51,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -79,11 +80,11 @@ public class AdminProductServiceImpl implements AdminProductService {
     @Override
     @Transactional(readOnly = true)
     public PageResult<AdminProductResponse> listProducts(UUID categoryId, String keyword, Boolean isEnabled,
-                                                         int page, int pageSize) {
+                                                         String sortBy, String sortDirection, int page, int pageSize) {
         validatePage(page, pageSize);
-        PageRequest pageable = PageRequest.of(page - 1, pageSize, Sort.by("sortOrder").ascending());
+        PageRequest pageable = PageRequest.of(page - 1, pageSize, ProductListSort.resolve(sortBy, sortDirection));
         Page<Product> productPage = keyword != null && !keyword.isBlank()
-                ? productRepository.findAdminProductsByKeyword(categoryId, "%" + keyword.toLowerCase() + "%", isEnabled, pageable)
+                ? productRepository.findAdminProductsByKeyword(categoryId, "%" + keyword.toLowerCase(Locale.ROOT) + "%", isEnabled, pageable)
                 : productRepository.findAdminProducts(categoryId, isEnabled, pageable);
         List<AdminProductResponse> list = productPage.getContent().stream()
                 .map(product -> buildResponse(product, false, null, null)).toList();
@@ -103,6 +104,7 @@ public class AdminProductServiceImpl implements AdminProductService {
     @Transactional
     public AdminProductResponse createProduct(AdminProductUpsertRequest request) {
         Product product = new Product();
+        product.setProductCode(nextProductCode());
         return saveAggregate(product, request, true);
     }
 
@@ -131,6 +133,19 @@ public class AdminProductServiceImpl implements AdminProductService {
         product.setEnabled(request.enabled());
         Product saved = productRepository.saveAndFlush(product);
         return buildResponse(saved, true, null, null);
+    }
+
+    @Override
+    @Transactional
+    public void updateSortWeight(UUID id, Integer sortWeight) {
+        if (sortWeight == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "排序权重不能为空");
+        }
+        Product product = productRepository.findByIdForUpdate(id)
+                .filter(candidate -> candidate.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
+        product.setSortWeight(sortWeight);
+        productRepository.saveAndFlush(product);
     }
 
     @Override
@@ -224,12 +239,12 @@ public class AdminProductServiceImpl implements AdminProductService {
         int initialSales = request.initialSales() == null
                 ? (creating ? 0 : product.getInitialSales()) : request.initialSales();
         if (initialSales < 0) throw new BusinessException(ErrorCode.BAD_REQUEST, "初始销量不能小于 0");
-        int sortOrder = request.sortOrder() == null ? (creating ? 0 : product.getSortOrder()) : request.sortOrder();
+        int sortWeight = request.sortWeight() == null ? (creating ? 0 : product.getSortWeight()) : request.sortWeight();
         UUID categoryId = request.categoryId() == null ? product.getCategoryId() : request.categoryId();
         List<String> warnings = new ArrayList<>();
         return new PreparedAggregate(request.title().trim(), request.description(), request.detailMd(), request.coverUrl(),
                 specEnabled, retailPrice, costPrice, deliveryType, stockMode,
-                fields, categoryId, lowStockThreshold, initialSales, sortOrder, enabled,
+                fields, categoryId, lowStockThreshold, initialSales, sortWeight, enabled,
                 request.manualStock(), preparedSpecs, warnings);
     }
 
@@ -342,7 +357,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         product.setSpecEnabled(aggregate.specEnabled());
         product.setEnabled(aggregate.enabled());
         product.setInitialSales(aggregate.initialSales());
-        product.setSortOrder(aggregate.sortOrder());
+        product.setSortWeight(aggregate.sortWeight());
     }
 
     private Map<UUID, ProductSpec> syncSpecs(Product product, PreparedAggregate aggregate) {
@@ -483,12 +498,12 @@ public class AdminProductServiceImpl implements AdminProductService {
         ProductInventoryBatchService.StockSnapshot rootStock = stock
                 .getOrDefault(new com.myshop.model.pricing.PriceTarget(product.getId(), null),
                         new ProductInventoryBatchService.StockSnapshot(0L, false));
-        return new AdminProductResponse(product.getId(), product.getTitle(), product.getDescription(), product.getDetailMd(),
+        return new AdminProductResponse(product.getId(), product.getProductCode(), product.getTitle(), product.getDescription(), product.getDetailMd(),
                 product.getCoverUrl(), product.getCostPrice(), product.getRetailPrice(), product.getCategoryId(),
                 categories.get(product.getCategoryId()) == null ? null : categories.get(product.getCategoryId()).getName(),
                 rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
                 ProductRules.currentFields(product), product.getStockMode().name(), sales, product.getInitialSales(),
-                product.isSpecEnabled(), product.isEnabled(), product.getSortOrder(), product.getLowStockThreshold(),
+                product.isSpecEnabled(), product.isEnabled(), product.getSortWeight(), product.getLowStockThreshold(),
                 buildSpecResponses(product, specs, stock), overrides.stream().map(this::toOverride).toList(), matrix,
                 warnings, product.getCreatedAt(), product.getUpdatedAt());
     }
@@ -577,6 +592,14 @@ public class AdminProductServiceImpl implements AdminProductService {
         }
     }
 
+    private String nextProductCode() {
+        long value = productRepository.nextProductCodeValue();
+        if (value < 1) {
+            throw new IllegalStateException("product_code_sequence returned an invalid value");
+        }
+        return String.format(Locale.ROOT, "P%06d", value);
+    }
+
     private record PreparedSpec(AdminProductSpecRequest request, UUID id, ProductSpec existing,
                                 String name, BigDecimal costPrice, BigDecimal retailPrice) {
         ProductSpec toEntity(UUID productId) {
@@ -594,9 +617,9 @@ public class AdminProductServiceImpl implements AdminProductService {
 
     private record PreparedAggregate(String title, String description, String detailMd, String coverUrl,
                                      boolean specEnabled, BigDecimal retailPrice, BigDecimal costPrice,
-                                     String deliveryType, StockMode stockMode,
-                                     List<CustomerInputField> customerInputFields, UUID categoryId,
-                                     int lowStockThreshold, int initialSales, int sortOrder, boolean enabled,
-                                     Integer manualStock, List<PreparedSpec> specs, List<String> warnings) {
+                                      String deliveryType, StockMode stockMode,
+                                      List<CustomerInputField> customerInputFields, UUID categoryId,
+                                      int lowStockThreshold, int initialSales, int sortWeight, boolean enabled,
+                                      Integer manualStock, List<PreparedSpec> specs, List<String> warnings) {
     }
 }

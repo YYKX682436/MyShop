@@ -11,7 +11,7 @@ import java.util.UUID;
 
 public interface AdminProductService {
     PageResult<AdminProductResponse> listProducts(UUID categoryId, String keyword, Boolean isEnabled,
-                                                  int page, int pageSize);
+                                                  String sortBy, String sortDirection, int page, int pageSize);
 
     AdminProductResponse getProduct(UUID id);
 
@@ -20,6 +20,8 @@ public interface AdminProductService {
     AdminProductResponse updateProduct(UUID id, AdminProductUpsertRequest request);
 
     AdminProductResponse setStatus(UUID id, AdminProductStatusRequest request);
+
+    void updateSortWeight(UUID id, Integer sortWeight);
 
     void deleteProduct(UUID id);
 

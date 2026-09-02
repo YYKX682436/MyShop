@@ -193,10 +193,10 @@ class DashboardAggregateIntegrationTest {
     private void insertOrderItem(UUID orderId, UUID productId, String title, int quantity, String subtotal,
                                  LocalDateTime createdAt) {
         jdbcTemplate.update("""
-                INSERT INTO order_items(id, created_at, updated_at, order_id, product_id, product_title,
+                INSERT INTO order_items(id, created_at, updated_at, order_id, product_id, product_code, product_title,
                                         quantity, unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source, subtotal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 5.00, 5.00, 5.00, 'RETAIL', ?)
-                """, UUID.randomUUID(), createdAt, createdAt, orderId, productId, title, quantity,
+                VALUES (?, ?, ?, ?, ?, (SELECT product_code FROM products WHERE id = ?), ?, ?, 5.00, 5.00, 5.00, 'RETAIL', ?)
+                """, UUID.randomUUID(), createdAt, createdAt, orderId, productId, productId, title, quantity,
                 new BigDecimal(subtotal));
     }
 

@@ -27,6 +27,7 @@ public record AdminUserOrderResponse(
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AdminUserOrderItemResponse(
             UUID id,
+            String productCode,
             String productTitle,
             String specName,
             int quantity,

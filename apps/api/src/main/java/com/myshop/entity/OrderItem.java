@@ -16,6 +16,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Getter
 @Setter
@@ -30,6 +31,9 @@ public class OrderItem extends BaseEntity {
 
     @Column(nullable = false)
     private UUID productId;
+
+    @Column(name = "product_code", nullable = false, updatable = false, length = 32)
+    private String productCode;
 
     @Column(nullable = false)
     private String productTitle;
@@ -88,4 +92,12 @@ public class OrderItem extends BaseEntity {
     public BigDecimal getRetailPriceSnapshot() { return retailPriceSnapshot; }
 
     public void setRetailPriceSnapshot(BigDecimal value) { this.retailPriceSnapshot = value; }
+
+    /** The order snapshot may be initialized once but cannot be changed later. */
+    public void setProductCode(String value) {
+        if (productCode != null && !Objects.equals(productCode, value)) {
+            throw new IllegalStateException("order item productCode is immutable");
+        }
+        productCode = value;
+    }
 }

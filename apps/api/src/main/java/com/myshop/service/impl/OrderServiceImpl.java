@@ -199,6 +199,7 @@ public class OrderServiceImpl implements OrderService {
         OrderItem item = new OrderItem();
         item.setOrderId(order.getId());
         item.setProductId(productId);
+        item.setProductCode(product.getProductCode());
         item.setSpecId(specId);
         item.setProductTitle(product.getTitle());
         item.setSpecName(specName);
@@ -324,6 +325,7 @@ public class OrderServiceImpl implements OrderService {
             Map<String, Object> im = new LinkedHashMap<>();
             im.put("id", i.getId());
             im.put("product_id", i.getProductId());
+            im.put("product_code", i.getProductCode());
             im.put("product_title", i.getProductTitle());
             im.put("spec_name", i.getSpecName());
             im.put("quantity", i.getQuantity());

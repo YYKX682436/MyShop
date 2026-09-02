@@ -4,6 +4,7 @@ import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
 import com.myshop.model.request.AdminProductUpsertRequest;
 import com.myshop.model.request.AdminProductStatusRequest;
+import com.myshop.model.request.AdminProductSortWeightRequest;
 import com.myshop.service.AdminProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -23,9 +24,12 @@ public class AdminProductController {
             @RequestParam(value = "category_id", required = false) UUID categoryId,
             @RequestParam(required = false) String keyword,
             @RequestParam(value = "is_enabled", required = false) Boolean isEnabled,
+            @RequestParam(value = "sort_by", required = false) String sortBy,
+            @RequestParam(value = "sort_direction", required = false) String sortDirection,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
-        return ApiResponse.success(productService.listProducts(categoryId, keyword, isEnabled, page, pageSize));
+        return ApiResponse.success(productService.listProducts(categoryId, keyword, isEnabled,
+                sortBy, sortDirection, page, pageSize));
     }
 
     @LogOperation(action = "product.create", targetType = "PRODUCT", detail = "'创建商品'")
@@ -49,6 +53,14 @@ public class AdminProductController {
     @PostMapping("/{id}/status")
     public ApiResponse<?> setStatus(@PathVariable UUID id, @RequestBody AdminProductStatusRequest request) {
         return ApiResponse.success(productService.setStatus(id, request));
+    }
+
+    @LogOperation(action = "product.sort_weight", targetType = "PRODUCT", targetId = "#id", detail = "'修改商品排序权重'")
+    @PatchMapping("/{id}/sort-weight")
+    public ApiResponse<Void> updateSortWeight(@PathVariable UUID id,
+                                               @RequestBody AdminProductSortWeightRequest request) {
+        productService.updateSortWeight(id, request == null ? null : request.sortWeight());
+        return ApiResponse.success();
     }
 
     @LogOperation(action = "product.delete", targetType = "PRODUCT", targetId = "#id", detail = "'删除商品'")

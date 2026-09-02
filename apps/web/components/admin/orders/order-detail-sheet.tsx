@@ -1,6 +1,6 @@
 "use client"
 
-import { CheckCircle, Loader2 } from "lucide-react"
+import { CheckCircle, Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { DataTableShell } from "@/components/admin/shared"
@@ -99,6 +99,13 @@ export function OrderDetailSheet({
                         <div key={item.id} className={`flex flex-wrap items-start justify-between gap-4 px-3 py-4 ${index > 0 ? "border-t border-border-subtle" : ""}`}>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-foreground">{item.product_title}{item.spec_name && <span className="text-muted-foreground"> · {item.spec_name}</span>} <span className="text-muted-foreground">×{item.quantity}</span></p>
+                            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                              <span>{t("admin.productCode")}:</span>
+                              <span className="font-mono">{item.product_code}</span>
+                              <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground" title={t("admin.copyProductCode")} aria-label={`${t("admin.copyProductCode")}: ${item.product_code}`} onClick={() => copyToClipboard(item.product_code)}>
+                                <Copy className="h-3 w-3" aria-hidden="true" />
+                              </button>
+                            </div>
                             {item.customer_inputs.length > 0 && <div className="mt-2 space-y-1 text-xs text-muted-foreground">{item.customer_inputs.map((input) => <p key={input.id}>{input.label}: {input.value}</p>)}</div>}
                             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                               <span>{manual ? t("admin.manualDeliveryLabel") : t("admin.autoDeliveryLabel")}</span>

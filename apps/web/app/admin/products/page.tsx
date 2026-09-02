@@ -1,8 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Image from "next/image"
-import { AlertCircle, Edit, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react"
+import { AlertCircle, Copy, Edit, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
 
@@ -23,11 +23,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useLocale } from "@/lib/context"
-import { cn, formatYuan } from "@/lib/utils"
+import { cn, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
 
 const PAGE_SIZE = 20
+
+const PRODUCT_SORT_OPTIONS = [
+  { value: "weight_desc", sortBy: "sort_weight", sortDirection: "desc", labelKey: "admin.sortWeightDesc" },
+  { value: "weight_asc", sortBy: "sort_weight", sortDirection: "asc", labelKey: "admin.sortWeightAsc" },
+  { value: "created_desc", sortBy: "created_at", sortDirection: "desc", labelKey: "admin.sortNewest" },
+  { value: "code_asc", sortBy: "product_code", sortDirection: "asc", labelKey: "admin.sortProductCode" },
+  { value: "retail_asc", sortBy: "retail_price", sortDirection: "asc", labelKey: "admin.sortRetailPrice" },
+  { value: "cost_asc", sortBy: "cost_price", sortDirection: "asc", labelKey: "admin.sortCostPrice" },
+] as const
 
 export default function AdminProductsPage() {
   const { t } = useLocale()
@@ -40,11 +49,15 @@ export default function AdminProductsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
+  const [sortOption, setSortOption] = useState("weight_desc")
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [deleteProduct, setDeleteProduct] = useState<AdminProductDetail | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [importProduct, setImportProduct] = useState<AdminProductDetail | null>(null)
+  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({})
+  const [savingWeights, setSavingWeights] = useState<Record<string, boolean>>({})
+  const savingWeightIds = useRef(new Set<string>())
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -70,6 +83,8 @@ export default function AdminProductsPage() {
         category_id: categoryFilter || undefined,
         is_enabled: statusFilter ? (statusFilter === "enabled" ? 1 : 0) : undefined,
         keyword: debouncedSearch || undefined,
+        sort_by: (PRODUCT_SORT_OPTIONS.find((option) => option.value === sortOption) || PRODUCT_SORT_OPTIONS[0]).sortBy,
+        sort_direction: (PRODUCT_SORT_OPTIONS.find((option) => option.value === sortOption) || PRODUCT_SORT_OPTIONS[0]).sortDirection,
       }))
       setProducts(data.list)
       setTotal(data.pagination.total)
@@ -80,7 +95,7 @@ export default function AdminProductsPage() {
     } finally {
       setLoading(false)
     }
-  }, [categoryFilter, debouncedSearch, page, statusFilter])
+  }, [categoryFilter, debouncedSearch, page, sortOption, statusFilter])
 
   useEffect(() => { void loadCategories() }, [loadCategories])
   useEffect(() => { void loadProducts() }, [loadProducts])
@@ -88,6 +103,78 @@ export default function AdminProductsPage() {
   const getCategoryName = (categoryId: string) => categories.find((category) => category.id === categoryId)?.name || "—"
   const isUnlimited = (product: AdminProductDetail) => product.unlimited === true || product.stock_mode === "UNLIMITED"
   const isCardKeyStock = (product: AdminProductDetail) => product.stock_mode !== "MANUAL" && product.stock_mode !== "UNLIMITED"
+
+  const formatCostPrice = (product: AdminProductDetail) => {
+    if (!product.spec_enabled) return product.cost_price == null ? t("admin.systemNoData") : formatYuan(product.cost_price)
+    const specs = (product.specs || []).filter((spec) => spec.is_deleted === 0)
+    const visibleSpecs = specs.filter((spec) => spec.is_visible)
+    const costs = (visibleSpecs.length ? visibleSpecs : specs)
+      .map((spec) => spec.cost_price)
+      .filter((cost) => Number.isFinite(cost))
+    if (costs.length === 0) return t("admin.systemNoData")
+    const lowest = Math.min(...costs)
+    const highest = Math.max(...costs)
+    return lowest === highest ? formatYuan(lowest) : `${formatYuan(lowest)} – ${formatYuan(highest)}`
+  }
+
+  const copyProductCode = (value: string) => {
+    const cleanValue = stripInvisible(value)
+    const fallback = () => {
+      const textarea = document.createElement("textarea")
+      textarea.value = cleanValue
+      textarea.style.position = "fixed"
+      textarea.style.opacity = "0"
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand("copy")
+      document.body.removeChild(textarea)
+      toast.success(t("order.copied"))
+    }
+    if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(cleanValue).then(() => toast.success(t("order.copied")), fallback)
+    else fallback()
+  }
+
+  const handleSortWeightSave = async (product: AdminProductDetail) => {
+    const draft = weightDrafts[product.id]
+    if (draft === undefined) return
+    const normalized = draft.trim()
+    const nextWeight = Number(normalized)
+    if (!/^-?\d+$/.test(normalized) || !Number.isSafeInteger(nextWeight)) {
+      setWeightDrafts((current) => ({ ...current, [product.id]: String(product.sort_weight ?? 0) }))
+      toast.error(t("admin.sortWeightInvalid"))
+      return
+    }
+    if (nextWeight === product.sort_weight) {
+      setWeightDrafts((current) => {
+        const next = { ...current }
+        delete next[product.id]
+        return next
+      })
+      return
+    }
+    if (savingWeightIds.current.has(product.id)) return
+    savingWeightIds.current.add(product.id)
+    setSavingWeights((current) => ({ ...current, [product.id]: true }))
+    try {
+      await requestOrThrow(() => adminProductApi.updateSortWeight(product.id, nextWeight))
+      await loadProducts()
+      setWeightDrafts((current) => {
+        const next = { ...current }
+        delete next[product.id]
+        return next
+      })
+    } catch (requestError: unknown) {
+      setWeightDrafts((current) => ({ ...current, [product.id]: String(product.sort_weight ?? 0) }))
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      savingWeightIds.current.delete(product.id)
+      setSavingWeights((current) => {
+        const next = { ...current }
+        delete next[product.id]
+        return next
+      })
+    }
+  }
 
   const handleToggleStatus = async (product: AdminProductDetail) => {
     try {
@@ -155,6 +242,14 @@ export default function AdminProductsPage() {
             <option value="enabled">{t("admin.active")}</option>
             <option value="disabled">{t("admin.inactive")}</option>
           </select>
+          <select
+            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            value={sortOption}
+            onChange={(event) => { setSortOption(event.target.value); setPage(1) }}
+            aria-label={t("admin.sortBy")}
+          >
+            {PRODUCT_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
+          </select>
         </div>
         {categoryError && (
           <Button type="button" variant="outline" size="sm" onClick={() => void loadCategories()}>
@@ -169,7 +264,8 @@ export default function AdminProductsPage() {
             <TableRow>
               <TableHead>{t("admin.product")}</TableHead>
               <TableHead>{t("admin.category")}</TableHead>
-              <TableHead>{t("admin.retailPrice")}</TableHead>
+              <TableHead>{t("admin.price")}</TableHead>
+              <TableHead>{t("admin.sortWeight")}</TableHead>
               <TableHead>{t("admin.stockLabel")}</TableHead>
               <TableHead>{t("admin.sold")}</TableHead>
               <TableHead>{t("admin.statusLabel")}</TableHead>
@@ -177,9 +273,9 @@ export default function AdminProductsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading && <TableLoadingState colSpan={7} />}
-            {!loading && error && <TableErrorState colSpan={7} onRetry={() => void loadProducts()} />}
-            {!loading && !error && products.length === 0 && <TableEmptyState colSpan={7}>{t("admin.noProductData")}</TableEmptyState>}
+            {loading && <TableLoadingState colSpan={8} />}
+            {!loading && error && <TableErrorState colSpan={8} onRetry={() => void loadProducts()} />}
+            {!loading && !error && products.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noProductData")}</TableEmptyState>}
             {!loading && !error && products.map((product) => {
               const unlimited = isUnlimited(product)
               const lowStock = !unlimited && product.stock_available != null && product.stock_available > 0 && product.stock_available <= (product.low_stock_threshold ?? 10)
@@ -193,12 +289,36 @@ export default function AdminProductsPage() {
                       </Link>
                       <div className="min-w-0">
                         <Link href={`/product/${product.id}`} className="block truncate font-medium text-foreground hover:text-primary hover:underline">{product.title}</Link>
+                        <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                          <span className="font-mono">{product.product_code}</span>
+                          <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground" title={t("admin.copyProductCode")} aria-label={`${t("admin.copyProductCode")}: ${product.product_code}`} onClick={() => copyProductCode(product.product_code)}>
+                            <Copy className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        </div>
                         {lowStock && <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-600"><AlertCircle className="h-3 w-3" aria-hidden="true" />{t("admin.lowStock")}</span>}
                       </div>
                     </div>
                   </TableCell>
                   <TableCell><StatusBadge label={getCategoryName(product.category_id)} /></TableCell>
-                  <TableCell className="whitespace-nowrap font-medium">{formatYuan(product.retail_price)}</TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <div className="space-y-0.5 text-sm">
+                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.retailPriceShort")}</span><span className="font-medium">{formatYuan(product.retail_price)}</span></div>
+                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.costPriceShort")}</span><span className="font-medium">{formatCostPrice(product)}</span></div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="px-2">
+                    <Input
+                      className="h-9 w-20"
+                      type="number"
+                      step="1"
+                      value={weightDrafts[product.id] ?? String(product.sort_weight ?? 0)}
+                      disabled={savingWeights[product.id] === true}
+                      aria-label={`${t("admin.sortWeightLabel")}: ${product.title}`}
+                      onChange={(event) => setWeightDrafts((current) => ({ ...current, [product.id]: event.target.value }))}
+                      onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur() } }}
+                      onBlur={() => void handleSortWeightSave(product)}
+                    />
+                  </TableCell>
                   <TableCell>
                     <span className={cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-600" : "text-foreground")}>
                       {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}

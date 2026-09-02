@@ -1,5 +1,6 @@
 package com.myshop.model.request;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.myshop.constant.StockMode;
 
 import java.math.BigDecimal;
@@ -19,7 +20,8 @@ public record AdminProductUpsertRequest(
         Boolean specEnabled,
         Boolean isEnabled,
         Integer initialSales,
-        Integer sortOrder,
+        @JsonProperty("sort_weight")
+        Integer sortWeight,
         String deliveryType,
         List<?> customerInputFields,
         StockMode stockMode,

@@ -18,13 +18,13 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSalesProjection;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.service.ProductInventoryBatchService;
+import com.myshop.service.ProductListSort;
 import com.myshop.service.PricingService;
 import com.myshop.service.ProductRules;
 import com.myshop.service.PublicProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +33,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -55,9 +56,9 @@ public class PublicProductServiceImpl implements PublicProductService {
                                                           int page, int pageSize, UUID requestUserId) {
         validatePage(page, pageSize);
         PageRequest pageable = PageRequest.of(page - 1, pageSize,
-                Sort.by("sortOrder").ascending().and(Sort.by("createdAt").descending()));
+                ProductListSort.resolve("sort_weight", "desc"));
         Page<Product> productPage = keyword != null && !keyword.isBlank()
-                ? productRepository.findPublicProductsByKeyword(categoryId, "%" + keyword.toLowerCase() + "%", pageable)
+                ? productRepository.findPublicProductsByKeyword(categoryId, "%" + keyword.toLowerCase(Locale.ROOT) + "%", pageable)
                 : productRepository.findPublicProducts(categoryId, pageable);
         return PageResult.of(productPage, buildResponses(productPage.getContent(), requestUserId, false));
     }

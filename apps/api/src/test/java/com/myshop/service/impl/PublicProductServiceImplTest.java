@@ -19,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -28,6 +29,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyIterable;
@@ -73,6 +75,14 @@ class PublicProductServiceImplTest {
                 .listProducts(null, null, 1, 100, null);
 
         assertEquals(100, result.getList().size());
+        var pageableCaptor = org.mockito.ArgumentCaptor.forClass(Pageable.class);
+        verify(productRepository).findPublicProducts(isNull(), pageableCaptor.capture());
+        assertEquals(List.of("sortWeight", "createdAt", "id"),
+                pageableCaptor.getValue().getSort().stream().map(order -> order.getProperty()).toList());
+        assertTrue(pageableCaptor.getValue().getSort().stream()
+                .filter(order -> !"id".equals(order.getProperty()))
+                .allMatch(order -> order.isDescending()));
+        assertTrue(pageableCaptor.getValue().getSort().getOrderFor("id").isAscending());
         verify(productSpecRepository, times(1))
                 .findByProductIdInAndIsDeletedAndVisibleOrderByProductIdAscSortOrderAsc(any(), eq(0), eq(true));
         verify(pricingService, times(1)).resolveBatch(anyCollection(), anyMap(), isNull());
@@ -124,6 +134,7 @@ class PublicProductServiceImplTest {
     private Product product(int index) {
         Product product = new Product();
         product.setId(UUID.randomUUID());
+        product.setProductCode(String.format("P%06d", index + 1));
         product.setTitle("Product " + index);
         product.setRetailPrice(money("10.00"));
         product.setCostPrice(money("5.00"));

@@ -30,7 +30,7 @@ type ProductFormData = {
   spec_enabled: boolean
   is_enabled: boolean
   initial_sales: string
-  sort_order: string
+  sort_weight: string
   delivery_type: DeliveryType
   customer_input_fields: { id: string; label: string }[]
   stock_mode: StockMode
@@ -76,7 +76,7 @@ function emptyForm(): ProductFormData {
     spec_enabled: false,
     is_enabled: true,
     initial_sales: "0",
-    sort_order: "0",
+    sort_weight: "0",
     delivery_type: "AUTO",
     customer_input_fields: [],
     stock_mode: "CARD_KEY",
@@ -98,7 +98,7 @@ function getFormData(product: AdminProductDetail | null): ProductFormData {
     spec_enabled: product.spec_enabled,
     is_enabled: product.is_enabled,
     initial_sales: String(product.initial_sales ?? 0),
-    sort_order: String(product.sort_order ?? 0),
+    sort_weight: String(product.sort_weight ?? 0),
     delivery_type: product.delivery_type === "MANUAL" ? "MANUAL" : "AUTO",
     customer_input_fields: (product.customer_input_fields || []).map((field) => ({ id: field.id, label: field.label })),
     stock_mode: product.stock_mode || (product.delivery_type === "MANUAL" ? "MANUAL" : "CARD_KEY"),
@@ -219,7 +219,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
       spec_enabled: formData.spec_enabled,
       is_enabled: formData.is_enabled,
       initial_sales: Math.max(0, Math.trunc(asNumber(formData.initial_sales))),
-      sort_order: Math.trunc(asNumber(formData.sort_order)),
+      sort_weight: Math.trunc(asNumber(formData.sort_weight)),
       delivery_type: formData.delivery_type,
       customer_input_fields: formData.customer_input_fields,
       stock_mode: formData.stock_mode,
@@ -494,8 +494,9 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </select>
           </label>
           <label className="flex flex-col gap-1.5 text-sm font-medium">
-            {t("admin.sortOrderLabel")}
-            <Input type="number" value={formData.sort_order} onChange={(event) => setField("sort_order", event.target.value)} />
+            {t("admin.sortWeightLabel")}
+            <Input type="number" value={formData.sort_weight} onChange={(event) => setField("sort_weight", event.target.value)} />
+            <span className="text-xs font-normal text-muted-foreground">{t("admin.sortWeightHint")}</span>
           </label>
           <label className="flex flex-col gap-1.5 text-sm font-medium">
             {t("admin.lowStockAlert")}

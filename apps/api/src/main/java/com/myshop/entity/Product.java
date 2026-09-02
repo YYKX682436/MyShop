@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Getter
 @Setter
@@ -22,6 +23,9 @@ import java.util.List;
 @Entity
 @Table(name = "products")
 public class Product extends BaseEntity {
+
+    @Column(name = "product_code", nullable = false, unique = true, updatable = false, length = 32)
+    private String productCode;
 
     @Column(nullable = false)
     private String title;
@@ -65,7 +69,16 @@ public class Product extends BaseEntity {
     @Column(columnDefinition = "INTEGER DEFAULT 0")
     private int initialSales = 0;
 
-    private int sortOrder = 0;
+    @Column(name = "sort_weight", nullable = false)
+    private int sortWeight = 0;
 
     private int isDeleted = 0;
+
+    /** The business number is assigned once and is never mutable afterwards. */
+    public void setProductCode(String value) {
+        if (productCode != null && !Objects.equals(productCode, value)) {
+            throw new IllegalStateException("productCode is immutable");
+        }
+        productCode = value;
+    }
 }

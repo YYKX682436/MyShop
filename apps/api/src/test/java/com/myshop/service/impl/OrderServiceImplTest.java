@@ -116,6 +116,15 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void orderItemProductCodeIsAnImmutableSnapshot() {
+        OrderItem item = new OrderItem();
+        item.setProductCode("P000001");
+
+        assertEquals("P000001", item.getProductCode());
+        assertThrows(IllegalStateException.class, () -> item.setProductCode("P000002"));
+    }
+
+    @Test
     void directOrderStoresAllCustomerInputsWithCurrentLabels() {
         UUID productId = UUID.randomUUID();
         Product product = product(productId, "10.00");
@@ -182,6 +191,7 @@ class OrderServiceImplTest {
         ArgumentCaptor<com.myshop.entity.OrderItem> itemCaptor =
                 ArgumentCaptor.forClass(com.myshop.entity.OrderItem.class);
         verify(orderItemRepository).save(itemCaptor.capture());
+        assertEquals("P000001", itemCaptor.getValue().getProductCode());
         assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getCostPriceSnapshot());
         assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getRetailPriceSnapshot());
         assertEquals(com.myshop.constant.PricingSource.RETAIL, itemCaptor.getValue().getPricingSource());
@@ -365,6 +375,7 @@ class OrderServiceImplTest {
         OrderItem item = new OrderItem();
         item.setId(UUID.randomUUID());
         item.setProductId(productId);
+        item.setProductCode(product.getProductCode());
         item.setProductTitle(product.getTitle());
         item.setQuantity(1);
         item.setUnitPrice(new BigDecimal("10.00"));
@@ -436,6 +447,7 @@ class OrderServiceImplTest {
     private Product product(UUID id, String price) {
         Product product = new Product();
         product.setId(id);
+        product.setProductCode("P000001");
         product.setTitle("Test product");
         product.setRetailPrice(new BigDecimal(price));
         product.setCostPrice(new BigDecimal(price));

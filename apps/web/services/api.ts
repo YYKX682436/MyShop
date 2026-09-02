@@ -417,7 +417,11 @@ export const adminDashboardApi = {
 // ============================================================
 
 export const adminProductApi = {
-  getList: (params: { page?: number; page_size?: number; category_id?: string; is_enabled?: number; keyword?: string }) => {
+  getList: (params: {
+    page?: number; page_size?: number; category_id?: string; is_enabled?: number; keyword?: string;
+    sort_by?: "sort_weight" | "created_at" | "product_code" | "retail_price" | "cost_price";
+    sort_direction?: "asc" | "desc";
+  }) => {
     const qs = buildQuery(params)
     return request<PaginatedData<AdminProductDetail>>(`/admin/products?${qs}`)
   },
@@ -431,6 +435,11 @@ export const adminProductApi = {
     request<AdminProductDetail>(`/admin/products/${id}/status`, {
       method: "POST",
       body: JSON.stringify({ enabled }),
+    }),
+  updateSortWeight: (id: string, sortWeight: number) =>
+    request<null>(`/admin/products/${id}/sort-weight`, {
+      method: "PATCH",
+      body: JSON.stringify({ sort_weight: sortWeight }),
     }),
   delete: (id: string) =>
     request<null>(`/admin/products/${id}`, { method: "DELETE" }),
@@ -532,7 +541,7 @@ export interface AdminProductUpsertPayload {
   spec_enabled: boolean
   is_enabled: boolean
   initial_sales?: number
-  sort_order?: number
+  sort_weight?: number
   delivery_type: "AUTO" | "MANUAL"
   customer_input_fields?: { id?: string; label: string }[]
   stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
