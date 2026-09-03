@@ -651,7 +651,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
       <Tabs value={activeTab} onValueChange={(value) => {
           if (PRODUCT_EDITOR_TABS.includes(value as ProductEditorTab)) setActiveTab(value as ProductEditorTab)
         }}>
-        <div className="sticky top-0 z-20 -mx-1 border-b border-border-subtle bg-surface/95 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-surface/80">
+        <div className="-mx-1 border-b border-border-subtle px-1 py-2">
           <TabsList className="flex h-auto w-full max-w-full justify-start overflow-x-auto p-1" aria-label={t("admin.productEditorHint")}>
             {tabItems.map((tab) => (
               <TabsTrigger key={tab.value} value={tab.value} className="min-w-max gap-2 px-4 py-2">
@@ -662,7 +662,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
           </TabsList>
         </div>
 
-        <TabsContent value="basic" forceMount>
+        <TabsContent value="basic" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.productBasics")} description={t("admin.productBasicsHint")}>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="flex min-w-0 items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3.5 py-3 lg:col-span-2">
@@ -714,7 +714,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="specs" forceMount>
+        <TabsContent value="specs" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.productSpecs")} description={t("admin.specsHint")}>
               <div className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5">
                 <span className="text-sm font-medium">{t("admin.enableMultiSpec")}</span>
@@ -754,7 +754,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="pricing" forceMount>
+        <TabsContent value="pricing" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.productTabPricing")} description={t("admin.pricingHint")}>
               <div className="overflow-x-auto rounded-card border border-border-subtle bg-surface">
                 <table className="w-full min-w-[720px] text-sm">
@@ -837,7 +837,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="inventory" forceMount>
+        <TabsContent value="inventory" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.inventorySettings")} description={t("admin.inventorySettingsHint")}>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="flex flex-col gap-1.5 text-sm font-medium">
@@ -903,7 +903,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="details" forceMount>
+        <TabsContent value="details" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
               <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage} />
             </FormSection>
