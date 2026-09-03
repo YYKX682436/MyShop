@@ -6,11 +6,13 @@ import com.myshop.model.request.AdminPricingPreviewRequest;
 import com.myshop.model.request.AdminProductUpsertRequest;
 import com.myshop.model.request.AdminProductStatusRequest;
 import com.myshop.model.request.AdminProductSortWeightRequest;
+import com.myshop.model.request.AdminProductCategoryUpdateRequest;
+import com.myshop.model.request.AdminProductPricesUpdateRequest;
+import com.myshop.model.request.AdminProductTitleUpdateRequest;
 import com.myshop.service.AdminProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -54,6 +56,27 @@ public class AdminProductController {
     @PostMapping("/{id}/status")
     public ApiResponse<?> setStatus(@PathVariable UUID id, @RequestBody AdminProductStatusRequest request) {
         return ApiResponse.success(productService.setStatus(id, request));
+    }
+
+    @LogOperation(action = "product.update", targetType = "PRODUCT", targetId = "#id", detail = "'快捷修改商品名称'")
+    @PutMapping("/{id}/title")
+    public ApiResponse<?> updateTitle(@PathVariable UUID id,
+                                      @RequestBody AdminProductTitleUpdateRequest request) {
+        return ApiResponse.success(productService.updateTitle(id, request));
+    }
+
+    @LogOperation(action = "product.update", targetType = "PRODUCT", targetId = "#id", detail = "'快捷修改商品分类'")
+    @PutMapping("/{id}/category")
+    public ApiResponse<?> updateCategory(@PathVariable UUID id,
+                                         @RequestBody AdminProductCategoryUpdateRequest request) {
+        return ApiResponse.success(productService.updateCategory(id, request));
+    }
+
+    @LogOperation(action = "product.update", targetType = "PRODUCT", targetId = "#id", detail = "'快捷修改商品价格'")
+    @PutMapping("/{id}/prices")
+    public ApiResponse<?> updatePrices(@PathVariable UUID id,
+                                       @RequestBody AdminProductPricesUpdateRequest request) {
+        return ApiResponse.success(productService.updatePrices(id, request));
     }
 
     @LogOperation(action = "product.sort_weight", targetType = "PRODUCT", targetId = "#id", detail = "'修改商品排序权重'")

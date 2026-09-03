@@ -40,6 +40,7 @@ import type {
   AdministratorItem,
   AdministratorOperationLog,
 } from "@/types"
+import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
 
 // ============================================================
 // Config
@@ -435,6 +436,21 @@ export const adminProductApi = {
     request<AdminProductDetail>(`/admin/products/${id}/status`, {
       method: "POST",
       body: JSON.stringify({ enabled }),
+    }),
+  updateTitle: (id: string, data: { title: string }) =>
+    request<AdminProductDetail>(`/admin/products/${id}/title`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  updateCategory: (id: string, data: { category_id: string }) =>
+    request<AdminProductDetail>(`/admin/products/${id}/category`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  updatePrices: (id: string, data: AdminProductPricesUpdatePayload) =>
+    request<AdminProductDetail>(`/admin/products/${id}/prices`, {
+      method: "PUT",
+      body: JSON.stringify(data),
     }),
   updateSortWeight: (id: string, sortWeight: number) =>
     request<null>(`/admin/products/${id}/sort-weight`, {

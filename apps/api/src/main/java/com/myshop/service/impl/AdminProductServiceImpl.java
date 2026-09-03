@@ -15,7 +15,11 @@ import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
 import com.myshop.model.request.AdminProductOverrideRequest;
+import com.myshop.model.request.AdminProductCategoryUpdateRequest;
+import com.myshop.model.request.AdminProductPricesUpdateRequest;
+import com.myshop.model.request.AdminProductSpecPriceRequest;
 import com.myshop.model.request.AdminProductSpecRequest;
+import com.myshop.model.request.AdminProductTitleUpdateRequest;
 import com.myshop.model.request.AdminProductUpsertRequest;
 import com.myshop.model.request.AdminPricingPreviewOverrideRequest;
 import com.myshop.model.request.AdminPricingPreviewRequest;
@@ -146,6 +150,146 @@ public class AdminProductServiceImpl implements AdminProductService {
         product.setEnabled(request.enabled());
         Product saved = productRepository.saveAndFlush(product);
         return buildResponse(saved, true, null, null);
+    }
+
+    @Override
+    @Transactional
+    public AdminProductResponse updateTitle(UUID id, AdminProductTitleUpdateRequest request) {
+        if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "商品名称参数不能为空");
+        String title = ProductRules.normalizeProductTitle(request.title());
+        Product product = productRepository.findByIdForUpdate(id)
+                .filter(candidate -> candidate.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
+        if (!Objects.equals(product.getTitle(), title)) {
+            product.setTitle(title);
+            productRepository.saveAndFlush(product);
+        }
+        return buildResponse(product, true, null, null);
+    }
+
+    @Override
+    @Transactional
+    public AdminProductResponse updateCategory(UUID id, AdminProductCategoryUpdateRequest request) {
+        if (request == null || request.categoryId() == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "商品分类不能为空");
+        }
+        Product product = productRepository.findByIdForUpdate(id)
+                .filter(candidate -> candidate.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
+        categoryRepository.findById(request.categoryId())
+                .filter(category -> category.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "商品分类不存在或已删除"));
+        if (!Objects.equals(product.getCategoryId(), request.categoryId())) {
+            product.setCategoryId(request.categoryId());
+            productRepository.saveAndFlush(product);
+        }
+        return buildResponse(product, true, null, null);
+    }
+
+    @Override
+    @Transactional
+    public AdminProductResponse updatePrices(UUID id, AdminProductPricesUpdateRequest request) {
+        if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "商品价格参数不能为空");
+        Product product = productRepository.findByIdForUpdate(id)
+                .filter(candidate -> candidate.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
+        if (product.isSpecEnabled()) {
+            return updateSpecificationPrices(product, request);
+        }
+        if (request.specs() != null && !request.specs().isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "无规格商品不能提交规格价格");
+        }
+
+        BigDecimal costPrice = ProductRules.validateMoney(request.costPrice(), false, "成本价");
+        BigDecimal retailPrice = ProductRules.validateMoney(request.retailPrice(), true, "零售价");
+        validateExistingOverridePrices(product, Map.of(), retailPrice);
+
+        product.setCostPrice(costPrice);
+        product.setRetailPrice(retailPrice);
+        Product saved = productRepository.saveAndFlush(product);
+        return buildResponse(saved, true, null, null);
+    }
+
+    private AdminProductResponse updateSpecificationPrices(Product product,
+                                                            AdminProductPricesUpdateRequest request) {
+        if (request.costPrice() != null || request.retailPrice() != null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "规格商品必须逐项提交规格价格，不能修改根价格");
+        }
+        List<ProductSpec> existingSpecs = productSpecRepository
+                .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
+        List<AdminProductSpecPriceRequest> requestedSpecs = request.specs();
+        if (existingSpecs.isEmpty() || requestedSpecs == null || requestedSpecs.size() != existingSpecs.size()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "规格价格参数必须包含当前商品的全部规格");
+        }
+
+        Map<UUID, ProductSpec> existingById = existingSpecs.stream()
+                .collect(Collectors.toMap(ProductSpec::getId, spec -> spec));
+        Map<UUID, BigDecimal> nextCostBySpec = new LinkedHashMap<>();
+        Map<UUID, BigDecimal> nextRetailBySpec = new LinkedHashMap<>();
+        Set<UUID> requestedIds = new HashSet<>();
+        for (AdminProductSpecPriceRequest requested : requestedSpecs) {
+            if (requested == null || requested.specId() == null) {
+                throw new BusinessException(ErrorCode.SPEC_NOT_FOUND, "规格不存在或不属于当前商品");
+            }
+            ProductSpec spec = existingById.get(requested.specId());
+            if (spec == null) {
+                throw new BusinessException(ErrorCode.SPEC_NOT_FOUND, "规格不存在或不属于当前商品");
+            }
+            if (!requestedIds.add(spec.getId())) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "规格价格参数不能重复");
+            }
+            BigDecimal costPrice = ProductRules.validateMoney(requested.costPrice(), false, "规格成本价");
+            BigDecimal retailPrice = ProductRules.validateMoney(requested.retailPrice(), true, "规格零售价");
+            nextCostBySpec.put(spec.getId(), costPrice);
+            nextRetailBySpec.put(spec.getId(), retailPrice);
+        }
+        if (requestedIds.size() != existingById.size()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "规格价格参数必须包含当前商品的全部规格");
+        }
+
+        validateExistingOverridePrices(product, nextRetailBySpec, product.getRetailPrice());
+        BigDecimal derivedRetailPrice = existingSpecs.stream()
+                .filter(ProductSpec::isVisible)
+                .map(spec -> nextRetailBySpec.get(spec.getId()))
+                .filter(Objects::nonNull)
+                .min(Comparator.naturalOrder())
+                .orElse(product.getRetailPrice());
+
+        // Only the two price columns on each existing spec and the derived
+        // root retail price are changed. Names, visibility, order, inventory,
+        // overrides, and every other product field remain untouched.
+        for (ProductSpec spec : existingSpecs) {
+            spec.setCostPrice(nextCostBySpec.get(spec.getId()));
+            spec.setRetailPrice(nextRetailBySpec.get(spec.getId()));
+        }
+        productSpecRepository.saveAllAndFlush(existingSpecs);
+        product.setRetailPrice(derivedRetailPrice);
+        Product saved = productRepository.saveAndFlush(product);
+        return buildResponse(saved, true, null, null);
+    }
+
+    private void validateExistingOverridePrices(Product product,
+                                                Map<UUID, BigDecimal> retailBySpec,
+                                                BigDecimal rootRetailPrice) {
+        for (ProductLevelPriceOverride override : overrideRepository.findByProductId(product.getId())) {
+            UUID specId = override.getSpecId();
+            if (product.isSpecEnabled() == (specId == null)) {
+                throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT,
+                        "现有特殊价与商品规格模式不匹配");
+            }
+            BigDecimal retailPrice = specId == null ? rootRetailPrice : retailBySpec.get(specId);
+            if (retailPrice == null || override.getPrice() == null
+                    || override.getPrice().scale() > 2 || override.getPrice().signum() <= 0) {
+                throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT,
+                        "现有特殊价与商品价格覆盖目标不匹配");
+            }
+            if (override.getPrice().compareTo(retailPrice) > 0) {
+                String target = specId == null ? "商品" : "规格 " + specId;
+                throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT,
+                        "新的" + target + "零售价不能低于已有特殊价");
+            }
+        }
     }
 
     @Override
@@ -373,9 +517,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         BigDecimal costPrice = resolveCostPrice(product, request, specEnabled, creating);
         if (specEnabled) costPrice = null;
 
-        if (request.title() == null || request.title().trim().isBlank() || request.title().trim().length() > 255) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "商品名称不能为空且不能超过 255 个字符");
-        }
+        String title = ProductRules.normalizeProductTitle(request.title());
         if (request.categoryId() == null && (creating || product.getCategoryId() == null)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "商品分类不能为空");
         }
@@ -383,8 +525,8 @@ public class AdminProductServiceImpl implements AdminProductService {
         if (specEnabled) {
             validateVisibleSpecRequirement(specEnabled, enabled, preparedSpecs.stream().anyMatch(this::isVisibleSpec));
         }
-        validateMoney(retailPrice, true, "零售价");
-        if (!specEnabled) validateMoney(costPrice, false, "成本价");
+        retailPrice = ProductRules.validateMoney(retailPrice, true, "零售价");
+        if (!specEnabled) costPrice = ProductRules.validateMoney(costPrice, false, "成本价");
         List<CustomerInputField> fields = ProductRules.normalizeCustomerInputFields(
                 request.customerInputFields() != null ? request.customerInputFields()
                         : (!creating ? product.getCustomerInputFields() : List.of()));
@@ -403,7 +545,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         int sortWeight = request.sortWeight() == null ? (creating ? 0 : product.getSortWeight()) : request.sortWeight();
         UUID categoryId = request.categoryId() == null ? product.getCategoryId() : request.categoryId();
         List<String> warnings = new ArrayList<>();
-        return new PreparedAggregate(request.title().trim(), request.description(), request.detailMd(), request.coverUrl(),
+        return new PreparedAggregate(title, request.description(), request.detailMd(), request.coverUrl(),
                 specEnabled, retailPrice, costPrice, deliveryType, stockMode,
                 fields, categoryId, lowStockThreshold, initialSales, sortWeight, enabled,
                 request.manualStock(), preparedSpecs, warnings);
@@ -453,8 +595,8 @@ public class AdminProductServiceImpl implements AdminProductService {
                     : existing == null ? null : existing.getCostPrice();
             BigDecimal retail = request.retailPrice() != null ? request.retailPrice()
                     : existing == null ? null : existing.getRetailPrice();
-            validateMoney(cost, false, "规格成本价");
-            validateMoney(retail, true, "规格零售价");
+            cost = ProductRules.validateMoney(cost, false, "规格成本价");
+            retail = ProductRules.validateMoney(retail, true, "规格零售价");
             result.add(new PreparedSpec(request, id, existing, name, cost, retail));
         }
         if (creating && !specEnabled && !result.isEmpty()) {
@@ -497,14 +639,6 @@ public class AdminProductServiceImpl implements AdminProductService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "从规格商品切换为无规格时必须填写新的零售价");
         }
         return cost;
-    }
-
-    private void validateMoney(BigDecimal value, boolean positive, String label) {
-        if (value == null) throw new BusinessException(ErrorCode.BAD_REQUEST, label + "不能为空");
-        if (value.scale() > 2) throw new BusinessException(ErrorCode.BAD_REQUEST, label + "最多支持两位小数");
-        if (positive ? value.signum() <= 0 : value.signum() < 0) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, label + (positive ? "必须大于 0" : "不能小于 0"));
-        }
     }
 
     private void applyProduct(Product product, PreparedAggregate aggregate) {

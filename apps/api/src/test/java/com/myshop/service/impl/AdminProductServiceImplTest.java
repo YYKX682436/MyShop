@@ -9,7 +9,11 @@ import com.myshop.entity.ProductLevelPriceOverride;
 import com.myshop.entity.ProductSpec;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminProductSpecRequest;
+import com.myshop.model.request.AdminProductSpecPriceRequest;
 import com.myshop.model.request.AdminProductStatusRequest;
+import com.myshop.model.request.AdminProductCategoryUpdateRequest;
+import com.myshop.model.request.AdminProductPricesUpdateRequest;
+import com.myshop.model.request.AdminProductTitleUpdateRequest;
 import com.myshop.model.request.AdminProductUpsertRequest;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -293,6 +297,221 @@ class AdminProductServiceImplTest {
 
         assertFalse(product.isEnabled());
         verify(productSpecRepository, never()).existsByProductIdAndIsDeletedAndVisible(any(), eq(0), eq(true));
+    }
+
+    @Test
+    void quickTitleUpdateUsesTheSharedTitleRuleAndDoesNotTouchOtherFields() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, false, true);
+        product.setDescription("keep description");
+        product.setDetailMd("keep detail");
+        product.setCoverUrl("keep-cover");
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        stubResponseData(product, List.of());
+        when(productRepository.saveAndFlush(product)).thenReturn(product);
+
+        var response = service().updateTitle(productId,
+                new AdminProductTitleUpdateRequest("  Updated product  "));
+
+        assertEquals("Updated product", response.title());
+        assertEquals("Updated product", product.getTitle());
+        assertEquals("keep description", product.getDescription());
+        assertEquals("keep detail", product.getDetailMd());
+        assertEquals("keep-cover", product.getCoverUrl());
+        verify(productRepository).saveAndFlush(product);
+    }
+
+    @Test
+    void quickCategoryUpdateRejectsADeletedOrMissingCategory() {
+        UUID productId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        Product product = product(productId, false, true);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        when(categoryRepository.findById(categoryId)).thenReturn(Optional.empty());
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().updateCategory(productId,
+                        new AdminProductCategoryUpdateRequest(categoryId)));
+
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
+        assertEquals("商品分类不存在或已删除", exception.getMessage());
+        verify(productRepository, never()).saveAndFlush(any(Product.class));
+    }
+
+    @Test
+    void quickPriceUpdateChangesRootCostAndRetailForAProductWithoutSpecs() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, false, true);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        stubResponseData(product, List.of());
+        when(productRepository.saveAndFlush(product)).thenReturn(product);
+
+        var response = service().updatePrices(productId, new AdminProductPricesUpdateRequest(
+                new BigDecimal("20.00"), new BigDecimal("40.00"), List.of()));
+
+        assertEquals(new BigDecimal("20.00"), product.getCostPrice());
+        assertEquals(new BigDecimal("40.00"), product.getRetailPrice());
+        assertEquals(new BigDecimal("20.00"), response.costPrice());
+        assertEquals(new BigDecimal("40.00"), response.retailPrice());
+        verify(productSpecRepository, never()).saveAllAndFlush(any());
+    }
+
+    @Test
+    void quickPriceUpdateChangesEveryExistingSpecWithoutFlatteningToRootCost() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, true, true);
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        ProductSpec first = spec(firstId, productId, "20.00", "30.00", true);
+        ProductSpec second = spec(secondId, productId, "40.00", "50.00", true);
+        first.setName("One month");
+        first.setSortOrder(3);
+        second.setName("Six months");
+        second.setSortOrder(7);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        stubResponseData(product, List.of(first, second));
+        when(productRepository.saveAndFlush(product)).thenReturn(product);
+
+        var response = service().updatePrices(productId, new AdminProductPricesUpdateRequest(
+                null, null, List.of(
+                        new AdminProductSpecPriceRequest(firstId, new BigDecimal("12.00"), new BigDecimal("25.00")),
+                        new AdminProductSpecPriceRequest(secondId, new BigDecimal("35.00"), new BigDecimal("45.00")))));
+
+        assertEquals(new BigDecimal("12.00"), first.getCostPrice());
+        assertEquals(new BigDecimal("25.00"), first.getRetailPrice());
+        assertEquals(new BigDecimal("35.00"), second.getCostPrice());
+        assertEquals(new BigDecimal("45.00"), second.getRetailPrice());
+        assertEquals(new BigDecimal("25.00"), product.getRetailPrice());
+        assertEquals(new BigDecimal("25.00"), response.retailPrice());
+        assertEquals(null, product.getCostPrice());
+        verify(productSpecRepository).saveAllAndFlush(List.of(first, second));
+    }
+
+    @Test
+    void quickPriceUpdateRecomputesRootRetailFromTheLowestVisibleSpec() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, true, true);
+        ProductSpec visibleExpensive = spec(UUID.randomUUID(), productId, "80.00", "100.00", true);
+        ProductSpec visibleCheap = spec(UUID.randomUUID(), productId, "30.00", "60.00", true);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        stubResponseData(product, List.of(visibleExpensive, visibleCheap));
+        when(productRepository.saveAndFlush(product)).thenReturn(product);
+
+        service().updatePrices(productId, new AdminProductPricesUpdateRequest(
+                null, null, List.of(
+                        new AdminProductSpecPriceRequest(visibleExpensive.getId(), new BigDecimal("90.00"), new BigDecimal("120.00")),
+                        new AdminProductSpecPriceRequest(visibleCheap.getId(), new BigDecimal("10.00"), new BigDecimal("35.00")))));
+
+        assertEquals(new BigDecimal("35.00"), product.getRetailPrice());
+    }
+
+    @Test
+    void quickPriceUpdateRejectsASpecOwnedByAnotherProduct() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, true, true);
+        ProductSpec current = spec(UUID.randomUUID(), productId, "20.00", "30.00", true);
+        UUID foreignSpecId = UUID.randomUUID();
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        when(productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0))
+                .thenReturn(List.of(current));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().updatePrices(productId, new AdminProductPricesUpdateRequest(
+                        null, null, List.of(new AdminProductSpecPriceRequest(
+                                foreignSpecId, new BigDecimal("10.00"), new BigDecimal("20.00"))))));
+
+        assertEquals(ErrorCode.SPEC_NOT_FOUND, exception.getCode());
+        verify(productRepository, never()).saveAndFlush(any(Product.class));
+        verify(productSpecRepository, never()).saveAllAndFlush(any());
+        assertEquals(new BigDecimal("30.00"), current.getRetailPrice());
+    }
+
+    @Test
+    void quickPriceUpdateRejectsRetailBelowAnExistingOverrideAndLeavesPricesUntouched() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, false, true);
+        ProductLevelPriceOverride override = new ProductLevelPriceOverride();
+        override.setProductId(productId);
+        override.setPrice(new BigDecimal("90.00"));
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        when(overrideRepository.findByProductId(productId)).thenReturn(List.of(override));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().updatePrices(productId, new AdminProductPricesUpdateRequest(
+                        new BigDecimal("50.00"), new BigDecimal("80.00"), List.of())));
+
+        assertEquals(ErrorCode.PRICE_OVERRIDE_CONFLICT, exception.getCode());
+        assertEquals(new BigDecimal("100.00"), product.getRetailPrice());
+        assertEquals(new BigDecimal("80.00"), product.getCostPrice());
+        verify(productRepository, never()).saveAndFlush(any(Product.class));
+    }
+
+    @Test
+    void quickSpecPriceUpdateRejectsRetailBelowAnExistingSpecOverride() {
+        UUID productId = UUID.randomUUID();
+        Product product = product(productId, true, true);
+        ProductSpec spec = spec(UUID.randomUUID(), productId, "20.00", "30.00", true);
+        ProductLevelPriceOverride override = new ProductLevelPriceOverride();
+        override.setProductId(productId);
+        override.setSpecId(spec.getId());
+        override.setPrice(new BigDecimal("40.00"));
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        when(productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0))
+                .thenReturn(List.of(spec));
+        when(overrideRepository.findByProductId(productId)).thenReturn(List.of(override));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().updatePrices(productId, new AdminProductPricesUpdateRequest(
+                        null, null, List.of(new AdminProductSpecPriceRequest(
+                                spec.getId(), new BigDecimal("22.00"), new BigDecimal("35.00"))))));
+
+        assertEquals(ErrorCode.PRICE_OVERRIDE_CONFLICT, exception.getCode());
+        assertEquals(new BigDecimal("30.00"), spec.getRetailPrice());
+        verify(productRepository, never()).saveAndFlush(any(Product.class));
+        verify(productSpecRepository, never()).saveAllAndFlush(any());
+    }
+
+    @Test
+    void quickSpecPriceUpdatePreservesNonPriceFieldsAndExistingOverrides() {
+        UUID productId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        Product product = product(productId, true, false);
+        product.setTitle("Keep title");
+        product.setDescription("Keep description");
+        product.setDetailMd("Keep detail");
+        product.setCoverUrl("Keep cover");
+        product.setCategoryId(categoryId);
+        product.setSortWeight(17);
+        product.setLowStockThreshold(4);
+        product.setStockMode(StockMode.CARD_KEY);
+        ProductSpec spec = spec(UUID.randomUUID(), productId, "20.00", "30.00", false);
+        spec.setName("Keep spec name");
+        spec.setSortOrder(8);
+        ProductLevelPriceOverride override = new ProductLevelPriceOverride();
+        override.setProductId(productId);
+        override.setSpecId(spec.getId());
+        override.setUserLevelId(UUID.randomUUID());
+        override.setPrice(new BigDecimal("25.00"));
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        stubResponseData(product, List.of(spec));
+        when(overrideRepository.findByProductId(productId)).thenReturn(List.of(override));
+        when(productRepository.saveAndFlush(product)).thenReturn(product);
+
+        service().updatePrices(productId, new AdminProductPricesUpdateRequest(
+                null, null, List.of(new AdminProductSpecPriceRequest(
+                        spec.getId(), new BigDecimal("22.00"), new BigDecimal("28.00")))));
+
+        assertEquals("Keep title", product.getTitle());
+        assertEquals("Keep description", product.getDescription());
+        assertEquals("Keep detail", product.getDetailMd());
+        assertEquals("Keep cover", product.getCoverUrl());
+        assertEquals(categoryId, product.getCategoryId());
+        assertEquals(17, product.getSortWeight());
+        assertEquals(4, product.getLowStockThreshold());
+        assertEquals("Keep spec name", spec.getName());
+        assertFalse(spec.isVisible());
+        assertEquals(8, spec.getSortOrder());
+        assertEquals(new BigDecimal("25.00"), override.getPrice());
     }
 
     @Test

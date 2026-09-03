@@ -7,6 +7,8 @@ import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
 import com.myshop.model.CustomerInputValue;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -19,11 +21,30 @@ import java.util.UUID;
 /** Shared product configuration and customer-input validation rules. */
 public final class ProductRules {
 
+    public static final int MAX_PRODUCT_TITLE_LENGTH = 255;
     public static final int MAX_CUSTOMER_INPUT_FIELDS = 20;
     public static final int MAX_CUSTOMER_INPUT_LABEL_LENGTH = 50;
     public static final int MAX_CUSTOMER_INPUT_VALUE_LENGTH = 255;
 
     private ProductRules() {
+    }
+
+    /** Normalize and validate the product title used by both aggregate and quick updates. */
+    public static String normalizeProductTitle(String raw) {
+        if (raw == null || raw.trim().isBlank() || raw.trim().length() > MAX_PRODUCT_TITLE_LENGTH) {
+            throw bad("商品名称不能为空且不能超过 " + MAX_PRODUCT_TITLE_LENGTH + " 个字符");
+        }
+        return raw.trim();
+    }
+
+    /** Validate the shared product money rule and normalize it to the database scale. */
+    public static BigDecimal validateMoney(BigDecimal value, boolean positive, String label) {
+        if (value == null) throw bad(label + "不能为空");
+        if (value.scale() > 2) throw bad(label + "最多支持两位小数");
+        if (positive ? value.signum() <= 0 : value.signum() < 0) {
+            throw bad(label + (positive ? "必须大于 0" : "不能小于 0"));
+        }
+        return value.setScale(2, RoundingMode.UNNECESSARY);
     }
 
     /** Normalize an admin product definition and generate ids for new fields. */

@@ -1,30 +1,23 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import Image from "next/image"
-import { AlertCircle, Copy, Edit, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react"
+import { AlertCircle, Copy, Edit, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
 
-import { CardKeyImportDialog } from "@/components/admin/products/card-key-import-dialog"
-import {
-  AdminPage,
-  AdminPagination,
-  ConfirmAlert,
-  DataTableShell,
-  PageHeader,
-  PageToolbar,
-  StatusBadge,
-  TableEmptyState,
-  TableErrorState,
-  TableLoadingState,
-} from "@/components/admin/shared"
+import { AdminPage, AdminPagination, ConfirmAlert, DataTableShell, PageHeader, PageToolbar, TableEmptyState, TableErrorState, TableLoadingState } from "@/components/admin/shared"
+import { ProductCategoryQuickEdit } from "@/components/admin/products/product-category-quick-edit"
+import { ProductImagePreviewDialog } from "@/components/admin/products/product-image-preview-dialog"
+import { ProductPriceQuickEdit } from "@/components/admin/products/product-price-quick-edit"
+import { ProductStatusQuickEdit } from "@/components/admin/products/product-status-quick-edit"
+import { ProductStockQuickAction } from "@/components/admin/products/product-stock-quick-action"
+import { ProductTitleQuickEdit } from "@/components/admin/products/product-title-quick-edit"
+import { ProductWeightQuickEdit } from "@/components/admin/products/product-weight-quick-edit"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useLocale } from "@/lib/context"
-import { getAdminProductPriceRanges } from "@/lib/product-pricing"
-import { cn, formatYuan, stripInvisible } from "@/lib/utils"
+import { cn, stripInvisible } from "@/lib/utils"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
 
@@ -38,6 +31,8 @@ const PRODUCT_SORT_OPTIONS = [
   { value: "retail_asc", sortBy: "retail_price", sortDirection: "asc", labelKey: "admin.sortRetailPrice" },
   { value: "cost_asc", sortBy: "cost_price", sortDirection: "asc", labelKey: "admin.sortCostPrice" },
 ] as const
+
+type QuickEditField = "title" | "category" | "prices" | "sort_weight" | "status"
 
 export default function AdminProductsPage() {
   const { t } = useLocale()
@@ -55,10 +50,8 @@ export default function AdminProductsPage() {
   const [total, setTotal] = useState(0)
   const [deleteProduct, setDeleteProduct] = useState<AdminProductDetail | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [importProduct, setImportProduct] = useState<AdminProductDetail | null>(null)
-  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({})
-  const [savingWeights, setSavingWeights] = useState<Record<string, boolean>>({})
-  const savingWeightIds = useRef(new Set<string>())
+  const [savingFields, setSavingFields] = useState<Record<string, boolean>>({})
+  const savingFieldKeys = useRef(new Set<string>())
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -78,14 +71,15 @@ export default function AdminProductsPage() {
     setLoading(true)
     setError(false)
     try {
+      const selectedSort = PRODUCT_SORT_OPTIONS.find((option) => option.value === sortOption) || PRODUCT_SORT_OPTIONS[0]
       const data = await requestOrThrow(() => adminProductApi.getList({
         page,
         page_size: PAGE_SIZE,
         category_id: categoryFilter || undefined,
         is_enabled: statusFilter ? (statusFilter === "enabled" ? 1 : 0) : undefined,
         keyword: debouncedSearch || undefined,
-        sort_by: (PRODUCT_SORT_OPTIONS.find((option) => option.value === sortOption) || PRODUCT_SORT_OPTIONS[0]).sortBy,
-        sort_direction: (PRODUCT_SORT_OPTIONS.find((option) => option.value === sortOption) || PRODUCT_SORT_OPTIONS[0]).sortDirection,
+        sort_by: selectedSort.sortBy,
+        sort_direction: selectedSort.sortDirection,
       }))
       setProducts(data.list)
       setTotal(data.pagination.total)
@@ -101,16 +95,58 @@ export default function AdminProductsPage() {
   useEffect(() => { void loadCategories() }, [loadCategories])
   useEffect(() => { void loadProducts() }, [loadProducts])
 
-  const getCategoryName = (categoryId: string) => categories.find((category) => category.id === categoryId)?.name || "—"
-  const isUnlimited = (product: AdminProductDetail) => product.unlimited === true || product.stock_mode === "UNLIMITED"
-  const isCardKeyStock = (product: AdminProductDetail) => product.stock_mode !== "MANUAL" && product.stock_mode !== "UNLIMITED"
+  const getCategoryName = (product: AdminProductDetail) =>
+    categories.find((category) => category.id === product.category_id)?.name || product.category_name || t("admin.systemNoData")
+  const isUnlimited = (product: AdminProductDetail) => product.stock_mode === "UNLIMITED"
+  const isSaving = (product: AdminProductDetail, field: QuickEditField) => savingFields[`${product.id}:${field}`] === true
 
-  const formatPriceRange = (range: { min: number; max: number } | null) => {
-    if (range == null) return t("admin.systemNoData")
-    return range.min === range.max
-      ? formatYuan(range.min)
-      : `${formatYuan(range.min)} – ${formatYuan(range.max)}`
-  }
+  const replaceProduct = useCallback((updated: AdminProductDetail) => {
+    const normalizedSearch = debouncedSearch.toLocaleLowerCase()
+    const matchesSearch = !normalizedSearch
+      || updated.title.toLocaleLowerCase().includes(normalizedSearch)
+      || (/^\d+$/.test(debouncedSearch) && String(updated.product_no) === debouncedSearch)
+    const matchesFilters = (!categoryFilter || updated.category_id === categoryFilter)
+      && (!statusFilter || (statusFilter === "enabled" ? updated.is_enabled !== false : updated.is_enabled === false))
+      && matchesSearch
+    const wasVisible = products.some((product) => product.id === updated.id)
+    setProducts((current) => matchesFilters
+      ? current.map((product) => product.id === updated.id ? updated : product)
+      : current.filter((product) => product.id !== updated.id))
+    if (wasVisible && !matchesFilters) setTotal((current) => Math.max(0, current - 1))
+  }, [categoryFilter, debouncedSearch, products, statusFilter])
+
+  const patchProduct = useCallback((id: string, patch: Partial<AdminProductDetail>) => {
+    setProducts((current) => current.map((product) => product.id === id ? { ...product, ...patch } : product))
+  }, [])
+
+  const runQuickSave = useCallback(async (
+    product: AdminProductDetail,
+    field: QuickEditField,
+    action: () => Promise<AdminProductDetail | null | void>,
+    onSuccess?: () => void | Promise<void>,
+  ): Promise<boolean> => {
+    const key = `${product.id}:${field}`
+    if (savingFieldKeys.current.has(key)) return false
+    savingFieldKeys.current.add(key)
+    setSavingFields((current) => ({ ...current, [key]: true }))
+    try {
+      const result = await action()
+      if (result && typeof result === "object" && "id" in result) replaceProduct(result as AdminProductDetail)
+      await onSuccess?.()
+      toast.success(t("admin.quickEditSaved"))
+      return true
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+      return false
+    } finally {
+      savingFieldKeys.current.delete(key)
+      setSavingFields((current) => {
+        const next = { ...current }
+        delete next[key]
+        return next
+      })
+    }
+  }, [replaceProduct, t])
 
   const copyProductNo = (value: number) => {
     const cleanValue = stripInvisible(String(value))
@@ -127,58 +163,6 @@ export default function AdminProductsPage() {
     }
     if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(cleanValue).then(() => toast.success(t("order.copied")), fallback)
     else fallback()
-  }
-
-  const handleSortWeightSave = async (product: AdminProductDetail) => {
-    const draft = weightDrafts[product.id]
-    if (draft === undefined) return
-    const normalized = draft.trim()
-    const nextWeight = Number(normalized)
-    if (!/^-?\d+$/.test(normalized) || !Number.isSafeInteger(nextWeight)) {
-      setWeightDrafts((current) => ({ ...current, [product.id]: String(product.sort_weight ?? 0) }))
-      toast.error(t("admin.sortWeightInvalid"))
-      return
-    }
-    if (nextWeight === product.sort_weight) {
-      setWeightDrafts((current) => {
-        const next = { ...current }
-        delete next[product.id]
-        return next
-      })
-      return
-    }
-    if (savingWeightIds.current.has(product.id)) return
-    savingWeightIds.current.add(product.id)
-    setSavingWeights((current) => ({ ...current, [product.id]: true }))
-    try {
-      await requestOrThrow(() => adminProductApi.updateSortWeight(product.id, nextWeight))
-      await loadProducts()
-      setWeightDrafts((current) => {
-        const next = { ...current }
-        delete next[product.id]
-        return next
-      })
-    } catch (requestError: unknown) {
-      setWeightDrafts((current) => ({ ...current, [product.id]: String(product.sort_weight ?? 0) }))
-      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
-    } finally {
-      savingWeightIds.current.delete(product.id)
-      setSavingWeights((current) => {
-        const next = { ...current }
-        delete next[product.id]
-        return next
-      })
-    }
-  }
-
-  const handleToggleStatus = async (product: AdminProductDetail) => {
-    try {
-      await requestOrThrow(() => adminProductApi.setStatus(product.id, product.is_enabled === false))
-      toast.success(product.is_enabled === false ? t("admin.productPublished") : t("admin.productUnpublished"))
-      await loadProducts()
-    } catch (requestError: unknown) {
-      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
-    }
   }
 
   const handleDelete = async () => {
@@ -262,32 +246,32 @@ export default function AdminProductsPage() {
               <TableHead>{t("admin.price")}</TableHead>
               <TableHead>{t("admin.sortWeight")}</TableHead>
               <TableHead>{t("admin.stockLabel")}</TableHead>
-              <TableHead>{t("admin.sold")}</TableHead>
               <TableHead>{t("admin.statusLabel")}</TableHead>
               <TableHead className="text-right">{t("admin.actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading && <TableLoadingState colSpan={8} />}
-            {!loading && error && <TableErrorState colSpan={8} onRetry={() => void loadProducts()} />}
-            {!loading && !error && products.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noProductData")}</TableEmptyState>}
+            {loading && <TableLoadingState colSpan={7} />}
+            {!loading && error && <TableErrorState colSpan={7} onRetry={() => void loadProducts()} />}
+            {!loading && !error && products.length === 0 && <TableEmptyState colSpan={7}>{t("admin.noProductData")}</TableEmptyState>}
             {!loading && !error && products.map((product) => {
               const unlimited = isUnlimited(product)
               const lowStock = !unlimited && product.stock_available != null && product.stock_available > 0 && product.stock_available <= (product.low_stock_threshold ?? 10)
-              const cardKeyStock = isCardKeyStock(product)
-              const priceRanges = getAdminProductPriceRanges(product)
+              const stockClass = cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-600" : "text-foreground")
               return (
                 <TableRow key={product.id}>
                   <TableCell className="min-w-[16rem]">
                     <div className="flex items-center gap-3">
-                      <Link href={`/product/${product.id}`} className="relative h-10 w-10 shrink-0 overflow-hidden rounded-control border border-border-subtle bg-surface-muted" aria-label={product.title}>
-                        {product.cover_url ? <Image src={product.cover_url} alt={product.title} fill unoptimized sizes="40px" className="object-cover" /> : <span className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{t("admin.systemNoData")}</span>}
-                      </Link>
+                      <ProductImagePreviewDialog product={product} />
                       <div className="min-w-0">
-                        <Link href={`/product/${product.id}`} className="block truncate font-medium text-foreground hover:text-primary hover:underline">{product.title}</Link>
+                        <ProductTitleQuickEdit
+                          product={product}
+                          saving={isSaving(product, "title")}
+                          onSave={(title) => runQuickSave(product, "title", () => requestOrThrow(() => adminProductApi.updateTitle(product.id, { title })))}
+                        />
                         <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                           <span className="font-mono">{product.product_no}</span>
-                          <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground" title={t("admin.copyProductNo")} aria-label={`${t("admin.copyProductNo")}: ${product.product_no}`} onClick={() => copyProductNo(product.product_no)}>
+                          <button type="button" className="rounded p-0.5 hover:bg-surface-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35" title={t("admin.copyProductNo")} aria-label={`${t("admin.copyProductNo")}: ${product.product_no}`} onClick={() => copyProductNo(product.product_no)}>
                             <Copy className="h-3 w-3" aria-hidden="true" />
                           </button>
                         </div>
@@ -295,51 +279,45 @@ export default function AdminProductsPage() {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell><StatusBadge label={getCategoryName(product.category_id)} /></TableCell>
+                  <TableCell>
+                    <ProductCategoryQuickEdit
+                      product={product}
+                      categories={categories}
+                      categoryName={getCategoryName(product)}
+                      saving={isSaving(product, "category")}
+                      onSave={(categoryId) => runQuickSave(product, "category", () => requestOrThrow(() => adminProductApi.updateCategory(product.id, { category_id: categoryId })))}
+                    />
+                  </TableCell>
                   <TableCell className="whitespace-nowrap">
-                    <div className="space-y-0.5 text-sm">
-                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.costPriceShort")}</span><span className="font-medium">{formatPriceRange(priceRanges.cost)}</span></div>
-                      <div><span className="mr-1 text-xs text-muted-foreground">{t("admin.retailPriceShort")}</span><span className="font-medium">{formatPriceRange(priceRanges.retail)}</span></div>
-                    </div>
+                    <ProductPriceQuickEdit
+                      product={product}
+                      saving={isSaving(product, "prices")}
+                      onSave={(payload) => runQuickSave(product, "prices", () => requestOrThrow(() => adminProductApi.updatePrices(product.id, payload)))}
+                    />
                   </TableCell>
                   <TableCell className="px-2">
-                    <Input
-                      className="h-9 w-20"
-                      type="number"
-                      step="1"
-                      value={weightDrafts[product.id] ?? String(product.sort_weight ?? 0)}
-                      disabled={savingWeights[product.id] === true}
-                      aria-label={`${t("admin.sortWeightLabel")}: ${product.title}`}
-                      onChange={(event) => setWeightDrafts((current) => ({ ...current, [product.id]: event.target.value }))}
-                      onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur() } }}
-                      onBlur={() => void handleSortWeightSave(product)}
+                    <ProductWeightQuickEdit
+                      product={product}
+                      saving={isSaving(product, "sort_weight")}
+                      onSave={(weight) => runQuickSave(product, "sort_weight", () => requestOrThrow(() => adminProductApi.updateSortWeight(product.id, weight)), () => patchProduct(product.id, { sort_weight: weight }))}
                     />
                   </TableCell>
                   <TableCell>
-                    <span className={cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-600" : "text-foreground")}>
+                    <ProductStockQuickAction product={product} className={stockClass} onImported={loadProducts}>
                       {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}
-                    </span>
+                    </ProductStockQuickAction>
                   </TableCell>
-                  <TableCell>{product.sales_count ?? 0}</TableCell>
-                  <TableCell><StatusBadge label={product.is_enabled !== false ? t("admin.active") : t("admin.inactive")} tone={product.is_enabled !== false ? "success" : "neutral"} /></TableCell>
                   <TableCell>
-                    <div className="flex justify-end gap-1">
+                    <ProductStatusQuickEdit
+                      product={product}
+                      saving={isSaving(product, "status")}
+                      onSave={(enabled) => runQuickSave(product, "status", () => requestOrThrow(() => adminProductApi.setStatus(product.id, enabled)))}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-0.5">
                       <Button asChild variant="ghost" size="icon" title={t("admin.editProduct")} aria-label={t("admin.editProduct")}>
                         <Link href={`/admin/products/${product.id}/edit`}><Edit className="h-4 w-4" aria-hidden="true" /></Link>
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        title={cardKeyStock ? t("admin.importKeys") : t("admin.stockModeHint")}
-                        aria-label={cardKeyStock ? t("admin.importKeys") : t("admin.stockModeHint")}
-                        disabled={!cardKeyStock}
-                        onClick={() => setImportProduct(product)}
-                      >
-                        <KeyRound className="h-4 w-4" aria-hidden="true" />
-                      </Button>
-                      <Button type="button" variant="ghost" size="icon" title={product.is_enabled !== false ? t("admin.inactive") : t("admin.active")} aria-label={product.is_enabled !== false ? t("admin.inactive") : t("admin.active")} onClick={() => void handleToggleStatus(product)}>
-                        {product.is_enabled !== false ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
                       </Button>
                       <Button type="button" variant="ghost" size="icon" title={t("admin.delete")} aria-label={t("admin.delete")} onClick={() => setDeleteProduct(product)}>
                         <Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" />
@@ -363,13 +341,6 @@ export default function AdminProductsPage() {
         destructive
         loading={deleting}
         onConfirm={() => void handleDelete()}
-      />
-
-      <CardKeyImportDialog
-        product={importProduct}
-        open={importProduct !== null}
-        onOpenChange={(open) => { if (!open) setImportProduct(null) }}
-        onImported={loadProducts}
       />
     </AdminPage>
   )

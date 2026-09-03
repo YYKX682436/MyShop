@@ -24,6 +24,7 @@ import {
   withCurrentSpecOrder,
   type ProductEditorTab,
 } from "@/lib/product-editor"
+import { isValidIntegerDraft, isValidMoneyDraft, validateProductTitleDraft } from "@/lib/product-quick-edit"
 import { cn, formatYuan } from "@/lib/utils"
 import { adminProductApi, adminUserLevelApi, requestOrThrow, type AdminProductUpsertPayload } from "@/services/api"
 import type {
@@ -179,18 +180,6 @@ function getInitialPreview(product: AdminProductDetail | null): AdminPricingPrev
     })),
     warnings: product.warnings || [],
   }
-}
-
-function isMoney(value: string, positive: boolean) {
-  if (!value.trim() || !/^\d+(\.\d{1,2})?$/.test(value.trim())) return false
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && (positive ? parsed > 0 : parsed >= 0)
-}
-
-function isInteger(value: string, minimum = Number.NEGATIVE_INFINITY) {
-  if (!/^-?\d+$/.test(value.trim())) return false
-  const parsed = Number(value)
-  return Number.isSafeInteger(parsed) && parsed >= minimum
 }
 
 function formatMargin(costValue: string, retailValue: string) {
@@ -457,21 +446,22 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   }
 
   const validate = (): ValidationFailure | null => {
-    if (!draft.title.trim()) return { tab: "basic", field: "title", message: t("admin.productNameRequired") }
-    if (draft.title.trim().length > 255) return { tab: "basic", field: "title", message: t("admin.productNameLength") }
+    const titleError = validateProductTitleDraft(draft.title)
+    if (titleError === "required") return { tab: "basic", field: "title", message: t("admin.productNameRequired") }
+    if (titleError === "length") return { tab: "basic", field: "title", message: t("admin.productNameLength") }
     if (!draft.category_id) return { tab: "basic", field: "category_id", message: t("admin.categoryRequired") }
-    if (!isInteger(draft.initial_sales, 0)) return { tab: "basic", field: "initial_sales", message: t("admin.initialSalesInvalid") }
-    if (!isInteger(draft.sort_weight)) return { tab: "basic", field: "sort_weight", message: t("admin.sortWeightInvalid") }
+    if (!isValidIntegerDraft(draft.initial_sales, 0)) return { tab: "basic", field: "initial_sales", message: t("admin.initialSalesInvalid") }
+    if (!isValidIntegerDraft(draft.sort_weight)) return { tab: "basic", field: "sort_weight", message: t("admin.sortWeightInvalid") }
 
     const customerError = validateCustomerFields()
     if (customerError) return customerError
-    if (!isInteger(draft.low_stock_threshold, 0)) {
+    if (!isValidIntegerDraft(draft.low_stock_threshold, 0)) {
       return { tab: "inventory", field: "low_stock_threshold", message: t("admin.lowStockThresholdInvalid") }
     }
 
     if (!draft.spec_enabled) {
-      if (!isMoney(draft.cost_price, false)) return { tab: "pricing", field: "cost_price", message: t("admin.costPriceRequired") }
-      if (!isMoney(draft.retail_price, true)) return { tab: "pricing", field: "retail_price", message: t("admin.retailPriceRequired") }
+      if (!isValidMoneyDraft(draft.cost_price, false)) return { tab: "pricing", field: "cost_price", message: t("admin.costPriceRequired") }
+      if (!isValidMoneyDraft(draft.retail_price, true)) return { tab: "pricing", field: "retail_price", message: t("admin.retailPriceRequired") }
     }
 
     if (draft.spec_enabled && draft.is_enabled && (draft.specs.length === 0 || !draft.specs.some((spec) => spec.visible))) {
@@ -488,21 +478,21 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
           message: t("admin.specNameDuplicate").replace("{name}", spec.name.trim()),
         }
       }
-      if (!isMoney(spec.cost_price, false)) {
+      if (!isValidMoneyDraft(spec.cost_price, false)) {
         return {
           tab: "pricing",
           field: `spec-cost-${spec.id}`,
           message: t("admin.specCostInvalid").replace("{name}", spec.name || t("admin.unnamed")),
         }
       }
-      if (!isMoney(spec.retail_price, true)) {
+      if (!isValidMoneyDraft(spec.retail_price, true)) {
         return {
           tab: "pricing",
           field: `spec-retail-${spec.id}`,
           message: t("admin.specRetailInvalid").replace("{name}", spec.name || t("admin.unnamed")),
         }
       }
-      if (draft.stock_mode === "MANUAL" && !isInteger(spec.manual_stock, 0)) {
+      if (draft.stock_mode === "MANUAL" && !isValidIntegerDraft(spec.manual_stock, 0)) {
         return {
           tab: "inventory",
           field: `spec-stock-${spec.id}`,
@@ -511,14 +501,14 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
       }
     }
 
-    if (draft.stock_mode === "MANUAL" && !draft.spec_enabled && !isInteger(draft.manual_stock, 0)) {
+    if (draft.stock_mode === "MANUAL" && !draft.spec_enabled && !isValidIntegerDraft(draft.manual_stock, 0)) {
       return { tab: "inventory", field: "manual_stock", message: t("admin.manualStockInvalid") }
     }
 
     const specIds = new Set(draft.specs.map((spec) => spec.id))
     const keys = new Set<string>()
     for (const override of draft.overrides) {
-      if (!override.user_level_id || !isMoney(override.price, true)) {
+      if (!override.user_level_id || !isValidMoneyDraft(override.price, true)) {
         return { tab: "pricing", field: `override-${override.user_level_id}-${override.spec_id || "product"}`, message: t("admin.overridePriceInvalid") }
       }
       if (draft.spec_enabled && (!override.spec_id || !specIds.has(override.spec_id))) {
