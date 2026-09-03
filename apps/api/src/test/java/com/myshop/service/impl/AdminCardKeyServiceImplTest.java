@@ -63,6 +63,9 @@ class AdminCardKeyServiceImplTest {
         product.setSpecEnabled(false);
         product.setIsDeleted(0);
         when(productRepository.findById(productId)).thenReturn(Optional.of(product));
+    }
+
+    private void stubBatchSave() {
         when(batchRepository.save(any(CardImportBatch.class))).thenAnswer(invocation -> {
             CardImportBatch batch = invocation.getArgument(0);
             if (batch.getId() == null) batch.setId(UUID.randomUUID());
@@ -93,6 +96,7 @@ class AdminCardKeyServiceImplTest {
         spec.setProductId(productId);
         spec.setIsDeleted(0);
         when(productSpecRepository.findById(specId)).thenReturn(Optional.of(spec));
+        stubBatchSave();
 
         service.importCardKeys(
                 Map.of("product_id", productId.toString(),
@@ -142,6 +146,7 @@ class AdminCardKeyServiceImplTest {
     @Test
     void specDisabledWithoutSpecIdImportsNormally() {
         product.setSpecEnabled(false);
+        stubBatchSave();
 
         Map<String, Object> result = service.importCardKeys(
                 Map.of("product_id", productId.toString(),
@@ -171,6 +176,7 @@ class AdminCardKeyServiceImplTest {
 
     @Test
     void singleContentColumnCreatesOnePartKeys() {
+        stubBatchSave();
         Map<String, Object> result = service.importCardKeys(
                 Map.of("product_id", productId.toString(),
                         "content_columns", List.of(" A \n B ")), UUID.randomUUID());
@@ -187,6 +193,7 @@ class AdminCardKeyServiceImplTest {
 
     @Test
     void currentBatchDuplicatesAreAlwaysFilteredEvenWhenHistoryCheckIsOff() {
+        stubBatchSave();
         Map<String, Object> result = service.importCardKeys(
                 Map.of("product_id", productId.toString(),
                         "content_columns", List.of("A\nA"),
@@ -201,6 +208,7 @@ class AdminCardKeyServiceImplTest {
 
     @Test
     void duplicateCheckOffStillAllowsAHistoricalDuplicate() {
+        stubBatchSave();
         Map<String, Object> result = service.importCardKeys(
                 Map.of("product_id", productId.toString(),
                         "content_columns", List.of("A"),
@@ -213,6 +221,7 @@ class AdminCardKeyServiceImplTest {
 
     @Test
     void historicalDuplicateUsesOneBatchFingerprintQueryAndFullTuple() {
+        stubBatchSave();
         String fingerprint = CardContentParser.fingerprint(List.of("1", "a"));
         when(cardKeyRepository.findExistingFingerprints(productId, null,
                 List.of(fingerprint, CardContentParser.fingerprint(List.of("2", "b")))))
