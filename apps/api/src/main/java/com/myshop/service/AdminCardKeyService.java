@@ -1,6 +1,8 @@
 package com.myshop.service;
 
 import com.myshop.common.PageResult;
+import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
+import com.myshop.model.response.AdminCardKeyPickupResponse;
 
 import java.util.List;
 import java.util.Map;
@@ -21,4 +23,8 @@ public interface AdminCardKeyService {
     List<?> getCardKeysByOrder(UUID orderId);
 
     PageResult<?> listCardKeys(UUID productId, UUID specId, int page, int pageSize);
+
+    AdminCardKeyPickupResponse batchPickup(AdminCardKeyBatchPickupRequest request, UUID operatorId);
+
+    AdminCardKeyPickupResponse pickupCardKey(UUID cardKeyId, UUID operatorId);
 }

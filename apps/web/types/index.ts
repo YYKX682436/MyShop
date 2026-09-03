@@ -532,6 +532,17 @@ export interface CardKeyListItem {
   sold_at: string | null
 }
 
+export interface AdminCardKeyPickupCard {
+  id: string
+  content_parts: string[]
+}
+
+export interface AdminCardKeyPickupResult {
+  order_id: string
+  count: number
+  cards: AdminCardKeyPickupCard[]
+}
+
 export interface CardImportBatch {
   id: string
   product_id: string

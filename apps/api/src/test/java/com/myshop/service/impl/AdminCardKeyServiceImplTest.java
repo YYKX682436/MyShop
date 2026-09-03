@@ -2,15 +2,21 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.CardImportBatch;
 import com.myshop.entity.CardKey;
+import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.exception.BusinessException;
+import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
 import com.myshop.repository.CardImportBatchRepository;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
+import com.myshop.repository.OrderRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.service.ManualStockService;
@@ -22,6 +28,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,6 +40,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,6 +53,7 @@ class AdminCardKeyServiceImplTest {
     @Mock private CardImportBatchRepository batchRepository;
     @Mock private ProductRepository productRepository;
     @Mock private ProductSpecRepository productSpecRepository;
+    @Mock private OrderRepository orderRepository;
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private ManualStockService manualStockService;
 
@@ -54,15 +64,19 @@ class AdminCardKeyServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new AdminCardKeyServiceImpl(cardKeyRepository, batchRepository, productRepository,
-                productSpecRepository, orderItemRepository, manualStockService);
+                productSpecRepository, orderRepository, orderItemRepository, manualStockService);
         productId = UUID.randomUUID();
         product = new Product();
         product.setId(productId);
         product.setDeliveryType("AUTO");
         product.setStockMode(StockMode.CARD_KEY);
+        product.setProductNo(1L);
+        product.setTitle("测试商品");
+        product.setRetailPrice(new java.math.BigDecimal("12.00"));
+        product.setCostPrice(new java.math.BigDecimal("5.00"));
         product.setSpecEnabled(false);
         product.setIsDeleted(0);
-        when(productRepository.findById(productId)).thenReturn(Optional.of(product));
+        lenient().when(productRepository.findById(productId)).thenReturn(Optional.of(product));
     }
 
     private void stubBatchSave() {
@@ -71,6 +85,20 @@ class AdminCardKeyServiceImplTest {
             if (batch.getId() == null) batch.setId(UUID.randomUUID());
             return batch;
         });
+    }
+
+    private void stubPickupSaves(UUID orderId, UUID orderItemId) {
+        when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            order.setId(orderId);
+            return order;
+        });
+        when(orderItemRepository.saveAndFlush(any(OrderItem.class))).thenAnswer(invocation -> {
+            OrderItem item = invocation.getArgument(0);
+            item.setId(orderItemId);
+            return item;
+        });
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
     }
 
     @Test
@@ -237,5 +265,120 @@ class AdminCardKeyServiceImplTest {
         assertNotNull(result.get("fail_detail"));
         verify(cardKeyRepository).findExistingFingerprints(productId, null,
                 List.of(fingerprint, CardContentParser.fingerprint(List.of("2", "b"))));
+    }
+
+    @Test
+    void singleCardPickupReturnsOneCardKeyForOneMultiPartCard() {
+        UUID orderId = UUID.randomUUID();
+        UUID orderItemId = UUID.randomUUID();
+        UUID cardId = UUID.randomUUID();
+        CardKey key = card(cardId, List.of("账号", "密码"), CardKeyStatus.AVAILABLE);
+        stubPickupSaves(orderId, orderItemId);
+        when(cardKeyRepository.findById(cardId)).thenReturn(Optional.of(key));
+        when(cardKeyRepository.findByIdForUpdate(cardId)).thenReturn(Optional.of(key));
+
+        var result = service.pickupCardKey(cardId, UUID.randomUUID());
+
+        assertEquals(orderId, result.orderId());
+        assertEquals(1, result.count());
+        assertEquals(1, result.cards().size());
+        assertEquals(List.of("账号", "密码"), result.cards().get(0).contentParts());
+        assertEquals(CardKeyStatus.SOLD, key.getStatus());
+        assertEquals(orderId, key.getOrderId());
+        assertEquals(orderItemId, key.getOrderItemId());
+        verify(cardKeyRepository).findByIdForUpdate(cardId);
+        verify(cardKeyRepository, never()).findAndLockAvailable(any(), any(), anyInt());
+    }
+
+    @Test
+    void batchPickupCountsCardKeysInsteadOfContentParts() {
+        UUID orderId = UUID.randomUUID();
+        UUID orderItemId = UUID.randomUUID();
+        CardKey key = card(UUID.randomUUID(), List.of("账号", "密码", "二次验证"), CardKeyStatus.AVAILABLE);
+        stubPickupSaves(orderId, orderItemId);
+        when(cardKeyRepository.findAndLockAvailable(productId, null, 1)).thenReturn(List.of(key));
+
+        var result = service.batchPickup(new AdminCardKeyBatchPickupRequest(productId, null, 1), UUID.randomUUID());
+
+        assertEquals(1, result.count());
+        assertEquals(1, result.cards().size());
+        assertEquals(orderId, key.getOrderId());
+        ArgumentCaptor<OrderItem> itemCaptor = ArgumentCaptor.forClass(OrderItem.class);
+        verify(orderItemRepository).saveAndFlush(itemCaptor.capture());
+        assertEquals(1, itemCaptor.getValue().getQuantity());
+        assertEquals(BigDecimal.ZERO.setScale(2), itemCaptor.getValue().getUnitPrice());
+        assertEquals(BigDecimal.ZERO.setScale(2), itemCaptor.getValue().getSubtotal());
+    }
+
+    @Test
+    void batchPickupReturnsExactlyNCardKeysAndBindsOneOrderItem() {
+        UUID orderId = UUID.randomUUID();
+        UUID orderItemId = UUID.randomUUID();
+        CardKey first = card(UUID.randomUUID(), List.of("A1", "B1"), CardKeyStatus.AVAILABLE);
+        CardKey second = card(UUID.randomUUID(), List.of("A2", "B2"), CardKeyStatus.AVAILABLE);
+        stubPickupSaves(orderId, orderItemId);
+        when(cardKeyRepository.findAndLockAvailable(productId, null, 2)).thenReturn(List.of(first, second));
+
+        var result = service.batchPickup(new AdminCardKeyBatchPickupRequest(productId, null, 2), UUID.randomUUID());
+
+        assertEquals(2, result.count());
+        assertEquals(2, result.cards().size());
+        assertEquals(List.of(first.getId(), second.getId()),
+                result.cards().stream().map(card -> card.id()).toList());
+        assertEquals(CardKeyStatus.SOLD, first.getStatus());
+        assertEquals(CardKeyStatus.SOLD, second.getStatus());
+        assertEquals(orderId, first.getOrderId());
+        assertEquals(orderId, second.getOrderId());
+        assertEquals(orderItemId, first.getOrderItemId());
+        assertEquals(orderItemId, second.getOrderItemId());
+        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository).saveAndFlush(orderCaptor.capture());
+        assertEquals(OrderType.ADMIN_PICKUP, orderCaptor.getValue().getOrderType());
+        assertEquals(OrderStatus.DELIVERED, orderCaptor.getValue().getStatus());
+        assertEquals(BigDecimal.ZERO.setScale(2), orderCaptor.getValue().getTotalAmount());
+        assertEquals(BigDecimal.ZERO.setScale(2), orderCaptor.getValue().getActualAmount());
+        assertNotNull(orderCaptor.getValue().getDeliveredAt());
+    }
+
+    @Test
+    void batchPickupShortageDoesNotCreateOrderOrMarkPartOfTheBatch() {
+        CardKey onlyAvailable = card(UUID.randomUUID(), List.of("only"), CardKeyStatus.AVAILABLE);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        when(cardKeyRepository.findAndLockAvailable(productId, null, 2)).thenReturn(List.of(onlyAvailable));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.batchPickup(new AdminCardKeyBatchPickupRequest(productId, null, 2), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.INSUFFICIENT_STOCK, exception.getCode());
+        assertEquals(CardKeyStatus.AVAILABLE, onlyAvailable.getStatus());
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
+        verify(orderItemRepository, never()).saveAndFlush(any(OrderItem.class));
+        verify(cardKeyRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void soldOrInvalidCardCannotBePickedUpBySingleCardId() {
+        UUID cardId = UUID.randomUUID();
+        CardKey key = card(cardId, List.of("secret"), CardKeyStatus.SOLD);
+        when(cardKeyRepository.findById(cardId)).thenReturn(Optional.of(key));
+        when(cardKeyRepository.findByIdForUpdate(cardId)).thenReturn(Optional.of(key));
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+
+        assertThrows(BusinessException.class, () -> service.pickupCardKey(cardId, UUID.randomUUID()));
+
+        key.setStatus(CardKeyStatus.INVALID);
+        assertThrows(BusinessException.class, () -> service.pickupCardKey(cardId, UUID.randomUUID()));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
+        verify(cardKeyRepository, never()).saveAll(anyList());
+    }
+
+    private CardKey card(UUID id, List<String> parts, CardKeyStatus status) {
+        CardKey key = new CardKey();
+        key.setId(id);
+        key.setProductId(productId);
+        key.setContentParts(parts);
+        key.setStatus(status);
+        key.setContentFingerprint(CardContentParser.fingerprint(parts));
+        return key;
     }
 }

@@ -8,13 +8,14 @@ interface CardContentPartsProps {
   parts: string[]
   onCopy: (value: string) => void
   className?: string
+  expandedByDefault?: boolean
 }
 
 /** Renders one CardKey's ordered parts without assigning card-number semantics. */
-export function CardContentParts({ parts, onCopy, className = "" }: CardContentPartsProps) {
+export function CardContentParts({ parts, onCopy, className = "", expandedByDefault = false }: CardContentPartsProps) {
   const { t } = useLocale()
   const resolvedParts = parts
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(expandedByDefault)
   const visibleParts = expanded ? resolvedParts : resolvedParts.slice(0, 2)
   const remainingCount = Math.max(0, resolvedParts.length - 2)
 

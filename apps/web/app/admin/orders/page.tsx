@@ -133,7 +133,6 @@ export default function AdminOrdersPage() {
             <option value="">{t("admin.allPayment")}</option>
             <option value="alipay">{t("payment.alipay")}</option>
             <option value="wechat">{t("payment.wechat")}</option>
-            <option value="ADMIN_PICKUP">{t("payment.adminPickup")}</option>
           </select>
         </div>
       </PageToolbar>

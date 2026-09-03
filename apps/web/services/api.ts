@@ -21,6 +21,7 @@ import type {
   SystemStatus,
   CardKeyStockSummary,
   CardKeyListItem,
+  AdminCardKeyPickupResult,
   CardImportBatch,
   OrderCardKey,
   AdminUserItem,
@@ -516,6 +517,10 @@ export const adminCardKeyApi = {
     const qs = buildQuery(params)
     return request<{ invalidated_count: number }>(`/admin/card-keys/batch-invalidate?${qs}`, { method: "POST" })
   },
+  batchPickup: (data: { product_id: string; spec_id: string | null; quantity: number }) =>
+    request<AdminCardKeyPickupResult>("/admin/card-keys/batch-pickup", { method: "POST", body: JSON.stringify(data) }),
+  pickup: (id: string) =>
+    request<AdminCardKeyPickupResult>(`/admin/card-keys/${id}/pickup`, { method: "POST" }),
   getByOrder: (orderId: string) =>
     request<OrderCardKey[]>(`/admin/card-keys/by-order/${orderId}`),
 }
@@ -798,6 +803,8 @@ const ERROR_CODE_I18N: Record<number, string> = {
   40007: "error.priceChanged",
   // Payment
   50001: "error.channelUnavailable",
+  // Admin card-key pickup conflicts are safe to translate in both locales.
+  70011: "error.cardKeyUnavailable",
 }
 
 /**

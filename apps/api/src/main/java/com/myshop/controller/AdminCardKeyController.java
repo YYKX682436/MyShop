@@ -3,7 +3,10 @@ package com.myshop.controller;
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
 import com.myshop.context.RequestContext;
+import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
+import com.myshop.model.response.AdminCardKeyPickupResponse;
 import com.myshop.service.AdminCardKeyService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -61,6 +64,27 @@ public class AdminCardKeyController {
             @RequestParam(value = "spec_id", required = false) UUID specId) {
         int count = adminCardKeyService.batchInvalidateCardKeys(productId, specId);
         return ApiResponse.success(Map.of("invalidated_count", count));
+    }
+
+    @LogOperation(
+            action = "cardkey.batch_pickup",
+            targetType = "CARD_KEY",
+            targetId = "#request.productId()",
+            detail = "'批量提卡，规格=' + #request.specId() + '，数量=' + #request.quantity()")
+    @PostMapping("/batch-pickup")
+    public ApiResponse<AdminCardKeyPickupResponse> batchPickup(
+            @Valid @RequestBody AdminCardKeyBatchPickupRequest request) {
+        return ApiResponse.success(adminCardKeyService.batchPickup(request, RequestContext.getUserId()));
+    }
+
+    @LogOperation(
+            action = "cardkey.pickup",
+            targetType = "CARD_KEY",
+            targetId = "#id",
+            detail = "'单张提卡，卡密 ID=' + #id")
+    @PostMapping("/{id}/pickup")
+    public ApiResponse<AdminCardKeyPickupResponse> pickup(@PathVariable UUID id) {
+        return ApiResponse.success(adminCardKeyService.pickupCardKey(id, RequestContext.getUserId()));
     }
 
     @GetMapping("/by-order/{orderId}")

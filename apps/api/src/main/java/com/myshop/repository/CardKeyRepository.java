@@ -2,9 +2,11 @@ package com.myshop.repository;
 
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.entity.CardKey;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -32,6 +34,11 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
     List<CardKey> findAndLockAvailable(@Param("productId") UUID productId,
                                        @Param("specId") UUID specId,
                                        @Param("count") int count);
+
+    /** Locks exactly the requested CardKey for the administrator single-pickup path. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT ck FROM CardKey ck WHERE ck.id = :id")
+    java.util.Optional<CardKey> findByIdForUpdate(@Param("id") UUID id);
 
     long countByProductIdAndStatus(UUID productId, CardKeyStatus status);
 

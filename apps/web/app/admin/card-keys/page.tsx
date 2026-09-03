@@ -1,10 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Ban, Eye, FileText, KeyRound, Package, Upload } from "lucide-react"
+import { Ban, Copy, Download, Eye, FileText, KeyRound, Package, Upload } from "lucide-react"
 import { toast } from "sonner"
 
-import { CardContentImportFields } from "@/components/admin/card-content-import-fields"
+import { CardKeyImportDialog } from "@/components/admin/products/card-key-import-dialog"
 import { CardContentParts } from "@/components/shared/card-content-parts"
 import {
   AdminPage,
@@ -30,10 +30,9 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
-import { validateCardContentColumns } from "@/lib/card-content"
 import { formatDateTime, stripInvisible } from "@/lib/utils"
 import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
-import type { AdminProductDetail, AdminProductSpec, CardImportBatch, CardKeyListItem, CardKeyStockSummary } from "@/types"
+import type { AdminCardKeyPickupResult, AdminProductDetail, CardImportBatch, CardKeyListItem, CardKeyStockSummary } from "@/types"
 
 const PAGE_SIZE = 20
 
@@ -43,6 +42,16 @@ const cardStatusTone = {
   SOLD: "info",
   INVALID: "danger",
 } as const
+
+function hasProductDetails(product: AdminProductDetail | undefined): product is AdminProductDetail {
+  return Boolean(
+    product
+      && Array.isArray(product.specs)
+      && typeof product.spec_enabled === "boolean"
+      && typeof product.delivery_type === "string"
+      && typeof product.stock_mode === "string",
+  )
+}
 
 export default function AdminCardKeysPage() {
   const { t, locale } = useLocale()
@@ -60,15 +69,20 @@ export default function AdminCardKeysPage() {
   const [importError, setImportError] = useState(false)
 
   const [importDialogOpen, setImportDialogOpen] = useState(false)
-  const [importProductId, setImportProductId] = useState("")
-  const [importSpecId, setImportSpecId] = useState("")
-  const [importSpecs, setImportSpecs] = useState<AdminProductSpec[]>([])
-  const [loadingSpecs, setLoadingSpecs] = useState(false)
-  const [importColumns, setImportColumns] = useState([""])
-  const [checkDuplicate, setCheckDuplicate] = useState(true)
-  const [importing, setImporting] = useState(false)
-  const [importErrors, setImportErrors] = useState<Record<string, boolean>>({})
-  const importProductRef = useRef<HTMLSelectElement>(null)
+  const [importProduct, setImportProduct] = useState<AdminProductDetail | null>(null)
+  const [importProductLoading, setImportProductLoading] = useState(false)
+
+  const [batchPickupDialogOpen, setBatchPickupDialogOpen] = useState(false)
+  const [pickupProductId, setPickupProductId] = useState("")
+  const [pickupProduct, setPickupProduct] = useState<AdminProductDetail | null>(null)
+  const [pickupSpecId, setPickupSpecId] = useState("")
+  const [pickupQuantity, setPickupQuantity] = useState("1")
+  const [pickupProductLoading, setPickupProductLoading] = useState(false)
+  const [pickupStockList, setPickupStockList] = useState<CardKeyStockSummary[]>([])
+  const [pickupStockLoading, setPickupStockLoading] = useState(false)
+  const [pickupStockError, setPickupStockError] = useState(false)
+  const [batchPickingUp, setBatchPickingUp] = useState(false)
+  const [pickupResult, setPickupResult] = useState<AdminCardKeyPickupResult | null>(null)
 
   const [detailItem, setDetailItem] = useState<CardKeyStockSummary | null>(null)
   const [detailKeys, setDetailKeys] = useState<CardKeyListItem[]>([])
@@ -78,11 +92,14 @@ export default function AdminCardKeysPage() {
   const [detailError, setDetailError] = useState(false)
   const [singleInvalidateTarget, setSingleInvalidateTarget] = useState<CardKeyListItem | null>(null)
   const [singleInvalidating, setSingleInvalidating] = useState(false)
+  const [singlePickupTarget, setSinglePickupTarget] = useState<CardKeyListItem | null>(null)
+  const [singlePickingUp, setSinglePickingUp] = useState(false)
   const [batchInvalidateTarget, setBatchInvalidateTarget] = useState<CardKeyStockSummary | null>(null)
   const [batchInvalidating, setBatchInvalidating] = useState(false)
   const detailRequestRef = useRef(0)
+  const pickupProductRequestRef = useRef(0)
 
-  const importableProducts = products.filter((product) => (product.delivery_type || "AUTO") === "AUTO" && (product.stock_mode || "CARD_KEY") === "CARD_KEY")
+  const pickupProducts = products.filter((product) => (product.stock_mode || "CARD_KEY") === "CARD_KEY")
 
   const loadProducts = useCallback(async () => {
     setProductsError(false)
@@ -134,80 +151,108 @@ export default function AdminCardKeysPage() {
   const totalSold = stockList.reduce((sum, row) => sum + row.sold, 0)
   const totalInvalid = stockList.reduce((sum, row) => sum + row.invalid, 0)
 
-  const resetImport = () => {
-    setImportProductId("")
-    setImportSpecId("")
-    setImportSpecs([])
-    setImportColumns([""])
-    setCheckDuplicate(true)
-    setImportErrors({})
-  }
+  const ensureProductDetail = useCallback(async (productId: string) => {
+    const existing = products.find((product) => product.id === productId)
+    if (hasProductDetails(existing)) return existing
+    const detail = await requestOrThrow(() => adminProductApi.getDetail(productId))
+    setProducts((current) => current.map((product) => product.id === detail.id ? detail : product))
+    return detail
+  }, [products])
 
-  const closeImportDialog = () => {
-    setImportDialogOpen(false)
-    resetImport()
-  }
-
-  const handleImportDialogChange = (open: boolean) => {
-    if (!open && !importing) {
-      closeImportDialog()
-    } else if (open) {
-      setImportDialogOpen(true)
-    }
-  }
-
-  const handleProductChange = async (productId: string) => {
-    setImportProductId(productId)
-    setImportSpecId("")
-    setImportSpecs([])
-    setImportErrors((current) => ({ ...current, product: false }))
-    if (!productId) return
-    setLoadingSpecs(true)
+  const openImportForProduct = async (productId: string) => {
+    setImportProductLoading(true)
     try {
-      setImportSpecs(await requestOrThrow(() => adminProductApi.getSpecs(productId)))
-    } catch {
-      setImportSpecs([])
-    } finally {
-      setLoadingSpecs(false)
-    }
-  }
-
-  const handleImport = async () => {
-    const validationError = validateCardContentColumns(importColumns)
-    if (!importProductId || validationError) {
-      setImportErrors({ product: !importProductId, content: Boolean(validationError) })
-      if (!importProductId) {
-        toast.error(t("admin.selectProductReq"))
-        importProductRef.current?.focus()
-      } else if (validationError) {
-        toast.error(validationError)
+      const product = await ensureProductDetail(productId)
+      if (product.stock_mode !== "CARD_KEY" || product.delivery_type !== "AUTO") {
+        throw new Error(t("admin.cardImportOnlyAutoCard"))
       }
-      return
-    }
-
-    setImporting(true)
-    try {
-      const result = await requestOrThrow(() => adminCardKeyApi.import({
-        product_id: importProductId,
-        spec_id: importSpecId || null,
-        content_columns: importColumns,
-        check_duplicate: checkDuplicate,
-      }))
-      toast.success(
-        t("admin.importSummary")
-          .replace("{total}", String(result.total_count))
-          .replace("{success}", String(result.success_count))
-          .replace("{duplicate}", String(result.duplicate_count))
-          .replace("{failed}", String(result.fail_count)),
-      )
-      closeImportDialog()
-      await Promise.all([loadStock(), loadImportBatches()])
+      setImportProduct(product)
+      setImportDialogOpen(true)
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.importFailed"))
     } finally {
-      setImporting(false)
+      setImportProductLoading(false)
     }
   }
+
+  const handleImportDialogChange = (open: boolean) => {
+    setImportDialogOpen(open)
+    if (!open) setImportProduct(null)
+  }
+
+  const resetBatchPickup = () => {
+    pickupProductRequestRef.current += 1
+    setPickupProductId("")
+    setPickupProduct(null)
+    setPickupSpecId("")
+    setPickupQuantity("1")
+    setPickupStockList([])
+    setPickupProductLoading(false)
+    setPickupStockLoading(false)
+    setPickupStockError(false)
+  }
+
+  const openBatchPickup = () => {
+    resetBatchPickup()
+    setBatchPickupDialogOpen(true)
+  }
+
+  const closeBatchPickup = () => {
+    if (batchPickingUp) return
+    setBatchPickupDialogOpen(false)
+    resetBatchPickup()
+  }
+
+  const handleBatchPickupDialogChange = (open: boolean) => {
+    if (!open) closeBatchPickup()
+    else setBatchPickupDialogOpen(true)
+  }
+
+  const handlePickupProductChange = async (productId: string) => {
+    const requestId = ++pickupProductRequestRef.current
+    setPickupProductId(productId)
+    setPickupProduct(null)
+    setPickupSpecId("")
+    setPickupQuantity("1")
+    setPickupStockList([])
+    setPickupStockError(false)
+    if (!productId) {
+      setPickupProductLoading(false)
+      setPickupStockLoading(false)
+      return
+    }
+
+    setPickupProductLoading(true)
+    setPickupStockLoading(true)
+    try {
+      const [product, stock] = await Promise.all([
+        ensureProductDetail(productId),
+        requestOrThrow(() => adminCardKeyApi.getStock({ product_id: productId })),
+      ])
+      if (product.stock_mode !== "CARD_KEY") throw new Error(t("admin.cardImportOnlyAutoCard"))
+      if (pickupProductRequestRef.current === requestId) {
+        setPickupProduct(product)
+        setPickupStockList(stock)
+        setPickupStockError(false)
+      }
+    } catch (requestError: unknown) {
+      if (pickupProductRequestRef.current === requestId) {
+        setPickupStockError(true)
+        toast.error(requestError instanceof Error ? requestError.message : t("admin.pickupFailed"))
+      }
+    } finally {
+      if (pickupProductRequestRef.current === requestId) setPickupProductLoading(false)
+      if (pickupProductRequestRef.current === requestId) setPickupStockLoading(false)
+    }
+  }
+
+  const pickupStock = pickupProductId && pickupProduct
+    && (!pickupProduct.spec_enabled || Boolean(pickupSpecId))
+    ? pickupStockList.find((row) => row.product_id === pickupProductId && (row.spec_id || null) === (pickupSpecId || null))
+    : undefined
+  const pickupAvailable = pickupStock?.available ?? null
+  const pickupQuantityNumber = Number(pickupQuantity)
+  const pickupQuantityValid = Number.isSafeInteger(pickupQuantityNumber) && pickupQuantityNumber > 0
 
   const fetchDetailKeys = useCallback(async (item: CardKeyStockSummary, page: number) => {
     const detailRequestId = ++detailRequestRef.current
@@ -268,6 +313,81 @@ export default function AdminCardKeysPage() {
     } else fallback()
   }
 
+  const refreshCardKeyData = useCallback(async () => {
+    const detailRefresh = detailItem
+      ? fetchDetailKeys(detailItem, detailPage)
+      : Promise.resolve()
+    const pickupStockRefresh = pickupProductId
+      ? requestOrThrow(() => adminCardKeyApi.getStock({ product_id: pickupProductId }))
+          .then((data) => {
+            setPickupStockList(data)
+            setPickupStockError(false)
+          })
+          .catch(() => setPickupStockError(true))
+      : Promise.resolve()
+    await Promise.all([loadProducts(), loadStock(), detailRefresh, pickupStockRefresh])
+  }, [detailItem, detailPage, fetchDetailKeys, loadProducts, loadStock, pickupProductId])
+
+  const handleImportCompleted = async () => {
+    await Promise.all([refreshCardKeyData(), loadImportBatches()])
+  }
+
+  const handleBatchPickup = async () => {
+    if (!pickupProductId || !pickupProduct) {
+      toast.error(t("admin.selectProductReq"))
+      return
+    }
+    if (pickupProduct.spec_enabled && !pickupSpecId) {
+      toast.error(t("admin.specRequiredForImport"))
+      return
+    }
+    if (!pickupQuantityValid) {
+      toast.error(t("admin.pickupQuantityRequired"))
+      return
+    }
+
+    setBatchPickingUp(true)
+    try {
+      const result = await requestOrThrow(() => adminCardKeyApi.batchPickup({
+        product_id: pickupProductId,
+        spec_id: pickupSpecId || null,
+        quantity: pickupQuantityNumber,
+      }))
+      setBatchPickupDialogOpen(false)
+      resetBatchPickup()
+      setPickupResult(result)
+      await refreshCardKeyData()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.pickupFailed"))
+      // The server is authoritative after a shortage or lock conflict; never
+      // infer a partial success from the requested quantity.
+      await refreshCardKeyData()
+    } finally {
+      setBatchPickingUp(false)
+    }
+  }
+
+  const handleSinglePickup = async () => {
+    if (!singlePickupTarget) return
+    setSinglePickingUp(true)
+    try {
+      const result = await requestOrThrow(() => adminCardKeyApi.pickup(singlePickupTarget.id))
+      setSinglePickupTarget(null)
+      setPickupResult(result)
+      await refreshCardKeyData()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.pickupFailed"))
+      await refreshCardKeyData()
+    } finally {
+      setSinglePickingUp(false)
+    }
+  }
+
+  const copyAllPickedUpCards = () => {
+    if (!pickupResult) return
+    copyToClipboard(pickupResult.cards.map((card) => card.content_parts.join("\t")).join("\n"))
+  }
+
   const handleSingleInvalidate = async () => {
     if (!singleInvalidateTarget) return
     setSingleInvalidating(true)
@@ -317,7 +437,7 @@ export default function AdminCardKeysPage() {
       <PageHeader
         title={t("admin.cardKeys")}
         description={t("admin.cardKeysDesc")}
-        actions={<Button type="button" onClick={() => handleImportDialogChange(true)} disabled={productsError || importableProducts.length === 0}><Upload className="h-4 w-4" aria-hidden="true" />{t("admin.batchImport")}</Button>}
+        actions={<Button type="button" onClick={openBatchPickup} disabled={productsError || pickupProducts.length === 0}><Download className="h-4 w-4" aria-hidden="true" />{t("admin.batchPickup")}</Button>}
       />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -350,7 +470,7 @@ export default function AdminCardKeysPage() {
           </PageToolbar>
 
           <DataTableShell>
-            <table className="w-full min-w-[900px] text-sm">
+            <table className="w-full min-w-[1000px] text-sm">
               <thead><tr className="border-b border-border-subtle bg-surface-muted">
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.productName2")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.specLabel")}</th>
@@ -378,6 +498,7 @@ export default function AdminCardKeysPage() {
                       <td className={item.invalid > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{item.invalid}</td>
                       <td className="px-4 py-3"><div className="flex justify-end gap-1">
                         {isCardKey && <>
+                          <Button type="button" variant="ghost" size="sm" title={t("admin.import")} aria-label={t("admin.import")} disabled={importProductLoading} onClick={() => void openImportForProduct(item.product_id)}><Upload className="h-4 w-4" aria-hidden="true" />{t("admin.import")}</Button>
                           <Button type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")} onClick={() => openDetail(item)}><Eye className="h-4 w-4" aria-hidden="true" /></Button>
                           <Button type="button" variant="ghost" size="icon" title={t("admin.batchInvalidate")} aria-label={t("admin.batchInvalidate")} disabled={(item.available ?? 0) <= 0} onClick={() => setBatchInvalidateTarget(item)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>
                         </>}
@@ -425,29 +546,113 @@ export default function AdminCardKeysPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={importDialogOpen} onOpenChange={handleImportDialogChange}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
-          <DialogHeader><DialogTitle>{t("admin.batchImportKeys")}</DialogTitle><DialogDescription>{t("admin.cardImportHint")}</DialogDescription></DialogHeader>
+      <CardKeyImportDialog
+        product={importProduct}
+        open={importDialogOpen}
+        onOpenChange={handleImportDialogChange}
+        onImported={handleImportCompleted}
+      />
+
+      <Dialog open={batchPickupDialogOpen} onOpenChange={handleBatchPickupDialogChange}>
+        <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t("admin.batchPickupTitle")}</DialogTitle>
+            <DialogDescription>{t("admin.pickupConfirmDescription")}</DialogDescription>
+          </DialogHeader>
           <div className="flex flex-col gap-4 py-2">
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectProductReq")}
-              <select ref={importProductRef} className={`h-11 rounded-control border bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 ${importErrors.product ? "border-destructive ring-2 ring-destructive/20" : "border-input focus:ring-ring"}`} value={importProductId} onChange={(event) => void handleProductChange(event.target.value)} disabled={importing}>
+              <select
+                className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                value={pickupProductId}
+                onChange={(event) => void handlePickupProductChange(event.target.value)}
+                disabled={batchPickingUp}
+              >
                 <option value="">{t("admin.selectProductPlaceholder")}</option>
-                {importableProducts.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
+                {pickupProducts.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
               </select>
             </label>
-            {loadingSpecs && <p className="text-sm text-muted-foreground">{t("admin.loadingSpecs")}</p>}
-            {!loadingSpecs && importSpecs.length > 0 && <label className="flex flex-col gap-1.5 text-sm font-medium">
-              {t("admin.selectSpec")}
-              <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring" value={importSpecId} onChange={(event) => setImportSpecId(event.target.value)} disabled={importing}>
-                <option value="">{t("admin.defaultSpec")}</option>
-                {importSpecs.map((spec) => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
-              </select>
-            </label>}
-            <div className={importErrors.content ? "rounded-card ring-1 ring-destructive" : undefined}><CardContentImportFields columns={importColumns} onChange={(columns) => { setImportColumns(columns); setImportErrors((current) => ({ ...current, content: false })) }} disabled={importing} /></div>
-            <label className="flex items-start gap-2 text-sm text-foreground"><input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={checkDuplicate} onChange={(event) => setCheckDuplicate(event.target.checked)} disabled={importing} /><span>{t("admin.checkDuplicate")}</span></label>
+
+            {(pickupProductLoading || pickupStockLoading) && <p className="text-sm text-muted-foreground">{t("common.loading")}</p>}
+
+            {pickupProduct?.spec_enabled && (
+              <label className="flex flex-col gap-1.5 text-sm font-medium">
+                {t("admin.selectSpec")}
+                <select
+                  className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={pickupSpecId}
+                  onChange={(event) => setPickupSpecId(event.target.value)}
+                  disabled={batchPickingUp}
+                >
+                  <option value="">{t("admin.chooseSpec")}</option>
+                  {pickupProduct.specs.map((spec) => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
+                </select>
+              </label>
+            )}
+
+            <div className="flex items-center justify-between rounded-card border border-border-subtle bg-surface-muted px-3 py-3 text-sm">
+              <span className="text-muted-foreground">{t("admin.availableToPickup")}</span>
+              <span className="font-semibold text-foreground">{pickupAvailable === null ? "—" : pickupAvailable}</span>
+            </div>
+            {pickupAvailable === 0 && <p className="text-sm text-destructive">{t("admin.pickupNoStock")}</p>}
+
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              {t("admin.pickupQuantity")}
+              <input
+                className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                type="number"
+                min={1}
+                max={pickupAvailable ?? undefined}
+                step={1}
+                inputMode="numeric"
+                value={pickupQuantity}
+                onChange={(event) => setPickupQuantity(event.target.value)}
+                disabled={batchPickingUp}
+              />
+            </label>
           </div>
-          <DialogFooter><Button type="button" variant="outline" onClick={() => handleImportDialogChange(false)} disabled={importing}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleImport()} disabled={importing}>{importing ? t("admin.importing") : t("admin.import")}</Button></DialogFooter>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeBatchPickup} disabled={batchPickingUp}>{t("admin.cancel")}</Button>
+            <Button
+              type="button"
+              onClick={() => void handleBatchPickup()}
+              disabled={batchPickingUp || pickupProductLoading || pickupStockLoading || pickupStockError || !pickupProduct || pickupAvailable === null || !pickupQuantityValid
+                || (pickupProduct?.spec_enabled === true && !pickupSpecId)
+                || (pickupAvailable !== null && pickupQuantityNumber > pickupAvailable)}
+            >
+              {batchPickingUp ? t("admin.pickingUp") : t("admin.confirmPickup")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={pickupResult !== null} onOpenChange={(open) => { if (!open) setPickupResult(null) }}>
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t("admin.pickupResult")}</DialogTitle>
+            <DialogDescription>
+              {pickupResult ? t("admin.pickedUpCount").replace("{count}", String(pickupResult.count)) : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {pickupResult && (
+            <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto py-2">
+              {pickupResult.cards.map((card, index) => (
+                <div key={card.id} className="rounded-card border border-border-subtle bg-surface-muted/40 p-3">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="font-semibold text-foreground">#{index + 1}</span>
+                    <span className="font-mono">{card.id}</span>
+                  </div>
+                  <CardContentParts parts={card.content_parts} onCopy={copyToClipboard} expandedByDefault />
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={copyAllPickedUpCards} disabled={!pickupResult || pickupResult.cards.length === 0}>
+              <Copy className="h-4 w-4" aria-hidden="true" />{t("admin.copyAllContent")}
+            </Button>
+            <Button type="button" onClick={() => setPickupResult(null)}>{t("admin.cancel")}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -459,7 +664,7 @@ export default function AdminCardKeysPage() {
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto p-6">
             <DataTableShell footer={<AdminPagination page={detailPage} total={detailTotal} pageSize={PAGE_SIZE} onPageChange={handleDetailPageChange} />}>
-              <table className="w-full min-w-[900px] text-sm" onCopy={(event) => { const selected = window.getSelection()?.toString(); if (selected) { event.clipboardData.setData("text/plain", stripInvisible(selected)); event.preventDefault() } }}>
+              <table className="w-full min-w-[1000px] text-sm" onCopy={(event) => { const selected = window.getSelection()?.toString(); if (selected) { event.clipboardData.setData("text/plain", stripInvisible(selected)); event.preventDefault() } }}>
                 <thead><tr className="border-b border-border-subtle bg-surface-muted">
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardContentColumnLabel")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardStatus")}</th>
@@ -479,7 +684,10 @@ export default function AdminCardKeysPage() {
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{formatDateTime(key.created_at, locale)}</td>
                       <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_id ? `${key.order_id.slice(0, 8)}…` : t("admin.systemNoData")}</td>
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{key.sold_at ? formatDateTime(key.sold_at, locale) : t("admin.systemNoData")}</td>
-                      <td className="px-4 py-3 text-right align-top">{(key.status === "AVAILABLE" || key.status === "LOCKED") && <Button type="button" variant="ghost" size="icon" title={t("admin.invalidateCard")} aria-label={t("admin.invalidateCard")} onClick={() => setSingleInvalidateTarget(key)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>}</td>
+                      <td className="px-4 py-3 text-right align-top"><div className="flex justify-end gap-1">
+                        {key.status === "AVAILABLE" && <Button type="button" variant="ghost" size="sm" title={t("admin.pickupCard")} aria-label={t("admin.pickupCard")} disabled={singlePickingUp} onClick={() => setSinglePickupTarget(key)}><Download className="h-4 w-4" aria-hidden="true" />{t("admin.pickupCard")}</Button>}
+                        {(key.status === "AVAILABLE" || key.status === "LOCKED") && <Button type="button" variant="ghost" size="icon" title={t("admin.invalidateCard")} aria-label={t("admin.invalidateCard")} onClick={() => setSingleInvalidateTarget(key)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>}
+                      </div></td>
                     </tr>
                   ))}
                 </tbody>
@@ -488,6 +696,17 @@ export default function AdminCardKeysPage() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <ConfirmAlert
+        open={singlePickupTarget !== null}
+        onOpenChange={(open) => { if (!open && !singlePickingUp) setSinglePickupTarget(null) }}
+        title={t("admin.pickupConfirmTitle")}
+        description={t("admin.pickupConfirmDescription")}
+        confirmLabel={singlePickingUp ? t("admin.pickingUp") : t("admin.confirmPickup")}
+        cancelLabel={t("admin.cancel")}
+        loading={singlePickingUp}
+        onConfirm={() => void handleSinglePickup()}
+      />
 
       <ConfirmAlert
         open={singleInvalidateTarget !== null}

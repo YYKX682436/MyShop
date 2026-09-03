@@ -3,12 +3,21 @@ package com.myshop.service.impl;
 import com.myshop.common.PageResult;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.FulfillmentStatus;
+import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
+import com.myshop.constant.PricingSource;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.CardImportBatch;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.OrderItem;
+import com.myshop.entity.Order;
 import com.myshop.entity.Product;
+import com.myshop.entity.ProductSpec;
 import com.myshop.exception.BusinessException;
+import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
+import com.myshop.model.response.AdminCardKeyPickupCardResponse;
+import com.myshop.model.response.AdminCardKeyPickupResponse;
 import com.myshop.repository.*;
 import com.myshop.service.AdminCardKeyService;
 import com.myshop.service.ManualStockService;
@@ -17,9 +26,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Slf4j
@@ -31,6 +43,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
     private final CardImportBatchRepository cardImportBatchRepository;
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
+    private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final ManualStockService manualStockService;
 
@@ -255,6 +268,133 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             return map;
         }).toList();
         return PageResult.of(keyPage, list);
+    }
+
+    @Override
+    @Transactional
+    public AdminCardKeyPickupResponse batchPickup(AdminCardKeyBatchPickupRequest request, UUID operatorId) {
+        if (request == null || request.productId() == null || request.quantity() == null
+                || request.quantity() < 1) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "商品和提卡数量不能为空，提卡数量必须大于 0");
+        }
+        return pickupCardKeys(request.productId(), request.specId(), request.quantity(), null, operatorId);
+    }
+
+    @Override
+    @Transactional
+    public AdminCardKeyPickupResponse pickupCardKey(UUID cardKeyId, UUID operatorId) {
+        if (cardKeyId == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "卡密不存在");
+        }
+        // Read only to discover the pool. The shared method acquires the
+        // product lock before the exact CardKey FOR UPDATE lock, matching the
+        // batch path and preventing a product/key lock-order deadlock.
+        CardKey key = cardKeyRepository.findById(cardKeyId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "卡密不存在"));
+        return pickupCardKeys(key.getProductId(), key.getSpecId(), 1, cardKeyId, operatorId);
+    }
+
+    /**
+     * Shared transaction boundary for both pickup entry points. The only
+     * difference is how the locked key set is obtained: batch pickup uses the
+     * pool allocator, while single pickup keeps the exact CardKey lock.
+     */
+    private AdminCardKeyPickupResponse pickupCardKeys(UUID productId,
+                                                      UUID specId,
+                                                      int quantity,
+                                                      UUID exactCardKeyId,
+                                                      UUID operatorId) {
+        Product product = productRepository.findByIdForUpdate(productId)
+                .filter(candidate -> candidate.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
+        if (product.getStockMode() != StockMode.CARD_KEY) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有卡密库存商品可以提卡");
+        }
+        ProductSpec spec = resolvePickupSpec(product, specId);
+
+        List<CardKey> keys;
+        if (exactCardKeyId != null) {
+            CardKey key = cardKeyRepository.findByIdForUpdate(exactCardKeyId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "卡密不存在"));
+            if (!productId.equals(key.getProductId()) || !Objects.equals(specId, key.getSpecId())) {
+                throw new BusinessException(ErrorCode.CARD_KEY_UNAVAILABLE,
+                        "指定卡密不属于当前可提取库存池，请刷新后重试", HttpStatus.CONFLICT);
+            }
+            if (key.getStatus() != CardKeyStatus.AVAILABLE) {
+                throw new BusinessException(ErrorCode.CARD_KEY_UNAVAILABLE,
+                        "指定卡密已不可提取，请刷新后重试", HttpStatus.CONFLICT);
+            }
+            keys = List.of(key);
+        } else {
+            keys = cardKeyRepository.findAndLockAvailable(productId, specId, quantity);
+            if (keys.size() != quantity) {
+                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK,
+                        "可提库存不足或正在被其他操作占用，本次未提取任何卡密，请刷新后重试",
+                        Map.of("available", keys.size()));
+            }
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        Order order = new Order();
+        order.setUserId(operatorId);
+        order.setTotalAmount(BigDecimal.ZERO.setScale(2));
+        order.setActualAmount(BigDecimal.ZERO.setScale(2));
+        order.setOrderType(OrderType.ADMIN_PICKUP);
+        order.setStatus(OrderStatus.DELIVERED);
+        order.setPaymentMethod("ADMIN_PICKUP");
+        order.setDeliveredAt(now);
+        orderRepository.saveAndFlush(order);
+
+        BigDecimal costPrice = spec == null ? product.getCostPrice() : spec.getCostPrice();
+        BigDecimal retailPrice = spec == null ? product.getRetailPrice() : spec.getRetailPrice();
+        OrderItem item = new OrderItem();
+        item.setOrderId(order.getId());
+        item.setProductId(product.getId());
+        item.setProductNo(product.getProductNo());
+        item.setProductTitle(product.getTitle());
+        item.setSpecId(spec == null ? null : spec.getId());
+        item.setSpecName(spec == null ? null : spec.getName());
+        item.setQuantity(keys.size());
+        item.setUnitPrice(BigDecimal.ZERO.setScale(2));
+        item.setCostPriceSnapshot(costPrice);
+        item.setRetailPriceSnapshot(retailPrice);
+        item.setPricingSource(PricingSource.RETAIL);
+        item.setSubtotal(BigDecimal.ZERO.setScale(2));
+        item.setDeliveryType(product.getDeliveryType());
+        item.setCustomerInputs(List.of());
+        item.setStockMode(StockMode.CARD_KEY);
+        item.setFulfillmentStatus(FulfillmentStatus.DELIVERED);
+        item.setDeliveredAt(now);
+        item.setManualStockReserved(0);
+        orderItemRepository.saveAndFlush(item);
+
+        for (CardKey key : keys) {
+            key.setStatus(CardKeyStatus.SOLD);
+            key.setOrderId(order.getId());
+            key.setOrderItemId(item.getId());
+            key.setSoldAt(now);
+        }
+        cardKeyRepository.saveAll(keys);
+
+        List<AdminCardKeyPickupCardResponse> cards = keys.stream()
+                .map(key -> new AdminCardKeyPickupCardResponse(key.getId(), List.copyOf(key.getContentParts())))
+                .toList();
+        return new AdminCardKeyPickupResponse(order.getId(), cards.size(), cards);
+    }
+
+    private ProductSpec resolvePickupSpec(Product product, UUID specId) {
+        if (product.isSpecEnabled()) {
+            if (specId == null) {
+                throw new BusinessException(ErrorCode.SPEC_NOT_FOUND, "启用规格的商品必须指定规格");
+            }
+            return productSpecRepository.findById(specId)
+                    .filter(spec -> product.getId().equals(spec.getProductId()) && spec.getIsDeleted() == 0)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.SPEC_NOT_FOUND, "规格不存在或不属于该商品"));
+        }
+        if (specId != null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "未启用规格的商品不能指定规格");
+        }
+        return null;
     }
 
     private Map<String, Object> buildStockEntry(Product product, UUID specId, String specName) {

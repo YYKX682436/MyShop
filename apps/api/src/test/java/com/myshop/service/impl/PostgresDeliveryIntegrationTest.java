@@ -1,12 +1,15 @@
 package com.myshop.service.impl;
 
 import com.myshop.exception.BusinessException;
+import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.Product;
+import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
 import com.myshop.payment.EpayPaymentProvider;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.AdminCardKeyService;
+import com.myshop.service.AdminOrderService;
 import com.myshop.service.DeliverService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
@@ -71,6 +74,9 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired
     private AdminCardKeyService adminCardKeyService;
+
+    @Autowired
+    private AdminOrderService adminOrderService;
 
     @Autowired
     private WebhookService webhookService;
@@ -148,6 +154,124 @@ class PostgresDeliveryIntegrationTest {
         assertTrue(number("select count(*) from card_keys where id = ? and order_item_id is not null and sold_at is not null", cardId) == 1);
         verify(epayPaymentProvider, never()).create(any(PaymentProvider.PaymentRequest.class));
         verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
+    }
+
+    @Test
+    void adminBatchPickupReturnsOneResultPerCardKeyAndBindsTheDeliveredOrderItem() {
+        String suffix = UUID.randomUUID().toString();
+        UUID operatorId = insertAdminUser("batch-pickup-admin-" + suffix, "batch-pickup-" + suffix + "@example.com");
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID firstCardId = insertCardParts(productId, List.of("first-user", "first-password"));
+        UUID secondCardId = insertCardParts(productId, List.of("second-user", "second-password"));
+
+        var result = adminCardKeyService.batchPickup(
+                new AdminCardKeyBatchPickupRequest(productId, null, 2), operatorId);
+
+        assertEquals(2, result.count());
+        assertEquals(2, result.cards().size());
+        assertEquals(List.of(firstCardId, secondCardId),
+                result.cards().stream().map(card -> card.id()).toList());
+        assertEquals(List.of("first-user", "first-password"), result.cards().get(0).contentParts());
+        UUID orderId = result.orderId();
+        assertEquals("ADMIN_PICKUP", scalar("select order_type from orders where id = ?", String.class, orderId));
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals(new BigDecimal("0.00"), scalar("select total_amount from orders where id = ?", BigDecimal.class, orderId));
+        assertEquals(new BigDecimal("0.00"), scalar("select actual_amount from orders where id = ?", BigDecimal.class, orderId));
+        assertEquals(1, number("select count(*) from orders where id = ? and delivered_at is not null", orderId));
+        assertEquals(1, number("select count(*) from order_items where order_id = ? and quantity = 2 "
+                + "and unit_price = 0 and subtotal = 0 and stock_mode = 'CARD_KEY' "
+                + "and fulfillment_status = 'DELIVERED' and delivered_at is not null", orderId));
+        assertEquals(2, number("select count(*) from card_keys where order_id = ? and order_item_id is not null "
+                + "and status = 'SOLD' and sold_at is not null", orderId));
+        assertEquals(2, number("select count(*) from card_keys where id in (?, ?) and order_id = ?", firstCardId, secondCardId, orderId));
+        verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
+    }
+
+    @Test
+    void adminBatchPickupShortageRollsBackTheWholeTransaction() {
+        String suffix = UUID.randomUUID().toString();
+        UUID operatorId = insertAdminUser("shortage-pickup-admin-" + suffix, "shortage-pickup-" + suffix + "@example.com");
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID cardId = insertCard(productId, "only-pickup-card");
+
+        assertThrows(BusinessException.class, () -> adminCardKeyService.batchPickup(
+                new AdminCardKeyBatchPickupRequest(productId, null, 2), operatorId));
+
+        assertEquals("AVAILABLE", scalar("select status from card_keys where id = ?", String.class, cardId));
+        assertEquals(0, number("select count(*) from orders where user_id = ? and order_type = 'ADMIN_PICKUP'", operatorId));
+        assertEquals(0, number("select count(*) from card_keys where order_id is not null and id = ?", cardId));
+    }
+
+    @Test
+    void adminSinglePickupLocksAndConsumesOnlyTheRequestedCardKey() {
+        String suffix = UUID.randomUUID().toString();
+        UUID operatorId = insertAdminUser("single-pickup-admin-" + suffix, "single-pickup-" + suffix + "@example.com");
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID firstCardId = insertCard(productId, "first-single-card");
+        UUID requestedCardId = insertCardParts(productId, List.of("requested-user", "requested-password"));
+
+        var result = adminCardKeyService.pickupCardKey(requestedCardId, operatorId);
+
+        assertEquals(1, result.count());
+        assertEquals(requestedCardId, result.cards().get(0).id());
+        assertEquals("AVAILABLE", scalar("select status from card_keys where id = ?", String.class, firstCardId));
+        assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, requestedCardId));
+        assertEquals(result.orderId(), scalar("select order_id from card_keys where id = ?", UUID.class, requestedCardId));
+        assertEquals(ErrorCode.CARD_KEY_UNAVAILABLE,
+                assertThrows(BusinessException.class, () -> adminCardKeyService.pickupCardKey(requestedCardId, operatorId)).getCode());
+
+        UUID invalidCardId = insertCard(productId, "invalid-single-card");
+        jdbcTemplate.update("update card_keys set status = 'INVALID' where id = ?", invalidCardId);
+        assertEquals(ErrorCode.CARD_KEY_UNAVAILABLE,
+                assertThrows(BusinessException.class, () -> adminCardKeyService.pickupCardKey(invalidCardId, operatorId)).getCode());
+    }
+
+    @Test
+    void adminPickupIsExcludedFromNormalAdminOrderList() {
+        String suffix = UUID.randomUUID().toString();
+        UUID operatorId = insertAdminUser("list-pickup-admin-" + suffix, "list-pickup-" + suffix + "@example.com");
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertOrder("normal-list-order-" + UUID.randomUUID());
+        insertCard(productId, "list-pickup-card");
+        adminCardKeyService.batchPickup(
+                new AdminCardKeyBatchPickupRequest(productId, null, 1), operatorId);
+
+        var result = adminOrderService.listOrders(null, null, null, null, 1, 100);
+        List<?> orders = result.getList();
+        assertTrue(orders.stream().noneMatch(value -> value instanceof Map<?, ?> map
+                && OrderType.ADMIN_PICKUP.name().equals(String.valueOf(map.get("order_type")))));
+    }
+
+    @Test
+    void normalFulfillmentAndAdminPickupCannotConsumeTheSameCardConcurrently() throws Exception {
+        String suffix = UUID.randomUUID().toString();
+        UUID operatorId = insertAdminUser("concurrent-pickup-admin-" + suffix, "concurrent-pickup-" + suffix + "@example.com");
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID normalOrderId = insertOrder("normal-vs-pickup-" + UUID.randomUUID());
+        insertOrderItem(normalOrderId, productId);
+        UUID cardId = insertCard(productId, "normal-vs-pickup-card");
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> admin = executor.submit(() -> pickupAfter(start, ready, productId, operatorId));
+            Future<Boolean> normal = executor.submit(() -> fulfillAfter(start, ready, normalOrderId));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+
+            assertNotEquals(admin.get(20, TimeUnit.SECONDS), normal.get(20, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
+        assertEquals(1, number("select count(*) from card_keys where id = ? and order_id is not null and order_item_id is not null", cardId));
     }
 
     @Test
@@ -551,6 +675,31 @@ class PostgresDeliveryIntegrationTest {
         return deliverService.deliverOrders(request(orderId, lookupToken), null);
     }
 
+    private boolean pickupAfter(CountDownLatch start, CountDownLatch ready,
+                                UUID productId, UUID operatorId) throws Exception {
+        ready.countDown();
+        start.await();
+        try {
+            adminCardKeyService.batchPickup(
+                    new AdminCardKeyBatchPickupRequest(productId, null, 1), operatorId);
+            return true;
+        } catch (BusinessException exception) {
+            return false;
+        }
+    }
+
+    private boolean fulfillAfter(CountDownLatch start, CountDownLatch ready,
+                                UUID orderId) throws Exception {
+        ready.countDown();
+        start.await();
+        try {
+            fulfillmentService.fulfillOrder(orderId);
+            return true;
+        } catch (BusinessException exception) {
+            return false;
+        }
+    }
+
     private boolean reserveAfter(CountDownLatch start, CountDownLatch ready, UUID productId) throws Exception {
         ready.countDown();
         start.await();
@@ -744,6 +893,19 @@ class PostgresDeliveryIntegrationTest {
                                        content_fingerprint, status)
                 values (?, current_timestamp, current_timestamp, ?, jsonb_build_array(?), ?, 'AVAILABLE')
                 """, cardId, productId, content, CardContentParser.fingerprint(List.of(content)));
+        return cardId;
+    }
+
+    private UUID insertCardParts(UUID productId, List<String> parts) {
+        if (parts.size() != 2) {
+            throw new IllegalArgumentException("This test helper expects exactly two card parts");
+        }
+        UUID cardId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into card_keys (id, created_at, updated_at, product_id, content_parts,
+                                       content_fingerprint, status)
+                values (?, current_timestamp, current_timestamp, ?, jsonb_build_array(?, ?), ?, 'AVAILABLE')
+                """, cardId, productId, parts.get(0), parts.get(1), CardContentParser.fingerprint(parts));
         return cardId;
     }
 

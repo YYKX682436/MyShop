@@ -59,4 +59,5 @@ public final class ErrorCode {
     public static final int USER_LEVEL_INVALID = 70008;
     public static final int USER_LEVEL_HAS_USERS = 70009;
     public static final int PRICE_OVERRIDE_CONFLICT = 70010;
+    public static final int CARD_KEY_UNAVAILABLE = 70011;
 }

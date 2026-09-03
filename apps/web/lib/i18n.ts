@@ -661,6 +661,21 @@ const zh = {
   "admin.keysInvalidated": "已作废 {count} 条可用卡密",
   "admin.keyInvalidated": "卡密已作废",
   "admin.loadingSpecs": "加载规格...",
+  "admin.batchPickup": "批量提卡",
+  "admin.batchPickupTitle": "批量提卡",
+  "admin.pickupCard": "提卡",
+  "admin.pickupConfirmTitle": "确认提卡",
+  "admin.pickupConfirmDescription": "提卡后将从可售库存中扣除，并创建一笔内部提卡订单。确定继续吗？",
+  "admin.confirmPickup": "确认提卡",
+  "admin.pickingUp": "提卡中...",
+  "admin.availableToPickup": "当前可提库存",
+  "admin.pickupQuantity": "提卡数量",
+  "admin.pickupQuantityRequired": "请输入大于 0 的提卡数量",
+  "admin.pickupNoStock": "当前没有可提库存",
+  "admin.pickupResult": "提卡结果",
+  "admin.pickedUpCount": "共提取 {count} 条",
+  "admin.pickupFailed": "提卡失败",
+  "admin.cardImportOnlyAutoCard": "只有自动发货的卡券库存商品可以导入卡密",
 
   // Admin Orders
   "admin.paymentMethod": "支付方式",
@@ -1050,6 +1065,7 @@ const zh = {
   "error.purchaseLimitPerUser": "超出个人最大购买数量限制",
   "error.channelUnavailable": "支付渠道不可用",
   "error.priceChanged": "商品价格已变化，请刷新价格并重新确认",
+  "error.cardKeyUnavailable": "指定卡密已不可提取，请刷新后重试",
 } as const
 
 const en: Record<keyof typeof zh, string> = {
@@ -1713,6 +1729,21 @@ const en: Record<keyof typeof zh, string> = {
   "admin.keysInvalidated": "Invalidated {count} available card keys",
   "admin.keyInvalidated": "Card key invalidated",
   "admin.loadingSpecs": "Loading specifications...",
+  "admin.batchPickup": "Batch Pickup",
+  "admin.batchPickupTitle": "Batch Pickup",
+  "admin.pickupCard": "Pick up",
+  "admin.pickupConfirmTitle": "Confirm pickup",
+  "admin.pickupConfirmDescription": "Picked-up cards will be deducted from sellable stock and an internal pickup order will be created. Continue?",
+  "admin.confirmPickup": "Confirm pickup",
+  "admin.pickingUp": "Picking up...",
+  "admin.availableToPickup": "Available to pick up",
+  "admin.pickupQuantity": "Pickup quantity",
+  "admin.pickupQuantityRequired": "Enter a pickup quantity greater than 0",
+  "admin.pickupNoStock": "No stock is currently available to pick up",
+  "admin.pickupResult": "Pickup result",
+  "admin.pickedUpCount": "Picked up {count} cards",
+  "admin.pickupFailed": "Pickup failed",
+  "admin.cardImportOnlyAutoCard": "Only automatic card-key inventory products can import card keys",
 
   // Admin Orders
   "admin.paymentMethod": "Payment Method",
@@ -2102,6 +2133,7 @@ const en: Record<keyof typeof zh, string> = {
   "error.purchaseLimitPerUser": "Exceeded personal purchase limit",
   "error.channelUnavailable": "Payment channel unavailable",
   "error.priceChanged": "The price changed. Refresh and confirm the current price.",
+  "error.cardKeyUnavailable": "The selected card key is no longer available. Refresh and try again.",
 }
 
 const dictionaries = { zh, en }
