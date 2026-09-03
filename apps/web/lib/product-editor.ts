@@ -44,6 +44,19 @@ export interface PricingPreviewDraftPayload {
   }[]
 }
 
+export type CardKeyImportAvailability = "hidden" | "save-product" | "save-changes" | "ready"
+
+export function getCardKeyImportAvailability(
+  product: { id: string } | null,
+  stockMode: string,
+  dirty: boolean,
+): CardKeyImportAvailability {
+  if (stockMode !== "CARD_KEY") return "hidden"
+  if (!product) return "save-product"
+  if (dirty) return "save-changes"
+  return "ready"
+}
+
 export function toNumberOrNull(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || String(value).trim() === "") return null
   const parsed = Number(value)

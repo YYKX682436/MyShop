@@ -40,10 +40,18 @@ export function CardKeyImportDialog({ product, open, onOpenChange, onImported }:
     }
   }, [open])
 
+  useEffect(() => {
+    if (open) setSpecId("")
+  }, [open, product?.id])
+
   const handleImport = async () => {
     const validationError = validateCardContentColumns(columns)
     if (!product || validationError) {
       toast.error(validationError || t("admin.cardKeyContentReq"))
+      return
+    }
+    if (product.spec_enabled && !specId) {
+      toast.error(t("admin.specRequiredForImport"))
       return
     }
 
@@ -51,7 +59,7 @@ export function CardKeyImportDialog({ product, open, onOpenChange, onImported }:
     try {
       const result = await requestOrThrow(() => adminCardKeyApi.import({
         product_id: product.id,
-        spec_id: specId || null,
+        spec_id: product.spec_enabled ? specId : null,
         content_columns: columns,
         check_duplicate: checkDuplicate,
       }))
@@ -80,7 +88,7 @@ export function CardKeyImportDialog({ product, open, onOpenChange, onImported }:
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-2">
-          {product && product.specs.length > 0 && (
+          {product?.spec_enabled && (
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectSpec")}
               <select
@@ -89,7 +97,7 @@ export function CardKeyImportDialog({ product, open, onOpenChange, onImported }:
                 onChange={(event) => setSpecId(event.target.value)}
                 disabled={importing}
               >
-                <option value="">{t("admin.defaultSpec")}</option>
+                <option value="">{t("admin.chooseSpec")}</option>
                 {product.specs.map((spec) => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
               </select>
             </label>
@@ -111,7 +119,7 @@ export function CardKeyImportDialog({ product, open, onOpenChange, onImported }:
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={importing}>{t("admin.cancel")}</Button>
-          <Button type="button" onClick={() => void handleImport()} disabled={importing || !product}>
+          <Button type="button" onClick={() => void handleImport()} disabled={importing || !product || (product.spec_enabled && !specId)}>
             {importing ? t("admin.importing") : t("admin.import")}
           </Button>
         </DialogFooter>

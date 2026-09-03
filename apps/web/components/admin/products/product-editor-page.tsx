@@ -53,6 +53,12 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
 
   useEffect(() => { void load() }, [load])
 
+  const refreshProduct = useCallback(async () => {
+    if (!productId) return
+    const productData = await requestOrThrow(() => adminProductApi.getDetail(productId))
+    setProduct(productData)
+  }, [productId])
+
   const handleSaved = onSaved || (() => router.push("/admin/products"))
   const handleCancel = onCancel || (() => router.push("/admin/products"))
 
@@ -72,7 +78,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
   if (loading) {
     return (
       <AdminPage>
-        <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} description={t("admin.productEditorHint")} />
+        <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} />
         <div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} />
       </AdminPage>
     )
@@ -81,7 +87,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
   if (error || (productId && !product)) {
     return (
       <AdminPage>
-        <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} description={t("admin.productEditorHint")} />
+        <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} />
         <div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center" role="alert">
           <p className="text-sm text-destructive">{productId ? t("admin.loadProductFailed") : t("admin.loadCategoriesFailed")}</p>
           <Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button>
@@ -98,6 +104,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
         onSaved={handleSaved}
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}
+        onProductRefresh={refreshProduct}
       />
     )
   }
@@ -106,7 +113,6 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
     <AdminPage>
       <PageHeader
         title={productId ? t("admin.editProduct") : t("admin.addProduct")}
-        description={t("admin.productEditorHint")}
         actions={
           <Button type="button" variant="outline" onClick={() => router.push("/admin/products")}>
             <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -114,7 +120,14 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
           </Button>
         }
       />
-      <ProductForm product={product} categories={categories} onSaved={handleSaved} onCancel={handleCancel} onDirtyChange={onDirtyChange} />
+      <ProductForm
+        product={product}
+        categories={categories}
+        onSaved={handleSaved}
+        onCancel={handleCancel}
+        onDirtyChange={onDirtyChange}
+        onProductRefresh={refreshProduct}
+      />
     </AdminPage>
   )
 }

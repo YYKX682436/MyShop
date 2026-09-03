@@ -1,11 +1,12 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, Loader2, Plus, Trash2 } from "lucide-react"
+import { AlertTriangle, ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
 import { MarkdownEditor } from "@/components/admin/markdown-editor"
+import { CardKeyImportDialog } from "@/components/admin/products/card-key-import-dialog"
 import { FormSection, StatusBadge } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
 import {
   buildPricingPreviewDraft,
+  getCardKeyImportAvailability,
   getProductEditorTabForMessage,
   PRODUCT_EDITOR_TABS,
   reorderSpecs,
@@ -210,9 +212,10 @@ interface ProductFormProps {
   onSaved: () => void | Promise<void>
   onCancel: () => void
   onDirtyChange?: (dirty: boolean) => void
+  onProductRefresh?: () => void | Promise<void>
 }
 
-export function ProductForm({ product, categories, onSaved, onCancel, onDirtyChange }: ProductFormProps) {
+export function ProductForm({ product, categories, onSaved, onCancel, onDirtyChange, onProductRefresh }: ProductFormProps) {
   const { t } = useLocale()
   const [draft, setDraft] = useState<ProductFormData>(() => getProductDraft(product))
   const [activeTab, setActiveTab] = useState<ProductEditorTab>("basic")
@@ -223,7 +226,8 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [productNoCopied, setProductNoCopied] = useState(false)
+  const [dirty, setDirtyState] = useState(false)
+  const [cardKeyImportOpen, setCardKeyImportOpen] = useState(false)
   const dirtyRef = useRef(false)
   const onDirtyChangeRef = useRef(onDirtyChange)
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({})
@@ -231,6 +235,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   const setDirty = useCallback((nextDirty: boolean) => {
     if (dirtyRef.current === nextDirty) return
     dirtyRef.current = nextDirty
+    setDirtyState(nextDirty)
     onDirtyChangeRef.current?.(nextDirty)
   }, [])
 
@@ -245,7 +250,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
     setDirty(false)
     setPreview(getInitialPreview(product))
     setPreviewError(false)
-    setProductNoCopied(false)
+    setCardKeyImportOpen(false)
   }, [product, setDirty])
 
   useEffect(() => {
@@ -609,30 +614,6 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
     setDraft((current) => ({ ...current, specs: [...current.specs, emptySpec()] }))
   }
 
-  const copyProductNo = async () => {
-    if (!product) return
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(String(product.product_no))
-      } else {
-        const textarea = document.createElement("textarea")
-        textarea.value = String(product.product_no)
-        textarea.setAttribute("readonly", "")
-        textarea.style.position = "fixed"
-        textarea.style.opacity = "0"
-        document.body.appendChild(textarea)
-        textarea.select()
-        const copied = document.execCommand("copy")
-        textarea.remove()
-        if (!copied) throw new Error("copy failed")
-      }
-      setProductNoCopied(true)
-      toast.success(t("admin.productNoCopied"))
-    } catch {
-      toast.error(t("admin.copyFailed"))
-    }
-  }
-
   const pricingTargets = draft.spec_enabled
     ? draft.specs.map((spec) => ({ id: spec.id, name: spec.name || t("admin.unnamed") }))
     : [{ id: null, name: t("admin.product") }]
@@ -645,6 +626,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
     { value: "inventory", label: t("admin.productTabInventory") },
     { value: "details", label: t("admin.productTabDetails") },
   ]
+  const cardKeyImportAvailability = getCardKeyImportAvailability(product, draft.stock_mode, dirty)
 
   return (
     <form className="flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); void handleSave() }}>
@@ -664,17 +646,11 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
 
         <TabsContent value="basic" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.productBasics")} description={t("admin.productBasicsHint")}>
+              <div className="mb-5">
+                <div className="mb-2 text-sm font-medium">{t("admin.coverUrl")}</div>
+                <ImageUploadDropzone value={draft.cover_url} onChange={handleCoverChange} uploadImage={uploadImage} disabled={saving} />
+              </div>
               <div className="grid gap-5 lg:grid-cols-2">
-                <div className="flex min-w-0 items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3.5 py-3 lg:col-span-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{t("admin.productNo")}</div>
-                    {product ? <div className="mt-1 font-mono text-sm text-muted-foreground">{product.product_no}</div> : <div className="mt-1 text-sm text-muted-foreground">{t("admin.productNoAfterSave")}</div>}
-                  </div>
-                  {product && <Button type="button" variant="outline" size="sm" onClick={() => void copyProductNo()}>
-                    <Copy className="mr-2 h-4 w-4" aria-hidden="true" />
-                    {productNoCopied ? t("admin.productNoCopied") : t("admin.copyProductNo")}
-                  </Button>}
-                </div>
                 <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
                   {t("admin.productNameReq")}
                   <Input ref={registerField("title")} value={draft.title} onChange={(event) => setField("title", event.target.value)} placeholder={t("admin.productNamePlaceholder")} />
@@ -705,10 +681,6 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                 <label className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 lg:col-span-2">
                   <span className="text-sm font-medium">{t("admin.listingStatus")}</span>
                   <Switch checked={draft.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
-                </label>
-                <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
-                  {t("admin.coverUrl")}
-                  <ImageUploadDropzone value={draft.cover_url} onChange={handleCoverChange} uploadImage={uploadImage} disabled={saving} />
                 </label>
               </div>
             </FormSection>
@@ -884,6 +856,18 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                   {draft.specs.map((spec) => <div key={spec.id} className="flex items-center justify-between gap-3 text-sm"><span className="min-w-0 truncate">{spec.name || t("admin.unnamed")}</span><StatusBadge tone="info" label={`${t("admin.cardKeyCount")}: ${spec.card_key_count ?? 0}`} /></div>)}
                 </div> : <div className="mt-3 flex items-center justify-between text-sm"><span>{t("admin.cardKeyCount")}</span><StatusBadge tone="info" label={product?.stock_available ?? 0} /></div>}
                 <p className="mt-3 text-xs text-muted-foreground">{t("admin.stockModeHint")}</p>
+                {cardKeyImportAvailability !== "hidden" && <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCardKeyImportOpen(true)}
+                    disabled={saving || cardKeyImportAvailability !== "ready"}
+                  >
+                    {t("admin.importKeys")}
+                  </Button>
+                  {cardKeyImportAvailability === "save-product" && <span className="text-xs text-muted-foreground">{t("admin.saveBeforeImportKeys")}</span>}
+                  {cardKeyImportAvailability === "save-changes" && <span className="text-xs text-muted-foreground">{t("admin.saveChangesBeforeImportKeys")}</span>}
+                </div>}
               </div>}
 
               {draft.stock_mode === "UNLIMITED" && <div className="mt-6 rounded-card border border-border-subtle bg-surface-muted/45 p-4 text-sm text-muted-foreground">{t("admin.unlimitedStockHint")}</div>}
@@ -910,10 +894,23 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
         </TabsContent>
       </Tabs>
 
-      <div className="sticky bottom-0 z-30 flex flex-col-reverse gap-3 border-t border-border-subtle bg-surface/95 py-4 backdrop-blur supports-[backdrop-filter]:bg-surface/80 sm:flex-row sm:justify-end">
+      <div className="flex flex-col-reverse gap-3 border-t border-border-subtle pt-4 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
         <Button type="submit" disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button>
       </div>
+      <CardKeyImportDialog
+        product={product}
+        open={cardKeyImportOpen && cardKeyImportAvailability === "ready"}
+        onOpenChange={setCardKeyImportOpen}
+        onImported={async () => {
+          setCardKeyImportOpen(false)
+          try {
+            await onProductRefresh?.()
+          } catch {
+            toast.error(t("admin.loadProductFailed"))
+          }
+        }}
+      />
     </form>
   )
 }

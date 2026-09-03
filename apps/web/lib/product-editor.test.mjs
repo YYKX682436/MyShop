@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   buildPricingPreviewDraft,
+  getCardKeyImportAvailability,
   getProductEditorTabForMessage,
   reorderSpecs,
   withCurrentSpecOrder,
@@ -53,6 +54,13 @@ test("save payload order is derived from the current array position", () => {
     { id: "second", sort_order: 0 },
     { id: "first", sort_order: 1 },
   ])
+})
+
+test("card-key import is only available for a saved clean card-key product", () => {
+  assert.equal(getCardKeyImportAvailability(null, "CARD_KEY", false), "save-product")
+  assert.equal(getCardKeyImportAvailability({ id: "product-1" }, "CARD_KEY", true), "save-changes")
+  assert.equal(getCardKeyImportAvailability({ id: "product-1" }, "CARD_KEY", false), "ready")
+  assert.equal(getCardKeyImportAvailability({ id: "product-1" }, "MANUAL", false), "hidden")
 })
 
 test("validation messages identify the tab that owns the error", () => {

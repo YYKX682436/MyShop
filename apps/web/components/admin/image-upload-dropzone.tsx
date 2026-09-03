@@ -106,14 +106,14 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
   }
 
   return (
-    <div className="min-w-0">
+    <div className="grid min-w-0 gap-4 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-start">
       <div
         role="button"
         tabIndex={busy ? -1 : 0}
         aria-disabled={busy}
         aria-busy={uploading}
         className={cn(
-          "relative flex min-h-52 w-full cursor-pointer flex-col items-center justify-center overflow-hidden rounded-card border-2 border-dashed bg-surface-muted/45 p-4 text-center transition-colors",
+          "relative aspect-square w-full max-w-44 cursor-pointer overflow-hidden rounded-card border-2 border-dashed bg-surface-muted/45 p-3 text-center transition-colors",
           isDragActive
             ? "border-primary bg-primary/10 ring-4 ring-primary/10"
             : "border-border-subtle hover:border-primary/60 hover:bg-primary/5",
@@ -133,19 +133,19 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
             width={512}
             height={512}
             unoptimized
-            className="max-h-64 max-w-full rounded-card object-contain"
+            className="h-full w-full rounded-card object-cover"
             onLoad={() => setFailedUrl(null)}
             onError={() => setFailedUrl(normalizedValue)}
           />
         ) : normalizedValue ? (
-          <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
-            <AlertCircle className="h-8 w-8 text-amber-500" />
+          <div className="flex h-full flex-col items-center justify-center gap-1.5 text-sm text-muted-foreground">
+            <AlertCircle className="h-7 w-7 text-amber-500" />
             <span className="font-medium text-foreground">{t("admin.previewFailed")}</span>
-            <span className="max-w-xs break-words text-xs">{t("admin.previewFailedHint")}</span>
+            <span className="max-w-full break-words text-xs">{t("admin.previewFailedHint")}</span>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-2 text-muted-foreground">
-            <ImagePlus className="h-9 w-9 text-primary/70" />
+          <div className="flex h-full flex-col items-center justify-center gap-1.5 text-muted-foreground">
+            <ImagePlus className="h-8 w-8 text-primary/70" />
             <span className="text-sm font-medium text-foreground">{t("admin.dropImage")}</span>
             <span className="text-xs">{t("admin.imageFormats")}</span>
             <span className="text-xs">{t("admin.maxFileSize")}</span>
@@ -153,7 +153,7 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
         )}
 
         {isDragActive && !busy && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-primary/15 px-4 text-sm font-semibold text-primary">
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-primary/15 px-3 text-sm font-semibold text-primary">
             {t("admin.releaseToUpload")}
           </div>
         )}
@@ -165,53 +165,55 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
         )}
       </div>
 
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ALLOWED_IMAGE_ACCEPT}
-        className="hidden"
-        disabled={busy}
-        onChange={(event) => void handleFile(event.target.files?.[0])}
-      />
-
-      {normalizedValue && (
-        <div className="mt-2 flex items-center gap-2">
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted disabled:pointer-events-none disabled:opacity-50"
-            onClick={openFilePicker}
-            disabled={busy}
-          >
-            <Upload className="h-3.5 w-3.5" />
-            {t("admin.replaceImage")}
-          </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-            onClick={() => {
-              setFailedUrl(null)
-              onChange("")
-            }}
-            disabled={busy}
-          >
-            <X className="h-3.5 w-3.5" />
-            {t("admin.removeImage")}
-          </button>
-        </div>
-      )}
-
-      <label className="mt-3 flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
-        {t("admin.imageUrl")}
+      <div className="min-w-0">
         <input
-          type="text"
-          className="h-11 w-full rounded-control border border-input bg-surface px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          placeholder="https://..."
-          value={value}
-          onChange={(event) => handleUrlChange(event.target.value)}
+          ref={inputRef}
+          type="file"
+          accept={ALLOWED_IMAGE_ACCEPT}
+          className="hidden"
           disabled={busy}
+          onChange={(event) => void handleFile(event.target.files?.[0])}
         />
-      </label>
-      <p className="mt-1.5 text-xs text-muted-foreground">{t("admin.imageUsageHint")}</p>
+
+        <label className="flex min-w-0 flex-col gap-1.5 text-xs font-medium text-muted-foreground">
+          {t("admin.imageUrl")}
+          <input
+            type="text"
+            className="h-11 w-full rounded-control border border-input bg-surface px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            placeholder="https://..."
+            value={value}
+            onChange={(event) => handleUrlChange(event.target.value)}
+            disabled={busy}
+          />
+        </label>
+
+        {normalizedValue && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted disabled:pointer-events-none disabled:opacity-50"
+              onClick={openFilePicker}
+              disabled={busy}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              {t("admin.replaceImage")}
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
+              onClick={() => {
+                setFailedUrl(null)
+                onChange("")
+              }}
+              disabled={busy}
+            >
+              <X className="h-3.5 w-3.5" />
+              {t("admin.removeImage")}
+            </button>
+          </div>
+        )}
+        <p className="mt-2 text-xs text-muted-foreground">{t("admin.imageUsageHint")}</p>
+      </div>
     </div>
   )
 })
