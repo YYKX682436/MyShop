@@ -238,32 +238,43 @@ export default function AdminProductsPage() {
       </PageToolbar>
 
       <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
-        <Table>
+        <Table className="min-w-[1180px] table-fixed">
+          <colgroup>
+            <col className="w-[280px]" />
+            <col className="w-[160px]" />
+            <col className="w-[160px]" />
+            <col className="w-[180px]" />
+            <col className="w-[90px]" />
+            <col className="w-[90px]" />
+            <col className="w-[100px]" />
+            <col className="w-[110px]" />
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead>{t("admin.product")}</TableHead>
-              <TableHead>{t("admin.category")}</TableHead>
-              <TableHead>{t("admin.price")}</TableHead>
-              <TableHead>{t("admin.sortWeight")}</TableHead>
-              <TableHead>{t("admin.stockLabel")}</TableHead>
-              <TableHead>{t("admin.statusLabel")}</TableHead>
-              <TableHead className="text-right">{t("admin.actions")}</TableHead>
+              <TableHead className="whitespace-nowrap">{t("admin.product")}</TableHead>
+              <TableHead className="whitespace-nowrap">{t("admin.category")}</TableHead>
+              <TableHead className="whitespace-nowrap text-right">{t("admin.costPriceShort")}</TableHead>
+              <TableHead className="whitespace-nowrap text-right">{t("admin.retailPriceShort")}</TableHead>
+              <TableHead className="whitespace-nowrap text-center">{t("admin.sortWeight")}</TableHead>
+              <TableHead className="whitespace-nowrap text-center">{t("admin.stockLabel")}</TableHead>
+              <TableHead className="whitespace-nowrap text-center">{t("admin.statusLabel")}</TableHead>
+              <TableHead className="whitespace-nowrap px-2 text-right">{t("admin.actions")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loading && <TableLoadingState colSpan={7} />}
-            {!loading && error && <TableErrorState colSpan={7} onRetry={() => void loadProducts()} />}
-            {!loading && !error && products.length === 0 && <TableEmptyState colSpan={7}>{t("admin.noProductData")}</TableEmptyState>}
+            {loading && <TableLoadingState colSpan={8} />}
+            {!loading && error && <TableErrorState colSpan={8} onRetry={() => void loadProducts()} />}
+            {!loading && !error && products.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noProductData")}</TableEmptyState>}
             {!loading && !error && products.map((product) => {
               const unlimited = isUnlimited(product)
               const lowStock = !unlimited && product.stock_available != null && product.stock_available > 0 && product.stock_available <= (product.low_stock_threshold ?? 10)
               const stockClass = cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-600" : "text-foreground")
               return (
                 <TableRow key={product.id}>
-                  <TableCell className="min-w-[16rem]">
-                    <div className="flex items-center gap-3">
+                  <TableCell className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-3">
                       <ProductImagePreviewDialog product={product} />
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <ProductTitleQuickEdit
                           product={product}
                           saving={isSaving(product, "title")}
@@ -279,7 +290,7 @@ export default function AdminProductsPage() {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="min-w-0">
                     <ProductCategoryQuickEdit
                       product={product}
                       categories={categories}
@@ -288,34 +299,49 @@ export default function AdminProductsPage() {
                       onSave={(categoryId) => runQuickSave(product, "category", () => requestOrThrow(() => adminProductApi.updateCategory(product.id, { category_id: categoryId })))}
                     />
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-nowrap text-right">
                     <ProductPriceQuickEdit
                       product={product}
+                      target="cost"
                       saving={isSaving(product, "prices")}
                       onSave={(payload) => runQuickSave(product, "prices", () => requestOrThrow(() => adminProductApi.updatePrices(product.id, payload)))}
                     />
                   </TableCell>
-                  <TableCell className="px-2">
-                    <ProductWeightQuickEdit
+                  <TableCell className="whitespace-nowrap text-right">
+                    <ProductPriceQuickEdit
                       product={product}
-                      saving={isSaving(product, "sort_weight")}
-                      onSave={(weight) => runQuickSave(product, "sort_weight", () => requestOrThrow(() => adminProductApi.updateSortWeight(product.id, weight)), () => patchProduct(product.id, { sort_weight: weight }))}
+                      target="retail"
+                      saving={isSaving(product, "prices")}
+                      onSave={(payload) => runQuickSave(product, "prices", () => requestOrThrow(() => adminProductApi.updatePrices(product.id, payload)))}
                     />
                   </TableCell>
-                  <TableCell>
-                    <ProductStockQuickAction product={product} className={stockClass} onImported={loadProducts}>
-                      {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}
-                    </ProductStockQuickAction>
+                  <TableCell className="text-center">
+                    <div className="flex justify-center">
+                      <ProductWeightQuickEdit
+                        product={product}
+                        saving={isSaving(product, "sort_weight")}
+                        onSave={(weight) => runQuickSave(product, "sort_weight", () => requestOrThrow(() => adminProductApi.updateSortWeight(product.id, weight)), () => patchProduct(product.id, { sort_weight: weight }))}
+                      />
+                    </div>
                   </TableCell>
-                  <TableCell>
-                    <ProductStatusQuickEdit
-                      product={product}
-                      saving={isSaving(product, "status")}
-                      onSave={(enabled) => runQuickSave(product, "status", () => requestOrThrow(() => adminProductApi.setStatus(product.id, enabled)))}
-                    />
+                  <TableCell className="whitespace-nowrap text-center">
+                    <div className="flex justify-center">
+                      <ProductStockQuickAction product={product} className={stockClass} onImported={loadProducts}>
+                        {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}
+                      </ProductStockQuickAction>
+                    </div>
                   </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-0.5">
+                  <TableCell className="text-center">
+                    <div className="flex justify-center">
+                      <ProductStatusQuickEdit
+                        product={product}
+                        saving={isSaving(product, "status")}
+                        onSave={(enabled) => runQuickSave(product, "status", () => requestOrThrow(() => adminProductApi.setStatus(product.id, enabled)))}
+                      />
+                    </div>
+                  </TableCell>
+                  <TableCell className="px-2 text-right">
+                    <div className="flex justify-end gap-1">
                       <Button asChild variant="ghost" size="icon" title={t("admin.editProduct")} aria-label={t("admin.editProduct")}>
                         <Link href={`/admin/products/${product.id}/edit`}><Edit className="h-4 w-4" aria-hidden="true" /></Link>
                       </Button>

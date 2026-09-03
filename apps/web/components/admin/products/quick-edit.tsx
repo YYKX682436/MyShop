@@ -9,7 +9,7 @@ import { useLocale } from "@/lib/context"
 import { cn } from "@/lib/utils"
 
 export const quickEditTriggerClassName =
-  "inline-flex min-h-8 max-w-full items-center rounded-control px-2 py-1 text-left transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 focus-visible:ring-offset-1"
+  "flex min-h-8 min-w-0 max-w-full items-center rounded-control px-2 py-1 text-left transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 focus-visible:ring-offset-1"
 
 export const QuickEditTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
   function QuickEditTrigger({ children, className, ...props }, ref) {

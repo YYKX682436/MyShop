@@ -5,6 +5,8 @@ export interface PriceRange {
   max: number
 }
 
+export type ProductPriceTarget = "cost" | "retail"
+
 type PriceProduct = Pick<AdminProductDetail, "spec_enabled" | "cost_price" | "retail_price"> & {
   specs?: AdminProductSpec[] | null
 }
@@ -40,4 +42,17 @@ export function getAdminProductPriceRanges(product: PriceProduct): {
     cost: toPriceRange(effectiveSpecs.map((spec) => spec.cost_price)),
     retail: toPriceRange(effectiveSpecs.map((spec) => spec.retail_price)),
   }
+}
+
+export function getAdminProductPriceRange(product: PriceProduct, target: ProductPriceTarget): PriceRange | null {
+  const ranges = getAdminProductPriceRanges(product)
+  return target === "cost" ? ranges.cost : ranges.retail
+}
+
+export function getAdminProductPriceFocusTarget(
+  product: Pick<AdminProductDetail, "spec_enabled" | "specs">,
+  target: ProductPriceTarget,
+): { target: ProductPriceTarget; key: string } | null {
+  const key = product.spec_enabled ? product.specs[0]?.id : "root"
+  return key ? { target, key } : null
 }

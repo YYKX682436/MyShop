@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { toast } from "sonner"
 
 import { StatusBadge } from "@/components/admin/shared"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { useLocale } from "@/lib/context"
-import { getAdminProductPriceRanges } from "@/lib/product-pricing"
+import { getAdminProductPriceFocusTarget, getAdminProductPriceRange, type ProductPriceTarget } from "@/lib/product-pricing"
 import {
   buildProductPricesUpdatePayload,
   createProductPriceDraft,
@@ -19,42 +19,39 @@ import { formatYuan } from "@/lib/utils"
 import type { AdminProductDetail, AdminProductSpec } from "@/types"
 import { QuickEditActions, QuickEditContent, QuickEditTrigger } from "./quick-edit"
 
-type PriceFocusTarget = "cost" | "retail"
-
 export function ProductPriceQuickEdit({
   product,
+  target,
   saving,
   onSave,
 }: {
   product: AdminProductDetail
+  target: ProductPriceTarget
   saving: boolean
   onSave: (payload: AdminProductPricesUpdatePayload) => Promise<boolean>
 }) {
   const { t } = useLocale()
   const [open, setOpen] = useState(false)
-  const [focusTarget, setFocusTarget] = useState<PriceFocusTarget>("retail")
   const [draft, setDraft] = useState<ProductPriceDraft>(() => createProductPriceDraft(product))
   const costInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const retailInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const saveInFlightRef = useRef(false)
-  const ranges = getAdminProductPriceRanges(product)
 
-  const focusPriceInput = (target: PriceFocusTarget = focusTarget) => {
-    const key = product.spec_enabled ? product.specs[0]?.id : "root"
-    if (!key) return
-    const ref = target === "cost" ? costInputRefs.current[key] : retailInputRefs.current[key]
+  const focusPriceInput = useCallback(() => {
+    const focusTarget = getAdminProductPriceFocusTarget(product, target)
+    if (!focusTarget) return
+    const ref = focusTarget.target === "cost"
+      ? costInputRefs.current[focusTarget.key]
+      : retailInputRefs.current[focusTarget.key]
     ref?.focus()
-  }
+  }, [product, target])
 
   useEffect(() => {
     if (open) {
       setDraft(createProductPriceDraft(product))
-      window.requestAnimationFrame(() => focusPriceInput())
+      window.requestAnimationFrame(focusPriceInput)
     }
-    // The focus helper intentionally follows the selected price row when the
-    // popover is opened; the refs are populated by then in the next frame.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, product])
+  }, [focusPriceInput, open, product])
 
   const formatPriceRange = (range: { min: number; max: number } | null) => {
     if (range == null) return t("admin.systemNoData")
@@ -63,11 +60,10 @@ export function ProductPriceQuickEdit({
       : `${formatYuan(range.min)} – ${formatYuan(range.max)}`
   }
 
-  const openEditor = (target: PriceFocusTarget) => {
-    setFocusTarget(target)
+  const openEditor = () => {
     setDraft(createProductPriceDraft(product))
     setOpen(true)
-    window.requestAnimationFrame(() => focusPriceInput(target))
+    window.requestAnimationFrame(focusPriceInput)
   }
 
   const handleOpenAutoFocus = (event: Event) => {
@@ -128,33 +124,20 @@ export function ProductPriceQuickEdit({
   }
 
   const stockLabel = (spec: AdminProductSpec) => spec.unlimited ? t("admin.unlimited") : String(spec.stock_available ?? 0)
+  const displayRange = getAdminProductPriceRange(product, target)
 
   return (
     <Popover open={open} onOpenChange={(nextOpen) => !saving && setOpen(nextOpen)}>
-      <div className="space-y-0.5 text-sm">
-        <PopoverTrigger asChild>
-          <QuickEditTrigger
-            className="w-full justify-start whitespace-nowrap"
-            disabled={saving}
-            aria-label={`${t("admin.editProductPrice")}: ${t("admin.costPriceShort")} · ${product.title}`}
-            onClick={(event) => { event.preventDefault(); openEditor("cost") }}
-          >
-            <span className="mr-1 text-xs text-muted-foreground">{t("admin.costPriceShort")}</span>
-            <span className="font-medium">{formatPriceRange(ranges.cost)}</span>
-          </QuickEditTrigger>
-        </PopoverTrigger>
-        <PopoverTrigger asChild>
-          <QuickEditTrigger
-            className="w-full justify-start whitespace-nowrap"
-            disabled={saving}
-            aria-label={`${t("admin.editProductPrice")}: ${t("admin.retailPriceShort")} · ${product.title}`}
-            onClick={(event) => { event.preventDefault(); openEditor("retail") }}
-          >
-            <span className="mr-1 text-xs text-muted-foreground">{t("admin.retailPriceShort")}</span>
-            <span className="font-medium">{formatPriceRange(ranges.retail)}</span>
-          </QuickEditTrigger>
-        </PopoverTrigger>
-      </div>
+      <PopoverTrigger asChild>
+        <QuickEditTrigger
+          className="w-full justify-end whitespace-nowrap text-right"
+          disabled={saving}
+          aria-label={`${t("admin.editProductPrice")}: ${target === "cost" ? t("admin.costPriceShort") : t("admin.retailPriceShort")} · ${product.title}`}
+          onClick={openEditor}
+        >
+          <span className="font-medium">{formatPriceRange(displayRange)}</span>
+        </QuickEditTrigger>
+      </PopoverTrigger>
       <QuickEditContent
         title={t("admin.editProductPrice")}
         description={t("admin.quickEditPriceHint")}

@@ -10,6 +10,7 @@ import {
   validateProductTitleDraft,
   validateProductPriceDraft,
 } from "./product-quick-edit.ts"
+import { getAdminProductPriceFocusTarget } from "./product-pricing.ts"
 
 const product = (overrides = {}) => ({
   spec_enabled: false,
@@ -58,6 +59,14 @@ test("multi-spec price draft preserves each specification target", () => {
       { spec_id: "spec-b", cost_price: 12, retail_price: 22 },
     ],
   })
+})
+
+test("price target focus points to the root or first specification field", () => {
+  assert.deepEqual(getAdminProductPriceFocusTarget(product(), "cost"), { target: "cost", key: "root" })
+  assert.deepEqual(getAdminProductPriceFocusTarget(product({
+    spec_enabled: true,
+    specs: [{ id: "spec-first" }, { id: "spec-second" }],
+  }), "retail"), { target: "retail", key: "spec-first" })
 })
 
 test("illegal money drafts are rejected before a request is built", () => {

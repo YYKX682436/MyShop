@@ -65,11 +65,12 @@ export function ProductCategoryQuickEdit({
     <Popover open={open} onOpenChange={(nextOpen) => !saving && setOpen(nextOpen)}>
       <PopoverTrigger asChild>
         <QuickEditTrigger
+          className="min-w-0"
           disabled={saving}
           aria-label={`${t("admin.editProductCategory")}: ${categoryName}`}
-          title={t("admin.editProductCategory")}
+          title={categoryName}
         >
-          <StatusBadge label={categoryName} />
+          <StatusBadge label={<span className="block max-w-[7rem] truncate">{categoryName}</span>} />
         </QuickEditTrigger>
       </PopoverTrigger>
       <QuickEditContent title={t("admin.editProductCategory")} onOpenAutoFocus={focusSelect}>

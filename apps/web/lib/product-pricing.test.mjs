@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { getAdminProductPriceRanges } from "./product-pricing.ts"
+import { getAdminProductPriceRange, getAdminProductPriceRanges } from "./product-pricing.ts"
 
 const spec = (name, cost, retail, { visible = true, deleted = 0 } = {}) => ({
   id: name,
@@ -37,6 +37,17 @@ test("different spec costs and retail prices produce matching ranges", () => {
     retail_price: 50,
     specs: [spec("A", 30, 50), spec("B", 80, 120), spec("C", 100, 150)],
   }), { cost: { min: 30, max: 100 }, retail: { min: 50, max: 150 } })
+})
+
+test("cost and retail targets select their own display ranges", () => {
+  const product = {
+    spec_enabled: true,
+    cost_price: null,
+    retail_price: 999,
+    specs: [spec("A", 17, 17), spec("B", 37, 34)],
+  }
+  assert.deepEqual(getAdminProductPriceRange(product, "cost"), { min: 17, max: 37 })
+  assert.deepEqual(getAdminProductPriceRange(product, "retail"), { min: 17, max: 34 })
 })
 
 test("visible undeleted specs are the one shared effective set", () => {
