@@ -608,6 +608,7 @@ const zh = {
   "admin.importCount": "导入数量",
   "admin.noImportData": "暂无导入记录",
   "admin.batchImportKeys": "批量导入卡密",
+  "admin.batchImportProductHint": "先选择自动发货的卡券库存商品，再选择规格并导入卡密。",
   "admin.selectProductReq": "选择商品 *",
   "admin.selectProductPlaceholder": "请选择商品",
   "admin.specOptional": "规格（可选）",
@@ -676,6 +677,7 @@ const zh = {
   "admin.pickedUpCount": "共提取 {count} 条",
   "admin.pickupFailed": "提卡失败",
   "admin.cardImportOnlyAutoCard": "只有自动发货的卡券库存商品可以导入卡密",
+  "admin.importSpecInvalid": "当前库存行对应的规格已不存在或不属于该商品，请刷新后重试",
 
   // Admin Orders
   "admin.paymentMethod": "支付方式",
@@ -1676,6 +1678,7 @@ const en: Record<keyof typeof zh, string> = {
   "admin.importCount": "Import Count",
   "admin.noImportData": "No import records",
   "admin.batchImportKeys": "Batch Import Keys",
+  "admin.batchImportProductHint": "Select an automatic card-key inventory product first, then choose a specification and import card keys.",
   "admin.selectProductReq": "Select Product *",
   "admin.selectProductPlaceholder": "Select a product",
   "admin.specOptional": "Spec (Optional)",
@@ -1744,6 +1747,7 @@ const en: Record<keyof typeof zh, string> = {
   "admin.pickedUpCount": "Picked up {count} cards",
   "admin.pickupFailed": "Pickup failed",
   "admin.cardImportOnlyAutoCard": "Only automatic card-key inventory products can import card keys",
+  "admin.importSpecInvalid": "The specification for this stock row no longer exists or does not belong to this product. Refresh and try again.",
 
   // Admin Orders
   "admin.paymentMethod": "Payment Method",

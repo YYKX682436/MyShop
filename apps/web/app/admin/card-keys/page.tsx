@@ -70,7 +70,11 @@ export default function AdminCardKeysPage() {
 
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [importProduct, setImportProduct] = useState<AdminProductDetail | null>(null)
+  const [importInitialSpecId, setImportInitialSpecId] = useState<string | null>(null)
   const [importProductLoading, setImportProductLoading] = useState(false)
+  const [batchImportSelectorOpen, setBatchImportSelectorOpen] = useState(false)
+  const [batchImportProductId, setBatchImportProductId] = useState("")
+  const [batchImportProductLoading, setBatchImportProductLoading] = useState(false)
 
   const [batchPickupDialogOpen, setBatchPickupDialogOpen] = useState(false)
   const [pickupProductId, setPickupProductId] = useState("")
@@ -99,6 +103,9 @@ export default function AdminCardKeysPage() {
   const detailRequestRef = useRef(0)
   const pickupProductRequestRef = useRef(0)
 
+  const importableProducts = products.filter(
+    (product) => (product.delivery_type || "AUTO") === "AUTO" && (product.stock_mode || "CARD_KEY") === "CARD_KEY",
+  )
   const pickupProducts = products.filter((product) => (product.stock_mode || "CARD_KEY") === "CARD_KEY")
 
   const loadProducts = useCallback(async () => {
@@ -159,17 +166,70 @@ export default function AdminCardKeysPage() {
     return detail
   }, [products])
 
-  const openImportForProduct = async (productId: string) => {
-    setImportProductLoading(true)
+  const resetBatchImportSelector = () => {
+    setBatchImportProductId("")
+    setBatchImportProductLoading(false)
+  }
+
+  const openBatchImport = () => {
+    resetBatchImportSelector()
+    setImportInitialSpecId(null)
+    setImportProduct(null)
+    setBatchImportSelectorOpen(true)
+  }
+
+  const closeBatchImportSelector = () => {
+    if (batchImportProductLoading) return
+    setBatchImportSelectorOpen(false)
+    resetBatchImportSelector()
+  }
+
+  const handleBatchImportSelectorChange = (open: boolean) => {
+    if (!open) closeBatchImportSelector()
+    else setBatchImportSelectorOpen(true)
+  }
+
+  const handleBatchImportProduct = async () => {
+    if (!batchImportProductId) {
+      toast.error(t("admin.selectProductReq"))
+      return
+    }
+
+    setBatchImportProductLoading(true)
     try {
-      const product = await ensureProductDetail(productId)
+      const product = await ensureProductDetail(batchImportProductId)
       if (product.stock_mode !== "CARD_KEY" || product.delivery_type !== "AUTO") {
         throw new Error(t("admin.cardImportOnlyAutoCard"))
       }
+      setImportInitialSpecId(item.spec_id)
+      setImportProduct(product)
+      setBatchImportSelectorOpen(false)
+      resetBatchImportSelector()
+      setImportDialogOpen(true)
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.importFailed"))
+      await Promise.all([loadProducts(), loadStock()])
+    } finally {
+      setBatchImportProductLoading(false)
+    }
+  }
+
+  const openImportForStockRow = async (item: CardKeyStockSummary) => {
+    setImportProductLoading(true)
+    try {
+      const product = await ensureProductDetail(item.product_id)
+      if (product.stock_mode !== "CARD_KEY" || product.delivery_type !== "AUTO") {
+        throw new Error(t("admin.cardImportOnlyAutoCard"))
+      }
+      if (item.spec_id !== null && (!product.spec_enabled || !product.specs.some((spec) => spec.id === item.spec_id))) {
+        throw new Error(t("admin.importSpecInvalid"))
+      }
+      setImportInitialSpecId(null)
       setImportProduct(product)
       setImportDialogOpen(true)
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.importFailed"))
+      await Promise.all([loadProducts(), loadStock()])
     } finally {
       setImportProductLoading(false)
     }
@@ -177,7 +237,10 @@ export default function AdminCardKeysPage() {
 
   const handleImportDialogChange = (open: boolean) => {
     setImportDialogOpen(open)
-    if (!open) setImportProduct(null)
+    if (!open) {
+      setImportProduct(null)
+      setImportInitialSpecId(null)
+    }
   }
 
   const resetBatchPickup = () => {
@@ -437,7 +500,16 @@ export default function AdminCardKeysPage() {
       <PageHeader
         title={t("admin.cardKeys")}
         description={t("admin.cardKeysDesc")}
-        actions={<Button type="button" onClick={openBatchPickup} disabled={productsError || pickupProducts.length === 0}><Download className="h-4 w-4" aria-hidden="true" />{t("admin.batchPickup")}</Button>}
+        actions={
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" onClick={openBatchImport} disabled={productsError || importableProducts.length === 0 || batchImportProductLoading}>
+              <Upload className="h-4 w-4" aria-hidden="true" />{t("admin.batchImport")}
+            </Button>
+            <Button type="button" onClick={openBatchPickup} disabled={productsError || pickupProducts.length === 0}>
+              <Download className="h-4 w-4" aria-hidden="true" />{t("admin.batchPickup")}
+            </Button>
+          </div>
+        }
       />
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -498,7 +570,7 @@ export default function AdminCardKeysPage() {
                       <td className={item.invalid > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{item.invalid}</td>
                       <td className="px-4 py-3"><div className="flex justify-end gap-1">
                         {isCardKey && <>
-                          <Button type="button" variant="ghost" size="sm" title={t("admin.import")} aria-label={t("admin.import")} disabled={importProductLoading} onClick={() => void openImportForProduct(item.product_id)}><Upload className="h-4 w-4" aria-hidden="true" />{t("admin.import")}</Button>
+                          <Button type="button" variant="ghost" size="icon" title={t("admin.import")} aria-label={t("admin.import")} disabled={importProductLoading} onClick={() => void openImportForStockRow(item)}><Upload className="h-4 w-4" aria-hidden="true" /></Button>
                           <Button type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")} onClick={() => openDetail(item)}><Eye className="h-4 w-4" aria-hidden="true" /></Button>
                           <Button type="button" variant="ghost" size="icon" title={t("admin.batchInvalidate")} aria-label={t("admin.batchInvalidate")} disabled={(item.available ?? 0) <= 0} onClick={() => setBatchInvalidateTarget(item)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>
                         </>}
@@ -546,8 +618,38 @@ export default function AdminCardKeysPage() {
         </TabsContent>
       </Tabs>
 
+      <Dialog open={batchImportSelectorOpen} onOpenChange={handleBatchImportSelectorChange}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{t("admin.batchImport")}</DialogTitle>
+            <DialogDescription>{t("admin.batchImportProductHint")}</DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              {t("admin.selectProductReq")}
+              <select
+                className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                value={batchImportProductId}
+                onChange={(event) => setBatchImportProductId(event.target.value)}
+                disabled={batchImportProductLoading}
+              >
+                <option value="">{t("admin.selectProductPlaceholder")}</option>
+                {importableProducts.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
+              </select>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeBatchImportSelector} disabled={batchImportProductLoading}>{t("admin.cancel")}</Button>
+            <Button type="button" onClick={() => void handleBatchImportProduct()} disabled={batchImportProductLoading || !batchImportProductId}>
+              {batchImportProductLoading ? t("common.loading") : t("common.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <CardKeyImportDialog
         product={importProduct}
+        initialSpecId={importInitialSpecId}
         open={importDialogOpen}
         onOpenChange={handleImportDialogChange}
         onImported={handleImportCompleted}
@@ -685,7 +787,7 @@ export default function AdminCardKeysPage() {
                       <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_id ? `${key.order_id.slice(0, 8)}…` : t("admin.systemNoData")}</td>
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{key.sold_at ? formatDateTime(key.sold_at, locale) : t("admin.systemNoData")}</td>
                       <td className="px-4 py-3 text-right align-top"><div className="flex justify-end gap-1">
-                        {key.status === "AVAILABLE" && <Button type="button" variant="ghost" size="sm" title={t("admin.pickupCard")} aria-label={t("admin.pickupCard")} disabled={singlePickingUp} onClick={() => setSinglePickupTarget(key)}><Download className="h-4 w-4" aria-hidden="true" />{t("admin.pickupCard")}</Button>}
+                        {key.status === "AVAILABLE" && <Button type="button" variant="ghost" size="icon" title={t("admin.pickupCard")} aria-label={t("admin.pickupCard")} disabled={singlePickingUp} onClick={() => setSinglePickupTarget(key)}><Download className="h-4 w-4" aria-hidden="true" /></Button>}
                         {(key.status === "AVAILABLE" || key.status === "LOCKED") && <Button type="button" variant="ghost" size="icon" title={t("admin.invalidateCard")} aria-label={t("admin.invalidateCard")} onClick={() => setSingleInvalidateTarget(key)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>}
                       </div></td>
                     </tr>

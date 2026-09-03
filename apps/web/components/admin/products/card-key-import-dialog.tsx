@@ -20,12 +20,13 @@ import type { AdminProductDetail } from "@/types"
 
 interface CardKeyImportDialogProps {
   product: AdminProductDetail | null
+  initialSpecId?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onImported: () => void | Promise<void>
 }
 
-export function CardKeyImportDialog({ product, open, onOpenChange, onImported }: CardKeyImportDialogProps) {
+export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpenChange, onImported }: CardKeyImportDialogProps) {
   const { t } = useLocale()
   const [specId, setSpecId] = useState("")
   const [columns, setColumns] = useState([""])
@@ -41,8 +42,8 @@ export function CardKeyImportDialog({ product, open, onOpenChange, onImported }:
   }, [open])
 
   useEffect(() => {
-    if (open) setSpecId("")
-  }, [open, product?.id])
+    if (open) setSpecId(initialSpecId || "")
+  }, [open, product?.id, initialSpecId])
 
   const handleImport = async () => {
     const validationError = validateCardContentColumns(columns)
