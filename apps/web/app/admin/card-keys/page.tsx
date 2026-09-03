@@ -201,7 +201,7 @@ export default function AdminCardKeysPage() {
       if (product.stock_mode !== "CARD_KEY" || product.delivery_type !== "AUTO") {
         throw new Error(t("admin.cardImportOnlyAutoCard"))
       }
-      setImportInitialSpecId(item.spec_id)
+      setImportInitialSpecId(null)
       setImportProduct(product)
       setBatchImportSelectorOpen(false)
       resetBatchImportSelector()
@@ -224,7 +224,7 @@ export default function AdminCardKeysPage() {
       if (item.spec_id !== null && (!product.spec_enabled || !product.specs.some((spec) => spec.id === item.spec_id))) {
         throw new Error(t("admin.importSpecInvalid"))
       }
-      setImportInitialSpecId(null)
+      setImportInitialSpecId(item.spec_id)
       setImportProduct(product)
       setImportDialogOpen(true)
     } catch (requestError: unknown) {
