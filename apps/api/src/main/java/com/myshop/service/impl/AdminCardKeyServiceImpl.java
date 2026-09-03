@@ -93,11 +93,15 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只有自动发货的卡券库存商品可以导入卡密");
         }
 
-        // 校验 specId 归属：防止传入不属于该商品的规格 ID
-        if (specId != null) {
+        if (product.isSpecEnabled()) {
+            if (specId == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "启用规格的商品必须指定规格");
+            }
             productSpecRepository.findById(specId)
                     .filter(s -> s.getProductId().equals(productId) && s.getIsDeleted() == 0)
                     .orElseThrow(() -> new BusinessException(ErrorCode.SPEC_NOT_FOUND, "规格不存在或不属于该商品"));
+        } else if (specId != null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "未启用规格的商品不能指定规格");
         }
 
         CardContentParser.ParsedColumns parsed;

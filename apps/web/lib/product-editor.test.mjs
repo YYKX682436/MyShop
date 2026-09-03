@@ -6,6 +6,7 @@ import {
   getCardKeyImportAvailability,
   getProductEditorTabForMessage,
   reorderSpecs,
+  shouldResetProductEditorTab,
   withCurrentSpecOrder,
 } from "./product-editor.ts"
 
@@ -61,6 +62,17 @@ test("card-key import is only available for a saved clean card-key product", () 
   assert.equal(getCardKeyImportAvailability({ id: "product-1" }, "CARD_KEY", true), "save-changes")
   assert.equal(getCardKeyImportAvailability({ id: "product-1" }, "CARD_KEY", false), "ready")
   assert.equal(getCardKeyImportAvailability({ id: "product-1" }, "MANUAL", false), "hidden")
+})
+
+test("same product refresh keeps the current editor tab", () => {
+  assert.equal(shouldResetProductEditorTab("product-1", "product-1"), false)
+})
+
+test("different product navigation resets the editor to the basic tab", () => {
+  assert.equal(shouldResetProductEditorTab(undefined, "product-1"), true)
+  assert.equal(shouldResetProductEditorTab(null, "product-1"), true)
+  assert.equal(shouldResetProductEditorTab("product-1", "product-2"), true)
+  assert.equal(shouldResetProductEditorTab("product-1", null), true)
 })
 
 test("validation messages identify the tab that owns the error", () => {

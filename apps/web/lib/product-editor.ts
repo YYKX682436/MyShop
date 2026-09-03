@@ -57,6 +57,13 @@ export function getCardKeyImportAvailability(
   return "ready"
 }
 
+export function shouldResetProductEditorTab(
+  previousProductId: string | null | undefined,
+  nextProductId: string | null,
+): boolean {
+  return previousProductId === undefined || previousProductId !== nextProductId
+}
+
 export function toNumberOrNull(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || String(value).trim() === "") return null
   const parsed = Number(value)

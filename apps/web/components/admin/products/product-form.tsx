@@ -19,6 +19,7 @@ import {
   getProductEditorTabForMessage,
   PRODUCT_EDITOR_TABS,
   reorderSpecs,
+  shouldResetProductEditorTab,
   toNumberOrNull,
   withCurrentSpecOrder,
   type ProductEditorTab,
@@ -231,6 +232,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   const dirtyRef = useRef(false)
   const onDirtyChangeRef = useRef(onDirtyChange)
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({})
+  const previousProductIdRef = useRef<string | null | undefined>(undefined)
 
   const setDirty = useCallback((nextDirty: boolean) => {
     if (dirtyRef.current === nextDirty) return
@@ -244,8 +246,12 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   }, [onDirtyChange])
 
   useEffect(() => {
+    const nextProductId = product?.id ?? null
     setDraft(getProductDraft(product))
-    setActiveTab("basic")
+    if (shouldResetProductEditorTab(previousProductIdRef.current, nextProductId)) {
+      setActiveTab("basic")
+    }
+    previousProductIdRef.current = nextProductId
     setTabErrors({})
     setDirty(false)
     setPreview(getInitialPreview(product))
