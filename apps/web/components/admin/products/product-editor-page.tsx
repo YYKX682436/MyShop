@@ -98,7 +98,6 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
         onSaved={handleSaved}
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}
-        stickyActions
       />
     )
   }

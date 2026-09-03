@@ -46,8 +46,26 @@ public class PricingCalculator {
                     level == null ? null : level.getName());
         }
 
-        if (level.getPricingType() != PricingType.COST_MARKUP || level.getMarkupRate() == null
-                || level.getMarkupRate().signum() < 0) {
+        BigDecimal cost = money(costPrice, "成本价不能为空");
+        BigDecimal calculated = calculateCostMarkup(cost, level);
+        if (calculated.compareTo(retail) > 0) {
+            return new PriceResolution(retail, cost, retail, PricingSource.RETAIL,
+                    true, calculated, level.getId(), level.getName());
+        }
+        return new PriceResolution(calculated, cost, retail, PricingSource.LEVEL_MARKUP,
+                false, calculated, level.getId(), level.getName());
+    }
+
+    /**
+     * Calculates the uncapped cost-plus rule price for a cost-markup level.
+     *
+     * <p>The live draft preview uses this method when a retail price has not
+     * been entered yet. Keeping the formula here guarantees that preview and
+     * persisted pricing use the same validation and rounding policy.</p>
+     */
+    public BigDecimal calculateCostMarkup(BigDecimal costPrice, UserLevel level) {
+        if (level == null || level.getPricingType() != PricingType.COST_MARKUP
+                || level.getMarkupRate() == null || level.getMarkupRate().signum() < 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "用户等级定价规则无效");
         }
         BigDecimal markupRate;
@@ -60,15 +78,9 @@ public class PricingCalculator {
         if (cost.signum() < 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "成本价不能小于 0");
         }
-        BigDecimal calculated = cost
+        return cost
                 .multiply(ONE_HUNDRED.add(markupRate))
                 .divide(ONE_HUNDRED, 2, RoundingMode.HALF_UP);
-        if (calculated.compareTo(retail) > 0) {
-            return new PriceResolution(retail, cost, retail, PricingSource.RETAIL,
-                    true, calculated, level.getId(), level.getName());
-        }
-        return new PriceResolution(calculated, cost, retail, PricingSource.LEVEL_MARKUP,
-                false, calculated, level.getId(), level.getName());
     }
 
     private BigDecimal money(BigDecimal value, String message) {

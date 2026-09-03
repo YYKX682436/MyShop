@@ -446,7 +446,7 @@ export const adminProductApi = {
   // Specs
   getSpecs: (productId: string) =>
     request<AdminProductSpec[]>(`/admin/products/${productId}/specs`),
-  previewPricing: (data: AdminProductUpsertPayload, signal?: AbortSignal) =>
+  previewPricing: (data: AdminPricingPreviewPayload, signal?: AbortSignal) =>
     request<AdminPricingPreview>("/admin/products/pricing-preview", {
       method: "POST",
       body: JSON.stringify(data),
@@ -535,13 +535,13 @@ export interface AdminProductUpsertPayload {
   detail_md?: string
   cover_url?: string
   cost_price: number | null
-  retail_price?: number
+  retail_price?: number | null
   category_id: string
-  low_stock_threshold?: number
+  low_stock_threshold?: number | null
   spec_enabled: boolean
   is_enabled: boolean
-  initial_sales?: number
-  sort_weight?: number
+  initial_sales?: number | null
+  sort_weight?: number | null
   delivery_type: "AUTO" | "MANUAL"
   customer_input_fields?: { id?: string; label: string }[]
   stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
@@ -549,16 +549,33 @@ export interface AdminProductUpsertPayload {
   specs: {
     id?: string
     name: string
-    cost_price: number
-    retail_price: number
+    cost_price: number | null
+    retail_price: number | null
     visible: boolean
     sort_order: number
-    manual_stock?: number
+    manual_stock?: number | null
   }[]
   overrides: {
     user_level_id: string
     spec_id: string | null
-    price: number
+    price: number | null
+  }[]
+}
+
+/** Only the values needed by the live pricing calculation. */
+export interface AdminPricingPreviewPayload {
+  cost_price: number | null
+  retail_price: number | null
+  spec_enabled: boolean
+  specs: {
+    id: string
+    cost_price: number | null
+    retail_price: number | null
+  }[]
+  overrides: {
+    user_level_id: string
+    spec_id: string | null
+    price: number | null
   }[]
 }
 

@@ -101,6 +101,73 @@ class AdminProductServiceImplTest {
     }
 
     @Test
+    void createAcceptsAClientGeneratedSpecUuidAndPersistsTheSameUuid() {
+        UUID categoryId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID clientSpecId = UUID.randomUUID();
+        Product responseProduct = product(productId, true, true);
+        stubResponseData(responseProduct, List.of());
+        when(productRepository.saveAndFlush(any(Product.class))).thenAnswer(invocation -> {
+            Product saved = invocation.getArgument(0);
+            saved.setId(productId);
+            return saved;
+        });
+        when(productSpecRepository.saveAndFlush(any(ProductSpec.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AdminProductSpecRequest requestSpec = new AdminProductSpecRequest(clientSpecId, "one month",
+                new BigDecimal("8.00"), new BigDecimal("10.00"), true, 0, null);
+        service().createProduct(request(categoryId, true, true, null, List.of(requestSpec)));
+
+        org.mockito.ArgumentCaptor<ProductSpec> captor = org.mockito.ArgumentCaptor.forClass(ProductSpec.class);
+        verify(productSpecRepository).saveAndFlush(captor.capture());
+        assertEquals(clientSpecId, captor.getValue().getId());
+    }
+
+    @Test
+    void updateAcceptsAClientGeneratedUuidForANewSpec() {
+        UUID productId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        UUID newSpecId = UUID.randomUUID();
+        Product product = product(productId, true, true);
+        ProductSpec existingSpec = spec(UUID.randomUUID(), productId, "8.00", "10.00", true);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        stubResponseData(product, List.of(existingSpec));
+        when(productRepository.saveAndFlush(product)).thenReturn(product);
+        when(productSpecRepository.saveAndFlush(any(ProductSpec.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        AdminProductSpecRequest newSpec = new AdminProductSpecRequest(newSpecId, "six months",
+                new BigDecimal("18.00"), new BigDecimal("22.00"), true, 1, null);
+        service().updateProduct(productId, request(categoryId, true, true, null,
+                List.of(specRequest(existingSpec), newSpec)));
+
+        org.mockito.ArgumentCaptor<ProductSpec> captor = org.mockito.ArgumentCaptor.forClass(ProductSpec.class);
+        verify(productSpecRepository, org.mockito.Mockito.times(2)).saveAndFlush(captor.capture());
+        assertTrue(captor.getAllValues().stream().anyMatch(saved -> newSpecId.equals(saved.getId())));
+    }
+
+    @Test
+    void rejectsASpecUuidAlreadyOwnedByAnotherProduct() {
+        UUID productId = UUID.randomUUID();
+        UUID categoryId = UUID.randomUUID();
+        UUID occupiedSpecId = UUID.randomUUID();
+        Product product = product(productId, true, true);
+        ProductSpec occupiedSpec = spec(occupiedSpecId, UUID.randomUUID(), "8.00", "10.00", true);
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
+        when(productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0)).thenReturn(List.of());
+        when(productSpecRepository.findById(occupiedSpecId)).thenReturn(Optional.of(occupiedSpec));
+
+        AdminProductSpecRequest requestSpec = new AdminProductSpecRequest(occupiedSpecId, "occupied",
+                new BigDecimal("8.00"), new BigDecimal("10.00"), true, 0, null);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service().updateProduct(productId, request(categoryId, true, true, null, List.of(requestSpec))));
+
+        assertEquals(ErrorCode.SPEC_NOT_FOUND, exception.getCode());
+        verify(productRepository, never()).saveAndFlush(any(Product.class));
+    }
+
+    @Test
     void updateRetainsProductNoAndTheEntityRejectsASecondAssignment() {
         UUID productId = UUID.randomUUID();
         UUID categoryId = UUID.randomUUID();

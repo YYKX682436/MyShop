@@ -44,6 +44,14 @@ class PricingCalculatorTest {
     }
 
     @Test
+    void costMarkupRuleCanBeCalculatedBeforeRetailPriceIsKnown() {
+        BigDecimal rule = calculator.calculateCostMarkup(money("10.01"),
+                level(PricingType.COST_MARKUP, money("5")));
+
+        assertEquals(money("10.51"), rule);
+    }
+
+    @Test
     void overrideWinsAndMayBeBelowCostButNeverAboveRetail() {
         UserLevel level = level(PricingType.COST_MARKUP, money("50"));
         PriceResolution override = calculator.calculate(money("80"), money("100"), level, money("70"));

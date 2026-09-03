@@ -1,6 +1,7 @@
 package com.myshop.service;
 
 import com.myshop.common.PageResult;
+import com.myshop.model.request.AdminPricingPreviewRequest;
 import com.myshop.model.request.AdminProductUpsertRequest;
 import com.myshop.model.request.AdminProductStatusRequest;
 import com.myshop.model.response.AdminPricingPreviewResponse;
@@ -27,5 +28,5 @@ public interface AdminProductService {
 
     java.util.List<AdminProductSpecResponse> listSpecs(UUID productId);
 
-    AdminPricingPreviewResponse previewPricing(AdminProductUpsertRequest request);
+    AdminPricingPreviewResponse previewPricing(AdminPricingPreviewRequest request);
 }

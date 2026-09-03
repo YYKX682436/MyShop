@@ -2,6 +2,7 @@ package com.myshop.controller;
 
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
+import com.myshop.model.request.AdminPricingPreviewRequest;
 import com.myshop.model.request.AdminProductUpsertRequest;
 import com.myshop.model.request.AdminProductStatusRequest;
 import com.myshop.model.request.AdminProductSortWeightRequest;
@@ -76,7 +77,7 @@ public class AdminProductController {
     }
 
     @PostMapping("/pricing-preview")
-    public ApiResponse<?> previewPricing(@RequestBody AdminProductUpsertRequest request) {
+    public ApiResponse<?> previewPricing(@RequestBody AdminPricingPreviewRequest request) {
         return ApiResponse.success(productService.previewPricing(request));
     }
 }

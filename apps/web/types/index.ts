@@ -166,8 +166,24 @@ export interface AdminPricingMatrixRow {
   below_cost: boolean
 }
 
+export type PricingPreviewStatus = "READY" | "WAITING_COST" | "WAITING_RETAIL"
+
+export interface AdminPricingPreviewRow {
+  user_level_id: string
+  user_level_name: string
+  pricing_type: PricingType
+  markup_rate: number | null
+  spec_id: string | null
+  rule_price: number | null
+  override_price: number | null
+  final_price: number | null
+  pricing_status: PricingPreviewStatus
+  retail_capped: boolean
+  below_cost: boolean
+}
+
 export interface AdminPricingPreview {
-  pricing_matrix: AdminPricingMatrixRow[]
+  pricing_matrix: AdminPricingPreviewRow[]
   warnings: string[]
 }
 

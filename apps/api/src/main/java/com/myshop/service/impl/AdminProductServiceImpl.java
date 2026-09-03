@@ -3,6 +3,7 @@ package com.myshop.service.impl;
 import com.myshop.common.PageResult;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.PricingPreviewStatus;
 import com.myshop.constant.PricingSource;
 import com.myshop.constant.PricingType;
 import com.myshop.constant.StockMode;
@@ -16,10 +17,14 @@ import com.myshop.model.CustomerInputField;
 import com.myshop.model.request.AdminProductOverrideRequest;
 import com.myshop.model.request.AdminProductSpecRequest;
 import com.myshop.model.request.AdminProductUpsertRequest;
+import com.myshop.model.request.AdminPricingPreviewOverrideRequest;
+import com.myshop.model.request.AdminPricingPreviewRequest;
+import com.myshop.model.request.AdminPricingPreviewSpecRequest;
 import com.myshop.model.request.AdminProductStatusRequest;
 import com.myshop.model.response.AdminPriceOverrideResponse;
 import com.myshop.model.response.AdminPricingMatrixResponse;
 import com.myshop.model.response.AdminPricingPreviewResponse;
+import com.myshop.model.response.AdminPricingPreviewRowResponse;
 import com.myshop.model.response.AdminProductResponse;
 import com.myshop.model.response.AdminProductSpecResponse;
 import com.myshop.repository.CardKeyRepository;
@@ -34,6 +39,7 @@ import com.myshop.service.AdminProductService;
 import com.myshop.service.ProductInventoryBatchService;
 import com.myshop.service.ProductListSort;
 import com.myshop.service.ProductRules;
+import com.myshop.service.PricingCalculator;
 import com.myshop.service.PricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -65,6 +71,7 @@ public class AdminProductServiceImpl implements AdminProductService {
     private static final int MAX_PAGE_SIZE = 100;
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
     private static final String VISIBLE_SPEC_REQUIRED_MESSAGE = "启用规格的商品至少需要一个可见可售规格";
+    private static final PricingCalculator PRICING_CALCULATOR = new PricingCalculator();
 
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
@@ -175,17 +182,165 @@ public class AdminProductServiceImpl implements AdminProductService {
 
     @Override
     @Transactional(readOnly = true)
-    public AdminPricingPreviewResponse previewPricing(AdminProductUpsertRequest request) {
-        Product product = new Product();
-        PreparedAggregate aggregate = prepare(product, request, true);
-        applyProduct(product, aggregate);
-        List<ProductSpec> previewSpecs = aggregate.specs().stream()
-                .map(spec -> spec.toEntity(product.getId())).toList();
+    public AdminPricingPreviewResponse previewPricing(AdminPricingPreviewRequest request) {
+        if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "价格预览参数不能为空");
+
+        boolean specEnabled = Boolean.TRUE.equals(request.specEnabled());
+        List<AdminPricingPreviewSpecRequest> requestedSpecs = request.specs() == null
+                ? List.of() : request.specs();
+        List<PreviewTarget> targets = specEnabled
+                ? preparePreviewSpecs(requestedSpecs)
+                : List.of(new PreviewTarget(null,
+                optionalMoney(request.costPrice(), false, "成本价"),
+                optionalMoney(request.retailPrice(), true, "零售价")));
+        if (specEnabled) {
+            // Root prices are not used for a specification product, but a
+            // supplied value is still checked when it is part of the draft.
+            optionalMoney(request.costPrice(), false, "成本价");
+            optionalMoney(request.retailPrice(), true, "零售价");
+        }
+
         List<UserLevel> levels = userLevelRepository.findAllOrdered().stream()
                 .filter(UserLevel::isEnabled).toList();
-        List<ProductLevelPriceOverride> overrides = toPreviewOverrides(aggregate, request.overrides());
-        return new AdminPricingPreviewResponse(buildMatrix(product, previewSpecs, levels, overrides),
-                buildWarnings(aggregate, levels, overrides));
+        List<AdminPricingPreviewOverrideRequest> requestedOverrides = request.overrides() == null
+                ? List.of() : request.overrides();
+        Map<PreviewOverrideKey, BigDecimal> overrides = preparePreviewOverrides(
+                requestedOverrides, targets, levels, specEnabled);
+        List<AdminPricingPreviewRowResponse> rows = new ArrayList<>();
+        for (UserLevel level : levels) {
+            for (PreviewTarget target : targets) {
+                BigDecimal override = overrides.get(new PreviewOverrideKey(level.getId(), target.specId()));
+                rows.add(buildPreviewRow(level, target, override));
+            }
+        }
+        return new AdminPricingPreviewResponse(rows, buildPreviewWarnings(rows));
+    }
+
+    private List<PreviewTarget> preparePreviewSpecs(List<AdminPricingPreviewSpecRequest> requests) {
+        Set<UUID> ids = new HashSet<>();
+        List<PreviewTarget> result = new ArrayList<>();
+        for (AdminPricingPreviewSpecRequest request : requests) {
+            if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "规格价格参数无效");
+            if (request.id() != null && !ids.add(request.id())) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "规格价格参数不能重复");
+            }
+            result.add(new PreviewTarget(request.id(),
+                    optionalMoney(request.costPrice(), false, "规格成本价"),
+                    optionalMoney(request.retailPrice(), true, "规格零售价")));
+        }
+        return result;
+    }
+
+    private Map<PreviewOverrideKey, BigDecimal> preparePreviewOverrides(
+            List<AdminPricingPreviewOverrideRequest> requests,
+            List<PreviewTarget> targets,
+            List<UserLevel> levels,
+            boolean specEnabled) {
+        Map<UUID, UserLevel> levelsById = levels.stream()
+                .collect(Collectors.toMap(UserLevel::getId, level -> level));
+        Map<UUID, PreviewTarget> targetsById = targets.stream()
+                .filter(target -> target.specId() != null)
+                .collect(Collectors.toMap(PreviewTarget::specId, target -> target));
+        Set<PreviewOverrideKey> keys = new HashSet<>();
+        Map<PreviewOverrideKey, BigDecimal> result = new LinkedHashMap<>();
+        for (AdminPricingPreviewOverrideRequest request : requests) {
+            if (request == null || request.userLevelId() == null || request.price() == null) {
+                throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT, "特殊价参数不完整");
+            }
+            if (!levelsById.containsKey(request.userLevelId())) {
+                throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "用户等级不存在");
+            }
+            UUID specId = request.specId();
+            PreviewTarget target;
+            if (specEnabled) {
+                target = targetsById.get(specId);
+                if (target == null) {
+                    throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT, "规格商品特殊价必须绑定有效规格");
+                }
+            } else {
+                if (specId != null) {
+                    throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT, "无规格商品不能设置规格特殊价");
+                }
+                target = targets.get(0);
+            }
+            BigDecimal price = request.price();
+            if (price.scale() > 2 || price.signum() <= 0
+                    || target.retailPrice() != null && price.compareTo(target.retailPrice()) > 0) {
+                throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT,
+                        "特殊价必须大于 0 且不能高于零售价");
+            }
+            PreviewOverrideKey key = new PreviewOverrideKey(request.userLevelId(), specId);
+            if (!keys.add(key)) {
+                throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT, "同一等级和目标不能重复设置特殊价");
+            }
+            result.put(key, price.setScale(2, RoundingMode.UNNECESSARY));
+        }
+        return result;
+    }
+
+    private BigDecimal optionalMoney(BigDecimal value, boolean positive, String label) {
+        if (value == null) return null;
+        if (value.scale() > 2) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, label + "最多支持两位小数");
+        }
+        if (positive ? value.signum() <= 0 : value.signum() < 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, label + (positive ? "必须大于 0" : "不能小于 0"));
+        }
+        return value.setScale(2, RoundingMode.UNNECESSARY);
+    }
+
+    private AdminPricingPreviewRowResponse buildPreviewRow(UserLevel level,
+                                                            PreviewTarget target,
+                                                            BigDecimal overridePrice) {
+        BigDecimal rulePrice = null;
+        BigDecimal finalPrice = null;
+        boolean retailCapped = false;
+        PricingPreviewStatus status;
+
+        if (level.getPricingType() == PricingType.RETAIL) {
+            if (target.retailPrice() == null) {
+                status = PricingPreviewStatus.WAITING_RETAIL;
+            } else {
+                rulePrice = target.retailPrice();
+                com.myshop.model.pricing.PriceResolution resolution = PRICING_CALCULATOR.calculate(
+                        target.costPrice(), target.retailPrice(), level, overridePrice);
+                finalPrice = resolution.price();
+                retailCapped = resolution.retailCapped();
+                status = PricingPreviewStatus.READY;
+            }
+        } else {
+            if (target.costPrice() != null) {
+                rulePrice = PRICING_CALCULATOR.calculateCostMarkup(target.costPrice(), level);
+            }
+            if (target.retailPrice() == null) {
+                status = PricingPreviewStatus.WAITING_RETAIL;
+            } else if (target.costPrice() == null) {
+                if (overridePrice != null) {
+                    finalPrice = PRICING_CALCULATOR.calculate(null, target.retailPrice(), level,
+                            overridePrice).price();
+                }
+                status = PricingPreviewStatus.WAITING_COST;
+            } else {
+                com.myshop.model.pricing.PriceResolution resolution = PRICING_CALCULATOR.calculate(
+                        target.costPrice(), target.retailPrice(), level, overridePrice);
+                finalPrice = resolution.price();
+                retailCapped = resolution.retailCapped();
+                status = PricingPreviewStatus.READY;
+            }
+        }
+
+        boolean belowCost = finalPrice != null && target.costPrice() != null
+                && finalPrice.compareTo(target.costPrice()) < 0;
+        return new AdminPricingPreviewRowResponse(level.getId(), level.getName(), level.getPricingType(),
+                level.getMarkupRate(), target.specId(), rulePrice, overridePrice, finalPrice,
+                status, retailCapped, belowCost);
+    }
+
+    private List<String> buildPreviewWarnings(List<AdminPricingPreviewRowResponse> rows) {
+        return rows.stream().filter(AdminPricingPreviewRowResponse::belowCost)
+                .map(row -> "等级「" + row.userLevelName() + "」的"
+                        + (row.specId() == null ? "商品" : "规格特殊价") + "低于成本价")
+                .distinct().toList();
     }
 
     private AdminProductResponse saveAggregate(Product product, AdminProductUpsertRequest request, boolean creating) {
@@ -274,14 +429,18 @@ public class AdminProductServiceImpl implements AdminProductService {
         }
         Map<UUID, ProductSpec> existingById = existingSpecs.stream()
                 .collect(Collectors.toMap(ProductSpec::getId, spec -> spec));
+        Set<UUID> ids = new HashSet<>();
         Set<String> names = new HashSet<>();
         List<PreparedSpec> result = new ArrayList<>();
         for (AdminProductSpecRequest request : effective) {
             if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "规格参数无效");
             UUID id = request.id() == null ? UUID.randomUUID() : request.id();
+            if (!ids.add(id)) throw new BusinessException(ErrorCode.BAD_REQUEST, "规格参数不能重复");
             ProductSpec existing = existingById.get(id);
             if (request.id() != null && existing == null) {
-                throw new BusinessException(ErrorCode.SPEC_NOT_FOUND, "规格不存在或不属于当前商品");
+                if (productSpecRepository.findById(id).isPresent()) {
+                    throw new BusinessException(ErrorCode.SPEC_NOT_FOUND, "规格不存在或不属于当前商品");
+                }
             }
             String name = request.name() == null ? "" : request.name().trim();
             if (name.isBlank() || name.length() > 255) {
@@ -408,12 +567,6 @@ public class AdminProductServiceImpl implements AdminProductService {
                             : old.getSpecId() == null)
                     .map(this::copyOverride).toList();
         }
-        return buildValidatedOverrides(aggregate, requests);
-    }
-
-    private List<ProductLevelPriceOverride> toPreviewOverrides(PreparedAggregate aggregate,
-                                                               List<AdminProductOverrideRequest> requests) {
-        if (requests == null) return List.of();
         return buildValidatedOverrides(aggregate, requests);
     }
 
@@ -569,17 +722,6 @@ public class AdminProductServiceImpl implements AdminProductService {
                 .distinct().toList();
     }
 
-    private List<String> buildWarnings(PreparedAggregate aggregate, List<UserLevel> levels,
-                                       List<ProductLevelPriceOverride> overrides) {
-        Product product = new Product();
-        product.setId(UUID.randomUUID());
-        product.setRetailPrice(aggregate.retailPrice());
-        product.setCostPrice(aggregate.costPrice());
-        product.setSpecEnabled(aggregate.specEnabled());
-        List<ProductSpec> specs = aggregate.specs().stream().map(spec -> spec.toEntity(product.getId())).toList();
-        return buildWarnings(product, specs, levels, overrides);
-    }
-
     private AdminPriceOverrideResponse toOverride(ProductLevelPriceOverride override) {
         return new AdminPriceOverrideResponse(override.getId(), override.getUserLevelId(), override.getSpecId(), override.getPrice());
     }
@@ -590,6 +732,12 @@ public class AdminProductServiceImpl implements AdminProductService {
         copy.setUserLevelId(old.getUserLevelId());
         copy.setPrice(old.getPrice());
         return copy;
+    }
+
+    private record PreviewTarget(UUID specId, BigDecimal costPrice, BigDecimal retailPrice) {
+    }
+
+    private record PreviewOverrideKey(UUID userLevelId, UUID specId) {
     }
 
     private void validatePage(int page, int pageSize) {
