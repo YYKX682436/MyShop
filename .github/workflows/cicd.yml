@@ -22,6 +22,60 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+      - name: Enforce ProductSpec PostgreSQL integration test
+        working-directory: apps/api
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The test class keeps disabledWithoutDocker=true so local developers
+          # can still run ordinary tests without installing Docker. CI must
+          # explicitly prove that Docker is available and must fail if this
+          # PostgreSQL/Testcontainers test is skipped.
+          docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
+          docker info --format 'server={{.ServerVersion}} containers={{.Containers}}'
+
+          report="target/surefire-reports/TEST-com.myshop.service.impl.AdminProductAssignedUuidIntegrationTest.xml"
+          rm -f "$report"
+          mvn -B \
+            -Dtest=AdminProductAssignedUuidIntegrationTest \
+            -Dsurefire.failIfNoSpecifiedTests=true \
+            test
+
+          REPORT="$report" python3 - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          report = Path(os.environ["REPORT"])
+          if not report.is_file():
+              raise SystemExit(f"Missing Surefire report: {report}")
+
+          suite = ET.parse(report).getroot()
+          tests = int(suite.attrib.get("tests", "0"))
+          failures = int(suite.attrib.get("failures", "0"))
+          errors = int(suite.attrib.get("errors", "0"))
+          skipped = int(suite.attrib.get("skipped", "0"))
+
+          result = (
+              "AdminProductAssignedUuidIntegrationTest PostgreSQL/Testcontainers: "
+              f"Tests run: {tests}, Failures: {failures}, "
+              f"Errors: {errors}, Skipped: {skipped}"
+          )
+          print(result)
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as summary:
+                  summary.write("### ProductSpec assigned UUID PostgreSQL integration test\n\n")
+                  summary.write(f"- {result}\n")
+
+          if tests <= 0 or failures != 0 or errors != 0 or skipped != 0:
+              raise SystemExit(
+                  "ProductSpec assigned UUID PostgreSQL integration test did not meet "
+                  "the CI execution contract"
+              )
+          PY
       - name: Build and test
         working-directory: apps/api
         run: mvn -B verify
