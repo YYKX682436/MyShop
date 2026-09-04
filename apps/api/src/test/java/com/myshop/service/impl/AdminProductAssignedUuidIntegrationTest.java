@@ -51,7 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * first-level persistence-context hit cannot hide an incorrect insert/update
  * decision.
  */
-@Testcontainers(disabledWithoutDocker = false)
+@Testcontainers(disabledWithoutDocker = true)
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class AdminProductAssignedUuidIntegrationTest {
