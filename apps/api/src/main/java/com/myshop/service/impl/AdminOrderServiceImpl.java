@@ -79,7 +79,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         List<Map<String, Object>> list = orders.stream()
                 .map(order -> toAdminOrder(order,
                         itemsByOrderId.getOrDefault(order.getId(), List.of()),
-                        usersById.get(order.getUserId()), false))
+                        order.getUserId() == null ? null : usersById.get(order.getUserId()), false))
                 .toList();
         return PageResult.of(orderPage, list);
     }
