@@ -99,18 +99,8 @@ public class DeliverServiceImpl implements DeliverService {
             result.append("\n第").append(itemNumber).append("项：").append(item.getProductTitle());
             if (item.getSpecName() != null) result.append(" [").append(item.getSpecName()).append("]");
             result.append("\n");
-            for (int cardIndex = 0; cardIndex < itemKeys.size(); cardIndex++) {
-                CardKey key = itemKeys.get(cardIndex);
-                List<String> parts = key.getContentParts();
-                if (parts.size() == 1) {
-                    result.append(parts.get(0)).append("\n");
-                    continue;
-                }
-                result.append("第 ").append(cardIndex + 1).append(" 份\n");
-                for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
-                    result.append("卡券内容 ").append(partIndex + 1).append(": ")
-                            .append(parts.get(partIndex)).append("\n");
-                }
+            for (CardKey key : itemKeys) {
+                result.append(String.join("\t", key.getContentParts())).append("\n");
             }
         }
         return result.toString();

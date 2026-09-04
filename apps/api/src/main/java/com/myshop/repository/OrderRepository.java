@@ -106,9 +106,13 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     List<Object[]> countPaymentOutcomesBetween(@Param("start") LocalDateTime start,
                                                @Param("end") LocalDateTime end);
 
-    /** Registered buyers are identified by user_id; each guest order is a distinct buyer. */
+    /** Registered users, guest sessions, and anomalous guest orders each have a stable buyer identity. */
     @Query(value = """
-            SELECT COUNT(DISTINCT COALESCE(o.user_id, o.id))
+            SELECT COUNT(DISTINCT CASE
+                       WHEN o.user_id IS NOT NULL THEN 'u:' || CAST(o.user_id AS text)
+                       WHEN NULLIF(o.session_token, '') IS NOT NULL THEN 's:' || o.session_token
+                       ELSE 'o:' || CAST(o.id AS text)
+                   END)
             FROM orders o
             WHERE o.status IN ('PAID', 'DELIVERED')
               AND o.paid_at >= :start

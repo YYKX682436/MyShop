@@ -1,6 +1,7 @@
 package com.myshop.service.impl;
 
 import com.myshop.model.response.DashboardStatsResponse;
+import com.myshop.repository.OrderRepository;
 import com.myshop.service.DashboardService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,9 @@ class DashboardAggregateIntegrationTest {
 
     @Autowired
     private DashboardService dashboardService;
+
+    @Autowired
+    private OrderRepository orderRepository;
 
     private long nextUserNo;
 
@@ -131,6 +135,27 @@ class DashboardAggregateIntegrationTest {
         assertEquals(start.plusHours(12), now);
     }
 
+    @Test
+    void postgresDistinctBuyerCountUsesUserSessionAndOrderFallback() {
+        LocalDate today = LocalDate.now(CLOCK);
+        LocalDateTime start = today.atStartOfDay();
+        UUID registeredUserId = insertUser("registered", "registered@example.com", "USER", 0,
+                start.plusHours(1));
+
+        insertOrder(registeredUserId, null, "PAID", start.plusHours(1), start.plusHours(2), "1.00");
+        insertOrder(registeredUserId, null, "DELIVERED", start.plusHours(3), start.plusHours(4), "2.00");
+
+        insertOrder(null, "guest-session-a", "PAID", start.plusHours(5), start.plusHours(6), "3.00");
+        insertOrder(null, "guest-session-a", "DELIVERED", start.plusHours(7), start.plusHours(8), "4.00");
+        insertOrder(null, "guest-session-b", "PAID", start.plusHours(9), start.plusHours(10), "5.00");
+
+        insertOrder(null, null, "PAID", start.plusHours(11), start.plusHours(12), "6.00");
+        insertOrder(null, null, "DELIVERED", start.plusHours(13), start.plusHours(14), "7.00");
+        insertOrder(null, "", "PAID", start.plusHours(15), start.plusHours(16), "8.00");
+
+        assertEquals(6L, orderRepository.countDistinctBuyersBetween(start, start.plusDays(1)));
+    }
+
     @TestConfiguration(proxyBeanMethods = false)
     static class FixedDashboardClockConfiguration {
         @Bean
@@ -175,18 +200,28 @@ class DashboardAggregateIntegrationTest {
 
     private UUID insertOrder(UUID userId, String status, LocalDateTime createdAt,
                              LocalDateTime paidAt, String amount) {
-        return insertOrder(userId, status, createdAt, paidAt, amount, "NORMAL");
+        return insertOrder(userId, null, status, createdAt, paidAt, amount, "NORMAL");
     }
 
     private UUID insertOrder(UUID userId, String status, LocalDateTime createdAt,
                              LocalDateTime paidAt, String amount, String orderType) {
+        return insertOrder(userId, null, status, createdAt, paidAt, amount, orderType);
+    }
+
+    private UUID insertOrder(UUID userId, String sessionToken, String status,
+                             LocalDateTime createdAt, LocalDateTime paidAt, String amount) {
+        return insertOrder(userId, sessionToken, status, createdAt, paidAt, amount, "NORMAL");
+    }
+
+    private UUID insertOrder(UUID userId, String sessionToken, String status,
+                             LocalDateTime createdAt, LocalDateTime paidAt, String amount, String orderType) {
         UUID id = UUID.randomUUID();
         LocalDateTime deliveredAt = "DELIVERED".equals(status) ? paidAt : null;
         jdbcTemplate.update("""
-                INSERT INTO orders(id, created_at, updated_at, user_id, actual_amount, total_amount,
+                INSERT INTO orders(id, created_at, updated_at, user_id, session_token, actual_amount, total_amount,
                                    status, order_type, paid_at, delivered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, id, createdAt, createdAt, userId,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, id, createdAt, createdAt, userId, sessionToken,
                 "ADMIN_PICKUP".equals(orderType) ? BigDecimal.ZERO : new BigDecimal(amount),
                 new BigDecimal(amount), status, orderType, paidAt, deliveredAt);
         return id;

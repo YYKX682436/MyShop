@@ -28,6 +28,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -186,13 +187,20 @@ class DeliverServiceImplTest {
         card.setId(UUID.randomUUID());
         card.setOrderId(orderId);
         card.setOrderItemId(itemId);
-        card.setContentParts(List.of("account", "secret"));
+        card.setContentParts(List.of("MULTI-A-001", "MULTI-A-SECRET"));
         card.setStatus(CardKeyStatus.SOLD);
+        CardKey singleColumnCard = new CardKey();
+        singleColumnCard.setId(UUID.randomUUID());
+        singleColumnCard.setOrderId(orderId);
+        singleColumnCard.setOrderItemId(itemId);
+        singleColumnCard.setContentParts(List.of("SINGLE-B-002"));
+        singleColumnCard.setStatus(CardKeyStatus.SOLD);
 
         when(orderRepository.findByOrderNo(order.getOrderNo())).thenReturn(Optional.of(order));
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
-        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of(card));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId))
+                .thenReturn(List.of(card, singleColumnCard));
 
         List<?> result = service.queryOrders(Map.of(
                 "orders", List.of(Map.of("order_no", order.getOrderNo().toString()))), userId);
@@ -200,8 +208,9 @@ class DeliverServiceImplTest {
         assertEquals(order.getOrderNo(), brief.get("order_no"));
 
         String exported = service.exportCardKeys(orderId, null, userId);
-        assertTrue(exported.contains("卡券内容 1: account"));
-        assertTrue(exported.contains("卡券内容 2: secret"));
+        assertTrue(exported.contains("MULTI-A-001\tMULTI-A-SECRET\nSINGLE-B-002\n"));
+        assertFalse(exported.contains("卡券内容 1"));
+        assertFalse(exported.contains("卡券内容 2"));
     }
 
     @Test
