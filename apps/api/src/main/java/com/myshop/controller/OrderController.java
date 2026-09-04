@@ -64,10 +64,14 @@ public class OrderController {
     @GetMapping("/{id}/export")
     public void exportCardKeys(@PathVariable UUID id,
                                @RequestParam(value = "lookup_token", required = false) String lookupToken,
+                               @RequestParam(value = "order_no", required = false) Long orderNo,
                                HttpServletResponse response) throws Exception {
         String content = deliverService.exportCardKeys(id, lookupToken, RequestContext.getUserId());
         response.setContentType("text/plain; charset=UTF-8");
-        response.setHeader("Content-Disposition", "attachment; filename=card-keys-" + id + ".txt");
+        String filename = orderNo != null && orderNo > 0
+                ? "card-keys-" + orderNo + ".txt"
+                : "card-keys.txt";
+        response.setHeader("Content-Disposition", "attachment; filename=" + filename);
         response.getWriter().write(content);
     }
 

@@ -6,10 +6,13 @@ import com.myshop.constant.PricingSource;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
+import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.FulfillmentService;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -23,6 +26,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -39,6 +45,7 @@ class AdminOrderServiceImplTest {
         UUID orderId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         Order order = order(orderId, userId);
+        order.setOrderNo(1000000001L);
         OrderItem item = item(orderId, new BigDecimal("30.00"), new BigDecimal("80.00"),
                 new BigDecimal("100.00"), 2);
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
@@ -50,8 +57,12 @@ class AdminOrderServiceImplTest {
         Map<String, Object> response = (Map<String, Object>) new AdminOrderServiceImpl(
                 orderRepository, orderItemRepository, userRepository, fulfillmentService).getOrderDetail(orderId);
 
+        assertEquals(1000000001L, response.get("order_no"));
         assertEquals(UUID.fromString("11111111-1111-1111-1111-111111111111"), response.get("user_level_id_snapshot"));
         assertEquals("黄金会员", response.get("user_level_name_snapshot"));
+        assertEquals(new BigDecimal("160.00"), response.get("cost_total"));
+        assertEquals(new BigDecimal("-100.00"), response.get("gross_profit_total"));
+        assertEquals(new BigDecimal("-166.67"), response.get("gross_margin_total"));
         Map<?, ?> itemResponse = (Map<?, ?>) ((List<?>) response.get("items")).get(0);
         assertEquals(1L, itemResponse.get("product_no"));
         assertEquals(new BigDecimal("30.00"), itemResponse.get("unit_price"));
@@ -85,6 +96,60 @@ class AdminOrderServiceImplTest {
         assertEquals(new BigDecimal("20.00"), itemResponse.get("gross_profit"));
         assertEquals(new BigDecimal("20.00"), itemResponse.get("gross_margin"));
         assertEquals(PricingSource.RETAIL, itemResponse.get("pricing_source"));
+    }
+
+    @Test
+    void searchListBatchLoadsItemsAndUsersWithoutPerOrderQueries() {
+        UUID registeredOrderId = UUID.randomUUID();
+        UUID guestOrderId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Order registeredOrder = order(registeredOrderId, userId);
+        registeredOrder.setOrderNo(1000000001L);
+        registeredOrder.setEmail("reserved@example.com");
+        Order guestOrder = order(guestOrderId, null);
+        guestOrder.setOrderNo(1000000002L);
+        guestOrder.setEmail("guest@example.com");
+
+        OrderItem registeredItem = item(registeredOrderId, new BigDecimal("30.00"),
+                new BigDecimal("20.00"), new BigDecimal("30.00"), 1);
+        OrderItem guestItem = item(guestOrderId, new BigDecimal("10.00"),
+                new BigDecimal("4.00"), new BigDecimal("10.00"), 2);
+        when(orderRepository.searchAdminOrders(isNull(), isNull(), isNull(), isNull(),
+                org.mockito.ArgumentMatchers.eq("desc"), any()))
+                .thenReturn(new PageImpl<>(List.of(registeredOrder, guestOrder),
+                        PageRequest.of(0, 20), 2));
+        when(orderItemRepository.findByOrderIdIn(List.of(registeredOrderId, guestOrderId)))
+                .thenReturn(List.of(registeredItem, guestItem));
+        User user = new User();
+        user.setId(userId);
+        user.setUsername("registered-buyer");
+        user.setUserNo(12345L);
+        user.setEmail("account@example.com");
+        user.setPhone("13800138000");
+        when(userRepository.findAllById(List.of(userId))).thenReturn(List.of(user));
+
+        var result = new AdminOrderServiceImpl(
+                orderRepository, orderItemRepository, userRepository, fulfillmentService)
+                .searchOrders(new AdminOrderSearchRequest(1, 20, null, null, null, null, null));
+
+        assertEquals(2L, result.getPagination().getTotal());
+        Map<?, ?> registered = (Map<?, ?>) result.getList().get(0);
+        assertEquals(1000000001L, registered.get("order_no"));
+        assertEquals("REGISTERED", registered.get("customer_type"));
+        assertEquals("registered-buyer", registered.get("username"));
+        assertEquals(12345L, registered.get("user_no"));
+        assertEquals("reserved@example.com", registered.get("order_email"));
+        Map<?, ?> guest = (Map<?, ?>) result.getList().get(1);
+        assertEquals(1000000002L, guest.get("order_no"));
+        assertEquals("GUEST", guest.get("customer_type"));
+        assertEquals("guest@example.com", guest.get("order_email"));
+        assertEquals(new BigDecimal("8.00"), guest.get("cost_total"));
+        assertEquals(new BigDecimal("12.00"), guest.get("gross_profit_total"));
+
+        verify(orderItemRepository).findByOrderIdIn(List.of(registeredOrderId, guestOrderId));
+        verify(userRepository).findAllById(List.of(userId));
+        verify(orderItemRepository, never()).findByOrderId(any());
+        verify(userRepository, never()).findById(any());
     }
 
     private Order order(UUID id, UUID userId) {

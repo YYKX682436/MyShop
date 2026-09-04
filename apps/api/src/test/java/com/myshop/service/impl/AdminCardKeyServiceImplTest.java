@@ -88,6 +88,7 @@ class AdminCardKeyServiceImplTest {
     }
 
     private void stubPickupSaves(UUID orderId, UUID orderItemId) {
+        lenient().when(orderRepository.nextOrderNo()).thenReturn(1000000001L);
         when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(invocation -> {
             Order order = invocation.getArgument(0);
             order.setId(orderId);

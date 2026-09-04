@@ -1,14 +1,14 @@
 package com.myshop.service;
 
 import com.myshop.common.PageResult;
+import com.myshop.model.request.AdminOrderSearchRequest;
 
 import java.util.Map;
 import java.util.UUID;
 
 public interface AdminOrderService {
 
-    PageResult<?> listOrders(String status, String paymentMethod, Boolean isRiskFlagged,
-                             String keyword, int page, int pageSize);
+    PageResult<?> searchOrders(AdminOrderSearchRequest request);
 
     Object getOrderDetail(UUID id);
 

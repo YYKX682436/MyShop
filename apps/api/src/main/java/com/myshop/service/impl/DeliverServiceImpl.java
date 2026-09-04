@@ -53,7 +53,7 @@ public class DeliverServiceImpl implements DeliverService {
         List<OrderCredential> credentials = parseCredentials(request);
         List<Map<String, Object>> result = new ArrayList<>();
         for (OrderCredential credential : credentials) {
-            Order order = findForAuthorization(credential.orderId());
+            Order order = findForAuthorization(credential.orderNo());
             authorize(order, credential.lookupToken(), requestUserId);
             order = expireIfNecessary(order);
             result.add(toBrief(order));
@@ -66,7 +66,7 @@ public class DeliverServiceImpl implements DeliverService {
         List<OrderCredential> credentials = parseCredentials(request);
         List<Map<String, Object>> results = new ArrayList<>();
         for (OrderCredential credential : credentials) {
-            Order order = findForAuthorization(credential.orderId());
+            Order order = findForAuthorization(credential.orderNo());
             authorize(order, credential.lookupToken(), requestUserId);
             results.add(fulfillmentService.fulfillOrder(order.getId()));
         }
@@ -86,7 +86,7 @@ public class DeliverServiceImpl implements DeliverService {
         List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
         List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
         StringBuilder result = new StringBuilder();
-        result.append("订单号: ").append(orderId).append("\n");
+        result.append("订单号: ").append(order.getOrderNo()).append("\n");
 
         Map<UUID, List<CardKey>> grouped = keys.stream()
                 .filter(key -> key.getOrderItemId() != null)
@@ -116,8 +116,8 @@ public class DeliverServiceImpl implements DeliverService {
         return result.toString();
     }
 
-    private Order findForAuthorization(UUID orderId) {
-        return orderRepository.findById(orderId)
+    private Order findForAuthorization(Long orderNo) {
+        return orderRepository.findByOrderNo(orderNo)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
     }
 
@@ -129,20 +129,23 @@ public class DeliverServiceImpl implements DeliverService {
     }
 
     private List<OrderCredential> parseCredentials(Map<String, Object> request) {
+        if (request == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单号和查询凭证不能为空");
+        }
         Object rawCredentials = request.get("orders");
         if (rawCredentials instanceof List<?> list) {
             List<OrderCredential> credentials = new ArrayList<>();
             for (Object value : list) {
                 if (!(value instanceof Map<?, ?> map)) continue;
-                String id = value(map.get("order_id"));
-                if (id != null) {
-                    credentials.add(new OrderCredential(UUID.fromString(id), value(map.get("lookup_token"))));
+                String orderNo = value(map.get("order_no"));
+                if (orderNo != null) {
+                    credentials.add(new OrderCredential(parseOrderNo(orderNo), value(map.get("lookup_token"))));
                 }
             }
             if (!credentials.isEmpty()) return credentials;
         }
 
-        Object rawIds = request.get("order_ids");
+        Object rawIds = request.get("order_nos");
         Object rawTokens = request.get("lookup_tokens");
         Map<String, String> tokenMap = rawTokens instanceof Map<?, ?> map
                 ? map.entrySet().stream().collect(Collectors.toMap(
@@ -152,11 +155,26 @@ public class DeliverServiceImpl implements DeliverService {
         List<OrderCredential> credentials = new ArrayList<>();
         if (rawIds instanceof List<?> ids) {
             for (Object rawId : ids) {
-                String id = value(rawId);
-                if (id != null) credentials.add(new OrderCredential(UUID.fromString(id), tokenMap.get(id)));
+                String orderNo = value(rawId);
+                if (orderNo != null) {
+                    credentials.add(new OrderCredential(parseOrderNo(orderNo), tokenMap.get(orderNo)));
+                }
             }
         }
+        if (credentials.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单号和查询凭证不能为空");
+        }
         return credentials;
+    }
+
+    private Long parseOrderNo(String raw) {
+        try {
+            long orderNo = Long.parseLong(raw);
+            if (orderNo <= 0) throw new NumberFormatException();
+            return orderNo;
+        } catch (NumberFormatException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单号格式无效");
+        }
     }
 
     private String value(Object value) {
@@ -194,6 +212,7 @@ public class DeliverServiceImpl implements DeliverService {
     private Map<String, Object> toBrief(Order order) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", order.getId());
+        map.put("order_no", order.getOrderNo());
         map.put("total_amount", order.getTotalAmount());
         map.put("actual_amount", order.getActualAmount());
         map.put("status", order.getStatus().name());
@@ -218,6 +237,6 @@ public class DeliverServiceImpl implements DeliverService {
         return map;
     }
 
-    private record OrderCredential(UUID orderId, String lookupToken) {
+    private record OrderCredential(Long orderNo, String lookupToken) {
     }
 }

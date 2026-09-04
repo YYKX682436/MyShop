@@ -82,6 +82,7 @@ public class PaymentServiceImpl implements PaymentService {
             }
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("order_id", order.getId());
+            result.put("order_no", order.getOrderNo());
             result.put("order_type", OrderType.ADMIN_PICKUP);
             result.put("admin_pickup", true);
             result.put("paid", true);
@@ -125,7 +126,8 @@ public class PaymentServiceImpl implements PaymentService {
                 amount,
                 order.getClientIp(),
                 device,
-                parseConfigData(channel.getConfigData())));
+                parseConfigData(channel.getConfigData()),
+                order.getOrderNo() == null ? null : order.getOrderNo().toString()));
         order.setPaymentUrl(result.payUrl());
         order.setQrcodeUrl(result.qrcodeUrl());
         order.setEpayTradeNo(result.tradeNo());
@@ -177,6 +179,7 @@ public class PaymentServiceImpl implements PaymentService {
     private Map<String, Object> buildResult(Order order) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", order.getId());
+        result.put("order_no", order.getOrderNo());
         result.put("payment_url", order.getQrcodeUrl() != null ? order.getQrcodeUrl() : order.getPaymentUrl());
         result.put("qrcode_url", order.getQrcodeUrl());
         result.put("pay_url", order.getPaymentUrl());

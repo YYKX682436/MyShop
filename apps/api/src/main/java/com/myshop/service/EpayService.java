@@ -14,14 +14,17 @@ public interface EpayService {
      * 调用易支付 /mapi.php 创建支付订单
      *
      * @param config     渠道配置（pid/key/apiUrl 等）
-     * @param outTradeNo 商户订单号（Order UUID）
+     * @param outTradeNo 商户订单号（内部 Order UUID，用于回调关联）
      * @param type       易支付支付类型：alipay / wxpay
      * @param name       商品名称
      * @param money      金额
      * @param clientIp   用户 IP
+     * @param device     支付设备
+     * @param returnOrderNo 用户可见业务订单号，用于支付完成后的回跳地址
      * @return 包含 payUrl / qrcodeUrl 的结果
      */
-    EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name, BigDecimal money, String clientIp, String device);
+    EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name,
+                             BigDecimal money, String clientIp, String device, String returnOrderNo);
 
     /**
      * 生成 MD5 签名

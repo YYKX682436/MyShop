@@ -105,7 +105,7 @@ export default function MyOrdersPage() {
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-xs font-medium text-foreground">
-                    {order.id.length > 20 ? `${order.id.slice(0, 8)}...${order.id.slice(-8)}` : order.id}
+                    {order.order_no}
                   </span>
                   <OrderStatusBadge status={order.status} />
                 </div>
@@ -149,7 +149,7 @@ export default function MyOrdersPage() {
                 <div className="flex gap-2">
                   {order.status === "PENDING" && order.payment_method && (
                     <Link
-                      href={`/pay/${order.id}?method=${order.payment_method}`}
+                      href={`/pay/${order.id}?orderNo=${order.order_no}&method=${order.payment_method}`}
                       className="inline-flex h-9 items-center gap-1 rounded-control bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98]"
                     >
                       {t("payment.continuePay")}
@@ -157,7 +157,7 @@ export default function MyOrdersPage() {
                   )}
                   {order.status === "DELIVERED" && (
                     <Link
-                      href={`/order/query?orderId=${order.id}`}
+                      href={`/order/query?orderNo=${order.order_no}`}
                       className="inline-flex h-9 items-center gap-1 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
                     >
                       <ExternalLink className="h-3 w-3" />

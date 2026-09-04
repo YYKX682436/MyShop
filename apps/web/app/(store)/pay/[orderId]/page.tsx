@@ -7,7 +7,7 @@ import { ArrowRight, CheckCircle2, Clock, Copy, Loader2, RefreshCw, Smartphone, 
 import { QRCodeSVG } from "qrcode.react"
 import { toast } from "sonner"
 import { useLocale, useSiteConfig } from "@/lib/context"
-import { orderApi } from "@/services/api"
+import { getOrderLookupToken, orderApi } from "@/services/api"
 import type { OrderStatus } from "@/types"
 import { cn, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
@@ -23,6 +23,8 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const searchParams = useSearchParams()
   const router = useRouter()
   const [status, setStatus] = useState<OrderStatus>("PENDING")
+  const [orderNo, setOrderNo] = useState(searchParams.get("orderNo") || "")
+  const [lookupToken, setLookupToken] = useState(searchParams.get("lookup_token") || "")
   const [timeLeft, setTimeLeft] = useState(-1)
   const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
@@ -38,13 +40,16 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const hasCountdown = timeLeft >= 0
 
   const fetchStatus = useCallback(async () => {
-    const result = await orderApi.getStatus(orderId)
+    const token = lookupToken || (orderNo ? getOrderLookupToken(orderNo) : undefined)
+    const result = await orderApi.getStatus(orderId, token, orderNo || undefined)
+    setOrderNo(String(result.order_no))
+    if (token && !lookupToken) setLookupToken(token)
     setTimeLeft(result.remaining_seconds ?? 0)
     if (result.payment_url && !qrcodeUrl) setQrcodeUrl(result.payment_url)
     if (result.status !== "PENDING") {
       setStatus(result.status)
     }
-  }, [orderId, qrcodeUrl])
+  }, [lookupToken, orderId, orderNo, qrcodeUrl])
 
   useEffect(() => { void fetchStatus().catch(() => undefined) }, [fetchStatus])
 
@@ -79,15 +84,16 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
 
   useEffect(() => {
     if (status !== "PAID" && status !== "DELIVERED") return
-    const timer = window.setTimeout(() => router.push(`/order/query?orderId=${orderId}`), 3000)
+    const timer = window.setTimeout(() => router.push(`/order/query?orderNo=${orderNo}`), 3000)
     return () => window.clearTimeout(timer)
-  }, [status, orderId, router])
+  }, [status, orderNo, router])
 
   const retry = async () => {
     if (retrying) return
     setRetrying(true)
     try {
-      const result = await orderApi.repay(orderId, detectPaymentDevice())
+      const result = await orderApi.repay(orderId, orderNo, detectPaymentDevice(), lookupToken || undefined)
+      setOrderNo(String(result.order_no))
       setPayUrl(result.pay_url || "")
       setQrcodeUrl(result.qrcode_url || result.payment_url || "")
       if (isMobile && result.pay_url && !isWechatMobile) window.location.href = result.pay_url
@@ -108,7 +114,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const copy = (value: string) => navigator.clipboard?.writeText(value).then(() => toast.success(t("order.copied")))
   const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
 
-  if (status === "PAID" || status === "DELIVERED") return <div className="surface mx-auto flex max-w-md flex-col items-center p-8 text-center"><div className="mb-4 rounded-full bg-emerald-500/10 p-4"><CheckCircle2 className="h-12 w-12 text-emerald-600 dark:text-emerald-400" /></div><h1 className="mb-2 text-xl font-semibold">{t("payment.success")}</h1><p className="mb-6 text-sm text-muted-foreground">支付已确认，正在准备卡密。</p><Link href={`/order/query?orderId=${orderId}`} className="inline-flex h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99]">查看订单与卡密</Link></div>
+  if (status === "PAID" || status === "DELIVERED") return <div className="surface mx-auto flex max-w-md flex-col items-center p-8 text-center"><div className="mb-4 rounded-full bg-emerald-500/10 p-4"><CheckCircle2 className="h-12 w-12 text-emerald-600 dark:text-emerald-400" /></div><h1 className="mb-2 text-xl font-semibold">{t("payment.success")}</h1><p className="mb-2 text-sm text-muted-foreground">支付已确认，正在准备卡密。</p><p className="mb-6 font-mono text-sm">订单号：{orderNo || "加载中"}</p><Link href={`/order/query?orderNo=${orderNo}`} className="inline-flex h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99]">查看订单与卡密</Link></div>
   if (status === "EXPIRED") return <div className="surface mx-auto flex max-w-md flex-col items-center p-8 text-center"><XCircle className="mb-4 h-12 w-12 text-muted-foreground" /><h1 className="mb-2 text-xl font-semibold">{t("payment.expired")}</h1><p className="mb-6 text-sm text-muted-foreground">订单已过期，请重新下单。</p><Link href="/" className="inline-flex h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99]">{t("payment.reorder")}</Link></div>
 
   return <div className="mx-auto flex max-w-lg flex-col items-center gap-6 py-4">
@@ -127,11 +133,11 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
         <p className="text-sm text-muted-foreground">{redirected ? "如已完成支付，请返回此页等待确认。" : "正在跳转支付页面……"}</p>
         <button onClick={retry} disabled={retrying} className="inline-flex h-11 items-center gap-2 rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", retrying && "animate-spin")} />{t("payment.retryPay")}</button>
       </>}
-      <div className="flex w-full items-center justify-between border-t border-border-subtle pt-4 text-sm"><span className="text-muted-foreground">{t("payment.orderNo")}</span><button onClick={() => void copy(orderId)} className="flex items-center gap-1 rounded-control px-2 py-1 font-mono text-xs transition-colors hover:bg-surface-muted"><span>{orderId}</span><Copy className="h-3.5 w-3.5" /></button></div>
+      <div className="flex w-full items-center justify-between border-t border-border-subtle pt-4 text-sm"><span className="text-muted-foreground">{t("payment.orderNo")}</span><button onClick={() => void copy(orderNo)} disabled={!orderNo} className="flex items-center gap-1 rounded-control px-2 py-1 font-mono text-xs transition-colors hover:bg-surface-muted disabled:opacity-50"><span>{orderNo || "加载中"}</span><Copy className="h-3.5 w-3.5" /></button></div>
     </div>
     <button onClick={() => void manualRefresh()} disabled={refreshCooldown > 0 || refreshing} className="inline-flex h-11 items-center gap-2 rounded-control border border-border-strong bg-surface px-5 text-sm font-medium transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{refreshing ? "刷新中" : refreshCooldown > 0 ? `${refreshCooldown}s 后可刷新` : "刷新支付状态"}</button>
     <div className="flex flex-col items-center gap-2 pt-2 text-sm">
-      <Link href={`/order/query?orderId=${orderId}`} className="text-muted-foreground hover:text-foreground">已完成支付？查看订单与卡密 <ArrowRight className="inline h-4 w-4" /></Link>
+       <Link href={`/order/query?orderNo=${orderNo}`} className="text-muted-foreground hover:text-foreground">已完成支付？查看订单与卡密 <ArrowRight className="inline h-4 w-4" /></Link>
       <ContactSupport
         title={t("payment.needHelp")}
         email={config?.contact_email}

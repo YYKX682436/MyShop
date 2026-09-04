@@ -13,6 +13,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URLEncoder;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -28,10 +29,16 @@ public class EpayServiceImpl implements EpayService {
     private final ObjectMapper objectMapper;
 
     @Override
-    public EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name, BigDecimal money, String clientIp, String device) {
-        // 动态拼接 return_url：基础 URL + orderId 查询参数，使 epay 回跳到订单查询页
+    public EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name,
+                                    BigDecimal money, String clientIp, String device, String returnOrderNo) {
+        // The gateway callback keeps the internal UUID in out_trade_no, while
+        // the user-facing synchronous return URL carries the numeric number.
         String baseReturnUrl = config.returnUrl();
-        String dynamicReturnUrl = baseReturnUrl + (baseReturnUrl.contains("?") ? "&" : "?") + "orderId=" + outTradeNo;
+        if (returnOrderNo == null || returnOrderNo.isBlank()) {
+            throw new IllegalArgumentException("returnOrderNo is required");
+        }
+        String dynamicReturnUrl = baseReturnUrl + (baseReturnUrl.contains("?") ? "&" : "?")
+                + "orderNo=" + URLEncoder.encode(returnOrderNo, StandardCharsets.UTF_8);
 
         Map<String, String> params = new LinkedHashMap<>();
         params.put("pid", config.pid());

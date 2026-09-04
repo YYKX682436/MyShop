@@ -70,8 +70,8 @@ const zh = {
 
   // Order
   "order.query": "订单查询",
-  "order.queryDesc": "输入订单号或邮箱查询订单",
-  "order.queryPlaceholder": "请输入订单号 / 邮箱",
+  "order.queryDesc": "输入订单号和查询凭证查看订单",
+  "order.queryPlaceholder": "请输入数字订单号",
   "order.orderNo": "订单号",
   "order.email": "邮箱",
   "order.search": "查询",
@@ -1140,8 +1140,8 @@ const en: Record<keyof typeof zh, string> = {
 
   // Order
   "order.query": "Order Query",
-  "order.queryDesc": "Enter order number or email to query",
-  "order.queryPlaceholder": "Enter Order No. / Email",
+  "order.queryDesc": "Enter the order number and lookup credential to view the order",
+  "order.queryPlaceholder": "Enter numeric order number",
   "order.orderNo": "Order No.",
   "order.email": "Email",
   "order.search": "Search",

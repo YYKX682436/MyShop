@@ -42,6 +42,8 @@ import type {
   AdministratorOperationLog,
 } from "@/types"
 import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
+import { buildAdminOrderSearchBody } from "@/lib/admin-order-search"
+import type { AdminOrderSearchParams } from "@/lib/admin-order-search"
 
 // ============================================================
 // Config
@@ -112,17 +114,17 @@ export function clearSessionToken() {
   localStorage.removeItem("session_token")
 }
 
-const ORDER_TOKEN_PREFIX = "myshop_order_lookup:"
+const ORDER_TOKEN_PREFIX = "myshop_order_lookup_by_no:"
 
-export function saveOrderLookupToken(orderId: string, token: string | undefined) {
+export function saveOrderLookupToken(orderNo: number | string, token: string | undefined) {
   if (typeof window !== "undefined" && token) {
-    localStorage.setItem(`${ORDER_TOKEN_PREFIX}${orderId}`, token)
+    localStorage.setItem(`${ORDER_TOKEN_PREFIX}${orderNo}`, token)
   }
 }
 
-export function getOrderLookupToken(orderId: string): string | undefined {
+export function getOrderLookupToken(orderNo: number | string): string | undefined {
   if (typeof window === "undefined") return undefined
-  return localStorage.getItem(`${ORDER_TOKEN_PREFIX}${orderId}`) || undefined
+  return localStorage.getItem(`${ORDER_TOKEN_PREFIX}${orderNo}`) || undefined
 }
 
 // ============================================================
@@ -362,20 +364,20 @@ export const orderApi = {
     getOrCreateGuestSessionToken()
     return request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) })
   },
-  getStatus: (orderId: string, lookupToken?: string) =>
-    request<{ order_id: string; status: OrderStatus; expires_at: string | null; remaining_seconds: number; payment_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`),
-  refreshStatus: (orderId: string, lookupToken?: string) =>
-    request<{ status: OrderStatus }>(`/orders/${orderId}/refresh?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`, { method: "POST" }),
-  query: (data: { orders: { order_id: string; lookup_token?: string }[] }) =>
+  getStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
+    request<{ order_id: string; order_no: number; status: OrderStatus; expires_at: string | null; remaining_seconds: number; payment_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`),
+  refreshStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
+    request<{ status: OrderStatus; order_no: number }>(`/orders/${orderId}/refresh?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`, { method: "POST" }),
+  query: (data: { orders: { order_no: number | string; lookup_token?: string }[] }) =>
     request<OrderBrief[]>("/orders/query", { method: "POST", body: JSON.stringify(data) }),
-  deliver: (data: { orders: { order_id: string; lookup_token?: string }[] }) =>
+  deliver: (data: { orders: { order_no: number | string; lookup_token?: string }[] }) =>
     request<DeliverResult[]>("/orders/deliver", { method: "POST", body: JSON.stringify(data) }),
-  exportKeys: (orderId: string, lookupToken?: string) =>
-    requestText(`/orders/${orderId}/export?${buildQuery({ lookup_token: lookupToken || getOrderLookupToken(orderId) })}`),
-  repay: (orderId: string, device?: string, lookupToken?: string) =>
+  exportKeys: (orderId: string, orderNo: number | string, lookupToken?: string) =>
+    requestText(`/orders/${orderId}/export?${buildQuery({ order_no: orderNo, lookup_token: lookupToken || getOrderLookupToken(orderNo) })}`),
+  repay: (orderId: string, orderNo: number | string, device?: string, lookupToken?: string) =>
     request<import("@/types").PaymentCreateResult>(`/orders/${orderId}/repay`, {
       method: "POST",
-      body: JSON.stringify({ device, lookup_token: lookupToken || getOrderLookupToken(orderId) }),
+      body: JSON.stringify({ device, lookup_token: lookupToken || getOrderLookupToken(orderNo) }),
     }),
 }
 
@@ -530,12 +532,12 @@ export const adminCardKeyApi = {
 // ============================================================
 
 export const adminOrderApi = {
-  getList: (params: {
-    page?: number; page_size?: number; status?: string;
-    payment_method?: string; is_risk_flagged?: number; keyword?: string
-  }, options?: RequestInit) => {
-    const qs = buildQuery(params)
-    return request<PaginatedData<AdminOrderItem>>(`/admin/orders?${qs}`, options)
+  getList: (params: AdminOrderSearchParams = {}, options?: RequestInit) => {
+    return request<PaginatedData<AdminOrderItem>>("/admin/orders/search", {
+      ...options,
+      method: "POST",
+      body: JSON.stringify(buildAdminOrderSearchBody(params)),
+    })
   },
   getDetail: (id: string) =>
     request<AdminOrderItem>(`/admin/orders/${id}`),

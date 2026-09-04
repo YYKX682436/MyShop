@@ -5,6 +5,7 @@ import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { useLocale } from "@/lib/context"
+import { formatAdminOrderNumber, formatAdminOrderProductMeta } from "@/lib/admin-order-display"
 import { formatDateTime, formatYuan } from "@/lib/utils"
 import type { AdminOrderItem } from "@/types"
 
@@ -61,7 +62,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                 {orders.map((order) => (
                   <tr key={order.id} className="border-b border-border-subtle last:border-0">
                     <td className="py-3 font-mono text-sm text-foreground">
-                      <CopyOrderButton id={order.id} onCopy={copyToClipboard} />
+                      <CopyOrderButton orderNo={order.order_no} onCopy={copyToClipboard} />
                     </td>
                     <td className="py-3 text-sm text-foreground">
                       <ProductSummary order={order} />
@@ -82,7 +83,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
             {orders.map((order) => (
               <article key={order.id} className="min-w-0 rounded-control border border-border-subtle bg-surface-muted/45 p-3">
                 <div className="flex min-w-0 items-start justify-between gap-3">
-                  <CopyOrderButton id={order.id} onCopy={copyToClipboard} mobile />
+                  <CopyOrderButton orderNo={order.order_no} onCopy={copyToClipboard} />
                   <OrderStatusBadge status={order.status} />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
@@ -111,18 +112,18 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
   )
 }
 
-function CopyOrderButton({ id, onCopy, mobile = false }: { id: string; onCopy: (id: string) => void; mobile?: boolean }) {
+function CopyOrderButton({ orderNo, onCopy }: { orderNo: number; onCopy: (value: string) => void }) {
   const { t } = useLocale()
-  const shortId = id.length > 20 ? `${id.slice(0, 8)}...${id.slice(-8)}` : id
+  const value = formatAdminOrderNumber(orderNo)
   return (
     <button
       type="button"
       className="group inline-flex max-w-full items-center gap-1 rounded px-0.5 text-left font-mono text-sm text-foreground underline-offset-4 hover:text-primary hover:underline"
-      title={id}
-      aria-label={`${t("admin.copyOrder")}: ${id}`}
-      onClick={() => onCopy(id)}
+      title={value}
+      aria-label={`${t("admin.copyOrder")}: ${value}`}
+      onClick={() => onCopy(value)}
     >
-      <span className="truncate">{mobile ? id : shortId}</span>
+      <span className="truncate">{value}</span>
       <Copy className="h-3.5 w-3.5 shrink-0 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
     </button>
   )
@@ -134,10 +135,10 @@ function ProductSummary({ order }: { order: AdminOrderItem }) {
   if (!firstItem) return <span className="text-muted-foreground">{t("admin.systemNoData")}</span>
   const more = (order.items?.length ?? 0) > 1 ? ` ${t("admin.moreItems").replace("{count}", String(order.items.length))}` : ""
   return (
-    <div className="min-w-0 truncate" title={`${firstItem.product_title}${firstItem.spec_name ? ` - ${firstItem.spec_name}` : ""}${more}`}>
-      <span>{firstItem.product_title}</span>
-      {firstItem.spec_name && <span className="text-muted-foreground"> - {firstItem.spec_name}</span>}
-      {more && <span className="ml-1 text-xs text-muted-foreground">{more}</span>}
+    <div className="min-w-0" title={`${firstItem.product_title}${firstItem.spec_name ? ` - ${firstItem.spec_name}` : ""}${more}`}>
+      <span className="block truncate">{firstItem.product_title}</span>
+      <span className="block truncate text-xs text-muted-foreground">{formatAdminOrderProductMeta(firstItem)}</span>
+      {more && <span className="text-xs text-muted-foreground">{more}</span>}
     </div>
   )
 }

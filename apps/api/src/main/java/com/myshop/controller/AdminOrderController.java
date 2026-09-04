@@ -2,6 +2,7 @@ package com.myshop.controller;
 
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
+import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.service.AdminOrderService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -15,16 +16,9 @@ public class AdminOrderController {
 
     private final AdminOrderService adminOrderService;
 
-    @GetMapping
-    public ApiResponse<?> listOrders(
-            @RequestParam(required = false) String status,
-            @RequestParam(value = "payment_method", required = false) String paymentMethod,
-            @RequestParam(value = "is_risk_flagged", required = false) Boolean isRiskFlagged,
-            @RequestParam(required = false) String keyword,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(value = "page_size", defaultValue = "20") int pageSize) {
-        return ApiResponse.success(adminOrderService.listOrders(status, paymentMethod,
-                isRiskFlagged, keyword, page, pageSize));
+    @PostMapping("/search")
+    public ApiResponse<?> searchOrders(@RequestBody(required = false) AdminOrderSearchRequest request) {
+        return ApiResponse.success(adminOrderService.searchOrders(request));
     }
 
     @GetMapping("/{id}")

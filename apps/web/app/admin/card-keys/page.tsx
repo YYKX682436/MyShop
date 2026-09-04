@@ -733,7 +733,7 @@ export default function AdminCardKeysPage() {
           <DialogHeader>
             <DialogTitle>{t("admin.pickupResult")}</DialogTitle>
             <DialogDescription>
-              {pickupResult ? t("admin.pickedUpCount").replace("{count}", String(pickupResult.count)) : ""}
+              {pickupResult ? `${t("admin.pickedUpCount").replace("{count}", String(pickupResult.count))} · 订单号 ${pickupResult.order_no}` : ""}
             </DialogDescription>
           </DialogHeader>
           {pickupResult && (
@@ -784,7 +784,7 @@ export default function AdminCardKeysPage() {
                       <td className="px-4 py-3 align-top"><CardContentParts parts={key.content_parts} onCopy={copyToClipboard} /></td>
                       <td className="px-4 py-3 align-top"><StatusBadge label={cardStatusLabel(key.status)} tone={cardStatusTone[key.status]} /></td>
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{formatDateTime(key.created_at, locale)}</td>
-                      <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_id ? `${key.order_id.slice(0, 8)}…` : t("admin.systemNoData")}</td>
+                      <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_no ?? t("admin.systemNoData")}</td>
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{key.sold_at ? formatDateTime(key.sold_at, locale) : t("admin.systemNoData")}</td>
                       <td className="px-4 py-3 text-right align-top"><div className="flex justify-end gap-1">
                         {key.status === "AVAILABLE" && <Button type="button" variant="ghost" size="icon" title={t("admin.pickupCard")} aria-label={t("admin.pickupCard")} disabled={singlePickingUp} onClick={() => setSinglePickupTarget(key)}><Download className="h-4 w-4" aria-hidden="true" /></Button>}

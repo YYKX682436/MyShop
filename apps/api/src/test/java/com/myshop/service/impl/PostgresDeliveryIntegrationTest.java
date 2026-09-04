@@ -5,6 +5,7 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.Product;
 import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
+import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.payment.EpayPaymentProvider;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.service.AutoFulfillmentService;
@@ -41,6 +42,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -240,10 +242,105 @@ class PostgresDeliveryIntegrationTest {
         adminCardKeyService.batchPickup(
                 new AdminCardKeyBatchPickupRequest(productId, null, 1), operatorId);
 
-        var result = adminOrderService.listOrders(null, null, null, null, 1, 100);
+        var result = adminOrderService.searchOrders(new AdminOrderSearchRequest(1, 100, null, null, null, null, null));
         List<?> orders = result.getList();
         assertTrue(orders.stream().noneMatch(value -> value instanceof Map<?, ?> map
                 && OrderType.ADMIN_PICKUP.name().equals(String.valueOf(map.get("order_type")))));
+    }
+
+    @Test
+    void adminOrderSearchMatchesEveryOperationalFieldWithoutDuplicateOrders() {
+        String suffix = UUID.randomUUID().toString().replace("-", "");
+        UUID userId = insertUser("search-user-" + suffix, "registered-search-" + suffix + "@example.com");
+        jdbcTemplate.update("UPDATE users SET phone = ? WHERE id = ?", "13800138000", userId);
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        String orderEmail = "reserved-search-" + suffix + "@example.com";
+        UUID orderId = insertSearchOrder(userId, orderEmail, "search-epay-" + suffix,
+                LocalDateTime.of(2026, 3, 3, 10, 0), "PAID", new BigDecimal("62.00"));
+        UUID firstItemId = insertOrderItem(orderId, productId, "AUTO", "CARD_KEY", 2, 0);
+        UUID secondItemId = insertOrderItem(orderId, productId, "AUTO", "CARD_KEY", 1, 0);
+        jdbcTemplate.update("""
+                UPDATE order_items
+                SET product_title = ?, spec_name = ?, customer_inputs = CAST(? AS jsonb),
+                    unit_price = ?, cost_price_snapshot = ?, retail_price_snapshot = ?, subtotal = ?
+                WHERE id = ?
+                """, "Search Product Title", "Search Spec Name",
+                "[{\"id\":\"account\",\"label\":\"账号\",\"value\":\"search-customer-value\"}]",
+                new BigDecimal("25.00"), new BigDecimal("8.00"), new BigDecimal("30.00"),
+                new BigDecimal("50.00"), firstItemId);
+        jdbcTemplate.update("""
+                UPDATE order_items
+                SET product_title = ?, spec_name = ?, customer_inputs = CAST(? AS jsonb),
+                    unit_price = ?, cost_price_snapshot = ?, retail_price_snapshot = ?, subtotal = ?
+                WHERE id = ?
+                """, "Second Search Product", "Second Search Spec",
+                "[{\"id\":\"region\",\"label\":\"区服\",\"value\":\"second-customer-value\"}]",
+                new BigDecimal("12.00"), new BigDecimal("5.00"), new BigDecimal("12.00"),
+                new BigDecimal("12.00"), secondItemId);
+        UUID cardId = insertCardParts(productId, List.of("search-card-user", "search-card-password"));
+        UUID secondCardId = insertCardParts(productId, List.of("search-card-user-2", "search-card-password"));
+        jdbcTemplate.update("""
+                UPDATE card_keys
+                SET order_id = ?, order_item_id = ?, status = 'SOLD', sold_at = current_timestamp
+                WHERE id = ?
+                """, orderId, firstItemId, cardId);
+        jdbcTemplate.update("""
+                UPDATE card_keys
+                SET order_id = ?, order_item_id = ?, status = 'SOLD', sold_at = current_timestamp
+                WHERE id = ?
+                """, orderId, secondItemId, secondCardId);
+
+        Long orderNo = scalar("SELECT order_no FROM orders WHERE id = ?", Long.class, orderId);
+        Long productNo = scalar("SELECT product_no FROM products WHERE id = ?", Long.class, productId);
+        Long userNo = scalar("SELECT user_no FROM users WHERE id = ?", Long.class, userId);
+        List<String> matchingKeywords = List.of(
+                orderNo.toString(), orderId.toString(), orderEmail,
+                "Search Product Title", productNo.toString(), "Search Spec Name",
+                "search-customer-value", "search-user-" + suffix, userNo.toString(),
+                userId.toString(), "registered-search-" + suffix + "@example.com",
+                "13800138000", cardId.toString(), "search-card-password",
+                "search-epay-" + suffix, "alipay");
+        for (String keyword : matchingKeywords) {
+            assertSearchMatches(keyword, orderId, orderNo);
+        }
+        assertEquals(0L, adminOrderService.searchOrders(new AdminOrderSearchRequest(
+                1, 20, "definitely-no-order-match-" + suffix, null, null, null, "desc"))
+                .getPagination().getTotal());
+
+        var summary = (Map<?, ?>) adminOrderService.searchOrders(new AdminOrderSearchRequest(
+                1, 20, orderNo.toString(), null, null, null, "desc")).getList().get(0);
+        assertEquals("REGISTERED", summary.get("customer_type"));
+        assertEquals("search-user-" + suffix, summary.get("username"));
+        assertEquals(userNo, summary.get("user_no"));
+        assertEquals(orderEmail, summary.get("order_email"));
+        assertEquals(new BigDecimal("21.00"), summary.get("cost_total"));
+        assertEquals(new BigDecimal("41.00"), summary.get("gross_profit_total"));
+        assertEquals(new BigDecimal("66.13"), summary.get("gross_margin_total"));
+    }
+
+    @Test
+    void adminOrderSearchUsesCreatedAtHalfOpenDatesAndStableSortDirection() {
+        UUID oldest = insertSearchOrder(null, "oldest-search@example.com", "trade-oldest",
+                LocalDateTime.of(2026, 3, 2, 10, 0), "PAID", new BigDecimal("10.00"));
+        UUID middle = insertSearchOrder(null, "middle-search@example.com", "trade-middle",
+                LocalDateTime.of(2026, 3, 3, 10, 0), "PAID", new BigDecimal("11.00"));
+        UUID boundary = insertSearchOrder(null, "boundary-search@example.com", "trade-boundary",
+                LocalDateTime.of(2026, 3, 4, 0, 0), "PAID", new BigDecimal("12.00"));
+
+        var ascending = adminOrderService.searchOrders(new AdminOrderSearchRequest(
+                1, 20, null, "PAID", "2026-03-02", "2026-03-04", "asc"));
+        assertEquals(2L, ascending.getPagination().getTotal());
+        assertEquals(List.of(oldest, middle), ascending.getList().stream()
+                .map(value -> ((Map<?, ?>) value).get("id")).toList());
+        assertTrue(ascending.getList().stream().noneMatch(value ->
+                boundary.equals(((Map<?, ?>) value).get("id"))));
+
+        var descending = adminOrderService.searchOrders(new AdminOrderSearchRequest(
+                1, 20, null, "PAID", "2026-03-02", "2026-03-04", "desc"));
+        assertEquals(2L, descending.getPagination().getTotal());
+        assertEquals(List.of(middle, oldest), descending.getList().stream()
+                .map(value -> ((Map<?, ?>) value).get("id")).toList());
     }
 
     @Test
@@ -720,9 +817,31 @@ class PostgresDeliveryIntegrationTest {
     }
 
     private Map<String, Object> request(UUID orderId, String lookupToken) {
+        Long orderNo = scalar("select order_no from orders where id = ?", Long.class, orderId);
         return Map.of("orders", List.of(Map.of(
-                "order_id", orderId.toString(),
+                "order_no", orderNo.toString(),
                 "lookup_token", lookupToken)));
+    }
+
+    private void assertSearchMatches(String keyword, UUID expectedOrderId, Long expectedOrderNo) {
+        var result = adminOrderService.searchOrders(new AdminOrderSearchRequest(
+                1, 20, keyword, null, null, null, "desc"));
+        assertEquals(1L, result.getPagination().getTotal(), "keyword=" + keyword);
+        assertEquals(1, result.getList().size(), "keyword=" + keyword);
+        Map<?, ?> row = (Map<?, ?>) result.getList().get(0);
+        assertEquals(expectedOrderId, row.get("id"), "keyword=" + keyword);
+        assertEquals(expectedOrderNo, row.get("order_no"), "keyword=" + keyword);
+    }
+
+    private UUID insertSearchOrder(UUID userId, String email, String tradeNo,
+                                   LocalDateTime createdAt, String status, BigDecimal amount) {
+        UUID orderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, created_at, updated_at, user_id, email, total_amount, actual_amount,
+                                   status, order_type, payment_method, epay_trade_no, paid_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NORMAL', 'alipay', ?, ?)
+                """, orderId, createdAt, createdAt, userId, email, amount, amount, status, tradeNo, createdAt);
+        return orderId;
     }
 
     private UUID insertOrder(String lookupToken) {

@@ -13,6 +13,7 @@ import java.util.UUID;
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public record AdminUserOrderResponse(
         UUID id,
+        @JsonProperty("order_no") Long orderNo,
         BigDecimal totalAmount,
         BigDecimal actualAmount,
         OrderStatus status,

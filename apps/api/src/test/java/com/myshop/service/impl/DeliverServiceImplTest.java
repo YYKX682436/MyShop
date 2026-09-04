@@ -1,6 +1,7 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.CardKeyStatus;
+import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
@@ -66,6 +67,7 @@ class DeliverServiceImplTest {
 
         Order order = new Order();
         order.setId(orderId);
+        order.setOrderNo(1000000001L);
         order.setStatus(OrderStatus.PAID);
         order.setLookupTokenHash(LookupTokens.hash(lookupToken));
 
@@ -78,7 +80,7 @@ class DeliverServiceImplTest {
         available.setContentFingerprint("fingerprint");
         available.setStatus(CardKeyStatus.AVAILABLE);
 
-        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(orderRepository.findByOrderNo(order.getOrderNo())).thenReturn(Optional.of(order));
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(first, second));
         when(cardKeyRepository.findAndLockAvailable(firstProductId, null, 1)).thenReturn(List.of(available));
@@ -87,7 +89,7 @@ class DeliverServiceImplTest {
         BusinessException exception = assertThrows(BusinessException.class, () ->
                 service.deliverOrders(Map.of(
                         "orders", List.of(Map.of(
-                                "order_id", orderId.toString(),
+                                "order_no", order.getOrderNo().toString(),
                                 "lookup_token", lookupToken))), null));
 
         assertEquals("缺货补货中，请联系客服", exception.getMessage());
@@ -97,17 +99,18 @@ class DeliverServiceImplTest {
     }
 
     @Test
-    void orderUuidAloneCannotTriggerGuestDelivery() {
+    void orderNumberAloneCannotTriggerGuestDelivery() {
         UUID orderId = UUID.randomUUID();
         Order order = new Order();
         order.setId(orderId);
+        order.setOrderNo(1000000001L);
         order.setStatus(OrderStatus.PAID);
         order.setLookupTokenHash(LookupTokens.hash("correct-token"));
-        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(orderRepository.findByOrderNo(order.getOrderNo())).thenReturn(Optional.of(order));
 
         BusinessException exception = assertThrows(BusinessException.class, () ->
                 service.deliverOrders(Map.of(
-                        "orders", List.of(Map.of("order_id", orderId.toString()))), null));
+                        "orders", List.of(Map.of("order_no", order.getOrderNo().toString()))), null));
 
         assertEquals("订单查询凭证无效", exception.getMessage());
         verify(cardKeyRepository, never()).findAndLockAvailable(any(), any(), anyInt());
@@ -119,21 +122,49 @@ class DeliverServiceImplTest {
         String lookupToken = "delivered-token";
         Order order = new Order();
         order.setId(orderId);
+        order.setOrderNo(1000000001L);
         order.setStatus(OrderStatus.DELIVERED);
         order.setLookupTokenHash(LookupTokens.hash(lookupToken));
-        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(orderRepository.findByOrderNo(order.getOrderNo())).thenReturn(Optional.of(order));
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
         when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of());
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of());
 
         List<?> result = service.deliverOrders(Map.of(
                 "orders", List.of(Map.of(
-                        "order_id", orderId.toString(),
+                        "order_no", order.getOrderNo().toString(),
                         "lookup_token", lookupToken))), null);
 
         Map<?, ?> response = (Map<?, ?>) result.get(0);
         assertEquals("DELIVERED", response.get("status"));
         verify(cardKeyRepository, never()).findAndLockAvailable(any(), any(), anyInt());
+    }
+
+    @Test
+    void guestCanQueryByOrderNumberAndWrongTokenIsRejected() {
+        UUID orderId = UUID.randomUUID();
+        String lookupToken = "query-order-number-token";
+        Order order = new Order();
+        order.setId(orderId);
+        order.setOrderNo(1000000001L);
+        order.setStatus(OrderStatus.PAID);
+        order.setOrderType(OrderType.NORMAL);
+        order.setLookupTokenHash(LookupTokens.hash(lookupToken));
+        when(orderRepository.findByOrderNo(order.getOrderNo())).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of());
+
+        List<?> result = service.queryOrders(Map.of(
+                "orders", List.of(Map.of("order_no", order.getOrderNo().toString(),
+                        "lookup_token", lookupToken))), null);
+
+        Map<?, ?> brief = (Map<?, ?>) result.get(0);
+        assertEquals(order.getOrderNo(), brief.get("order_no"));
+        assertEquals(orderId, brief.get("id"));
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.queryOrders(Map.of(
+                "orders", List.of(Map.of("order_no", order.getOrderNo().toString(),
+                        "lookup_token", "wrong-token"))), null));
+        assertEquals(ErrorCode.FORBIDDEN, exception.getCode());
     }
 
     @Test
@@ -213,6 +244,7 @@ class DeliverServiceImplTest {
     private Order paidOrder(UUID orderId, OrderType orderType) {
         Order order = new Order();
         order.setId(orderId);
+        order.setOrderNo(1000000001L);
         order.setStatus(OrderStatus.PAID);
         order.setOrderType(orderType);
         return order;

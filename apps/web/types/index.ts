@@ -241,6 +241,7 @@ export type OrderType = 'NORMAL' | 'ADMIN_PICKUP'
 
 export interface OrderBrief {
   id: string
+  order_no: number
   total_amount: number
   actual_amount: number
   status: OrderStatus
@@ -255,6 +256,7 @@ export interface OrderItemDetail {
   product_id: string
   product_no: number
   product_title: string
+  spec_id?: string | null
   spec_name: string | null
   quantity: number
   unit_price: number
@@ -277,6 +279,7 @@ export interface OrderDetail extends OrderBrief {
 
 export interface PaymentCreateResult {
   order_id: string
+  order_no: number
   payment_url?: string
   qrcode_url?: string
   pay_url?: string
@@ -304,6 +307,7 @@ export interface DeliverResultGroup {
 
 export interface DeliverResult {
   order_id: string
+  order_no: number
   status: OrderStatus
   groups: DeliverResultGroup[]
   item_statuses?: { id: string; product_no: number; product_title: string; fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"; delivery_type: string }[]
@@ -528,6 +532,7 @@ export interface CardKeyListItem {
   content_parts: string[]
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'
   order_id: string | null
+  order_no: number | null
   created_at: string
   sold_at: string | null
 }
@@ -539,6 +544,7 @@ export interface AdminCardKeyPickupCard {
 
 export interface AdminCardKeyPickupResult {
   order_id: string
+  order_no: number
   count: number
   cards: AdminCardKeyPickupCard[]
 }
@@ -560,6 +566,7 @@ export interface CardImportBatch {
 
 export interface OrderCardKey {
   card_key_id: string
+  order_no?: number | null
   order_item_id?: string | null
   content_parts: string[]
   product_no?: number | null
@@ -580,13 +587,28 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
   gross_margin: number | null
 }
 
-export interface AdminOrderItem extends Omit<OrderDetail, "items"> {
+export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at"> {
   items: AdminOrderItemDetail[]
-  user_id: string | null
+  payment_method?: string | null
+  expires_at?: string | null
+  paid_at?: string | null
+  delivered_at?: string | null
+  order_email?: string | null
+  customer_type: "REGISTERED" | "GUEST"
+  user_id?: string | null
+  user_no: number | null
   username: string | null
   is_risk_flagged: boolean
-  user_level_id_snapshot: string | null
-  user_level_name_snapshot: string | null
+  registered_email?: string | null
+  phone?: string | null
+  internal_order_id?: string
+  user_level_id_snapshot?: string | null
+  user_level_name_snapshot?: string | null
+  epay_trade_no?: string | null
+  client_ip?: string | null
+  cost_total: number
+  gross_profit_total: number
+  gross_margin_total: number | null
 }
 
 // ============================================================
@@ -631,6 +653,7 @@ export interface AdminUserOrderItem {
 
 export interface AdminUserOrder {
   id: string
+  order_no: number
   total_amount: number | null
   actual_amount: number | null
   status: OrderStatus

@@ -39,7 +39,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       setOrder(detail)
       setCardKeys([])
       setCardKeysError(false)
-      if (detail.status === "DELIVERED") {
+      if (detail.status === "PAID" || detail.status === "DELIVERED") {
         setCardKeysLoading(true)
         try {
           setCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
@@ -96,7 +96,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   }
 
   const retryCardKeys = () => {
-    if (!order || order.status !== "DELIVERED") return
+    if (!order || (order.status !== "PAID" && order.status !== "DELIVERED")) return
     setCardKeysLoading(true)
     setCardKeysError(false)
     void requestOrThrow(() => adminCardKeyApi.getByOrder(order.id)).then(setCardKeys).catch(() => {
@@ -154,7 +154,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   if (presentation === "full") {
     return (
       <AdminPage>
-        <PageHeader title={t("admin.orderDetail")} description={orderId} actions={markPaidButton} />
+        <PageHeader title={t("admin.orderDetail")} description={order ? String(order.order_no) : t("common.loading")} actions={markPaidButton} />
         <div className="surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
         {confirmDialog}
       </AdminPage>
@@ -165,7 +165,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     <>
       <InspectorSheet
         title={t("admin.orderDetail")}
-        description={order?.id || orderId}
+        description={order ? String(order.order_no) : t("common.loading")}
         onClose={close}
         contentClassName="p-0 sm:p-0"
         footer={

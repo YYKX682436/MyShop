@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { CheckCircle, Copy, Eye } from "lucide-react"
 import { toast } from "sonner"
@@ -18,16 +18,65 @@ import {
   TableLoadingState,
 } from "@/components/admin/shared"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
-import { getPaymentLabel, PaymentIcon } from "@/components/shared/payment-icon"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
+import { formatAdminOrderNumber, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItem } from "@/types"
 
 const PAGE_SIZE = 20
+type TimeRange = "all" | "today" | "yesterday" | "7d" | "30d" | "custom"
+
+function dateValue(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function shiftDate(date: Date, days: number) {
+  const result = new Date(date)
+  result.setDate(result.getDate() + days)
+  return result
+}
+
+function dateBounds(range: TimeRange, customFrom: string, customTo: string) {
+  if (range === "all") return { created_from: undefined, created_to: undefined }
+  if (range === "custom") {
+    return {
+      created_from: customFrom || undefined,
+      created_to: customTo ? dateValue(shiftDate(new Date(`${customTo}T00:00:00`), 1)) : undefined,
+    }
+  }
+  const today = new Date()
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  if (range === "today") return { created_from: dateValue(start), created_to: dateValue(shiftDate(start, 1)) }
+  if (range === "yesterday") return { created_from: dateValue(shiftDate(start, -1)), created_to: dateValue(start) }
+  const days = range === "7d" ? 6 : 29
+  return { created_from: dateValue(shiftDate(start, -days)), created_to: dateValue(shiftDate(start, 1)) }
+}
+
+function ProductSummary({ order, emptyLabel }: { order: AdminOrderItem; emptyLabel: string }) {
+  const items = order.items ?? []
+  if (items.length === 0) return <span className="text-muted-foreground">{emptyLabel}</span>
+  const { visible, additionalCount } = limitAdminOrderProductItems(items)
+  return (
+    <div className="min-w-[14rem] max-w-[22rem] space-y-1">
+      {visible.map((item) => (
+        <div key={item.id} className="min-w-0">
+          <p className="truncate font-medium text-foreground">{item.product_title}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {formatAdminOrderProductMeta(item)}
+          </p>
+        </div>
+      ))}
+      {additionalCount > 0 && <p className="text-xs text-muted-foreground">+{additionalCount}</p>}
+    </div>
+  )
+}
 
 export default function AdminOrdersPage() {
   const { t, locale } = useLocale()
@@ -38,7 +87,10 @@ export default function AdminOrdersPage() {
   const [search, setSearch] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
-  const [paymentFilter, setPaymentFilter] = useState("")
+  const [timeRange, setTimeRange] = useState<TimeRange>("all")
+  const [customFrom, setCustomFrom] = useState("")
+  const [customTo, setCustomTo] = useState("")
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
   const [page, setPage] = useState(1)
 
   const [markPaidOrderId, setMarkPaidOrderId] = useState<string | null>(null)
@@ -53,6 +105,8 @@ export default function AdminOrdersPage() {
     return () => window.clearTimeout(timer)
   }, [search])
 
+  const bounds = useMemo(() => dateBounds(timeRange, customFrom, customTo), [timeRange, customFrom, customTo])
+
   const loadOrders = useCallback(async () => {
     setLoading(true)
     setError(false)
@@ -61,8 +115,9 @@ export default function AdminOrdersPage() {
         page,
         page_size: PAGE_SIZE,
         status: statusFilter || undefined,
-        payment_method: paymentFilter || undefined,
         keyword: debouncedSearch || undefined,
+        ...bounds,
+        sort_direction: sortDirection,
       }))
       setOrders(data.list)
       setTotal(data.pagination.total)
@@ -73,7 +128,7 @@ export default function AdminOrdersPage() {
     } finally {
       setLoading(false)
     }
-  }, [debouncedSearch, page, paymentFilter, statusFilter])
+  }, [bounds, debouncedSearch, page, sortDirection, statusFilter])
 
   useEffect(() => { void loadOrders() }, [loadOrders])
 
@@ -98,8 +153,8 @@ export default function AdminOrdersPage() {
     }
   }
 
-  const copyOrderNumber = (value: string) => {
-    const cleanValue = stripInvisible(value)
+  const copyOrderNumber = (value: number) => {
+    const cleanValue = stripInvisible(formatAdminOrderNumber(value))
     const fallback = () => {
       const textarea = document.createElement("textarea")
       textarea.value = cleanValue
@@ -120,7 +175,7 @@ export default function AdminOrdersPage() {
       <PageHeader title={t("admin.orders")} description={t("admin.ordersDesc")} />
 
       <PageToolbar>
-        <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:flex-wrap">
           <Input className="min-w-0 lg:max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("admin.searchOrder")} aria-label={t("admin.searchOrder")} />
           <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} aria-label={t("admin.statusLabel")}>
             <option value="">{t("admin.allStatus")}</option>
@@ -129,48 +184,54 @@ export default function AdminOrdersPage() {
             <option value="DELIVERED">{t("status.DELIVERED")}</option>
             <option value="EXPIRED">{t("status.EXPIRED")}</option>
           </select>
-          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={paymentFilter} onChange={(event) => { setPaymentFilter(event.target.value); setPage(1) }} aria-label={t("admin.paymentMethod")}>
-            <option value="">{t("admin.allPayment")}</option>
-            <option value="alipay">{t("payment.alipay")}</option>
-            <option value="wechat">{t("payment.wechat")}</option>
+          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label="创建时间范围">
+            <option value="all">全部时间</option>
+            <option value="today">今天</option>
+            <option value="yesterday">昨天</option>
+            <option value="7d">近 7 天</option>
+            <option value="30d">近 30 天</option>
+            <option value="custom">自定义</option>
           </select>
+          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={sortDirection} onChange={(event) => { setSortDirection(event.target.value as "asc" | "desc"); setPage(1) }} aria-label="创建时间排序">
+            <option value="desc">最新在前</option>
+            <option value="asc">最早在前</option>
+          </select>
+          {timeRange === "custom" && <div className="flex items-center gap-2">
+            <Input type="date" value={customFrom} onChange={(event) => { setCustomFrom(event.target.value); setPage(1) }} aria-label="开始日期" />
+            <span className="text-sm text-muted-foreground">至</span>
+            <Input type="date" value={customTo} onChange={(event) => { setCustomTo(event.target.value); setPage(1) }} aria-label="结束日期" />
+          </div>}
         </div>
       </PageToolbar>
 
       <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
-        <table className="w-full min-w-[1200px] text-sm">
+        <table className="w-full min-w-[1180px] text-sm">
           <thead><tr className="border-b border-border-subtle bg-surface-muted">
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">商品</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderProducts")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.quantity")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.user")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.paymentMethod")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">客户</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">金额</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">利润</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
             <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
           </tr></thead>
           <tbody>
-            {loading && <TableLoadingState colSpan={9} />}
-            {!loading && error && <TableErrorState colSpan={9} onRetry={() => void loadOrders()} />}
-            {!loading && !error && orders.length === 0 && <TableEmptyState colSpan={9}>{t("admin.noOrderData")}</TableEmptyState>}
-            {!loading && !error && orders.map((order) => {
-              const item = order.items[0]
-              const quantity = order.items.reduce((sum, current) => sum + current.quantity, 0)
-              return (
-                <tr key={order.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                  <td className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={order.id} onClick={() => copyOrderNumber(order.id)}>{order.id.length > 16 ? `${order.id.slice(0, 8)}…${order.id.slice(-4)}` : order.id}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
-                  <td className="max-w-[220px] truncate px-4 py-3">{item?.product_title || t("admin.systemNoData")}{item?.spec_name && <span className="text-muted-foreground"> · {item.spec_name}</span>}{order.items.length > 1 && <span className="ml-1 text-xs text-muted-foreground">+{order.items.length - 1}</span>}</td>
-                  <td className="px-4 py-3">{quantity}</td>
-                  <td className="px-4 py-3"><div className="flex min-w-[12rem] flex-col"><span>{order.username || t("admin.guest")}</span><span className="text-xs text-muted-foreground">{order.email}</span></div></td>
-                  <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
-                  <td className="px-4 py-3"><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.payment_method} className="h-4 w-4" />{getPaymentLabel(order.payment_method, t)}</span></td>
-                  <td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
-                  <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button>{order.status === "PENDING" && <Button type="button" variant="ghost" size="icon" title={t("admin.markPaid")} aria-label={t("admin.markPaid")} onClick={() => { setMarkPaidOrderId(order.id); setMarkPaidReason("") }}><CheckCircle className="h-4 w-4 text-emerald-600" aria-hidden="true" /></Button>}</div></td>
-                </tr>
-              )
-            })}
+            {loading && <TableLoadingState colSpan={8} />}
+            {!loading && error && <TableErrorState colSpan={8} onRetry={() => void loadOrders()} />}
+            {!loading && !error && orders.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noOrderData")}</TableEmptyState>}
+            {!loading && !error && orders.map((order) => (
+              <tr key={order.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
+                <td className="px-4 py-3"><ProductSummary order={order} emptyLabel={t("admin.systemNoData")} /></td>
+                <td className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={formatAdminOrderNumber(order.order_no)} onClick={() => copyOrderNumber(order.order_no)}>{formatAdminOrderNumber(order.order_no)}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
+                <td className="px-4 py-3"><div className="flex min-w-[12rem] flex-col"><span>{order.customer_type === "REGISTERED" ? `${order.username || t("admin.user")}${order.user_no ? ` · UID ${order.user_no}` : ""}` : t("admin.guest")}</span><span className="text-xs text-muted-foreground">{order.email || t("admin.systemNoData")}</span></div></td>
+                <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
+                <td className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>
+                <td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td>
+                <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
+                <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button>{order.status === "PENDING" && <Button type="button" variant="ghost" size="icon" title={t("admin.markPaid")} aria-label={t("admin.markPaid")} onClick={() => { setMarkPaidOrderId(order.id); setMarkPaidReason("") }}><CheckCircle className="h-4 w-4 text-emerald-600" aria-hidden="true" /></Button>}</div></td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </DataTableShell>
@@ -188,7 +249,6 @@ export default function AdminOrdersPage() {
       >
         <Textarea value={markPaidReason} onChange={(event) => setMarkPaidReason(event.target.value)} placeholder={t("admin.markPaidReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.markPaidReasonPlaceholder")} />
       </ConfirmAlert>
-
     </AdminPage>
   )
 }

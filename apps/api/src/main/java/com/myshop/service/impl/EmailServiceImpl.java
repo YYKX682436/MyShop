@@ -89,7 +89,7 @@ public class EmailServiceImpl implements EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(fromAddress);
             helper.setTo(order.getEmail());
-            helper.setSubject("【" + siteName + "】订单发货通知 - " + orderId.toString().substring(0, 8));
+            helper.setSubject("【" + siteName + "】订单发货通知 - " + order.getOrderNo());
             helper.setText(html, true);
 
             mailSender.send(message);
@@ -103,10 +103,10 @@ public class EmailServiceImpl implements EmailService {
 
     private String buildHtml(Order order, Map<UUID, OrderItem> itemMap,
                              Map<UUID, List<CardKey>> grouped, String siteName, String lookupToken) {
-        UUID orderId = order.getId();
+        Long orderNo = order.getOrderNo();
         BigDecimal amount = order.getActualAmount() != null ? order.getActualAmount() : order.getTotalAmount();
         LocalDateTime createdAt = order.getCreatedAt();
-        String orderUrl = siteUrl + "/order/query?orderId=" + orderId;
+        String orderUrl = siteUrl + "/order/query?orderNo=" + orderNo;
         if (lookupToken != null && !lookupToken.isBlank()) {
             orderUrl += "&lookup_token=" + URLEncoder.encode(lookupToken, StandardCharsets.UTF_8);
         }
@@ -139,7 +139,7 @@ public class EmailServiceImpl implements EmailService {
         sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#f8f9fa;border-radius:6px;padding:16px;\">");
         sb.append("<tr><td style=\"padding:4px 16px;\"><span style=\"color:#888;font-size:13px;\">订单编号</span></td>");
         sb.append("<td style=\"padding:4px 16px;text-align:right;\"><span style=\"color:#333;font-size:13px;font-family:monospace;\">")
-          .append(orderId).append("</span></td></tr>");
+          .append(orderNo).append("</span></td></tr>");
         sb.append("<tr><td style=\"padding:4px 16px;\"><span style=\"color:#888;font-size:13px;\">支付金额</span></td>");
         sb.append("<td style=\"padding:4px 16px;text-align:right;\"><span style=\"color:#333;font-size:13px;font-weight:600;\">¥")
           .append(amount).append("</span></td></tr>");

@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Copy } from "lucide-react"
 import { useLocale } from "@/lib/context"
+import { formatCardContent } from "@/lib/card-display"
 
 interface CardContentPartsProps {
   parts: string[]
@@ -48,7 +49,7 @@ export function CardContentParts({ parts, onCopy, className = "", expandedByDefa
         )}
         <button
           type="button"
-          onClick={() => onCopy(resolvedParts.join("\n"))}
+          onClick={() => onCopy(formatCardContent(resolvedParts))}
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
           <Copy className="h-3.5 w-3.5" />{t("admin.copyAllContent")}

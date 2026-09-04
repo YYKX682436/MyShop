@@ -191,6 +191,7 @@ public class OrderServiceImpl implements OrderService {
         LookupTokens.Issued lookupToken = LookupTokens.issue();
         order.setLookupTokenHash(lookupToken.hash());
         if (userId == null) order.setGuestLookupToken(lookupToken.plaintext());
+        order.setOrderNo(orderRepository.nextOrderNo());
         orderRepository.save(order);
 
         String specName = null;
@@ -228,6 +229,7 @@ public class OrderServiceImpl implements OrderService {
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", order.getId());
+        result.put("order_no", order.getOrderNo());
         result.put("status", order.getStatus().name());
         result.put("expires_at", order.getExpiresAt());
         // 返回服务端计算的剩余秒数，前端倒计时以此为准，不受客户端时钟影响
@@ -284,6 +286,7 @@ public class OrderServiceImpl implements OrderService {
         if (isAdminPickup(order)) {
             payment = new LinkedHashMap<>();
             payment.put("order_id", order.getId());
+            payment.put("order_no", order.getOrderNo());
             payment.put("order_type", OrderType.ADMIN_PICKUP);
             payment.put("admin_pickup", true);
             payment.put("paid", true);
@@ -311,6 +314,7 @@ public class OrderServiceImpl implements OrderService {
     private Map<String, Object> toOrderDetail(Order o, List<OrderItem> items) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", o.getId());
+        map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());

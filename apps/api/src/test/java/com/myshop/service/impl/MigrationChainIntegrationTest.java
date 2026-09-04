@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("11", flyway.info().current().getVersion().getVersion());
-        assertEquals(11, flyway.info().all().length);
+        assertEquals("12", flyway.info().current().getVersion().getVersion());
+        assertEquals(12, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -306,7 +306,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("11", flyway().info().current().getVersion().getVersion());
+        assertEquals("12", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -376,7 +376,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("11", flyway().info().current().getVersion().getVersion());
+        assertEquals("12", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -404,6 +404,57 @@ class MigrationChainIntegrationTest {
                 INSERT INTO products(id, title, retail_price, cost_price, category_id, product_no)
                 VALUES (?, 'v11-invalid', 10.00, 5.00, ?, 0)
                 """, UUID.randomUUID(), categoryId));
+    }
+
+    @Test
+    void v12AddsStableOrderNumbersBackfillsInCreationOrderAndProtectsThem() {
+        flyway("11").migrate();
+        UUID firstOrderId = UUID.randomUUID();
+        UUID secondOrderId = UUID.randomUUID();
+        LocalDateTime firstCreatedAt = LocalDateTime.of(2026, 2, 1, 0, 0);
+        LocalDateTime secondCreatedAt = firstCreatedAt.plusMinutes(1);
+
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type)
+                VALUES (?, ?, ?, 10.00, 10.00, 'PENDING', 'NORMAL')
+                """, secondOrderId, secondCreatedAt, secondCreatedAt);
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type)
+                VALUES (?, ?, ?, 20.00, 20.00, 'PENDING', 'NORMAL')
+                """, firstOrderId, firstCreatedAt, firstCreatedAt);
+
+        flyway().migrate();
+
+        assertEquals("12", flyway().info().current().getVersion().getVersion());
+        assertEquals("bigint", dataType("orders", "order_no"));
+        assertEquals("NO", nullableValue("orders", "order_no"));
+        assertTrue(defaultValue("orders", "order_no").contains("order_no_sequence"));
+        assertTrue(checkConstraintExists("orders_order_no_positive"));
+        assertTrue(indexExists("orders_order_no_key"));
+        assertTrue(indexExists("idx_card_keys_order"));
+        assertTrue(sequenceExists("order_no_sequence"));
+        assertTrue(functionExists("prevent_order_no_update"));
+        assertEquals(1, jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM pg_trigger
+                WHERE tgname = 'trg_orders_order_no_immutable'
+                """, Integer.class));
+        assertEquals(1000000001L, jdbcTemplate.queryForObject(
+                "SELECT order_no FROM orders WHERE id = ?", Long.class, firstOrderId));
+        assertEquals(1000000002L, jdbcTemplate.queryForObject(
+                "SELECT order_no FROM orders WHERE id = ?", Long.class, secondOrderId));
+        assertEquals(1000000003L, jdbcTemplate.queryForObject(
+                "SELECT nextval('order_no_sequence')", Long.class));
+
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "UPDATE orders SET order_no = 999 WHERE id = ?", firstOrderId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, order_no)
+                VALUES (?, 1.00, 1.00, 'PENDING', 'NORMAL', 1000000001)
+                """, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, order_no)
+                VALUES (?, 1.00, 1.00, 'PENDING', 'NORMAL', 0)
+                """, UUID.randomUUID()));
     }
 
     @Test
@@ -547,7 +598,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("11", flyway().info().current().getVersion().getVersion());
+        assertEquals("12", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -593,7 +644,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("11", flyway().info().current().getVersion().getVersion());
+        assertEquals("12", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

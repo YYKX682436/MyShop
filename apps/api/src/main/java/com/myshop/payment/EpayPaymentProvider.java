@@ -46,7 +46,8 @@ public class EpayPaymentProvider implements PaymentProvider {
         String type = "wechat".equalsIgnoreCase(request.paymentType()) ? "wxpay" : "alipay";
         EpayService.EpayResult result = epayService.createPayment(
                 channelConfig(config),
-                request.orderId(), type, request.productName(), request.amount(), request.clientIp(), request.device());
+                request.orderId(), type, request.productName(), request.amount(), request.clientIp(), request.device(),
+                request.returnOrderNo());
         return new PaymentResult(result.tradeNo(), result.payUrl(), result.qrcodeUrl());
     }
 

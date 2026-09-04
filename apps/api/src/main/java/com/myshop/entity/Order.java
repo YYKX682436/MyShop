@@ -10,6 +10,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 @Getter
@@ -19,6 +20,10 @@ import java.util.UUID;
 @Entity
 @Table(name = "orders")
 public class Order extends BaseEntity {
+
+    /** Public business identifier. The UUID inherited from BaseEntity remains the internal primary key. */
+    @Column(name = "order_no", nullable = false, unique = true, updatable = false)
+    private Long orderNo;
 
     private UUID userId;
 
@@ -87,5 +92,13 @@ public class Order extends BaseEntity {
     private String qrcodeUrl;
 
     private String epayTradeNo;
+
+    /** The visible business number is assigned once and must never change. */
+    public void setOrderNo(Long value) {
+        if (orderNo != null && !Objects.equals(orderNo, value)) {
+            throw new IllegalStateException("order_no is immutable");
+        }
+        orderNo = value;
+    }
 
 }

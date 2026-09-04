@@ -128,18 +128,18 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           idempotency_fingerprint: intent.fingerprint,
           device,
         }))
-      saveOrderLookupToken(result.payment.order_id, result.lookup_token)
+      saveOrderLookupToken(result.order.order_no, result.lookup_token)
       clearIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, intent.key)
       if (adminPickup || result.payment.admin_pickup || result.order.order_type === "ADMIN_PICKUP") {
         toast.success(t("payment.adminPickupSuccess"))
-        router.push(`/order/query?orderId=${encodeURIComponent(result.payment.order_id)}`)
+        router.push(`/order/query?orderNo=${encodeURIComponent(String(result.order.order_no))}`)
         return
       }
       toast.success(t("payment.redirectingToPay"))
       const payUrlH5 = result.payment.pay_url || ""
       const qr = result.payment.qrcode_url || result.payment.payment_url || ""
       const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
-      let payUrl = `/pay/${result.payment.order_id}?method=${encodeURIComponent(paymentType || "")}`
+      let payUrl = `/pay/${result.payment.order_id}?orderNo=${encodeURIComponent(String(result.order.order_no))}&method=${encodeURIComponent(paymentType || "")}`
       if (qr) payUrl += `&qr=${encodeURIComponent(qr)}`
       if (payUrlH5) payUrl += `&payurl=${encodeURIComponent(payUrlH5)}`
       // 移动端非微信：直接跳转网关支付页，避免中间经过 pay 页面的延迟

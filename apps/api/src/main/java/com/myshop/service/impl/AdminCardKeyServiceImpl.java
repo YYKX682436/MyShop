@@ -33,6 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -232,6 +233,8 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
 
     @Override
     public List<?> getCardKeysByOrder(UUID orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId);
         List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
         Map<UUID, OrderItem> itemMap = new HashMap<>();
@@ -242,6 +245,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         return keys.stream().map(k -> {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("card_key_id", k.getId());
+            map.put("order_no", order.getOrderNo());
             map.put("order_item_id", k.getOrderItemId());
             map.put("content_parts", List.copyOf(k.getContentParts()));
             OrderItem item = k.getOrderItemId() != null ? itemMap.get(k.getOrderItemId()) : null;
@@ -257,12 +261,23 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
     public PageResult<?> listCardKeys(UUID productId, UUID specId, int page, int pageSize) {
         var pageable = PageRequest.of(page - 1, pageSize);
         var keyPage = cardKeyRepository.findByProductIdAndOptionalSpecId(productId, specId, pageable);
+        List<UUID> orderIds = keyPage.getContent().stream()
+                .map(CardKey::getOrderId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<UUID, Order> ordersById = orderIds.isEmpty()
+                ? Map.of()
+                : orderRepository.findAllById(orderIds).stream()
+                .collect(Collectors.toMap(Order::getId, order -> order));
         var list = keyPage.getContent().stream().map(k -> {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("id", k.getId());
             map.put("content_parts", List.copyOf(k.getContentParts()));
             map.put("status", k.getStatus().name());
             map.put("order_id", k.getOrderId());
+            map.put("order_no", k.getOrderId() == null ? null : ordersById.get(k.getOrderId()) == null
+                    ? null : ordersById.get(k.getOrderId()).getOrderNo());
             map.put("created_at", k.getCreatedAt());
             map.put("sold_at", k.getSoldAt());
             return map;
@@ -343,6 +358,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         order.setStatus(OrderStatus.DELIVERED);
         order.setPaymentMethod("ADMIN_PICKUP");
         order.setDeliveredAt(now);
+        order.setOrderNo(orderRepository.nextOrderNo());
         orderRepository.saveAndFlush(order);
 
         BigDecimal costPrice = spec == null ? product.getCostPrice() : spec.getCostPrice();
@@ -379,7 +395,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         List<AdminCardKeyPickupCardResponse> cards = keys.stream()
                 .map(key -> new AdminCardKeyPickupCardResponse(key.getId(), List.copyOf(key.getContentParts())))
                 .toList();
-        return new AdminCardKeyPickupResponse(order.getId(), cards.size(), cards);
+        return new AdminCardKeyPickupResponse(order.getId(), order.getOrderNo(), cards.size(), cards);
     }
 
     private ProductSpec resolvePickupSpec(Product product, UUID specId) {

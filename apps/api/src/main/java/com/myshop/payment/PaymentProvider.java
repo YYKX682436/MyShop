@@ -41,7 +41,7 @@ public interface PaymentProvider {
 
     record PaymentRequest(String orderId, String paymentType, String productName,
                           BigDecimal amount, String clientIp, String device,
-                          Map<String, String> config) { }
+                          Map<String, String> config, String returnOrderNo) { }
 
     record CallbackRequest(Map<String, String> params, Map<String, String> config) { }
 

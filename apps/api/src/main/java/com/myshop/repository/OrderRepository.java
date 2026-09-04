@@ -22,6 +22,11 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Optional<Order> findByLookupTokenHash(String lookupTokenHash);
 
+    Optional<Order> findByOrderNo(Long orderNo);
+
+    @Query(value = "SELECT nextval('order_no_sequence')", nativeQuery = true)
+    Long nextOrderNo();
+
     List<Order> findByStatusAndDeliveredAtIsNullOrderByCreatedAtAsc(OrderStatus status, Pageable pageable);
 
     /** Only paid orders with unfinished automatic card delivery are retryable. */
@@ -147,31 +152,118 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     long count();
 
-    // 管理后台订单列表 — 无搜索词
-    @Query("SELECT o FROM Order o WHERE " +
-            "o.orderType = com.myshop.constant.OrderType.NORMAL " +
-            "AND " +
-            "(:status IS NULL OR o.status = :status) " +
-            "AND (:paymentMethod IS NULL OR o.paymentMethod = :paymentMethod) " +
-            "AND (:isRiskFlagged IS NULL OR o.riskFlagged = :isRiskFlagged) " +
-            "ORDER BY o.createdAt DESC")
-    Page<Order> findAdminOrders(@Param("status") OrderStatus status,
-                                @Param("paymentMethod") String paymentMethod,
-                                @Param("isRiskFlagged") Boolean isRiskFlagged,
-                                Pageable pageable);
-
-    // 管理后台订单列表 — 带搜索词（按订单ID、邮箱或商品名称搜索，keyword 保证非 null）
-    @Query("SELECT DISTINCT o FROM Order o LEFT JOIN OrderItem oi ON oi.orderId = o.id WHERE " +
-            "o.orderType = com.myshop.constant.OrderType.NORMAL " +
-            "AND " +
-            "(:status IS NULL OR o.status = :status) " +
-            "AND (:paymentMethod IS NULL OR o.paymentMethod = :paymentMethod) " +
-            "AND (:isRiskFlagged IS NULL OR o.riskFlagged = :isRiskFlagged) " +
-            "AND (str(o.id) LIKE :keywordPattern OR o.email LIKE :keywordPattern OR oi.productTitle LIKE :keywordPattern) " +
-            "ORDER BY o.createdAt DESC")
-    Page<Order> findAdminOrdersByKeyword(@Param("status") OrderStatus status,
-                                         @Param("paymentMethod") String paymentMethod,
-                                         @Param("isRiskFlagged") Boolean isRiskFlagged,
-                                         @Param("keywordPattern") String keywordPattern,
-                                         Pageable pageable);
+    /**
+     * Search the order page without joining one-to-many relations. Every
+     * related-field match is an EXISTS predicate, so count/pagination remain
+     * one row per order even when an order has multiple items or cards.
+     */
+    @Query(value = """
+            SELECT o.*
+            FROM orders o
+            WHERE o.order_type = 'NORMAL'
+              AND (CAST(:status AS text) IS NULL OR o.status = CAST(:status AS text))
+              AND (CAST(:createdFrom AS timestamp) IS NULL OR o.created_at >= CAST(:createdFrom AS timestamp))
+              AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
+              AND (
+                    CAST(:keywordPattern AS text) IS NULL
+                    OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.epay_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM order_items oi
+                        WHERE oi.order_id = o.id
+                          AND (
+                                COALESCE(oi.product_title, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(oi.product_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR COALESCE(oi.spec_name, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(oi.customer_inputs AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          )
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM users u
+                        WHERE u.id = o.user_id
+                          AND (
+                                COALESCE(u.username, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(u.user_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(u.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR COALESCE(u.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR COALESCE(u.phone, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          )
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM card_keys ck
+                        WHERE ck.order_id = o.id
+                          AND (
+                                CAST(ck.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(ck.content_parts AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          )
+                    )
+              )
+            ORDER BY
+                CASE WHEN CAST(:sortDirection AS text) = 'asc' THEN o.created_at END ASC,
+                CASE WHEN CAST(:sortDirection AS text) = 'desc' THEN o.created_at END DESC,
+                CASE WHEN CAST(:sortDirection AS text) = 'asc' THEN o.id END ASC,
+                CASE WHEN CAST(:sortDirection AS text) = 'desc' THEN o.id END DESC
+            """,
+            countQuery = """
+            SELECT COUNT(*)
+            FROM orders o
+            WHERE o.order_type = 'NORMAL'
+              AND CAST(:sortDirection AS text) IN ('asc', 'desc')
+              AND (CAST(:status AS text) IS NULL OR o.status = CAST(:status AS text))
+              AND (CAST(:createdFrom AS timestamp) IS NULL OR o.created_at >= CAST(:createdFrom AS timestamp))
+              AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
+              AND (
+                    CAST(:keywordPattern AS text) IS NULL
+                    OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.epay_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM order_items oi
+                        WHERE oi.order_id = o.id
+                          AND (
+                                COALESCE(oi.product_title, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(oi.product_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR COALESCE(oi.spec_name, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(oi.customer_inputs AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          )
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM users u
+                        WHERE u.id = o.user_id
+                          AND (
+                                COALESCE(u.username, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(u.user_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(u.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR COALESCE(u.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR COALESCE(u.phone, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          )
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM card_keys ck
+                        WHERE ck.order_id = o.id
+                          AND (
+                                CAST(ck.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                OR CAST(ck.content_parts AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          )
+                    )
+              )
+            """,
+            nativeQuery = true)
+    Page<Order> searchAdminOrders(@Param("status") String status,
+                                   @Param("createdFrom") LocalDateTime createdFrom,
+                                   @Param("createdTo") LocalDateTime createdTo,
+                                   @Param("keywordPattern") String keywordPattern,
+                                   @Param("sortDirection") String sortDirection,
+                                   Pageable pageable);
 }

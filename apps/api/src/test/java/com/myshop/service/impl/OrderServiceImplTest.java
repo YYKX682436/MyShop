@@ -85,6 +85,7 @@ class OrderServiceImplTest {
                 .thenReturn(Optional.of(enabledChannel()));
         lenient().when(paymentService.createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class)))
                 .thenReturn(Map.of("payment_url", "https://pay.example/1"));
+        lenient().when(orderRepository.nextOrderNo()).thenReturn(1000000001L);
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
             Order order = invocation.getArgument(0);
             if (order.getId() == null) order.setId(UUID.randomUUID());
@@ -112,6 +113,8 @@ class OrderServiceImplTest {
         assertEquals(OrderStatus.PENDING, saved.getStatus());
         assertNotNull(first.get("lookup_token"));
         assertTrue(String.valueOf(first.get("lookup_token")).length() >= 40);
+        Map<?, ?> orderResult = (Map<?, ?>) first.get("order");
+        assertEquals(1000000001L, orderResult.get("order_no"));
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
     }
 
