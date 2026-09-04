@@ -200,7 +200,8 @@ class DeliverServiceImplTest {
         assertEquals(order.getOrderNo(), brief.get("order_no"));
 
         String exported = service.exportCardKeys(orderId, null, userId);
-        assertTrue(exported.contains("account\tsecret"));
+        assertTrue(exported.contains("卡券内容 1: account"));
+        assertTrue(exported.contains("卡券内容 2: secret"));
     }
 
     @Test
