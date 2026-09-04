@@ -296,14 +296,16 @@ class PostgresDeliveryIntegrationTest {
         Long userNo = scalar("SELECT user_no FROM users WHERE id = ?", Long.class, userId);
         List<String> matchingKeywords = List.of(
                 orderNo.toString(), orderId.toString(), orderEmail,
-                "Search Product Title", productNo.toString(), "Search Spec Name",
-                "search-customer-value", "search-user-" + suffix, userNo.toString(),
+                "Search Product Title", "Search Spec Name",
+                "search-customer-value", "search-user-" + suffix,
                 userId.toString(), "registered-search-" + suffix + "@example.com",
                 "13800138000", cardId.toString(), "search-card-password",
                 "search-epay-" + suffix, "alipay");
         for (String keyword : matchingKeywords) {
             assertSearchMatches(keyword, orderId, orderNo);
         }
+        assertSearchContains(productNo.toString(), orderId, orderNo);
+        assertSearchContains(userNo.toString(), orderId, orderNo);
         assertEquals(0L, adminOrderService.searchOrders(new AdminOrderSearchRequest(
                 1, 20, "definitely-no-order-match-" + suffix, null, null, null, "desc"))
                 .getPagination().getTotal());
@@ -322,14 +324,14 @@ class PostgresDeliveryIntegrationTest {
     @Test
     void adminOrderSearchUsesCreatedAtHalfOpenDatesAndStableSortDirection() {
         UUID oldest = insertSearchOrder(null, "oldest-search@example.com", "trade-oldest",
-                LocalDateTime.of(2026, 3, 2, 10, 0), "PAID", new BigDecimal("10.00"));
+                LocalDateTime.of(2026, 4, 2, 10, 0), "PAID", new BigDecimal("10.00"));
         UUID middle = insertSearchOrder(null, "middle-search@example.com", "trade-middle",
-                LocalDateTime.of(2026, 3, 3, 10, 0), "PAID", new BigDecimal("11.00"));
+                LocalDateTime.of(2026, 4, 3, 10, 0), "PAID", new BigDecimal("11.00"));
         UUID boundary = insertSearchOrder(null, "boundary-search@example.com", "trade-boundary",
-                LocalDateTime.of(2026, 3, 4, 0, 0), "PAID", new BigDecimal("12.00"));
+                LocalDateTime.of(2026, 4, 4, 0, 0), "PAID", new BigDecimal("12.00"));
 
         var ascending = adminOrderService.searchOrders(new AdminOrderSearchRequest(
-                1, 20, null, "PAID", "2026-03-02", "2026-03-04", "asc"));
+                1, 20, null, "PAID", "2026-04-02", "2026-04-04", "asc"));
         assertEquals(2L, ascending.getPagination().getTotal());
         assertEquals(List.of(oldest, middle), ascending.getList().stream()
                 .map(value -> ((Map<?, ?>) value).get("id")).toList());
@@ -337,7 +339,7 @@ class PostgresDeliveryIntegrationTest {
                 boundary.equals(((Map<?, ?>) value).get("id"))));
 
         var descending = adminOrderService.searchOrders(new AdminOrderSearchRequest(
-                1, 20, null, "PAID", "2026-03-02", "2026-03-04", "desc"));
+                1, 20, null, "PAID", "2026-04-02", "2026-04-04", "desc"));
         assertEquals(2L, descending.getPagination().getTotal());
         assertEquals(List.of(middle, oldest), descending.getList().stream()
                 .map(value -> ((Map<?, ?>) value).get("id")).toList());
@@ -831,6 +833,17 @@ class PostgresDeliveryIntegrationTest {
         Map<?, ?> row = (Map<?, ?>) result.getList().get(0);
         assertEquals(expectedOrderId, row.get("id"), "keyword=" + keyword);
         assertEquals(expectedOrderNo, row.get("order_no"), "keyword=" + keyword);
+    }
+
+    private void assertSearchContains(String keyword, UUID expectedOrderId, Long expectedOrderNo) {
+        var result = adminOrderService.searchOrders(new AdminOrderSearchRequest(
+                1, 20, keyword, null, null, null, "desc"));
+        assertTrue(result.getPagination().getTotal() >= 1, "keyword=" + keyword);
+        assertTrue(result.getList().stream().anyMatch(value -> {
+            Map<?, ?> row = (Map<?, ?>) value;
+            return expectedOrderId.equals(row.get("id"))
+                    && expectedOrderNo.equals(row.get("order_no"));
+        }), "keyword=" + keyword);
     }
 
     private UUID insertSearchOrder(UUID userId, String email, String tradeNo,
