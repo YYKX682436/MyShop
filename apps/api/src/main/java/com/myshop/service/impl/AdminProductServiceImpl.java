@@ -500,8 +500,8 @@ public class AdminProductServiceImpl implements AdminProductService {
 
         applyProduct(product, aggregate);
         Product saved = productRepository.saveAndFlush(product);
-        Map<UUID, ProductSpec> savedSpecs = syncSpecs(saved, aggregate);
-        saveOverrides(saved, aggregate, desiredOverrides, savedSpecs);
+        syncSpecs(saved, aggregate);
+        saveOverrides(saved, desiredOverrides);
         updateManualStock(saved, aggregate);
         return buildResponse(saved, true, desiredOverrides, aggregate.warnings());
     }
@@ -659,14 +659,13 @@ public class AdminProductServiceImpl implements AdminProductService {
         product.setSortWeight(aggregate.sortWeight());
     }
 
-    private Map<UUID, ProductSpec> syncSpecs(Product product, PreparedAggregate aggregate) {
+    private void syncSpecs(Product product, PreparedAggregate aggregate) {
         List<ProductSpec> existing = productSpecRepository
                 .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
         Set<UUID> keep = aggregate.specs().stream().map(PreparedSpec::id).collect(Collectors.toSet());
         for (ProductSpec old : existing) {
             if (!keep.contains(old.getId())) retireSpec(product, old);
         }
-        Map<UUID, ProductSpec> saved = new LinkedHashMap<>();
         for (PreparedSpec prepared : aggregate.specs()) {
             ProductSpec spec = prepared.existing() == null ? new ProductSpec() : prepared.existing();
             if (prepared.existing() == null) spec.setId(prepared.id());
@@ -677,9 +676,8 @@ public class AdminProductServiceImpl implements AdminProductService {
             spec.setVisible(prepared.request().visible() == null || prepared.request().visible());
             spec.setSortOrder(prepared.request().sortOrder() == null ? 0 : prepared.request().sortOrder());
             spec.setIsDeleted(0);
-            saved.put(prepared.id(), productSpecRepository.saveAndFlush(spec));
+            productSpecRepository.saveAndFlush(spec);
         }
-        return saved;
     }
 
     private void retireSpec(Product product, ProductSpec spec) {
@@ -750,9 +748,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         }
     }
 
-    private void saveOverrides(Product product, PreparedAggregate aggregate,
-                               List<ProductLevelPriceOverride> overrides,
-                               Map<UUID, ProductSpec> savedSpecs) {
+    private void saveOverrides(Product product, List<ProductLevelPriceOverride> overrides) {
         for (ProductLevelPriceOverride override : overrides) {
             override.setProductId(product.getId());
         }
@@ -891,17 +887,6 @@ public class AdminProductServiceImpl implements AdminProductService {
 
     private record PreparedSpec(AdminProductSpecRequest request, UUID id, ProductSpec existing,
                                 String name, BigDecimal costPrice, BigDecimal retailPrice) {
-        ProductSpec toEntity(UUID productId) {
-            ProductSpec spec = new ProductSpec();
-            spec.setId(id);
-            spec.setProductId(productId);
-            spec.setName(name);
-            spec.setCostPrice(costPrice);
-            spec.setRetailPrice(retailPrice);
-            spec.setVisible(request.visible() == null || request.visible());
-            spec.setSortOrder(request.sortOrder() == null ? 0 : request.sortOrder());
-            return spec;
-        }
     }
 
     private record PreparedAggregate(String title, String description, String detailMd, String coverUrl,

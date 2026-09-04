@@ -15,7 +15,7 @@ import java.util.UUID;
 @AllArgsConstructor
 @Entity
 @Table(name = "product_specs")
-public class ProductSpec extends BaseEntity {
+public class ProductSpec extends AssignedUuidEntity {
 
     @Column(nullable = false)
     private UUID productId;
