@@ -23,9 +23,8 @@ if [[ ! -f "${repo_dir}/ops/Ip2RegionXdbVerifier.java" ]]; then
   exit 1
 fi
 
-target_parent="$(dirname -- "${target_dir}")"
 mkdir -p "${target_dir}"
-tmp_dir="$(mktemp -d "${target_parent%/}/.ip2region-update.XXXXXX")"
+tmp_dir="$(mktemp -d "${target_dir%/}/.ip2region-update.XXXXXX")"
 cleanup() {
   rm -rf -- "${tmp_dir}"
 }
@@ -87,9 +86,10 @@ ipv4_sha256="$(sha256sum "${ipv4_tmp}" | awk '{print $1}')"
 ipv6_sha256="$(sha256sum "${ipv6_tmp}" | awk '{print $1}')"
 updated_at="$(date --iso-8601=seconds)"
 
-# The temporary directory is a sibling of the target, so each rename stays on
-# one filesystem. A failed download/validation exits before either old file is
-# touched. The manifest is replaced last and is itself atomic.
+# The temporary directory is inside the target, so each rename stays on one
+# filesystem and uses the target directory's write permission. A failed
+# download/validation exits before either old file is touched. The manifest is
+# replaced last and is itself atomic.
 chmod 0644 "${ipv4_tmp}" "${ipv6_tmp}"
 mv -f -- "${ipv4_tmp}" "${target_dir}/ip2region_v4.xdb"
 mv -f -- "${ipv6_tmp}" "${target_dir}/ip2region_v6.xdb"
