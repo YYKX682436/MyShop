@@ -19,7 +19,6 @@ public record AdminUserOrderResponse(
         OrderStatus status,
         OrderType orderType,
         String paymentMethod,
-        String email,
         LocalDateTime createdAt,
         LocalDateTime paidAt,
         LocalDateTime deliveredAt,

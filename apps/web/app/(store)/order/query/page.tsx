@@ -8,12 +8,14 @@ import { toast } from "sonner"
 import { getApiErrorMessage, getOrderLookupToken, orderApi, saveOrderLookupToken } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { getPaymentLabel } from "@/components/shared/payment-icon"
+import { useAuth } from "@/lib/context"
 import { formatCardContent, formatCardContents } from "@/lib/card-display"
 import { formatYuan } from "@/lib/utils"
 import type { DeliverResult, OrderBrief } from "@/types"
 
 export default function OrderQueryPage() {
   const searchParams = useSearchParams()
+  const { user, authLoaded } = useAuth()
   const [orderNo, setOrderNo] = useState("")
   const [lookupToken, setLookupToken] = useState("")
   const [orders, setOrders] = useState<OrderBrief[]>([])
@@ -24,17 +26,23 @@ export default function OrderQueryPage() {
   const search = useCallback(async (requestedOrderNo?: string, requestedToken?: string) => {
     const requested = (requestedOrderNo ?? orderNo).trim()
     const token = (requestedToken ?? lookupToken).trim()
-    if (!requested || !token) {
-      toast.error("请输入订单号和订单查询凭证")
+    if (!requested) {
+      toast.error("请输入订单号")
+      return
+    }
+    if (!authLoaded) return
+    if (!user && !token) {
+      toast.error("游客查询需要订单查询凭证")
       return
     }
     setLoading(true)
     try {
-      saveOrderLookupToken(requested, token)
-      const found = await orderApi.query({ orders: [{ order_no: requested, lookup_token: token }] })
+      if (token) saveOrderLookupToken(requested, token)
+      const credential = token ? { order_no: requested, lookup_token: token } : { order_no: requested }
+      const found = await orderApi.query({ orders: [credential] })
       const deliverable = found.filter(order => order.status === "PAID" || order.status === "DELIVERED")
       const delivered = deliverable.length
-        ? await orderApi.deliver({ orders: deliverable.map(order => ({ order_no: order.order_no, lookup_token: token })) })
+        ? await orderApi.deliver({ orders: deliverable.map(order => token ? { order_no: order.order_no, lookup_token: token } : { order_no: order.order_no }) })
         : []
       setOrders(found.map(order => {
         const result = delivered.find(item => item.order_no === order.order_no)
@@ -48,20 +56,22 @@ export default function OrderQueryPage() {
     } finally {
       setLoading(false)
     }
-  }, [lookupToken, orderNo])
+  }, [authLoaded, lookupToken, orderNo, user])
 
   useEffect(() => {
     const requested = searchParams.get("orderNo") || ""
-    if (initializedFromUrl.current) return
+    if (!requested || !authLoaded || initializedFromUrl.current) return
     initializedFromUrl.current = true
     const tokenFromUrl = searchParams.get("lookup_token") || ""
     const storedToken = requested ? tokenFromUrl || getOrderLookupToken(requested) || "" : ""
-    if (requested) setOrderNo(requested)
+    setOrderNo(requested)
     if (storedToken) {
       setLookupToken(storedToken)
       void search(requested, storedToken)
+    } else if (user) {
+      void search(requested, "")
     }
-  }, [searchParams, search])
+  }, [authLoaded, search, searchParams, user])
 
   const copy = async (value: string) => {
     await navigator.clipboard.writeText(value)
@@ -91,7 +101,7 @@ export default function OrderQueryPage() {
           <span className="flex size-9 items-center justify-center rounded-control bg-primary/10 text-primary"><ClipboardList className="size-5" aria-hidden="true" /></span>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">查询订单与卡密</h1>
         </div>
-        <p className="text-sm text-muted-foreground">订单号本身不能访问订单；请同时输入下单后得到的查询凭证。服务器会在支付成功后自动尝试发货。</p>
+        <p className="text-sm text-muted-foreground">订单号本身不能访问游客订单；游客需要同时输入下单后得到的查询凭证，登录用户查询自己的订单可留空。服务器会在支付成功后自动尝试发货。</p>
       </div>
 
       <div className="surface p-5 sm:p-6">
@@ -101,16 +111,16 @@ export default function OrderQueryPage() {
             <input inputMode="numeric" value={orderNo} onChange={event => setOrderNo(event.target.value)} placeholder="10 位数字订单号" className="mt-1.5 h-11 w-full rounded-control border border-input bg-surface-muted px-3 font-mono text-sm" />
           </label>
           <label className="text-sm font-medium text-foreground">
-            订单查询凭证
-            <input value={lookupToken} onChange={event => setLookupToken(event.target.value)} placeholder="仅在下单结果中显示一次" className="mt-1.5 h-11 w-full rounded-control border border-input bg-surface-muted px-3 font-mono text-sm" />
+            订单查询凭证（游客必填）
+            <input value={lookupToken} onChange={event => setLookupToken(event.target.value)} placeholder="游客下单结果中显示一次；登录用户可留空" className="mt-1.5 h-11 w-full rounded-control border border-input bg-surface-muted px-3 font-mono text-sm" />
           </label>
-          <button onClick={() => void search()} disabled={loading} className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50">
+          <button onClick={() => void search()} disabled={loading || !authLoaded} className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} 查询
           </button>
         </div>
         <div className="mt-4 flex items-start gap-2 rounded-card border border-border-subtle bg-surface-muted p-3.5 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-          <span>查询凭证只在本机订单记录中保存；服务端日志不会记录明文凭证。为支持站长恢复，数据库中的 guest token 字段属于敏感凭证。</span>
+          <span>游客查询凭证只在本机订单记录中保存；登录用户查询自己的订单不依赖本机凭证。服务端日志不会记录明文凭证，数据库中的 guest token 字段属于敏感凭证。</span>
         </div>
       </div>
 

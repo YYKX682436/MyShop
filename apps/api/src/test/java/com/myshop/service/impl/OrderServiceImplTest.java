@@ -116,6 +116,8 @@ class OrderServiceImplTest {
         Map<?, ?> orderResult = (Map<?, ?>) first.get("order");
         assertEquals(1000000001L, orderResult.get("order_no"));
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
+        assertFalse(request.containsKey("email"));
+        assertFalse(orderResult.containsKey("email"));
     }
 
     @Test
@@ -336,6 +338,8 @@ class OrderServiceImplTest {
         assertEquals(levelId, saved.getUserLevelIdSnapshot());
         assertEquals("普通会员", saved.getUserLevelNameSnapshot());
         assertEquals("https://pay.example/1", ((Map<?, ?>) result.get("payment")).get("payment_url"));
+        assertFalse(request.containsKey("email"));
+        assertFalse(((Map<?, ?>) result.get("order")).containsKey("email"));
         verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
         verify(autoFulfillmentService, never()).trigger(any());
     }

@@ -5,7 +5,7 @@ import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { useLocale } from "@/lib/context"
-import { formatAdminOrderNumber, formatAdminOrderProductMeta } from "@/lib/admin-order-display"
+import { formatAdminOrderCustomer, formatAdminOrderNumber, formatAdminOrderProductMeta } from "@/lib/admin-order-display"
 import { formatDateTime, formatYuan } from "@/lib/utils"
 import type { AdminOrderItem } from "@/types"
 
@@ -67,8 +67,8 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                     <td className="py-3 text-sm text-foreground">
                       <ProductSummary order={order} />
                     </td>
-                    <td className="truncate py-3 text-foreground" title={order.username || order.email || t("admin.guest")}>
-                      {order.username || order.email || t("admin.guest")}
+                    <td className="truncate py-3 text-foreground" title={formatAdminOrderCustomer(order, t("admin.guest")).primary}>
+                      <CustomerIdentity order={order} guestLabel={t("admin.guest")} />
                     </td>
                     <td className="py-3 font-medium text-foreground">{formatYuan(order.actual_amount)}</td>
                     <td className="py-3"><OrderStatusBadge status={order.status} /></td>
@@ -93,7 +93,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">{t("admin.user")}</p>
-                    <p className="truncate text-foreground" title={order.username || order.email || t("admin.guest")}>{order.username || order.email || t("admin.guest")}</p>
+                    <p className="truncate text-foreground" title={formatAdminOrderCustomer(order, t("admin.guest")).primary}><CustomerIdentity order={order} guestLabel={t("admin.guest")} /></p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">{t("admin.amount")}</p>
@@ -140,5 +140,15 @@ function ProductSummary({ order }: { order: AdminOrderItem }) {
       <span className="block truncate text-xs text-muted-foreground">{formatAdminOrderProductMeta(firstItem)}</span>
       {more && <span className="text-xs text-muted-foreground">{more}</span>}
     </div>
+  )
+}
+
+function CustomerIdentity({ order, guestLabel }: { order: AdminOrderItem; guestLabel: string }) {
+  const identity = formatAdminOrderCustomer(order, guestLabel)
+  return (
+    <span className="inline-flex min-w-0 flex-col align-top">
+      <span className="truncate">{identity.primary}</span>
+      {identity.secondary && <span className="truncate text-xs text-muted-foreground">{identity.secondary}</span>}
+    </span>
   )
 }

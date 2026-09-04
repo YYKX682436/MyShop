@@ -255,8 +255,7 @@ class PostgresDeliveryIntegrationTest {
         jdbcTemplate.update("UPDATE users SET phone = ? WHERE id = ?", "13800138000", userId);
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
-        String orderEmail = "reserved-search-" + suffix + "@example.com";
-        UUID orderId = insertSearchOrder(userId, orderEmail, "search-epay-" + suffix,
+        UUID orderId = insertSearchOrder(userId, "search-epay-" + suffix,
                 LocalDateTime.of(2026, 3, 3, 10, 0), "PAID", new BigDecimal("62.00"));
         UUID firstItemId = insertOrderItem(orderId, productId, "AUTO", "CARD_KEY", 2, 0);
         UUID secondItemId = insertOrderItem(orderId, productId, "AUTO", "CARD_KEY", 1, 0);
@@ -295,7 +294,7 @@ class PostgresDeliveryIntegrationTest {
         Long productNo = scalar("SELECT product_no FROM products WHERE id = ?", Long.class, productId);
         Long userNo = scalar("SELECT user_no FROM users WHERE id = ?", Long.class, userId);
         List<String> matchingKeywords = List.of(
-                orderNo.toString(), orderId.toString(), orderEmail,
+                orderNo.toString(), orderId.toString(),
                 "Search Product Title", "Search Spec Name",
                 "search-customer-value", "search-user-" + suffix,
                 userId.toString(), "registered-search-" + suffix + "@example.com",
@@ -315,7 +314,8 @@ class PostgresDeliveryIntegrationTest {
         assertEquals("REGISTERED", summary.get("customer_type"));
         assertEquals("search-user-" + suffix, summary.get("username"));
         assertEquals(userNo, summary.get("user_no"));
-        assertEquals(orderEmail, summary.get("order_email"));
+        assertTrue(!summary.containsKey("email"));
+        assertTrue(!summary.containsKey("order_email"));
         assertEquals(new BigDecimal("21.00"), summary.get("cost_total"));
         assertEquals(new BigDecimal("41.00"), summary.get("gross_profit_total"));
         assertEquals(new BigDecimal("66.13"), summary.get("gross_margin_total"));
@@ -323,11 +323,11 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void adminOrderSearchUsesCreatedAtHalfOpenDatesAndStableSortDirection() {
-        UUID oldest = insertSearchOrder(null, "oldest-search@example.com", "trade-oldest",
+        UUID oldest = insertSearchOrder(null, "trade-oldest",
                 LocalDateTime.of(2026, 4, 2, 10, 0), "PAID", new BigDecimal("10.00"));
-        UUID middle = insertSearchOrder(null, "middle-search@example.com", "trade-middle",
+        UUID middle = insertSearchOrder(null, "trade-middle",
                 LocalDateTime.of(2026, 4, 3, 10, 0), "PAID", new BigDecimal("11.00"));
-        UUID boundary = insertSearchOrder(null, "boundary-search@example.com", "trade-boundary",
+        UUID boundary = insertSearchOrder(null, "trade-boundary",
                 LocalDateTime.of(2026, 4, 4, 0, 0), "PAID", new BigDecimal("12.00"));
 
         var ascending = adminOrderService.searchOrders(new AdminOrderSearchRequest(
@@ -378,19 +378,18 @@ class PostgresDeliveryIntegrationTest {
         String suffix = UUID.randomUUID().toString().replace("-", "");
         UUID userId = insertUser("pending-user-" + suffix, "pending-user-" + suffix + "@example.com");
         UUID productId = UUID.randomUUID();
-        String email = "pending-user-order-" + suffix + "@example.com";
         String clientIp = "203.0.113.40";
         String channel = "pending-user-" + suffix;
         insertProduct(productId);
         insertCard(productId, "pending-user-card-" + suffix);
         insertPaymentChannel(channel);
         for (int i = 0; i < 5; i++) {
-            insertPendingOrder(channel, userId, email, clientIp);
+            insertPendingOrder(channel, userId, clientIp);
         }
         configurePaymentCreation("pending-user-trade-" + suffix);
 
         Map<String, Object> result = orderService.createDirectOrder(
-                directOrderRequest(productId, email, channel), userId, clientIp, "pending-user-session-" + suffix);
+                directOrderRequest(productId, channel), userId, clientIp, "pending-user-session-" + suffix);
 
         assertNormalPendingPaymentOrder(result);
         verify(epayPaymentProvider, times(1)).create(any(PaymentProvider.PaymentRequest.class));
@@ -406,12 +405,12 @@ class PostgresDeliveryIntegrationTest {
         insertCard(productId, "pending-guest-card-" + suffix);
         insertPaymentChannel(channel);
         for (int i = 0; i < 5; i++) {
-            insertPendingOrder(channel, null, "previous-guest-" + i + "-" + suffix + "@example.com", clientIp);
+            insertPendingOrder(channel, null, clientIp);
         }
         configurePaymentCreation("pending-guest-trade-" + suffix);
 
         Map<String, Object> result = orderService.createDirectOrder(
-                directOrderRequest(productId, "new-guest-" + suffix + "@example.com", channel),
+                directOrderRequest(productId, channel),
                 null, clientIp, "pending-guest-session-" + suffix);
 
         assertNormalPendingPaymentOrder(result);
@@ -419,22 +418,21 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
-    void sameEmailCanCreateNormalPaymentOrderDespiteMultiplePendingOrders() {
+    void guestCanCreateNormalPaymentOrderDespiteMultiplePendingOrdersAcrossIps() {
         String suffix = UUID.randomUUID().toString().replace("-", "");
         UUID productId = UUID.randomUUID();
-        String email = "pending-email-" + suffix + "@example.com";
-        String channel = "pending-email-" + suffix;
+        String channel = "pending-guest-cross-ip-" + suffix;
         insertProduct(productId);
-        insertCard(productId, "pending-email-card-" + suffix);
+        insertCard(productId, "pending-guest-cross-ip-card-" + suffix);
         insertPaymentChannel(channel);
         for (int i = 0; i < 5; i++) {
-            insertPendingOrder(channel, null, email, "198.51.100." + (40 + i));
+            insertPendingOrder(channel, null, "198.51.100." + (40 + i));
         }
-        configurePaymentCreation("pending-email-trade-" + suffix);
+        configurePaymentCreation("pending-guest-cross-ip-trade-" + suffix);
 
         Map<String, Object> result = orderService.createDirectOrder(
-                directOrderRequest(productId, email, channel), null, "198.51.100.50",
-                "pending-email-session-" + suffix);
+                directOrderRequest(productId, channel), null, "198.51.100.50",
+                "pending-guest-cross-ip-session-" + suffix);
 
         assertNormalPendingPaymentOrder(result);
         verify(epayPaymentProvider, times(1)).create(any(PaymentProvider.PaymentRequest.class));
@@ -637,7 +635,6 @@ class PostgresDeliveryIntegrationTest {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
         request.put("quantity", 1);
-        request.put("email", "buyer@example.com");
         request.put("payment_method", "idempotent-channel");
         request.put("expected_unit_price", "10.00");
         request.put("idempotency_key", "guest-idempotency-key");
@@ -846,14 +843,14 @@ class PostgresDeliveryIntegrationTest {
         }), "keyword=" + keyword);
     }
 
-    private UUID insertSearchOrder(UUID userId, String email, String tradeNo,
+    private UUID insertSearchOrder(UUID userId, String tradeNo,
                                    LocalDateTime createdAt, String status, BigDecimal amount) {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
-                INSERT INTO orders(id, created_at, updated_at, user_id, email, total_amount, actual_amount,
+                INSERT INTO orders(id, created_at, updated_at, user_id, total_amount, actual_amount,
                                    status, order_type, payment_method, epay_trade_no, paid_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NORMAL', 'alipay', ?, ?)
-                """, orderId, createdAt, createdAt, userId, email, amount, amount, status, tradeNo, createdAt);
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'NORMAL', 'alipay', ?, ?)
+                """, orderId, createdAt, createdAt, userId, amount, amount, status, tradeNo, createdAt);
         return orderId;
     }
 
@@ -902,14 +899,14 @@ class PostgresDeliveryIntegrationTest {
         return orderId;
     }
 
-    private UUID insertPendingOrder(String paymentMethod, UUID userId, String email, String clientIp) {
+    private UUID insertPendingOrder(String paymentMethod, UUID userId, String clientIp) {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
-                insert into orders (id, created_at, updated_at, user_id, email, actual_amount, total_amount,
+                insert into orders (id, created_at, updated_at, user_id, actual_amount, total_amount,
                     status, payment_method, expires_at, client_ip)
-                values (?, current_timestamp, current_timestamp, ?, ?, 10.00, 10.00, 'PENDING', ?,
+                values (?, current_timestamp, current_timestamp, ?, 10.00, 10.00, 'PENDING', ?,
                     current_timestamp + interval '15 minutes', ?)
-                """, orderId, userId, email, paymentMethod, clientIp);
+                """, orderId, userId, paymentMethod, clientIp);
         return orderId;
     }
 
@@ -960,11 +957,10 @@ class PostgresDeliveryIntegrationTest {
                         tradeNo, "https://pay.example/" + tradeNo, null));
     }
 
-    private Map<String, Object> directOrderRequest(UUID productId, String email, String paymentMethod) {
+    private Map<String, Object> directOrderRequest(UUID productId, String paymentMethod) {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
         request.put("quantity", 1);
-        request.put("email", email);
         request.put("payment_method", paymentMethod);
         request.put("expected_unit_price", "10.00");
         return request;

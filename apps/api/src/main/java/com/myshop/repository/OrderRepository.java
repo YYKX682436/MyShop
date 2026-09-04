@@ -40,8 +40,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Page<Order> findByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, OrderStatus status, Pageable pageable);
 
-    List<Order> findByEmailInOrderByCreatedAtDesc(List<String> emails);
-
     List<Order> findByIdIn(List<UUID> ids);
 
     @Query("SELECT o FROM Order o WHERE o.status = com.myshop.constant.OrderStatus.PENDING AND o.expiresAt < :now")
@@ -108,12 +106,15 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     List<Object[]> countPaymentOutcomesBetween(@Param("start") LocalDateTime start,
                                                @Param("end") LocalDateTime end);
 
-    @Query("SELECT COUNT(DISTINCT LOWER(TRIM(o.email))) FROM Order o " +
-            "WHERE (o.status = com.myshop.constant.OrderStatus.PAID OR " +
-            "o.status = com.myshop.constant.OrderStatus.DELIVERED) " +
-            "AND o.paidAt >= :start AND o.paidAt < :end " +
-            "AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
-            "AND o.email IS NOT NULL AND TRIM(o.email) <> ''")
+    /** Registered buyers are identified by user_id; each guest order is a distinct buyer. */
+    @Query(value = """
+            SELECT COUNT(DISTINCT COALESCE(o.user_id, o.id))
+            FROM orders o
+            WHERE o.status IN ('PAID', 'DELIVERED')
+              AND o.paid_at >= :start
+              AND o.paid_at < :end
+              AND o.order_type = 'NORMAL'
+            """, nativeQuery = true)
     long countDistinctBuyersBetween(@Param("start") LocalDateTime start,
                                     @Param("end") LocalDateTime end);
 
@@ -168,7 +169,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                     CAST(:keywordPattern AS text) IS NULL
                     OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                    OR COALESCE(o.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.epay_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR EXISTS (
@@ -222,7 +222,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                     CAST(:keywordPattern AS text) IS NULL
                     OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                    OR COALESCE(o.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.epay_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR EXISTS (

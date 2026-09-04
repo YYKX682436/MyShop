@@ -85,7 +85,7 @@ class DashboardAggregateIntegrationTest {
         LocalDateTime now = LocalDateTime.now(CLOCK);
         UUID product = UUID.randomUUID();
         UUID emptyProduct = UUID.randomUUID();
-        insertUser("normal", "Buyer@Example.com", "USER", 0, start.plusHours(1));
+        UUID normalUserId = insertUser("normal", "Buyer@Example.com", "USER", 0, start.plusHours(1));
         insertUser("admin", "admin@example.com", "ADMIN", 0, start.plusHours(1));
         insertUser("deleted", "deleted@example.com", "USER", 1, start.plusHours(1));
         insertProduct(product, "Popular", 5, true, 0, start.plusHours(1));
@@ -93,15 +93,15 @@ class DashboardAggregateIntegrationTest {
         insertProduct(UUID.randomUUID(), "Disabled", 3, false, 0, start.plusHours(1));
         insertCard(product, "available", "AVAILABLE", start.plusHours(1).plusMinutes(1));
 
-        UUID paidOrder = insertOrder("PAID", "Buyer@Example.com", start.plusHours(2), start.plusHours(3), "10.00");
+        UUID paidOrder = insertOrder(normalUserId, "PAID", start.plusHours(2), start.plusHours(3), "10.00");
         insertOrderItem(paidOrder, product, "Popular", 2, "10.00", start.plusHours(3));
-        UUID deliveredOrder = insertOrder("DELIVERED", "buyer@example.com", start.plusHours(4), start.plusHours(5), "5.00");
+        UUID deliveredOrder = insertOrder(normalUserId, "DELIVERED", start.plusHours(4), start.plusHours(5), "5.00");
         insertOrderItem(deliveredOrder, product, "Popular", 1, "5.00", start.plusHours(5));
-        UUID adminPickupOrder = insertOrder("DELIVERED", "admin@example.com", start.plusHours(4), start.plusHours(5), "100.00", "ADMIN_PICKUP");
+        UUID adminPickupOrder = insertOrder(null, "DELIVERED", start.plusHours(4), start.plusHours(5), "100.00", "ADMIN_PICKUP");
         insertOrderItem(adminPickupOrder, product, "Popular", 99, "9900.00", start.plusHours(5));
-        insertOrder("EXPIRED", "expired@example.com", start.plusHours(6), null, "3.00");
-        insertOrder("PENDING", "pending@example.com", start.plusHours(7), null, "7.00");
-        insertOrder("PAID", "old@example.com", start.minusDays(10), start.minusDays(9), "99.00");
+        insertOrder(null, "EXPIRED", start.plusHours(6), null, "3.00");
+        insertOrder(null, "PENDING", start.plusHours(7), null, "7.00");
+        insertOrder(null, "PAID", start.minusDays(10), start.minusDays(9), "99.00");
         insertVisit(today, 120, 20, now.minusMinutes(1));
 
         DashboardStatsResponse stats = dashboardService.getStats();
@@ -140,7 +140,8 @@ class DashboardAggregateIntegrationTest {
         }
     }
 
-    private void insertUser(String username, String email, String role, int deleted, LocalDateTime createdAt) {
+    private UUID insertUser(String username, String email, String role, int deleted, LocalDateTime createdAt) {
+        UUID id = UUID.randomUUID();
         Long userNo = "USER".equals(role) ? nextUserNo++ : null;
         UUID userLevelId = "USER".equals(role)
                 ? jdbcTemplate.queryForObject("SELECT id FROM user_levels WHERE is_default = true", UUID.class)
@@ -149,8 +150,9 @@ class DashboardAggregateIntegrationTest {
                 INSERT INTO users(id, created_at, updated_at, username, email, password_hash, role, is_deleted,
                                   user_no, user_level_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, UUID.randomUUID(), createdAt, createdAt, username, email, "hash", role, deleted, userNo,
+                """, id, createdAt, createdAt, username, email, "hash", role, deleted, userNo,
                 userLevelId);
+        return id;
     }
 
     private void insertProduct(UUID id, String title, int threshold, boolean enabled, int deleted,
@@ -171,20 +173,20 @@ class DashboardAggregateIntegrationTest {
                 CardContentParser.fingerprint(List.of(content)), status);
     }
 
-    private UUID insertOrder(String status, String email, LocalDateTime createdAt,
+    private UUID insertOrder(UUID userId, String status, LocalDateTime createdAt,
                              LocalDateTime paidAt, String amount) {
-        return insertOrder(status, email, createdAt, paidAt, amount, "NORMAL");
+        return insertOrder(userId, status, createdAt, paidAt, amount, "NORMAL");
     }
 
-    private UUID insertOrder(String status, String email, LocalDateTime createdAt,
+    private UUID insertOrder(UUID userId, String status, LocalDateTime createdAt,
                              LocalDateTime paidAt, String amount, String orderType) {
         UUID id = UUID.randomUUID();
         LocalDateTime deliveredAt = "DELIVERED".equals(status) ? paidAt : null;
         jdbcTemplate.update("""
-                INSERT INTO orders(id, created_at, updated_at, email, actual_amount, total_amount,
+                INSERT INTO orders(id, created_at, updated_at, user_id, actual_amount, total_amount,
                                    status, order_type, paid_at, delivered_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, id, createdAt, createdAt, email,
+                """, id, createdAt, createdAt, userId,
                 "ADMIN_PICKUP".equals(orderType) ? BigDecimal.ZERO : new BigDecimal(amount),
                 new BigDecimal(amount), status, orderType, paidAt, deliveredAt);
         return id;

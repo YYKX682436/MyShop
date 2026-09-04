@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("12", flyway.info().current().getVersion().getVersion());
-        assertEquals(12, flyway.info().all().length);
+        assertEquals("13", flyway.info().current().getVersion().getVersion());
+        assertEquals(13, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -67,6 +67,8 @@ class MigrationChainIntegrationTest {
         }
         assertFalse(tableExists("cart_items"));
         assertFalse(tableExists("wholesale_rules"));
+        assertFalse(columnExists("orders", "email"));
+        assertFalse(indexExists("idx_orders_email_status"));
         assertTrue(columnExists("orders", "order_type"));
         assertEquals("NO", nullableValue("orders", "order_type"));
         assertTrue(defaultValue("orders", "order_type").contains("NORMAL"));
@@ -306,7 +308,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("12", flyway().info().current().getVersion().getVersion());
+        assertEquals("13", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -376,7 +378,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("12", flyway().info().current().getVersion().getVersion());
+        assertEquals("13", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -425,7 +427,9 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("12", flyway().info().current().getVersion().getVersion());
+        assertEquals("13", flyway().info().current().getVersion().getVersion());
+        assertFalse(columnExists("orders", "email"));
+        assertFalse(indexExists("idx_orders_email_status"));
         assertEquals("bigint", dataType("orders", "order_no"));
         assertEquals("NO", nullableValue("orders", "order_no"));
         assertTrue(defaultValue("orders", "order_no").contains("order_no_sequence"));
@@ -598,7 +602,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("12", flyway().info().current().getVersion().getVersion());
+        assertEquals("13", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -644,7 +648,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("12", flyway().info().current().getVersion().getVersion());
+        assertEquals("13", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

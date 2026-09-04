@@ -270,7 +270,6 @@ export interface OrderItemDetail {
 }
 
 export interface OrderDetail extends OrderBrief {
-  email: string | null
   expires_at: string | null
   paid_at: string | null
   delivered_at: string | null
@@ -403,7 +402,6 @@ export interface CreateOrderRequest {
   product_id: string
   spec_id: string | null
   quantity: number
-  email?: string
   payment_method: string
   idempotency_key: string
   idempotency_fingerprint?: string
@@ -593,7 +591,6 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   expires_at?: string | null
   paid_at?: string | null
   delivered_at?: string | null
-  order_email?: string | null
   customer_type: "REGISTERED" | "GUEST"
   user_id?: string | null
   user_no: number | null
@@ -659,7 +656,6 @@ export interface AdminUserOrder {
   status: OrderStatus
   order_type: OrderType
   payment_method: string | null
-  email: string | null
   created_at: string
   paid_at: string | null
   delivered_at: string | null

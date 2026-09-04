@@ -29,6 +29,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -161,10 +162,45 @@ class DeliverServiceImplTest {
         assertEquals(order.getOrderNo(), brief.get("order_no"));
         assertEquals(orderId, brief.get("id"));
 
+        BusinessException missingToken = assertThrows(BusinessException.class, () -> service.queryOrders(Map.of(
+                "orders", List.of(Map.of("order_no", order.getOrderNo().toString()))), null));
+        assertEquals(ErrorCode.FORBIDDEN, missingToken.getCode());
+
         BusinessException exception = assertThrows(BusinessException.class, () -> service.queryOrders(Map.of(
                 "orders", List.of(Map.of("order_no", order.getOrderNo().toString(),
                         "lookup_token", "wrong-token"))), null));
         assertEquals(ErrorCode.FORBIDDEN, exception.getCode());
+    }
+
+    @Test
+    void registeredOwnerCanQueryAndExportWithoutLookupToken() {
+        UUID orderId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        Order order = paidOrder(orderId, OrderType.NORMAL);
+        order.setStatus(OrderStatus.DELIVERED);
+        order.setUserId(userId);
+        OrderItem item = item(orderId, UUID.randomUUID(), 1);
+        item.setId(itemId);
+        CardKey card = new CardKey();
+        card.setId(UUID.randomUUID());
+        card.setOrderId(orderId);
+        card.setOrderItemId(itemId);
+        card.setContentParts(List.of("account", "secret"));
+        card.setStatus(CardKeyStatus.SOLD);
+
+        when(orderRepository.findByOrderNo(order.getOrderNo())).thenReturn(Optional.of(order));
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of(card));
+
+        List<?> result = service.queryOrders(Map.of(
+                "orders", List.of(Map.of("order_no", order.getOrderNo().toString()))), userId);
+        Map<?, ?> brief = (Map<?, ?>) result.get(0);
+        assertEquals(order.getOrderNo(), brief.get("order_no"));
+
+        String exported = service.exportCardKeys(orderId, null, userId);
+        assertTrue(exported.contains("account\tsecret"));
     }
 
     @Test

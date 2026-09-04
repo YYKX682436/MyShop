@@ -27,8 +27,6 @@ public class Order extends BaseEntity {
 
     private UUID userId;
 
-    private String email;
-
     @Column(precision = 10, scale = 2)
     private BigDecimal totalAmount;
 

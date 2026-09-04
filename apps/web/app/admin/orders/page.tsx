@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
-import { formatAdminOrderNumber, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
+import { formatAdminOrderCustomer, formatAdminOrderNumber, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItem } from "@/types"
@@ -224,7 +224,7 @@ export default function AdminOrdersPage() {
               <tr key={order.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                 <td className="px-4 py-3"><ProductSummary order={order} emptyLabel={t("admin.systemNoData")} /></td>
                 <td className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={formatAdminOrderNumber(order.order_no)} onClick={() => copyOrderNumber(order.order_no)}>{formatAdminOrderNumber(order.order_no)}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
-                <td className="px-4 py-3"><div className="flex min-w-[12rem] flex-col"><span>{order.customer_type === "REGISTERED" ? `${order.username || t("admin.user")}${order.user_no ? ` · UID ${order.user_no}` : ""}` : t("admin.guest")}</span><span className="text-xs text-muted-foreground">{order.email || t("admin.systemNoData")}</span></div></td>
+                <td className="px-4 py-3"><CustomerCell order={order} guestLabel={t("admin.guest")} /></td>
                 <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
                 <td className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>
                 <td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td>
@@ -250,5 +250,15 @@ export default function AdminOrdersPage() {
         <Textarea value={markPaidReason} onChange={(event) => setMarkPaidReason(event.target.value)} placeholder={t("admin.markPaidReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.markPaidReasonPlaceholder")} />
       </ConfirmAlert>
     </AdminPage>
+  )
+}
+
+function CustomerCell({ order, guestLabel }: { order: AdminOrderItem; guestLabel: string }) {
+  const identity = formatAdminOrderCustomer(order, guestLabel)
+  return (
+    <div className="flex min-w-[12rem] flex-col">
+      <span>{identity.primary}</span>
+      {identity.secondary && <span className="text-xs text-muted-foreground">{identity.secondary}</span>}
+    </div>
   )
 }

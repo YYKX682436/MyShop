@@ -1,23 +1,21 @@
 "use client"
 
-import { CheckCircle, Copy, Loader2 } from "lucide-react"
+import { Fragment, type ReactNode } from "react"
+import { ChevronDown, Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
-import { CardContentParts } from "@/components/shared/card-content-parts"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { getPaymentLabel, PaymentIcon } from "@/components/shared/payment-icon"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useLocale } from "@/lib/context"
-import { formatAdminOrderProductMeta } from "@/lib/admin-order-display"
-import { formatCardContents } from "@/lib/card-display"
+import { formatAdminOrderCustomer } from "@/lib/admin-order-display"
+import { formatCardContent, formatCardContents } from "@/lib/card-display"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import type { TranslationKey } from "@/lib/i18n"
 import type { AdminOrderItem, AdminOrderItemDetail, OrderCardKey, OrderItemDetail } from "@/types"
 
 interface OrderDetailSheetProps {
   order: AdminOrderItem | null
-  onOpenChange: (open: boolean) => void
   detailLoading?: boolean
   detailError?: boolean
   onRetryDetail?: () => void
@@ -27,42 +25,102 @@ interface OrderDetailSheetProps {
   onRetryCardKeys?: () => void
   completingManualItem?: string | null
   onCompleteManualItem?: (orderId: string, orderItemId: string) => void
-  onMarkPaid?: (orderId: string) => void
-  embedded?: boolean
 }
 
-function fulfillmentLabel(item: OrderItemDetail, t: (key: TranslationKey) => string) {
+type Translator = (key: TranslationKey) => string
+
+function fulfillmentLabel(item: OrderItemDetail, t: Translator) {
   if (item.fulfillment_status === "WAITING_MANUAL") return t("admin.fulfillmentWaitingManual")
   if (item.fulfillment_status === "DELIVERED") return t("admin.fulfillmentDelivered")
   if (item.fulfillment_status === "CANCELLED") return t("admin.fulfillmentCancelled")
   return t("admin.fulfillmentPending")
 }
 
-function pricingSourceLabel(source: AdminOrderItemDetail["pricing_source"], t: (key: TranslationKey) => string) {
+function pricingSourceLabel(source: AdminOrderItemDetail["pricing_source"], t: Translator) {
   if (source === "LEVEL_OVERRIDE") return t("admin.pricingSourceOverride")
   if (source === "LEVEL_MARKUP") return t("admin.pricingSourceMarkup")
   return t("admin.pricingSourceRetail")
 }
 
-function CopyField({ label, value, onCopy, empty }: { label: string; value: unknown; onCopy: (value: string) => void; empty: string }) {
+function formatMoney(value: number | null | undefined, empty: string) {
+  return value === null || value === undefined ? empty : formatYuan(value)
+}
+
+function uniqueValues(values: (string | null | undefined)[]) {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))]
+}
+
+function CopyButton({ value, label, onCopy, className = "" }: { value: string; label: string; onCopy: (value: string) => void; className?: string }) {
+  return (
+    <button
+      type="button"
+      className={`shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-surface hover:text-foreground ${className}`}
+      title={`复制${label}`}
+      aria-label={`复制${label}`}
+      onClick={() => onCopy(value)}
+    >
+      <Copy className="size-3.5" aria-hidden="true" />
+    </button>
+  )
+}
+
+function DefinitionRow({ label, children, mono = false }: { label: string; children: ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex min-w-0 items-start justify-between gap-4 py-2">
+      <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
+      <dd className={`min-w-0 break-all text-right text-sm text-foreground ${mono ? "font-mono" : ""}`}>{children}</dd>
+    </div>
+  )
+}
+
+function CopyDefinitionRow({ label, value, onCopy, empty, mono = false }: { label: string; value: unknown; onCopy: (value: string) => void; empty: string; mono?: boolean }) {
   const hasValue = value !== null && value !== undefined && String(value) !== ""
   const display = hasValue ? String(value) : empty
   return (
-    <div className="min-w-0 rounded-control border border-border-subtle bg-surface-muted/45 px-3 py-2">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <div className="mt-1 flex min-w-0 items-start justify-between gap-2">
-        <span className="min-w-0 break-all text-sm text-foreground">{display}</span>
-        <button type="button" disabled={!hasValue} onClick={() => onCopy(String(value))} className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-surface hover:text-foreground disabled:opacity-30" title={hasValue ? "复制" : empty} aria-label={`${label}复制`}>
-          <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-        </button>
+    <div className="flex min-w-0 items-start justify-between gap-4 py-2">
+      <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
+      <dd className={`flex min-w-0 items-start justify-end gap-1 text-right text-sm text-foreground ${mono ? "font-mono" : ""}`}>
+        <span className="min-w-0 break-all">{display}</span>
+        {hasValue && <CopyButton value={String(value)} label={label} onCopy={onCopy} />}
+      </dd>
+    </div>
+  )
+}
+
+function Panel({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5">
+      <h2 className="mb-3 text-sm font-semibold text-foreground">{title}</h2>
+      <dl className="divide-y divide-border-subtle/70">{children}</dl>
+    </section>
+  )
+}
+
+function CardRow({ card, index, onCopy }: { card: OrderCardKey; index: number; onCopy: (value: string) => void }) {
+  const parts = card.content_parts ?? []
+  return (
+    <div className="flex min-w-0 items-start gap-3 border-b border-border-subtle/70 py-3 last:border-b-0">
+      <span className="w-14 shrink-0 pt-1 text-xs text-muted-foreground">卡券 {index + 1}</span>
+      <div className="min-w-0 flex-1 overflow-x-auto">
+        <div className="flex min-w-max items-center gap-1.5 font-mono text-sm">
+          {parts.length === 0 ? <span className="text-muted-foreground">—</span> : parts.map((part, partIndex) => (
+            <Fragment key={`${card.card_key_id}-${partIndex}`}>
+              {partIndex > 0 && <span className="px-0.5 text-muted-foreground" aria-hidden="true">⇥</span>}
+              <span className="inline-flex max-w-[26rem] items-start gap-1 rounded-control bg-surface-muted px-2 py-1">
+                <span className="break-all whitespace-pre-wrap">{part}</span>
+                <CopyButton value={part} label={`卡券 ${index + 1} 字段 ${partIndex + 1}`} onCopy={onCopy} />
+              </span>
+            </Fragment>
+          ))}
+        </div>
       </div>
+      <CopyButton value={formatCardContent(parts)} label={`卡券 ${index + 1}`} onCopy={onCopy} />
     </div>
   )
 }
 
 export function OrderDetailSheet({
   order,
-  onOpenChange,
   detailLoading = false,
   detailError = false,
   onRetryDetail,
@@ -72,8 +130,6 @@ export function OrderDetailSheet({
   onRetryCardKeys,
   completingManualItem = null,
   onCompleteManualItem,
-  onMarkPaid,
-  embedded = false,
 }: OrderDetailSheetProps) {
   const { t, locale } = useLocale()
   const empty = t("admin.systemNoData")
@@ -95,6 +151,10 @@ export function OrderDetailSheet({
     else fallback()
   }
 
+  if (!order) return null
+
+  const identity = formatAdminOrderCustomer(order, t("admin.guest"))
+  const mainItem = order.items[0]
   const cardGroups = new Map<string, { title: string; cards: OrderCardKey[] }>()
   detailCardKeys.forEach((card) => {
     const groupKey = card.order_item_id || `${card.product_title}\u0000${card.spec_name || ""}`
@@ -104,159 +164,143 @@ export function OrderDetailSheet({
     else cardGroups.set(groupKey, { title, cards: [card] })
   })
 
-  const cardSection = order && (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">B. 卡密与交付</h3>
-          <p className="mt-1 text-xs text-muted-foreground">按订单项分组；字段在同一卡券内保持原顺序。</p>
-        </div>
-        {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <Button type="button" variant="outline" size="sm" onClick={() => copyToClipboard(formatCardContents(detailCardKeys))}><Copy className="mr-1.5 h-3.5 w-3.5" />复制全部</Button>}
-      </div>
-      {detailCardKeysLoading && <div className="flex items-center gap-2 rounded-card border border-border-subtle bg-surface-muted px-3 py-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />正在加载卡密交付内容…</div>}
-      {!detailCardKeysLoading && detailCardKeysError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><span>卡密内容加载失败，未使用本地占位数据。</span>{onRetryCardKeys && <Button type="button" variant="outline" size="sm" onClick={onRetryCardKeys}>{t("common.retry")}</Button>}</div>}
-      {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length === 0 && <div className="rounded-card border border-border-subtle bg-surface-muted/45 p-4 text-sm text-muted-foreground">{order.status === "PAID" ? "订单已支付，卡密正在准备或等待库存补充。" : order.status === "DELIVERED" ? "订单已完成，但没有可显示的卡密内容。" : "当前订单没有可交付的卡密内容。"}</div>}
-      {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <div className="space-y-3">{[...cardGroups.entries()].map(([groupKey, group]) => (
-        <div key={groupKey} className="rounded-card border border-border-subtle bg-surface-muted/35 p-3">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-medium text-muted-foreground">{group.title}</p><Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(formatCardContents(group.cards))}>复制本组</Button></div>
-          <div className="space-y-2">{group.cards.map((card, index) => (
-            <div key={card.card_key_id} className="rounded-control border border-border-subtle bg-surface p-3">
-              <p className="mb-2 text-xs text-muted-foreground">卡券 {index + 1}</p>
-              <CardContentParts parts={card.content_parts} onCopy={copyToClipboard} />
+  const productIds = uniqueValues(order.items.map(item => item.product_id))
+  const specIds = uniqueValues(order.items.map(item => item.spec_id))
+  const pricingSources = [...new Set(order.items.map(item => pricingSourceLabel(item.pricing_source, t)))]
+  const stockModes = [...new Set(order.items.map(item => item.stock_mode).filter(Boolean))]
+
+  return (
+    <div className="space-y-6">
+      {detailLoading && <div className="flex items-center gap-2 rounded-control border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div>}
+      {detailError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryDetail && <Button type="button" variant="outline" size="sm" onClick={onRetryDetail}>{t("common.retry")}</Button>}</div>}
+
+      <header className="rounded-surface border border-border-subtle bg-surface p-5 shadow-sm sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-lg font-semibold tracking-tight text-foreground">{order.order_no}</span>
+              <CopyButton value={String(order.order_no)} label={t("admin.orderNo")} onCopy={copyToClipboard} />
+              <OrderStatusBadge status={order.status} />
+              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${order.is_risk_flagged ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>
+                {order.is_risk_flagged ? t("admin.riskFlagged") : "风险正常"}
+              </span>
             </div>
-          ))}</div>
+            <p className="mt-2 text-xs text-muted-foreground">订单工作台</p>
+          </div>
         </div>
-      ))}</div>}
-    </section>
-  )
+        <dl className="mt-5 grid gap-4 border-t border-border-subtle pt-5 sm:grid-cols-2 xl:grid-cols-4">
+          <DefinitionRow label="主要商品"><span className="font-medium">{mainItem?.product_title || empty}</span></DefinitionRow>
+          <DefinitionRow label="客户"><span className="font-medium">{identity.primary}</span>{identity.secondary && <span className="block text-xs text-muted-foreground">{identity.secondary}</span>}</DefinitionRow>
+          <DefinitionRow label={t("admin.paymentAmount")}><span className="font-semibold">{formatMoney(order.actual_amount, empty)}</span></DefinitionRow>
+          <DefinitionRow label={t("admin.createdAt")}><span>{formatDateTime(order.created_at, locale)}</span></DefinitionRow>
+        </dl>
+      </header>
 
-  const detailContent = order && (
-    <>
-      {!embedded && <SheetHeader className="border-b border-border-subtle px-5 py-5 pr-14 sm:px-6">
-        <SheetTitle>{t("admin.orderDetail")}</SheetTitle>
-        <SheetDescription className="font-mono">订单号：{order.order_no}</SheetDescription>
-      </SheetHeader>}
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
-        {detailLoading && <div className="mb-4 flex items-center gap-2 rounded-control border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div>}
-        {detailError && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryDetail && <Button type="button" variant="outline" size="sm" onClick={onRetryDetail}>{t("common.retry")}</Button>}</div>}
-
-        <div className="flex flex-col gap-7">
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">A. 订单摘要</h3>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <CopyField label={t("admin.orderNo")} value={order.order_no} onCopy={copyToClipboard} empty={empty} />
-              <div className="rounded-control border border-border-subtle bg-surface-muted/45 px-3 py-2"><p className="text-xs text-muted-foreground">{t("admin.statusLabel")}</p><div className="mt-1"><OrderStatusBadge status={order.status} /></div></div>
-              <CopyField label="主要商品" value={order.items.length > 0 ? `${order.items[0].product_title} · ${formatAdminOrderProductMeta(order.items[0])}` : null} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="客户" value={order.customer_type === "REGISTERED" ? `${order.username || empty}${order.user_no ? ` · UID ${order.user_no}` : ""}` : `访客 · ${order.email || empty}`} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label={t("admin.paymentAmount")} value={formatYuan(order.actual_amount)} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label={t("admin.createdAt")} value={formatDateTime(order.created_at, locale)} onCopy={copyToClipboard} empty={empty} />
-              <div className="rounded-control border border-border-subtle bg-surface-muted/45 px-3 py-2"><p className="text-xs text-muted-foreground">风险</p><p className={`mt-1 text-sm font-medium ${order.is_risk_flagged ? "text-destructive" : "text-foreground"}`}>{order.is_risk_flagged ? t("admin.riskFlagged") : "正常"}</p></div>
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(15rem,1fr)]">
+        <main className="min-w-0 space-y-6">
+          <section className="rounded-surface border border-primary/20 bg-surface p-5 shadow-sm sm:p-6" aria-labelledby="order-card-delivery-title">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 id="order-card-delivery-title" className="text-base font-semibold text-foreground">卡券与交付</h2>
+                <p className="mt-1 text-xs text-muted-foreground">一张卡券一行；同一卡券的多个字段按原顺序以 Tab 分隔。</p>
+              </div>
+              {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <Button type="button" variant="outline" size="sm" onClick={() => copyToClipboard(formatCardContents(detailCardKeys))}><Copy className="mr-1.5 size-3.5" />复制全部</Button>}
             </div>
+            {detailCardKeysLoading && <div className="mt-4 flex items-center gap-2 rounded-card border border-border-subtle bg-surface-muted px-3 py-4 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" aria-hidden="true" />正在加载卡密交付内容…</div>}
+            {!detailCardKeysLoading && detailCardKeysError && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><span>卡密内容加载失败，未使用本地占位数据。</span>{onRetryCardKeys && <Button type="button" variant="outline" size="sm" onClick={onRetryCardKeys}>{t("common.retry")}</Button>}</div>}
+            {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length === 0 && <div className="mt-4 rounded-card bg-surface-muted/70 p-4 text-sm text-muted-foreground">{order.status === "PAID" ? "订单已支付，卡密正在准备或等待库存补充。" : order.status === "DELIVERED" ? "订单已完成，但没有可显示的卡密内容。" : "当前订单没有可交付的卡密内容。"}</div>}
+            {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <div className="mt-4 space-y-4">{[...cardGroups.entries()].map(([groupKey, group]) => <div key={groupKey} className="rounded-card border border-border-subtle bg-surface-muted/45 p-3 sm:p-4"><div className="mb-1 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{group.title}</h3><Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(formatCardContents(group.cards))}>复制本组</Button></div><div className="overflow-x-auto">{group.cards.map((card, index) => <CardRow key={card.card_key_id} card={card} index={index} onCopy={copyToClipboard} />)}</div></div>)}</div>}
           </section>
 
-          {cardSection}
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">C. 商品与客户填写信息</h3>
-            <div className="space-y-3">
-              {order.items.length === 0 && <p className="rounded-card border border-border-subtle bg-surface-muted p-4 text-sm text-muted-foreground">{empty}</p>}
+          <section className="rounded-surface border border-border-subtle bg-surface p-5 shadow-sm sm:p-6" aria-labelledby="order-product-inputs-title">
+            <div className="mb-4">
+              <h2 id="order-product-inputs-title" className="text-base font-semibold text-foreground">商品与客户填写</h2>
+              <p className="mt-1 text-xs text-muted-foreground">商品快照保留成交时的标题、编号、规格和价格；客户填写内容可直接复制。</p>
+            </div>
+            <div className="space-y-5">
+              {order.items.length === 0 && <p className="rounded-card bg-surface-muted p-4 text-sm text-muted-foreground">{empty}</p>}
               {order.items.map((item) => {
                 const manual = item.delivery_type === "MANUAL"
                 const canComplete = manual && order.status === "PAID" && item.fulfillment_status !== "DELIVERED" && item.fulfillment_status !== "CANCELLED" && Boolean(onCompleteManualItem)
-                return <div key={item.id} className="rounded-card border border-border-subtle bg-surface p-4">
-                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3"><div><p className="font-medium text-foreground">{item.product_title}</p><p className="mt-1 text-xs text-muted-foreground">{item.spec_name || "无规格"} · ×{item.quantity}</p></div><div className="flex items-center gap-2"><OrderStatusBadge status={order.status} />{canComplete && <Button type="button" size="sm" disabled={completingManualItem === item.id} onClick={() => onCompleteManualItem?.(order.id, item.id)}>{completingManualItem === item.id && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />}{completingManualItem === item.id ? t("admin.processing") : t("admin.completeDelivery")}</Button>}</div></div>
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    <CopyField label="商品标题" value={item.product_title} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label={t("admin.productNo")} value={item.product_no} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="商品 ID" value={item.product_id} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="规格名称" value={item.spec_name} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="规格 ID" value={item.spec_id} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="数量" value={item.quantity} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label={t("admin.unitPrice")} value={formatYuan(item.unit_price)} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label={t("admin.retailPriceSnapshot")} value={formatYuan(item.retail_price_snapshot)} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label={t("admin.costPriceSnapshot")} value={formatYuan(item.cost_price_snapshot)} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="小计" value={formatYuan(item.subtotal)} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label={t("admin.marginAmount")} value={item.gross_profit === null ? null : formatYuan(item.gross_profit)} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label={t("admin.marginRate")} value={item.gross_margin === null ? null : `${item.gross_margin.toFixed(2)}%`} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="定价来源" value={pricingSourceLabel(item.pricing_source, t)} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="交付方式" value={manual ? t("admin.manualDeliveryLabel") : t("admin.autoDeliveryLabel")} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="库存模式" value={item.stock_mode} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="履约状态" value={fulfillmentLabel(item, t)} onCopy={copyToClipboard} empty={empty} />
-                    <CopyField label="交付时间" value={item.delivered_at ? formatDateTime(item.delivered_at, locale) : null} onCopy={copyToClipboard} empty={empty} />
+                const inputs = item.customer_inputs ?? []
+                const inputText = inputs.map(input => `${input.label}：${input.value}`).join("\n")
+                return <article key={item.id} className="border-t border-border-subtle pt-5 first:border-t-0 first:pt-0">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0"><h3 className="text-base font-medium text-foreground">{item.product_title}</h3><p className="mt-1 text-xs text-muted-foreground">商品 #{item.product_no} · {item.spec_name || "无规格"} · ×{item.quantity}</p></div>
+                    <div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">{fulfillmentLabel(item, t)}</span>{canComplete && <Button type="button" size="sm" disabled={completingManualItem === item.id} onClick={() => onCompleteManualItem?.(order.id, item.id)}>{completingManualItem === item.id && <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden="true" />}{completingManualItem === item.id ? t("admin.processing") : t("admin.completeDelivery")}</Button>}</div>
                   </div>
-                  <div className="mt-3 rounded-control border border-border-subtle bg-surface-muted/35 p-3"><p className="mb-2 text-xs font-medium text-muted-foreground">客户填写信息</p>{item.customer_inputs.length === 0 ? <p className="text-sm text-muted-foreground">{empty}</p> : <div className="grid gap-2 sm:grid-cols-2">{item.customer_inputs.map((input) => <CopyField key={input.id} label={input.label} value={input.value} onCopy={copyToClipboard} empty={empty} />)}</div>}</div>
-                </div>
+                  <div className="mt-4 grid gap-x-5 gap-y-3 border-y border-border-subtle/70 py-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                    <div><p className="text-xs text-muted-foreground">商品编号</p><p className="mt-1 font-mono">#{item.product_no}</p></div>
+                    <div><p className="text-xs text-muted-foreground">规格</p><p className="mt-1">{item.spec_name || "无规格"}</p></div>
+                    <div><p className="text-xs text-muted-foreground">数量</p><p className="mt-1">{item.quantity}</p></div>
+                    <div><p className="text-xs text-muted-foreground">交付方式</p><p className="mt-1">{manual ? t("admin.manualDeliveryLabel") : t("admin.autoDeliveryLabel")}</p></div>
+                  </div>
+                  <dl className="grid gap-x-5 gap-y-2 border-b border-border-subtle/70 pb-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
+                    <DefinitionRow label={t("admin.unitPrice")}><span>{formatMoney(item.unit_price, empty)}</span></DefinitionRow>
+                    <DefinitionRow label="成交小计"><span>{formatMoney(item.subtotal, empty)}</span></DefinitionRow>
+                    <DefinitionRow label={t("admin.costPriceSnapshot")}><span>{formatMoney(item.cost_price_snapshot, empty)}</span></DefinitionRow>
+                    <DefinitionRow label={t("admin.marginAmount")}><span>{formatMoney(item.gross_profit, empty)}</span></DefinitionRow>
+                    <DefinitionRow label={t("admin.marginRate")}><span>{item.gross_margin === null ? empty : `${item.gross_margin.toFixed(2)}%`}</span></DefinitionRow>
+                  </dl>
+                  <div className="mt-4 rounded-card bg-surface-muted/70 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-medium text-foreground">客户填写</h4>{inputText && <Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(inputText)}><Copy className="mr-1.5 size-3.5" />复制全部</Button>}</div>
+                    {inputs.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">{empty}</p> : <div className="mt-2 divide-y divide-border-subtle/70">{inputs.map(input => <div key={input.id} className="flex min-w-0 items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"><span className="shrink-0 text-xs text-muted-foreground">{input.label}</span><span className="flex min-w-0 items-start gap-1 text-right text-sm text-foreground"><span className="break-all whitespace-pre-wrap">{input.value}</span><CopyButton value={input.value} label={input.label} onCopy={copyToClipboard} /></span></div>)}</div>}
+                  </div>
+                </article>
               })}
             </div>
           </section>
+        </main>
 
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">D. 客户</h3>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <CopyField label="客户类型" value={order.customer_type === "REGISTERED" ? "注册用户" : "访客"} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="用户名" value={order.username} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="UID" value={order.user_no} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="用户 ID" value={order.user_id} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="订单邮箱" value={order.order_email || order.email} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="注册邮箱" value={order.registered_email} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="手机号" value={order.phone} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="下单时等级 ID" value={order.user_level_id_snapshot} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label={t("admin.userLevelSnapshot")} value={order.user_level_name_snapshot} onCopy={copyToClipboard} empty={empty} />
-            </div>
-          </section>
+        <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
+          <Panel title="客户">
+            {order.customer_type === "REGISTERED" ? <>
+              <DefinitionRow label="用户名"><span className="font-medium">{order.username || identity.primary}</span></DefinitionRow>
+              <CopyDefinitionRow label="UID" value={order.user_no} onCopy={copyToClipboard} empty={empty} mono />
+              <CopyDefinitionRow label="账户邮箱" value={order.registered_email} onCopy={copyToClipboard} empty={empty} />
+              <CopyDefinitionRow label="手机号" value={order.phone} onCopy={copyToClipboard} empty={empty} />
+            </> : <DefinitionRow label="客户"><span className="font-medium">{t("admin.guest")}</span></DefinitionRow>}
+          </Panel>
 
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">E. 财务</h3>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              <CopyField label="订单总额" value={formatYuan(order.total_amount)} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="实际支付" value={formatYuan(order.actual_amount)} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="成本合计" value={formatYuan(order.cost_total)} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="毛利合计" value={formatYuan(order.gross_profit_total)} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="毛利率合计" value={order.gross_margin_total === null ? null : `${order.gross_margin_total.toFixed(2)}%`} onCopy={copyToClipboard} empty={empty} />
-            </div>
-          </section>
+          <Panel title="金额">
+            <DefinitionRow label="实付"><span className="font-semibold">{formatMoney(order.actual_amount, empty)}</span></DefinitionRow>
+            <DefinitionRow label="成本"><span>{formatMoney(order.cost_total, empty)}</span></DefinitionRow>
+            <DefinitionRow label="利润"><span>{formatMoney(order.gross_profit_total, empty)}</span></DefinitionRow>
+            <DefinitionRow label="毛利率"><span>{order.gross_margin_total === null ? empty : `${order.gross_margin_total.toFixed(2)}%`}</span></DefinitionRow>
+          </Panel>
 
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">F. 生命周期与支付</h3>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              <CopyField label={t("admin.statusLabel")} value={order.status} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="订单类型" value={order.order_type} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label={t("admin.createdAt")} value={formatDateTime(order.created_at, locale)} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="过期时间" value={order.expires_at ? formatDateTime(order.expires_at, locale) : null} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label={t("admin.paidAt")} value={order.paid_at ? formatDateTime(order.paid_at, locale) : null} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="完成交付时间" value={order.delivered_at ? formatDateTime(order.delivered_at, locale) : null} onCopy={copyToClipboard} empty={empty} />
-              <div className="rounded-control border border-border-subtle bg-surface-muted/45 px-3 py-2"><p className="text-xs text-muted-foreground">{t("admin.paymentMethod")}</p><p className="mt-1 inline-flex items-center gap-1.5 text-sm text-foreground"><PaymentIcon method={order.payment_method || ""} className="h-4 w-4" />{order.payment_method ? getPaymentLabel(order.payment_method, t) : empty}</p></div>
-              <CopyField label="Epay 交易号" value={order.epay_trade_no} onCopy={copyToClipboard} empty={empty} />
-            </div>
-          </section>
-
-          <section className="space-y-3 border-t border-border-subtle pt-5">
-            <h3 className="text-sm font-semibold text-foreground">G. 内部与风险</h3>
-            <p className="text-xs text-muted-foreground">内部订单 ID 仅用于管理员排障和复制，不是对外订单号。</p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <CopyField label="内部订单 ID" value={order.internal_order_id || order.id} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="客户端 IP" value={order.client_ip} onCopy={copyToClipboard} empty={empty} />
-              <CopyField label="风险标记" value={order.is_risk_flagged ? t("admin.riskFlagged") : "正常"} onCopy={copyToClipboard} empty={empty} />
-            </div>
-          </section>
-        </div>
+          <Panel title="订单信息">
+            <DefinitionRow label="创建"><span>{formatDateTime(order.created_at, locale)}</span></DefinitionRow>
+            <DefinitionRow label="支付"><span>{order.paid_at ? formatDateTime(order.paid_at, locale) : empty}</span></DefinitionRow>
+            <DefinitionRow label="完成"><span>{order.delivered_at ? formatDateTime(order.delivered_at, locale) : empty}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.paymentMethod")}><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.payment_method || ""} className="size-4" />{order.payment_method ? getPaymentLabel(order.payment_method, t) : empty}</span></DefinitionRow>
+            <CopyDefinitionRow label="外部交易号" value={order.epay_trade_no} onCopy={copyToClipboard} empty={empty} mono />
+            <DefinitionRow label="风险状态"><span className={order.is_risk_flagged ? "font-medium text-destructive" : "text-emerald-700 dark:text-emerald-300"}>{order.is_risk_flagged ? t("admin.riskFlagged") : "正常"}</span></DefinitionRow>
+          </Panel>
+        </aside>
       </div>
 
-      {!embedded && <SheetFooter className="border-t border-border-subtle bg-surface-muted/45 px-5 py-4 sm:px-6">
-        {order.status === "PENDING" && onMarkPaid && <Button type="button" onClick={() => onMarkPaid(order.id)}><CheckCircle className="h-4 w-4" aria-hidden="true" />{t("admin.markPaid")}</Button>}
-        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("common.close")}</Button>
-      </SheetFooter>}
-    </>
-  )
-
-  if (embedded) return <div className="flex min-h-full flex-col">{detailContent}</div>
-
-  return (
-    <Sheet open={order !== null} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col p-0 sm:max-w-3xl">
-        {detailContent}
-      </SheetContent>
-    </Sheet>
+      <details className="rounded-surface border border-border-subtle bg-surface shadow-sm">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+          <span>技术信息 / 高级信息</span>
+          <ChevronDown className="size-4 text-muted-foreground transition-transform" aria-hidden="true" />
+        </summary>
+        <div className="border-t border-border-subtle px-5 py-4 sm:px-6">
+          <dl className="grid gap-x-8 divide-y divide-border-subtle/70 sm:grid-cols-2 sm:divide-y-0">
+            <CopyDefinitionRow label="内部订单 UUID" value={order.internal_order_id || order.id} onCopy={copyToClipboard} empty={empty} mono />
+            <CopyDefinitionRow label="用户 UUID" value={order.user_id} onCopy={copyToClipboard} empty={empty} mono />
+            {productIds.map((id, index) => <CopyDefinitionRow key={`product-${id}`} label={`商品 UUID${productIds.length > 1 ? ` ${index + 1}` : ""}`} value={id} onCopy={copyToClipboard} empty={empty} mono />)}
+            {specIds.map((id, index) => <CopyDefinitionRow key={`spec-${id}`} label={`规格 UUID${specIds.length > 1 ? ` ${index + 1}` : ""}`} value={id} onCopy={copyToClipboard} empty={empty} mono />)}
+            <DefinitionRow label="定价来源"><span>{pricingSources.join("、") || empty}</span></DefinitionRow>
+            <DefinitionRow label="库存模式"><span>{stockModes.join("、") || empty}</span></DefinitionRow>
+            <CopyDefinitionRow label="下单时等级 UUID" value={order.user_level_id_snapshot} onCopy={copyToClipboard} empty={empty} mono />
+            <DefinitionRow label="下单时等级"><span>{order.user_level_name_snapshot || empty}</span></DefinitionRow>
+            <DefinitionRow label="客户端 IP"><span className="font-mono">{order.client_ip || empty}</span></DefinitionRow>
+            <DefinitionRow label="订单类型"><span>{order.order_type}</span></DefinitionRow>
+            <DefinitionRow label="过期时间"><span>{order.expires_at ? formatDateTime(order.expires_at, locale) : empty}</span></DefinitionRow>
+          </dl>
+        </div>
+      </details>
+    </div>
   )
 }

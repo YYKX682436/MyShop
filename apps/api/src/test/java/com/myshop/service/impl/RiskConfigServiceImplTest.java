@@ -3,6 +3,7 @@ package com.myshop.service.impl;
 import com.myshop.entity.SiteConfig;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.SiteConfigRepository;
+import com.myshop.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,11 +30,14 @@ class RiskConfigServiceImplTest {
     @Mock
     private OrderRepository orderRepository;
 
+    @Mock
+    private UserRepository userRepository;
+
     private RiskConfigServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new RiskConfigServiceImpl(siteConfigRepository, orderRepository);
+        service = new RiskConfigServiceImpl(siteConfigRepository, orderRepository, userRepository);
     }
 
     @Test

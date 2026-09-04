@@ -363,7 +363,7 @@ public class AdminUserServiceImpl implements AdminUserService {
                 .toList();
         return new AdminUserOrderResponse(
                 order.getId(), order.getOrderNo(), order.getTotalAmount(), order.getActualAmount(), order.getStatus(),
-                order.getOrderType(), order.getPaymentMethod(), order.getEmail(), order.getCreatedAt(),
+                order.getOrderType(), order.getPaymentMethod(), order.getCreatedAt(),
                 order.getPaidAt(), order.getDeliveredAt(), items);
     }
 

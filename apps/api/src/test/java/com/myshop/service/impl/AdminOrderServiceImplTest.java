@@ -105,10 +105,8 @@ class AdminOrderServiceImplTest {
         UUID userId = UUID.randomUUID();
         Order registeredOrder = order(registeredOrderId, userId);
         registeredOrder.setOrderNo(1000000001L);
-        registeredOrder.setEmail("reserved@example.com");
         Order guestOrder = order(guestOrderId, null);
         guestOrder.setOrderNo(1000000002L);
-        guestOrder.setEmail("guest@example.com");
 
         OrderItem registeredItem = item(registeredOrderId, new BigDecimal("30.00"),
                 new BigDecimal("20.00"), new BigDecimal("30.00"), 1);
@@ -138,11 +136,15 @@ class AdminOrderServiceImplTest {
         assertEquals("REGISTERED", registered.get("customer_type"));
         assertEquals("registered-buyer", registered.get("username"));
         assertEquals(12345L, registered.get("user_no"));
-        assertEquals("reserved@example.com", registered.get("order_email"));
+        org.junit.jupiter.api.Assertions.assertFalse(registered.containsKey("email"));
+        org.junit.jupiter.api.Assertions.assertFalse(registered.containsKey("order_email"));
         Map<?, ?> guest = (Map<?, ?>) result.getList().get(1);
         assertEquals(1000000002L, guest.get("order_no"));
         assertEquals("GUEST", guest.get("customer_type"));
-        assertEquals("guest@example.com", guest.get("order_email"));
+        assertEquals(null, guest.get("username"));
+        assertEquals(null, guest.get("user_no"));
+        org.junit.jupiter.api.Assertions.assertFalse(guest.containsKey("email"));
+        org.junit.jupiter.api.Assertions.assertFalse(guest.containsKey("order_email"));
         assertEquals(new BigDecimal("8.00"), guest.get("cost_total"));
         assertEquals(new BigDecimal("12.00"), guest.get("gross_profit_total"));
 

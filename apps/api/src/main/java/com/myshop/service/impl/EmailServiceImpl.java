@@ -7,6 +7,7 @@ import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.SiteConfigRepository;
+import com.myshop.repository.UserRepository;
 import com.myshop.service.EmailService;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
@@ -37,6 +38,7 @@ public class EmailServiceImpl implements EmailService {
     private final OrderItemRepository orderItemRepository;
     private final CardKeyRepository cardKeyRepository;
     private final SiteConfigRepository siteConfigRepository;
+    private final UserRepository userRepository;
 
     @Value("${mail.enabled:false}")
     private boolean mailEnabled;
@@ -55,16 +57,25 @@ public class EmailServiceImpl implements EmailService {
         if (!mailEnabled) {
             return;
         }
-        JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
-        if (mailSender == null) {
-            log.warn("Delivery email is enabled but no JavaMailSender is configured");
-            return;
-        }
 
         try {
             Order order = orderRepository.findById(orderId).orElse(null);
-            if (order == null || order.getEmail() == null || order.getEmail().isBlank()) {
-                log.warn("Cannot send delivery email: order {} not found or no email", orderId);
+            if (order == null || order.getUserId() == null) {
+                // Guest orders have no recipient by design. This is a normal
+                // path, so do not emit a warning or create a noisy failure.
+                return;
+            }
+            String recipient = userRepository.findById(order.getUserId())
+                    .map(user -> user.getEmail())
+                    .filter(email -> email != null && !email.isBlank())
+                    .orElse(null);
+            if (recipient == null) {
+                return;
+            }
+
+            JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
+            if (mailSender == null) {
+                log.warn("Delivery email is enabled but no JavaMailSender is configured");
                 return;
             }
 
@@ -88,12 +99,12 @@ public class EmailServiceImpl implements EmailService {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(fromAddress);
-            helper.setTo(order.getEmail());
+            helper.setTo(recipient);
             helper.setSubject("【" + siteName + "】订单发货通知 - " + order.getOrderNo());
             helper.setText(html, true);
 
             mailSender.send(message);
-            log.info("Delivery email sent for order {} to {}", orderId, order.getEmail());
+            log.info("Delivery email sent for order {}", orderId);
         } catch (MessagingException e) {
             log.error("Failed to send delivery email for order {}: {}", orderId, e.getMessage(), e);
         } catch (Exception e) {

@@ -9,7 +9,7 @@ import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
 import { ApiError, orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
-import { cn, validateEmail, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { cn, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel, isWechatChannel } from "@/lib/payment-channel"
 import { PaymentSelector } from "@/components/shared/payment-selector"
@@ -25,7 +25,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const { t } = useLocale()
   const { user } = useAuth()
   const router = useRouter()
-  const emailInputRef = useRef<HTMLInputElement>(null)
   const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   const enabledChannels = useMemo(() => channels.filter(c => c.is_enabled), [channels])
@@ -38,8 +37,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     setSelectedSpec((current) => product.specs?.find((spec) => spec.id === current?.id) || product.specs?.[0] || null)
   }, [product])
   const [quantity, setQuantity] = useState(1)
-  const [email, setEmail] = useState("")
-  const [emailError, setEmailError] = useState("")
   const customerInputFields = product.customer_input_fields ?? []
   const [customerInputs, setCustomerInputs] = useState<Record<string, string>>(() =>
     Object.fromEntries(customerInputFields.map(field => [field.id, ""]))
@@ -59,15 +56,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const isOutOfStock = !unlimited && finiteStock === 0
   const deliveryType = product.delivery_type === "MANUAL" ? "manual" : "auto"
 
-  const handleEmailChange = (value: string) => {
-    setEmail(value)
-    if (value && !validateEmail(value)) {
-      setEmailError(t("product.emailInvalid"))
-    } else {
-      setEmailError("")
-    }
-  }
-
   const validateCustomerInputsForAction = () => {
     const result = validateCustomerInputs(customerInputFields, customerInputs)
     if (!result.ok) {
@@ -82,17 +70,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const handleBuyNow = async () => {
     const normalizedCustomerInputs = validateCustomerInputsForAction()
     if (!normalizedCustomerInputs) return
-    if (!adminPickup && !email.trim()) {
-      toast.error(t("product.emailRequired"))
-      emailInputRef.current?.focus()
-      emailInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
-      return
-    }
-    if (!adminPickup && !validateEmail(email)) {
-      toast.error(t("product.emailInvalid"))
-      emailInputRef.current?.focus()
-      return
-    }
     if (!adminPickup && !selectedPayment) {
       toast.error(t("product.paymentMethod"))
       return
@@ -109,7 +86,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       spec_id: selectedSpec?.id ?? null,
       quantity,
       customer_inputs: normalizedCustomerInputs,
-      email: adminPickup ? undefined : email.trim().toLowerCase(),
       payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
       expected_unit_price: Number(currentPrice.toFixed(2)),
     })
@@ -120,7 +96,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           product_id: product.id,
           spec_id: selectedSpec?.id ?? null,
           quantity,
-          email: adminPickup ? undefined : email,
           customer_inputs: normalizedCustomerInputs,
           payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
           expected_unit_price: Number(currentPrice.toFixed(2)),
@@ -327,32 +302,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             {customerInputErrors[field.id] && <p className="mt-1 text-xs text-destructive">{customerInputErrors[field.id]}</p>}
           </div>
         ))}
-
-        {/* Email input */}
-        <div>
-          <label className="mb-1.5 block text-sm font-medium text-foreground">
-            {adminPickup ? t("product.adminPickupEmailOptional") : t("product.email")}
-          </label>
-          <input
-            ref={emailInputRef}
-            type="email"
-              placeholder={adminPickup ? t("product.adminPickupEmailPlaceholder") : t("product.emailPlaceholder")}
-            value={email}
-            onChange={(e) => handleEmailChange(e.target.value)}
-            className={cn(
-              "h-11 w-full rounded-control border bg-surface px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring",
-              emailError ? "border-destructive" : "border-input"
-            )}
-          />
-          <div className="mt-1.5">
-            <p className="text-xs text-muted-foreground">
-              {adminPickup ? t("product.adminPickupEmailHint") : t("product.emailFullHint")}
-            </p>
-            {emailError && (
-              <p className="mt-1 text-xs text-destructive">{emailError}</p>
-            )}
-          </div>
-        </div>
 
         {/* Payment method */}
         <div>

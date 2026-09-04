@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import { CheckCircle, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
-import { InspectorSheet, useRouteOverlayClose } from "@/components/admin/route-overlay"
+import { WorkspaceSheet, useRouteOverlayClose } from "@/components/admin/route-overlay"
 import { OrderDetailSheet } from "@/components/admin/orders/order-detail-sheet"
 import { AdminPage, ConfirmAlert, PageHeader } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
@@ -111,9 +111,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       {error && !order && <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" size="sm" onClick={() => void load()}>{t("common.retry")}</Button></div>}
       {order && (
         <OrderDetailSheet
-          embedded
           order={order}
-          onOpenChange={(open) => { if (!open) close() }}
           detailLoading={loading}
           detailError={error}
           onRetryDetail={() => void load()}
@@ -154,7 +152,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   if (presentation === "full") {
     return (
       <AdminPage>
-        <PageHeader title={t("admin.orderDetail")} description={order ? String(order.order_no) : t("common.loading")} actions={markPaidButton} />
+        <PageHeader title={t("admin.orderWorkspace")} description={order ? String(order.order_no) : t("common.loading")} actions={markPaidButton} />
         <div className="surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
         {confirmDialog}
       </AdminPage>
@@ -163,20 +161,14 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
 
   return (
     <>
-      <InspectorSheet
-        title={t("admin.orderDetail")}
+      <WorkspaceSheet
+        title={t("admin.orderWorkspace")}
         description={order ? String(order.order_no) : t("common.loading")}
         onClose={close}
-        contentClassName="p-0 sm:p-0"
-        footer={
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            {markPaidButton}
-            <Button type="button" variant="outline" onClick={() => close()}>{t("common.close")}</Button>
-          </div>
-        }
+        headerActions={markPaidButton}
       >
         {detailContent}
-      </InspectorSheet>
+      </WorkspaceSheet>
       {confirmDialog}
     </>
   )

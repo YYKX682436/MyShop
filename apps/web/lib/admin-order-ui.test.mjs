@@ -1,8 +1,11 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 
-import { formatAdminOrderNumber, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "./admin-order-display.ts"
+import { formatAdminOrderCustomer, formatAdminOrderNumber, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "./admin-order-display.ts"
 import { buildAdminOrderSearchBody } from "./admin-order-search.ts"
+
+const readSource = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8")
 
 test("admin order search sends defaults and all filters in the JSON body", () => {
   assert.deepEqual(
@@ -42,4 +45,49 @@ test("admin order display keeps the numeric order number and compactly limits pr
   assert.equal(summary.additionalCount, 1)
   assert.equal(formatAdminOrderProductMeta(items[0]), "商品 #12 · 标准 · ×2")
   assert.equal(formatAdminOrderProductMeta(items[1]), "商品 #13 · 无规格 · ×1")
+})
+
+test("admin order customer identity keeps guests to one line and uses UID as the registered fallback", () => {
+  assert.deepEqual(formatAdminOrderCustomer({ customer_type: "GUEST", username: null, user_no: null }), {
+    primary: "游客",
+    secondary: null,
+  })
+  assert.deepEqual(formatAdminOrderCustomer({ customer_type: "REGISTERED", username: "buyer", user_no: 10001 }), {
+    primary: "buyer",
+    secondary: "UID 10001",
+  })
+  assert.deepEqual(formatAdminOrderCustomer({ customer_type: "REGISTERED", username: "", user_no: 10001 }), {
+    primary: "UID 10001",
+    secondary: null,
+  })
+})
+
+test("checkout no longer renders or sends an order email", () => {
+  const source = readSource("../app/(store)/product/[id]/product-actions.tsx")
+  assert.doesNotMatch(source, /\bemail\b/i)
+  assert.doesNotMatch(source, /emailInputRef|emailError|validateEmail|handleEmailChange/)
+  assert.match(source, /customer_inputs: normalizedCustomerInputs/)
+  assert.doesNotMatch(source, /fingerprint[\s\S]*email/i)
+})
+
+test("order details use the wide workspace route and keep the workbench structure", () => {
+  const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
+  const detailSource = readSource("../components/admin/orders/order-detail-sheet.tsx")
+  const overlaySource = readSource("../components/admin/route-overlay.tsx")
+
+  assert.match(routeSource, /WorkspaceSheet/)
+  assert.doesNotMatch(routeSource, /InspectorSheet/)
+  assert.match(overlaySource, /sm:w-\[88vw\].*lg:w-\[64vw\].*max-w-\[1100px\]/s)
+  assert.match(detailSource, /卡券与交付/)
+  assert.match(detailSource, /商品与客户填写/)
+  assert.match(detailSource, /技术信息 \/ 高级信息/)
+  assert.doesNotMatch(detailSource, /\b[A-G]\.\s/)
+})
+
+test("order query lets authenticated owners omit lookup tokens while guests still need one", () => {
+  const source = readSource("../app/(store)/order/query/page.tsx")
+  assert.match(source, /useAuth/)
+  assert.match(source, /!user && !token/)
+  assert.match(source, /lookup_token/)
+  assert.match(source, /void search\(requested, ""\)/)
 })

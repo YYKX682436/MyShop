@@ -114,10 +114,6 @@ public class OrderServiceImpl implements OrderService {
         UUID productId = UUID.fromString((String) req.get("product_id"));
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
         int quantity = ((Number) req.get("quantity")).intValue();
-        String email = clean(asString(req.get("email")));
-        if (adminPickup && (email == null || email.isBlank())) {
-            email = currentUser.getEmail();
-        }
 
         // F4: 购买数量校验（读取后台配置，兜底 999）
         int maxQuantity = getMaxPurchasePerUser();
@@ -174,7 +170,6 @@ public class OrderServiceImpl implements OrderService {
 
         Order order = new Order();
         order.setUserId(userId);
-        order.setEmail(email);
         order.setTotalAmount(totalAmount);
         order.setActualAmount(adminPickup ? BigDecimal.ZERO.setScale(2) : totalAmount);
         order.setOrderType(adminPickup ? OrderType.ADMIN_PICKUP : OrderType.NORMAL);
@@ -321,7 +316,6 @@ public class OrderServiceImpl implements OrderService {
         map.put("order_type", o.getOrderType());
         map.put("payment_method", o.getPaymentMethod());
         map.put("created_at", o.getCreatedAt());
-        map.put("email", o.getEmail());
         map.put("expires_at", o.getExpiresAt());
         map.put("paid_at", o.getPaidAt());
         map.put("delivered_at", o.getDeliveredAt());

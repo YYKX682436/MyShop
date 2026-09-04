@@ -70,6 +70,7 @@ interface RouteSheetProps {
   title: ReactNode
   description?: ReactNode
   footer?: ReactNode
+  headerActions?: ReactNode
   dirty?: boolean
   onClose: () => void
   open?: boolean
@@ -101,7 +102,7 @@ export function InspectorSheet({ children, title, description, footer, dirty = f
   )
 }
 
-export function WorkspaceSheet({ children, title, description, dirty = false, onClose, open = true, className, contentClassName }: RouteSheetProps) {
+export function WorkspaceSheet({ children, title, description, headerActions, dirty = false, onClose, open = true, className, contentClassName }: RouteSheetProps) {
   const { t } = useLocale()
 
   return (
@@ -121,7 +122,10 @@ export function WorkspaceSheet({ children, title, description, dirty = false, on
             <SheetTitle className="tracking-tight">{title}</SheetTitle>
             {description && <SheetDescription className="mt-2 max-w-2xl">{description}</SheetDescription>}
           </div>
-          {dirty && <span className="hidden shrink-0 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300 sm:inline-flex">{t("admin.unsavedChanges")}</span>}
+          <div className="flex shrink-0 items-center gap-2">
+            {headerActions}
+            {dirty && <span className="hidden rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300 sm:inline-flex">{t("admin.unsavedChanges")}</span>}
+          </div>
         </SheetHeader>
         <div className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-7", contentClassName)}>{children}</div>
       </SheetContent>

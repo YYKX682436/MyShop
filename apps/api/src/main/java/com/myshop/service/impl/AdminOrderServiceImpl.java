@@ -128,8 +128,6 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("status", o.getStatus().name());
         map.put("order_type", o.getOrderType());
         map.put("created_at", o.getCreatedAt());
-        map.put("email", o.getEmail());
-        map.put("order_email", o.getEmail());
         map.put("customer_type", user == null ? "GUEST" : "REGISTERED");
         map.put("username", user == null ? null : user.getUsername());
         map.put("user_no", user == null ? null : user.getUserNo());
