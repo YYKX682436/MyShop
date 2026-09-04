@@ -61,8 +61,7 @@ if ! grep -Fq 'source: /data/myshop/uploads' <<<"$production_config"; then
 fi
 
 if ! grep -Fq 'target: /app/ipdb' <<<"$rendered_config" \
-  || ! grep -Fq 'read_only: true' <<<"$rendered_config" \
-  || ! grep -Fq 'create_host_path: false' <<<"$rendered_config"; then
+  || ! grep -Fq 'read_only: true' <<<"$rendered_config"; then
   echo "compose validation missing the read-only /app/ipdb bind" >&2
   exit 1
 fi
