@@ -131,6 +131,9 @@ public class AdministratorServiceImpl implements AdministratorService {
         validateStatus(isDeleted);
         int previous = user.getIsDeleted();
         user.setIsDeleted(isDeleted);
+        if (previous != isDeleted) {
+            bumpAuthVersion(user);
+        }
         userRepository.save(user);
         String action = isDeleted == 1 ? "administrator.disable" : "administrator.enable";
         logAdministratorOperation(action, id,
@@ -147,6 +150,7 @@ public class AdministratorServiceImpl implements AdministratorService {
         user.setPasswordHash(passwordEncoder.encode(password));
         user.setFailedLoginAttempts(0);
         user.setLockUntil(null);
+        bumpAuthVersion(user);
         userRepository.save(user);
         logAdministratorOperation("administrator.reset_password", id,
                 "重置管理员密码（密码内容不记录）");
@@ -271,6 +275,13 @@ public class AdministratorServiceImpl implements AdministratorService {
         if (isDeleted != null && isDeleted != 0 && isDeleted != 1) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员状态只能为 0 或 1");
         }
+    }
+
+    private void bumpAuthVersion(User user) {
+        if (user.getAuthVersion() == Integer.MAX_VALUE) {
+            throw new IllegalStateException("User auth version overflow");
+        }
+        user.setAuthVersion(user.getAuthVersion() + 1);
     }
 
     private void requirePage(int page, int pageSize) {

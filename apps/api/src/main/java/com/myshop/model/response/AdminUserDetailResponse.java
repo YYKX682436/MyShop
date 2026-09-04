@@ -20,12 +20,9 @@ public record AdminUserDetailResponse(
         long successfulOrderCount,
         BigDecimal totalSpent,
         int isDeleted,
-        LocalDateTime createdAt
-) {
-    public AdminUserDetailResponse(UUID id, Long userNo, String username, String email,
-                                   String phone, BigDecimal balance, long successfulOrderCount,
-                                   BigDecimal totalSpent, int isDeleted, LocalDateTime createdAt) {
-        this(id, userNo, username, email, phone, null, null, balance, successfulOrderCount,
-                totalSpent, isDeleted, createdAt);
-    }
+        LocalDateTime createdAt,
+        String lastLoginIp,
+        LocalDateTime lastLoginAt,
+        IpLocationResponse lastLoginIpLocation
+    ) {
 }

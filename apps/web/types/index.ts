@@ -636,6 +636,22 @@ export interface AdminUserDetail extends Omit<AdminUserItem, "order_count" | "to
   phone: string | null
   successful_order_count: number
   total_spent: number
+  last_login_ip: string | null
+  last_login_at: string | null
+  last_login_ip_location: IpLocation | null
+}
+
+export interface IpLocation {
+  country: string | null
+  province: string | null
+  city: string | null
+  isp: string | null
+  display_name: string
+  resolved: boolean
+}
+
+export interface AdminResetPasswordResponse {
+  temporary_password: string
 }
 
 export interface AdminUserOrderItem {
@@ -697,7 +713,7 @@ export interface BalanceTransaction {
   delta: number
   balance_before: number
   balance_after: number
-  reason: string
+  reason: string | null
   operator_id: string
   order_id: string | null
   created_at: string

@@ -3,13 +3,14 @@
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { ArrowLeft, Edit3, KeyRound, Plus, ShieldCheck, UserCheck, UserX } from "lucide-react"
+import { ArrowLeft, Edit3, KeyRound, Plus, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 
 import {
   AdminPage,
   AdminPagination,
   ConfirmAlert,
+  CopyableValue,
   DataTableShell,
   FormSection,
   PageHeader,
@@ -18,19 +19,24 @@ import {
   TableErrorState,
   TableLoadingState,
 } from "@/components/admin/shared"
+import { UserLevelQuickEdit } from "@/components/admin/users/user-level-quick-edit"
+import { UserStatusQuickEdit } from "@/components/admin/users/user-status-quick-edit"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
+import { copyText } from "@/lib/clipboard"
 import { formatDateTime } from "@/lib/utils"
 import { formatCents, formatYuanFromCents, formatYuanValue, MAX_BALANCE_CENTS, parseMoneyValueToCents, parsePositiveMoneyToCents } from "@/lib/money"
+import { buildPasswordResetResultText, formatBalanceAdjustmentResult, isOptionalReasonValid, normalizeIpLocationDisplay, normalizeOptionalReason } from "@/lib/user-management"
 import { adminUserApi, adminUserLevelApi, requestOrThrow } from "@/services/api"
 import type { AdminOperationLogDetail, AdminUserDetail, AdminUserOrder, BalanceTransaction, UserLevel } from "@/types"
 
 type DetailTab = "overview" | "orders" | "balance" | "logs"
 type RecordTab = Exclude<DetailTab, "overview">
+type CopyStatus = "pending" | "success" | "failed"
 const PAGE_SIZE = 10
 
 interface AdminUserDetailPageProps {
@@ -63,24 +69,25 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   const [balanceAmount, setBalanceAmount] = useState("")
   const [balanceReason, setBalanceReason] = useState("")
   const [balanceLoading, setBalanceLoading] = useState(false)
-  const [resetOpen, setResetOpen] = useState(false)
-  const [newPassword, setNewPassword] = useState("")
+  const [balanceResult, setBalanceResult] = useState<{ text: string; transaction: BalanceTransaction; copyStatus: CopyStatus } | null>(null)
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
-  const [statusOpen, setStatusOpen] = useState(false)
-  const [statusLoading, setStatusLoading] = useState(false)
+  const [resetResult, setResetResult] = useState<{ password: string; text: string; copyStatus: CopyStatus } | null>(null)
   const [levels, setLevels] = useState<UserLevel[]>([])
   const [levelLoading, setLevelLoading] = useState(false)
 
-  const loadUser = useCallback(async () => {
+  const loadUser = useCallback(async (): Promise<AdminUserDetail | null> => {
     setLoading(true)
     setError(false)
     try {
       const data = await requestOrThrow(() => adminUserApi.getDetail(userId))
       setUser(data)
       setEditEmail(data.email)
+      return data
     } catch {
       setUser(null)
       setError(true)
+      return null
     } finally {
       setLoading(false)
     }
@@ -165,30 +172,33 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
     }
   }
 
-  const handleChangeLevel = async (userLevelId: string) => {
-    if (!user || !userLevelId || userLevelId === user.user_level_id) return
+  const handleChangeLevel = async (userLevelId: string): Promise<boolean> => {
+    if (!user || !userLevelId || userLevelId === user.user_level_id) return true
     setLevelLoading(true)
     try {
       const level = await requestOrThrow(() => adminUserApi.changeLevel(user.id, userLevelId))
       setUser((current) => current ? { ...current, user_level_id: level.id, user_level_name: level.name } : current)
       await refreshRecords("logs")
       toast.success(t("admin.userLevelChanged"))
+      return true
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+      return false
     } finally {
       setLevelLoading(false)
     }
   }
 
   const handleBalance = async () => {
+    if (!user) return
     const amountCents = parsePositiveMoneyToCents(balanceAmount)
-    const reason = balanceReason.trim()
+    const reason = normalizeOptionalReason(balanceReason)
     if (amountCents === null) {
       toast.error(t("admin.balanceAmountInvalid"))
       return
     }
-    if (!reason) {
-      toast.error(t("admin.balanceReasonRequired"))
+    if (!isOptionalReasonValid(balanceReason)) {
+      toast.error(t("admin.balanceReasonTooLong"))
       return
     }
     if (previewBalanceCents < 0) {
@@ -201,17 +211,21 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
     }
     setBalanceLoading(true)
     try {
-      await requestOrThrow(() => adminUserApi.adjustBalance(userId, {
+      const target = user
+      const transaction = await requestOrThrow(() => adminUserApi.adjustBalance(userId, {
         type: balanceType,
         amount: formatCents(amountCents),
         reason,
       }))
+      setUser((current) => current ? { ...current, balance: Number(transaction.balance_after) } : current)
       await loadUser()
       await refreshRecords("balance")
       setBalanceOpen(false)
       setBalanceAmount("")
       setBalanceReason("")
-      toast.success(t("admin.balanceAdjusted"))
+      const text = formatBalanceAdjustmentResult(target.user_no, target.username, transaction)
+      setBalanceResult({ text, transaction, copyStatus: "pending" })
+      void copyText(text).then((success) => setBalanceResult((current) => current ? { ...current, copyStatus: success ? "success" : "failed" } : current))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -220,17 +234,14 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   }
 
   const handleReset = async () => {
-    if (newPassword.length < 6 || newPassword.length > 72 || !/^[!-~]+$/.test(newPassword)) {
-      toast.error(t("admin.passwordMinLength"))
-      return
-    }
     setResetLoading(true)
     try {
-      await requestOrThrow(() => adminUserApi.resetPassword(userId, newPassword))
-      setResetOpen(false)
-      setNewPassword("")
+      const response = await requestOrThrow(() => adminUserApi.resetPassword(userId))
+      const text = buildPasswordResetResultText(response.temporary_password)
+      setResetConfirmOpen(false)
       await refreshRecords("logs")
-      toast.success(t("admin.passwordReset"))
+      setResetResult({ password: response.temporary_password, text, copyStatus: "pending" })
+      void copyText(text).then((success) => setResetResult((current) => current ? { ...current, copyStatus: success ? "success" : "failed" } : current))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -238,26 +249,35 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
     }
   }
 
-  const handleToggle = async () => {
-    if (!user) return
-    setStatusLoading(true)
+  const handleToggle = async (nextIsDeleted: 0 | 1): Promise<boolean> => {
+    if (!user || user.is_deleted === nextIsDeleted) return true
     try {
-      await requestOrThrow(() => adminUserApi.toggleStatus(userId, user.is_deleted === 0 ? 1 : 0))
-      await loadUser()
-      setStatusOpen(false)
+      await requestOrThrow(() => adminUserApi.toggleStatus(userId, nextIsDeleted))
+      setUser((current) => current ? { ...current, is_deleted: nextIsDeleted } : current)
       await refreshRecords("logs")
-      toast.success(user.is_deleted === 0 ? t("admin.userDisabled") : t("admin.userEnabled"))
+      toast.success(nextIsDeleted === 1 ? t("admin.userDisabled") : t("admin.userEnabled"))
+      return true
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
-    } finally {
-      setStatusLoading(false)
+      return false
     }
+  }
+
+  const copyBalanceResult = async () => {
+    if (!balanceResult) return
+    const success = await copyText(balanceResult.text)
+    setBalanceResult((current) => current ? { ...current, copyStatus: success ? "success" : "failed" } : current)
+  }
+
+  const copyResetResult = async () => {
+    if (!resetResult) return
+    const success = await copyText(resetResult.text)
+    setResetResult((current) => current ? { ...current, copyStatus: success ? "success" : "failed" } : current)
   }
 
   const formDirty = Boolean(
     (editOpen && user && editEmail !== user.email)
     || (balanceOpen && (balanceAmount.trim() || balanceReason.trim()))
-    || (resetOpen && newPassword.trim())
   )
 
   useEffect(() => {
@@ -271,7 +291,6 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
     return <AdminPage className={embedded ? "max-w-none" : undefined}>{!embedded && <PageHeader title={t("admin.userDetail")} />}<div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void loadUser()}>{t("common.retry")}</Button></div></AdminPage>
   }
 
-  const enabled = user.is_deleted === 0
   const tabs: { key: DetailTab; label: string }[] = [
     { key: "overview", label: t("admin.overview") },
     { key: "orders", label: t("admin.orderRecords") },
@@ -296,16 +315,18 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
           <div className="flex min-w-0 items-start gap-4">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><ShieldCheck className="size-7" aria-hidden="true" /></div>
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-xl font-semibold">{user.username}</h2><StatusBadge label={enabled ? t("admin.normal") : t("admin.banned")} tone={enabled ? "success" : "danger"} /></div>
-              <p className="mt-1 truncate text-sm text-muted-foreground">{user.email}</p>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"><span>{t("admin.userNumber")}: <strong className="font-mono text-foreground">{user.user_no}</strong></span><span>{t("admin.internalId")}: <span className="font-mono">{user.id}</span></span></div>
+              <h2 className="truncate text-xl font-semibold">{user.username}</h2>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                <CopyableValue value={String(user.user_no)} label={t("admin.userNumber")} mono />
+                <CopyableValue value={user.id} label={t("admin.internalUuid")} mono displayValue={`${t("admin.internalUuid")}: ${user.id}`} />
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={openEdit}><Edit3 className="h-4 w-4" aria-hidden="true" />{t("admin.editProfile")}</Button>
             <Button type="button" variant="outline" onClick={() => { setBalanceType("INCREASE"); setBalanceAmount(""); setBalanceReason(""); setBalanceOpen(true) }}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.adjustBalance")}</Button>
-            <Button type="button" variant="outline" onClick={() => { setNewPassword(""); setResetOpen(true) }}><KeyRound className="h-4 w-4" aria-hidden="true" />{t("admin.resetPassword")}</Button>
-            <Button type="button" variant={enabled ? "destructive" : "outline"} onClick={() => setStatusOpen(true)}>{enabled ? <UserX className="h-4 w-4" aria-hidden="true" /> : <UserCheck className="h-4 w-4" aria-hidden="true" />}{enabled ? t("admin.ban") : t("admin.unban")}</Button>
+            <Button type="button" variant="outline" onClick={() => setResetConfirmOpen(true)}><KeyRound className="h-4 w-4" aria-hidden="true" />{t("admin.resetPassword")}</Button>
+            <UserStatusQuickEdit username={user.username} isDeleted={user.is_deleted} onSave={handleToggle} />
           </div>
         </div>
       </section>
@@ -313,10 +334,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
       <section className="surface p-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="font-semibold">{t("admin.userLevel")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("admin.userLevelImmediateHint")}</p></div>
-          <select className="h-11 min-w-52 rounded-control border border-input bg-surface px-3 text-sm shadow-sm" value={user.user_level_id || ""} onChange={(event) => void handleChangeLevel(event.target.value)} disabled={levelLoading} aria-label={t("admin.userLevel")}>
-            <option value="">{user.user_level_name || t("admin.systemNoData")}</option>
-            {levels.filter((level) => level.enabled).map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
-          </select>
+          <UserLevelQuickEdit username={user.username} value={user.user_level_id} label={user.user_level_name || t("admin.systemNoData")} levels={levels} saving={levelLoading} onSave={handleChangeLevel} />
         </div>
       </section>
 
@@ -350,19 +368,45 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
             <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAmount")}</span><Input type="text" inputMode="decimal" value={balanceAmount} onChange={(event) => setBalanceAmount(event.target.value)} placeholder="0.00" /></label>
           </div>
           <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceReason")}</span><Textarea value={balanceReason} onChange={(event) => setBalanceReason(event.target.value)} placeholder={t("admin.balanceReasonPlaceholder")} maxLength={500} rows={4} /></label>
-          <DialogFooter><Button type="button" variant="outline" onClick={() => setBalanceOpen(false)} disabled={balanceLoading}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleBalance()} disabled={balanceLoading || previewBalanceCents < 0 || previewBalanceCents > MAX_BALANCE_CENTS || !balanceAmount || !balanceReason.trim()}>{balanceLoading ? t("admin.processing") : t("admin.confirmAdjustment")}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setBalanceOpen(false)} disabled={balanceLoading}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleBalance()} disabled={balanceLoading || previewBalanceCents < 0 || previewBalanceCents > MAX_BALANCE_CENTS || !balanceAmount}>{balanceLoading ? t("admin.processing") : t("admin.confirmAdjustment")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={resetOpen} onOpenChange={(open) => { if (!resetLoading) setResetOpen(open) }}>
+      <ConfirmAlert
+        open={resetConfirmOpen}
+        onOpenChange={(open) => { if (!resetLoading) setResetConfirmOpen(open) }}
+        title={t("admin.resetPasswordTitle")}
+        description={t("admin.resetPasswordConfirmMessage")}
+        confirmLabel={t("admin.confirmReset")}
+        cancelLabel={t("admin.cancel")}
+        loading={resetLoading}
+        onConfirm={() => void handleReset()}
+      />
+
+      <Dialog open={balanceResult !== null} onOpenChange={(open) => { if (!open) setBalanceResult(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>{t("admin.balanceAdjusted")}</DialogTitle><DialogDescription>{t("admin.balanceResultAuthoritative")}</DialogDescription></DialogHeader>
+          <pre className="whitespace-pre-wrap rounded-card border border-border-subtle bg-surface-muted p-4 text-sm leading-6 text-foreground">{balanceResult?.text}</pre>
+          <p className={`text-xs ${balanceResult?.copyStatus === "failed" ? "text-destructive" : "text-muted-foreground"}`} role="status">
+            {balanceResult?.copyStatus === "pending" ? t("admin.copying") : balanceResult?.copyStatus === "success" ? t("admin.autoCopySuccess") : t("admin.autoCopyFailed")}
+          </p>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => void copyBalanceResult()}>{t("admin.copyAll")}</Button><Button type="button" onClick={() => setBalanceResult(null)}>{t("common.close")}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={resetResult !== null} onOpenChange={(open) => { if (!open) setResetResult(null) }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>{t("admin.resetPasswordTitle")}</DialogTitle><DialogDescription>{t("admin.resetPasswordDescription").replace("{username}", user.username)}</DialogDescription></DialogHeader>
-          <Input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder={t("admin.newPasswordPlaceholder")} minLength={6} maxLength={72} autoComplete="new-password" />
-          <DialogFooter><Button type="button" variant="outline" onClick={() => setResetOpen(false)} disabled={resetLoading}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleReset()} disabled={resetLoading || newPassword.length < 6}>{resetLoading ? t("admin.processing") : t("admin.confirmReset")}</Button></DialogFooter>
+          <DialogHeader><DialogTitle>{t("admin.passwordResetResultTitle")}</DialogTitle><DialogDescription>{t("admin.passwordResetResultDescription")}</DialogDescription></DialogHeader>
+          <div className="rounded-card border border-amber-500/30 bg-amber-500/10 p-4">
+            <CopyableValue value={resetResult?.password || ""} label={t("admin.temporaryPassword")} mono className="w-full text-base font-semibold" />
+          </div>
+          <pre className="whitespace-pre-wrap rounded-card border border-border-subtle bg-surface-muted p-4 text-sm leading-6 text-foreground">{resetResult?.text}</pre>
+          <p className={`text-xs ${resetResult?.copyStatus === "failed" ? "text-destructive" : "text-muted-foreground"}`} role="status">
+            {resetResult?.copyStatus === "pending" ? t("admin.copying") : resetResult?.copyStatus === "success" ? t("admin.autoCopySuccess") : t("admin.autoCopyFailed")}
+          </p>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => void copyResetResult()}>{t("admin.copyAll")}</Button><Button type="button" onClick={() => setResetResult(null)}>{t("common.close")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <ConfirmAlert open={statusOpen} onOpenChange={(open) => { if (!statusLoading) setStatusOpen(open) }} title={enabled ? t("admin.confirmDisable") : t("admin.confirmEnable")} description={t("admin.userStatusDescription").replace("{action}", enabled ? t("admin.ban") : t("admin.unban")).replace("{username}", user.username)} confirmLabel={enabled ? t("admin.ban") : t("admin.unban")} cancelLabel={t("admin.cancel")} destructive={enabled} loading={statusLoading} onConfirm={() => void handleToggle()} />
     </AdminPage>
   )
 }
@@ -370,10 +414,34 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
 type Translator = (key: Parameters<ReturnType<typeof useLocale>["t"]>[0]) => string
 
 function Overview({ user, t, locale }: { user: AdminUserDetail; t: Translator; locale: string }) {
-  return <div className="grid gap-6 lg:grid-cols-2"><FormSection title={t("admin.accountOverview")} description={t("admin.accountOverviewDesc")}><div className="grid gap-3 sm:grid-cols-2"><Info label={t("admin.userNumber")} value={String(user.user_no)} mono /><Info label={t("admin.usernameLabel")} value={user.username} /><Info label={t("admin.emailLabel")} value={user.email} /><Info label={t("admin.phoneLabel")} value={user.phone || t("admin.systemNoData")} /><Info label={t("admin.registeredAt")} value={formatDateTime(user.created_at, locale)} /></div></FormSection><FormSection title={t("admin.accountMetrics")}><div className="grid gap-3 sm:grid-cols-3"><Metric label={t("admin.currentBalance")} value={formatYuanValue(user.balance)} /><Metric label={t("admin.successfulOrders")} value={String(user.successful_order_count)} /><Metric label={t("admin.totalSpent")} value={formatYuanValue(user.total_spent)} /></div></FormSection></div>
+  const ipLocation = normalizeIpLocationDisplay(user.last_login_ip_location)
+  return <div className="grid gap-6 lg:grid-cols-2">
+    <FormSection title={t("admin.accountOverview")} description={t("admin.accountOverviewDesc")} className="lg:col-span-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Info label={t("admin.userNumber")} value={String(user.user_no)} mono copyValue={String(user.user_no)} />
+        <Info label={t("admin.usernameLabel")} value={user.username} copyValue={user.username} />
+        <Info label={t("admin.emailLabel")} value={user.email} copyValue={user.email} />
+        <Info label={t("admin.phoneLabel")} value={user.phone || t("admin.systemNoData")} copyValue={user.phone || undefined} />
+        <Info label={t("admin.userLevel")} value={user.user_level_name || t("admin.systemNoData")} />
+        <Info label={t("admin.statusLabel")} value={user.is_deleted === 0 ? t("admin.normal") : t("admin.banned")} />
+        <Info label={t("admin.registeredAt")} value={formatDateTime(user.created_at, locale)} />
+        <Info label={t("admin.internalUuid")} value={user.id} mono copyValue={user.id} />
+      </div>
+    </FormSection>
+    <FormSection title={t("admin.accountMetrics")}>
+      <div className="grid gap-3 sm:grid-cols-3"><Metric label={t("admin.currentBalance")} value={formatYuanValue(user.balance)} /><Metric label={t("admin.successfulOrders")} value={String(user.successful_order_count)} /><Metric label={t("admin.totalSpent")} value={formatYuanValue(user.total_spent)} /></div>
+    </FormSection>
+    <FormSection title={t("admin.loginSecurity")} description={t("admin.ipEstimateHint")}>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Info label={t("admin.lastLoginAt")} value={user.last_login_at ? formatDateTime(user.last_login_at, locale) : t("admin.systemNoData")} />
+        <Info label={t("admin.lastLoginIp")} value={user.last_login_ip || t("admin.systemNoData")} mono copyValue={user.last_login_ip || undefined} />
+        <Info label={t("admin.ipLocationEstimate")} value={ipLocation} />
+      </div>
+    </FormSection>
+  </div>
 }
 
-function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div className="rounded-card border border-border-subtle bg-surface-muted p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 break-all text-sm font-medium ${mono ? "font-mono" : ""}`}>{value}</p></div> }
+function Info({ label, value, mono = false, copyValue }: { label: string; value: string; mono?: boolean; copyValue?: string }) { return <div className="rounded-card border border-border-subtle bg-surface-muted p-3"><p className="text-xs text-muted-foreground">{label}</p><p className={`mt-1 break-all text-sm font-medium ${mono ? "font-mono" : ""}`}>{copyValue ? <CopyableValue value={copyValue} label={label} displayValue={value} mono={mono} /> : value}</p></div> }
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-card border border-border-subtle bg-surface-muted p-3"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 text-xl font-semibold">{value}</p></div> }
 
 function RecordShell({ children, loading, error, empty, onRetry, footer, colSpan, t }: { children: React.ReactNode; loading: boolean; error: boolean; empty: boolean; onRetry: () => void; footer: React.ReactNode; colSpan: number; t: Translator }) {
@@ -386,7 +454,7 @@ function OrdersTab({ orders, loading, error, onRetry, page, total, onPageChange,
 
 function BalanceTab({ transactions, loading, error, onRetry, page, total, onPageChange, t, locale }: { transactions: BalanceTransaction[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {
   const typeLabel = (type: BalanceTransaction["type"]) => type === "ADMIN_ADJUSTMENT" ? t("admin.balanceAdminAdjustment") : type === "RECHARGE" ? t("admin.balanceRecharge") : type === "ORDER_PAYMENT" ? t("admin.balanceOrderPayment") : t("admin.balanceRefund")
-  return <RecordShell loading={loading} error={error} empty={transactions.length === 0} onRetry={onRetry} colSpan={7} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceType")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceDelta")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceBeforeAfter")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceReason")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.operator")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{transactions.map((transaction) => { const deltaCents = parseMoneyValueToCents(transaction.delta) ?? 0; return <tr key={transaction.id} className="border-b border-border/60 last:border-0"><td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(transaction.created_at, locale)}</td><td className="px-4 py-3"><StatusBadge label={typeLabel(transaction.type)} tone="info" /></td><td className={`whitespace-nowrap px-4 py-3 font-medium ${deltaCents >= 0 ? "text-emerald-600" : "text-destructive"}`}>{deltaCents >= 0 ? "+" : "-"}{formatYuanFromCents(Math.abs(deltaCents))}</td><td className="whitespace-nowrap px-4 py-3">{formatYuanValue(transaction.balance_before)} → {formatYuanValue(transaction.balance_after)}</td><td className="max-w-[260px] truncate px-4 py-3" title={transaction.reason}>{transaction.reason}</td><td className="px-4 py-3 font-mono text-xs">{transaction.operator_id.slice(0, 8)}…</td><td className="px-4 py-3">—</td></tr> })}</RecordShell>
+  return <RecordShell loading={loading} error={error} empty={transactions.length === 0} onRetry={onRetry} colSpan={7} t={t} footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={onPageChange} />}><tr className="border-b border-border bg-muted/30"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceType")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceDelta")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceBeforeAfter")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.balanceReason")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.operator")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.actions")}</th></tr>{transactions.map((transaction) => { const deltaCents = parseMoneyValueToCents(transaction.delta) ?? 0; return <tr key={transaction.id} className="border-b border-border/60 last:border-0"><td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(transaction.created_at, locale)}</td><td className="px-4 py-3"><StatusBadge label={typeLabel(transaction.type)} tone="info" /></td><td className={`whitespace-nowrap px-4 py-3 font-medium ${deltaCents >= 0 ? "text-emerald-600" : "text-destructive"}`}>{deltaCents >= 0 ? "+" : "-"}{formatYuanFromCents(Math.abs(deltaCents))}</td><td className="whitespace-nowrap px-4 py-3">{formatYuanValue(transaction.balance_before)} → {formatYuanValue(transaction.balance_after)}</td><td className="max-w-[260px] truncate px-4 py-3" title={transaction.reason || undefined}>{transaction.reason || t("admin.noReason")}</td><td className="px-4 py-3 font-mono text-xs">{transaction.operator_id.slice(0, 8)}…</td><td className="px-4 py-3">—</td></tr> })}</RecordShell>
 }
 
 function LogsTab({ logs, loading, error, onRetry, page, total, onPageChange, t, locale }: { logs: AdminOperationLogDetail[]; loading: boolean; error: boolean; onRetry: () => void; page: number; total: number; onPageChange: (page: number) => void; t: Translator; locale: string }) {

@@ -8,7 +8,7 @@ import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { useLocale } from "@/lib/context"
 import { parseIntegerDraft } from "@/lib/product-quick-edit"
 import type { AdminProductDetail } from "@/types"
-import { QuickEditActions, QuickEditContent, QuickEditTrigger } from "./quick-edit"
+import { QuickEditActions, QuickEditContent, QuickEditTrigger } from "@/components/admin/shared/quick-edit"
 
 export function ProductWeightQuickEdit({
   product,

@@ -63,9 +63,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
               AND (CAST(:isDeleted AS integer) IS NULL OR u.is_deleted = CAST(:isDeleted AS integer))
               AND (
                   CAST(:keyword AS text) IS NULL
-                  OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
-                  OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
-                  OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR u.phone ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
               )
             ORDER BY u.created_at DESC, u.id DESC
             """,
@@ -78,6 +79,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
                   CAST(:keyword AS text) IS NULL
                   OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
                   OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.phone ILIKE '%' || CAST(:keyword AS text) || '%'
                   OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
               )
             """,
@@ -94,9 +96,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
               AND u.user_level_id = :userLevelId
               AND (
                   CAST(:keyword AS text) IS NULL
-                  OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
-                  OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
-                  OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR u.phone ILIKE '%' || CAST(:keyword AS text) || '%'
+              OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
               )
             ORDER BY u.created_at DESC, u.id DESC
             """,
@@ -110,6 +113,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
                   CAST(:keyword AS text) IS NULL
                   OR u.username ILIKE '%' || CAST(:keyword AS text) || '%'
                   OR u.email ILIKE '%' || CAST(:keyword AS text) || '%'
+                  OR u.phone ILIKE '%' || CAST(:keyword AS text) || '%'
                   OR CAST(u.user_no AS text) ILIKE '%' || CAST(:keyword AS text) || '%'
               )
             """,

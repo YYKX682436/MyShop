@@ -21,10 +21,4 @@ public record AdminUserListResponse(
         int isDeleted,
         LocalDateTime createdAt
 ) {
-    public AdminUserListResponse(UUID id, Long userNo, String username, String email,
-                                 BigDecimal balance, long orderCount, BigDecimal totalSpent,
-                                 int isDeleted, LocalDateTime createdAt) {
-        this(id, userNo, username, email, null, null, balance, orderCount, totalSpent,
-                isDeleted, createdAt);
-    }
 }

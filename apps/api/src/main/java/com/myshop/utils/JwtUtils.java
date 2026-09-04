@@ -32,12 +32,13 @@ public class JwtUtils {
         }
     }
 
-    public String generateToken(UUID userId, String username, String role) {
+    public String generateToken(UUID userId, String username, String role, int authVersion) {
         Date now = new Date();
         return Jwts.builder()
                 .subject(userId.toString())
                 .claim("username", username)
                 .claim("role", role)
+                .claim("authVersion", authVersion)
                 .issuedAt(now)
                 .expiration(new Date(now.getTime() + expiration))
                 .signWith(key)
@@ -62,6 +63,14 @@ public class JwtUtils {
 
     public String getRole(String token) {
         return parseToken(token).get("role", String.class);
+    }
+
+    public int getAuthVersion(String token) {
+        Object value = parseToken(token).get("authVersion");
+        if (!(value instanceof Number number)) {
+            throw new IllegalArgumentException("JWT authVersion claim is missing or invalid");
+        }
+        return number.intValue();
     }
 
     /**

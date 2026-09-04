@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -76,7 +77,7 @@ class UserNumberConcurrencyIntegrationTest {
         jdbcTemplate.update("DELETE FROM users");
         jdbcTemplate.update("UPDATE user_number_sequences SET start_user_no = 10000, next_user_no = 10000 WHERE id = 1");
         when(captchaUtils.verify(anyString(), anyString())).thenReturn(true);
-        when(jwtUtils.generateToken(any(), anyString(), anyString())).thenReturn("integration-token");
+        when(jwtUtils.generateToken(any(), anyString(), anyString(), anyInt())).thenReturn("integration-token");
     }
 
     @Test
@@ -99,7 +100,7 @@ class UserNumberConcurrencyIntegrationTest {
                     request.setPhone(String.format("1380013%04d", registrationIndex));
                     request.setCaptchaId("captcha-" + registrationIndex);
                     request.setCaptcha("1234");
-                    return authService.register(request).user().getUserNo();
+                    return authService.register(request, "203.0.113.10").user().getUserNo();
                 }));
             }
             assertTrue(ready.await(10, TimeUnit.SECONDS));

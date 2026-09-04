@@ -53,4 +53,16 @@ public class User extends BaseEntity {
 
     /** 账户锁定截止时间（null 表示未锁定） */
     private LocalDateTime lockUntil;
+
+    /** Incremented whenever a password or account status change invalidates sessions. */
+    @Column(name = "auth_version", nullable = false)
+    private int authVersion = 0;
+
+    /** The last client IP observed on a successful registration or login. */
+    @Column(name = "last_login_ip", length = 45)
+    private String lastLoginIp;
+
+    /** The last successful registration or login time. */
+    @Column(name = "last_login_at")
+    private LocalDateTime lastLoginAt;
 }

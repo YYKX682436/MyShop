@@ -13,9 +13,9 @@ import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
-import com.myshop.model.request.AdminResetPasswordRequest;
 import com.myshop.model.request.AdminToggleUserStatusRequest;
 import com.myshop.model.request.AdminUpdateUserProfileRequest;
+import com.myshop.model.response.AdminResetPasswordResponse;
 import com.myshop.model.response.AdminUserDetailResponse;
 import com.myshop.model.response.AdminUserListResponse;
 import com.myshop.model.response.AdminUserOrderResponse;
@@ -25,7 +25,9 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserOrderMetricsProjection;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.BalanceTransactionService;
+import com.myshop.service.IpLocationService;
 import com.myshop.service.OperationLogService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -68,13 +71,18 @@ class AdminUserServiceImplTest {
     private OperationLogRepository operationLogRepository;
     @Mock
     private PasswordEncoder passwordEncoder;
+    @Mock
+    private IpLocationService ipLocationService;
+    @Mock
+    private UserLevelRepository userLevelRepository;
 
     private AdminUserServiceImpl service;
 
     @BeforeEach
     void setUp() {
         service = new AdminUserServiceImpl(userRepository, orderRepository, orderItemRepository,
-                balanceTransactionService, operationLogService, operationLogRepository, passwordEncoder);
+                balanceTransactionService, operationLogService, operationLogRepository,
+                passwordEncoder, userLevelRepository, ipLocationService);
     }
 
     @AfterEach
@@ -97,6 +105,7 @@ class AdminUserServiceImplTest {
 
         AdminUserListResponse row = result.getList().get(0);
         assertEquals(10000L, row.userNo());
+        assertEquals("buyer@example.com", row.email());
         assertEquals(2L, row.orderCount());
         assertEquals(new BigDecimal("25.50"), row.totalSpent());
         verify(userRepository).findAdminUsers(null, null, pageable);
@@ -126,6 +135,23 @@ class AdminUserServiceImplTest {
         assertEquals(new BigDecimal("25.50"), result.totalSpent());
         assertEquals(0, result.isDeleted());
         verify(orderRepository).findSuccessfulMetricsByUserIdIn(List.of(id));
+    }
+
+    @Test
+    void detailReturnsLastLoginFieldsAndReplaceableIpEstimate() {
+        UUID id = UUID.randomUUID();
+        User user = user(id, "buyer", "buyer@example.com", 10000L, "12.30");
+        user.setLastLoginIp("203.0.113.10");
+        user.setLastLoginAt(java.time.LocalDateTime.of(2026, 9, 4, 12, 30));
+        when(userRepository.findById(id)).thenReturn(Optional.of(user));
+        when(ipLocationService.resolve("203.0.113.10"))
+                .thenReturn(new com.myshop.model.response.IpLocationResponse(
+                        "中国", "广东省", "深圳市", "电信", "广东省 · 深圳市", true));
+        AdminUserDetailResponse result = service.getUserDetail(id);
+
+        assertEquals("203.0.113.10", result.lastLoginIp());
+        assertEquals(java.time.LocalDateTime.of(2026, 9, 4, 12, 30), result.lastLoginAt());
+        assertEquals("广东省 · 深圳市", result.lastLoginIpLocation().displayName());
     }
 
     @Test
@@ -251,6 +277,51 @@ class AdminUserServiceImplTest {
     }
 
     @Test
+    void nullAndBlankReasonsAreStoredAsNullAndOmittedFromAuditText() {
+        UUID userId = UUID.randomUUID();
+        UUID operatorId = UUID.randomUUID();
+        User user = user(userId, "buyer", "buyer@example.com", 10000L, "10.00");
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
+        stubLedgerService();
+        RequestContext.set(new RequestContext.UserInfo(operatorId, "admin", "ADMIN"));
+
+        AdminAdjustBalanceRequest request = new AdminAdjustBalanceRequest();
+        request.setType(BalanceAdjustmentType.INCREASE);
+        request.setAmount(new BigDecimal("1.00"));
+        request.setReason("   ");
+
+        service.adjustBalance(userId, request);
+
+        verify(balanceTransactionService).recordAdminAdjustment(
+                userId, new BigDecimal("1.00"), new BigDecimal("1.00"),
+                new BigDecimal("10.00"), new BigDecimal("11.00"), null, operatorId);
+        verify(operationLogService).logCurrentRequest(
+                "user.adjust_balance", "USER", userId.toString(),
+                "管理员增加余额：1.00，余额：10.00 -> 11.00");
+    }
+
+    @Test
+    void reasonOverFiveHundredCharactersAndBalanceCapAreRejected() {
+        UUID userId = UUID.randomUUID();
+        User user = user(userId, "buyer", "buyer@example.com", 10000L, "10.00");
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
+        AdminAdjustBalanceRequest longReason = new AdminAdjustBalanceRequest();
+        longReason.setType(BalanceAdjustmentType.INCREASE);
+        longReason.setAmount(new BigDecimal("1.00"));
+        longReason.setReason("x".repeat(501));
+        assertEquals(ErrorCode.BAD_REQUEST, assertThrows(BusinessException.class,
+                () -> service.adjustBalance(userId, longReason)).getCode());
+
+        user.setBalance(new BigDecimal("9999999999.99"));
+        AdminAdjustBalanceRequest overCap = new AdminAdjustBalanceRequest();
+        overCap.setType(BalanceAdjustmentType.INCREASE);
+        overCap.setAmount(new BigDecimal("0.01"));
+        assertEquals(ErrorCode.BAD_REQUEST, assertThrows(BusinessException.class,
+                () -> service.adjustBalance(userId, overCap)).getCode());
+        verify(balanceTransactionService, never()).recordAdminAdjustment(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void administratorTargetIsRejectedByEveryMutationBoundary() {
         UUID adminId = UUID.randomUUID();
         User admin = user(adminId, "admin", "admin@example.com", null, "0.00");
@@ -312,8 +383,10 @@ class AdminUserServiceImplTest {
         UUID userId = UUID.randomUUID();
         UUID operatorId = UUID.randomUUID();
         User user = user(userId, "buyer", "buyer@example.com", 10000L, "0.00");
+        user.setFailedLoginAttempts(4);
+        user.setLockUntil(java.time.LocalDateTime.now().plusMinutes(10));
         when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
-        when(passwordEncoder.encode("a-new-password")).thenReturn("bcrypt-hash");
+        when(passwordEncoder.encode(anyString())).thenReturn("bcrypt-hash");
         RequestContext.set(new RequestContext.UserInfo(operatorId, "admin", "ADMIN"));
 
         AdminToggleUserStatusRequest toggle = new AdminToggleUserStatusRequest();
@@ -321,14 +394,39 @@ class AdminUserServiceImplTest {
         service.toggleUser(userId, toggle);
         assertEquals(1, user.getIsDeleted());
 
-        AdminResetPasswordRequest reset = new AdminResetPasswordRequest();
-        reset.setNewPassword("a-new-password");
-        service.resetPassword(userId, reset);
+        AdminResetPasswordResponse reset = service.resetPassword(userId);
+        assertTrue(reset.temporaryPassword().matches("^AIYUN\\d{8}$"));
         assertEquals("bcrypt-hash", user.getPasswordHash());
+        assertEquals(0, user.getFailedLoginAttempts());
+        assertEquals(null, user.getLockUntil());
+        assertEquals(2, user.getAuthVersion());
+        verify(passwordEncoder).encode(org.mockito.ArgumentMatchers.argThat(
+                password -> password != null && password.toString().matches("^AIYUN\\d{8}$")));
         verify(operationLogService).logCurrentRequest(
                 "user.disable", "USER", userId.toString(), "管理员修改用户状态：正常 -> 已禁用");
         verify(operationLogService).logCurrentRequest(
                 "user.reset_password", "USER", userId.toString(), "管理员重置用户密码（密码内容不记录）");
+    }
+
+    @Test
+    void bothUserStatusTransitionsBumpAuthVersion() {
+        UUID userId = UUID.randomUUID();
+        UUID operatorId = UUID.randomUUID();
+        User user = user(userId, "buyer", "buyer@example.com", 10000L, "0.00");
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
+        RequestContext.set(new RequestContext.UserInfo(operatorId, "admin", "ADMIN"));
+
+        AdminToggleUserStatusRequest disable = new AdminToggleUserStatusRequest();
+        disable.setIsDeleted(1);
+        service.toggleUser(userId, disable);
+        assertEquals(1, user.getAuthVersion());
+
+        AdminToggleUserStatusRequest restore = new AdminToggleUserStatusRequest();
+        restore.setIsDeleted(0);
+        service.toggleUser(userId, restore);
+        assertEquals(2, user.getAuthVersion());
+        verify(operationLogService).logCurrentRequest(
+                "user.enable", "USER", userId.toString(), "管理员修改用户状态：已禁用 -> 正常");
     }
 
     private void stubLedgerService() {

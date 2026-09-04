@@ -13,6 +13,7 @@ ACME_EMAIL=ops@example.test
 DB_PASSWORD=compose-validation-password
 JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
 UPLOAD_HOST_PATH=./uploads
+IP_GEO_HOST_PATH=./ipdb
 EOF
 
 cat >"$production_env" <<'EOF'
@@ -21,6 +22,7 @@ ACME_EMAIL=ops@example.test
 DB_PASSWORD=compose-validation-password
 JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
 UPLOAD_HOST_PATH=/data/myshop/uploads
+IP_GEO_HOST_PATH=/data/myshop/ipdb
 EOF
 
 cat >"$missing_env" <<'EOF'
@@ -43,8 +45,8 @@ for expected in \
   fi
 done
 
-if ! grep -Fq 'create_host_path: false' "$repo_dir/docker-compose.yml"; then
-  echo "compose validation missing create_host_path: false for the upload bind" >&2
+if [[ "$(grep -Fc 'create_host_path: false' "$repo_dir/docker-compose.yml")" -lt 2 ]]; then
+  echo "compose validation missing create_host_path: false for the upload/IP database binds" >&2
   exit 1
 fi
 
@@ -55,6 +57,18 @@ fi
 
 if ! grep -Fq 'source: /data/myshop/uploads' <<<"$production_config"; then
   echo "compose validation did not resolve the production upload path to /data/myshop/uploads" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'target: /app/ipdb' <<<"$rendered_config" \
+  || ! grep -Fq 'read_only: true' <<<"$rendered_config" \
+  || ! grep -Fq 'create_host_path: false' <<<"$rendered_config"; then
+  echo "compose validation missing the read-only /app/ipdb bind" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'source: /data/myshop/ipdb' <<<"$production_config"; then
+  echo "compose validation did not resolve the production IP database path to /data/myshop/ipdb" >&2
   exit 1
 fi
 

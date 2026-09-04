@@ -91,6 +91,10 @@ mail:
 rate-limit:
   trusted-proxies: ${RATE_LIMIT_TRUSTED_PROXIES:127.0.0.1,::1,0:0:0:0:0:0:0:1,172.30.0.2}
 
+ip-geo:
+  ipv4-db-path: ${IP_GEO_IPV4_DB_PATH:/app/ipdb/ip2region_v4.xdb}
+  ipv6-db-path: ${IP_GEO_IPV6_DB_PATH:/app/ipdb/ip2region_v6.xdb}
+
 fulfillment:
   retry-interval-ms: ${FULFILLMENT_RETRY_INTERVAL_MS:60000}
   retry-initial-delay-ms: ${FULFILLMENT_RETRY_INITIAL_DELAY_MS:60000}

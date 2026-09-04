@@ -55,8 +55,9 @@ public class BalanceTransactionServiceImpl implements BalanceTransactionService 
         if (expectedAfter.compareTo(balanceAfter.setScale(2, RoundingMode.UNNECESSARY)) != 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水前后余额不一致");
         }
-        if (reason == null || reason.isBlank() || reason.length() > 500) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水原因不能为空且不能超过 500 个字符");
+        String normalizedReason = reason == null ? null : reason.trim();
+        if (normalizedReason != null && normalizedReason.length() > 500) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水原因不能超过 500 个字符");
         }
 
         BalanceTransaction transaction = new BalanceTransaction();
@@ -66,7 +67,8 @@ public class BalanceTransactionServiceImpl implements BalanceTransactionService 
         transaction.setDelta(delta.setScale(2, RoundingMode.UNNECESSARY));
         transaction.setBalanceBefore(balanceBefore.setScale(2, RoundingMode.UNNECESSARY));
         transaction.setBalanceAfter(balanceAfter.setScale(2, RoundingMode.UNNECESSARY));
-        transaction.setReason(reason.trim());
+        transaction.setReason(normalizedReason == null || normalizedReason.isBlank()
+                ? null : normalizedReason);
         transaction.setOperatorId(operatorId);
         transaction.setOrderId(null);
         return balanceTransactionRepository.save(transaction);

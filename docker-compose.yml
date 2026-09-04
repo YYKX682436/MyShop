@@ -48,12 +48,20 @@ services:
       TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:-172.30.0.2,127.0.0.1,::1}
+      IP_GEO_IPV4_DB_PATH: ${IP_GEO_IPV4_DB_PATH:-/app/ipdb/ip2region_v4.xdb}
+      IP_GEO_IPV6_DB_PATH: ${IP_GEO_IPV6_DB_PATH:-/app/ipdb/ip2region_v6.xdb}
       NODE_EXPORTER_URL: ${NODE_EXPORTER_URL:-http://node-exporter:9100}
       DATA_DISK_MOUNTPOINT: ${DATA_DISK_MOUNTPOINT:-/data}
     volumes:
       - type: bind
         source: ${UPLOAD_HOST_PATH:-./uploads}
         target: /app/uploads
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${IP_GEO_HOST_PATH:-./ipdb}
+        target: /app/ipdb
+        read_only: true
         bind:
           create_host_path: false
     depends_on:

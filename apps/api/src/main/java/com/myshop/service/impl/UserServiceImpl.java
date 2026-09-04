@@ -58,6 +58,10 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(ErrorCode.OLD_PASSWORD_WRONG, "原密码错误");
         }
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        if (user.getAuthVersion() == Integer.MAX_VALUE) {
+            throw new IllegalStateException("User auth version overflow");
+        }
+        user.setAuthVersion(user.getAuthVersion() + 1);
         userRepository.save(user);
     }
 

@@ -36,6 +36,25 @@ class ClientIpResolverTest {
         assertEquals("203.0.113.40", resolver.resolve(request));
     }
 
+    @Test
+    void trustedProxyAcceptsLiteralIpv4AndIpv6Only() {
+        MockHttpServletRequest ipv4 = new MockHttpServletRequest();
+        ipv4.setRemoteAddr("172.30.0.2");
+        ipv4.addHeader("X-Real-IP", "203.0.113.41");
+        assertEquals("203.0.113.41", resolver.resolve(ipv4));
+
+        MockHttpServletRequest ipv6 = new MockHttpServletRequest();
+        ipv6.setRemoteAddr("172.30.0.2");
+        ipv6.addHeader("X-Real-IP", "2001:4860:4860::8888");
+        assertEquals("2001:4860:4860::8888", resolver.resolve(ipv6));
+
+        MockHttpServletRequest malformed = new MockHttpServletRequest();
+        malformed.setRemoteAddr("172.30.0.2");
+        malformed.addHeader("X-Real-IP", "203.0.113.999");
+        malformed.addHeader("X-Forwarded-For", "2001:db8:::1");
+        assertEquals("172.30.0.2", resolver.resolve(malformed));
+    }
+
     private String resolve(String publicIp, String remoteAddress) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRemoteAddr(remoteAddress);

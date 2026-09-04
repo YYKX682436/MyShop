@@ -22,13 +22,18 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.UUID;
 import java.util.Optional;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
@@ -76,25 +81,28 @@ class AuthServiceImplTest {
             if (user.getId() == null) user.setId(UUID.randomUUID());
             return user;
         });
-        lenient().when(jwtUtils.generateToken(any(), anyString(), anyString())).thenReturn("token");
+        lenient().when(jwtUtils.generateToken(any(), anyString(), anyString(), anyInt())).thenReturn("token");
     }
 
     @Test
     void firstRegistrationGetsDefaultUserNumberAndCanonicalEmail() {
-        AuthResult result = service.register(request("  Buyer@Example.COM "));
+        AuthResult result = service.register(request("  Buyer@Example.COM "), "203.0.113.10");
 
         assertEquals(10000L, result.user().getUserNo());
         assertEquals("buyer@example.com", result.user().getEmail());
         assertEquals(10001L, sequence.getNextUserNo());
+        verify(jwtUtils).generateToken(any(), eq(result.user().getUsername()), eq("USER"), eq(0));
         verify(userRepository).saveAndFlush(argThat(user ->
                 "13800138000".equals(user.getPhone())
-                        && defaultLevel.getId().equals(user.getUserLevelId())));
+                        && defaultLevel.getId().equals(user.getUserLevelId())
+                        && "203.0.113.10".equals(user.getLastLoginIp())
+                        && user.getLastLoginAt() != null));
     }
 
     @Test
     void subsequentRegistrationsConsumeTheLockedCounterSequentially() {
-        AuthResult first = service.register(request("first@example.com"));
-        AuthResult second = service.register(request("second@example.com"));
+        AuthResult first = service.register(request("first@example.com"), "203.0.113.10");
+        AuthResult second = service.register(request("second@example.com"), "2001:db8::10");
 
         assertEquals(10000L, first.user().getUserNo());
         assertEquals(10001L, second.user().getUserNo());
@@ -107,7 +115,7 @@ class AuthServiceImplTest {
         request.setUsername("  Tom123  ");
         request.setPhone(" 13900139000 ");
 
-        AuthResult result = service.register(request);
+        AuthResult result = service.register(request, "203.0.113.10");
 
         assertEquals("Tom123", result.user().getUsername());
     }
@@ -117,7 +125,7 @@ class AuthServiceImplTest {
         RegisterRequest request = request("simple-username@example.com");
         request.setUsername("buyer_test-1");
 
-        AuthResult result = service.register(request);
+        AuthResult result = service.register(request, "203.0.113.10");
 
         assertEquals("buyer_test-1", result.user().getUsername());
     }
@@ -129,7 +137,8 @@ class AuthServiceImplTest {
         request.setPhone("13900139000");
         when(userRepository.existsByPhone("13800138000")).thenReturn(true);
 
-        BusinessException exception = assertThrows(BusinessException.class, () -> service.register(request));
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.register(request, "203.0.113.10"));
 
         assertEquals("用户名不能与现有手机号相同", exception.getMessage());
     }
@@ -140,7 +149,8 @@ class AuthServiceImplTest {
         request.setPhone("13900139000");
         when(userRepository.existsByUsernameIgnoreCase("13900139000")).thenReturn(true);
 
-        BusinessException exception = assertThrows(BusinessException.class, () -> service.register(request));
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.register(request, "203.0.113.10"));
 
         assertEquals("该手机号已注册", exception.getMessage());
     }
@@ -151,7 +161,8 @@ class AuthServiceImplTest {
         request.setUsername("13800138000");
         request.setPhone("13800138000");
 
-        BusinessException exception = assertThrows(BusinessException.class, () -> service.register(request));
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.register(request, "203.0.113.10"));
 
         assertEquals("用户名和手机号不能相同", exception.getMessage());
     }
@@ -162,20 +173,20 @@ class AuthServiceImplTest {
         usernameRequest.setUsername("Tom123");
         when(userRepository.existsByUsernameIgnoreCase("Tom123")).thenReturn(true);
         BusinessException usernameException = assertThrows(BusinessException.class,
-                () -> service.register(usernameRequest));
+                () -> service.register(usernameRequest, "203.0.113.10"));
         assertEquals("用户名已存在", usernameException.getMessage());
 
         RegisterRequest emailRequest = request("Duplicate@Example.COM");
         when(userRepository.existsByEmailIgnoreCase("duplicate@example.com")).thenReturn(true);
         BusinessException emailException = assertThrows(BusinessException.class,
-                () -> service.register(emailRequest));
+                () -> service.register(emailRequest, "203.0.113.10"));
         assertEquals("该邮箱已注册", emailException.getMessage());
 
         RegisterRequest phoneRequest = request("unique-phone@example.com");
         phoneRequest.setPhone("13900139000");
         when(userRepository.existsByPhone("13900139000")).thenReturn(true);
         BusinessException phoneException = assertThrows(BusinessException.class,
-                () -> service.register(phoneRequest));
+                () -> service.register(phoneRequest, "203.0.113.10"));
         assertEquals("该手机号已注册", phoneException.getMessage());
     }
 
@@ -185,7 +196,7 @@ class AuthServiceImplTest {
         when(userRepository.findByUsernameIgnoreCase("ToM123")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login("ToM123", "abcdef"));
+        service.login(login("ToM123", "abcdef"), "2001:db8::20");
 
         verify(userRepository).findByUsernameIgnoreCase("ToM123");
         verify(userRepository, never()).findByPhone(anyString());
@@ -198,9 +209,11 @@ class AuthServiceImplTest {
         when(userRepository.findByEmailIgnoreCase("buyer@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login("  Buyer@Example.COM ", "abcdef"));
+        service.login(login("  Buyer@Example.COM ", "abcdef"), "203.0.113.11");
 
         verify(userRepository).findByEmailIgnoreCase("buyer@example.com");
+        assertEquals("203.0.113.11", user.getLastLoginIp());
+        assertNotNull(user.getLastLoginAt());
         verify(userRepository, never()).findByUsernameIgnoreCase(anyString());
         verify(userRepository, never()).findByPhone(anyString());
     }
@@ -212,7 +225,7 @@ class AuthServiceImplTest {
         when(userRepository.findByUsernameIgnoreCase("13800138000")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login("13800138000", "abcdef"));
+        service.login(login("13800138000", "abcdef"), "203.0.113.12");
 
         InOrder lookupOrder = inOrder(userRepository);
         lookupOrder.verify(userRepository).findByPhone("13800138000");
@@ -226,7 +239,7 @@ class AuthServiceImplTest {
         when(userRepository.findByPhone("13800138000")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
-        service.login(login(" 13800138000 ", "abcdef"));
+        service.login(login(" 13800138000 ", "abcdef"), "203.0.113.13");
 
         verify(userRepository).findByPhone("13800138000");
         verify(userRepository, never()).findByUsernameIgnoreCase(anyString());
@@ -236,20 +249,47 @@ class AuthServiceImplTest {
     @Test
     void loginUsesOneCredentialMessageForUnknownAccountsAndWrongPasswords() {
         BusinessException blankAccount = assertThrows(BusinessException.class,
-                () -> service.login(login("  ", "abcdef")));
+                () -> service.login(login("  ", "abcdef"), "203.0.113.14"));
         assertEquals("账号或密码错误", blankAccount.getMessage());
 
         BusinessException unknownAccount = assertThrows(BusinessException.class,
-                () -> service.login(login("missing-user", "abcdef")));
+                () -> service.login(login("missing-user", "abcdef"), "203.0.113.14"));
         assertEquals("账号或密码错误", unknownAccount.getMessage());
 
         User user = user("buyer", "buyer@example.com", "13800138003");
+        LocalDateTime previousLogin = LocalDateTime.of(2026, 1, 1, 12, 0);
+        user.setLastLoginIp("198.51.100.8");
+        user.setLastLoginAt(previousLogin);
         when(userRepository.findByUsernameIgnoreCase("buyer")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong-password", user.getPasswordHash())).thenReturn(false);
 
         BusinessException wrongPassword = assertThrows(BusinessException.class,
-                () -> service.login(login("buyer", "wrong-password")));
+                () -> service.login(login("buyer", "wrong-password"), "203.0.113.14"));
         assertEquals("账号或密码错误", wrongPassword.getMessage());
+        assertEquals("198.51.100.8", user.getLastLoginIp());
+        assertEquals(previousLogin, user.getLastLoginAt());
+    }
+
+    @Test
+    void disabledAndLockedAccountsDoNotRecordASuccessfulLogin() {
+        User user = user("buyer", "buyer@example.com", "13800138004");
+        LocalDateTime previousLogin = LocalDateTime.of(2026, 1, 1, 12, 0);
+        user.setLastLoginIp("198.51.100.8");
+        user.setLastLoginAt(previousLogin);
+        when(userRepository.findByUsernameIgnoreCase("buyer")).thenReturn(Optional.of(user));
+
+        user.setIsDeleted(1);
+        assertEquals("该账号已被禁用", assertThrows(BusinessException.class,
+                () -> service.login(login("buyer", "secret1"), "203.0.113.15")).getMessage());
+
+        user.setIsDeleted(0);
+        user.setLockUntil(LocalDateTime.now().plusMinutes(5));
+        BusinessException locked = assertThrows(BusinessException.class,
+                () -> service.login(login("buyer", "secret1"), "203.0.113.16"));
+        assertTrue(locked.getMessage().startsWith("账号已被锁定"));
+
+        assertEquals("198.51.100.8", user.getLastLoginIp());
+        assertEquals(previousLogin, user.getLastLoginAt());
     }
 
     private RegisterRequest request(String email) {

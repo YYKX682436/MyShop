@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("13", flyway.info().current().getVersion().getVersion());
-        assertEquals(13, flyway.info().all().length);
+        assertEquals("14", flyway.info().current().getVersion().getVersion());
+        assertEquals(14, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -110,6 +110,13 @@ class MigrationChainIntegrationTest {
         assertEquals("YES", nullableValue("users", "email"));
         assertTrue(indexExists("uq_users_single_super_admin"));
         assertTrue(columnExists("users", "user_level_id"));
+        assertTrue(columnExists("users", "auth_version"));
+        assertEquals("NO", nullableValue("users", "auth_version"));
+        assertEquals("0", defaultValue("users", "auth_version"));
+        assertTrue(columnExists("users", "last_login_ip"));
+        assertEquals("YES", nullableValue("users", "last_login_ip"));
+        assertTrue(columnExists("users", "last_login_at"));
+        assertEquals("YES", nullableValue("users", "last_login_at"));
         assertTrue(checkConstraintExists("users_user_level_role_check"));
         assertEquals(1, jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM user_levels WHERE is_default = true", Integer.class));
@@ -137,6 +144,7 @@ class MigrationChainIntegrationTest {
                     "missing balance transaction column: " + column);
         }
         assertTrue(indexExists("idx_balance_transactions_user_created"));
+        assertEquals("YES", nullableValue("balance_transactions", "reason"));
 
         UUID defaultLevelId = defaultUserLevelId();
         UUID defaultBalanceUserId = UUID.randomUUID();
@@ -308,7 +316,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("13", flyway().info().current().getVersion().getVersion());
+        assertEquals("14", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -378,7 +386,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("13", flyway().info().current().getVersion().getVersion());
+        assertEquals("14", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -427,7 +435,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("13", flyway().info().current().getVersion().getVersion());
+        assertEquals("14", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         assertEquals("bigint", dataType("orders", "order_no"));
@@ -602,7 +610,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("13", flyway().info().current().getVersion().getVersion());
+        assertEquals("14", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -648,7 +656,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("13", flyway().info().current().getVersion().getVersion());
+        assertEquals("14", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

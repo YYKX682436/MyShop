@@ -13,14 +13,15 @@ import com.myshop.entity.User;
 import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
-import com.myshop.model.request.AdminResetPasswordRequest;
 import com.myshop.model.request.AdminToggleUserStatusRequest;
 import com.myshop.model.request.AdminUpdateUserProfileRequest;
 import com.myshop.model.response.AdminOperationLogResponse;
+import com.myshop.model.response.AdminResetPasswordResponse;
 import com.myshop.model.response.AdminUserDetailResponse;
 import com.myshop.model.response.AdminUserListResponse;
 import com.myshop.model.response.AdminUserOrderResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
+import com.myshop.model.response.IpLocationResponse;
 import com.myshop.repository.OperationLogRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
@@ -29,8 +30,8 @@ import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.AdminUserService;
 import com.myshop.service.BalanceTransactionService;
+import com.myshop.service.IpLocationService;
 import com.myshop.service.OperationLogService;
-import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -40,6 +41,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.security.SecureRandom;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
@@ -48,7 +50,6 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.regex.Pattern;
 
 @Service
 public class AdminUserServiceImpl implements AdminUserService {
@@ -56,7 +57,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     private static final int MAX_PAGE_SIZE = 100;
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2);
     private static final BigDecimal MAX_BALANCE = new BigDecimal("9999999999.99");
-    private static final Pattern PASSWORD_PATTERN = Pattern.compile("^[!-~]{6,72}$");
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
@@ -66,6 +67,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     private final OperationLogRepository operationLogRepository;
     private final PasswordEncoder passwordEncoder;
     private final UserLevelRepository userLevelRepository;
+    private final IpLocationService ipLocationService;
 
     @Autowired
     public AdminUserServiceImpl(UserRepository userRepository, OrderRepository orderRepository,
@@ -74,7 +76,8 @@ public class AdminUserServiceImpl implements AdminUserService {
                                 OperationLogService operationLogService,
                                 OperationLogRepository operationLogRepository,
                                 PasswordEncoder passwordEncoder,
-                                UserLevelRepository userLevelRepository) {
+                                UserLevelRepository userLevelRepository,
+                                IpLocationService ipLocationService) {
         this.userRepository = userRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
@@ -83,17 +86,7 @@ public class AdminUserServiceImpl implements AdminUserService {
         this.operationLogRepository = operationLogRepository;
         this.passwordEncoder = passwordEncoder;
         this.userLevelRepository = userLevelRepository;
-    }
-
-    /** Test-friendly constructor retained for the pre-level admin service tests. */
-    public AdminUserServiceImpl(UserRepository userRepository, OrderRepository orderRepository,
-                                OrderItemRepository orderItemRepository,
-                                BalanceTransactionService balanceTransactionService,
-                                OperationLogService operationLogService,
-                                OperationLogRepository operationLogRepository,
-                                PasswordEncoder passwordEncoder) {
-        this(userRepository, orderRepository, orderItemRepository, balanceTransactionService,
-                operationLogService, operationLogRepository, passwordEncoder, null);
+        this.ipLocationService = ipLocationService;
     }
 
     @Override
@@ -132,7 +125,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Transactional(readOnly = true)
     public AdminUserDetailResponse getUserDetail(UUID id) {
         User user = requireRegularUser(id, false);
-        UserLevel level = userLevelRepository == null || user.getUserLevelId() == null
+        UserLevel level = user.getUserLevelId() == null
                 ? null : userLevelRepository.findById(user.getUserLevelId()).orElse(null);
         return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()), level);
     }
@@ -196,7 +189,7 @@ public class AdminUserServiceImpl implements AdminUserService {
         userRepository.save(user);
         logUserOperation("user.update_profile", id,
                 "管理员修改用户邮箱：" + oldEmail + " -> " + email);
-        UserLevel level = userLevelRepository == null || user.getUserLevelId() == null
+        UserLevel level = user.getUserLevelId() == null
                 ? null : userLevelRepository.findById(user.getUserLevelId()).orElse(null);
         return toDetailResponse(user, loadOrderMetrics(List.of(user)).get(user.getId()), level);
     }
@@ -212,9 +205,9 @@ public class AdminUserServiceImpl implements AdminUserService {
         if (amount.signum() <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "调整金额必须大于 0");
         }
-        String reason = request.getReason() == null ? "" : request.getReason().trim();
-        if (reason.isBlank() || reason.length() > 500) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "调整原因不能为空且不能超过 500 个字符");
+        String reason = normalizeReason(request.getReason());
+        if (reason != null && reason.length() > 500) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "调整原因不能超过 500 个字符");
         }
 
         BigDecimal before = normalizeMoney(user.getBalance());
@@ -228,21 +221,19 @@ public class AdminUserServiceImpl implements AdminUserService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "调整后余额超出系统支持范围");
         }
 
-        user.setBalance(after);
-        userRepository.save(user);
-
         UUID operatorId = RequestContext.getUserId();
         if (operatorId == null) {
             throw new IllegalStateException("An authenticated administrator is required for a balance adjustment");
         }
+        user.setBalance(after);
+        userRepository.save(user);
+
         BalanceTransaction saved = balanceTransactionService.recordAdminAdjustment(
                 id, amount, delta, before, after, reason, operatorId);
 
         String operation = request.getType() == BalanceAdjustmentType.INCREASE ? "增加" : "扣减";
         logUserOperation("user.adjust_balance", id,
-                "管理员" + operation + "余额：" + formatMoney(amount)
-                        + "，余额：" + formatMoney(before) + " -> " + formatMoney(after)
-                        + "，原因：" + reason);
+                adjustmentLogDetail(operation, amount, before, after, reason));
         return toBalanceResponse(saved);
     }
 
@@ -256,6 +247,9 @@ public class AdminUserServiceImpl implements AdminUserService {
         }
         int previous = user.getIsDeleted();
         user.setIsDeleted(isDeleted);
+        if (previous != isDeleted) {
+            bumpAuthVersion(user);
+        }
         userRepository.save(user);
         String action = isDeleted == 1 ? "user.disable" : "user.enable";
         String state = isDeleted == 1 ? "已禁用" : "正常";
@@ -265,17 +259,16 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Override
     @Transactional
-    public void resetPassword(UUID id, AdminResetPasswordRequest request) {
+    public AdminResetPasswordResponse resetPassword(UUID id) {
         User user = requireRegularUser(id, true);
-        String newPassword = request == null ? null : request.getNewPassword();
-        if (newPassword == null || !PASSWORD_PATTERN.matcher(newPassword).matches()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "新密码必须为 6-72 位 ASCII 可见字符");
-        }
-        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        String temporaryPassword = generateTemporaryPassword();
+        user.setPasswordHash(passwordEncoder.encode(temporaryPassword));
         user.setFailedLoginAttempts(0);
         user.setLockUntil(null);
+        bumpAuthVersion(user);
         userRepository.save(user);
         logUserOperation("user.reset_password", id, "管理员重置用户密码（密码内容不记录）");
+        return new AdminResetPasswordResponse(temporaryPassword);
     }
 
     private User requireRegularUser(UUID id, boolean locked) {
@@ -337,11 +330,12 @@ public class AdminUserServiceImpl implements AdminUserService {
                 normalizeMoney(user.getBalance()),
                 orderCount(metrics),
                 totalSpent(metrics),
-                user.getIsDeleted(), user.getCreatedAt());
+                user.getIsDeleted(), user.getCreatedAt(), user.getLastLoginIp(), user.getLastLoginAt(),
+                ipLocation(user.getLastLoginIp()));
     }
 
     private Map<UUID, UserLevel> loadLevels(Collection<User> users) {
-        if (userLevelRepository == null || users.isEmpty()) return Collections.emptyMap();
+        if (users.isEmpty()) return Collections.emptyMap();
         List<UUID> ids = users.stream().map(User::getUserLevelId)
                 .filter(java.util.Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) return Collections.emptyMap();
@@ -411,6 +405,43 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     private String formatMoney(BigDecimal value) {
         return value.setScale(2, RoundingMode.UNNECESSARY).toPlainString();
+    }
+
+    private String normalizeReason(String value) {
+        if (value == null) return null;
+        String normalized = value.trim();
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private String adjustmentLogDetail(String operation, BigDecimal amount,
+                                       BigDecimal before, BigDecimal after, String reason) {
+        String detail = "管理员" + operation + "余额：" + formatMoney(amount)
+                + "，余额：" + formatMoney(before) + " -> " + formatMoney(after);
+        return reason == null ? detail : detail + "，原因：" + reason;
+    }
+
+    private String generateTemporaryPassword() {
+        return "AIYUN" + String.format(Locale.ROOT, "%08d",
+                SECURE_RANDOM.nextInt(100_000_000));
+    }
+
+    private void bumpAuthVersion(User user) {
+        if (user.getAuthVersion() == Integer.MAX_VALUE) {
+            throw new IllegalStateException("User auth version overflow");
+        }
+        user.setAuthVersion(user.getAuthVersion() + 1);
+    }
+
+    private IpLocationResponse ipLocation(String ipAddress) {
+        if (ipAddress == null || ipAddress.isBlank()) {
+            return IpLocationResponse.unknown();
+        }
+        try {
+            IpLocationResponse response = ipLocationService.resolve(ipAddress);
+            return response == null ? IpLocationResponse.unknown() : response;
+        } catch (RuntimeException exception) {
+            return IpLocationResponse.unknown();
+        }
     }
 
     private String normalizeEmail(String value) {

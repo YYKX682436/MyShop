@@ -9,9 +9,9 @@ public interface AuthService {
 
     CaptchaResponse generateCaptcha();
 
-    AuthResult register(RegisterRequest request);
+    AuthResult register(RegisterRequest request, String clientIp);
 
-    AuthResult login(LoginRequest request);
+    AuthResult login(LoginRequest request, String clientIp);
 
     void logout();
 }

@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -74,5 +75,23 @@ class BalanceTransactionServiceImplTest {
 
         assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
         verify(repository, never()).save(any(BalanceTransaction.class));
+    }
+
+    @Test
+    void storesNullForMissingOrBlankReason() {
+        when(repository.save(any(BalanceTransaction.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        UUID userId = UUID.randomUUID();
+        UUID operatorId = UUID.randomUUID();
+
+        BalanceTransaction missing = service.recordAdminAdjustment(
+                userId, new BigDecimal("1.00"), new BigDecimal("1.00"),
+                new BigDecimal("0.00"), new BigDecimal("1.00"), null, operatorId);
+        BalanceTransaction blank = service.recordAdminAdjustment(
+                userId, new BigDecimal("1.00"), new BigDecimal("1.00"),
+                new BigDecimal("1.00"), new BigDecimal("2.00"), "  ", operatorId);
+
+        assertNull(missing.getReason());
+        assertNull(blank.getReason());
     }
 }

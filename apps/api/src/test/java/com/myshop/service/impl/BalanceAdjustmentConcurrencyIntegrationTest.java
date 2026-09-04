@@ -37,6 +37,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -85,7 +86,7 @@ class BalanceAdjustmentConcurrencyIntegrationTest {
         jdbcTemplate.update("DELETE FROM operation_logs");
         jdbcTemplate.update("DELETE FROM users");
         when(captchaUtils.verify(anyString(), anyString())).thenReturn(true);
-        when(jwtUtils.generateToken(any(), anyString(), anyString())).thenReturn("integration-token");
+        when(jwtUtils.generateToken(any(), anyString(), anyString(), anyInt())).thenReturn("integration-token");
     }
 
     @AfterEach

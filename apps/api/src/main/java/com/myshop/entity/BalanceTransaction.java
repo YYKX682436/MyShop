@@ -44,7 +44,7 @@ public class BalanceTransaction extends BaseEntity {
     @Column(name = "balance_after", nullable = false, precision = 12, scale = 2)
     private BigDecimal balanceAfter;
 
-    @Column(nullable = false, length = 500)
+    @Column(length = 500)
     private String reason;
 
     @Column(name = "operator_id", nullable = false)

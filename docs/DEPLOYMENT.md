@@ -14,7 +14,9 @@ Internet -> Caddy (80/443) -> Web (private) -> API (private) -> PostgreSQL (priv
 
 Only Caddy publishes host ports. PostgreSQL uses a named persistent volume;
 uploads use the explicit `UPLOAD_HOST_PATH` bind on the host (production uses
-`/data/myshop/uploads`, never a release-local directory or symlink); Caddy uses persistent certificate/config volumes. The
+`/data/myshop/uploads`, never a release-local directory or symlink); IP
+geography XDB files use the separate `/data/myshop/ipdb` bind mounted
+read-only at `/app/ipdb`; Caddy uses persistent certificate/config volumes. The
 application services have restart policies and health checks; node-exporter is
 intentionally optional to API startup so a missing exporter only degrades the
 Dashboard metrics.
@@ -36,10 +38,10 @@ Prometheus or Grafana for this dashboard.
 
 1. Provision a supported Linux host with Docker Engine and Compose v2.
 2. Copy the repository and `.env.example` to a protected deployment directory.
-3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, and `UPLOAD_HOST_PATH`.
+3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
 4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
-6. Create the configured upload directory with owner `10001:10001` and mode `0750`, then run `docker compose up -d --build` and inspect `docker compose ps` and API logs. The API performs a write/delete probe during startup and refuses to become healthy when the path is not usable.
+6. Create the configured upload directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because its bind uses `create_host_path: false`. Provision the two official non-empty XDB files there when available, then run `docker compose up -d --build` and inspect `docker compose ps` and API logs. Missing XDB files only degrade the detail estimate to `未知`; they do not prevent API startup.
 7. After API and Web health checks pass, run `bash /opt/myshop/scripts/cleanup-docker-retention.sh` to retain only the active release and two rollback releases and to remove unused Docker build cache. The script never touches Docker volumes, uploads, or database backups.
 
 Before startup, `bash scripts/check-compose.sh` verifies that Compose receives
@@ -76,12 +78,14 @@ system and release files on the root filesystem, and mount the data disk at
 /data/docker             Docker metadata, containers, and named volumes
 /data/containerd         Docker image layers and BuildKit/containerd snapshots
 /data/myshop/uploads     Product and site uploads
+/data/myshop/ipdb        Official ip2region IPv4/IPv6 XDB files
 /data/myshop/backups     PostgreSQL backups
 /opt/myshop              Releases, Compose files, and runtime configuration
 ```
 
 Configure Docker's `data-root` to `/data/docker` and set the production `.env`
-value `UPLOAD_HOST_PATH=/data/myshop/uploads`. Do not create or depend on an
+values `UPLOAD_HOST_PATH=/data/myshop/uploads` and
+`IP_GEO_HOST_PATH=/data/myshop/ipdb`. Do not create or depend on an
 `/opt/myshop/uploads` symlink. Set `DATA_DISK_MOUNTPOINT=/data` so the
 Dashboard reports the real data filesystem. Do not format an existing disk as
 part of a migration; verify its device, stable UUID, filesystem, mountpoint,
@@ -114,6 +118,24 @@ docker compose config
 
 Never remove Docker volumes as part of a data-disk or schema migration. Verify
 that PostgreSQL and Caddy data remain available before continuing.
+
+## IP geography database updates
+
+The API uses the replaceable `IpLocationService` boundary and official
+ip2region Java binding. The API never downloads XDB data during startup. Run
+the repository's operator script from the deployment checkout to fetch the
+latest formal official release, verify non-empty IPv4 and IPv6 files with the
+binding, atomically replace both files, write `/data/myshop/ipdb/manifest`, and
+restart only the API so the new data is loaded:
+
+```bash
+bash ops/update-ip2region.sh
+```
+
+The script never touches PostgreSQL/Caddy volumes, uploads, backups, or the
+application source. If download or query validation fails, the existing XDB
+files remain in place. Set `RESTART_API=false` when a later controlled restart
+is preferred.
 
 ## Dashboard server metrics
 

@@ -6,6 +6,7 @@ import com.myshop.model.request.RegisterRequest;
 import com.myshop.model.response.AuthResponse;
 import com.myshop.model.response.AuthResult;
 import com.myshop.model.response.CaptchaResponse;
+import com.myshop.config.ClientIpResolver;
 import com.myshop.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +14,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import com.myshop.utils.LookupTokens;
 import java.time.Duration;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final ClientIpResolver clientIpResolver;
 
     @Value("${security.cookie-secure:false}")
     private boolean cookieSecure;
@@ -33,16 +36,19 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ApiResponse<AuthResponse> register(@Valid @RequestBody RegisterRequest request, HttpServletResponse response) {
-        AuthResult result = authService.register(request);
+    public ApiResponse<AuthResponse> register(@Valid @RequestBody RegisterRequest request,
+                                              HttpServletRequest servletRequest,
+                                              HttpServletResponse response) {
+        AuthResult result = authService.register(request, clientIpResolver.resolve(servletRequest));
         writeAuthCookies(response, result.token());
         return ApiResponse.success(new AuthResponse(result.user()));
     }
 
     @PostMapping("/login")
     public ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request,
+                                           HttpServletRequest servletRequest,
                                            HttpServletResponse response) {
-        AuthResult result = authService.login(request);
+        AuthResult result = authService.login(request, clientIpResolver.resolve(servletRequest));
         writeAuthCookies(response, result.token());
         return ApiResponse.success(new AuthResponse(result.user()));
     }

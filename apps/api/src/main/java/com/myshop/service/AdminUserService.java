@@ -2,13 +2,13 @@ package com.myshop.service;
 
 import com.myshop.common.PageResult;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
-import com.myshop.model.request.AdminResetPasswordRequest;
 import com.myshop.model.request.AdminToggleUserStatusRequest;
 import com.myshop.model.request.AdminUpdateUserProfileRequest;
 import com.myshop.model.response.AdminOperationLogResponse;
 import com.myshop.model.response.AdminUserDetailResponse;
 import com.myshop.model.response.AdminUserListResponse;
 import com.myshop.model.response.AdminUserOrderResponse;
+import com.myshop.model.response.AdminResetPasswordResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
 
 import java.util.UUID;
@@ -34,5 +34,5 @@ public interface AdminUserService {
 
     void toggleUser(UUID id, AdminToggleUserStatusRequest request);
 
-    void resetPassword(UUID id, AdminResetPasswordRequest request);
+    AdminResetPasswordResponse resetPassword(UUID id);
 }

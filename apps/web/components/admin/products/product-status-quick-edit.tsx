@@ -6,7 +6,7 @@ import { ConfirmAlert, StatusBadge } from "@/components/admin/shared"
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { useLocale } from "@/lib/context"
 import type { AdminProductDetail } from "@/types"
-import { QuickEditContent, QuickEditTrigger } from "./quick-edit"
+import { QuickEditContent, QuickEditTrigger } from "@/components/admin/shared/quick-edit"
 
 export function ProductStatusQuickEdit({
   product,

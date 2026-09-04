@@ -1,8 +1,5 @@
 package com.myshop.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.myshop.common.ApiResponse;
-import com.myshop.constant.ErrorCode;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.User;
 import com.myshop.repository.UserRepository;
@@ -10,11 +7,11 @@ import com.myshop.utils.JwtUtils;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -26,6 +23,11 @@ import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * JWT is only a signed locator. Every request with a token re-reads the user
+ * row so deletion, role changes, password resets, and status changes take
+ * effect without waiting for token expiry.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -33,7 +35,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtils jwtUtils;
     private final UserRepository userRepository;
-    private final ObjectMapper objectMapper;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -42,38 +43,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             String token = extractToken(request);
             if (StringUtils.hasText(token)) {
-                Claims claims = jwtUtils.parseTokenSafe(token);
-                if (claims != null) {
-                    UUID userId = UUID.fromString(claims.getSubject());
-                    String username = claims.get("username", String.class);
-                    String role = claims.get("role", String.class);
-
-                    // 管理员请求：必须校验数据库中用户状态和角色
-                    String requestUri = request.getRequestURI();
-                    String contextPath = request.getContextPath();
-                    String path = contextPath != null && !contextPath.isBlank()
-                            && requestUri.startsWith(contextPath)
-                            ? requestUri.substring(contextPath.length()) : requestUri;
-                    boolean adminRole = "ADMIN".equals(role) || "SUPER_ADMIN".equals(role);
-                    boolean privilegedPath = path.startsWith("/admin") || path.startsWith("/upload");
-                    if (adminRole && privilegedPath) {
-                        User user = userRepository.findById(userId).orElse(null);
-                        if (user == null || user.getIsDeleted() == 1
-                                || !user.getRole().name().equals(role)) {
-                            log.warn("Admin JWT verification failed: userId={}, dbExists={}, dbDeleted={}, dbRole={}",
-                                    userId, user != null, user != null ? user.getIsDeleted() : "N/A",
-                                    user != null ? user.getRole() : "N/A");
-                            rejectRequest(response, "身份验证失败，请重新登录");
-                            return;
-                        }
-                    }
-
-                    RequestContext.set(new RequestContext.UserInfo(userId, username, role));
-
-                    var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
-                    var auth = new UsernamePasswordAuthenticationToken(userId, null, authorities);
-                    SecurityContextHolder.getContext().setAuthentication(auth);
-                }
+                // A presented token is authoritative for this request. Do
+                // not let an earlier filter's authentication survive a bad
+                // or stale cookie.
+                SecurityContextHolder.clearContext();
+                authenticateFromDatabase(token);
             }
             filterChain.doFilter(request, response);
         } finally {
@@ -81,20 +55,53 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
     }
 
-    private void rejectRequest(HttpServletResponse response, String message) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding("UTF-8");
-        response.getWriter().write(objectMapper.writeValueAsString(
-                ApiResponse.error(ErrorCode.UNAUTHORIZED, message)));
+    private void authenticateFromDatabase(String token) {
+        Claims claims = jwtUtils.parseTokenSafe(token);
+        if (claims == null) return;
+
+        UUID userId;
+        String tokenRole = claims.get("role", String.class);
+        Integer tokenAuthVersion = authVersion(claims.get("authVersion"));
+        try {
+            userId = UUID.fromString(claims.getSubject());
+        } catch (Exception exception) {
+            return;
+        }
+        if (!StringUtils.hasText(tokenRole) || tokenAuthVersion == null) return;
+
+        try {
+            User user = userRepository.findById(userId).orElse(null);
+            if (user == null || user.getIsDeleted() != 0
+                    || !user.getRole().name().equals(tokenRole)
+                    || user.getAuthVersion() != tokenAuthVersion) {
+                log.debug("JWT rejected by current user authority");
+                return;
+            }
+
+            String databaseRole = user.getRole().name();
+            RequestContext.set(new RequestContext.UserInfo(user.getId(), user.getUsername(), databaseRole));
+            var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + databaseRole));
+            var authentication = new UsernamePasswordAuthenticationToken(user.getId(), null, authorities);
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+        } catch (RuntimeException exception) {
+            // Authentication must fail closed when the authority lookup is not
+            // usable, while public endpoints can still render their response.
+            log.warn("JWT database authority lookup failed", exception);
+        }
+    }
+
+    private Integer authVersion(Object value) {
+        if (!(value instanceof Number number)) return null;
+        long candidate = number.longValue();
+        return candidate < Integer.MIN_VALUE || candidate > Integer.MAX_VALUE ? null : (int) candidate;
     }
 
     private String extractToken(HttpServletRequest request) {
-        if (request.getCookies() != null) {
-            for (var cookie : request.getCookies()) {
-                if ("myshop_access_token".equals(cookie.getName()) && StringUtils.hasText(cookie.getValue())) {
-                    return cookie.getValue();
-                }
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) return null;
+        for (Cookie cookie : cookies) {
+            if ("myshop_access_token".equals(cookie.getName()) && StringUtils.hasText(cookie.getValue())) {
+                return cookie.getValue();
             }
         }
         return null;

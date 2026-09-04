@@ -27,6 +27,7 @@ import type {
   AdminUserItem,
   AdminUserDetail,
   AdminUserOrder,
+  AdminResetPasswordResponse,
   BalanceTransaction,
   AdminOperationLogDetail,
   UserNumberConfig,
@@ -627,7 +628,7 @@ export const adminUserApi = {
   },
   updateProfile: (id: string, data: { email: string }) =>
     request<AdminUserDetail>(`/admin/users/${id}/profile`, { method: "PUT", body: JSON.stringify(data) }),
-  adjustBalance: (id: string, data: { type: "INCREASE" | "DECREASE"; amount: string; reason: string }) =>
+  adjustBalance: (id: string, data: { type: "INCREASE" | "DECREASE"; amount: string; reason?: string | null }) =>
     request<BalanceTransaction>(`/admin/users/${id}/balance`, { method: "POST", body: JSON.stringify(data) }),
   toggleStatus: (id: string, isDeleted: 0 | 1) =>
     request<null>(`/admin/users/${id}/toggle`, { method: "POST", body: JSON.stringify({ is_deleted: isDeleted }) }),
@@ -636,11 +637,8 @@ export const adminUserApi = {
       method: "POST",
       body: JSON.stringify({ user_level_id: userLevelId }),
     }),
-  resetPassword: (id: string, newPassword: string) =>
-    request<null>(`/admin/users/${id}/reset-password`, {
-      method: "POST",
-      body: JSON.stringify({ new_password: newPassword }),
-    }),
+  resetPassword: (id: string) =>
+    request<AdminResetPasswordResponse>(`/admin/users/${id}/reset-password`, { method: "POST" }),
 }
 
 // ============================================================

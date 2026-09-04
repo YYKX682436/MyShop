@@ -3,7 +3,6 @@ package com.myshop.model.request;
 import com.myshop.constant.BalanceAdjustmentType;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
@@ -23,7 +22,6 @@ public class AdminAdjustBalanceRequest {
     @Digits(integer = 10, fraction = 2, message = "调整金额最多 10 位整数和 2 位小数")
     private BigDecimal amount;
 
-    @NotBlank(message = "调整原因不能为空")
     @Size(max = 500, message = "调整原因不能超过 500 个字符")
     private String reason;
 }

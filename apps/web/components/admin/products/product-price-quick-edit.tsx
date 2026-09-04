@@ -17,7 +17,7 @@ import {
 } from "@/lib/product-quick-edit"
 import { formatYuan } from "@/lib/utils"
 import type { AdminProductDetail, AdminProductSpec } from "@/types"
-import { QuickEditActions, QuickEditContent, QuickEditTrigger } from "./quick-edit"
+import { QuickEditActions, QuickEditContent, QuickEditTrigger } from "@/components/admin/shared/quick-edit"
 
 export function ProductPriceQuickEdit({
   product,

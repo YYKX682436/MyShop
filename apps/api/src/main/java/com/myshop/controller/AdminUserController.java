@@ -3,7 +3,6 @@ package com.myshop.controller;
 import com.myshop.common.ApiResponse;
 import com.myshop.common.PageResult;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
-import com.myshop.model.request.AdminResetPasswordRequest;
 import com.myshop.model.request.AdminToggleUserStatusRequest;
 import com.myshop.model.request.AdminUpdateUserProfileRequest;
 import com.myshop.model.request.UserLevelAssignmentRequest;
@@ -12,6 +11,7 @@ import com.myshop.model.response.AdminUserDetailResponse;
 import com.myshop.model.response.AdminUserListResponse;
 import com.myshop.model.response.AdminUserOrderResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
+import com.myshop.model.response.AdminResetPasswordResponse;
 import com.myshop.model.response.UserLevelResponse;
 import com.myshop.service.AdminUserService;
 import com.myshop.service.UserLevelService;
@@ -98,11 +98,8 @@ public class AdminUserController {
     }
 
     @PostMapping("/{id}/reset-password")
-    public ApiResponse<Void> resetPassword(
-            @PathVariable UUID id,
-            @Valid @RequestBody AdminResetPasswordRequest request) {
-        adminUserService.resetPassword(id, request);
-        return ApiResponse.success();
+    public ApiResponse<AdminResetPasswordResponse> resetPassword(@PathVariable UUID id) {
+        return ApiResponse.success(adminUserService.resetPassword(id));
     }
 
     @PostMapping("/{id}/level")

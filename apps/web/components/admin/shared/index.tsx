@@ -284,3 +284,5 @@ export function ConfirmAlert({
     </AlertDialog>
   )
 }
+
+export { CopyableValue } from "./copyable-value"

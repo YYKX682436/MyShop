@@ -3,6 +3,8 @@ package com.myshop.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.common.ApiResponse;
 import com.myshop.constant.ErrorCode;
+import com.myshop.entity.User;
+import com.myshop.repository.UserRepository;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.utils.JwtUtils;
 import io.jsonwebtoken.Claims;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.io.IOException;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -26,6 +29,7 @@ import java.io.IOException;
 public class MaintenanceFilter implements Filter {
 
     private final SiteConfigRepository siteConfigRepository;
+    private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
     private final JwtUtils jwtUtils;
 
@@ -93,12 +97,25 @@ public class MaintenanceFilter implements Filter {
                 Claims claims = jwtUtils.parseTokenSafe(cookie.getValue());
                 if (claims == null) return false;
                 String role = claims.get("role", String.class);
-                return "ADMIN".equals(role) || "SUPER_ADMIN".equals(role);
+                Integer authVersion = authVersion(claims.get("authVersion"));
+                UUID userId = UUID.fromString(claims.getSubject());
+                if (authVersion == null) return false;
+                User user = userRepository.findById(userId).orElse(null);
+                return user != null && user.getIsDeleted() == 0
+                        && user.getAuthVersion() == authVersion
+                        && user.getRole().name().equals(role)
+                        && ("ADMIN".equals(role) || "SUPER_ADMIN".equals(role));
             }
             return false;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private Integer authVersion(Object value) {
+        if (!(value instanceof Number number)) return null;
+        long candidate = number.longValue();
+        return candidate < Integer.MIN_VALUE || candidate > Integer.MAX_VALUE ? null : (int) candidate;
     }
 
     private void refreshCache() {

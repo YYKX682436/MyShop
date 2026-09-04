@@ -25,6 +25,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.Optional;
 import java.util.Locale;
+import java.time.LocalDateTime;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -51,7 +52,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
-    public AuthResult register(RegisterRequest request) {
+    public AuthResult register(RegisterRequest request, String clientIp) {
         if (!captchaUtils.verify(request.getCaptchaId(), request.getCaptcha())) {
             throw new BusinessException(ErrorCode.CAPTCHA_INVALID, "验证码错误或已过期");
         }
@@ -114,9 +115,11 @@ public class AuthServiceImpl implements AuthService {
         user.setRole(UserRole.USER);
         user.setUserNo(userNo);
         user.setUserLevelId(defaultLevel.getId());
+        recordSuccessfulLogin(user, clientIp);
         userRepository.saveAndFlush(user);
 
-        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());
+        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name(),
+                user.getAuthVersion());
         return new AuthResult(token, UserProfileResponse.from(user, defaultLevel));
     }
 
@@ -127,7 +130,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional(noRollbackFor = BusinessException.class)
-    public AuthResult login(LoginRequest request) {
+    public AuthResult login(LoginRequest request, String clientIp) {
         String account = request == null ? null : request.getAccount();
         account = account == null ? null : account.trim();
         if (!StringUtils.hasText(account)) {
@@ -179,15 +182,15 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // 登录成功：重置失败计数和锁定状态
-        if (user.getFailedLoginAttempts() > 0 || user.getLockUntil() != null) {
-            user.setFailedLoginAttempts(0);
-            user.setLockUntil(null);
-            userRepository.save(user);
-        }
+        user.setFailedLoginAttempts(0);
+        user.setLockUntil(null);
+        recordSuccessfulLogin(user, clientIp);
+        userRepository.save(user);
 
         UserLevel currentLevel = user.getRole() == UserRole.USER && user.getUserLevelId() != null
                 ? userLevelRepository.findById(user.getUserLevelId()).orElse(null) : null;
-        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name());
+        String token = jwtUtils.generateToken(user.getId(), user.getUsername(), user.getRole().name(),
+                user.getAuthVersion());
         return new AuthResult(token, UserProfileResponse.from(user, currentLevel));
     }
 
@@ -223,5 +226,14 @@ public class AuthServiceImpl implements AuthService {
         if (phone == null || !PHONE_PATTERN.matcher(phone).matches()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "手机号格式不正确");
         }
+    }
+
+    private void recordSuccessfulLogin(User user, String clientIp) {
+        String normalizedIp = clientIp == null ? null : clientIp.trim();
+        if (normalizedIp != null && normalizedIp.length() > 45) {
+            normalizedIp = null;
+        }
+        user.setLastLoginIp(normalizedIp == null || normalizedIp.isBlank() ? null : normalizedIp);
+        user.setLastLoginAt(LocalDateTime.now());
     }
 }
