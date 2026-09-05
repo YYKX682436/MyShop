@@ -10,6 +10,7 @@ import { useLocale, useSiteConfig } from "@/lib/context"
 import { getOrderLookupToken, orderApi } from "@/services/api"
 import type { OrderStatus } from "@/types"
 import { cn, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { getPaymentQrValue, getRepayPaymentCarriers } from "@/lib/payment-page"
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
 import { ContactSupport } from "@/components/shared/contact-methods"
 
@@ -29,8 +30,9 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [retrying, setRetrying] = useState(false)
-  const [qrcodeUrl, setQrcodeUrl] = useState(searchParams.get("qr") || "")
-  const [payUrl, setPayUrl] = useState(searchParams.get("payurl") || "")
+  const [qrcodeUrl, setQrcodeUrl] = useState(searchParams.get("qr")?.trim() || "")
+  const [payUrl, setPayUrl] = useState(searchParams.get("payurl")?.trim() || "")
+  const [statusLoaded, setStatusLoaded] = useState(false)
   const [redirected, setRedirected] = useState(false)
   const isMobile = isMobileDevice()
   const method = searchParams.get("method") || "alipay"
@@ -38,18 +40,25 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const methodName = getPaymentLabel(method, t)
   const brandColor = getPaymentBrandColor(method)
   const hasCountdown = timeLeft >= 0
+  const qrcodeValue = getPaymentQrValue(qrcodeUrl, payUrl)
+  const missingPaymentCarrier = statusLoaded && !qrcodeValue
 
   const fetchStatus = useCallback(async () => {
-    const token = lookupToken || (orderNo ? getOrderLookupToken(orderNo) : undefined)
-    const result = await orderApi.getStatus(orderId, token, orderNo || undefined)
-    setOrderNo(String(result.order_no))
-    if (token && !lookupToken) setLookupToken(token)
-    setTimeLeft(result.remaining_seconds ?? 0)
-    if (result.payment_url && !qrcodeUrl) setQrcodeUrl(result.payment_url)
-    if (result.status !== "PENDING") {
-      setStatus(result.status)
+    try {
+      const token = lookupToken || (orderNo ? getOrderLookupToken(orderNo) : undefined)
+      const result = await orderApi.getStatus(orderId, token, orderNo || undefined)
+      setOrderNo(String(result.order_no))
+      if (token && !lookupToken) setLookupToken(token)
+      setTimeLeft(result.remaining_seconds ?? 0)
+      const paymentUrl = result.payment_url?.trim() || ""
+      if (paymentUrl && !getPaymentQrValue(qrcodeUrl, payUrl)) setQrcodeUrl(paymentUrl)
+      if (result.status !== "PENDING") {
+        setStatus(result.status)
+      }
+    } finally {
+      setStatusLoaded(true)
     }
-  }, [lookupToken, orderId, orderNo, qrcodeUrl])
+  }, [lookupToken, orderId, orderNo, payUrl, qrcodeUrl])
 
   useEffect(() => { void fetchStatus().catch(() => undefined) }, [fetchStatus])
 
@@ -93,10 +102,12 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
     setRetrying(true)
     try {
       const result = await orderApi.repay(orderId, orderNo, detectPaymentDevice(), lookupToken || undefined)
+      const carriers = getRepayPaymentCarriers(result)
       setOrderNo(String(result.order_no))
-      setPayUrl(result.pay_url || "")
-      setQrcodeUrl(result.qrcode_url || result.payment_url || "")
-      if (isMobile && result.pay_url && !isWechatMobile) window.location.href = result.pay_url
+      setPayUrl(carriers.payUrl)
+      setQrcodeUrl(carriers.qrcodeUrl)
+      setStatusLoaded(true)
+      if (isMobile && carriers.payUrl && !isWechatMobile) window.location.href = carriers.payUrl
       else toast.success(t("payment.statusRefreshed"))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("common.error"))
@@ -113,6 +124,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
 
   const copy = (value: string) => navigator.clipboard?.writeText(value).then(() => toast.success(t("order.copied")))
   const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
+  const retryButton = <button onClick={retry} disabled={retrying} className="inline-flex h-11 items-center gap-2 rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", retrying && "animate-spin")} />{t("payment.retryQrCode")}</button>
 
   if (status === "PAID" || status === "DELIVERED") return <div className="surface mx-auto flex max-w-md flex-col items-center p-8 text-center"><div className="mb-4 rounded-full bg-emerald-500/10 p-4"><CheckCircle2 className="h-12 w-12 text-emerald-600 dark:text-emerald-400" /></div><h1 className="mb-2 text-xl font-semibold">{t("payment.success")}</h1><p className="mb-2 text-sm text-muted-foreground">支付已确认，正在准备卡密。</p><p className="mb-6 font-mono text-sm">订单号：{orderNo || "加载中"}</p><Link href={`/order/query?orderNo=${orderNo}`} className="inline-flex h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99]">查看订单与卡密</Link></div>
   if (status === "EXPIRED") return <div className="surface mx-auto flex max-w-md flex-col items-center p-8 text-center"><XCircle className="mb-4 h-12 w-12 text-muted-foreground" /><h1 className="mb-2 text-xl font-semibold">{t("payment.expired")}</h1><p className="mb-6 text-sm text-muted-foreground">订单已过期，请重新下单。</p><Link href="/" className="inline-flex h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99]">{t("payment.reorder")}</Link></div>
@@ -125,13 +137,13 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
         <div className="flex w-72 flex-col items-center gap-4 rounded-surface px-6 pb-8 pt-6" style={{ backgroundColor: brandColor || "#374151" }}>
           <div className="flex items-center gap-2.5"><PaymentIcon method={method} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div>
           <p className="text-sm font-medium text-white/90">{getPaymentScanHint(method, t)}</p>
-          <div className="flex h-52 w-52 items-center justify-center rounded-xl bg-white p-3">{qrcodeUrl ? <QRCodeSVG value={qrcodeUrl} size={184} /> : <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />}</div>
+          <div className="flex h-52 w-52 items-center justify-center rounded-xl bg-white p-3">{qrcodeValue ? <QRCodeSVG value={qrcodeValue} size={184} /> : statusLoaded ? <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert"><p className="text-sm text-muted-foreground">{t("payment.noQrCode")}</p>{retryButton}</div> : <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />}</div>
         </div>
-        <p className="animate-pulse text-sm text-primary">{t("payment.detecting")}</p>
+        {qrcodeValue || !statusLoaded ? <p className="animate-pulse text-sm text-primary">{t("payment.detecting")}</p> : null}
       </> : <>
-        <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-surface px-6 py-6" style={{ backgroundColor: brandColor || "#374151" }}><div className="flex items-center gap-2.5"><PaymentIcon method={method} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div><Smartphone className="h-8 w-8 text-white/80" /></div>
+        {missingPaymentCarrier ? <><p className="text-center text-sm text-muted-foreground" role="alert">{t("payment.noQrCode")}</p>{retryButton}</> : <><div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-surface px-6 py-6" style={{ backgroundColor: brandColor || "#374151" }}><div className="flex items-center gap-2.5"><PaymentIcon method={method} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div><Smartphone className="h-8 w-8 text-white/80" /></div>
         <p className="text-sm text-muted-foreground">{redirected ? "如已完成支付，请返回此页等待确认。" : "正在跳转支付页面……"}</p>
-        <button onClick={retry} disabled={retrying} className="inline-flex h-11 items-center gap-2 rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", retrying && "animate-spin")} />{t("payment.retryPay")}</button>
+        {retryButton}</>}
       </>}
       <div className="flex w-full items-center justify-between border-t border-border-subtle pt-4 text-sm"><span className="text-muted-foreground">{t("payment.orderNo")}</span><button onClick={() => void copy(orderNo)} disabled={!orderNo} className="flex items-center gap-1 rounded-control px-2 py-1 font-mono text-xs transition-colors hover:bg-surface-muted disabled:opacity-50"><span>{orderNo || "加载中"}</span><Copy className="h-3.5 w-3.5" /></button></div>
     </div>

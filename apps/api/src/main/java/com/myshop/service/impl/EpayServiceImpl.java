@@ -74,42 +74,61 @@ public class EpayServiceImpl implements EpayService {
                 String responseBody = response.getBody();
 
                 if (responseBody == null || responseBody.isBlank()) {
-                    log.error("Epay API returned null/empty body");
+                    log.error("Epay API response: orderId={}, paymentType={}, responseCode=unknown, responseFields=[], selectedCarrier=none",
+                            outTradeNo, type);
                     throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：响应为空");
                 }
-
-                log.debug("Epay API raw response: {}", responseBody);
 
                 Map<String, Object> body;
                 try {
                     body = objectMapper.readValue(responseBody, new TypeReference<>() {});
                 } catch (Exception parseEx) {
-                    log.error("Epay API response is not valid JSON: {}", responseBody);
+                    log.error("Epay API response: orderId={}, paymentType={}, responseCode=unknown, responseFields=unavailable, selectedCarrier=none; invalidJson",
+                            outTradeNo, type);
                     throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：响应格式异常");
                 }
 
-                int code = body.get("code") instanceof Number n ? n.intValue() : -1;
-                String msg = body.get("msg") != null ? body.get("msg").toString() : "";
-                String tradeNo = body.get("trade_no") != null ? body.get("trade_no").toString() : "";
-                String payUrl = body.get("payurl") != null ? body.get("payurl").toString() : null;
-                String qrcode = body.get("qrcode") != null ? body.get("qrcode").toString() : null;
-                String urlscheme = body.get("urlscheme") != null ? body.get("urlscheme").toString() : null;
+                Object rawCode = body.get("code");
+                int code = isSuccessCode(rawCode) ? 1 : -1;
+                String responseCode = responseCodeForLog(rawCode);
+                String msg = presentValue(body.get("msg"));
+                String tradeNo = presentValue(body.get("trade_no"));
+                if (msg == null) msg = "";
+                if (tradeNo == null) tradeNo = "";
 
-                log.info("Epay API response: code={}, msg={}, tradeNo={}, payUrl={}, qrcode={}", code, msg, tradeNo, payUrl, qrcode);
+                String gatewayOrigin = origin(parseHttpUrl(config.apiUrl()));
+                Carrier qrcodeCarrier = firstCarrier(body, gatewayOrigin,
+                        "qrcode", "qr_code", "urlscheme");
+                Carrier payUrlCarrier = firstCarrier(body, gatewayOrigin,
+                        "payurl", "payurl2", "url", "pay_action_url");
+                String responseFields = responseFieldNames(body);
+                String selectedCarrier = selectedCarrier(qrcodeCarrier, payUrlCarrier);
+                log.info("Epay API response: orderId={}, paymentType={}, responseCode={}, responseFields=[{}], selectedCarrier={}",
+                        outTradeNo, type, responseCode, responseFields, selectedCarrier);
 
-                if (code != 1) {
+                if (!isSuccessCode(rawCode)) {
                     // 业务错误不重试
-                    log.error("Epay API error: code={}, msg={}", code, msg);
+                    log.error("Epay API error: orderId={}, paymentType={}, responseCode={}, selectedCarrier=none",
+                            outTradeNo, type, responseCode);
                     throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：" + msg);
                 }
 
-                String resultQrcode = qrcode != null ? qrcode : urlscheme;
+                String resultQrcode = qrcodeCarrier == null ? null : qrcodeCarrier.value();
+                String payUrl = payUrlCarrier == null ? null : payUrlCarrier.value();
+
+                if (payUrl == null && resultQrcode == null) {
+                    log.error("Epay API error: orderId={}, paymentType={}, responseCode={}, selectedCarrier=none; noPaymentCarrier",
+                            outTradeNo, type, responseCode);
+                    throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL,
+                            "支付创建失败：网关未返回支付链接或二维码");
+                }
 
                 // 网关未返回 payUrl 且为移动端请求时，将 qrcode（收银台页面 URL）作为 H5 跳转入口
                 String effectivePayUrl = payUrl;
                 if (effectivePayUrl == null && device != null && !"pc".equals(device) && resultQrcode != null) {
                     effectivePayUrl = resultQrcode;
-                    log.info("Epay: gateway returned no payUrl, using qrcode URL as mobile redirect: {}", effectivePayUrl);
+                    log.info("Epay mobile fallback: orderId={}, paymentType={}, selectedCarrier={}",
+                            outTradeNo, type, qrcodeCarrier.fieldName());
                 }
 
                 return new EpayResult(code, msg, tradeNo, effectivePayUrl, resultQrcode);
@@ -118,13 +137,81 @@ public class EpayServiceImpl implements EpayService {
                 throw e; // 业务异常直接抛出，不重试
             } catch (Exception e) {
                 lastException = e;
-                log.warn("Epay API attempt {} failed: {}", attempt + 1, e.getMessage());
+                log.warn("Epay API attempt {} failed: orderId={}, paymentType={}, errorType={}",
+                        attempt + 1, outTradeNo, type, e.getClass().getSimpleName());
             }
         }
 
-        log.error("Epay API call failed after {} retries", maxRetries + 1, lastException);
+        log.error("Epay API call failed after {} retries: orderId={}, paymentType={}, errorType={}",
+                maxRetries + 1, outTradeNo, type,
+                lastException == null ? "unknown" : lastException.getClass().getSimpleName());
         throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：网络超时，请重试");
     }
+
+    private Carrier firstCarrier(Map<String, Object> body, String gatewayOrigin, String... fieldNames) {
+        for (String fieldName : fieldNames) {
+            String value = normalizeResponseField(fieldName, body.get(fieldName), gatewayOrigin);
+            if (value != null) return new Carrier(fieldName, value);
+        }
+        return null;
+    }
+
+    private String normalizeResponseField(String fieldName, Object rawValue, String gatewayOrigin) {
+        String value = presentValue(rawValue);
+        if (value == null) return null;
+        if (isRelativeUrlField(fieldName) && value.startsWith("/")) {
+            return gatewayOrigin + value;
+        }
+        return value;
+    }
+
+    private boolean isRelativeUrlField(String fieldName) {
+        return switch (fieldName) {
+            case "payurl", "payurl2", "url", "pay_action_url", "qrcode", "qr_code" -> true;
+            default -> false;
+        };
+    }
+
+    private String presentValue(Object rawValue) {
+        if (rawValue == null) return null;
+        String value = rawValue.toString().trim();
+        return value.isEmpty() ? null : value;
+    }
+
+    private boolean isSuccessCode(Object rawCode) {
+        if (rawCode instanceof Number number) {
+            try {
+                return new BigDecimal(number.toString()).compareTo(BigDecimal.ONE) == 0;
+            } catch (NumberFormatException ignored) {
+                return false;
+            }
+        }
+        return rawCode instanceof CharSequence sequence
+                && "1".equals(sequence.toString().trim());
+    }
+
+    private String responseCodeForLog(Object rawCode) {
+        String value = presentValue(rawCode);
+        return value == null ? "null" : value;
+    }
+
+    private String responseFieldNames(Map<String, Object> body) {
+        List<String> fields = body.keySet().stream()
+                .filter(Objects::nonNull)
+                .map(Object::toString)
+                .sorted()
+                .toList();
+        return String.join(",", fields);
+    }
+
+    private String selectedCarrier(Carrier qrcodeCarrier, Carrier payUrlCarrier) {
+        List<String> selected = new ArrayList<>();
+        if (qrcodeCarrier != null) selected.add(qrcodeCarrier.fieldName());
+        if (payUrlCarrier != null) selected.add(payUrlCarrier.fieldName());
+        return selected.isEmpty() ? "none" : String.join(",", selected);
+    }
+
+    private record Carrier(String fieldName, String value) { }
 
     @Override
     public String buildSign(String merchantKey, Map<String, String> params) {
@@ -166,13 +253,12 @@ public class EpayServiceImpl implements EpayService {
                 log.warn("Epay order query returned empty body: outTradeNo={}", outTradeNo);
                 return null;
             }
-            log.debug("Epay order query response: {}", body);
-
             Map<String, Object> result = objectMapper.readValue(body, new TypeReference<>() {});
 
             // 网关返回错误码时（如订单不存在），返回 null
-            if (result.containsKey("code") && !Integer.valueOf(1).equals(result.get("code"))) {
-                log.warn("Epay order query error: {}", body);
+            if (result.containsKey("code") && !isSuccessCode(result.get("code"))) {
+                log.warn("Epay order query error: outTradeNo={}, responseCode={}",
+                        outTradeNo, responseCodeForLog(result.get("code")));
                 return null;
             }
 
@@ -181,7 +267,8 @@ public class EpayServiceImpl implements EpayService {
             String tradeNo = result.get("trade_no") != null ? result.get("trade_no").toString() : null;
             return new OrderQueryResult(tradeStatus, money, tradeNo);
         } catch (Exception e) {
-            log.warn("Epay order query failed: outTradeNo={}, error={}", outTradeNo, e.getMessage());
+            log.warn("Epay order query failed: outTradeNo={}, errorType={}",
+                    outTradeNo, e.getClass().getSimpleName());
             return null;
         }
     }

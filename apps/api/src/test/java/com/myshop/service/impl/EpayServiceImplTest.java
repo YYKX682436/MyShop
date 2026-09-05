@@ -10,6 +10,7 @@ import org.springframework.web.client.RestTemplate;
 import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -75,5 +76,85 @@ class EpayServiceImplTest {
         verify(restTemplate).getForEntity(
                 eq("https://pay.example.com/api.php?act=order&pid=pid&key=secret&out_trade_no=order-1"),
                 eq(String.class));
+    }
+
+    @Test
+    void usesUrlschemeWhenTheStandardQrFieldIsBlank() {
+        EpayService.EpayResult result = createPaymentResponse(
+                "{\"code\":1,\"msg\":\"success\",\"trade_no\":\"123\","
+                        + "\"payurl\":\"\",\"qrcode\":\"\","
+                        + "\"urlscheme\":\"weixin://dl/business/?ticket=xxx\"}");
+
+        assertEquals("weixin://dl/business/?ticket=xxx", result.qrcodeUrl());
+        assertNull(result.payUrl());
+    }
+
+    @Test
+    void fallsBackToQrCodeWhenPayUrlIsBlank() {
+        EpayService.EpayResult result = createPaymentResponse(
+                "{\"code\":1,\"payurl\":\" \",\"qrcode\":\"weixin://qr/123\"}");
+
+        assertEquals("weixin://qr/123", result.qrcodeUrl());
+        assertNull(result.payUrl());
+    }
+
+    @Test
+    void rejectsAReportedSuccessWithoutAnyPaymentCarrier() {
+        BusinessException exception = assertThrows(BusinessException.class, () -> createPaymentResponse(
+                "{\"code\":1,\"payurl\":\" \",\"payurl2\":\"\",\"url\":null,"
+                        + "\"pay_action_url\":\"  \",\"qrcode\":\"\",\"qr_code\":\" \","
+                        + "\"urlscheme\":\"\"}"));
+
+        assertEquals("支付创建失败：网关未返回支付链接或二维码", exception.getMessage());
+    }
+
+    @Test
+    void acceptsStringSuccessCodeWithoutAcceptingFuzzySuccessValues() {
+        EpayService.EpayResult result = createPaymentResponse(
+                "{\"code\":\"1\",\"payurl\":\"https://pay.example.com/checkout\"}");
+        assertEquals(1, result.code());
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> createPaymentResponse(
+                "{\"code\":true,\"payurl\":\"https://pay.example.com/checkout\"}"));
+        assertEquals("支付创建失败：", exception.getMessage());
+    }
+
+    @Test
+    void supportsSecondaryPaymentAndQrCarrierNames() {
+        EpayService.EpayResult payUrlFallback = createPaymentResponse(
+                "{\"code\":1,\"payurl\":\"\",\"payurl2\":\"https://pay.example.com/second\"}");
+        assertEquals("https://pay.example.com/second", payUrlFallback.payUrl());
+
+        EpayService.EpayResult qrFallback = createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"\",\"qr_code\":\"weixin://qr/secondary\"}");
+        assertEquals("weixin://qr/secondary", qrFallback.qrcodeUrl());
+    }
+
+    @Test
+    void normalizesRelativeUrlCarriersAgainstTheGatewayOriginOnly() {
+        EpayService.EpayResult relative = createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"/api/pay/toapp/123\"}");
+        assertEquals("https://pay.example.com/api/pay/toapp/123", relative.qrcodeUrl());
+
+        EpayService.EpayResult scheme = createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"weixin://dl/business/?ticket=xxx\"}");
+        assertEquals("weixin://dl/business/?ticket=xxx", scheme.qrcodeUrl());
+
+        EpayService.EpayResult absolute = createPaymentResponse(
+                "{\"code\":1,\"payurl\":\"https://other.example.com/checkout\"}");
+        assertEquals("https://other.example.com/checkout", absolute.payUrl());
+    }
+
+    private EpayService.EpayResult createPaymentResponse(String responseBody) {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.postForEntity(eq("https://pay.example.com/mapi.php"),
+                org.mockito.ArgumentMatchers.any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(responseBody));
+        EpayServiceImpl service = new EpayServiceImpl(restTemplate, new ObjectMapper());
+        return service.createPayment(
+                new EpayService.ChannelConfig("pid", "secret", "https://pay.example.com/mapi.php"),
+                "order-id", "wxpay", "商品", BigDecimal.TEN, "127.0.0.1", "pc",
+                "https://shop.example.com/api/payments/webhook/epay",
+                "https://shop.example.com/pay/order-id?orderNo=100001&method=wxpay");
     }
 }
