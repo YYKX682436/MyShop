@@ -9,6 +9,7 @@ import {
 
 test("the pay page treats a persisted payment carrier as a QR value fallback", () => {
   assert.equal(getPaymentQrValue("", " https://pay.example/checkout "), "https://pay.example/checkout")
+  assert.equal(getPaymentQrValue("", "https://pay.example/submit.php?pid=demo&sign=abcdef"), "https://pay.example/submit.php?pid=demo&sign=abcdef")
   assert.equal(getPaymentQrValue("weixin://dl/business/?ticket=xxx", "https://pay.example/checkout"), "weixin://dl/business/?ticket=xxx")
 })
 

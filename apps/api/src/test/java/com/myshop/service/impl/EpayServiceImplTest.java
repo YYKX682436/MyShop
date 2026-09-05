@@ -10,8 +10,10 @@ import org.springframework.web.client.RestTemplate;
 import java.math.BigDecimal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -106,6 +108,32 @@ class EpayServiceImplTest {
                         + "\"urlscheme\":\"\"}"));
 
         assertEquals("支付创建失败：网关未返回支付链接或二维码", exception.getMessage());
+    }
+
+    @Test
+    void usesTheExplicitlyEnabledSubmitPageForVerifiedNoCarrierGateways() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.postForEntity(eq("https://pay.example.com/mapi.php"),
+                org.mockito.ArgumentMatchers.any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(
+                        "{\"code\":1,\"msg\":\"success\",\"trade_no\":\"trade-1\","
+                                + "\"payurl\":\"\",\"qrcode\":\"\"}"));
+        EpayServiceImpl service = new EpayServiceImpl(restTemplate, new ObjectMapper(), true);
+
+        EpayService.EpayResult result = service.createPayment(
+                new EpayService.ChannelConfig("pid", "secret", "https://pay.example.com"),
+                "order-1", "wxpay", "商品", BigDecimal.TEN, "127.0.0.1", "pc",
+                "https://shop.example.com/api/payments/webhook/epay",
+                "https://shop.example.com/pay/order-1?orderNo=100001&method=wxpay");
+
+        assertTrue(result.payUrl().startsWith("https://pay.example.com/submit.php?"));
+        assertNull(result.qrcodeUrl());
+        assertTrue(result.payUrl().contains("pid=pid"));
+        assertTrue(result.payUrl().contains("out_trade_no=order-1"));
+        assertTrue(result.payUrl().contains("sign_type=MD5"));
+        assertFalse(result.payUrl().contains("key=secret"));
+        verify(restTemplate).postForEntity(eq("https://pay.example.com/mapi.php"),
+                org.mockito.ArgumentMatchers.any(), eq(String.class));
     }
 
     @Test

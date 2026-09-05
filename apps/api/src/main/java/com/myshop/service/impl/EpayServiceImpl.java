@@ -5,8 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
 import com.myshop.service.EpayService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
@@ -23,11 +24,25 @@ import java.util.*;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class EpayServiceImpl implements EpayService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final boolean pageRedirectFallbackEnabled;
+
+    @Autowired
+    public EpayServiceImpl(RestTemplate restTemplate, ObjectMapper objectMapper,
+                           @Value("${app.epay.page-redirect-fallback-enabled:false}")
+                           boolean pageRedirectFallbackEnabled) {
+        this.restTemplate = restTemplate;
+        this.objectMapper = objectMapper;
+        this.pageRedirectFallbackEnabled = pageRedirectFallbackEnabled;
+    }
+
+    /** Test-friendly constructor keeps the fail-closed default. */
+    public EpayServiceImpl(RestTemplate restTemplate, ObjectMapper objectMapper) {
+        this(restTemplate, objectMapper, false);
+    }
 
     @Override
     public EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name,
@@ -117,6 +132,13 @@ public class EpayServiceImpl implements EpayService {
                 String payUrl = payUrlCarrier == null ? null : payUrlCarrier.value();
 
                 if (payUrl == null && resultQrcode == null) {
+                    if (pageRedirectFallbackEnabled && tradeNo != null) {
+                        String submitUrl = buildSubmitPaymentUrl(config.apiUrl(), params);
+                        log.info("Epay API page redirect fallback: orderId={}, paymentType={}, "
+                                        + "responseCode={}, selectedCarrier=submit.php",
+                                outTradeNo, type, responseCode);
+                        return new EpayResult(code, msg, tradeNo, submitUrl, null);
+                    }
                     log.error("Epay API error: orderId={}, paymentType={}, responseCode={}, selectedCarrier=none; noPaymentCarrier",
                             outTradeNo, type, responseCode);
                     throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL,
@@ -209,6 +231,23 @@ public class EpayServiceImpl implements EpayService {
         if (qrcodeCarrier != null) selected.add(qrcodeCarrier.fieldName());
         if (payUrlCarrier != null) selected.add(payUrlCarrier.fieldName());
         return selected.isEmpty() ? "none" : String.join(",", selected);
+    }
+
+    /**
+     * Some Epay-compatible gateways create the order through mapi.php but do
+     * not return a payurl/qrcode. When that behavior has been explicitly
+     * enabled for a verified gateway, the signed submit.php page is the
+     * provider's payment carrier. The merchant key is deliberately not part
+     * of params and therefore can never enter this URL.
+     */
+    private String buildSubmitPaymentUrl(String rawApiUrl, Map<String, String> params) {
+        String endpoint = gatewayBaseUrl(rawApiUrl) + "/submit.php";
+        String query = params.entrySet().stream()
+                .filter(entry -> entry.getValue() != null && !entry.getValue().isBlank())
+                .map(entry -> encodeQueryParam(entry.getKey()) + "=" + encodeQueryParam(entry.getValue()))
+                .reduce((left, right) -> left + "&" + right)
+                .orElse("");
+        return endpoint + (query.isEmpty() ? "" : "?" + query);
     }
 
     private record Carrier(String fieldName, String value) { }

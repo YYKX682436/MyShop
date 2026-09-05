@@ -159,6 +159,7 @@ checks are not a public health or metrics API.
 
 - Set the canonical public storefront origin in `PUBLIC_SITE_URL`, aligned with `SITE_DOMAIN` and without a query or fragment.
 - Configure one enabled Epay-compatible channel with only `pid`, `key`, and `api_url`. The API URL may be the gateway root or its complete `mapi.php` endpoint.
+- Keep `EPAY_PAGE_REDIRECT_FALLBACK_ENABLED=false` unless the configured gateway has been independently verified to accept its signed `submit.php` page. If its successful `mapi.php` response intentionally contains no `payurl`/`qrcode`, set it to `true`; the API still makes only the `mapi.php` create request and returns the `submit.php` page as the payment carrier.
 - The server generates the public callback route `/api/payments/webhook/epay` and the storefront payment-result return page; no callback or return URL is entered in the admin UI.
 - Verify the generated callback route is reachable through Caddy while the API remains private.
 - Test a successful callback, wrong amount, bad signature, unpaid server query, and duplicate `trade_no` before accepting real orders.

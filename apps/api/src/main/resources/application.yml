@@ -8,6 +8,10 @@ server:
 # Never infer this value from a request Host header behind a reverse proxy.
 app:
   public-site-url: ${PUBLIC_SITE_URL:http://localhost:3000}
+  epay:
+    # Enable only for a gateway verified to expose submit.php when its
+    # successful mapi.php response contains no payment carrier.
+    page-redirect-fallback-enabled: ${EPAY_PAGE_REDIRECT_FALLBACK_ENABLED:false}
 
 spring:
   autoconfigure:

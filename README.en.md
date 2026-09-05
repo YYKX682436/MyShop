@@ -72,7 +72,7 @@ The delivery transaction locks the order, then locks each available card-key poo
 
 Payment creation, callback signature verification, exact amount comparison, server-side order query, and webhook idempotency use the channel profile stored with the order. A client callback cannot mark an order paid by itself; a repeated `trade_no` is handled through the unique webhook event. The provider extension contract is documented in [docs/PAYMENT_PROVIDER.md](docs/PAYMENT_PROVIDER.md).
 
-An Epay-compatible channel requires only `pid`, `key`, and `api_url` (either the gateway root or the complete `mapi.php` endpoint). The server generates callback and payment-result return URLs from `PUBLIC_SITE_URL`; sensitive fields are masked in admin responses, and public APIs never return provider configuration or keys.
+An Epay-compatible channel requires only `pid`, `key`, and `api_url` (either the gateway root or the complete `mapi.php` endpoint). The server generates callback and payment-result return URLs from `PUBLIC_SITE_URL`; sensitive fields are masked in admin responses, and public APIs never return provider configuration or keys. For a verified gateway whose successful `mapi.php` response has no payment carrier but whose signed `submit.php` page is usable, set `EPAY_PAGE_REDIRECT_FALLBACK_ENABLED=true` in the deployment environment. It is disabled by default to keep unverified no-carrier responses fail-closed.
 
 ## Verification commands
 

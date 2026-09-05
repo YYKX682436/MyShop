@@ -49,6 +49,18 @@ and `payurl`/`qrcode` handling. It verifies the callback signature, then
 queries the gateway server-side. The order is changed to PAID only after
 signature, exact amount, paid status, and trade-number checks all succeed.
 
+Some gateways, including the production gateway verified for this deployment,
+accept the same signed parameter set at a `submit.php` page but return only
+`code=1`, `trade_no`, and no payment carrier from `mapi.php`. The API keeps the
+JSON `mapi.php` request as the only server-side create call. For that specific,
+operator-verified behavior, set
+`EPAY_PAGE_REDIRECT_FALLBACK_ENABLED=true` in the deployment environment. The
+provider then returns a signed `submit.php` page URL as `payUrl` only after a
+successful response with a non-empty `trade_no`; the merchant key is never
+placed in the URL or logs. The default is `false`, so an unverified gateway
+still fails closed with the no-carrier error. This is not an `api.php` fallback
+and does not add a fourth administrator configuration field.
+
 The server builds provider callback and payment-result URLs from the
 canonical `PUBLIC_SITE_URL` environment variable (`app.public-site-url`),
 never from an incoming request Host header. The Epay callback route is the

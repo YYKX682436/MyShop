@@ -9,7 +9,11 @@ public interface EpayService {
     record ChannelConfig(String pid, String key, String apiUrl) {}
 
     /**
-     * 调用易支付 /mapi.php 创建支付订单
+     * 调用易支付 /mapi.php 创建支付订单。
+     *
+     * 对于已由运维验证支持页面跳转的网关，如果 mapi.php 返回成功但不
+     * 返回支付载体，具体实现可以返回同一签名参数对应的 submit.php 页面
+     * 作为 payUrl；这不改变 SPI，也不会把商户密钥放入 URL。
      *
      * @param config     渠道配置（pid/key/apiUrl 等）
      * @param outTradeNo 商户订单号（内部 Order UUID，用于回调关联）
