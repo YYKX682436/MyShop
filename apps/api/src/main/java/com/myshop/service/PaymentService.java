@@ -12,7 +12,7 @@ public interface PaymentService {
     Map<String, Object> createPayment(UUID orderId, String paymentMethod, java.math.BigDecimal amount);
 
     /**
-     * Create payment with device hint (pc/mobile/wechat/alipay).
+     * Create payment with device hint (pc/mobile/wxpay/alipay).
      */
     Map<String, Object> createPayment(UUID orderId, String paymentMethod, java.math.BigDecimal amount, String device);
 

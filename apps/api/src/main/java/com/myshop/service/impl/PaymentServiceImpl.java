@@ -13,7 +13,6 @@ import com.myshop.payment.PaymentProvider;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
-import com.myshop.service.EpayService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import com.myshop.utils.LookupTokens;
@@ -135,17 +134,6 @@ public class PaymentServiceImpl implements PaymentService {
         return buildResult(order);
     }
 
-    /** Used by the Epay callback verifier to resolve the exact channel profile. */
-    public EpayService.ChannelConfig buildChannelConfig(PaymentChannel channel) {
-        Map<String, String> config = parseConfigData(channel.getConfigData());
-        return new EpayService.ChannelConfig(
-                required(config, "pid", channel.getChannelCode()),
-                required(config, "key", channel.getChannelCode()),
-                required(config, "api_url", channel.getChannelCode()),
-                required(config, "notify_url", channel.getChannelCode()),
-                required(config, "return_url", channel.getChannelCode()));
-    }
-
     @Override
     @Transactional
     public Map<String, Object> repay(UUID orderId, String device, UUID requestUserId, String lookupToken) {
@@ -221,12 +209,4 @@ public class PaymentServiceImpl implements PaymentService {
         orderRepository.save(order);
     }
 
-    private String required(Map<String, String> config, String field, String channelCode) {
-        String value = config.get(field);
-        if (value == null || value.isBlank()) {
-            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE,
-                    "支付渠道 [" + channelCode + "] 缺少必填配置项: " + field);
-        }
-        return value;
-    }
 }

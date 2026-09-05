@@ -38,7 +38,7 @@ Prometheus or Grafana for this dashboard.
 
 1. Provision a supported Linux host with Docker Engine and Compose v2.
 2. Copy the repository and `.env.example` to a protected deployment directory.
-3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
+3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, matching `PUBLIC_SITE_URL`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
 4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
 6. Create the configured upload directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because its bind uses `create_host_path: false`. Provision the two official non-empty XDB files there when available, then run `docker compose up -d --build` and inspect `docker compose ps` and API logs. Missing XDB files only degrade the detail estimate to `未知`; they do not prevent API startup.
@@ -157,10 +157,12 @@ checks are not a public health or metrics API.
 
 ## Payment callback checklist
 
-- Configure one enabled Epay channel with `pid`, `key`, `api_url`, `notify_url`, and `return_url`.
-- Use the public HTTPS URL `/api/payments/webhook/epay` as the Epay notify URL.
-- Verify the configured callback URL is reachable through Caddy while the API remains private.
+- Set the canonical public storefront origin in `PUBLIC_SITE_URL`, aligned with `SITE_DOMAIN` and without a query or fragment.
+- Configure one enabled Epay-compatible channel with only `pid`, `key`, and `api_url`. The API URL may be the gateway root or its complete `mapi.php` endpoint.
+- The server generates the public callback route `/api/payments/webhook/epay` and the storefront payment-result return page; no callback or return URL is entered in the admin UI.
+- Verify the generated callback route is reachable through Caddy while the API remains private.
 - Test a successful callback, wrong amount, bad signature, unpaid server query, and duplicate `trade_no` before accepting real orders.
+- Disabling a channel blocks only new payment creation. Do not change its provider, payment type, code, `pid`, `key`, or `api_url`, or delete it, while normal pending orders still reference the channel; the API returns HTTP 409.
 - Never put Epay keys in Compose files, Git, screenshots, or ordinary logs.
 
 ## Delivery correctness

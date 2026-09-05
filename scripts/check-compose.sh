@@ -10,6 +10,7 @@ trap 'rm -f "$valid_env" "$missing_env" "$production_env"' EXIT
 cat >"$valid_env" <<'EOF'
 SITE_DOMAIN=store.example.test
 ACME_EMAIL=ops@example.test
+PUBLIC_SITE_URL=https://store.example.test
 DB_PASSWORD=compose-validation-password
 JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
 UPLOAD_HOST_PATH=./uploads
@@ -19,6 +20,7 @@ EOF
 cat >"$production_env" <<'EOF'
 SITE_DOMAIN=store.example.test
 ACME_EMAIL=ops@example.test
+PUBLIC_SITE_URL=https://store.example.test
 DB_PASSWORD=compose-validation-password
 JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
 UPLOAD_HOST_PATH=/data/myshop/uploads
@@ -52,6 +54,11 @@ fi
 
 if ! grep -Fq 'target: /app/uploads' <<<"$rendered_config"; then
   echo "compose validation missing the /app/uploads container target" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'PUBLIC_SITE_URL: https://store.example.test' <<<"$rendered_config"; then
+  echo "compose validation missing the canonical public site URL" >&2
   exit 1
 fi
 

@@ -51,7 +51,7 @@ class PaymentServiceImplTest {
     @BeforeEach
     void setUp() {
         lenient().when(provider.id()).thenReturn("epay");
-        lenient().when(provider.paymentTypes()).thenReturn(List.of("alipay", "wechat"));
+        lenient().when(provider.paymentTypes()).thenReturn(List.of("alipay", "wxpay"));
         lenient().when(orderItemRepository.findByOrderId(any())).thenReturn(List.of());
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         service = new PaymentServiceImpl(paymentChannelRepository, orderRepository, orderItemRepository,
@@ -89,6 +89,23 @@ class PaymentServiceImplTest {
                 () -> service.createPayment(orderId, "alipay", new BigDecimal("0.01"), "pc"));
 
         assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
+        verify(provider, never()).create(any(PaymentProvider.PaymentRequest.class));
+    }
+
+    @Test
+    void disabledChannelCannotCreateANewPayment() {
+        UUID orderId = UUID.randomUUID();
+        PaymentChannel channel = channel("alipay");
+        channel.setEnabled(false);
+        when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))
+                .thenReturn(Optional.of(channel));
+        when(orderRepository.findByIdForUpdate(orderId))
+                .thenReturn(Optional.of(pendingOrder(orderId, "10.00")));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.createPayment(orderId, "alipay", new BigDecimal("10.00"), "pc"));
+
+        assertEquals(ErrorCode.CHANNEL_UNAVAILABLE, exception.getCode());
         verify(provider, never()).create(any(PaymentProvider.PaymentRequest.class));
     }
 

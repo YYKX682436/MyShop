@@ -13,12 +13,12 @@ import { cn, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel, isWechatChannel } from "@/lib/payment-channel"
 import { PaymentSelector } from "@/components/shared/payment-selector"
-import type { ProductDetail, ProductSpec, PaymentChannelItem } from "@/types"
+import type { ProductDetail, ProductSpec, PublicPaymentChannel } from "@/types"
 import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
 
 interface ProductActionsProps {
   product: ProductDetail
-  channels: PaymentChannelItem[]
+  channels: PublicPaymentChannel[]
 }
 
 export function ProductActions({ product, channels }: ProductActionsProps) {
@@ -27,7 +27,8 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const router = useRouter()
   const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
-  const enabledChannels = useMemo(() => channels.filter(c => c.is_enabled), [channels])
+  // The public API only returns enabled, storefront-safe channels.
+  const enabledChannels = useMemo(() => channels, [channels])
   const adminPickup = isAdminRole(user?.role)
 
   const [selectedSpec, setSelectedSpec] = useState<ProductSpec | null>(

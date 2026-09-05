@@ -128,9 +128,9 @@ public class WebhookServiceImpl implements WebhookService {
         PaymentChannel channel = paymentChannelRepository
                 .findByChannelCodeAndIsDeleted(order.getPaymentMethod(), 0)
                 .orElseThrow(() -> new IllegalStateException("payment channel missing"));
-        if (!channel.isEnabled()) {
-            throw new IllegalStateException("payment channel disabled");
-        }
+        // Enabled controls only creation of new payment requests. The exact
+        // channel profile must remain usable for an existing order callback,
+        // even after an administrator disables the channel.
         Map<String, String> config = parseConfig(channel.getConfigData());
         PaymentProvider provider = paymentProviders.stream()
                 .filter(candidate -> candidate.id().equalsIgnoreCase(channel.getProviderType()))

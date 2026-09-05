@@ -13,7 +13,7 @@ import type {
   ProductCard,
   ProductDetail,
   Category,
-  PaymentChannelItem,
+  PublicPaymentChannel,
   SiteConfig,
 } from "@/types"
 import { cookies } from "next/headers"
@@ -127,8 +127,8 @@ export async function getCategories(): Promise<Category[]> {
 // Public API — 支付渠道
 // ============================================================
 
-export async function getPaymentChannels(): Promise<PaymentChannelItem[]> {
-  return serverRequest<PaymentChannelItem[]>("/payment-channels")
+export async function getPaymentChannels(): Promise<PublicPaymentChannel[]> {
+  return serverRequest<PublicPaymentChannel[]>("/payment-channels")
 }
 
 // ============================================================

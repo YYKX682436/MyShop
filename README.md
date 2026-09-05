@@ -76,7 +76,7 @@ BOOTSTRAP_SUPER_ADMIN_PASSWORD  # 6-72 位 ASCII 可见字符；仅首次初始�
 
 支付创建、回调验签、精确金额比较、服务端订单查询和 webhook 幂等均使用订单创建时的渠道配置。回调不会因为客户端传来的“成功”而直接改订单状态；重复 `trade_no` 通过唯一 webhook 事件安全返回。新增 provider 的接口约定见 [docs/PAYMENT_PROVIDER.md](docs/PAYMENT_PROVIDER.md)。
 
-Epay 渠道配置必须提供 `pid`、`key`、`api_url`、`notify_url` 和 `return_url`。`key` 等敏感字段在后台响应中会被掩码，日志不会输出完整密钥或签名。
+易支付兼容协议渠道只需配置 `pid`、`key` 和 `api_url`（可填写网关根地址或完整 `mapi.php` 地址）。回调与支付完成回跳地址由服务端根据 `PUBLIC_SITE_URL` 自动生成；`key` 等敏感字段在后台响应中会被掩码，公开接口不会返回 provider 配置或密钥。
 
 ## 验证命令
 

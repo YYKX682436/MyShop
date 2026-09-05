@@ -13,6 +13,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URI;
 import java.net.URLEncoder;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -30,22 +31,15 @@ public class EpayServiceImpl implements EpayService {
 
     @Override
     public EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name,
-                                    BigDecimal money, String clientIp, String device, String returnOrderNo) {
-        // The gateway callback keeps the internal UUID in out_trade_no, while
-        // the user-facing synchronous return URL carries the numeric number.
-        String baseReturnUrl = config.returnUrl();
-        if (returnOrderNo == null || returnOrderNo.isBlank()) {
-            throw new IllegalArgumentException("returnOrderNo is required");
-        }
-        String dynamicReturnUrl = baseReturnUrl + (baseReturnUrl.contains("?") ? "&" : "?")
-                + "orderNo=" + URLEncoder.encode(returnOrderNo, StandardCharsets.UTF_8);
-
+                                    BigDecimal money, String clientIp, String device,
+                                    String notifyUrl, String returnUrl) {
+        String url = normalizeApiUrl(config.apiUrl());
         Map<String, String> params = new LinkedHashMap<>();
         params.put("pid", config.pid());
         params.put("type", type);
         params.put("out_trade_no", outTradeNo);
-        params.put("notify_url", config.notifyUrl());
-        params.put("return_url", dynamicReturnUrl);
+        params.put("notify_url", notifyUrl);
+        params.put("return_url", returnUrl);
         params.put("name", name);
         params.put("money", money.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         params.put("clientip", clientIp != null ? clientIp : "127.0.0.1");
@@ -64,8 +58,6 @@ public class EpayServiceImpl implements EpayService {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(formData, headers);
-
-        String url = config.apiUrl() + (config.apiUrl().endsWith("/") ? "" : "/") + "mapi.php";
 
         // 带重试的网络调用（最多重试 2 次，间隔 1 秒）
         int maxRetries = 2;
@@ -162,9 +154,10 @@ public class EpayServiceImpl implements EpayService {
 
     @Override
     public OrderQueryResult queryOrder(ChannelConfig config, String outTradeNo) {
-        String url = config.apiUrl() + (config.apiUrl().endsWith("/") ? "" : "/")
-                + "api.php?act=order&pid=" + config.pid() + "&key=" + config.key()
-                + "&out_trade_no=" + outTradeNo;
+        String url = gatewayBaseUrl(config.apiUrl()) + "/api.php?act=order"
+                + "&pid=" + encodeQueryParam(config.pid())
+                + "&key=" + encodeQueryParam(config.key())
+                + "&out_trade_no=" + encodeQueryParam(outTradeNo);
 
         try {
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
@@ -198,6 +191,61 @@ public class EpayServiceImpl implements EpayService {
         if (sign == null || sign.isEmpty()) return false;
         String expected = buildSign(merchantKey, params);
         return expected.equalsIgnoreCase(sign);
+    }
+
+    /**
+     * Accept either a gateway root or the complete mapi.php endpoint and
+     * produce exactly one canonical mapi.php URL.
+     */
+    public static String normalizeApiUrl(String raw) {
+        URI uri = parseHttpUrl(raw);
+        String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+        while (path.endsWith("/") && !path.isEmpty()) {
+            path = path.substring(0, path.length() - 1);
+        }
+        String lowerPath = path.toLowerCase(Locale.ROOT);
+        int mapiMarker = lowerPath.indexOf("/mapi.php");
+        if (mapiMarker >= 0
+                && (lowerPath.length() == mapiMarker + "/mapi.php".length()
+                || lowerPath.charAt(mapiMarker + "/mapi.php".length()) == '/')) {
+            // Truncate a repeated or suffixed endpoint to its first mapi.php
+            // segment so the request URL can never contain mapi.php twice.
+            path = path.substring(0, mapiMarker) + "/mapi.php";
+        } else {
+            path = (path.isEmpty() ? "" : path) + "/mapi.php";
+        }
+        return origin(uri) + path;
+    }
+
+    private static String gatewayBaseUrl(String raw) {
+        String mapiUrl = normalizeApiUrl(raw);
+        return mapiUrl.substring(0, mapiUrl.length() - "/mapi.php".length());
+    }
+
+    private static URI parseHttpUrl(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        try {
+            URI uri = URI.create(value);
+            if (!("http".equalsIgnoreCase(uri.getScheme())
+                    || "https".equalsIgnoreCase(uri.getScheme()))
+                    || uri.getHost() == null || uri.getHost().isBlank()
+                    || uri.getUserInfo() != null || uri.getQuery() != null
+                    || uri.getFragment() != null) {
+                throw new IllegalArgumentException();
+            }
+            return uri;
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "易支付接口地址必须是合法的 http/https URL");
+        }
+    }
+
+    private static String origin(URI uri) {
+        return uri.getScheme().toLowerCase(Locale.ROOT) + "://" + uri.getRawAuthority();
+    }
+
+    private static String encodeQueryParam(String value) {
+        return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
     }
 
     private String md5(String input) {

@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("14", flyway.info().current().getVersion().getVersion());
-        assertEquals(14, flyway.info().all().length);
+        assertEquals("15", flyway.info().current().getVersion().getVersion());
+        assertEquals(15, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -276,9 +276,35 @@ class MigrationChainIntegrationTest {
         assertTrue(indexExists("idx_card_keys_available_pool"));
         assertFalse(indexExists("uq_card_key_pool_content"));
         assertEquals("[]", configValue("contact_items"));
+        assertTrue(columnExists("payment_channels", "payment_hint"));
+        assertTrue(columnExists("payment_channels", "badge_text"));
         for (String retiredKey : List.of("github_url", "contact_telegram", "contact_telegram_group")) {
             assertEquals(0, configCount(retiredKey), "retired config key must not be seeded: " + retiredKey);
         }
+    }
+
+    @Test
+    void v15NormalizesLegacyPaymentTypeAndRemovesAdministratorManagedUrls() {
+        flyway("14").migrate();
+        UUID channelId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO payment_channels(id, channel_code, channel_name, provider_type,
+                                              payment_type, config_data)
+                VALUES (?, 'wechat', '微信', 'epay', 'wechat',
+                        '{"pid":"743794","key":"legacy-secret","api_url":"https://pay.example.com","notify_url":"https://old.example/notify","return_url":"https://old.example/return"}')
+                """, channelId);
+
+        flyway().migrate();
+
+        assertEquals("wxpay", jdbcTemplate.queryForObject(
+                "SELECT payment_type FROM payment_channels WHERE id = ?", String.class, channelId));
+        String configData = jdbcTemplate.queryForObject(
+                "SELECT config_data FROM payment_channels WHERE id = ?", String.class, channelId);
+        assertNotNull(configData);
+        assertFalse(configData.contains("notify_url"));
+        assertFalse(configData.contains("return_url"));
+        assertTrue(columnExists("payment_channels", "payment_hint"));
+        assertTrue(columnExists("payment_channels", "badge_text"));
     }
 
     @Test
@@ -316,7 +342,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("14", flyway().info().current().getVersion().getVersion());
+        assertEquals("15", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -386,7 +412,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("14", flyway().info().current().getVersion().getVersion());
+        assertEquals("15", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -435,7 +461,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("14", flyway().info().current().getVersion().getVersion());
+        assertEquals("15", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         assertEquals("bigint", dataType("orders", "order_no"));
@@ -610,7 +636,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("14", flyway().info().current().getVersion().getVersion());
+        assertEquals("15", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -656,7 +682,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("14", flyway().info().current().getVersion().getVersion());
+        assertEquals("15", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

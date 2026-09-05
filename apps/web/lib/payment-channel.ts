@@ -1,22 +1,21 @@
-import type { PaymentChannelItem } from "@/types"
+import type { PublicPaymentChannel } from "@/types"
 
 /** Resolve a channel instance to the provider payment type it represents. */
 export function getPaymentTypeForChannel(
-  channels: readonly PaymentChannelItem[],
+  channels: readonly PublicPaymentChannel[],
   channelCode: string | null | undefined,
 ): string | undefined {
   const normalizedCode = channelCode?.trim()
   if (!normalizedCode) return undefined
 
   const channel = channels.find(({ channel_code }) => channel_code === normalizedCode)
-  const paymentType = channel?.payment_type?.trim().toLowerCase()
-  return paymentType || undefined
+  return channel?.type?.trim().toLowerCase() || undefined
 }
 
-/** Mobile routing must follow payment_type, never the channel instance code. */
+/** Mobile routing must follow the stored type, never the channel instance code. */
 export function isWechatChannel(
-  channels: readonly PaymentChannelItem[],
+  channels: readonly PublicPaymentChannel[],
   channelCode: string | null | undefined,
 ): boolean {
-  return getPaymentTypeForChannel(channels, channelCode) === "wechat"
+  return getPaymentTypeForChannel(channels, channelCode) === "wxpay"
 }

@@ -34,7 +34,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const [redirected, setRedirected] = useState(false)
   const isMobile = isMobileDevice()
   const method = searchParams.get("method") || "alipay"
-  const isWechatMobile = isMobile && method.toLowerCase() === "wechat"
+  const isWechatMobile = isMobile && method.toLowerCase() === "wxpay"
   const methodName = getPaymentLabel(method, t)
   const brandColor = getPaymentBrandColor(method)
   const hasCountdown = timeLeft >= 0

@@ -3,6 +3,7 @@ package com.myshop.payment;
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
 import com.myshop.service.EpayService;
+import com.myshop.service.PaymentUrlService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -14,40 +15,40 @@ import java.util.Map;
 public class EpayPaymentProvider implements PaymentProvider {
 
     private final EpayService epayService;
+    private final PaymentUrlService paymentUrlService;
 
     @Override
     public String id() { return "epay"; }
 
     @Override
-    public String displayName() { return "Epay 聚合支付"; }
+    public String displayName() { return "易支付兼容协议"; }
 
     @Override
-    public List<String> paymentTypes() { return List.of("alipay", "wechat"); }
+    public List<String> paymentTypes() { return List.of("alipay", "wxpay"); }
 
     @Override
     public List<ConfigField> configSchema() {
         return List.of(
-                new ConfigField("pid", "商户 ID", "text", false, true,
+                new ConfigField("pid", "商户 ID / PID", "text", false, true,
                         "例如：743794", null, List.of()),
-                new ConfigField("key", "商户密钥", "password", true, true,
+                new ConfigField("key", "商户密钥 / KEY", "password", true, true,
                         "MD5 密钥", null, List.of()),
-                new ConfigField("api_url", "接口地址", "url", false, true,
-                        "https://pay.example.com/", null, List.of()),
-                new ConfigField("notify_url", "异步通知地址", "url", false, true,
-                        "https://yourdomain.com/api/payments/webhook/epay", null, List.of()),
-                new ConfigField("return_url", "同步回跳地址", "url", false, true,
-                        "https://yourdomain.com/order/query", null, List.of())
+                new ConfigField("api_url", "接口地址 / API URL", "url", false, true,
+                        "https://pay.example.com 或 https://pay.example.com/mapi.php", null, List.of())
         );
     }
 
     @Override
     public PaymentResult create(PaymentRequest request) {
         Map<String, String> config = request.config();
-        String type = "wechat".equalsIgnoreCase(request.paymentType()) ? "wxpay" : "alipay";
+        String type = gatewayPaymentType(request.paymentType());
+        String notifyUrl = paymentUrlService.webhookUrl(id());
+        String returnUrl = paymentUrlService.paymentReturnUrl(
+                request.orderId(), request.returnOrderNo(), request.paymentType());
         EpayService.EpayResult result = epayService.createPayment(
                 channelConfig(config),
                 request.orderId(), type, request.productName(), request.amount(), request.clientIp(), request.device(),
-                request.returnOrderNo());
+                notifyUrl, returnUrl);
         return new PaymentResult(result.tradeNo(), result.payUrl(), result.qrcodeUrl());
     }
 
@@ -69,15 +70,21 @@ public class EpayPaymentProvider implements PaymentProvider {
         return new EpayService.ChannelConfig(
                 required(config, "pid"),
                 required(config, "key"),
-                required(config, "api_url"),
-                required(config, "notify_url"),
-                required(config, "return_url"));
+                required(config, "api_url"));
+    }
+
+    private String gatewayPaymentType(String paymentType) {
+        if ("alipay".equalsIgnoreCase(paymentType)) return "alipay";
+        if ("wxpay".equalsIgnoreCase(paymentType)) return "wxpay";
+        throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE,
+                "易支付兼容协议不支持支付类型: " + paymentType);
     }
 
     private String required(Map<String, String> config, String key) {
         String value = config.get(key);
         if (value == null || value.isBlank()) {
-            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "Epay 渠道缺少配置项: " + key);
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE,
+                    "易支付兼容协议渠道缺少配置项: " + key);
         }
         return value;
     }

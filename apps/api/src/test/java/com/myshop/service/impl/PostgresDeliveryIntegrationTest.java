@@ -104,7 +104,7 @@ class PostgresDeliveryIntegrationTest {
     @BeforeEach
     void configureProvider() {
         when(epayPaymentProvider.id()).thenReturn("epay");
-        when(epayPaymentProvider.paymentTypes()).thenReturn(List.of("alipay", "wechat"));
+        when(epayPaymentProvider.paymentTypes()).thenReturn(List.of("alipay", "wxpay"));
     }
 
     @DynamicPropertySource
@@ -942,7 +942,7 @@ class PostgresDeliveryIntegrationTest {
                     provider_type, payment_type, config_data, is_enabled, sort_order, is_deleted)
                 values (?, current_timestamp, current_timestamp, ?, ?, 'epay', 'alipay', ?, true, 0, 0)
                 """, UUID.randomUUID(), channelCode, channelCode,
-                "{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\",\"notify_url\":\"https://shop.example/notify\",\"return_url\":\"https://shop.example/return\"}");
+                "{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\"}");
     }
 
     private void configureSuccessfulCallback(String tradeNo) {

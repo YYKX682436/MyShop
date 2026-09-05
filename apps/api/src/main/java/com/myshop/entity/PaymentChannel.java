@@ -24,12 +24,20 @@ public class PaymentChannel extends BaseEntity {
     @Column(nullable = false, columnDefinition = "varchar(255) not null default 'epay'")
     private String providerType = "epay";
 
-    /** Payment type exposed in the first-party UI, e.g. alipay or wechat. */
+    /** Payment type exposed in the first-party UI, e.g. alipay or wxpay. */
     @Column(nullable = false, length = 32)
     private String paymentType = "alipay";
 
     @Column(columnDefinition = "TEXT")
     private String configData;
+
+    /** Optional storefront guidance shown below the channel label. */
+    @Column(name = "payment_hint", length = 160)
+    private String paymentHint;
+
+    /** Optional short storefront badge. */
+    @Column(name = "badge_text", length = 16)
+    private String badgeText;
 
     @Column(name = "is_enabled")
     private boolean enabled = true;

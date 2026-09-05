@@ -31,13 +31,34 @@ use a provider allowlist or Epay field list as its production data source.
 The admin API validates provider IDs and payment types against the registered
 provider. Config keys must be declared by the provider schema, field types and
 select options are checked server-side, and values are bounded scalar values.
-Sensitive schema fields are masked in read responses. `channel_code` is the
-unique code of a concrete channel instance, not the payment type; for example
-`epay-alipay-main` and `epay-alipay-backup` can both use `payment_type=alipay`.
-Production configuration must use HTTPS callback and return URLs and must not
-be placed in source control.
+Sensitive schema fields are masked in admin read responses. The server
+generates `channel_code` from the payment type for a new channel; administrators
+do not type it. The display name defaults to `支付宝` or `微信支付` and can be
+overridden together with the optional storefront hint and short badge.
 
-The Phase 1 Epay implementation maps `alipay` and `wechat` to Epay's
-`alipay`/`wxpay` request types, verifies the callback signature, then queries
-the gateway server-side. The order is changed to PAID only after signature,
-exact amount, paid status, and trade-number checks all succeed.
+The current mainland storefront exposes only `alipay` and `wxpay`. When only
+one provider is registered, its provider ID is selected by the server and is
+not an admin choice. `status` and `sort` have safe defaults and are management
+fields rather than protocol prerequisites.
+
+The Phase 1 Epay-compatible implementation has exactly three configuration
+fields: `pid`, `key`, and `api_url`. It accepts either a gateway root or a full
+`mapi.php` URL and normalizes both forms to one `mapi.php` request endpoint.
+It keeps the Epay parameter set, sorted MD5 signature, JSON response parsing,
+and `payurl`/`qrcode` handling. It verifies the callback signature, then
+queries the gateway server-side. The order is changed to PAID only after
+signature, exact amount, paid status, and trade-number checks all succeed.
+
+The server builds provider callback and payment-result URLs from the
+canonical `PUBLIC_SITE_URL` environment variable (`app.public-site-url`),
+never from an incoming request Host header. The Epay callback route is the
+real `GET /api/payments/webhook/epay` route. The synchronous return goes
+to the storefront `/pay/{orderId}` payment-result page with the visible order
+number and payment type in its query string. These URLs are not administrator
+configuration fields.
+
+Disabling a channel prevents new payment creation only. Existing pending
+orders continue to use the persisted channel profile for callback verification
+and confirmation. While a normal pending order references a channel, changes
+to its provider, payment type, generated code, or `pid`/`key`/`api_url`, as
+well as deletion, return HTTP 409. Display-only fields remain editable.

@@ -103,6 +103,30 @@ class WebhookServiceImplTest {
     }
 
     @Test
+    void disabledChannelStillVerifiesAndConfirmsAnExistingOrder() {
+        UUID orderId = UUID.randomUUID();
+        Order order = pendingOrder(orderId);
+        PaymentChannel channel = stubChannelAndOrder(order);
+        channel.setEnabled(false);
+        when(webhookEventRepository.findByEventId("epay:trade-disabled"))
+                .thenReturn(Optional.empty(), Optional.empty());
+        when(provider.verifyCallback(any(PaymentProvider.CallbackRequest.class))).thenReturn(true);
+        when(provider.query(any(PaymentProvider.PaymentQueryRequest.class)))
+                .thenReturn(new PaymentProvider.PaymentQueryResult("TRADE_SUCCESS", "10.00", "trade-disabled"));
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(webhookEventRepository.save(any(WebhookEvent.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertEquals("SUCCESS", service.processEpayCallback(
+                callback(orderId, "trade-disabled", "10.00")));
+
+        assertEquals(OrderStatus.PAID, order.getStatus());
+        verify(provider).verifyCallback(any(PaymentProvider.CallbackRequest.class));
+        verify(provider).query(any(PaymentProvider.PaymentQueryRequest.class));
+        verify(orderRepository).save(order);
+    }
+
+    @Test
     void duplicateCallbackIsIdempotent() {
         UUID orderId = UUID.randomUUID();
         Order order = pendingOrder(orderId);
@@ -124,17 +148,18 @@ class WebhookServiceImplTest {
         verify(webhookEventRepository).save(any(WebhookEvent.class));
     }
 
-    private void stubChannelAndOrder(Order order) {
+    private PaymentChannel stubChannelAndOrder(Order order) {
         PaymentChannel channel = new PaymentChannel();
         channel.setChannelCode("alipay");
         channel.setProviderType("epay");
         channel.setPaymentType("alipay");
         channel.setEnabled(true);
         channel.setIsDeleted(0);
-        channel.setConfigData("{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\",\"notify_url\":\"https://shop.example/api/payments/webhook/epay\",\"return_url\":\"https://shop.example/order\"}");
+        channel.setConfigData("{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\"}");
         when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))
                 .thenReturn(Optional.of(channel));
         when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        return channel;
     }
 
     private Order pendingOrder(UUID id) {

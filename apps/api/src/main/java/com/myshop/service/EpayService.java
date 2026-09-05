@@ -5,10 +5,8 @@ import java.util.Map;
 
 public interface EpayService {
 
-    /**
-     * 易支付渠道配置（从管理后台配置读取，或从 application.yml 默认值）
-     */
-    record ChannelConfig(String pid, String key, String apiUrl, String notifyUrl, String returnUrl) {}
+    /** Only merchant credentials and the gateway endpoint are persisted. */
+    record ChannelConfig(String pid, String key, String apiUrl) {}
 
     /**
      * 调用易支付 /mapi.php 创建支付订单
@@ -20,11 +18,13 @@ public interface EpayService {
      * @param money      金额
      * @param clientIp   用户 IP
      * @param device     支付设备
-     * @param returnOrderNo 用户可见业务订单号，用于支付完成后的回跳地址
+     * @param notifyUrl 服务器生成的异步通知地址
+     * @param returnUrl 服务器生成的支付结果回跳地址
      * @return 包含 payUrl / qrcodeUrl 的结果
      */
     EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name,
-                             BigDecimal money, String clientIp, String device, String returnOrderNo);
+                             BigDecimal money, String clientIp, String device,
+                             String notifyUrl, String returnUrl);
 
     /**
      * 生成 MD5 签名

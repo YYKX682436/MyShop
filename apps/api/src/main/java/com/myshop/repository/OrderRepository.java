@@ -1,6 +1,7 @@
 package com.myshop.repository;
 
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +18,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface OrderRepository extends JpaRepository<Order, UUID> {
+
+    boolean existsByPaymentMethodAndStatusAndOrderType(String paymentMethod,
+                                                        OrderStatus status,
+                                                        OrderType orderType);
 
     Optional<Order> findByIdempotencyKey(String idempotencyKey);
 

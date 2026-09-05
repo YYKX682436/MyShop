@@ -18,14 +18,14 @@ function normalize(method: string): string {
 function getLogoSrc(method: string): string | null {
   const m = normalize(method)
   if (m.includes("alipay") || m === "支付宝") return "/images/payment/ali.svg"
-  if (m.includes("wechat") || m === "微信支付") return "/images/payment/wechat.svg"
+  if (m === "wxpay" || m === "微信支付") return "/images/payment/wechat.svg"
   return null
 }
 
 /** 支付方式 code → 品牌色（大小写不敏感） */
 const BRAND_COLORS: Record<string, string> = {
   alipay: "#1677FF",
-  wechat: "#07C160",
+  wxpay: "#07C160",
 }
 
 export function getPaymentBrandColor(method: string): string | undefined {
@@ -35,7 +35,7 @@ export function getPaymentBrandColor(method: string): string | undefined {
 /** 支付方式 code → 中文名称（不依赖 i18n，用于无 hook 的场景） */
 const PAYMENT_LABELS: Record<string, string> = {
   alipay: "支付宝",
-  wechat: "微信支付",
+  wxpay: "微信支付",
   admin_pickup: "管理员提卡",
 }
 
@@ -45,7 +45,7 @@ export function getPaymentLabel(method: string, t?: (key: any) => string): strin
   const m = normalize(method)
   if (t) {
     if (m === "alipay") return t("payment.alipay")
-    if (m === "wechat") return t("payment.wechat")
+    if (m === "wxpay") return t("payment.wechat")
     if (m === "admin_pickup") return t("payment.adminPickup")
   }
   return PAYMENT_LABELS[m] || method
@@ -56,7 +56,7 @@ export function getPaymentLabel(method: string, t?: (key: any) => string): strin
 export function getPaymentScanHint(method: string, t: (key: any) => string): string {
   const m = normalize(method)
   if (m === "alipay") return t("payment.scanWithAlipay")
-  if (m === "wechat") return t("payment.scanWithWechat")
+  if (m === "wxpay") return t("payment.scanWithWechat")
   if (m === "admin_pickup") return t("payment.adminPickup")
   return t("payment.scanToPay")
 }

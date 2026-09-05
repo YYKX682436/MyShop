@@ -347,14 +347,26 @@ export interface PaymentProviderMetadata {
   config_schema: PaymentProviderConfigField[]
 }
 
-export interface PaymentChannelItem {
+/** Storefront-safe payment channel payload. It never contains provider config. */
+export interface PublicPaymentChannel {
+  id: string
+  channel_code: string
+  name: string
+  payment_hint?: string | null
+  badge_text?: string | null
+  type: string
+}
+
+/** Admin channel payload; config_data is masked by the API. */
+export interface AdminPaymentChannel {
   id: string
   channel_code: string
   channel_name: string
   provider_type: ProviderType
   payment_type: string
-  icon?: string
   config_data?: PaymentChannelConfig | null
+  payment_hint?: string | null
+  badge_text?: string | null
   is_enabled: boolean
   sort_order: number
   created_at: string

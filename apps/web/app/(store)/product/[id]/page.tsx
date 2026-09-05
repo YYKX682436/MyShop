@@ -7,7 +7,7 @@ import { ProductBreadcrumb } from "./product-breadcrumb"
 import { ProductDescription } from "./product-description"
 import { ScrollToTop } from "./scroll-to-top"
 import type { Metadata } from "next"
-import type { PaymentChannelItem } from "@/types"
+import type { PublicPaymentChannel } from "@/types"
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -41,7 +41,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
 
   const [product, channels] = await Promise.all([
     getViewerProductDetail(id).catch(() => null),
-    getPaymentChannels().catch(() => [] as PaymentChannelItem[]),
+    getPaymentChannels().catch(() => [] as PublicPaymentChannel[]),
   ])
 
   if (!product) notFound()

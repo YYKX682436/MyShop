@@ -4,6 +4,11 @@ server:
     context-path: /api
   forward-headers-strategy: native
 
+# Canonical public storefront origin used to generate payment provider URLs.
+# Never infer this value from a request Host header behind a reverse proxy.
+app:
+  public-site-url: ${PUBLIC_SITE_URL:http://localhost:3000}
+
 spring:
   autoconfigure:
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration

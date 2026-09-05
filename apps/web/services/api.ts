@@ -32,7 +32,8 @@ import type {
   AdminOperationLogDetail,
   UserNumberConfig,
   AdminOrderItem,
-  PaymentChannelItem,
+  PublicPaymentChannel,
+  AdminPaymentChannel,
   PaymentProviderMetadata,
   OperationLog,
   RiskConfig,
@@ -397,7 +398,7 @@ export const siteApi = {
 
 export const paymentApi = {
   getChannels: () =>
-    request<PaymentChannelItem[]>("/payment-channels"),
+    request<PublicPaymentChannel[]>("/payment-channels"),
   getProviders: () =>
     request<PaymentProviderMetadata[]>("/payment-providers"),
 }
@@ -647,10 +648,10 @@ export const adminUserApi = {
 
 export const adminPaymentApi = {
   getList: () =>
-    request<PaymentChannelItem[]>("/admin/payment-channels"),
-  create: (data: { channel_code: string; channel_name: string; provider_type: string; payment_type: string; config_data?: Record<string, unknown>; is_enabled?: boolean; sort_order?: number }) =>
+    request<AdminPaymentChannel[]>("/admin/payment-channels"),
+  create: (data: { channel_name?: string; provider_type?: string; payment_type: string; config_data?: Record<string, unknown>; payment_hint?: string | null; badge_text?: string | null; is_enabled?: boolean; sort_order?: number }) =>
     request<null>("/admin/payment-channels", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: Partial<{ channel_code: string; channel_name: string; provider_type: string; payment_type: string; config_data: Record<string, unknown>; is_enabled: boolean; sort_order: number }>) =>
+  update: (id: string, data: Partial<{ channel_code: string; channel_name: string; provider_type: string; payment_type: string; config_data: Record<string, unknown>; payment_hint: string | null; badge_text: string | null; is_enabled: boolean; sort_order: number }>) =>
     request<null>(`/admin/payment-channels/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<null>(`/admin/payment-channels/${id}`, { method: "DELETE" }),
