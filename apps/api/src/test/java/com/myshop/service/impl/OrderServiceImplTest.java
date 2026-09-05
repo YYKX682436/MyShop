@@ -258,6 +258,8 @@ class OrderServiceImplTest {
         order.setStatus(OrderStatus.PENDING);
         order.setExpiresAt(LocalDateTime.now().plusMinutes(10));
         order.setLookupTokenHash(com.myshop.utils.LookupTokens.hash(lookupToken));
+        order.setQrcodeUrl(" weixin://dl/business/?ticket=qr-token ");
+        order.setPaymentUrl(" https://pay.example/submit.php?trade_no=demo ");
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
 
         BusinessException noCredential = assertThrows(BusinessException.class,
@@ -270,6 +272,9 @@ class OrderServiceImplTest {
 
         Map<String, Object> guestResult = service.getOrderStatus(orderId, lookupToken, null);
         assertEquals("PENDING", guestResult.get("status"));
+        assertEquals("weixin://dl/business/?ticket=qr-token", guestResult.get("qrcode_url"));
+        assertEquals("https://pay.example/submit.php?trade_no=demo", guestResult.get("pay_url"));
+        assertEquals("weixin://dl/business/?ticket=qr-token", guestResult.get("payment_url"));
 
         UUID userId = UUID.randomUUID();
         order.setUserId(userId);

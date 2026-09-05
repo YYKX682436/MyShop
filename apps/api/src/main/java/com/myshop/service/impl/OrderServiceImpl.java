@@ -235,8 +235,17 @@ public class OrderServiceImpl implements OrderService {
             result.put("remaining_seconds", 0);
         }
         if (order.getStatus() == OrderStatus.PENDING) {
-            // 优先返回二维码 URL（PC），其次 H5 跳转链接（移动端）
-            String effectiveUrl = order.getQrcodeUrl() != null ? order.getQrcodeUrl() : order.getPaymentUrl();
+            // 分开返回数据库中已保存的两种支付载体：只有真正的二维码载体才能交给前端生成二维码，
+            // 支付跳转链接应直接打开支付页面。payment_url 保留为历史兼容字段，但不再让前端据此猜测载体类型。
+            String qrcodeUrl = clean(order.getQrcodeUrl());
+            String payUrl = clean(order.getPaymentUrl());
+            if (qrcodeUrl != null) {
+                result.put("qrcode_url", qrcodeUrl);
+            }
+            if (payUrl != null) {
+                result.put("pay_url", payUrl);
+            }
+            String effectiveUrl = qrcodeUrl != null ? qrcodeUrl : payUrl;
             if (effectiveUrl != null) {
                 result.put("payment_url", effectiveUrl);
             }

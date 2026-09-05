@@ -113,7 +113,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       }
       toast.success(t("payment.redirectingToPay"))
       const payUrlH5 = result.payment.pay_url || ""
-      const qr = result.payment.qrcode_url || result.payment.payment_url || ""
+      const qr = result.payment.qrcode_url || ""
       const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
       let payUrl = `/pay/${result.payment.order_id}?orderNo=${encodeURIComponent(String(result.order.order_no))}&method=${encodeURIComponent(paymentType || "")}`
       if (qr) payUrl += `&qr=${encodeURIComponent(qr)}`

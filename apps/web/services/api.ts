@@ -367,7 +367,7 @@ export const orderApi = {
     return request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) })
   },
   getStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
-    request<{ order_id: string; order_no: number; status: OrderStatus; expires_at: string | null; remaining_seconds: number; payment_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`),
+    request<{ order_id: string; order_no: number; status: OrderStatus; expires_at: string | null; remaining_seconds: number; payment_url?: string; qrcode_url?: string; pay_url?: string }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`),
   refreshStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
     request<{ status: OrderStatus; order_no: number }>(`/orders/${orderId}/refresh?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`, { method: "POST" }),
   query: (data: { orders: { order_no: number | string; lookup_token?: string }[] }) =>

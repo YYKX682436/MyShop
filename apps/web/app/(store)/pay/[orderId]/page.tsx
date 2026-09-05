@@ -40,8 +40,9 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const methodName = getPaymentLabel(method, t)
   const brandColor = getPaymentBrandColor(method)
   const hasCountdown = timeLeft >= 0
-  const qrcodeValue = getPaymentQrValue(qrcodeUrl, payUrl)
-  const missingPaymentCarrier = statusLoaded && !qrcodeValue
+  const qrcodeValue = getPaymentQrValue(qrcodeUrl)
+  const paymentPageAvailable = Boolean(payUrl)
+  const missingPaymentCarrier = statusLoaded && !qrcodeValue && !paymentPageAvailable
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -50,8 +51,10 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
       setOrderNo(String(result.order_no))
       if (token && !lookupToken) setLookupToken(token)
       setTimeLeft(result.remaining_seconds ?? 0)
-      const paymentUrl = result.payment_url?.trim() || ""
-      if (paymentUrl && !getPaymentQrValue(qrcodeUrl, payUrl)) setQrcodeUrl(paymentUrl)
+      const nextQrcodeUrl = result.qrcode_url?.trim() || ""
+      const nextPayUrl = result.pay_url?.trim() || (!nextQrcodeUrl ? result.payment_url?.trim() || "" : "")
+      if (nextQrcodeUrl && !qrcodeUrl) setQrcodeUrl(nextQrcodeUrl)
+      if (nextPayUrl && !payUrl) setPayUrl(nextPayUrl)
       if (result.status !== "PENDING") {
         setStatus(result.status)
       }
@@ -91,6 +94,17 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
     window.location.href = payUrl
   }, [isMobile, payUrl, status, isWechatMobile, orderId])
 
+  // A pay URL is a gateway page, not QR content. On desktop open that page in
+  // the current browser so the gateway can render its real WeChat QR code.
+  useEffect(() => {
+    if (isMobile || !payUrl || qrcodeValue || status !== "PENDING") return
+    const key = `myshop_payment_page_redirected_${orderId}`
+    if (sessionStorage.getItem(key)) { setRedirected(true); return }
+    sessionStorage.setItem(key, "1")
+    setRedirected(true)
+    window.location.href = payUrl
+  }, [isMobile, payUrl, qrcodeValue, status, orderId])
+
   useEffect(() => {
     if (status !== "PAID" && status !== "DELIVERED") return
     const timer = window.setTimeout(() => router.push(`/order/query?orderNo=${orderNo}`), 3000)
@@ -107,8 +121,10 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
       setPayUrl(carriers.payUrl)
       setQrcodeUrl(carriers.qrcodeUrl)
       setStatusLoaded(true)
-      if (isMobile && carriers.payUrl && !isWechatMobile) window.location.href = carriers.payUrl
-      else toast.success(t("payment.statusRefreshed"))
+      if (carriers.payUrl && !carriers.qrcodeUrl && (!isMobile || !isWechatMobile)) {
+        sessionStorage.removeItem(`myshop_payment_page_redirected_${orderId}`)
+        window.location.href = carriers.payUrl
+      } else toast.success(t("payment.statusRefreshed"))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("common.error"))
     } finally { setRetrying(false) }
@@ -137,9 +153,9 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
         <div className="flex w-72 flex-col items-center gap-4 rounded-surface px-6 pb-8 pt-6" style={{ backgroundColor: brandColor || "#374151" }}>
           <div className="flex items-center gap-2.5"><PaymentIcon method={method} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div>
           <p className="text-sm font-medium text-white/90">{getPaymentScanHint(method, t)}</p>
-          <div className="flex h-52 w-52 items-center justify-center rounded-xl bg-white p-3">{qrcodeValue ? <QRCodeSVG value={qrcodeValue} size={184} /> : statusLoaded ? <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert"><p className="text-sm text-muted-foreground">{t("payment.noQrCode")}</p>{retryButton}</div> : <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />}</div>
+          <div className="flex h-52 w-52 items-center justify-center rounded-xl bg-white p-3">{qrcodeValue ? <QRCodeSVG value={qrcodeValue} size={184} /> : paymentPageAvailable ? <div className="flex flex-col items-center gap-3 px-3 text-center" role="status"><p className="text-sm text-muted-foreground">{t("payment.redirectingToPay")}</p><a href={payUrl} className="rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">{t("payment.continuePay")}</a></div> : statusLoaded ? <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert"><p className="text-sm text-muted-foreground">{t("payment.noQrCode")}</p>{retryButton}</div> : <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />}</div>
         </div>
-        {qrcodeValue || !statusLoaded ? <p className="animate-pulse text-sm text-primary">{t("payment.detecting")}</p> : null}
+        {qrcodeValue || !statusLoaded ? <p className="animate-pulse text-sm text-primary">{t("payment.detecting")}</p> : paymentPageAvailable ? <p className="text-sm text-muted-foreground">{redirected ? t("payment.returnedFromPay") : t("payment.redirectingToPay")}</p> : null}
       </> : <>
         {missingPaymentCarrier ? <><p className="text-center text-sm text-muted-foreground" role="alert">{t("payment.noQrCode")}</p>{retryButton}</> : <><div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-surface px-6 py-6" style={{ backgroundColor: brandColor || "#374151" }}><div className="flex items-center gap-2.5"><PaymentIcon method={method} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div><Smartphone className="h-8 w-8 text-white/80" /></div>
         <p className="text-sm text-muted-foreground">{redirected ? "如已完成支付，请返回此页等待确认。" : "正在跳转支付页面……"}</p>
