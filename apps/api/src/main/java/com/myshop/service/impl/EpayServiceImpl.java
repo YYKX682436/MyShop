@@ -132,7 +132,7 @@ public class EpayServiceImpl implements EpayService {
                 String payUrl = payUrlCarrier == null ? null : payUrlCarrier.value();
 
                 if (payUrl == null && resultQrcode == null) {
-                    if (pageRedirectFallbackEnabled && tradeNo != null) {
+                    if (pageRedirectFallbackEnabled && tradeNo != null && !tradeNo.isBlank()) {
                         String submitUrl = buildSubmitPaymentUrl(config.apiUrl(), params);
                         log.info("Epay API page redirect fallback: orderId={}, paymentType={}, "
                                         + "responseCode={}, selectedCarrier=submit.php",

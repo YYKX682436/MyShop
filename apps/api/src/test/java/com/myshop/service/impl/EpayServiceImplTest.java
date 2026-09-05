@@ -137,6 +137,25 @@ class EpayServiceImplTest {
     }
 
     @Test
+    void stillRejectsNoCarrierSuccessWithoutTradeNoWhenSubmitFallbackIsEnabled() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.postForEntity(eq("https://pay.example.com/mapi.php"),
+                org.mockito.ArgumentMatchers.any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(
+                        "{\"code\":1,\"msg\":\"success\",\"trade_no\":\" \","
+                                + "\"payurl\":\"\",\"qrcode\":\"\"}"));
+        EpayServiceImpl service = new EpayServiceImpl(restTemplate, new ObjectMapper(), true);
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.createPayment(
+                new EpayService.ChannelConfig("pid", "secret", "https://pay.example.com"),
+                "order-1", "wxpay", "商品", BigDecimal.TEN, "127.0.0.1", "pc",
+                "https://shop.example.com/api/payments/webhook/epay",
+                "https://shop.example.com/pay/order-1?orderNo=100001&method=wxpay"));
+
+        assertEquals("支付创建失败：网关未返回支付链接或二维码", exception.getMessage());
+    }
+
+    @Test
     void acceptsStringSuccessCodeWithoutAcceptingFuzzySuccessValues() {
         EpayService.EpayResult result = createPaymentResponse(
                 "{\"code\":\"1\",\"payurl\":\"https://pay.example.com/checkout\"}");
