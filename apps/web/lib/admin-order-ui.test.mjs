@@ -89,5 +89,6 @@ test("order query lets authenticated owners omit lookup tokens while guests stil
   assert.match(source, /useAuth/)
   assert.match(source, /!user && !token/)
   assert.match(source, /lookup_token/)
-  assert.match(source, /void search\(requested, ""\)/)
+  assert.match(source, /if \(storedToken \|\| user\)/)
+  assert.match(source, /else void search\(requested, storedToken\)/)
 })

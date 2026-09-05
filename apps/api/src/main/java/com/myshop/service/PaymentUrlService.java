@@ -29,14 +29,10 @@ public class PaymentUrlService {
         return publicSiteUrl + "/api/payments/webhook/" + provider;
     }
 
-    public String paymentReturnUrl(String orderId, String orderNo, String paymentType) {
-        String internalId = requiredPathSegment(orderId, "orderId");
+    public String paymentReturnUrl(String orderNo) {
         String visibleOrderNo = requiredText(orderNo, "orderNo");
-        String type = requiredText(paymentType, "paymentType");
-        return publicSiteUrl + "/pay/" + internalId
-                + "?orderNo=" + encodeQuery(visibleOrderNo)
-                + "&method=" + encodeQuery(type)
-                + "&return=1";
+        return publicSiteUrl + "/order/query?orderNo=" + encodeQuery(visibleOrderNo)
+                + "&paymentReturn=1";
     }
 
     public String publicSiteUrl() {

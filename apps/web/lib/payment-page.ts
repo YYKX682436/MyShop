@@ -4,8 +4,24 @@ export interface PaymentCarrierResponse {
   pay_url?: string | null
 }
 
+export interface PaymentNavigationInput {
+  isMobile: boolean
+  payUrl?: string | null
+  qrcodeUrl?: string | null
+}
+
 function normalizeCarrier(value: string | null | undefined): string {
   return value?.trim() || ""
+}
+
+/**
+ * A provider pay URL is already a payment page. Desktop stays on MyShop only
+ * when the provider supplied a real QR carrier for local rendering.
+ */
+export function shouldDirectProviderPayment({ isMobile, payUrl, qrcodeUrl }: PaymentNavigationInput): boolean {
+  const normalizedPayUrl = normalizeCarrier(payUrl)
+  const normalizedQrcodeUrl = normalizeCarrier(qrcodeUrl)
+  return Boolean(normalizedPayUrl) && (isMobile || !normalizedQrcodeUrl)
 }
 
 /** Only a provider-supplied QR carrier may be rendered as QR code content. */

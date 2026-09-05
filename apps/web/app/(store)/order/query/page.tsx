@@ -13,6 +13,20 @@ import { formatCardContent, formatCardContents } from "@/lib/card-display"
 import { formatYuan } from "@/lib/utils"
 import type { DeliverResult, OrderBrief } from "@/types"
 
+const RETURN_POLL_INTERVAL_MS = 1000
+const RETURN_POLL_MAX_MS = 20000
+
+interface SearchOptions {
+  preserveOnError?: boolean
+  silent?: boolean
+}
+
+interface SearchOutcome {
+  terminal: boolean
+}
+
+type ReturnPollCallback = (requested: string, token: string, deadline: number) => void
+
 export default function OrderQueryPage() {
   const searchParams = useSearchParams()
   const { user, authLoaded } = useAuth()
@@ -21,25 +35,39 @@ export default function OrderQueryPage() {
   const [orders, setOrders] = useState<OrderBrief[]>([])
   const [deliveries, setDeliveries] = useState<DeliverResult[]>([])
   const [loading, setLoading] = useState(false)
+  const [returnChecking, setReturnChecking] = useState(false)
+  const [returnTimedOut, setReturnTimedOut] = useState(false)
   const initializedFromUrl = useRef(false)
+  const searchInFlight = useRef(false)
+  const returnPolling = useRef(false)
+  const returnPollTimer = useRef<number | undefined>(undefined)
+  const returnPollCallback = useRef<ReturnPollCallback | undefined>(undefined)
+  const paymentReturn = searchParams.get("paymentReturn") === "1"
 
-  const search = useCallback(async (requestedOrderNo?: string, requestedToken?: string) => {
+  const search = useCallback(async (
+    requestedOrderNo?: string,
+    requestedToken?: string,
+    options: SearchOptions = {},
+  ): Promise<SearchOutcome | null> => {
     const requested = (requestedOrderNo ?? orderNo).trim()
     const token = (requestedToken ?? lookupToken).trim()
     if (!requested) {
-      toast.error("请输入订单号")
-      return
+      if (!options.silent) toast.error("请输入订单号")
+      return { terminal: true }
     }
-    if (!authLoaded) return
+    if (!authLoaded) return { terminal: false }
     if (!user && !token) {
-      toast.error("游客查询需要订单查询凭证")
-      return
+      if (!options.silent) toast.error("游客查询需要订单查询凭证")
+      return { terminal: true }
     }
+    if (searchInFlight.current) return null
+    searchInFlight.current = true
     setLoading(true)
+    let found: OrderBrief[] = []
     try {
       if (token) saveOrderLookupToken(requested, token)
       const credential = token ? { order_no: requested, lookup_token: token } : { order_no: requested }
-      const found = await orderApi.query({ orders: [credential] })
+      found = await orderApi.query({ orders: [credential] })
       const deliverable = found.filter(order => order.status === "PAID" || order.status === "DELIVERED")
       const delivered = deliverable.length
         ? await orderApi.deliver({ orders: deliverable.map(order => token ? { order_no: order.order_no, lookup_token: token } : { order_no: order.order_no }) })
@@ -49,14 +77,84 @@ export default function OrderQueryPage() {
         return result && result.status !== order.status ? { ...order, status: result.status } : order
       }))
       setDeliveries(delivered)
+      const terminalOrder = found.find(order => order.status === "EXPIRED" || order.status === "DELIVERED")
+      const deliveryCompleted = delivered.some(item => item.status === "DELIVERED" || Boolean(item.groups?.length))
+      return {
+        terminal: Boolean(terminalOrder || deliveryCompleted),
+      }
     } catch (error) {
-      setOrders([])
-      setDeliveries([])
-      toast.error(getApiErrorMessage(error, key => key))
+      if (options.preserveOnError) {
+        if (found.length > 0) setOrders(found)
+      } else {
+        setOrders([])
+        setDeliveries([])
+      }
+      if (!options.silent) toast.error(getApiErrorMessage(error, key => key))
+      return { terminal: false }
     } finally {
+      searchInFlight.current = false
       setLoading(false)
     }
   }, [authLoaded, lookupToken, orderNo, user])
+
+  const stopReturnPolling = useCallback((timedOut: boolean) => {
+    returnPolling.current = false
+    if (returnPollTimer.current !== undefined) {
+      window.clearTimeout(returnPollTimer.current)
+      returnPollTimer.current = undefined
+    }
+    setReturnChecking(false)
+    if (timedOut) setReturnTimedOut(true)
+  }, [])
+
+  const pollPaymentReturn = useCallback(async (requested: string, token: string, deadline: number) => {
+    if (!returnPolling.current) return
+    if (Date.now() >= deadline) {
+      stopReturnPolling(true)
+      return
+    }
+    const outcome = await search(requested, token, { preserveOnError: true, silent: true })
+    if (!returnPolling.current) return
+    if (outcome?.terminal) {
+      stopReturnPolling(false)
+      return
+    }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      stopReturnPolling(true)
+      return
+    }
+    returnPollTimer.current = window.setTimeout(() => {
+      returnPollTimer.current = undefined
+      returnPollCallback.current?.(requested, token, deadline)
+    }, Math.min(RETURN_POLL_INTERVAL_MS, remaining))
+  }, [search, stopReturnPolling])
+
+  useEffect(() => {
+    returnPollCallback.current = pollPaymentReturn
+  }, [pollPaymentReturn])
+
+  const confirmPaymentReturn = useCallback(async (requested: string, token: string) => {
+    const deadline = Date.now() + RETURN_POLL_MAX_MS
+    returnPolling.current = true
+    setReturnChecking(true)
+    setReturnTimedOut(false)
+    const initial = await search(requested, token, { preserveOnError: true, silent: true })
+    if (!returnPolling.current) return
+    if (initial?.terminal) {
+      stopReturnPolling(false)
+      return
+    }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      stopReturnPolling(true)
+      return
+    }
+    returnPollTimer.current = window.setTimeout(() => {
+      returnPollTimer.current = undefined
+      returnPollCallback.current?.(requested, token, deadline)
+    }, Math.min(RETURN_POLL_INTERVAL_MS, remaining))
+  }, [search, stopReturnPolling])
 
   useEffect(() => {
     const requested = searchParams.get("orderNo") || ""
@@ -67,11 +165,22 @@ export default function OrderQueryPage() {
     setOrderNo(requested)
     if (storedToken) {
       setLookupToken(storedToken)
-      void search(requested, storedToken)
-    } else if (user) {
-      void search(requested, "")
     }
-  }, [authLoaded, search, searchParams, user])
+    if (storedToken || user) {
+      if (paymentReturn) void confirmPaymentReturn(requested, storedToken)
+      else void search(requested, storedToken)
+    }
+  }, [authLoaded, confirmPaymentReturn, paymentReturn, search, searchParams, user])
+
+  useEffect(() => () => {
+    returnPolling.current = false
+    if (returnPollTimer.current !== undefined) window.clearTimeout(returnPollTimer.current)
+  }, [])
+
+  const manualSearch = () => {
+    setReturnTimedOut(false)
+    void search()
+  }
 
   const copy = async (value: string) => {
     await navigator.clipboard.writeText(value)
@@ -104,6 +213,9 @@ export default function OrderQueryPage() {
         <p className="text-sm text-muted-foreground">订单号本身不能访问游客订单；游客需要同时输入下单后得到的查询凭证，登录用户查询自己的订单可留空。服务器会在支付成功后自动尝试发货。</p>
       </div>
 
+      {paymentReturn && returnChecking && <div className="rounded-card border border-primary/20 bg-primary/[0.06] px-4 py-3 text-sm text-primary" role="status">正在确认支付结果 / 正在准备卡密</div>}
+      {paymentReturn && returnTimedOut && !returnChecking && <div className="rounded-card border border-border-subtle bg-surface-muted px-4 py-3 text-sm text-muted-foreground" role="status">暂未完成支付确认，请点击“查询”重试。系统尚未判定支付失败。</div>}
+
       <div className="surface p-5 sm:p-6">
         <div className="grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
           <label className="text-sm font-medium text-foreground">
@@ -114,7 +226,7 @@ export default function OrderQueryPage() {
             订单查询凭证（游客必填）
             <input value={lookupToken} onChange={event => setLookupToken(event.target.value)} placeholder="游客下单结果中显示一次；登录用户可留空" className="mt-1.5 h-11 w-full rounded-control border border-input bg-surface-muted px-3 font-mono text-sm" />
           </label>
-          <button onClick={() => void search()} disabled={loading || !authLoaded} className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50">
+          <button onClick={manualSearch} disabled={loading || !authLoaded} className="inline-flex h-11 items-center justify-center gap-2 rounded-control bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} 查询
           </button>
         </div>

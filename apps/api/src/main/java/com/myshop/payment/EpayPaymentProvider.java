@@ -46,8 +46,7 @@ public class EpayPaymentProvider implements PaymentProvider {
         Map<String, String> config = request.config();
         String type = gatewayPaymentType(request.paymentType());
         String notifyUrl = paymentUrlService.webhookUrl(id());
-        String returnUrl = paymentUrlService.paymentReturnUrl(
-                request.orderId(), request.returnOrderNo(), request.paymentType());
+        String returnUrl = paymentUrlService.paymentReturnUrl(request.returnOrderNo());
         EpayService.EpayResult result = epayService.createPayment(
                 channelConfig(config),
                 request.orderId(), type, request.productName(), request.amount(), request.clientIp(), request.device(),

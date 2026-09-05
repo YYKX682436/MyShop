@@ -11,7 +11,8 @@ import { ApiError, orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHea
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
-import { getPaymentTypeForChannel, isWechatChannel } from "@/lib/payment-channel"
+import { getPaymentTypeForChannel } from "@/lib/payment-channel"
+import { shouldDirectProviderPayment } from "@/lib/payment-page"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PublicPaymentChannel } from "@/types"
 import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
@@ -118,15 +119,11 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       let payUrl = `/pay/${result.payment.order_id}?orderNo=${encodeURIComponent(String(result.order.order_no))}&method=${encodeURIComponent(paymentType || "")}`
       if (qr) payUrl += `&qr=${encodeURIComponent(qr)}`
       if (payUrlH5) payUrl += `&payurl=${encodeURIComponent(payUrlH5)}`
-      const isWechat = isWechatChannel(enabledChannels, selectedPayment)
-      const isMobile = isMobileDevice()
-      // A pay_url is already the provider's payment page. Open it directly
-      // when there is no provider-supplied QR carrier, so desktop WeChat
-      // shows the gateway's real payment code without an intermediate page.
-      // Keep mobile WeChat on the pay page because its JSAPI flow may need the
-      // storefront context; mobile non-WeChat keeps the existing direct flow.
-      if (payUrlH5 && !qr && (!isMobile || !isWechat)) {
-        sessionStorage.setItem(`myshop_payment_page_redirected_${result.payment.order_id}`, "1")
+      if (shouldDirectProviderPayment({
+        isMobile: isMobileDevice(),
+        payUrl: payUrlH5,
+        qrcodeUrl: qr,
+      })) {
         window.location.href = payUrlH5
         return
       }

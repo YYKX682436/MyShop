@@ -75,11 +75,12 @@ The server builds provider callback and payment-result URLs from the
 canonical `PUBLIC_SITE_URL` environment variable (`app.public-site-url`),
 never from an incoming request Host header. The Epay callback route is the
 real `GET /api/payments/webhook/epay` route. The synchronous return goes
-to the storefront `/pay/{orderId}` payment-result page with the visible order
-number, payment type, and a return marker in its query string. The storefront
-uses that marker to wait for asynchronous confirmation instead of redirecting
-back to the gateway after the user returns. These URLs are not administrator
-configuration fields.
+directly to `/order/query?orderNo={orderNo}&paymentReturn=1`. The browser
+return URL contains only the visible order number; it never contains a lookup
+token, merchant key, or any other credential. The order-result page performs a
+bounded confirmation check for this payment return so a webhook that arrives
+slightly later can still trigger the existing delivery flow. These URLs are not
+administrator configuration fields.
 
 Disabling a channel prevents new payment creation only. Existing pending
 orders continue to use the persisted channel profile for callback verification
