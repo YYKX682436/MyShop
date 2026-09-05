@@ -13,7 +13,7 @@ class PaymentUrlServiceTest {
 
         assertEquals("https://shop.example.com/api/payments/webhook/epay",
                 service.webhookUrl("epay"));
-        assertEquals("https://shop.example.com/pay/550e8400-e29b-41d4-a716-446655440000?orderNo=100001&method=wxpay",
+        assertEquals("https://shop.example.com/pay/550e8400-e29b-41d4-a716-446655440000?orderNo=100001&method=wxpay&return=1",
                 service.paymentReturnUrl("550e8400-e29b-41d4-a716-446655440000", "100001", "wxpay"));
     }
 

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
+import com.myshop.payment.PaymentQueryUnavailableException;
 import com.myshop.service.EpayService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -292,7 +293,19 @@ public class EpayServiceImpl implements EpayService {
                 log.warn("Epay order query returned empty body: outTradeNo={}", outTradeNo);
                 return null;
             }
-            Map<String, Object> result = objectMapper.readValue(body, new TypeReference<>() {});
+            Map<String, Object> result;
+            try {
+                result = objectMapper.readValue(body, new TypeReference<>() {});
+            } catch (Exception parseException) {
+                if (isHtmlResponse(response, body)) {
+                    log.warn("Epay order query endpoint unavailable: outTradeNo={}, responseContentType={}",
+                            outTradeNo, response.getHeaders().getContentType());
+                    throw new PaymentQueryUnavailableException("易支付网关未提供可用的订单查询接口");
+                }
+                log.warn("Epay order query returned an invalid response: outTradeNo={}, errorType={}",
+                        outTradeNo, parseException.getClass().getSimpleName());
+                return null;
+            }
 
             // 网关返回错误码时（如订单不存在），返回 null
             if (result.containsKey("code") && !isSuccessCode(result.get("code"))) {
@@ -305,11 +318,20 @@ public class EpayServiceImpl implements EpayService {
             String money = result.get("money") != null ? result.get("money").toString() : null;
             String tradeNo = result.get("trade_no") != null ? result.get("trade_no").toString() : null;
             return new OrderQueryResult(tradeStatus, money, tradeNo);
+        } catch (PaymentQueryUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("Epay order query failed: outTradeNo={}, errorType={}",
                     outTradeNo, e.getClass().getSimpleName());
             return null;
         }
+    }
+
+    private boolean isHtmlResponse(ResponseEntity<String> response, String body) {
+        MediaType contentType = response.getHeaders().getContentType();
+        if (contentType != null && MediaType.TEXT_HTML.isCompatibleWith(contentType)) return true;
+        String value = body == null ? "" : body.trim().toLowerCase(Locale.ROOT);
+        return value.startsWith("<!doctype html") || value.startsWith("<html");
     }
 
     @Override

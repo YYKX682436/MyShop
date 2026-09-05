@@ -46,8 +46,10 @@ fields: `pid`, `key`, and `api_url`. It accepts either a gateway root or a full
 `mapi.php` URL and normalizes both forms to one `mapi.php` request endpoint.
 It keeps the Epay parameter set, sorted MD5 signature, JSON response parsing,
 and `payurl`/`qrcode` handling. It verifies the callback signature, then
-queries the gateway server-side. The order is changed to PAID only after
-signature, exact amount, paid status, and trade-number checks all succeed.
+queries the gateway server-side when the gateway exposes a usable JSON query
+endpoint. The order is changed to PAID only after the signature, exact amount,
+and paid status checks succeed; a trade-number and server-query check is also
+required whenever the query endpoint returns a valid result.
 
 Some gateways, including the production gateway verified for this deployment,
 accept the same signed parameter set at a `submit.php` page but return only
@@ -61,12 +63,22 @@ placed in the URL or logs. The default is `false`, so an unverified gateway
 still fails closed with the no-carrier error. This is not an `api.php` fallback
 and does not add a fourth administrator configuration field.
 
+Some Epay-compatible gateways expose no order-query API and return an HTML
+storefront from the conventional `api.php?act=order` endpoint. `EpayService`
+marks that explicit HTML response as query-unavailable; the Epay provider may
+then accept the already verified callback using its MD5 signature, exact amount,
+and `TRADE_SUCCESS` status. Network failures, empty responses, malformed
+non-HTML responses, and query error responses remain failures and are not
+treated as paid.
+
 The server builds provider callback and payment-result URLs from the
 canonical `PUBLIC_SITE_URL` environment variable (`app.public-site-url`),
 never from an incoming request Host header. The Epay callback route is the
 real `GET /api/payments/webhook/epay` route. The synchronous return goes
 to the storefront `/pay/{orderId}` payment-result page with the visible order
-number and payment type in its query string. These URLs are not administrator
+number, payment type, and a return marker in its query string. The storefront
+uses that marker to wait for asynchronous confirmation instead of redirecting
+back to the gateway after the user returns. These URLs are not administrator
 configuration fields.
 
 Disabling a channel prevents new payment creation only. Existing pending

@@ -30,6 +30,15 @@ public interface PaymentProvider {
         throw new UnsupportedOperationException("Payment provider does not support server-side query");
     }
 
+    /**
+     * Whether a provider may confirm a callback after it explicitly reports
+     * that its query endpoint is unavailable. The callback must still pass
+     * the provider signature, success status, and exact amount checks first.
+     */
+    default boolean allowSignedCallbackWhenQueryUnavailable() {
+        return false;
+    }
+
     record ConfigOption(String value, String label) { }
 
     record ConfigField(String name, String label, String type, boolean secret, boolean required,

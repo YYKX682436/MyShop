@@ -34,6 +34,7 @@ test("the pay page has a bounded no-QR state and a manual repay action", () => {
   assert.match(page, /QRCodeSVG value=\{qrcodeValue\}/)
   assert.match(page, /window\.location\.href = payUrl/)
   assert.match(page, /myshop_payment_page_redirected_\$\{orderId\}/)
+  assert.match(page, /returnedFromGateway/)
   assert.match(page, /paymentPageAvailable/)
   assert.doesNotMatch(page, /qrcodeUrl \? <QRCodeSVG value=\{qrcodeUrl\}/)
   assert.doesNotMatch(page, /getPaymentQrValue\(qrcodeUrl, payUrl\)/)
@@ -44,4 +45,12 @@ test("checkout forwards only an explicit QR carrier to the pay page", () => {
 
   assert.match(checkout, /const qr = result\.payment\.qrcode_url \|\| \"\"/)
   assert.doesNotMatch(checkout, /qrcode_url \|\| result\.payment\.payment_url/)
+})
+
+test("checkout opens a pay-only gateway page directly", () => {
+  const checkout = readFileSync(new URL("../app/(store)/product/[id]/product-actions.tsx", import.meta.url), "utf8")
+
+  assert.match(checkout, /payUrlH5 && !qr/)
+  assert.match(checkout, /myshop_payment_page_redirected_\$\{result\.payment\.order_id\}/)
+  assert.match(checkout, /window\.location\.href = payUrlH5/)
 })

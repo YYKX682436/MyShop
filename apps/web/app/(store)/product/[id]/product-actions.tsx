@@ -118,12 +118,15 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       let payUrl = `/pay/${result.payment.order_id}?orderNo=${encodeURIComponent(String(result.order.order_no))}&method=${encodeURIComponent(paymentType || "")}`
       if (qr) payUrl += `&qr=${encodeURIComponent(qr)}`
       if (payUrlH5) payUrl += `&payurl=${encodeURIComponent(payUrlH5)}`
-      // 移动端非微信：直接跳转网关支付页，避免中间经过 pay 页面的延迟
-      // 导致支付宝 H5 session token 过期（"会话超时"）
-      // 微信支付的 jspay 走 JSAPI（需微信浏览器），普通浏览器不能跳转，只能到 pay 页展示二维码
       const isWechat = isWechatChannel(enabledChannels, selectedPayment)
-      if (isMobileDevice() && payUrlH5 && !isWechat) {
-        sessionStorage.setItem(`pay_redirected_${result.payment.order_id}`, "1")
+      const isMobile = isMobileDevice()
+      // A pay_url is already the provider's payment page. Open it directly
+      // when there is no provider-supplied QR carrier, so desktop WeChat
+      // shows the gateway's real payment code without an intermediate page.
+      // Keep mobile WeChat on the pay page because its JSAPI flow may need the
+      // storefront context; mobile non-WeChat keeps the existing direct flow.
+      if (payUrlH5 && !qr && (!isMobile || !isWechat)) {
+        sessionStorage.setItem(`myshop_payment_page_redirected_${result.payment.order_id}`, "1")
         window.location.href = payUrlH5
         return
       }

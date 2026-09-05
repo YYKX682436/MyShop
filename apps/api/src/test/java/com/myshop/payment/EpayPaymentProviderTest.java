@@ -72,7 +72,7 @@ class EpayPaymentProviderTest {
                 new EpayService.ChannelConfig("pid", "secret", "https://pay.example"),
                 "order-id", "wxpay", "商品", new BigDecimal("10.00"), "127.0.0.1", "pc",
                 "https://shop.example.com/api/payments/webhook/epay",
-                "https://shop.example.com/pay/order-id?orderNo=100001&method=wxpay");
+                "https://shop.example.com/pay/order-id?orderNo=100001&method=wxpay&return=1");
     }
 
     private Map<String, String> validConfig() {

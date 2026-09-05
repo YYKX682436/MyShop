@@ -4,6 +4,7 @@ import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.entity.WebhookEvent;
+import com.myshop.payment.PaymentQueryUnavailableException;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
@@ -124,6 +125,30 @@ class WebhookServiceImplTest {
         verify(provider).verifyCallback(any(PaymentProvider.CallbackRequest.class));
         verify(provider).query(any(PaymentProvider.PaymentQueryRequest.class));
         verify(orderRepository).save(order);
+    }
+
+    @Test
+    void confirmsSignedCallbackWhenEpayQueryEndpointIsKnownUnavailable() {
+        UUID orderId = UUID.randomUUID();
+        Order order = pendingOrder(orderId);
+        stubChannelAndOrder(order);
+        when(webhookEventRepository.findByEventId("epay:trade-query-unavailable"))
+                .thenReturn(Optional.empty(), Optional.empty());
+        when(provider.verifyCallback(any(PaymentProvider.CallbackRequest.class))).thenReturn(true);
+        when(provider.allowSignedCallbackWhenQueryUnavailable()).thenReturn(true);
+        when(provider.query(any(PaymentProvider.PaymentQueryRequest.class)))
+                .thenThrow(new PaymentQueryUnavailableException("query endpoint unavailable"));
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(webhookEventRepository.save(any(WebhookEvent.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertEquals("SUCCESS", service.processEpayCallback(
+                callback(orderId, "trade-query-unavailable", "10.00")));
+
+        assertEquals(OrderStatus.PAID, order.getStatus());
+        verify(provider).query(any(PaymentProvider.PaymentQueryRequest.class));
+        verify(orderRepository).save(order);
+        verify(webhookEventRepository).save(any(WebhookEvent.class));
     }
 
     @Test

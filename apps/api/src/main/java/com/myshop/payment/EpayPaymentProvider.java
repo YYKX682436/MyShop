@@ -24,6 +24,9 @@ public class EpayPaymentProvider implements PaymentProvider {
     public String displayName() { return "易支付兼容协议"; }
 
     @Override
+    public boolean allowSignedCallbackWhenQueryUnavailable() { return true; }
+
+    @Override
     public List<String> paymentTypes() { return List.of("alipay", "wxpay"); }
 
     @Override

@@ -2,8 +2,11 @@ package com.myshop.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.exception.BusinessException;
+import com.myshop.payment.PaymentQueryUnavailableException;
 import com.myshop.service.EpayService;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
@@ -78,6 +81,23 @@ class EpayServiceImplTest {
         verify(restTemplate).getForEntity(
                 eq("https://pay.example.com/api.php?act=order&pid=pid&key=secret&out_trade_no=order-1"),
                 eq(String.class));
+    }
+
+    @Test
+    void reportsAnExplicitlyUnsupportedHtmlQueryEndpoint() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.TEXT_HTML);
+        when(restTemplate.getForEntity(
+                eq("https://pay.example.com/api.php?act=order&pid=pid&key=secret&out_trade_no=order-1"),
+                eq(String.class)))
+                .thenReturn(new ResponseEntity<>("<!doctype html><html></html>", headers,
+                        org.springframework.http.HttpStatus.OK));
+        EpayServiceImpl service = new EpayServiceImpl(restTemplate, new ObjectMapper());
+
+        assertThrows(PaymentQueryUnavailableException.class, () -> service.queryOrder(
+                new EpayService.ChannelConfig("pid", "secret", "https://pay.example.com"),
+                "order-1"));
     }
 
     @Test

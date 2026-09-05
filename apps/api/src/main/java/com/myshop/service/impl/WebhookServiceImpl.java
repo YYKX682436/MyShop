@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentChannel;
+import com.myshop.payment.PaymentQueryUnavailableException;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
@@ -101,15 +102,27 @@ public class WebhookServiceImpl implements WebhookService {
         }
 
         PaymentProvider.PaymentQueryResult query;
+        boolean queryUnavailable = false;
         try {
             query = resolvedChannel.provider().query(new PaymentProvider.PaymentQueryRequest(
                     outTradeNo, resolvedChannel.config()));
+        } catch (PaymentQueryUnavailableException exception) {
+            if (!resolvedChannel.provider().allowSignedCallbackWhenQueryUnavailable()) {
+                log.warn("Payment provider query endpoint unavailable and signed fallback is disabled: outTradeNo={}",
+                        outTradeNo);
+                return "FAIL";
+            }
+            queryUnavailable = true;
+            query = null;
+            log.warn("Payment provider query endpoint unavailable; accepting verified callback: outTradeNo={}",
+                    outTradeNo);
         } catch (RuntimeException exception) {
             log.warn("Epay callback server-side query failed");
             return "FAIL";
         }
-        if (query == null || !isPaid(query.tradeStatus()) || !sameAmount(query.money(), order.getActualAmount())
-                || !sameTrade(query.tradeNo(), tradeNo, outTradeNo)) {
+        if (!queryUnavailable && (query == null || !isPaid(query.tradeStatus())
+                || !sameAmount(query.money(), order.getActualAmount())
+                || !sameTrade(query.tradeNo(), tradeNo, outTradeNo))) {
             log.warn("Epay callback server-side verification failed");
             return "FAIL";
         }

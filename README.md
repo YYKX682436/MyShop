@@ -70,11 +70,11 @@ BOOTSTRAP_SUPER_ADMIN_PASSWORD  # 6-72 位 ASCII 可见字符；仅首次初始�
 
 游客创建订单时，API 返回随机 `lookup_token`，数据库同时保存 SHA-256 摘要和一个用于站长恢复的敏感明文值。常规鉴权仍只比较 hash；明文值不进入普通日志、错误日志、操作日志或后台批量列表，包含它的数据库/备份必须按密码等敏感凭证保护。相同 guest session 的同一 `idempotency_key` 重放会返回同一订单和同一凭证；不同 session/用户会被拒绝。订单号本身不能读取卡密或导出文件。
 
-付款回调只在签名、金额、服务端查询通过后提交 `PAID` 和 webhook 幂等事件；提交成功后，内部 service API 才启动独立 fulfillment 事务。发货事务会锁定订单，再为每个订单行锁定对应商品/规格的可用卡密池。事务先收集和校验所有数量，随后才把全部卡密标记为 SOLD、绑定订单并把订单改为 DELIVERED；缺货只回滚 fulfillment，不回滚已确认付款；同一订单的并发发货会由订单行锁串行化。
+付款回调会先校验签名、金额和成功状态；网关提供可用 JSON 查询接口时还会进行服务端查询和交易号校验，然后提交 `PAID` 和 webhook 幂等事件。对于已明确返回 HTML、表示查询接口不可用的易支付兼容网关，已验签的成功回调可在金额和成功状态通过后确认；网络错误、空响应和非 HTML 格式错误仍会失败。提交成功后，内部 service API 才启动独立 fulfillment 事务。发货事务会锁定订单，再为每个订单行锁定对应商品/规格的可用卡密池。事务先收集和校验所有数量，随后才把全部卡密标记为 SOLD、绑定订单并把订单改为 DELIVERED；缺货只回滚 fulfillment，不回滚已确认付款；同一订单的并发发货会由订单行锁串行化。
 
 ## 支付渠道
 
-支付创建、回调验签、精确金额比较、服务端订单查询和 webhook 幂等均使用订单创建时的渠道配置。回调不会因为客户端传来的“成功”而直接改订单状态；重复 `trade_no` 通过唯一 webhook 事件安全返回。新增 provider 的接口约定见 [docs/PAYMENT_PROVIDER.md](docs/PAYMENT_PROVIDER.md)。
+支付创建、回调验签、精确金额比较、服务端订单查询和 webhook 幂等均使用订单创建时的渠道配置。回调不会因为客户端传来的“成功”而直接改订单状态；只有在签名、金额和成功状态通过，并且查询结果有效或网关明确声明查询接口不可用时才确认；重复 `trade_no` 通过唯一 webhook 事件安全返回。新增 provider 的接口约定见 [docs/PAYMENT_PROVIDER.md](docs/PAYMENT_PROVIDER.md)。
 
 易支付兼容协议渠道只需配置 `pid`、`key` 和 `api_url`（可填写网关根地址或完整 `mapi.php` 地址）。回调与支付完成回跳地址由服务端根据 `PUBLIC_SITE_URL` 自动生成；`key` 等敏感字段在后台响应中会被掩码，公开接口不会返回 provider 配置或密钥。对于经验证的、`mapi.php` 成功响应不返回支付载体但支持同参数 `submit.php` 的网关，可在部署环境设置 `EPAY_PAGE_REDIRECT_FALLBACK_ENABLED=true`；默认关闭，避免未经验证的假成功。
 

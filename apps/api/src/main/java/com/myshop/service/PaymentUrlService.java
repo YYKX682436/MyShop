@@ -35,7 +35,8 @@ public class PaymentUrlService {
         String type = requiredText(paymentType, "paymentType");
         return publicSiteUrl + "/pay/" + internalId
                 + "?orderNo=" + encodeQuery(visibleOrderNo)
-                + "&method=" + encodeQuery(type);
+                + "&method=" + encodeQuery(type)
+                + "&return=1";
     }
 
     public String publicSiteUrl() {

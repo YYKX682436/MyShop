@@ -37,6 +37,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   const isMobile = isMobileDevice()
   const method = searchParams.get("method") || "alipay"
   const isWechatMobile = isMobile && method.toLowerCase() === "wxpay"
+  const returnedFromGateway = searchParams.get("return") === "1"
   const methodName = getPaymentLabel(method, t)
   const brandColor = getPaymentBrandColor(method)
   const hasCountdown = timeLeft >= 0
@@ -87,7 +88,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
 
   useEffect(() => {
     if (!isMobile || !payUrl || status !== "PENDING" || isWechatMobile) return
-    const key = `myshop_pay_redirected_${orderId}`
+    const key = `myshop_payment_page_redirected_${orderId}`
     if (sessionStorage.getItem(key)) { setRedirected(true); return }
     sessionStorage.setItem(key, "1")
     setRedirected(true)
@@ -97,13 +98,13 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
   // A pay URL is a gateway page, not QR content. On desktop open that page in
   // the current browser so the gateway can render its real WeChat QR code.
   useEffect(() => {
-    if (isMobile || !payUrl || qrcodeValue || status !== "PENDING") return
+    if (isMobile || returnedFromGateway || !payUrl || qrcodeValue || status !== "PENDING") return
     const key = `myshop_payment_page_redirected_${orderId}`
     if (sessionStorage.getItem(key)) { setRedirected(true); return }
     sessionStorage.setItem(key, "1")
     setRedirected(true)
     window.location.href = payUrl
-  }, [isMobile, payUrl, qrcodeValue, status, orderId])
+  }, [isMobile, returnedFromGateway, payUrl, qrcodeValue, status, orderId])
 
   useEffect(() => {
     if (status !== "PAID" && status !== "DELIVERED") return
