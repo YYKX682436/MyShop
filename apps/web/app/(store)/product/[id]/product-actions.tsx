@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useRef, useEffect } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Zap, Minus, Plus, Package, TrendingUp } from "lucide-react"
 import { motion } from "motion/react"
@@ -12,6 +13,8 @@ import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, formatYuan, detectPaymentDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel } from "@/lib/payment-channel"
+import { executePaymentAction, isExecutablePaymentAction } from "@/lib/payment-action-executor"
+import { buildPaymentPageHref, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction } from "@/lib/payment-entry"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PublicPaymentChannel } from "@/types"
 import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
@@ -47,6 +50,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     enabledChannels.length > 0 ? enabledChannels[0].channel_code : ""
   )
   const [submitting, setSubmitting] = useState(false)
+  const [paymentFallbackHref, setPaymentFallbackHref] = useState<string | null>(null)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
 
   const currentPrice = selectedSpec ? selectedSpec.price : product.price
@@ -82,6 +86,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     }
 
     setSubmitting(true)
+    setPaymentFallbackHref(null)
     const intent = getOrCreateIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, {
       product_id: product.id,
       spec_id: selectedSpec?.id ?? null,
@@ -111,9 +116,21 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         router.push(`/order/query?orderNo=${encodeURIComponent(String(result.order.order_no))}`)
         return
       }
-      toast.success(t("payment.redirectingToPay"))
       const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
-      router.push(`/pay/${result.payment.order_id}?orderNo=${encodeURIComponent(String(result.order.order_no))}&method=${encodeURIComponent(paymentType || "")}`)
+      const paymentHref = buildPaymentPageHref(result.payment.order_id, result.order.order_no, paymentType || "")
+      const action = result.payment.next_action
+      if (action) {
+        savePaymentAction(result.payment.order_id, action)
+        const entry = resolvePaymentEntry(action, getPaymentActionEnvironment())
+        if (entry.mode === "execute" && isExecutablePaymentAction(entry.decision)) {
+          setPaymentFallbackHref(paymentHref)
+          toast.success(t("payment.redirectingToPay"))
+          executePaymentAction(entry.decision)
+          return
+        }
+      }
+      toast.success(t("payment.redirectingToPay"))
+      router.push(paymentHref)
     } catch (err: unknown) {
       if (err instanceof ApiError && err.code === 40007) {
         const current = err.params?.current_unit_price
@@ -334,6 +351,14 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             )}
             {isOutOfStock ? t("product.outOfStock") : adminPickup ? t("product.adminPickup") : t("product.buyNow")}
           </button>
+          {paymentFallbackHref && (
+            <div className="mt-3 flex flex-col items-center gap-2 rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-center" role="alert">
+              <p className="text-xs text-muted-foreground">{t("payment.actionFallback")}</p>
+              <Link href={paymentFallbackHref} className="inline-flex h-9 items-center rounded-control bg-primary px-4 text-sm font-medium text-primary-foreground">
+                {t("payment.continuePay")}
+              </Link>
+            </div>
+          )}
         </div>
       </div>
     </div>

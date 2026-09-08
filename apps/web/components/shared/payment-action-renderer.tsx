@@ -1,74 +1,89 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Copy, ExternalLink, Loader2 } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
 import { toast } from "sonner"
 import { useLocale } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
-import { isMobileDevice } from "@/lib/utils"
-import { isAlipayBrowser, isWechatBrowser, resolvePaymentAction, type PaymentActionEnvironment } from "@/lib/payment-action"
+import { resolvePaymentAction, type PaymentActionEnvironment } from "@/lib/payment-action"
+import { executePaymentAction, isExecutablePaymentAction, type ExecutablePaymentAction } from "@/lib/payment-action-executor"
+import { getPaymentActionEnvironment } from "@/lib/payment-entry"
+import type { PaymentPageLoadPhase } from "@/lib/payment-page-state"
 import type { PaymentNextAction } from "@/types"
 
 interface PaymentActionRendererProps {
   action: PaymentNextAction | null | undefined
-  statusLoaded: boolean
+  loadState: PaymentPageLoadPhase
+  statusError?: string | null
   retryAction?: ReactNode
+  retryStatusAction?: ReactNode
 }
+
+const EXECUTION_FALLBACK_DELAY = 1600
 
 function clientLabel(client: "wechat" | "alipay", t: (key: TranslationKey) => string): string {
   return client === "wechat" ? t("payment.wechat") : t("payment.alipay")
 }
 
-export function PaymentActionRenderer({ action, statusLoaded, retryAction }: PaymentActionRendererProps) {
+function openClientLabel(client: "wechat" | "alipay", t: (key: TranslationKey) => string): string {
+  return client === "wechat" ? t("payment.openWechat") : t("payment.openAlipay")
+}
+
+function scanClientHint(client: "wechat" | "alipay", t: (key: TranslationKey) => string): string {
+  return client === "wechat" ? t("payment.scanOpenWechat") : t("payment.scanOpenAlipay")
+}
+
+const FALLBACK_ENVIRONMENT: PaymentActionEnvironment = {
+  isMobile: false,
+  isWechatBrowser: false,
+  isAlipayBrowser: false,
+}
+
+export function PaymentActionRenderer({
+  action,
+  loadState,
+  statusError,
+  retryAction,
+  retryStatusAction,
+}: PaymentActionRendererProps) {
   const { t } = useLocale()
   const [environment, setEnvironment] = useState<PaymentActionEnvironment | null>(null)
-  useEffect(() => {
-    setEnvironment({
-      isMobile: isMobileDevice(),
-      isWechatBrowser: isWechatBrowser(),
-      isAlipayBrowser: isAlipayBrowser(),
-    })
-  }, [])
-  const decision = useMemo(
-    () => action && environment ? resolvePaymentAction(action, environment) : null,
-    [action, environment],
-  )
+  const [autoExecutionPending, setAutoExecutionPending] = useState(false)
   const executedRef = useRef<string>("")
-  const [copying, setCopying] = useState(false)
 
   useEffect(() => {
-    if (!action || !decision) return
+    setEnvironment(getPaymentActionEnvironment())
+  }, [])
+
+  const needsEnvironment = action?.type === "open_in_client" || action?.type === "deep_link"
+  const decision = useMemo(() => {
+    if (!action) return null
+    if (needsEnvironment && !environment) return null
+    return resolvePaymentAction(action, environment ?? FALLBACK_ENVIRONMENT)
+  }, [action, environment, needsEnvironment])
+
+  const triggerExecution = useCallback((executable: ExecutablePaymentAction) => {
+    setAutoExecutionPending(true)
+    try {
+      executePaymentAction(executable)
+    } catch (error) {
+      setAutoExecutionPending(false)
+      toast.error(error instanceof Error ? error.message : t("common.error"))
+      return
+    }
+    window.setTimeout(() => setAutoExecutionPending(false), EXECUTION_FALLBACK_DELAY)
+  }, [t])
+
+  useEffect(() => {
+    if (!decision || !isExecutablePaymentAction(decision)) return
     const signature = JSON.stringify(decision)
     if (executedRef.current === signature) return
     executedRef.current = signature
-
-    if (decision.kind === "redirect" || decision.kind === "form_post"
-      || (decision.kind === "open_in_client" && decision.mode === "direct")
-      || (decision.kind === "deep_link" && decision.mode === "open")) {
-      if (decision.kind === "form_post") {
-        const form = document.createElement("form")
-        form.method = "POST"
-        form.action = decision.url
-        Object.entries(decision.fields).forEach(([name, value]) => {
-          const input = document.createElement("input")
-          input.type = "hidden"
-          input.name = name
-          input.value = value
-          form.appendChild(input)
-        })
-        document.body.appendChild(form)
-        form.submit()
-        form.remove()
-      } else {
-        window.location.assign(decision.url)
-      }
-    }
-  }, [action, decision])
+    triggerExecution(decision)
+  }, [decision, triggerExecution])
 
   const copy = async (value: string) => {
-    if (copying) return
-    setCopying(true)
     try {
       if (!navigator.clipboard?.writeText) {
         toast.error(t("payment.copyFailed"))
@@ -78,19 +93,31 @@ export function PaymentActionRenderer({ action, statusLoaded, retryAction }: Pay
       toast.success(t("payment.linkCopied"))
     } catch {
       toast.error(t("payment.copyFailed"))
-    } finally {
-      setCopying(false)
     }
   }
 
-  const needsEnvironment = action?.type === "open_in_client" || action?.type === "deep_link"
-  if (!action) {
-    return statusLoaded
-      ? <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert"><p className="text-sm text-muted-foreground">{t("payment.noAction")}</p>{retryAction}</div>
-      : <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+  const retryExecution = () => {
+    if (decision && isExecutablePaymentAction(decision)) triggerExecution(decision)
   }
+
+  if (!action) {
+    if (loadState === "loading") {
+      return <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label={t("common.loading")} />
+    }
+    if (loadState === "error" || statusError) {
+      return <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert">
+        <p className="text-sm text-destructive">{statusError || t("payment.loadFailed")}</p>
+        {retryStatusAction || retryAction}
+      </div>
+    }
+    return <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert">
+      <p className="text-sm text-muted-foreground">{t("payment.noAction")}</p>
+      {retryAction}
+    </div>
+  }
+
   if (!decision || (needsEnvironment && !environment)) {
-    return <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+    return <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label={t("common.loading")} />
   }
 
   if (decision.kind === "qr_code") {
@@ -99,7 +126,9 @@ export function PaymentActionRenderer({ action, statusLoaded, retryAction }: Pay
 
   if (decision.kind === "redirect") {
     return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">
-      <p className="text-sm text-muted-foreground">{t("payment.redirectingToPay")}</p>
+      <p className="text-sm text-muted-foreground">
+        {autoExecutionPending ? t("payment.redirectingToPay") : t("payment.actionFallback")}
+      </p>
       <a href={decision.url} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
         {t("payment.continuePay")} <ExternalLink className="h-3.5 w-3.5" />
       </a>
@@ -108,26 +137,62 @@ export function PaymentActionRenderer({ action, statusLoaded, retryAction }: Pay
 
   if (decision.kind === "open_in_client") {
     if (decision.mode === "qr_code") {
-      return <div className="flex flex-col items-center gap-2 text-center"><QRCodeSVG value={decision.url} size={184} /><p className="text-xs text-muted-foreground">{t("payment.scanWithClient")} · {clientLabel(decision.client, t)}</p></div>
+      return <div className="flex flex-col items-center gap-2 text-center">
+        <QRCodeSVG value={decision.url} size={184} aria-label={scanClientHint(decision.client, t)} />
+        <p className="text-xs text-muted-foreground">{scanClientHint(decision.client, t)}</p>
+      </div>
     }
     if (decision.mode === "copy") {
       return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">
         <p className="text-sm text-muted-foreground">{t("payment.openInClientHint")} · {clientLabel(decision.client, t)}</p>
-        <button type="button" onClick={() => void copy(decision.url)} disabled={copying} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"><Copy className="h-3.5 w-3.5" />{t("payment.copyClientLink")}</button>
+        <button type="button" onClick={() => void copy(decision.url)} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+          <Copy className="h-3.5 w-3.5" />{t("payment.copyClientLink")}
+        </button>
       </div>
     }
-    return <p className="px-3 text-center text-sm text-muted-foreground">{t("payment.openingClient")} · {clientLabel(decision.client, t)}</p>
+    return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">
+      <p className="text-sm text-muted-foreground">
+        {autoExecutionPending ? t("payment.openingClient") : t("payment.actionFallback")} · {clientLabel(decision.client, t)}
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <a href={decision.url} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+          {openClientLabel(decision.client, t)} <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+        <button type="button" onClick={() => void copy(decision.url)} className="inline-flex items-center gap-1.5 rounded-control border border-border-strong px-4 py-2 text-sm font-medium text-foreground">
+          <Copy className="h-3.5 w-3.5" />{t("payment.copyClientLink")}
+        </button>
+      </div>
+    </div>
   }
 
   if (decision.kind === "deep_link") {
     if (decision.mode === "qr_code") {
-      return <div className="flex flex-col items-center gap-2 text-center"><QRCodeSVG value={decision.url} size={184} /><p className="text-xs text-muted-foreground">{t("payment.scanWithClient")} · {clientLabel(decision.client, t)}</p></div>
+      return <div className="flex flex-col items-center gap-2 text-center">
+        <QRCodeSVG value={decision.url} size={184} aria-label={scanClientHint(decision.client, t)} />
+        <p className="text-xs text-muted-foreground">{scanClientHint(decision.client, t)}</p>
+      </div>
     }
-    return <p className="px-3 text-center text-sm text-muted-foreground">{t("payment.openingClient")} · {clientLabel(decision.client, t)}</p>
+    return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">
+      <p className="text-sm text-muted-foreground">
+        {autoExecutionPending ? t("payment.openingClient") : t("payment.actionFallback")} · {clientLabel(decision.client, t)}
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <a href={decision.url} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+          {openClientLabel(decision.client, t)} <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+        <button type="button" onClick={() => void copy(decision.url)} className="inline-flex items-center gap-1.5 rounded-control border border-border-strong px-4 py-2 text-sm font-medium text-foreground">
+          <Copy className="h-3.5 w-3.5" />{t("payment.copyClientLink")}
+        </button>
+      </div>
+    </div>
   }
 
   return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">
-    <Loader2 className="h-6 w-6 animate-spin text-primary" />
-    <p className="text-sm text-muted-foreground">{t("payment.submittingForm")}</p>
+    <p className="text-sm text-muted-foreground">
+      {autoExecutionPending ? t("payment.submittingForm") : t("payment.actionFallback")}
+    </p>
+    <button type="button" onClick={retryExecution} className="inline-flex items-center gap-1.5 rounded-control bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+      {t("payment.continuePay")} <ExternalLink className="h-3.5 w-3.5" />
+    </button>
   </div>
 }
