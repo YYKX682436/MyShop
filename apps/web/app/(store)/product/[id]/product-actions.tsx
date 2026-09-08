@@ -9,10 +9,9 @@ import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
 import { ApiError, orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
-import { cn, formatYuan, detectPaymentDevice, isMobileDevice } from "@/lib/utils"
+import { cn, formatYuan, detectPaymentDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel } from "@/lib/payment-channel"
-import { shouldDirectProviderPayment } from "@/lib/payment-page"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PublicPaymentChannel } from "@/types"
 import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
@@ -113,21 +112,8 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         return
       }
       toast.success(t("payment.redirectingToPay"))
-      const payUrlH5 = result.payment.pay_url || ""
-      const qr = result.payment.qrcode_url || ""
       const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
-      let payUrl = `/pay/${result.payment.order_id}?orderNo=${encodeURIComponent(String(result.order.order_no))}&method=${encodeURIComponent(paymentType || "")}`
-      if (qr) payUrl += `&qr=${encodeURIComponent(qr)}`
-      if (payUrlH5) payUrl += `&payurl=${encodeURIComponent(payUrlH5)}`
-      if (shouldDirectProviderPayment({
-        isMobile: isMobileDevice(),
-        payUrl: payUrlH5,
-        qrcodeUrl: qr,
-      })) {
-        window.location.href = payUrlH5
-        return
-      }
-      router.push(payUrl)
+      router.push(`/pay/${result.payment.order_id}?orderNo=${encodeURIComponent(String(result.order.order_no))}&method=${encodeURIComponent(paymentType || "")}`)
     } catch (err: unknown) {
       if (err instanceof ApiError && err.code === 40007) {
         const current = err.params?.current_unit_price

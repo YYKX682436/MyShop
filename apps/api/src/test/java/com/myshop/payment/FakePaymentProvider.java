@@ -23,6 +23,6 @@ public final class FakePaymentProvider implements PaymentProvider {
         );
     }
     @Override public PaymentResult create(PaymentRequest request) {
-        return new PaymentResult("fake-trade", "https://fake.example/pay", null);
+        return new PaymentResult("fake-trade", new PaymentNextAction.Redirect("https://fake.example/pay"));
     }
 }

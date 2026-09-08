@@ -83,14 +83,6 @@ public class Order extends BaseEntity {
 
     private String sessionToken;
 
-    @Column(columnDefinition = "TEXT")
-    private String paymentUrl;
-
-    @Column(columnDefinition = "TEXT")
-    private String qrcodeUrl;
-
-    private String epayTradeNo;
-
     /** The visible business number is assigned once and must never change. */
     public void setOrderNo(Long value) {
         if (orderNo != null && !Objects.equals(orderNo, value)) {

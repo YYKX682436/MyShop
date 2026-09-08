@@ -7,7 +7,9 @@ import com.myshop.entity.Product;
 import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.payment.EpayPaymentProvider;
+import com.myshop.payment.PaymentNextAction;
 import com.myshop.payment.PaymentProvider;
+import com.myshop.payment.PaymentStatus;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.AdminCardKeyService;
 import com.myshop.service.AdminOrderService;
@@ -49,6 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
@@ -105,6 +108,10 @@ class PostgresDeliveryIntegrationTest {
     void configureProvider() {
         when(epayPaymentProvider.id()).thenReturn("epay");
         when(epayPaymentProvider.paymentTypes()).thenReturn(List.of("alipay", "wxpay"));
+        when(epayPaymentProvider.successAcknowledgement())
+                .thenReturn(PaymentProvider.WebhookAcknowledgement.success());
+        when(epayPaymentProvider.failureAcknowledgement())
+                .thenReturn(PaymentProvider.WebhookAcknowledgement.failure());
     }
 
     @DynamicPropertySource
@@ -147,8 +154,8 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(new BigDecimal("0.00"), orderResult.get("actual_amount"));
         assertEquals(true, paymentResult.get("paid"));
         assertEquals(true, paymentResult.get("admin_pickup"));
-        assertTrue(!paymentResult.containsKey("payment_url"));
-        assertTrue(!paymentResult.containsKey("qrcode_url"));
+        assertEquals(java.util.Set.of("order_id", "order_no", "expires_at",
+                        "order_type", "admin_pickup", "paid"), paymentResult.keySet());
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals("ADMIN_PICKUP", scalar("select order_type from orders where id = ?", String.class, orderId));
         assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
@@ -548,8 +555,7 @@ class PostgresDeliveryIntegrationTest {
                     assertTrue(releaseProvider.await(10, TimeUnit.SECONDS));
                     return new PaymentProvider.PaymentResult(
                             "payment-concurrency-trade",
-                            "https://pay.example/payment-concurrency",
-                            "qr-payment-concurrency");
+                            new PaymentNextAction.QrCode("qr-payment-concurrency"));
                 });
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -569,17 +575,17 @@ class PostgresDeliveryIntegrationTest {
 
             Map<String, Object> firstResult = first.get(20, TimeUnit.SECONDS);
             Map<String, Object> secondResult = second.get(20, TimeUnit.SECONDS);
-            assertEquals(firstResult.get("pay_url"), secondResult.get("pay_url"));
-            assertEquals(firstResult.get("qrcode_url"), secondResult.get("qrcode_url"));
-            assertEquals("https://pay.example/payment-concurrency", firstResult.get("pay_url"));
-            assertEquals("qr-payment-concurrency", firstResult.get("qrcode_url"));
+            assertEquals(firstResult.get("next_action"), secondResult.get("next_action"));
+            assertEquals(new PaymentNextAction.QrCode("qr-payment-concurrency"), firstResult.get("next_action"));
             assertEquals(1, providerCreateCalls.get(), "Provider.create must run once");
 
             Map<String, Object> stored = jdbcTemplate.queryForMap(
-                    "select payment_url, qrcode_url, epay_trade_no from orders where id = ?", orderId);
-            assertEquals("https://pay.example/payment-concurrency", stored.get("payment_url"));
-            assertEquals("qr-payment-concurrency", stored.get("qrcode_url"));
-            assertEquals("payment-concurrency-trade", stored.get("epay_trade_no"));
+                    "select merchant_trade_no, provider_trade_no, next_action from payment_attempts where order_id = ?",
+                    orderId);
+            assertTrue(String.valueOf(stored.get("merchant_trade_no")).startsWith("m_"));
+            assertEquals("payment-concurrency-trade", stored.get("provider_trade_no"));
+            assertEquals("{\"type\":\"qr_code\",\"value\":\"qr-payment-concurrency\"}",
+                    stored.get("next_action"));
         } finally {
             releaseProvider.countDown();
             executor.shutdownNow();
@@ -594,13 +600,17 @@ class PostgresDeliveryIntegrationTest {
         insertOrderItem(orderId, productId);
         insertCard(productId, "auto-card");
         insertPaymentChannel("auto-channel");
+        configurePaymentCreation("auto-trade");
+        String merchantTradeNo = createAttempt(orderId, "auto-channel", "auto-trade");
         configureSuccessfulCallback("auto-trade");
 
-        assertEquals("SUCCESS", webhookService.processEpayCallback(callback(orderId, "auto-trade")));
+        assertEquals("SUCCESS", webhookService.handleWebhook(
+                "epay", callback(merchantTradeNo, "auto-trade")).body());
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
 
-        assertEquals("SUCCESS", webhookService.processEpayCallback(callback(orderId, "auto-trade")));
+        assertEquals("SUCCESS", webhookService.handleWebhook(
+                "epay", callback(merchantTradeNo, "auto-trade")).body());
         assertEquals(1, number("select count(*) from card_keys where order_id = ?", orderId));
     }
 
@@ -611,9 +621,12 @@ class PostgresDeliveryIntegrationTest {
         insertProduct(productId);
         insertOrderItem(orderId, productId);
         insertPaymentChannel("retry-channel");
+        configurePaymentCreation("retry-trade");
+        String merchantTradeNo = createAttempt(orderId, "retry-channel", "retry-trade");
         configureSuccessfulCallback("retry-trade");
 
-        assertEquals("SUCCESS", webhookService.processEpayCallback(callback(orderId, "retry-trade")));
+        assertEquals("SUCCESS", webhookService.handleWebhook(
+                "epay", callback(merchantTradeNo, "retry-trade")).body());
         assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals(0, number("select count(*) from card_keys where order_id = ?", orderId));
 
@@ -630,7 +643,8 @@ class PostgresDeliveryIntegrationTest {
         insertCard(productId, "idempotent-card");
         insertPaymentChannel("idempotent-channel");
         when(epayPaymentProvider.create(any(PaymentProvider.PaymentRequest.class)))
-                .thenReturn(new PaymentProvider.PaymentResult("idempotent-trade", "https://pay.example/idempotent", null));
+                .thenReturn(new PaymentProvider.PaymentResult("idempotent-trade",
+                        new PaymentNextAction.Redirect("https://pay.example/idempotent")));
 
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
@@ -848,9 +862,18 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO orders(id, created_at, updated_at, user_id, total_amount, actual_amount,
-                                   status, order_type, payment_method, epay_trade_no, paid_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'NORMAL', 'alipay', ?, ?)
-                """, orderId, createdAt, createdAt, userId, amount, amount, status, tradeNo, createdAt);
+                                   status, order_type, payment_method, paid_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'NORMAL', 'alipay', ?)
+                """, orderId, createdAt, createdAt, userId, amount, amount, status, createdAt);
+        jdbcTemplate.update("""
+                INSERT INTO payment_attempts(id, created_at, updated_at, order_id, channel_id,
+                    channel_code_snapshot, provider_type, payment_type, provider_config_snapshot,
+                    merchant_trade_no, provider_trade_no, amount, status, next_action)
+                VALUES (?, ?, ?, ?, ?, ?, 'epay', 'alipay',
+                    '{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\"}',
+                    ?, ?, ?, 'PAID', '{\"type\":\"redirect\",\"url\":\"https://pay.example/attempt\"}')
+                """, UUID.randomUUID(), createdAt, createdAt, orderId, UUID.randomUUID(),
+                "search-channel-" + tradeNo, "merchant-" + tradeNo, tradeNo, amount);
         return orderId;
     }
 
@@ -946,15 +969,27 @@ class PostgresDeliveryIntegrationTest {
     }
 
     private void configureSuccessfulCallback(String tradeNo) {
-        when(epayPaymentProvider.verifyCallback(any(PaymentProvider.CallbackRequest.class))).thenReturn(true);
+        when(epayPaymentProvider.supportsServerSideQuery()).thenReturn(true);
+        when(epayPaymentProvider.extractMerchantTradeNo(any(PaymentProvider.WebhookRequest.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0, PaymentProvider.WebhookRequest.class)
+                        .parameter("out_trade_no"));
+        when(epayPaymentProvider.verifyAndParseCallback(
+                any(PaymentProvider.WebhookRequest.class), anyMap()))
+                .thenAnswer(invocation -> {
+                    PaymentProvider.WebhookRequest request = invocation.getArgument(0);
+                    String merchantTradeNo = request.parameter("out_trade_no");
+                    return new PaymentProvider.CallbackResult("epay:" + tradeNo + ":" + merchantTradeNo,
+                            merchantTradeNo, tradeNo, PaymentStatus.PAID, new BigDecimal("10.00"));
+                });
         when(epayPaymentProvider.query(any(PaymentProvider.PaymentQueryRequest.class)))
-                .thenReturn(new PaymentProvider.PaymentQueryResult("TRADE_SUCCESS", "10.00", tradeNo));
+                .thenReturn(new PaymentProvider.PaymentQueryResult(
+                        PaymentStatus.PAID, new BigDecimal("10.00"), tradeNo));
     }
 
     private void configurePaymentCreation(String tradeNo) {
         when(epayPaymentProvider.create(any(PaymentProvider.PaymentRequest.class)))
                 .thenReturn(new PaymentProvider.PaymentResult(
-                        tradeNo, "https://pay.example/" + tradeNo, null));
+                        tradeNo, new PaymentNextAction.Redirect("https://pay.example/" + tradeNo)));
     }
 
     private Map<String, Object> directOrderRequest(UUID productId, String paymentMethod) {
@@ -974,17 +1009,24 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(OrderType.NORMAL, order.get("order_type"));
         assertEquals("PENDING", order.get("status"));
         assertEquals("PENDING", scalar("select status from orders where id = ?", String.class, orderId));
-        assertTrue(String.valueOf(payment.get("payment_url")).startsWith("https://pay.example/"));
+        assertTrue(payment.get("next_action") instanceof PaymentNextAction.Redirect);
     }
 
-    private Map<String, String> callback(UUID orderId, String tradeNo) {
-        Map<String, String> params = new java.util.LinkedHashMap<>();
-        params.put("trade_no", tradeNo);
-        params.put("out_trade_no", orderId.toString());
-        params.put("trade_status", "TRADE_SUCCESS");
-        params.put("money", "10.00");
-        params.put("sign", "valid-signature");
-        return params;
+    private PaymentProvider.WebhookRequest callback(String merchantTradeNo, String tradeNo) {
+        return new PaymentProvider.WebhookRequest("POST", Map.of(), Map.of(), Map.of(
+                "trade_no", List.of(tradeNo),
+                "out_trade_no", List.of(merchantTradeNo),
+                "trade_status", List.of("TRADE_SUCCESS"),
+                "money", List.of("10.00"),
+                "sign", List.of("valid-signature")), "");
+    }
+
+    private String createAttempt(UUID orderId, String channel, String tradeNo) {
+        Map<String, Object> result = paymentService.createPayment(
+                orderId, channel, new BigDecimal("10.00"), "pc");
+        UUID paymentId = (UUID) result.get("payment_id");
+        return scalar("select merchant_trade_no from payment_attempts where id = ?",
+                String.class, paymentId);
     }
 
     private UUID insertOrderItem(UUID orderId, UUID productId) {

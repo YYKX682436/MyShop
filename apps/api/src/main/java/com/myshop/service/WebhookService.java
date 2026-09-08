@@ -1,12 +1,9 @@
 package com.myshop.service;
 
-import java.util.Map;
+import com.myshop.payment.PaymentProvider;
 
 public interface WebhookService {
 
-    /**
-     * 处理易支付 GET 回调
-     */
-    String processEpayCallback(Map<String, String> params);
-
+    PaymentProvider.WebhookAcknowledgement handleWebhook(
+            String providerId, PaymentProvider.WebhookRequest request);
 }

@@ -274,7 +274,6 @@ export function OrderDetailSheet({
             <DefinitionRow label="支付"><span>{order.paid_at ? formatDateTime(order.paid_at, locale) : empty}</span></DefinitionRow>
             <DefinitionRow label="完成"><span>{order.delivered_at ? formatDateTime(order.delivered_at, locale) : empty}</span></DefinitionRow>
             <DefinitionRow label={t("admin.paymentMethod")}><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.payment_method || ""} className="size-4" />{order.payment_method ? getPaymentLabel(order.payment_method, t) : empty}</span></DefinitionRow>
-            <CopyDefinitionRow label="外部交易号" value={order.epay_trade_no} onCopy={copyToClipboard} empty={empty} mono />
             <DefinitionRow label="风险状态"><span className={order.is_risk_flagged ? "font-medium text-destructive" : "text-emerald-700 dark:text-emerald-300"}>{order.is_risk_flagged ? t("admin.riskFlagged") : "正常"}</span></DefinitionRow>
           </Panel>
         </aside>

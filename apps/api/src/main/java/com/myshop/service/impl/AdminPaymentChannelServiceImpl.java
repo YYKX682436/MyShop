@@ -4,17 +4,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
-import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.response.AdminPaymentChannelResponse;
 import com.myshop.payment.PaymentProvider;
-import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.AdminPaymentChannelService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,7 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -40,26 +35,16 @@ public class AdminPaymentChannelServiceImpl implements AdminPaymentChannelServic
             "api_token", "key", "secret", "password", "private_key", "token");
 
     private final PaymentChannelRepository paymentChannelRepository;
-    private final OrderRepository orderRepository;
     private final ObjectMapper objectMapper;
     private final List<PaymentProvider> paymentProviders;
 
     @Autowired
     public AdminPaymentChannelServiceImpl(PaymentChannelRepository paymentChannelRepository,
-                                          OrderRepository orderRepository,
                                           ObjectMapper objectMapper,
                                           List<PaymentProvider> paymentProviders) {
         this.paymentChannelRepository = paymentChannelRepository;
-        this.orderRepository = orderRepository;
         this.objectMapper = objectMapper;
         this.paymentProviders = paymentProviders == null ? List.of() : List.copyOf(paymentProviders);
-    }
-
-    /** Convenience constructor retained for isolated provider-schema tests. */
-    public AdminPaymentChannelServiceImpl(PaymentChannelRepository paymentChannelRepository,
-                                          ObjectMapper objectMapper,
-                                          List<PaymentProvider> paymentProviders) {
-        this(paymentChannelRepository, null, objectMapper, paymentProviders);
     }
 
     @Override
@@ -97,12 +82,11 @@ public class AdminPaymentChannelServiceImpl implements AdminPaymentChannelServic
                 .filter(value -> value.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "支付渠道不存在"));
 
-        String oldChannelCode = channel.getChannelCode();
         String oldProviderType = channel.getProviderType();
         String oldPaymentType = channel.getPaymentType();
         String oldConfigData = channel.getConfigData();
 
-        String channelCode = oldChannelCode;
+        String channelCode = channel.getChannelCode();
         if (req.containsKey("channel_code")) {
             channelCode = requiredText(req.get("channel_code"), "渠道代码不能为空");
             validateChannelCode(channelCode);
@@ -124,14 +108,6 @@ public class AdminPaymentChannelServiceImpl implements AdminPaymentChannelServic
             Object requestedConfig = req.containsKey("config_data")
                     ? req.get("config_data") : oldConfigData;
             configData = validateAndSerializeConfig(requestedConfig, provider, oldConfigData);
-        }
-
-        boolean technicalChange = !Objects.equals(oldChannelCode, channelCode)
-                || !Objects.equals(oldProviderType, provider.id())
-                || !Objects.equals(oldPaymentType, paymentType)
-                || !sameConfig(oldConfigData, configData);
-        if (technicalChange && hasPendingOrders(oldChannelCode)) {
-            throw pendingOrdersConflict("修改支付渠道技术配置");
         }
 
         channel.setChannelCode(channelCode);
@@ -165,9 +141,6 @@ public class AdminPaymentChannelServiceImpl implements AdminPaymentChannelServic
         PaymentChannel channel = paymentChannelRepository.findById(id)
                 .filter(value -> value.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "支付渠道不存在"));
-        if (hasPendingOrders(channel.getChannelCode())) {
-            throw pendingOrdersConflict("删除支付渠道");
-        }
         channel.setIsDeleted(1);
         paymentChannelRepository.save(channel);
     }
@@ -186,32 +159,6 @@ public class AdminPaymentChannelServiceImpl implements AdminPaymentChannelServic
                 channel.isEnabled(),
                 channel.getSortOrder(),
                 channel.getCreatedAt());
-    }
-
-    private BusinessException pendingOrdersConflict(String operation) {
-        return new BusinessException(ErrorCode.PAYMENT_CHANNEL_HAS_PENDING_ORDERS,
-                "无法" + operation + "：该渠道仍存在待支付订单。请先完成或过期待支付订单后再重试。",
-                HttpStatus.CONFLICT);
-    }
-
-    private boolean hasPendingOrders(String channelCode) {
-        return orderRepository != null
-                && orderRepository.existsByPaymentMethodAndStatusAndOrderType(
-                channelCode, OrderStatus.PENDING, OrderType.NORMAL);
-    }
-
-    private boolean sameConfig(String oldJson, String newJson) {
-        return normalizeConfigForComparison(deserializeConfigData(oldJson))
-                .equals(normalizeConfigForComparison(deserializeConfigData(newJson)));
-    }
-
-    private Map<String, String> normalizeConfigForComparison(Map<String, Object> config) {
-        if (config == null || config.isEmpty()) return Map.of();
-        Map<String, String> normalized = new LinkedHashMap<>();
-        config.forEach((key, value) -> {
-            if (value != null) normalized.put(key, String.valueOf(value));
-        });
-        return normalized;
     }
 
     private Map<String, Object> maskSensitiveConfigData(Map<String, Object> config,

@@ -2,201 +2,187 @@ package com.myshop.service.impl;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.myshop.entity.Order;
-import com.myshop.entity.PaymentChannel;
+import com.myshop.entity.PaymentAttempt;
 import com.myshop.payment.PaymentQueryUnavailableException;
 import com.myshop.payment.PaymentProvider;
-import com.myshop.repository.OrderRepository;
-import com.myshop.repository.PaymentChannelRepository;
+import com.myshop.payment.PaymentStatus;
+import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.WebhookEventRepository;
 import com.myshop.service.WebhookService;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
-/**
- * Epay callback verification. It performs all untrusted/provider I/O before
- * handing the trusted result to the separate payment-confirmation transaction.
- */
-@Slf4j
+/** Generic webhook boundary; provider protocol details remain inside each adapter. */
 @Service
 public class WebhookServiceImpl implements WebhookService {
 
     private final WebhookEventRepository webhookEventRepository;
-    private final OrderRepository orderRepository;
-    private final PaymentChannelRepository paymentChannelRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
     private final List<PaymentProvider> paymentProviders;
     private final ObjectMapper objectMapper;
     private final PaymentConfirmationTransactionService confirmationService;
 
     @Autowired
     public WebhookServiceImpl(WebhookEventRepository webhookEventRepository,
-                              OrderRepository orderRepository,
-                              PaymentChannelRepository paymentChannelRepository,
+                              PaymentAttemptRepository paymentAttemptRepository,
                               List<PaymentProvider> paymentProviders,
                               ObjectMapper objectMapper,
                               PaymentConfirmationTransactionService confirmationService) {
         this.webhookEventRepository = webhookEventRepository;
-        this.orderRepository = orderRepository;
-        this.paymentChannelRepository = paymentChannelRepository;
-        this.paymentProviders = paymentProviders;
+        this.paymentAttemptRepository = paymentAttemptRepository;
+        this.paymentProviders = paymentProviders == null ? List.of() : List.copyOf(paymentProviders);
         this.objectMapper = objectMapper;
         this.confirmationService = confirmationService;
     }
 
     @Override
-    public String processEpayCallback(Map<String, String> params) {
-        String tradeNo = clean(params.get("trade_no"));
-        String outTradeNo = clean(params.get("out_trade_no"));
-        String tradeStatus = clean(params.get("trade_status"));
-        String money = clean(params.get("money"));
+    public PaymentProvider.WebhookAcknowledgement handleWebhook(
+            String providerId, PaymentProvider.WebhookRequest request) {
+        PaymentProvider provider = providerForPath(providerId);
+        if (provider == null || request == null) return PaymentProvider.WebhookAcknowledgement.failure();
 
-        if (tradeNo == null || outTradeNo == null) return "FAIL";
-        String eventId = "epay:" + tradeNo;
-        if (webhookEventRepository.findByEventId(eventId).isPresent()) return "SUCCESS";
-
-        UUID orderId;
+        String merchantTradeNo;
         try {
-            orderId = UUID.fromString(outTradeNo);
-        } catch (IllegalArgumentException exception) {
-            log.warn("Rejected Epay callback with invalid order identifier");
-            return "FAIL";
-        }
-
-        Order order = orderRepository.findById(orderId).orElse(null);
-        if (order == null) {
-            // Do not consume a callback that raced order creation.
-            log.warn("Epay callback order was not found");
-            return "FAIL";
-        }
-
-        ResolvedChannel resolvedChannel;
-        try {
-            resolvedChannel = resolveChannel(order);
+            merchantTradeNo = clean(provider.extractMerchantTradeNo(request));
         } catch (RuntimeException exception) {
-            log.warn("Epay callback rejected because the channel profile is unavailable");
-            return "FAIL";
+            return provider.failureAcknowledgement();
+        }
+        if (merchantTradeNo == null) return provider.failureAcknowledgement();
+
+        PaymentAttempt attempt = paymentAttemptRepository.findByMerchantTradeNo(merchantTradeNo)
+                .orElse(null);
+        if (attempt == null || !provider.id().equalsIgnoreCase(attempt.getProviderType())) {
+            return provider.failureAcknowledgement();
         }
 
-        if (!resolvedChannel.provider().verifyCallback(
-                new PaymentProvider.CallbackRequest(params, resolvedChannel.config()))) {
-            log.warn("Epay callback signature verification failed");
-            return "FAIL";
+        Map<String, String> config;
+        try {
+            config = parseConfigSnapshot(attempt.getProviderConfigSnapshot());
+        } catch (RuntimeException exception) {
+            return provider.failureAcknowledgement();
         }
 
-        // A non-success notification must not consume the identity of a later
-        // success notification with the same gateway trade number.
-        if (!"TRADE_SUCCESS".equalsIgnoreCase(tradeStatus)) return "SUCCESS";
-
-        BigDecimal callbackAmount = parseAmount(money);
-        if (callbackAmount == null || order.getActualAmount() == null
-                || order.getActualAmount().compareTo(callbackAmount) != 0) {
-            log.warn("Epay callback amount mismatch; event remains retryable");
-            return "FAIL";
+        PaymentProvider.CallbackResult callback;
+        try {
+            callback = provider.verifyAndParseCallback(request, config);
+        } catch (RuntimeException exception) {
+            // Never include the snapshot or provider exception text in logs.
+            return provider.failureAcknowledgement();
+        }
+        if (!validCallback(attempt, callback, merchantTradeNo)) {
+            return provider.failureAcknowledgement();
         }
 
+        if (webhookEventRepository.findByEventId(callback.eventId()).isPresent()) {
+            return provider.successAcknowledgement();
+        }
+
+        // A valid signed non-paid notification is acknowledged, but it does
+        // not consume the event identity: a later PAID notification remains
+        // eligible for confirmation.
+        if (callback.status() != PaymentStatus.PAID) {
+            return provider.successAcknowledgement();
+        }
+
+        if (attempt.getStatus() == PaymentStatus.PAID) {
+            return provider.successAcknowledgement();
+        }
+        if (attempt.getStatus() != PaymentStatus.PENDING) {
+            return provider.failureAcknowledgement();
+        }
+        if (attempt.getExpiresAt() != null
+                && !attempt.getExpiresAt().isAfter(LocalDateTime.now())) {
+            return provider.failureAcknowledgement();
+        }
+
+        if (provider.supportsServerSideQuery() && !queryMatches(provider, attempt, callback, config)) {
+            return provider.failureAcknowledgement();
+        }
+
+        String result = confirmationService.confirmPaid(attempt.getId(), callback);
+        return "SUCCESS".equals(result)
+                ? provider.successAcknowledgement()
+                : provider.failureAcknowledgement();
+    }
+
+    private boolean queryMatches(PaymentProvider provider, PaymentAttempt attempt,
+                                 PaymentProvider.CallbackResult callback,
+                                 Map<String, String> config) {
         PaymentProvider.PaymentQueryResult query;
-        boolean queryUnavailable = false;
         try {
-            query = resolvedChannel.provider().query(new PaymentProvider.PaymentQueryRequest(
-                    outTradeNo, resolvedChannel.config()));
+            query = provider.query(new PaymentProvider.PaymentQueryRequest(
+                    attempt.getMerchantTradeNo(), config));
         } catch (PaymentQueryUnavailableException exception) {
-            if (!resolvedChannel.provider().allowSignedCallbackWhenQueryUnavailable()) {
-                log.warn("Payment provider query endpoint unavailable and signed fallback is disabled: outTradeNo={}",
-                        outTradeNo);
-                return "FAIL";
-            }
-            queryUnavailable = true;
-            query = null;
-            log.warn("Payment provider query endpoint unavailable; accepting verified callback: outTradeNo={}",
-                    outTradeNo);
+            return provider.allowSignedCallbackWhenQueryUnavailable();
         } catch (RuntimeException exception) {
-            log.warn("Epay callback server-side query failed");
-            return "FAIL";
+            return false;
         }
-        if (!queryUnavailable && (query == null || !isPaid(query.tradeStatus())
-                || !sameAmount(query.money(), order.getActualAmount())
-                || !sameTrade(query.tradeNo(), tradeNo, outTradeNo))) {
-            log.warn("Epay callback server-side verification failed");
-            return "FAIL";
+        if (query == null || query.status() != PaymentStatus.PAID
+                || !sameAmount(query.amount(), attempt.getAmount())) {
+            return false;
         }
-
-        // Only this service mutates payment state. It commits PAID and the
-        // webhook event first; its afterCommit hook starts fulfillment in a
-        // separate transaction.
-        return confirmationService.confirmPaid(orderId, eventId,
-                resolvedChannel.channel().getChannelCode(), params);
+        return sameTrade(query.providerTradeNo(), callback.providerTradeNo(), attempt.getProviderTradeNo());
     }
 
-    private ResolvedChannel resolveChannel(Order order) {
-        if (order.getPaymentMethod() == null || order.getPaymentMethod().isBlank()) {
-            throw new IllegalStateException("payment method missing");
+    private boolean validCallback(PaymentAttempt attempt, PaymentProvider.CallbackResult callback,
+                                  String extractedMerchantTradeNo) {
+        if (callback == null || callback.eventId() == null || callback.eventId().isBlank()
+                || callback.status() == null
+                || !extractedMerchantTradeNo.equals(callback.merchantTradeNo())
+                || !attempt.getMerchantTradeNo().equals(callback.merchantTradeNo())
+                || callback.amount() == null
+                || !sameAmount(callback.amount(), attempt.getAmount())) {
+            return false;
         }
-        PaymentChannel channel = paymentChannelRepository
-                .findByChannelCodeAndIsDeleted(order.getPaymentMethod(), 0)
-                .orElseThrow(() -> new IllegalStateException("payment channel missing"));
-        // Enabled controls only creation of new payment requests. The exact
-        // channel profile must remain usable for an existing order callback,
-        // even after an administrator disables the channel.
-        Map<String, String> config = parseConfig(channel.getConfigData());
-        PaymentProvider provider = paymentProviders.stream()
-                .filter(candidate -> candidate.id().equalsIgnoreCase(channel.getProviderType()))
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException("payment provider missing"));
-        return new ResolvedChannel(channel, provider, config);
+        String storedTradeNo = clean(attempt.getProviderTradeNo());
+        String callbackTradeNo = clean(callback.providerTradeNo());
+        return storedTradeNo == null || callbackTradeNo == null || storedTradeNo.equals(callbackTradeNo);
     }
 
-    private Map<String, String> parseConfig(String raw) {
-        if (raw == null || raw.isBlank()) throw new IllegalStateException("empty payment configuration");
+    private Map<String, String> parseConfigSnapshot(String raw) {
+        if (raw == null || raw.isBlank()) throw new IllegalArgumentException();
         try {
-            Map<String, Object> values = objectMapper.readValue(raw, new TypeReference<>() {
-            });
+            Map<String, Object> values = objectMapper.readValue(raw, new TypeReference<>() { });
             Map<String, String> result = new LinkedHashMap<>();
             values.forEach((key, value) -> {
-                if (value != null) result.put(key, value.toString());
+                if (key != null && value != null) result.put(key, String.valueOf(value));
             });
             return result;
         } catch (Exception exception) {
-            throw new IllegalStateException("invalid payment configuration", exception);
+            throw new IllegalArgumentException("invalid payment snapshot");
         }
     }
 
-    private BigDecimal parseAmount(String value) {
-        if (value == null || value.isBlank()) return null;
-        try {
-            return new BigDecimal(value);
-        } catch (NumberFormatException exception) {
-            return null;
-        }
+    private PaymentProvider providerForPath(String providerId) {
+        String requested = clean(providerId);
+        if (requested == null) return null;
+        return paymentProviders.stream()
+                .filter(provider -> provider.id().equalsIgnoreCase(requested))
+                .findFirst()
+                .orElse(null);
     }
 
-    private boolean sameAmount(String value, BigDecimal expected) {
-        BigDecimal actual = parseAmount(value);
-        return actual != null && expected != null && expected.compareTo(actual) == 0;
+    private boolean sameAmount(BigDecimal actual, BigDecimal expected) {
+        return actual != null && expected != null && actual.compareTo(expected) == 0;
     }
 
-    private boolean isPaid(String status) {
-        return "TRADE_SUCCESS".equalsIgnoreCase(status) || "1".equals(status);
-    }
-
-    private boolean sameTrade(String queriedTrade, String callbackTrade, String outTrade) {
-        return queriedTrade == null || queriedTrade.isBlank()
-                || queriedTrade.equals(callbackTrade) || queriedTrade.equals(outTrade);
+    private boolean sameTrade(String queried, String callback, String created) {
+        String queryTrade = clean(queried);
+        String callbackTrade = clean(callback);
+        String createdTrade = clean(created);
+        return queryTrade == null || callbackTrade == null || queryTrade.equals(callbackTrade)
+                || (createdTrade != null && queryTrade.equals(createdTrade));
     }
 
     private String clean(String value) {
         if (value == null) return null;
         String result = value.trim();
         return result.isEmpty() ? null : result;
-    }
-
-    private record ResolvedChannel(PaymentChannel channel, PaymentProvider provider,
-                                   Map<String, String> config) {
     }
 }

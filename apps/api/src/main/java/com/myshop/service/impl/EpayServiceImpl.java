@@ -4,24 +4,33 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
+import com.myshop.payment.PaymentNextAction;
 import com.myshop.payment.PaymentQueryUnavailableException;
+import com.myshop.payment.PaymentStatus;
 import com.myshop.service.EpayService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
+import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
 
 @Slf4j
 @Service
@@ -29,31 +38,23 @@ public class EpayServiceImpl implements EpayService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
-    private final boolean pageRedirectFallbackEnabled;
 
     @Autowired
-    public EpayServiceImpl(RestTemplate restTemplate, ObjectMapper objectMapper,
-                           @Value("${app.epay.page-redirect-fallback-enabled:false}")
-                           boolean pageRedirectFallbackEnabled) {
+    public EpayServiceImpl(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
-        this.pageRedirectFallbackEnabled = pageRedirectFallbackEnabled;
-    }
-
-    /** Test-friendly constructor keeps the fail-closed default. */
-    public EpayServiceImpl(RestTemplate restTemplate, ObjectMapper objectMapper) {
-        this(restTemplate, objectMapper, false);
     }
 
     @Override
-    public EpayResult createPayment(ChannelConfig config, String outTradeNo, String type, String name,
-                                    BigDecimal money, String clientIp, String device,
-                                    String notifyUrl, String returnUrl) {
+    public EpayCreateResult createPayment(ChannelConfig config, String merchantTradeNo, String type,
+                                          String name, BigDecimal money, String clientIp, String device,
+                                          String notifyUrl, String returnUrl,
+                                          boolean submitFallbackEnabled, String carrierMode) {
         String url = normalizeApiUrl(config.apiUrl());
-        Map<String, String> params = new LinkedHashMap<>();
+        Map<String, String> params = new java.util.LinkedHashMap<>();
         params.put("pid", config.pid());
         params.put("type", type);
-        params.put("out_trade_no", outTradeNo);
+        params.put("out_trade_no", merchantTradeNo);
         params.put("notify_url", notifyUrl);
         params.put("return_url", returnUrl);
         params.put("name", name);
@@ -61,114 +62,149 @@ public class EpayServiceImpl implements EpayService {
         params.put("clientip", clientIp != null ? clientIp : "127.0.0.1");
         params.put("device", device != null && !device.isBlank() ? device : "pc");
 
-        String sign = buildSign(config.key(), params);
-        params.put("sign", sign);
+        params.put("sign", buildSign(config.key(), params));
         params.put("sign_type", "MD5");
 
-        log.info("Epay createPayment: outTradeNo={}, type={}, money={}, apiUrl={}", outTradeNo, type, money, config.apiUrl());
+        log.info("Epay payment create: merchantTradeNo={}, type={}, money={}, apiUrl={}",
+                merchantTradeNo, type, money, config.apiUrl());
 
-        // Build form-urlencoded body
         MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
         params.forEach(formData::add);
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(formData, headers);
 
-        // 带重试的网络调用（最多重试 2 次，间隔 1 秒）
         int maxRetries = 2;
         Exception lastException = null;
-
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             try {
                 if (attempt > 0) {
                     log.info("Epay API retry attempt {}/{}", attempt, maxRetries);
                     Thread.sleep(1000);
                 }
-
                 ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
                 String responseBody = response.getBody();
-
                 if (responseBody == null || responseBody.isBlank()) {
-                    log.error("Epay API response: orderId={}, paymentType={}, responseCode=unknown, responseFields=[], selectedCarrier=none",
-                            outTradeNo, type);
+                    log.error("Epay API response: merchantTradeNo={}, paymentType={}, responseCode=unknown, responseFields=[], selectedCarrier=none",
+                            merchantTradeNo, type);
                     throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：响应为空");
                 }
 
                 Map<String, Object> body;
                 try {
-                    body = objectMapper.readValue(responseBody, new TypeReference<>() {});
-                } catch (Exception parseEx) {
-                    log.error("Epay API response: orderId={}, paymentType={}, responseCode=unknown, responseFields=unavailable, selectedCarrier=none; invalidJson",
-                            outTradeNo, type);
+                    body = objectMapper.readValue(responseBody, new TypeReference<>() { });
+                } catch (Exception parseException) {
+                    log.error("Epay API response: merchantTradeNo={}, paymentType={}, responseCode=unknown, responseFields=unavailable, selectedCarrier=none; invalidJson",
+                            merchantTradeNo, type);
                     throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：响应格式异常");
                 }
 
                 Object rawCode = body.get("code");
-                int code = isSuccessCode(rawCode) ? 1 : -1;
                 String responseCode = responseCodeForLog(rawCode);
-                String msg = presentValue(body.get("msg"));
-                String tradeNo = presentValue(body.get("trade_no"));
-                if (msg == null) msg = "";
-                if (tradeNo == null) tradeNo = "";
-
+                String message = presentValue(body.get("msg"));
+                String providerTradeNo = presentValue(body.get("trade_no"));
                 String gatewayOrigin = origin(parseHttpUrl(config.apiUrl()));
-                Carrier qrcodeCarrier = firstCarrier(body, gatewayOrigin,
-                        "qrcode", "qr_code", "urlscheme");
-                Carrier payUrlCarrier = firstCarrier(body, gatewayOrigin,
-                        "payurl", "payurl2", "url", "pay_action_url");
                 String responseFields = responseFieldNames(body);
-                String selectedCarrier = selectedCarrier(qrcodeCarrier, payUrlCarrier);
-                log.info("Epay API response: orderId={}, paymentType={}, responseCode={}, responseFields=[{}], selectedCarrier={}",
-                        outTradeNo, type, responseCode, responseFields, selectedCarrier);
+                Carrier selected = firstAvailableCarrier(body, gatewayOrigin);
+                log.info("Epay API response: merchantTradeNo={}, paymentType={}, responseCode={}, responseFields=[{}], selectedCarrier={}",
+                        merchantTradeNo, type, responseCode, responseFields,
+                        selected == null ? "none" : selected.fieldName());
 
                 if (!isSuccessCode(rawCode)) {
-                    // 业务错误不重试
-                    log.error("Epay API error: orderId={}, paymentType={}, responseCode={}, selectedCarrier=none",
-                            outTradeNo, type, responseCode);
-                    throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：" + msg);
-                }
-
-                String resultQrcode = qrcodeCarrier == null ? null : qrcodeCarrier.value();
-                String payUrl = payUrlCarrier == null ? null : payUrlCarrier.value();
-
-                if (payUrl == null && resultQrcode == null) {
-                    if (pageRedirectFallbackEnabled && tradeNo != null && !tradeNo.isBlank()) {
-                        String submitUrl = buildSubmitPaymentUrl(config.apiUrl(), params);
-                        log.info("Epay API page redirect fallback: orderId={}, paymentType={}, "
-                                        + "responseCode={}, selectedCarrier=submit.php",
-                                outTradeNo, type, responseCode);
-                        return new EpayResult(code, msg, tradeNo, submitUrl, null);
-                    }
-                    log.error("Epay API error: orderId={}, paymentType={}, responseCode={}, selectedCarrier=none; noPaymentCarrier",
-                            outTradeNo, type, responseCode);
+                    log.error("Epay API error: merchantTradeNo={}, paymentType={}, responseCode={}, selectedCarrier=none",
+                            merchantTradeNo, type, responseCode);
                     throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL,
-                            "支付创建失败：网关未返回支付链接或二维码");
+                            "支付创建失败：" + (message == null ? "" : message));
                 }
 
-                // 网关未返回 payUrl 且为移动端请求时，将 qrcode（收银台页面 URL）作为 H5 跳转入口
-                String effectivePayUrl = payUrl;
-                if (effectivePayUrl == null && device != null && !"pc".equals(device) && resultQrcode != null) {
-                    effectivePayUrl = resultQrcode;
-                    log.info("Epay mobile fallback: orderId={}, paymentType={}, selectedCarrier={}",
-                            outTradeNo, type, qrcodeCarrier.fieldName());
-                }
-
-                return new EpayResult(code, msg, tradeNo, effectivePayUrl, resultQrcode);
-
-            } catch (BusinessException e) {
-                throw e; // 业务异常直接抛出，不重试
-            } catch (Exception e) {
-                lastException = e;
-                log.warn("Epay API attempt {} failed: orderId={}, paymentType={}, errorType={}",
-                        attempt + 1, outTradeNo, type, e.getClass().getSimpleName());
+                PaymentNextAction nextAction = selectNextAction(
+                        body, gatewayOrigin, type, submitFallbackEnabled, carrierMode,
+                        params, config.apiUrl());
+                return new EpayCreateResult(providerTradeNo, nextAction);
+            } catch (BusinessException exception) {
+                throw exception;
+            } catch (Exception exception) {
+                lastException = exception;
+                log.warn("Epay API attempt {} failed: merchantTradeNo={}, paymentType={}, errorType={}",
+                        attempt + 1, merchantTradeNo, type, exception.getClass().getSimpleName());
             }
         }
 
-        log.error("Epay API call failed after {} retries: orderId={}, paymentType={}, errorType={}",
-                maxRetries + 1, outTradeNo, type,
+        log.error("Epay API call failed after {} retries: merchantTradeNo={}, paymentType={}, errorType={}",
+                maxRetries + 1, merchantTradeNo, type,
                 lastException == null ? "unknown" : lastException.getClass().getSimpleName());
         throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：网络超时，请重试");
+    }
+
+    private PaymentNextAction selectNextAction(Map<String, Object> body, String gatewayOrigin,
+                                                String paymentType, boolean submitFallbackEnabled,
+                                                String rawCarrierMode, Map<String, String> signedParams,
+                                                String apiUrl) {
+        String carrierMode = normalizeCarrierMode(rawCarrierMode);
+        Carrier scheme = firstCarrier(body, gatewayOrigin, "urlscheme");
+        Carrier qrCode = firstCarrier(body, gatewayOrigin, "qrcode", "qr_code");
+        Carrier redirect = firstCarrier(body, gatewayOrigin,
+                "payurl", "payurl2", "url", "pay_action_url");
+
+        return switch (carrierMode) {
+            case "auto" -> {
+                if (scheme != null) {
+                    if (!isAppScheme(scheme.value())) throw noCompatibleCarrier();
+                    yield new PaymentNextAction.DeepLink(scheme.value(), clientFor(paymentType));
+                }
+                if (qrCode != null) yield new PaymentNextAction.QrCode(qrCode.value());
+                if (redirect != null) yield new PaymentNextAction.Redirect(redirect.value());
+                yield fallbackAction(submitFallbackEnabled, signedParams,
+                        paymentType, carrierMode, apiUrl);
+            }
+            case "qr_code" -> {
+                if (qrCode == null) throw noCompatibleCarrier();
+                yield new PaymentNextAction.QrCode(qrCode.value());
+            }
+            case "redirect" -> {
+                if (redirect == null) {
+                    if (scheme != null || qrCode != null) throw noCompatibleCarrier();
+                    yield fallbackAction(submitFallbackEnabled, signedParams,
+                            paymentType, carrierMode, apiUrl);
+                }
+                yield new PaymentNextAction.Redirect(redirect.value());
+            }
+            case "open_in_client" -> {
+                if (redirect == null) {
+                    if (scheme != null || qrCode != null) throw noCompatibleCarrier();
+                    yield fallbackAction(submitFallbackEnabled, signedParams,
+                            paymentType, carrierMode, apiUrl);
+                }
+                yield new PaymentNextAction.OpenInClient(redirect.value(), clientFor(paymentType));
+            }
+            default -> throw noCompatibleCarrier();
+        };
+    }
+
+    private PaymentNextAction fallbackAction(boolean enabled, Map<String, String> signedParams,
+                                             String paymentType,
+                                             String carrierMode, String apiUrl) {
+        if (!enabled || "qr_code".equals(carrierMode)) {
+            throw noCompatibleCarrier();
+        }
+        String submitUrl = buildSubmitPaymentUrl(apiUrl, signedParams);
+        if ("open_in_client".equals(carrierMode)) {
+            return new PaymentNextAction.OpenInClient(submitUrl, clientFor(paymentType));
+        }
+        return new PaymentNextAction.Redirect(submitUrl);
+    }
+
+    private BusinessException noCompatibleCarrier() {
+        return new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL,
+                "支付创建失败：网关未返回与渠道载体模式兼容的载体");
+    }
+
+    private Carrier firstAvailableCarrier(Map<String, Object> body, String gatewayOrigin) {
+        Carrier scheme = firstCarrier(body, gatewayOrigin, "urlscheme");
+        if (scheme != null) return scheme;
+        Carrier qrCode = firstCarrier(body, gatewayOrigin, "qrcode", "qr_code");
+        if (qrCode != null) return qrCode;
+        return firstCarrier(body, gatewayOrigin, "payurl", "payurl2", "url", "pay_action_url");
     }
 
     private Carrier firstCarrier(Map<String, Object> body, String gatewayOrigin, String... fieldNames) {
@@ -182,9 +218,7 @@ public class EpayServiceImpl implements EpayService {
     private String normalizeResponseField(String fieldName, Object rawValue, String gatewayOrigin) {
         String value = presentValue(rawValue);
         if (value == null) return null;
-        if (isRelativeUrlField(fieldName) && value.startsWith("/")) {
-            return gatewayOrigin + value;
-        }
+        if (isRelativeUrlField(fieldName) && value.startsWith("/")) return gatewayOrigin + value;
         return value;
     }
 
@@ -193,6 +227,31 @@ public class EpayServiceImpl implements EpayService {
             case "payurl", "payurl2", "url", "pay_action_url", "qrcode", "qr_code" -> true;
             default -> false;
         };
+    }
+
+    private boolean isAppScheme(String value) {
+        try {
+            URI uri = URI.create(value);
+            String scheme = uri.getScheme();
+            return scheme != null && !"http".equalsIgnoreCase(scheme)
+                    && !"https".equalsIgnoreCase(scheme) && uri.getSchemeSpecificPart() != null
+                    && !uri.getSchemeSpecificPart().isBlank();
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
+    private String clientFor(String paymentType) {
+        if ("wxpay".equalsIgnoreCase(paymentType)) return "wechat";
+        if ("alipay".equalsIgnoreCase(paymentType)) return "alipay";
+        throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE,
+                "易支付兼容协议不支持支付类型: " + paymentType);
+    }
+
+    private String normalizeCarrierMode(String raw) {
+        String mode = raw == null || raw.isBlank() ? "auto" : raw.trim().toLowerCase(Locale.ROOT);
+        if (List.of("auto", "qr_code", "redirect", "open_in_client").contains(mode)) return mode;
+        throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：渠道载体模式无效");
     }
 
     private String presentValue(Object rawValue) {
@@ -209,8 +268,7 @@ public class EpayServiceImpl implements EpayService {
                 return false;
             }
         }
-        return rawCode instanceof CharSequence sequence
-                && "1".equals(sequence.toString().trim());
+        return rawCode instanceof CharSequence sequence && "1".equals(sequence.toString().trim());
     }
 
     private String responseCodeForLog(Object rawCode) {
@@ -219,43 +277,26 @@ public class EpayServiceImpl implements EpayService {
     }
 
     private String responseFieldNames(Map<String, Object> body) {
-        List<String> fields = body.keySet().stream()
-                .filter(Objects::nonNull)
-                .map(Object::toString)
-                .sorted()
-                .toList();
-        return String.join(",", fields);
+        return String.join(",", body.keySet().stream()
+                .filter(Objects::nonNull).map(Object::toString).sorted().toList());
     }
 
-    private String selectedCarrier(Carrier qrcodeCarrier, Carrier payUrlCarrier) {
-        List<String> selected = new ArrayList<>();
-        if (qrcodeCarrier != null) selected.add(qrcodeCarrier.fieldName());
-        if (payUrlCarrier != null) selected.add(payUrlCarrier.fieldName());
-        return selected.isEmpty() ? "none" : String.join(",", selected);
-    }
-
-    /**
-     * Some Epay-compatible gateways create the order through mapi.php but do
-     * not return a payurl/qrcode. When that behavior has been explicitly
-     * enabled for a verified gateway, the signed submit.php page is the
-     * provider's payment carrier. The merchant key is deliberately not part
-     * of params and therefore can never enter this URL.
-     */
-    private String buildSubmitPaymentUrl(String rawApiUrl, Map<String, String> params) {
-        String endpoint = gatewayBaseUrl(rawApiUrl) + "/submit.php";
-        String query = params.entrySet().stream()
-                .filter(entry -> entry.getValue() != null && !entry.getValue().isBlank())
-                .map(entry -> encodeQueryParam(entry.getKey()) + "=" + encodeQueryParam(entry.getValue()))
-                .reduce((left, right) -> left + "&" + right)
-                .orElse("");
-        return endpoint + (query.isEmpty() ? "" : "?" + query);
+    /** The submit page receives the same signed request, without the merchant secret. */
+    private String buildSubmitPaymentUrl(String apiUrl, Map<String, String> params) {
+        String endpoint = gatewayBaseUrl(apiUrl) + "/submit.php";
+        List<String> encoded = new ArrayList<>();
+        params.forEach((key, value) -> {
+            if (value != null && !value.isBlank() && !"api_url".equals(key)) {
+                encoded.add(encodeQueryParam(key) + "=" + encodeQueryParam(value));
+            }
+        });
+        return endpoint + (encoded.isEmpty() ? "" : "?" + String.join("&", encoded));
     }
 
     private record Carrier(String fieldName, String value) { }
 
     @Override
     public String buildSign(String merchantKey, Map<String, String> params) {
-        // 1. Filter out sign, sign_type, and empty values
         TreeMap<String, String> sorted = new TreeMap<>();
         for (Map.Entry<String, String> entry : params.entrySet()) {
             String key = entry.getKey();
@@ -265,64 +306,83 @@ public class EpayServiceImpl implements EpayService {
             sorted.put(key, value);
         }
 
-        // 2. Concatenate sorted params: a=b&c=d&e=f
-        StringBuilder sb = new StringBuilder();
+        StringBuilder content = new StringBuilder();
         for (Map.Entry<String, String> entry : sorted.entrySet()) {
-            if (!sb.isEmpty()) sb.append('&');
-            sb.append(entry.getKey()).append('=').append(entry.getValue());
+            if (!content.isEmpty()) content.append('&');
+            content.append(entry.getKey()).append('=').append(entry.getValue());
         }
-
-        // 3. Append merchant key directly
-        sb.append(merchantKey);
-
-        // 4. MD5 hash
-        return md5(sb.toString());
+        content.append(merchantKey);
+        return md5(content.toString());
     }
 
     @Override
-    public OrderQueryResult queryOrder(ChannelConfig config, String outTradeNo) {
+    public OrderQueryResult queryOrder(ChannelConfig config, String merchantTradeNo) {
         String url = gatewayBaseUrl(config.apiUrl()) + "/api.php?act=order"
                 + "&pid=" + encodeQueryParam(config.pid())
                 + "&key=" + encodeQueryParam(config.key())
-                + "&out_trade_no=" + encodeQueryParam(outTradeNo);
-
+                + "&out_trade_no=" + encodeQueryParam(merchantTradeNo);
         try {
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             String body = response.getBody();
             if (body == null || body.isBlank()) {
-                log.warn("Epay order query returned empty body: outTradeNo={}", outTradeNo);
+                log.warn("Epay order query returned empty body: merchantTradeNo={}", merchantTradeNo);
                 return null;
             }
             Map<String, Object> result;
             try {
-                result = objectMapper.readValue(body, new TypeReference<>() {});
+                result = objectMapper.readValue(body, new TypeReference<>() { });
             } catch (Exception parseException) {
                 if (isHtmlResponse(response, body)) {
-                    log.warn("Epay order query endpoint unavailable: outTradeNo={}, responseContentType={}",
-                            outTradeNo, response.getHeaders().getContentType());
+                    log.warn("Epay order query endpoint unavailable: merchantTradeNo={}, responseContentType={}",
+                            merchantTradeNo, response.getHeaders().getContentType());
                     throw new PaymentQueryUnavailableException("易支付网关未提供可用的订单查询接口");
                 }
-                log.warn("Epay order query returned an invalid response: outTradeNo={}, errorType={}",
-                        outTradeNo, parseException.getClass().getSimpleName());
+                log.warn("Epay order query returned an invalid response: merchantTradeNo={}, errorType={}",
+                        merchantTradeNo, parseException.getClass().getSimpleName());
                 return null;
             }
 
-            // 网关返回错误码时（如订单不存在），返回 null
             if (result.containsKey("code") && !isSuccessCode(result.get("code"))) {
-                log.warn("Epay order query error: outTradeNo={}, responseCode={}",
-                        outTradeNo, responseCodeForLog(result.get("code")));
+                log.warn("Epay order query error: merchantTradeNo={}, responseCode={}",
+                        merchantTradeNo, responseCodeForLog(result.get("code")));
                 return null;
             }
+            String rawStatus = result.get("status") == null ? null : result.get("status").toString();
+            BigDecimal amount = parseAmount(result.get("money"));
+            String providerTradeNo = result.get("trade_no") == null
+                    ? null : result.get("trade_no").toString();
+            return new OrderQueryResult(mapStatus(rawStatus), amount, presentValue(providerTradeNo));
+        } catch (PaymentQueryUnavailableException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            log.warn("Epay order query failed: merchantTradeNo={}, errorType={}",
+                    merchantTradeNo, exception.getClass().getSimpleName());
+            return null;
+        }
+    }
 
-            String tradeStatus = result.get("status") != null ? result.get("status").toString() : null;
-            String money = result.get("money") != null ? result.get("money").toString() : null;
-            String tradeNo = result.get("trade_no") != null ? result.get("trade_no").toString() : null;
-            return new OrderQueryResult(tradeStatus, money, tradeNo);
-        } catch (PaymentQueryUnavailableException e) {
-            throw e;
-        } catch (Exception e) {
-            log.warn("Epay order query failed: outTradeNo={}, errorType={}",
-                    outTradeNo, e.getClass().getSimpleName());
+    private PaymentStatus mapStatus(String rawStatus) {
+        String status = presentValue(rawStatus);
+        if ("TRADE_SUCCESS".equalsIgnoreCase(status) || "1".equals(status)) {
+            return PaymentStatus.PAID;
+        }
+        if ("TRADE_CLOSED".equalsIgnoreCase(status) || "CLOSED".equalsIgnoreCase(status)
+                || "4".equals(status)) {
+            return PaymentStatus.CLOSED;
+        }
+        if (status == null || "TRADE_CREATED".equalsIgnoreCase(status)
+                || "WAIT_BUYER_PAY".equalsIgnoreCase(status) || "0".equals(status)) {
+            return PaymentStatus.PENDING;
+        }
+        return PaymentStatus.FAILED;
+    }
+
+    private BigDecimal parseAmount(Object rawAmount) {
+        String value = presentValue(rawAmount);
+        if (value == null) return null;
+        try {
+            return new BigDecimal(value);
+        } catch (NumberFormatException ignored) {
             return null;
         }
     }
@@ -337,27 +397,17 @@ public class EpayServiceImpl implements EpayService {
     @Override
     public boolean verifySign(String merchantKey, Map<String, String> params, String sign) {
         if (sign == null || sign.isEmpty()) return false;
-        String expected = buildSign(merchantKey, params);
-        return expected.equalsIgnoreCase(sign);
+        return buildSign(merchantKey, params).equalsIgnoreCase(sign);
     }
 
-    /**
-     * Accept either a gateway root or the complete mapi.php endpoint and
-     * produce exactly one canonical mapi.php URL.
-     */
     public static String normalizeApiUrl(String raw) {
         URI uri = parseHttpUrl(raw);
         String path = uri.getRawPath() == null ? "" : uri.getRawPath();
-        while (path.endsWith("/") && !path.isEmpty()) {
-            path = path.substring(0, path.length() - 1);
-        }
+        while (path.endsWith("/") && !path.isEmpty()) path = path.substring(0, path.length() - 1);
         String lowerPath = path.toLowerCase(Locale.ROOT);
         int mapiMarker = lowerPath.indexOf("/mapi.php");
-        if (mapiMarker >= 0
-                && (lowerPath.length() == mapiMarker + "/mapi.php".length()
+        if (mapiMarker >= 0 && (lowerPath.length() == mapiMarker + "/mapi.php".length()
                 || lowerPath.charAt(mapiMarker + "/mapi.php".length()) == '/')) {
-            // Truncate a repeated or suffixed endpoint to its first mapi.php
-            // segment so the request URL can never contain mapi.php twice.
             path = path.substring(0, mapiMarker) + "/mapi.php";
         } else {
             path = (path.isEmpty() ? "" : path) + "/mapi.php";
@@ -374,11 +424,9 @@ public class EpayServiceImpl implements EpayService {
         String value = raw == null ? "" : raw.trim();
         try {
             URI uri = URI.create(value);
-            if (!("http".equalsIgnoreCase(uri.getScheme())
-                    || "https".equalsIgnoreCase(uri.getScheme()))
+            if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
                     || uri.getHost() == null || uri.getHost().isBlank()
-                    || uri.getUserInfo() != null || uri.getQuery() != null
-                    || uri.getFragment() != null) {
+                    || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
                 throw new IllegalArgumentException();
             }
             return uri;
@@ -401,12 +449,10 @@ public class EpayServiceImpl implements EpayService {
             MessageDigest md = MessageDigest.getInstance("MD5");
             byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder();
-            for (byte b : digest) {
-                hex.append(String.format("%02x", b));
-            }
+            for (byte b : digest) hex.append(String.format("%02x", b));
             return hex.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("MD5 algorithm not available", e);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new RuntimeException("MD5 algorithm not available", exception);
         }
     }
 }

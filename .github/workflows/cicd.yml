@@ -22,7 +22,7 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
-      - name: Enforce ProductSpec PostgreSQL integration test
+      - name: Enforce PostgreSQL integration tests
         working-directory: apps/api
         shell: bash
         run: |
@@ -35,45 +35,55 @@ jobs:
           docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
           docker info --format 'server={{.ServerVersion}} containers={{.Containers}}'
 
-          report="target/surefire-reports/TEST-com.myshop.service.impl.AdminProductAssignedUuidIntegrationTest.xml"
-          rm -f "$report"
+          reports=(
+            target/surefire-reports/TEST-com.myshop.service.impl.AdminProductAssignedUuidIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.impl.MigrationChainIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.impl.PostgresDeliveryIntegrationTest.xml
+          )
+          rm -f "${reports[@]}"
           mvn -B \
-            -Dtest=AdminProductAssignedUuidIntegrationTest \
+            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,PostgresDeliveryIntegrationTest \
             -Dsurefire.failIfNoSpecifiedTests=true \
             test
 
-          REPORT="$report" python3 - <<'PY'
+          REPORTS="${reports[*]}" python3 - <<'PY'
           import os
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
-          report = Path(os.environ["REPORT"])
-          if not report.is_file():
-              raise SystemExit(f"Missing Surefire report: {report}")
+          reports = [Path(value) for value in os.environ["REPORTS"].split()]
+          results = []
+          for report in reports:
+              if not report.is_file():
+                  raise SystemExit(f"Missing Surefire report: {report}")
 
-          suite = ET.parse(report).getroot()
-          tests = int(suite.attrib.get("tests", "0"))
-          failures = int(suite.attrib.get("failures", "0"))
-          errors = int(suite.attrib.get("errors", "0"))
-          skipped = int(suite.attrib.get("skipped", "0"))
-
-          result = (
-              "AdminProductAssignedUuidIntegrationTest PostgreSQL/Testcontainers: "
-              f"Tests run: {tests}, Failures: {failures}, "
-              f"Errors: {errors}, Skipped: {skipped}"
-          )
-          print(result)
+              suite = ET.parse(report).getroot()
+              tests = int(suite.attrib.get("tests", "0"))
+              failures = int(suite.attrib.get("failures", "0"))
+              errors = int(suite.attrib.get("errors", "0"))
+              skipped = int(suite.attrib.get("skipped", "0"))
+              result = (
+                  f"{report.stem.removeprefix('TEST-com.myshop.service.impl.')} "
+                  "PostgreSQL/Testcontainers: "
+                  f"Tests run: {tests}, Failures: {failures}, "
+                  f"Errors: {errors}, Skipped: {skipped}"
+              )
+              results.append((result, tests, failures, errors, skipped))
+              print(result)
 
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
               with open(summary_path, "a", encoding="utf-8") as summary:
-                  summary.write("### ProductSpec assigned UUID PostgreSQL integration test\n\n")
-                  summary.write(f"- {result}\n")
+                  summary.write("### PostgreSQL/Testcontainers integration tests\n\n")
+                  for result, *_ in results:
+                      summary.write(f"- {result}\n")
 
-          if tests <= 0 or failures != 0 or errors != 0 or skipped != 0:
+          invalid = [result for result, tests, failures, errors, skipped in results
+                     if tests <= 0 or failures != 0 or errors != 0 or skipped != 0]
+          if invalid:
               raise SystemExit(
-                  "ProductSpec assigned UUID PostgreSQL integration test did not meet "
-                  "the CI execution contract"
+                  "PostgreSQL/Testcontainers integration test execution contract failed:\n"
+                  + "\n".join(invalid)
               )
           PY
       - name: Build and test

@@ -3,20 +3,24 @@ package com.myshop.service.impl;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
+import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.exception.BusinessException;
+import com.myshop.payment.PaymentNextAction;
 import com.myshop.payment.PaymentProvider;
+import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import com.myshop.utils.LookupTokens;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,7 +32,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-@Slf4j
 @Service
 public class PaymentServiceImpl implements PaymentService {
 
@@ -37,6 +40,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentChannelRepository paymentChannelRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
     private final List<PaymentProvider> paymentProviders;
     private final ObjectMapper objectMapper;
     private final ManualStockService manualStockService;
@@ -45,13 +49,15 @@ public class PaymentServiceImpl implements PaymentService {
     public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
                               OrderRepository orderRepository,
                               OrderItemRepository orderItemRepository,
+                              PaymentAttemptRepository paymentAttemptRepository,
                               List<PaymentProvider> paymentProviders,
                               ObjectMapper objectMapper,
                               ManualStockService manualStockService) {
         this.paymentChannelRepository = paymentChannelRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
-        this.paymentProviders = paymentProviders;
+        this.paymentAttemptRepository = paymentAttemptRepository;
+        this.paymentProviders = paymentProviders == null ? List.of() : List.copyOf(paymentProviders);
         this.objectMapper = objectMapper;
         this.manualStockService = manualStockService;
     }
@@ -63,33 +69,93 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     @Transactional
-    public Map<String, Object> createPayment(UUID orderId, String paymentMethod, BigDecimal amount, String device) {
-        // The admin pickup path is already paid and must never resolve a
-        // channel or call an external provider. Keep this guard here as a
-        // second boundary for direct/internal callers.
+    public Map<String, Object> createPayment(UUID orderId, String paymentMethod,
+                                              BigDecimal amount, String device) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        if (order.getOrderType() == OrderType.ADMIN_PICKUP
-                || "ADMIN_PICKUP".equalsIgnoreCase(order.getPaymentMethod())) {
-            if (order.getOrderType() != OrderType.ADMIN_PICKUP
-                    || !"ADMIN_PICKUP".equalsIgnoreCase(paymentMethod)) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员提卡订单不支持外部支付");
-            }
-            if (order.getActualAmount() == null || amount == null
-                    || order.getActualAmount().compareTo(amount) != 0) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
-            }
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("order_id", order.getId());
-            result.put("order_no", order.getOrderNo());
-            result.put("order_type", OrderType.ADMIN_PICKUP);
-            result.put("admin_pickup", true);
-            result.put("paid", true);
-            result.put("expires_at", order.getExpiresAt());
-            return result;
+        validateRequestedChannel(order, paymentMethod);
+
+        if (isAdminPickup(order)) {
+            validateAmount(order, amount);
+            return buildAdminPickupResult(order);
         }
 
-        PaymentChannel channel = paymentChannelRepository.findByChannelCodeAndIsDeleted(paymentMethod, 0)
+        validatePendingOrder(order);
+        validateAmount(order, amount);
+        PaymentAttempt active = findActiveAttempt(order.getId());
+        if (active != null) return buildResult(order, active);
+
+        PaymentContext context = resolveCreationContext(order.getPaymentMethod());
+        return createAttempt(order, context.channel(), context.provider(), device);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> repay(UUID orderId, String device, UUID requestUserId,
+                                     String lookupToken) {
+        Order order = orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        boolean owner = requestUserId != null && requestUserId.equals(order.getUserId());
+        if (!owner && !LookupTokens.matches(lookupToken, order.getLookupTokenHash())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作此订单");
+        }
+        if (isAdminPickup(order)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员提卡订单不支持重新支付");
+        }
+        validatePendingOrder(order);
+        if (order.getUpdatedAt() != null
+                && order.getUpdatedAt().plusSeconds(REPAY_COOLDOWN_SECONDS).isAfter(LocalDateTime.now())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "操作过于频繁，请稍后再试");
+        }
+
+        // Resolve the current enabled channel before closing the old attempt.
+        // A repay is a new external transaction and must never use a disabled
+        // channel, while history remains usable by the webhook path.
+        PaymentContext context = resolveCreationContext(order.getPaymentMethod());
+        closePendingAttempts(order.getId());
+        return createAttempt(order, context.channel(), context.provider(), device);
+    }
+
+    private Map<String, Object> createAttempt(Order order, PaymentChannel channel,
+                                              PaymentProvider provider, String device) {
+        String configSnapshot = requiredConfigSnapshot(channel.getConfigData());
+        Map<String, String> providerConfig = parseConfig(configSnapshot);
+        String merchantTradeNo = nextMerchantTradeNo();
+        String productName = buildProductName(order.getId());
+        PaymentProvider.PaymentResult providerResult = provider.create(
+                new PaymentProvider.PaymentRequest(
+                        merchantTradeNo,
+                        channel.getPaymentType(),
+                        productName,
+                        order.getActualAmount(),
+                        order.getClientIp(),
+                        device,
+                        providerConfig,
+                        order.getOrderNo() == null ? null : order.getOrderNo().toString()));
+        if (providerResult == null || providerResult.nextAction() == null) {
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付提供商未返回有效支付动作");
+        }
+
+        PaymentAttempt attempt = new PaymentAttempt();
+        attempt.setOrderId(order.getId());
+        attempt.setChannelId(channel.getId());
+        attempt.setChannelCodeSnapshot(channel.getChannelCode());
+        attempt.setProviderType(provider.id());
+        attempt.setPaymentType(channel.getPaymentType());
+        attempt.setProviderConfigSnapshot(configSnapshot);
+        attempt.setMerchantTradeNo(merchantTradeNo);
+        attempt.setProviderTradeNo(providerResult.providerTradeNo());
+        attempt.setAmount(order.getActualAmount());
+        attempt.setStatus(PaymentStatus.PENDING);
+        attempt.setNextAction(serializeNextAction(providerResult.nextAction()));
+        attempt.setExpiresAt(order.getExpiresAt());
+        paymentAttemptRepository.save(attempt);
+        return buildResult(order, attempt);
+    }
+
+    private PaymentContext resolveCreationContext(String channelCode) {
+        PaymentChannel channel = paymentChannelRepository
+                .findByChannelCodeAndIsDeleted(channelCode, 0)
                 .filter(PaymentChannel::isEnabled)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道不可用"));
         PaymentProvider provider = paymentProviders.stream()
@@ -100,9 +166,110 @@ public class PaymentServiceImpl implements PaymentService {
                 .noneMatch(type -> type.equalsIgnoreCase(channel.getPaymentType()))) {
             throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付方式不受该提供商支持");
         }
+        return new PaymentContext(channel, provider);
+    }
 
-        // Lock the order before reading/writing cached gateway fields. Retries
-        // for the same order therefore cannot create two remote payments.
+    private PaymentAttempt findActiveAttempt(UUID orderId) {
+        return paymentAttemptRepository
+                .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
+                        orderId, PaymentStatus.PENDING, LocalDateTime.now())
+                .orElse(null);
+    }
+
+    private void closePendingAttempts(UUID orderId) {
+        List<PaymentAttempt> attempts = paymentAttemptRepository
+                .findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING);
+        for (PaymentAttempt attempt : attempts) {
+            attempt.setStatus(PaymentStatus.CLOSED);
+            paymentAttemptRepository.save(attempt);
+        }
+    }
+
+    private String nextMerchantTradeNo() {
+        String candidate;
+        do {
+            candidate = "m_" + Long.toUnsignedString(System.currentTimeMillis(), 36)
+                    + "_" + UUID.randomUUID().toString().replace("-", "");
+        } while (paymentAttemptRepository.existsByMerchantTradeNo(candidate));
+        return candidate;
+    }
+
+    private Map<String, Object> buildResult(Order order, PaymentAttempt attempt) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("payment_id", attempt.getId());
+        result.put("order_id", order.getId());
+        result.put("order_no", order.getOrderNo());
+        result.put("status", attempt.getStatus());
+        result.put("next_action", deserializeNextAction(attempt.getNextAction()));
+        result.put("expires_at", attempt.getExpiresAt());
+        return result;
+    }
+
+    private Map<String, Object> buildAdminPickupResult(Order order) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("order_id", order.getId());
+        result.put("order_no", order.getOrderNo());
+        result.put("status", PaymentStatus.PAID);
+        result.put("expires_at", order.getExpiresAt());
+        result.put("order_type", OrderType.ADMIN_PICKUP);
+        result.put("admin_pickup", true);
+        result.put("paid", true);
+        return result;
+    }
+
+    private String serializeNextAction(PaymentNextAction action) {
+        try {
+            return objectMapper.writeValueAsString(action);
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付动作无法保存");
+        }
+    }
+
+    private PaymentNextAction deserializeNextAction(String raw) {
+        try {
+            if (raw == null || raw.isBlank()) throw new IllegalArgumentException();
+            return objectMapper.readValue(raw, PaymentNextAction.class);
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付动作数据无效");
+        }
+    }
+
+    private String requiredConfigSnapshot(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道配置不可用");
+        }
+        // Validate the snapshot as an object without putting its contents in
+        // an exception or log message.
+        try {
+            Map<String, Object> ignored = objectMapper.readValue(raw, new TypeReference<>() { });
+            return raw.trim();
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道配置不可用");
+        }
+    }
+
+    private Map<String, String> parseConfig(String raw) {
+        try {
+            Map<String, Object> values = objectMapper.readValue(raw, new TypeReference<>() { });
+            Map<String, String> result = new LinkedHashMap<>();
+            values.forEach((key, value) -> {
+                if (key != null && value != null) result.put(key, String.valueOf(value));
+            });
+            return result;
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道配置不可用");
+        }
+    }
+
+    private void validateRequestedChannel(Order order, String requestedChannel) {
+        String actual = clean(order.getPaymentMethod());
+        String requested = clean(requestedChannel);
+        if (actual == null || (requested != null && !actual.equalsIgnoreCase(requested))) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单支付渠道不匹配");
+        }
+    }
+
+    private void validatePendingOrder(Order order) {
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单状态不允许发起支付");
         }
@@ -110,69 +277,21 @@ public class PaymentServiceImpl implements PaymentService {
             expireOrder(order);
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期");
         }
-        if (order.getActualAmount() == null || amount == null || order.getActualAmount().compareTo(amount) != 0) {
+        if (order.getActualAmount() == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
         }
-        if ((order.getPaymentUrl() != null && !order.getPaymentUrl().isBlank())
-                || (order.getQrcodeUrl() != null && !order.getQrcodeUrl().isBlank())) {
-            return buildResult(order);
-        }
-
-        PaymentProvider.PaymentResult result = provider.create(new PaymentProvider.PaymentRequest(
-                order.getId().toString(),
-                channel.getPaymentType(),
-                buildProductName(order.getId()),
-                amount,
-                order.getClientIp(),
-                device,
-                parseConfigData(channel.getConfigData()),
-                order.getOrderNo() == null ? null : order.getOrderNo().toString()));
-        order.setPaymentUrl(result.payUrl());
-        order.setQrcodeUrl(result.qrcodeUrl());
-        order.setEpayTradeNo(result.tradeNo());
-        orderRepository.save(order);
-        return buildResult(order);
     }
 
-    @Override
-    @Transactional
-    public Map<String, Object> repay(UUID orderId, String device, UUID requestUserId, String lookupToken) {
-        Order order = orderRepository.findByIdForUpdate(orderId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        boolean owner = requestUserId != null && requestUserId.equals(order.getUserId());
-        if (!owner && !LookupTokens.matches(lookupToken, order.getLookupTokenHash())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作此订单");
+    private void validateAmount(Order order, BigDecimal amount) {
+        if (order.getActualAmount() == null || amount == null
+                || order.getActualAmount().compareTo(amount) != 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
         }
-        if (order.getOrderType() == OrderType.ADMIN_PICKUP
-                || "ADMIN_PICKUP".equalsIgnoreCase(order.getPaymentMethod())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员提卡订单不支持重新支付");
-        }
-        if (order.getStatus() != OrderStatus.PENDING) {
-            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单状态不允许重新支付");
-        }
-        if (order.getExpiresAt() != null && order.getExpiresAt().isBefore(LocalDateTime.now())) {
-            expireOrder(order);
-            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期");
-        }
-        if (order.getUpdatedAt() != null && order.getUpdatedAt().plusSeconds(REPAY_COOLDOWN_SECONDS).isAfter(LocalDateTime.now())) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "操作过于频繁，请稍后再试");
-        }
-        order.setPaymentUrl(null);
-        order.setQrcodeUrl(null);
-        order.setEpayTradeNo(null);
-        orderRepository.save(order);
-        return createPayment(order.getId(), order.getPaymentMethod(), order.getActualAmount(), device);
     }
 
-    private Map<String, Object> buildResult(Order order) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("order_id", order.getId());
-        result.put("order_no", order.getOrderNo());
-        result.put("payment_url", order.getQrcodeUrl() != null ? order.getQrcodeUrl() : order.getPaymentUrl());
-        result.put("qrcode_url", order.getQrcodeUrl());
-        result.put("pay_url", order.getPaymentUrl());
-        result.put("expires_at", order.getExpiresAt());
-        return result;
+    private boolean isAdminPickup(Order order) {
+        return order.getOrderType() == OrderType.ADMIN_PICKUP
+                || "ADMIN_PICKUP".equalsIgnoreCase(order.getPaymentMethod());
     }
 
     private String buildProductName(UUID orderId) {
@@ -182,31 +301,31 @@ public class PaymentServiceImpl implements PaymentService {
         return items.size() == 1 ? firstName : firstName + " 等" + items.size() + "件商品";
     }
 
-    private Map<String, String> parseConfigData(String configData) {
-        if (configData == null || configData.isBlank()) return Map.of();
-        try {
-            Map<String, Object> raw = objectMapper.readValue(configData, new TypeReference<>() {});
-            Map<String, String> result = new LinkedHashMap<>();
-            raw.forEach((key, value) -> { if (value != null) result.put(key, value.toString()); });
-            return result;
-        } catch (Exception exception) {
-            log.warn("Payment channel configuration is not valid JSON for a configured channel.");
-            return Map.of();
-        }
-    }
-
     private void expireOrder(Order order) {
+        for (PaymentAttempt attempt : paymentAttemptRepository
+                .findByOrderIdAndStatusForUpdate(order.getId(), PaymentStatus.PENDING)) {
+            attempt.setStatus(PaymentStatus.CLOSED);
+            paymentAttemptRepository.save(attempt);
+        }
         for (OrderItem item : orderItemRepository.findByOrderId(order.getId())) {
             int reserved = item.getManualStockReserved();
             if (reserved > 0) {
                 manualStockService.release(item.getProductId(), item.getSpecId(), reserved);
                 item.setManualStockReserved(0);
             }
-            item.setFulfillmentStatus(com.myshop.constant.FulfillmentStatus.CANCELLED);
+            item.setFulfillmentStatus(FulfillmentStatus.CANCELLED);
             orderItemRepository.save(item);
         }
         order.setStatus(OrderStatus.EXPIRED);
         orderRepository.save(order);
     }
+
+    private String clean(String value) {
+        if (value == null) return null;
+        String result = value.trim();
+        return result.isEmpty() ? null : result;
+    }
+
+    private record PaymentContext(PaymentChannel channel, PaymentProvider provider) { }
 
 }

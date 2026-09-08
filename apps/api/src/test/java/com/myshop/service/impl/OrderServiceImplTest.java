@@ -8,6 +8,7 @@ import com.myshop.constant.PricingType;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
+import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
@@ -16,10 +17,13 @@ import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
 import com.myshop.model.CustomerInputValue;
+import com.myshop.payment.PaymentNextAction;
+import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
+import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SiteConfigRepository;
@@ -33,6 +37,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -65,6 +70,7 @@ class OrderServiceImplTest {
     @Mock private CardKeyRepository cardKeyRepository;
     @Mock private SiteConfigRepository siteConfigRepository;
     @Mock private PaymentChannelRepository paymentChannelRepository;
+    @Mock private PaymentAttemptRepository paymentAttemptRepository;
     @Mock private PaymentService paymentService;
     @Mock private ManualStockService manualStockService;
     @Mock private com.myshop.repository.UserRepository userRepository;
@@ -77,14 +83,20 @@ class OrderServiceImplTest {
     void setUp() {
         service = new OrderServiceImpl(orderRepository, orderItemRepository, productRepository,
                 productSpecRepository, cardKeyRepository,
-                siteConfigRepository, paymentChannelRepository, paymentService, manualStockService,
-                userRepository, userLevelRepository, autoFulfillmentService);
+                siteConfigRepository, paymentChannelRepository, paymentAttemptRepository, paymentService,
+                manualStockService, userRepository, userLevelRepository, autoFulfillmentService,
+                new PricingServiceImpl(userRepository, userLevelRepository, null), new ObjectMapper());
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
         lenient().when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))
                 .thenReturn(Optional.of(enabledChannel()));
         lenient().when(paymentService.createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class)))
-                .thenReturn(Map.of("payment_url", "https://pay.example/1"));
+                .thenReturn(Map.of("status", PaymentStatus.PENDING,
+                        "next_action", new PaymentNextAction.Redirect("https://pay.example/1")));
+        lenient().when(paymentAttemptRepository
+                .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
+                        any(), eq(PaymentStatus.PENDING), any(LocalDateTime.class)))
+                .thenReturn(Optional.empty());
         lenient().when(orderRepository.nextOrderNo()).thenReturn(1000000001L);
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
             Order order = invocation.getArgument(0);
@@ -258,8 +270,16 @@ class OrderServiceImplTest {
         order.setStatus(OrderStatus.PENDING);
         order.setExpiresAt(LocalDateTime.now().plusMinutes(10));
         order.setLookupTokenHash(com.myshop.utils.LookupTokens.hash(lookupToken));
-        order.setQrcodeUrl(" weixin://dl/business/?ticket=qr-token ");
-        order.setPaymentUrl(" https://pay.example/submit.php?trade_no=demo ");
+        order.setOrderNo(1000000002L);
+        PaymentAttempt attempt = new PaymentAttempt();
+        attempt.setId(UUID.randomUUID());
+        attempt.setOrderId(orderId);
+        attempt.setStatus(PaymentStatus.PENDING);
+        attempt.setNextAction("{\"type\":\"deep_link\",\"url\":\"weixin://dl/business/?ticket=qr-token\",\"client\":\"wechat\"}");
+        when(paymentAttemptRepository
+                .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
+                        eq(orderId), eq(PaymentStatus.PENDING), any(LocalDateTime.class)))
+                .thenReturn(Optional.of(attempt));
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
 
         BusinessException noCredential = assertThrows(BusinessException.class,
@@ -272,9 +292,9 @@ class OrderServiceImplTest {
 
         Map<String, Object> guestResult = service.getOrderStatus(orderId, lookupToken, null);
         assertEquals("PENDING", guestResult.get("status"));
-        assertEquals("weixin://dl/business/?ticket=qr-token", guestResult.get("qrcode_url"));
-        assertEquals("https://pay.example/submit.php?trade_no=demo", guestResult.get("pay_url"));
-        assertEquals("weixin://dl/business/?ticket=qr-token", guestResult.get("payment_url"));
+        assertEquals(attempt.getId(), guestResult.get("payment_id"));
+        assertEquals(new PaymentNextAction.DeepLink(
+                "weixin://dl/business/?ticket=qr-token", "wechat"), guestResult.get("next_action"));
 
         UUID userId = UUID.randomUUID();
         order.setUserId(userId);
@@ -342,7 +362,8 @@ class OrderServiceImplTest {
         assertEquals(new BigDecimal("12.50"), saved.getActualAmount());
         assertEquals(levelId, saved.getUserLevelIdSnapshot());
         assertEquals("普通会员", saved.getUserLevelNameSnapshot());
-        assertEquals("https://pay.example/1", ((Map<?, ?>) result.get("payment")).get("payment_url"));
+        assertEquals(new PaymentNextAction.Redirect("https://pay.example/1"),
+                ((Map<?, ?>) result.get("payment")).get("next_action"));
         assertFalse(request.containsKey("email"));
         assertFalse(((Map<?, ?>) result.get("order")).containsKey("email"));
         verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));

@@ -2,12 +2,9 @@ package com.myshop.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.entity.PaymentChannel;
-import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import com.myshop.exception.BusinessException;
 import com.myshop.payment.FakePaymentProvider;
 import com.myshop.model.response.AdminPaymentChannelResponse;
-import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,17 +34,14 @@ import static org.mockito.Mockito.lenient;
 class AdminPaymentChannelServiceImplTest {
 
     @Mock private PaymentChannelRepository repository;
-    @Mock private OrderRepository orderRepository;
     private AdminPaymentChannelServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new AdminPaymentChannelServiceImpl(repository, orderRepository,
-                new ObjectMapper(), List.of(new FakePaymentProvider()));
+        service = new AdminPaymentChannelServiceImpl(repository, new ObjectMapper(),
+                List.of(new FakePaymentProvider()));
         lenient().when(repository.findByChannelCodeAndIsDeleted(anyString(), eq(0))).thenReturn(Optional.empty());
         lenient().when(repository.save(any(PaymentChannel.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        lenient().when(orderRepository.existsByPaymentMethodAndStatusAndOrderType(anyString(), eq(OrderStatus.PENDING), eq(OrderType.NORMAL)))
-                .thenReturn(false);
     }
 
     @Test
@@ -112,45 +106,36 @@ class AdminPaymentChannelServiceImplTest {
     }
 
     @Test
-    void blocksTechnicalChangesWhileNormalPendingOrdersExist() {
+    void allowsTechnicalChangesWithoutInspectingPendingOrders() throws Exception {
         UUID id = UUID.randomUUID();
         PaymentChannel channel = existingChannel(id);
         when(repository.findById(id)).thenReturn(Optional.of(channel));
-        when(orderRepository.existsByPaymentMethodAndStatusAndOrderType(
-                "alipay", OrderStatus.PENDING, OrderType.NORMAL)).thenReturn(true);
+        service.updateChannel(id, Map.of(
+                "config_data", Map.of(
+                        "merchant", "changed-merchant",
+                        "timeout", 30,
+                        "sandbox", false,
+                        "mode", "fast")));
 
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.updateChannel(id, Map.of(
-                        "config_data", Map.of(
-                                "merchant", "changed-merchant",
-                                "timeout", 30,
-                                "sandbox", false,
-                                "mode", "fast"))));
-
-        assertEquals(70012, exception.getCode());
-        assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getHttpStatus());
-        verify(repository, never()).save(any(PaymentChannel.class));
+        verify(repository).save(channel);
+        assertEquals(Map.of("merchant", "changed-merchant", "timeout", 30,
+                        "sandbox", false, "mode", "fast"),
+                new ObjectMapper().readValue(channel.getConfigData(), Map.class));
     }
 
     @Test
-    void blocksDeletionWhileNormalPendingOrdersExist() {
+    void allowsDeletionWithoutInspectingPendingOrders() {
         UUID id = UUID.randomUUID();
         PaymentChannel channel = existingChannel(id);
         when(repository.findById(id)).thenReturn(Optional.of(channel));
-        when(orderRepository.existsByPaymentMethodAndStatusAndOrderType(
-                "alipay", OrderStatus.PENDING, OrderType.NORMAL)).thenReturn(true);
+        service.deleteChannel(id);
 
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.deleteChannel(id));
-
-        assertEquals(70012, exception.getCode());
-        assertEquals(org.springframework.http.HttpStatus.CONFLICT, exception.getHttpStatus());
-        assertEquals(0, channel.getIsDeleted());
-        verify(repository, never()).save(any(PaymentChannel.class));
+        verify(repository).save(channel);
+        assertEquals(1, channel.getIsDeleted());
     }
 
     @Test
-    void allowsDisplayOnlyChangesWhileNormalPendingOrdersExist() {
+    void allowsDisplayOnlyChangesWithoutPendingOrderCoupling() {
         UUID id = UUID.randomUUID();
         PaymentChannel channel = existingChannel(id);
         when(repository.findById(id)).thenReturn(Optional.of(channel));

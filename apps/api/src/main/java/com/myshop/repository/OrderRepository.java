@@ -178,8 +178,14 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                     CAST(:keywordPattern AS text) IS NULL
                     OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                    OR COALESCE(o.epay_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM payment_attempts pa
+                        WHERE pa.order_id = o.id
+                          AND (COALESCE(pa.merchant_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                               OR COALESCE(pa.provider_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\')
+                    )
                     OR EXISTS (
                         SELECT 1
                         FROM order_items oi
@@ -231,8 +237,14 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                     CAST(:keywordPattern AS text) IS NULL
                     OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                    OR COALESCE(o.epay_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR EXISTS (
+                        SELECT 1
+                        FROM payment_attempts pa
+                        WHERE pa.order_id = o.id
+                          AND (COALESCE(pa.merchant_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                               OR COALESCE(pa.provider_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\')
+                    )
                     OR EXISTS (
                         SELECT 1
                         FROM order_items oi

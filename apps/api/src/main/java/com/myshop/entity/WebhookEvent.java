@@ -25,6 +25,9 @@ public class WebhookEvent extends BaseEntity {
     @Column(nullable = false)
     private UUID orderId;
 
+    /** The attempt is the source of truth for channel and order snapshots. */
+    private UUID paymentAttemptId;
+
     @Column(columnDefinition = "TEXT")
     private String payload;
 

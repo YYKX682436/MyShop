@@ -158,12 +158,11 @@ checks are not a public health or metrics API.
 ## Payment callback checklist
 
 - Set the canonical public storefront origin in `PUBLIC_SITE_URL`, aligned with `SITE_DOMAIN` and without a query or fragment.
-- Configure one enabled Epay-compatible channel with only `pid`, `key`, and `api_url`. The API URL may be the gateway root or its complete `mapi.php` endpoint.
-- Keep `EPAY_PAGE_REDIRECT_FALLBACK_ENABLED=false` unless the configured gateway has been independently verified to accept its signed `submit.php` page. If its successful `mapi.php` response intentionally contains no `payurl`/`qrcode`, set it to `true`; the API still makes only the `mapi.php` create request and returns the `submit.php` page as the payment carrier.
-- The server generates the public callback route `/api/payments/webhook/epay` and the storefront payment-result return page; no callback or return URL is entered in the admin UI.
+- Configure one enabled Epay-compatible channel with `pid`, `key`, `api_url`, `submit_fallback_enabled`, and `carrier_mode`. The API URL may be the gateway root or its complete `mapi.php` endpoint; the two carrier settings are stored on that channel and default to disabled/automatic.
+- The server generates the provider-generic callback route `/api/payments/webhook/{providerId}` and the storefront payment-result return page; no callback or return URL is entered in the admin UI.
 - Verify the generated callback route is reachable through Caddy while the API remains private.
-- Test a successful callback, wrong amount, bad signature, unpaid server query, and duplicate `trade_no` before accepting real orders.
-- Disabling a channel blocks only new payment creation. Do not change its provider, payment type, code, `pid`, `key`, or `api_url`, or delete it, while normal pending orders still reference the channel; the API returns HTTP 409.
+- Test a successful callback, wrong amount, bad signature, unpaid server query, query-unavailable policy, and duplicate webhook before accepting real orders.
+- Disabling, editing, or soft-deleting a channel blocks only new payment attempts. Existing attempts continue with their immutable provider/config/payment-type/channel snapshots.
 - Never put Epay keys in Compose files, Git, screenshots, or ordinary logs.
 
 ## Delivery correctness

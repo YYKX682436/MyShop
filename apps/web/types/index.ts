@@ -277,11 +277,11 @@ export interface OrderDetail extends OrderBrief {
 }
 
 export interface PaymentCreateResult {
+  payment_id?: string | null
   order_id: string
   order_no: number
-  payment_url?: string
-  qrcode_url?: string
-  pay_url?: string
+  status: PaymentStatus
+  next_action?: PaymentNextAction | null
   expires_at: string | null
   order_type?: OrderType
   admin_pickup?: boolean
@@ -315,6 +315,16 @@ export interface DeliverResult {
 // ============================================================
 // Payment
 // ============================================================
+
+export type PaymentStatus = "PENDING" | "PAID" | "FAILED" | "CLOSED"
+export type PaymentClient = "wechat" | "alipay"
+
+export type PaymentNextAction =
+  | { type: "qr_code"; value: string }
+  | { type: "redirect"; url: string }
+  | { type: "open_in_client"; url: string; client: PaymentClient }
+  | { type: "deep_link"; url: string; client: PaymentClient }
+  | { type: "form_post"; url: string; fields: Record<string, string> }
 
 export type ProviderType = string
 
@@ -613,7 +623,6 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   internal_order_id?: string
   user_level_id_snapshot?: string | null
   user_level_name_snapshot?: string | null
-  epay_trade_no?: string | null
   client_ip?: string | null
   cost_total: number
   gross_profit_total: number

@@ -1,5 +1,6 @@
 package com.myshop.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
@@ -11,6 +12,8 @@ import com.myshop.constant.UserRole;
 import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.pricing.PriceResolution;
+import com.myshop.payment.PaymentNextAction;
+import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.*;
 import com.myshop.service.OrderService;
 import com.myshop.service.AutoFulfillmentService;
@@ -43,23 +46,26 @@ public class OrderServiceImpl implements OrderService {
     private final CardKeyRepository cardKeyRepository;
     private final SiteConfigRepository siteConfigRepository;
     private final PaymentChannelRepository paymentChannelRepository;
+    private final PaymentAttemptRepository paymentAttemptRepository;
     private final PaymentService paymentService;
     private final ManualStockService manualStockService;
     private final UserRepository userRepository;
     private final UserLevelRepository userLevelRepository;
     private final AutoFulfillmentService autoFulfillmentService;
     private final PricingService pricingService;
+    private final ObjectMapper objectMapper;
 
     @Autowired
     public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
-                            ProductRepository productRepository, ProductSpecRepository productSpecRepository,
-                            CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
-                            PaymentChannelRepository paymentChannelRepository, PaymentService paymentService,
-                            ManualStockService manualStockService,
-                            UserRepository userRepository,
-                            UserLevelRepository userLevelRepository,
-                            AutoFulfillmentService autoFulfillmentService,
-                            PricingService pricingService) {
+                             ProductRepository productRepository, ProductSpecRepository productSpecRepository,
+                             CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
+                             PaymentChannelRepository paymentChannelRepository,
+                             PaymentAttemptRepository paymentAttemptRepository, PaymentService paymentService,
+                             ManualStockService manualStockService,
+                             UserRepository userRepository,
+                             UserLevelRepository userLevelRepository,
+                             AutoFulfillmentService autoFulfillmentService,
+                             PricingService pricingService, ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.productRepository = productRepository;
@@ -67,27 +73,14 @@ public class OrderServiceImpl implements OrderService {
         this.cardKeyRepository = cardKeyRepository;
         this.siteConfigRepository = siteConfigRepository;
         this.paymentChannelRepository = paymentChannelRepository;
+        this.paymentAttemptRepository = paymentAttemptRepository;
         this.paymentService = paymentService;
         this.manualStockService = manualStockService;
         this.userRepository = userRepository;
         this.userLevelRepository = userLevelRepository;
         this.autoFulfillmentService = autoFulfillmentService;
         this.pricingService = pricingService;
-    }
-
-    /** Test/source compatibility constructor; production uses the injected pricing boundary. */
-    public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
-                            ProductRepository productRepository, ProductSpecRepository productSpecRepository,
-                            CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
-                            PaymentChannelRepository paymentChannelRepository, PaymentService paymentService,
-                            ManualStockService manualStockService,
-                            UserRepository userRepository,
-                            UserLevelRepository userLevelRepository,
-                            AutoFulfillmentService autoFulfillmentService) {
-        this(orderRepository, orderItemRepository, productRepository, productSpecRepository, cardKeyRepository,
-                siteConfigRepository, paymentChannelRepository, paymentService, manualStockService, userRepository,
-                userLevelRepository, autoFulfillmentService,
-                new PricingServiceImpl(userRepository, userLevelRepository, null));
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -228,29 +221,31 @@ public class OrderServiceImpl implements OrderService {
         result.put("status", order.getStatus().name());
         result.put("expires_at", order.getExpiresAt());
         // 返回服务端计算的剩余秒数，前端倒计时以此为准，不受客户端时钟影响
-        if (order.getStatus() == OrderStatus.PENDING) {
+        if (order.getStatus() == OrderStatus.PENDING && order.getExpiresAt() != null) {
             long remainingSeconds = Duration.between(LocalDateTime.now(), order.getExpiresAt()).getSeconds();
             result.put("remaining_seconds", Math.max(0, remainingSeconds));
         } else {
             result.put("remaining_seconds", 0);
         }
         if (order.getStatus() == OrderStatus.PENDING) {
-            // 分开返回数据库中已保存的两种支付载体：只有真正的二维码载体才能交给前端生成二维码，
-            // 支付跳转链接应直接打开支付页面。payment_url 保留为历史兼容字段，但不再让前端据此猜测载体类型。
-            String qrcodeUrl = clean(order.getQrcodeUrl());
-            String payUrl = clean(order.getPaymentUrl());
-            if (qrcodeUrl != null) {
-                result.put("qrcode_url", qrcodeUrl);
-            }
-            if (payUrl != null) {
-                result.put("pay_url", payUrl);
-            }
-            String effectiveUrl = qrcodeUrl != null ? qrcodeUrl : payUrl;
-            if (effectiveUrl != null) {
-                result.put("payment_url", effectiveUrl);
-            }
+            paymentAttemptRepository
+                    .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
+                            order.getId(), PaymentStatus.PENDING, LocalDateTime.now())
+                    .ifPresent(attempt -> {
+                        result.put("payment_id", attempt.getId());
+                        result.put("next_action", readNextAction(attempt.getNextAction()));
+                    });
         }
         return result;
+    }
+
+    private PaymentNextAction readNextAction(String raw) {
+        try {
+            if (raw == null || raw.isBlank()) throw new IllegalArgumentException();
+            return objectMapper.readValue(raw, PaymentNextAction.class);
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付动作数据无效");
+        }
     }
 
     @Override
@@ -506,6 +501,11 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private void expireOrder(Order order) {
+        for (PaymentAttempt attempt : paymentAttemptRepository
+                .findByOrderIdAndStatusForUpdate(order.getId(), PaymentStatus.PENDING)) {
+            attempt.setStatus(PaymentStatus.CLOSED);
+            paymentAttemptRepository.save(attempt);
+        }
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         for (OrderItem item : items) {
             int reserved = item.getManualStockReserved();

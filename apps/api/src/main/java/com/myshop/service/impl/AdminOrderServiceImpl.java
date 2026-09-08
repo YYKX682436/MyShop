@@ -173,7 +173,6 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             map.put("expires_at", o.getExpiresAt());
             map.put("paid_at", o.getPaidAt());
             map.put("delivered_at", o.getDeliveredAt());
-            map.put("epay_trade_no", o.getEpayTradeNo());
             map.put("client_ip", o.getClientIp());
         }
         return map;
