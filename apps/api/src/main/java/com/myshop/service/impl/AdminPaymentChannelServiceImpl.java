@@ -123,8 +123,7 @@ public class AdminPaymentChannelServiceImpl implements AdminPaymentChannelServic
                     PAYMENT_HINT_MAX_LENGTH, "支付提示"));
         }
         if (req.containsKey("badge_text")) {
-            channel.setBadgeText(optionalText(req.get("badge_text"),
-                    BADGE_TEXT_MAX_LENGTH, "标签"));
+            channel.setBadgeText(optionalText(req.get("badge_text"), BADGE_TEXT_MAX_LENGTH, "标签"));
         }
         if (req.containsKey("is_enabled")) {
             channel.setEnabled(booleanValue(req.get("is_enabled"), channel.isEnabled()));
@@ -164,21 +163,15 @@ public class AdminPaymentChannelServiceImpl implements AdminPaymentChannelServic
     private Map<String, Object> maskSensitiveConfigData(Map<String, Object> config,
                                                          PaymentProvider provider) {
         if (config == null) return null;
-        Set<String> sensitive = provider.configSchema().stream()
-                .filter(this::isSensitive)
-                .map(PaymentProvider.ConfigField::name)
-                .collect(Collectors.toSet());
-        sensitive.addAll(FALLBACK_SENSITIVE_KEYS);
-        Map<String, Object> result = new LinkedHashMap<>(config);
-        for (Map.Entry<String, Object> entry : result.entrySet()) {
-            String key = entry.getKey();
-            if (!sensitive.stream().anyMatch(name -> name.equalsIgnoreCase(key))
-                    && !isSensitiveConfigName(key)) continue;
-            Object value = entry.getValue();
-            if (value == null) continue;
-            String text = String.valueOf(value);
-            if (text.isBlank()) continue;
-            entry.setValue(mask(text));
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (PaymentProvider.ConfigField field : provider.configSchema()) {
+            if (!config.containsKey(field.name())) continue;
+            Object value = config.get(field.name());
+            if (value != null && (isSensitive(field) || isSensitiveConfigName(field.name()))) {
+                String text = String.valueOf(value);
+                if (!text.isBlank()) value = mask(text);
+            }
+            result.put(field.name(), value);
         }
         return result;
     }

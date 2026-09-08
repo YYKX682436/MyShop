@@ -11,73 +11,47 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class EpayPaymentProviderTest {
 
     @Test
-    void exposesOnlyTheProviderCredentialsAndChannelLevelActionControls() {
+    void exposesOnlyGatewayMerchantIdAndKey() {
         EpayPaymentProvider provider = provider(mock(EpayService.class));
 
         assertEquals(List.of("alipay", "wxpay"), provider.paymentTypes());
-        assertEquals("易支付兼容协议", provider.displayName());
-        assertEquals(List.of("pid", "key", "api_url", "create_mode", "carrier_mode"),
+        assertEquals(List.of("api_url", "pid", "key"),
                 provider.configSchema().stream().map(PaymentProvider.ConfigField::name).toList());
-        assertEquals(5, provider.configSchema().size());
-        assertFalse(provider.configSchema().stream().anyMatch(field ->
-                "notify_url".equals(field.name()) || "return_url".equals(field.name())));
-        assertEquals(List.of(true, true, true, false, false),
+        assertEquals(List.of("支付网关", "商户号 / PID", "商户密钥 / KEY"),
+                provider.configSchema().stream().map(PaymentProvider.ConfigField::label).toList());
+        assertEquals(List.of(true, true, true),
                 provider.configSchema().stream().map(PaymentProvider.ConfigField::required).toList());
-        assertEquals("api", provider.configSchema().get(3).defaultValue());
-        assertEquals(List.of(
-                        "API 模式（mapi.php 返回支付载体）",
-                        "页面模式（浏览器提交 submit.php）"),
-                provider.configSchema().get(3).options().stream()
-                        .map(PaymentProvider.ConfigOption::label).toList());
-        assertEquals("auto", provider.configSchema().get(4).defaultValue());
-        assertEquals("支付发起模式", provider.configSchema().get(3).label());
-        assertEquals("API 载体语义（仅 API 模式）", provider.configSchema().get(4).label());
-        assertEquals(List.of(
-                        "自动（按易支付常见字段）",
-                        "二维码（将返回载体编码展示）",
-                        "跳转（直接打开 HTTP(S) 载体）",
-                        "在客户端打开（交给微信/支付宝）"),
-                provider.configSchema().get(4).options().stream()
-                        .map(PaymentProvider.ConfigOption::label).toList());
     }
 
     @Test
-    void rejectsEachMissingCredential() {
+    void rejectsEachMissingMerchantField() {
         EpayPaymentProvider provider = provider(mock(EpayService.class));
-
-        for (String missing : List.of("pid", "key", "api_url")) {
+        for (String missing : List.of("api_url", "pid", "key")) {
             Map<String, String> config = validConfig();
             config.remove(missing);
-
-            BusinessException exception = assertThrows(BusinessException.class, () ->
-                    provider.create(new PaymentProvider.PaymentRequest(
-                            "merchant-1", "alipay", "商品", BigDecimal.TEN,
+            BusinessException exception = assertThrows(BusinessException.class, () -> provider.create(
+                    new PaymentProvider.PaymentRequest("merchant-1", "alipay", "商品", BigDecimal.TEN,
                             "127.0.0.1", "pc", config, "100001")));
-
             assertEquals(50001, exception.getCode(), missing);
         }
     }
 
     @Test
-    void delegatesApiModeWithIndependentMerchantTradeNoAndReturnsNeutralNextAction() {
+    void delegatesCreationWithOnlyCanonicalMerchantConfig() {
         EpayService epayService = mock(EpayService.class);
         PaymentNextAction.Redirect action = new PaymentNextAction.Redirect("https://pay.example/checkout");
-        when(epayService.createApiPayment(any(), anyString(), anyString(), anyString(), any(), anyString(),
-                anyString(), anyString(), anyString(), anyString()))
+        when(epayService.createPayment(any(), eq("merchant-1"), eq("wxpay"), eq("商品"),
+                eq(new BigDecimal("10.00")), eq("127.0.0.1"), eq("pc"), any(), any()))
                 .thenReturn(new EpayService.EpayCreateResult("trade-1", action));
         EpayPaymentProvider provider = provider(epayService);
 
@@ -87,86 +61,39 @@ class EpayPaymentProviderTest {
 
         assertEquals("trade-1", result.providerTradeNo());
         assertEquals(action, result.nextAction());
-        verify(epayService).createApiPayment(
-                new EpayService.ChannelConfig("pid", "secret", "https://pay.example"),
-                "merchant-1", "wxpay", "商品", new BigDecimal("10.00"), "127.0.0.1", "pc",
-                "https://shop.example.com/api/payments/webhook/epay",
-                "https://shop.example.com/order/query?orderNo=100001&paymentReturn=1",
-                "auto");
-    }
-
-    @Test
-    void delegatesPageModeWithoutCallingApiAndIgnoresCarrierMode() {
-        EpayService epayService = mock(EpayService.class);
-        PaymentNextAction.FormPost action = new PaymentNextAction.FormPost(
-                "https://pay.example.com/submit.php", Map.of("pid", "demo"));
-        when(epayService.createPagePayment(any(), anyString(), anyString(), anyString(), any(), anyString(),
-                anyString(), anyString(), anyString()))
-                .thenReturn(new EpayService.EpayCreateResult(null, action));
-        EpayPaymentProvider provider = provider(epayService);
-        Map<String, String> config = validConfig();
-        config.put("create_mode", "page");
-        config.put("carrier_mode", "open_in_client");
-
-        PaymentProvider.PaymentResult result = provider.create(new PaymentProvider.PaymentRequest(
-                "merchant-1", "wxpay", "商品", new BigDecimal("10.00"),
-                "127.0.0.1", "pc", config, "100001"));
-
-        assertNull(result.providerTradeNo());
-        assertEquals(action, result.nextAction());
-        verify(epayService).createPagePayment(
-                new EpayService.ChannelConfig("pid", "secret", "https://pay.example"),
+        verify(epayService).createPayment(
+                new EpayService.ChannelConfig("https://pay.example", "pid", "secret"),
                 "merchant-1", "wxpay", "商品", new BigDecimal("10.00"), "127.0.0.1", "pc",
                 "https://shop.example.com/api/payments/webhook/epay",
                 "https://shop.example.com/order/query?orderNo=100001&paymentReturn=1");
-        verify(epayService, never()).createApiPayment(any(), anyString(), anyString(), anyString(), any(),
-                anyString(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
-    void normalizesSignedCallbackIntoTheStandardResult() {
+    void verifiesSignedCallbackAndMapsQuery() {
         EpayService epayService = mock(EpayService.class);
         when(epayService.verifySign(eq("secret"), any(), eq("valid-signature"))).thenReturn(true);
+        when(epayService.queryOrder(any(), eq("merchant-1"))).thenReturn(
+                new EpayService.OrderQueryResult(PaymentStatus.PAID, new BigDecimal("10.00"), "trade-1"));
         EpayPaymentProvider provider = provider(epayService);
 
-        Map<String, String> values = new LinkedHashMap<>();
-        values.put("out_trade_no", "merchant-1");
-        values.put("trade_no", "trade-1");
-        values.put("trade_status", "TRADE_SUCCESS");
-        values.put("money", "10.00");
-        values.put("sign", "valid-signature");
-        PaymentProvider.WebhookRequest request = new PaymentProvider.WebhookRequest(
-                "POST", Map.of("X-Test", "1"), Map.of(), Map.of(
-                        "out_trade_no", List.of(values.get("out_trade_no")),
-                        "trade_no", List.of(values.get("trade_no")),
-                        "trade_status", List.of(values.get("trade_status")),
-                        "money", List.of(values.get("money")),
-                        "sign", List.of(values.get("sign"))), "raw");
+        PaymentProvider.WebhookRequest callback = new PaymentProvider.WebhookRequest(
+                "POST", Map.of(), Map.of(), Map.of(
+                        "out_trade_no", List.of("merchant-1"),
+                        "trade_no", List.of("trade-1"),
+                        "trade_status", List.of("TRADE_SUCCESS"),
+                        "money", List.of("10.00"),
+                        "sign", List.of("valid-signature")), "raw");
+        PaymentProvider.CallbackResult callbackResult = provider.verifyAndParseCallback(callback, validConfig());
+        assertEquals("merchant-1", callbackResult.merchantTradeNo());
+        assertEquals(PaymentStatus.PAID, callbackResult.status());
 
-        PaymentProvider.CallbackResult result = provider.verifyAndParseCallback(request, validConfig());
-
-        assertEquals("epay:trade-1", result.eventId());
-        assertEquals("merchant-1", result.merchantTradeNo());
-        assertEquals("trade-1", result.providerTradeNo());
-        assertEquals(PaymentStatus.PAID, result.status());
-        assertEquals(new BigDecimal("10.00"), result.amount());
-        assertEquals("merchant-1", provider.extractMerchantTradeNo(request));
-    }
-
-    @Test
-    void mapsQueryIntoTheStandardStatusAndAmount() {
-        EpayService epayService = mock(EpayService.class);
-        when(epayService.queryOrder(any(), eq("merchant-1")))
-                .thenReturn(new EpayService.OrderQueryResult(
-                        PaymentStatus.PAID, new BigDecimal("10.00"), "trade-1"));
-        EpayPaymentProvider provider = provider(epayService);
-
-        PaymentProvider.PaymentQueryResult result = provider.query(
+        PaymentProvider.PaymentQueryResult query = provider.query(
                 new PaymentProvider.PaymentQueryRequest("merchant-1", validConfig()));
-
-        assertEquals(PaymentStatus.PAID, result.status());
-        assertEquals(new BigDecimal("10.00"), result.amount());
-        assertEquals("trade-1", result.providerTradeNo());
+        assertEquals(PaymentStatus.PAID, query.status());
+        assertEquals(new BigDecimal("10.00"), query.amount());
+        assertEquals("trade-1", query.providerTradeNo());
+        verify(epayService).queryOrder(
+                new EpayService.ChannelConfig("https://pay.example", "pid", "secret"), "merchant-1");
     }
 
     private EpayPaymentProvider provider(EpayService service) {
@@ -175,8 +102,8 @@ class EpayPaymentProviderTest {
 
     private Map<String, String> validConfig() {
         return new LinkedHashMap<>(Map.of(
+                "api_url", "https://pay.example",
                 "pid", "pid",
-                "key", "secret",
-                "api_url", "https://pay.example"));
+                "key", "secret"));
     }
 }

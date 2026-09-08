@@ -8,32 +8,22 @@ import java.util.Map;
 
 public interface EpayService {
 
-    /** Only merchant credentials and the gateway endpoint are persisted. */
-    record ChannelConfig(String pid, String key, String apiUrl) {}
-
-    /** Call the Epay-compatible mapi endpoint and normalize its carrier to nextAction. */
-    EpayCreateResult createApiPayment(ChannelConfig config, String merchantTradeNo, String type, String name,
-                                      BigDecimal money, String clientIp, String device,
-                                      String notifyUrl, String returnUrl, String carrierMode);
-
-    /** Build the browser form for the independent Epay submit.php protocol. */
-    EpayCreateResult createPagePayment(ChannelConfig config, String merchantTradeNo, String type, String name,
-                                       BigDecimal money, String clientIp, String device,
-                                       String notifyUrl, String returnUrl);
+    /** The complete merchant configuration persisted for an Epay-compatible channel. */
+    record ChannelConfig(String gateway, String pid, String key) {}
 
     /**
-     * 生成 MD5 签名
+     * Create a payment. The gateway value determines the protocol internally:
+     * an explicit mapi.php/pay/apisubmit path uses the JSON API; submit.php or
+     * a gateway base URL uses the universal browser form protocol.
      */
+    EpayCreateResult createPayment(ChannelConfig config, String merchantTradeNo, String type, String name,
+                                   BigDecimal money, String clientIp, String device,
+                                   String notifyUrl, String returnUrl);
+
     String buildSign(String merchantKey, Map<String, String> params);
 
-    /**
-     * 验证回调签名
-     */
     boolean verifySign(String merchantKey, Map<String, String> params, String sign);
 
-    /**
-     * Query the gateway and convert its protocol status and amount to standard values.
-     */
     OrderQueryResult queryOrder(ChannelConfig config, String merchantTradeNo);
 
     record EpayCreateResult(String providerTradeNo, PaymentNextAction nextAction) { }
