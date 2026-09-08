@@ -92,56 +92,43 @@ previous attempt always uses its own snapshot and can finish its callback.
 
 ## Epay channel configuration
 
-The Epay adapter declares these channel-level fields:
+The Epay adapter declares exactly these channel-level fields:
 
+- `api_url` — required HTTP(S) gateway root or an explicit `submit.php`,
+  `mapi.php`, or `pay/apisubmit` endpoint;
 - `pid` — required merchant ID;
-- `key` — required secret, masked in administrator responses;
-- `api_url` — required gateway root or `mapi.php` URL;
-- `create_mode` — select, default `api`, with `api` (the server calls
-  `mapi.php`) and `page` (the browser submits `submit.php`);
-- `carrier_mode` — select, default `auto`, with `auto`, `qr_code`,
-  `redirect`, and `open_in_client`. This is an administrator declaration of
-  what the API gateway's returned carrier means and applies only in `api`
-  mode.
+- `key` — required merchant secret, masked in administrator responses.
 
-The two Epay creation protocols are separate:
+Creation protocol is selected by the configured endpoint, not by an
+administrator-controlled mode field:
 
-- In `api` mode, MyShop builds the common signed fields, POSTs them to
-  `mapi.php`, requires a successful response code, reads the provider trade
-  number, and normalizes the returned carrier according to `carrier_mode`. If
-  the successful response has no carrier compatible with the selected API
-  carrier mode, creation fails with `支付创建失败：API 模式下网关未返回可用支付载体`;
-  `submit.php` is never requested.
-- In `page` mode, MyShop does not request `mapi.php`. It returns a
-  `form_post` action whose URL is the gateway base plus `/submit.php` and whose
-  fields are the signed `pid`, `type`, `out_trade_no`, `notify_url`,
-  `return_url`, `name`, `money`, `clientip`, `device`, `sign`, and
-  `sign_type=MD5`. The merchant key is never included in those browser
-  fields, and the provider trade number is null until the gateway reports it.
-  `carrier_mode` is not read in this mode.
+- A root gateway URL is normalized and returned as a `form_post` action to
+  `<gateway>/submit.php`. An explicit `submit.php` URL is posted to directly.
+  The browser receives only the signed `pid`, `type`, `out_trade_no`,
+  `notify_url`, `return_url`, `name`, `money`, `clientip`, `device`, `sign`,
+  and `sign_type=MD5`; the merchant key is never included.
+- An explicit `mapi.php` or `pay/apisubmit` URL is called by the server with
+  the same signed form fields. The response must be successful JSON; HTML or
+  another non-JSON response fails with `支付网关请填写站点根地址或 submit.php`.
 
-The API adapter first extracts returned values without assigning domain
-semantics to their provider-specific field names. The configured API carrier
-mode then chooses the standard action:
+For a successful API response, the adapter returns one standard action using
+these protocol field semantics:
 
-- `auto` follows the common Epay convention: a valid non-HTTP(S) `urlscheme`
-  becomes `deep_link`; otherwise `qrcode`/`qr_code` becomes `qr_code`; otherwise
-  `payurl`, `payurl2`, `url`, or `pay_action_url` becomes `redirect`. An HTTP
-  value in a QR field is not guessed into a redirect in this mode.
-- `qr_code` treats the returned carrier as QR content. It prefers
-  `qrcode`/`qr_code`, then the URL fields, and finally a valid app scheme. This
-  explicit mode may encode an HTTP URL or deep link as the QR content.
-- `redirect` searches, in order, `payurl`, `payurl2`, `url`, `pay_action_url`,
-  `qrcode`, and `qr_code` for the first valid HTTP(S) URL and opens it as a
-  payment page.
-- `open_in_client` uses the same HTTP(S) carrier order, then selects `wechat`
-  for `wxpay` or `alipay` for `alipay`.
+- A valid non-HTTP(S) `urlscheme` becomes `deep_link`.
+- `qrcode` / `qr_code` is always returned as `qr_code` raw content. An HTTP(S)
+  value remains QR content and is rendered into a local QR code; it is never
+  loaded as a payment page or embedded in the QR area.
+- `payurl`, `payurl2`, `url`, or `pay_action_url` becomes a `redirect` only
+  when the selected value is a valid HTTP(S) URL. Relative redirect values are
+  resolved against the normalized gateway base. If no compatible carrier is
+  returned, creation fails closed.
 
-`redirect` and `open_in_client` reject app schemes, `javascript:`, `data:`,
-`file:`, and malformed URLs. A forced mode with a returned but incompatible
-carrier fails closed. Some Epay gateways put a payment-page URL in the
-`qrcode` field. For those gateways do not leave the channel in `auto`: choose
-`redirect` or `open_in_client` according to the gateway's actual behavior.
+For order queries, the adapter removes `/mapi.php`, `/pay/apisubmit`, or
+`/submit.php` from the configured URL and calls `/api.php` on the normalized
+gateway root. Root URLs with a trailing slash are normalized before endpoint
+construction, so no double slash is generated. The admin schema rejects every
+other configuration field; a forward migration canonicalizes existing Epay
+objects to the same three keys and preserves their values.
 
 Epay protocol statuses and fields are translated to the standard SPI only
 inside the Epay adapter/service. The generic payment and webhook services do
