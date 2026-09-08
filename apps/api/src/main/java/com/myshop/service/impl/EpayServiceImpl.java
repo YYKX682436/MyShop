@@ -110,7 +110,7 @@ public class EpayServiceImpl implements EpayService {
         String scheme = first(body, base, false, "urlscheme");
         if (scheme != null && isAppScheme(scheme)) return new PaymentNextAction.DeepLink(scheme, clientFor(paymentType));
         // qrcode/qr_code are QR payloads, including HTTP URLs that must be encoded locally.
-        String qr = first(body, base, true, "qrcode", "qr_code");
+        String qr = first(body, base, false, "qrcode", "qr_code");
         if (qr != null) return new PaymentNextAction.QrCode(qr);
         // payurl/url fields are cashier pages and must always be top-level browser redirects.
         String redirect = first(body, base, true, "payurl", "payurl2", "url", "pay_action_url");

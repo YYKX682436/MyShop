@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("17", flyway.info().current().getVersion().getVersion());
-        assertEquals(17, flyway.info().all().length);
+        assertEquals("18", flyway.info().current().getVersion().getVersion());
+        assertEquals(18, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -317,7 +317,7 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
-    void v17SeparatesEpayCreationModesAndRemovesRetiredSwitch() {
+    void epayConfigMigrationRetainsOnlyCanonicalFieldsAndPreservesCredentials() {
         flyway("16").migrate();
         UUID pageChannelId = UUID.randomUUID();
         UUID apiChannelId = UUID.randomUUID();
@@ -330,7 +330,7 @@ class MigrationChainIntegrationTest {
                 INSERT INTO payment_channels(id, channel_code, channel_name, provider_type,
                                               payment_type, config_data)
                 VALUES (?, 'epay-page', 'Epay page', 'epay', 'wxpay',
-                        jsonb_build_object('pid', 'page-pid', 'key', 'page-key',
+                        jsonb_build_object('pid', 'page-pid', 'KEY', 'page-key',
                                            'api_url', 'https://page.example', ?::text, true,
                                            'carrier_mode', 'open_in_client')::text),
                        (?, 'epay-api', 'Epay api', 'epay', 'alipay',
@@ -347,20 +347,46 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("17", flyway().info().current().getVersion().getVersion());
-        assertEquals("page", paymentChannelConfigValue(pageChannelId, "create_mode"));
-        assertEquals("api", paymentChannelConfigValue(apiChannelId, "create_mode"));
-        assertEquals("api", paymentChannelConfigValue(defaultChannelId, "create_mode"));
-        assertEquals("api", paymentChannelConfigValue(emptyChannelId, "create_mode"));
-        for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId, emptyChannelId)) {
+        assertEquals("18", flyway().info().current().getVersion().getVersion());
+        for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
+            assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
+            assertNull(paymentChannelConfigValue(channelId, "create_mode"));
+            assertNull(paymentChannelConfigValue(channelId, "carrier_mode"));
         }
+        assertEquals(0, paymentChannelConfigKeyCount(emptyChannelId));
+        assertNull(paymentChannelConfigValue(emptyChannelId, legacyCreateModeKey));
+        assertNull(paymentChannelConfigValue(emptyChannelId, "create_mode"));
+        assertNull(paymentChannelConfigValue(emptyChannelId, "carrier_mode"));
         assertEquals("page-pid", paymentChannelConfigValue(pageChannelId, "pid"));
         assertEquals("page-key", paymentChannelConfigValue(pageChannelId, "key"));
         assertEquals("https://page.example", paymentChannelConfigValue(pageChannelId, "api_url"));
-        assertEquals("open_in_client", paymentChannelConfigValue(pageChannelId, "carrier_mode"));
         assertEquals("true", paymentChannelConfigValue(otherProviderId, legacyCreateModeKey));
         assertNull(paymentChannelConfigValue(otherProviderId, "create_mode"));
+    }
+
+    @Test
+    void canonicalEpayConfigMigrationIsIdempotentForAlreadyCanonicalRows() {
+        flyway("17").migrate();
+        UUID channelId = UUID.randomUUID();
+        String canonical = "{\"key\":\"canonical-key\",\"pid\":\"canonical-pid\","
+                + "\"api_url\":\"https://canonical.example\"}";
+        jdbcTemplate.update("""
+                INSERT INTO payment_channels(id, channel_code, channel_name, provider_type,
+                                              payment_type, config_data)
+                VALUES (?, 'epay-canonical', 'Epay canonical', 'epay', 'wxpay', ?)
+                """, channelId, canonical);
+
+        flyway().migrate();
+        String afterFirstMigration = jdbcTemplate.queryForObject(
+                "SELECT config_data FROM payment_channels WHERE id = ?", String.class, channelId);
+        flyway().migrate();
+        String afterSecondMigration = jdbcTemplate.queryForObject(
+                "SELECT config_data FROM payment_channels WHERE id = ?", String.class, channelId);
+
+        assertEquals(canonical, afterFirstMigration);
+        assertEquals(afterFirstMigration, afterSecondMigration);
+        assertEquals(3, paymentChannelConfigKeyCount(channelId));
     }
 
     @Test
@@ -398,7 +424,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("17", flyway().info().current().getVersion().getVersion());
+        assertEquals("18", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -468,7 +494,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("17", flyway().info().current().getVersion().getVersion());
+        assertEquals("18", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -517,7 +543,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("17", flyway().info().current().getVersion().getVersion());
+        assertEquals("18", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         assertEquals("bigint", dataType("orders", "order_no"));
@@ -692,7 +718,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("17", flyway().info().current().getVersion().getVersion());
+        assertEquals("18", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -738,7 +764,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("17", flyway().info().current().getVersion().getVersion());
+        assertEquals("18", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));
@@ -1071,6 +1097,16 @@ class MigrationChainIntegrationTest {
                 FROM payment_channels
                 WHERE id = ?
                 """, String.class, key, channelId);
+    }
+
+    private int paymentChannelConfigKeyCount(UUID channelId) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT count(*)
+                FROM jsonb_object_keys((SELECT config_data::jsonb
+                                        FROM payment_channels
+                                        WHERE id = ?))
+                """, Integer.class, channelId);
+        return count == null ? 0 : count;
     }
 
     private int configCount(String key) {

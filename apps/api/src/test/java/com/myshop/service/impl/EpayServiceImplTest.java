@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -41,7 +42,7 @@ class EpayServiceImplTest {
         EpayServiceImpl service = service(restTemplate);
 
         EpayService.EpayCreateResult result = service.createPayment(
-                config("https://pay.example.com"), "merchant-1", "wxpay", "商品", BigDecimal.TEN,
+                config("https://pay.example.com/"), "merchant-1", "wxpay", "商品", BigDecimal.TEN,
                 "127.0.0.1", "pc", "https://shop.example/webhook", "https://shop.example/return");
 
         PaymentNextAction.FormPost action = assertInstanceOf(PaymentNextAction.FormPost.class, result.nextAction());
@@ -80,6 +81,19 @@ class EpayServiceImplTest {
 
         assertEquals("trade-1", result.providerTradeNo());
         assertEquals(new PaymentNextAction.QrCode("https://pay.example.com/qr-content"), result.nextAction());
+    }
+
+    @Test
+    void apiQrCodeAliasIsAlsoReturnedWithoutEndpointRewriting() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.postForEntity(eq("https://pay.example.com/pay/apisubmit"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"code\":1,\"qr_code\":\"/qr/raw-payload\"}"));
+
+        EpayService.EpayCreateResult result = service(restTemplate).createPayment(
+                config("https://pay.example.com/pay/apisubmit"), "merchant-1", "wxpay", "商品", BigDecimal.TEN,
+                "127.0.0.1", "pc", "https://shop.example/webhook", "https://shop.example/return");
+
+        assertEquals(new PaymentNextAction.QrCode("/qr/raw-payload"), result.nextAction());
     }
 
     @Test
@@ -123,20 +137,23 @@ class EpayServiceImplTest {
     @Test
     void queryUsesGatewayBaseRegardlessOfCreateEndpoint() {
         RestTemplate restTemplate = mock(RestTemplate.class);
-        when(restTemplate.getForEntity(
-                eq("https://pay.example.com/api.php?act=order&pid=pid&key=secret&out_trade_no=merchant-1"),
-                eq(String.class)))
+        String queryUrl = "https://pay.example.com/api.php?act=order&pid=pid&key=secret&out_trade_no=merchant-1";
+        when(restTemplate.getForEntity(eq(queryUrl), eq(String.class)))
                 .thenReturn(ResponseEntity.ok("{\"status\":\"TRADE_SUCCESS\",\"money\":\"10.00\",\"trade_no\":\"trade-1\"}"));
 
-        EpayService.OrderQueryResult result = service(restTemplate).queryOrder(
-                config("https://pay.example.com/pay/apisubmit"), "merchant-1");
+        for (String endpoint : List.of(
+                "https://pay.example.com/",
+                "https://pay.example.com/submit.php",
+                "https://pay.example.com/mapi.php",
+                "https://pay.example.com/pay/apisubmit")) {
+            EpayService.OrderQueryResult result = service(restTemplate).queryOrder(
+                    config(endpoint), "merchant-1");
 
-        assertEquals(PaymentStatus.PAID, result.status());
-        assertEquals(new BigDecimal("10.00"), result.amount());
-        assertEquals("trade-1", result.providerTradeNo());
-        verify(restTemplate).getForEntity(
-                eq("https://pay.example.com/api.php?act=order&pid=pid&key=secret&out_trade_no=merchant-1"),
-                eq(String.class));
+            assertEquals(PaymentStatus.PAID, result.status(), endpoint);
+            assertEquals(new BigDecimal("10.00"), result.amount(), endpoint);
+            assertEquals("trade-1", result.providerTradeNo(), endpoint);
+        }
+        verify(restTemplate, times(4)).getForEntity(eq(queryUrl), eq(String.class));
     }
 
     private EpayServiceImpl service(RestTemplate restTemplate) {

@@ -19,7 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -168,15 +168,15 @@ class AdminPaymentChannelServiceImplTest {
     }
 
     @Test
-    void masksSensitiveKeysInAdminReadResponsesRegardlessOfKeyCase() {
+    void doesNotReturnUndeclaredSensitiveKeysInAdminReadResponses() {
         PaymentChannel channel = existingChannel(UUID.randomUUID());
         channel.setConfigData("{\"pid\":\"743794\",\"KEY\":\"raw-secret-value\",\"api_url\":\"https://pay.example\"}");
         when(repository.findByIsDeletedOrderBySortOrderAsc(0)).thenReturn(List.of(channel));
 
         AdminPaymentChannelResponse response = service.listChannels().get(0);
 
-        assertNotEquals("raw-secret-value", response.configData().get("KEY"));
-        assertEquals("raw-****ue", response.configData().get("KEY"));
+        assertFalse(response.configData().containsKey("KEY"));
+        assertFalse(response.configData().containsValue("raw-secret-value"));
     }
 
     private Map<String, Object> request(String channelCode) {
