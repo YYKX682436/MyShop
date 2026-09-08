@@ -53,9 +53,12 @@ public class EpayPaymentProvider implements PaymentProvider {
                         "MD5 密钥", null, List.of()),
                 new ConfigField("api_url", "接口地址 / API URL", "url", false, true,
                         "https://pay.example.com 或 https://pay.example.com/mapi.php", null, List.of()),
-                new ConfigField("submit_fallback_enabled", "无载体时启用 submit.php", "switch", false, false,
-                        null, false, List.of()),
-                new ConfigField("carrier_mode", "支付载体语义（按网关实际行为选择）", "select", false, false,
+                new ConfigField("create_mode", "支付发起模式", "select", false, false,
+                        null, "api", List.of(
+                                new ConfigOption("api", "API 模式（mapi.php 返回支付载体）"),
+                                new ConfigOption("page", "页面模式（浏览器提交 submit.php）")
+                        )),
+                new ConfigField("carrier_mode", "API 载体语义（仅 API 模式）", "select", false, false,
                         null, "auto", List.of(
                                 new ConfigOption("auto", "自动（按易支付常见字段）"),
                                 new ConfigOption("qr_code", "二维码（将返回载体编码展示）"),
@@ -71,11 +74,19 @@ public class EpayPaymentProvider implements PaymentProvider {
         String type = gatewayPaymentType(request.paymentType());
         String notifyUrl = paymentUrlService.webhookUrl(id());
         String returnUrl = paymentUrlService.paymentReturnUrl(request.returnOrderNo());
-        EpayService.EpayCreateResult result = epayService.createPayment(
-                channelConfig(config), request.merchantTradeNo(), type, request.productName(),
-                request.amount(), request.clientIp(), request.device(), notifyUrl, returnUrl,
-                booleanConfig(config, "submit_fallback_enabled", false),
-                textConfig(config, "carrier_mode", "auto"));
+        EpayService.ChannelConfig channelConfig = channelConfig(config);
+        String createMode = textConfig(config, "create_mode", "api");
+        EpayService.EpayCreateResult result = switch (createMode) {
+            case "api" -> epayService.createApiPayment(
+                    channelConfig, request.merchantTradeNo(), type, request.productName(),
+                    request.amount(), request.clientIp(), request.device(), notifyUrl, returnUrl,
+                    textConfig(config, "carrier_mode", "auto"));
+            case "page" -> epayService.createPagePayment(
+                    channelConfig, request.merchantTradeNo(), type, request.productName(),
+                    request.amount(), request.clientIp(), request.device(), notifyUrl, returnUrl);
+            default -> throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE,
+                    "易支付兼容协议支付发起模式无效: " + createMode);
+        };
         return new PaymentResult(result.providerTradeNo(), result.nextAction());
     }
 
@@ -135,11 +146,6 @@ public class EpayPaymentProvider implements PaymentProvider {
     private String textConfig(Map<String, String> config, String key, String fallback) {
         String value = clean(config.get(key));
         return value == null ? fallback : value.toLowerCase(Locale.ROOT);
-    }
-
-    private boolean booleanConfig(Map<String, String> config, String key, boolean fallback) {
-        String value = clean(config.get(key));
-        return value == null ? fallback : Boolean.parseBoolean(value);
     }
 
     private PaymentStatus mapStatus(String rawStatus) {

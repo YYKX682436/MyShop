@@ -9,7 +9,7 @@ import { useLocale, useSiteConfig } from "@/lib/context"
 import { getApiErrorMessage, getOrderLookupToken, orderApi } from "@/services/api"
 import type { OrderStatus } from "@/types"
 import { cn, detectPaymentDevice } from "@/lib/utils"
-import { clearPaymentAction, readPaymentAction, savePaymentAction } from "@/lib/payment-entry"
+import { clearPaymentAction, getPaymentActionEnvironment, readPaymentAction, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
 import { applyPaymentStatus, applyPaymentStatusError, createPaymentPageActionState, type PaymentStatusRequestKind } from "@/lib/payment-page-state"
 import { PaymentActionRenderer } from "@/components/shared/payment-action-renderer"
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
@@ -55,8 +55,11 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
       setPaymentState(current => applyPaymentStatus(current, result.status, result.next_action))
       if (result.status !== "PENDING") {
         clearPaymentAction(orderId)
-      } else if (result.next_action) {
+      } else if (result.next_action
+        && shouldSeedPaymentAction(resolvePaymentEntry(result.next_action, getPaymentActionEnvironment()))) {
         savePaymentAction(orderId, result.next_action)
+      } else {
+        clearPaymentAction(orderId)
       }
       setStatus(result.status)
       return null
@@ -105,7 +108,7 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
       setOrderNo(returnedOrderNo)
       const action = result.next_action ?? null
       setPaymentState({ phase: "ready", nextAction: action, errorMessage: null })
-      if (action) {
+      if (action && shouldSeedPaymentAction(resolvePaymentEntry(action, getPaymentActionEnvironment()))) {
         savePaymentAction(orderId, action)
       } else {
         clearPaymentAction(orderId)

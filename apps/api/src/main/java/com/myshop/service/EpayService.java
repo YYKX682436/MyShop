@@ -12,10 +12,14 @@ public interface EpayService {
     record ChannelConfig(String pid, String key, String apiUrl) {}
 
     /** Call the Epay-compatible mapi endpoint and normalize its carrier to nextAction. */
-    EpayCreateResult createPayment(ChannelConfig config, String merchantTradeNo, String type, String name,
-                             BigDecimal money, String clientIp, String device,
-                             String notifyUrl, String returnUrl,
-                             boolean submitFallbackEnabled, String carrierMode);
+    EpayCreateResult createApiPayment(ChannelConfig config, String merchantTradeNo, String type, String name,
+                                      BigDecimal money, String clientIp, String device,
+                                      String notifyUrl, String returnUrl, String carrierMode);
+
+    /** Build the browser form for the independent Epay submit.php protocol. */
+    EpayCreateResult createPagePayment(ChannelConfig config, String merchantTradeNo, String type, String name,
+                                       BigDecimal money, String clientIp, String device,
+                                       String notifyUrl, String returnUrl);
 
     /**
      * 生成 MD5 签名

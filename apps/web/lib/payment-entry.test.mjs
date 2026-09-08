@@ -8,6 +8,7 @@ import {
   readPaymentAction,
   resolvePaymentEntry,
   savePaymentAction,
+  shouldSeedPaymentAction,
 } from "./payment-entry.ts"
 
 const redirect = { type: "redirect", url: "https://pay.example/checkout" }
@@ -31,6 +32,7 @@ test("form_post is submitted immediately and never needs /pay", () => {
   const entry = resolvePaymentEntry(formPost, mobile)
   assert.equal(entry.mode, "execute")
   assert.equal(entry.decision.kind, "form_post")
+  assert.equal(shouldSeedPaymentAction(entry), false)
 })
 
 test("qr_code enters /pay with an initial action seed", () => {
@@ -78,6 +80,8 @@ test("storage keeps only the public action under the order-bound key", () => {
     savePaymentAction("order-2", qrCode)
     assert.equal(values.get(paymentActionStorageKey("order-2")), JSON.stringify(qrCode))
     assert.deepEqual(readPaymentAction("order-2"), qrCode)
+    savePaymentAction("order-form", formPost)
+    assert.equal(values.get(paymentActionStorageKey("order-form")), undefined)
     clearPaymentAction("order-2")
     assert.equal(readPaymentAction("order-2"), null)
   } finally {
@@ -97,6 +101,32 @@ test("product actions consume create response actions instead of unconditionally
   assert.match(productActionsSource, /resolvePaymentEntry\(/)
   assert.match(productActionsSource, /executePaymentAction\(/)
   assert.doesNotMatch(productActionsSource, /router\.push\(`\/pay\//)
+})
+
+test("checkout form_post response executes directly without a payment-page seed", () => {
+  const createResponse = {
+    payment: {
+      next_action: {
+        type: "form_post",
+        url: "https://pay.example.com/submit.php",
+        fields: { pid: "demo", sign: "signed" },
+      },
+    },
+  }
+  const entry = resolvePaymentEntry(createResponse.payment.next_action, desktop)
+
+  assert.equal(entry.mode, "execute")
+  assert.equal(entry.decision.kind, "form_post")
+  assert.equal(shouldSeedPaymentAction(entry), false)
+  assert.match(productActionsSource, /if \(entry\.mode === "execute"/)
+  assert.match(productActionsSource, /executePaymentAction\(entry\.decision\)/)
+  assert.match(productActionsSource, /if \(shouldSeedPaymentAction\(entry\)\)/)
+  const executeBranchStart = productActionsSource.indexOf('if (entry.mode === "execute"')
+  const paymentPageNavigationStart = productActionsSource.indexOf("router.push(paymentHref)")
+  const executeBranch = productActionsSource.slice(executeBranchStart, paymentPageNavigationStart)
+  assert.doesNotMatch(executeBranch, /router\.push/)
+  assert.match(executeBranch, /executePaymentAction\(entry\.decision\)/)
+  assert.match(executeBranch, /return/)
 })
 
 test("payment page uses explicit load state and does not hide status errors", () => {

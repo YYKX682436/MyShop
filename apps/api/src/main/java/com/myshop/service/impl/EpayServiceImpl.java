@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -46,12 +47,29 @@ public class EpayServiceImpl implements EpayService {
     }
 
     @Override
-    public EpayCreateResult createPayment(ChannelConfig config, String merchantTradeNo, String type,
-                                          String name, BigDecimal money, String clientIp, String device,
-                                          String notifyUrl, String returnUrl,
-                                          boolean submitFallbackEnabled, String carrierMode) {
-        String url = normalizeApiUrl(config.apiUrl());
-        Map<String, String> params = new java.util.LinkedHashMap<>();
+    public EpayCreateResult createApiPayment(ChannelConfig config, String merchantTradeNo, String type,
+                                             String name, BigDecimal money, String clientIp, String device,
+                                             String notifyUrl, String returnUrl, String carrierMode) {
+        Map<String, String> signedFields = buildSignedPaymentFields(
+                config, merchantTradeNo, type, name, money, clientIp, device, notifyUrl, returnUrl);
+        return postApiPayment(config, merchantTradeNo, type, signedFields, carrierMode);
+    }
+
+    @Override
+    public EpayCreateResult createPagePayment(ChannelConfig config, String merchantTradeNo, String type,
+                                              String name, BigDecimal money, String clientIp, String device,
+                                              String notifyUrl, String returnUrl) {
+        Map<String, String> signedFields = buildSignedPaymentFields(
+                config, merchantTradeNo, type, name, money, clientIp, device, notifyUrl, returnUrl);
+        String endpoint = gatewayBaseUrl(config.apiUrl()) + "/submit.php";
+        return new EpayCreateResult(null, new PaymentNextAction.FormPost(endpoint, signedFields));
+    }
+
+    private Map<String, String> buildSignedPaymentFields(ChannelConfig config, String merchantTradeNo,
+                                                         String type, String name, BigDecimal money,
+                                                         String clientIp, String device, String notifyUrl,
+                                                         String returnUrl) {
+        Map<String, String> params = new LinkedHashMap<>();
         params.put("pid", config.pid());
         params.put("type", type);
         params.put("out_trade_no", merchantTradeNo);
@@ -61,15 +79,20 @@ public class EpayServiceImpl implements EpayService {
         params.put("money", money.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString());
         params.put("clientip", clientIp != null ? clientIp : "127.0.0.1");
         params.put("device", device != null && !device.isBlank() ? device : "pc");
-
         params.put("sign", buildSign(config.key(), params));
         params.put("sign_type", "MD5");
+        return params;
+    }
 
-        log.info("Epay payment create: merchantTradeNo={}, type={}, money={}, apiUrl={}",
-                merchantTradeNo, type, money, config.apiUrl());
+    private EpayCreateResult postApiPayment(ChannelConfig config, String merchantTradeNo, String type,
+                                            Map<String, String> signedFields, String carrierMode) {
+        String url = normalizeApiUrl(config.apiUrl());
+
+        log.info("Epay API payment create: merchantTradeNo={}, type={}, apiUrl={}",
+                merchantTradeNo, type, config.apiUrl());
 
         MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
-        params.forEach(formData::add);
+        signedFields.forEach(formData::add);
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(formData, headers);
@@ -118,9 +141,7 @@ public class EpayServiceImpl implements EpayService {
                             "支付创建失败：" + (message == null ? "" : message));
                 }
 
-                PaymentNextAction nextAction = selectNextAction(
-                        candidates, type, submitFallbackEnabled, carrierMode,
-                        params, config.apiUrl());
+                PaymentNextAction nextAction = selectApiNextAction(candidates, type, carrierMode);
                 return new EpayCreateResult(providerTradeNo, nextAction);
             } catch (BusinessException exception) {
                 throw exception;
@@ -137,10 +158,8 @@ public class EpayServiceImpl implements EpayService {
         throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：网络超时，请重试");
     }
 
-    private PaymentNextAction selectNextAction(CarrierCandidates candidates,
-                                                String paymentType, boolean submitFallbackEnabled,
-                                                String rawCarrierMode, Map<String, String> signedParams,
-                                                String apiUrl) {
+    private PaymentNextAction selectApiNextAction(CarrierCandidates candidates,
+                                                  String paymentType, String rawCarrierMode) {
         String carrierMode = normalizeCarrierMode(rawCarrierMode);
 
         return switch (carrierMode) {
@@ -153,59 +172,40 @@ public class EpayServiceImpl implements EpayService {
                 }
                 Carrier redirect = firstHttpUrlCarrier(candidates.redirectCandidates());
                 if (redirect != null) yield new PaymentNextAction.Redirect(redirect.value());
-                if (!candidates.redirectCandidates().isEmpty()) throw noCompatibleCarrier();
-                yield fallbackAction(submitFallbackEnabled, signedParams,
-                        paymentType, carrierMode, apiUrl);
+                throw apiCarrierUnavailable();
             }
             case "qr_code" -> {
                 if (candidates.qrCode() != null) {
                     yield new PaymentNextAction.QrCode(candidates.qrCode().value());
                 }
-                Carrier fallbackQr = firstCarrier(candidates.qrCodeFallbackCandidates());
-                if (fallbackQr != null) yield new PaymentNextAction.QrCode(fallbackQr.value());
+                Carrier alternativeQrCarrier = firstCarrier(candidates.qrCodeFallbackCandidates());
+                if (alternativeQrCarrier != null) yield new PaymentNextAction.QrCode(alternativeQrCarrier.value());
                 if (candidates.scheme() != null && isAppScheme(candidates.scheme().value())) {
                     yield new PaymentNextAction.QrCode(candidates.scheme().value());
                 }
-                throw noCompatibleCarrier();
+                throw apiCarrierUnavailable();
             }
             case "redirect" -> {
                 Carrier redirect = firstHttpUrlCarrier(candidates.redirectCandidates());
                 if (redirect == null) {
-                    if (candidates.hasAnyCarrier()) throw noCompatibleCarrier();
-                    yield fallbackAction(submitFallbackEnabled, signedParams,
-                            paymentType, carrierMode, apiUrl);
+                    throw apiCarrierUnavailable();
                 }
                 yield new PaymentNextAction.Redirect(redirect.value());
             }
             case "open_in_client" -> {
                 Carrier redirect = firstHttpUrlCarrier(candidates.redirectCandidates());
                 if (redirect == null) {
-                    if (candidates.hasAnyCarrier()) throw noCompatibleCarrier();
-                    yield fallbackAction(submitFallbackEnabled, signedParams,
-                            paymentType, carrierMode, apiUrl);
+                    throw apiCarrierUnavailable();
                 }
                 yield new PaymentNextAction.OpenInClient(redirect.value(), clientFor(paymentType));
             }
-            default -> throw noCompatibleCarrier();
+            default -> throw apiCarrierUnavailable();
         };
     }
 
-    private PaymentNextAction fallbackAction(boolean enabled, Map<String, String> signedParams,
-                                             String paymentType,
-                                             String carrierMode, String apiUrl) {
-        if (!enabled || "qr_code".equals(carrierMode)) {
-            throw noCompatibleCarrier();
-        }
-        String submitUrl = buildSubmitPaymentUrl(apiUrl, signedParams);
-        if ("open_in_client".equals(carrierMode)) {
-            return new PaymentNextAction.OpenInClient(submitUrl, clientFor(paymentType));
-        }
-        return new PaymentNextAction.Redirect(submitUrl);
-    }
-
-    private BusinessException noCompatibleCarrier() {
+    private BusinessException apiCarrierUnavailable() {
         return new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL,
-                "支付创建失败：网关未返回与渠道载体模式兼容的载体");
+                "支付创建失败：API 模式下网关未返回可用支付载体");
     }
 
     private CarrierCandidates extractCarrierCandidates(Map<String, Object> body, String gatewayOrigin) {
@@ -328,18 +328,6 @@ public class EpayServiceImpl implements EpayService {
                 .filter(Objects::nonNull).map(Object::toString).sorted().toList());
     }
 
-    /** The submit page receives the same signed request, without the merchant secret. */
-    private String buildSubmitPaymentUrl(String apiUrl, Map<String, String> params) {
-        String endpoint = gatewayBaseUrl(apiUrl) + "/submit.php";
-        List<String> encoded = new ArrayList<>();
-        params.forEach((key, value) -> {
-            if (value != null && !value.isBlank() && !"api_url".equals(key)) {
-                encoded.add(encodeQueryParam(key) + "=" + encodeQueryParam(value));
-            }
-        });
-        return endpoint + (encoded.isEmpty() ? "" : "?" + String.join("&", encoded));
-    }
-
     private record Carrier(String fieldName, String value) { }
 
     private record CarrierCandidates(Carrier scheme, Carrier qrCode,
@@ -348,10 +336,6 @@ public class EpayServiceImpl implements EpayService {
         private CarrierCandidates {
             redirectCandidates = List.copyOf(redirectCandidates);
             qrCodeFallbackCandidates = List.copyOf(qrCodeFallbackCandidates);
-        }
-
-        private boolean hasAnyCarrier() {
-            return scheme != null || qrCode != null || !redirectCandidates.isEmpty();
         }
     }
 

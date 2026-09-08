@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("16", flyway.info().current().getVersion().getVersion());
-        assertEquals(16, flyway.info().all().length);
+        assertEquals("17", flyway.info().current().getVersion().getVersion());
+        assertEquals(17, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -314,6 +314,53 @@ class MigrationChainIntegrationTest {
         assertFalse(configData.contains("return_url"));
         assertTrue(columnExists("payment_channels", "payment_hint"));
         assertTrue(columnExists("payment_channels", "badge_text"));
+    }
+
+    @Test
+    void v17SeparatesEpayCreationModesAndRemovesRetiredSwitch() {
+        flyway("16").migrate();
+        UUID pageChannelId = UUID.randomUUID();
+        UUID apiChannelId = UUID.randomUUID();
+        UUID defaultChannelId = UUID.randomUUID();
+        UUID emptyChannelId = UUID.randomUUID();
+        UUID otherProviderId = UUID.randomUUID();
+        String legacyCreateModeKey = String.join("_", "submit", "fallback", "enabled");
+
+        jdbcTemplate.update("""
+                INSERT INTO payment_channels(id, channel_code, channel_name, provider_type,
+                                              payment_type, config_data)
+                VALUES (?, 'epay-page', 'Epay page', 'epay', 'wxpay',
+                        jsonb_build_object('pid', 'page-pid', 'key', 'page-key',
+                                           'api_url', 'https://page.example', ?::text, true,
+                                           'carrier_mode', 'open_in_client')::text),
+                       (?, 'epay-api', 'Epay api', 'epay', 'alipay',
+                        jsonb_build_object('pid', 'api-pid', 'key', 'api-key',
+                                           'api_url', 'https://api.example', ?::text, false,
+                                           'carrier_mode', 'redirect')::text),
+                       (?, 'epay-default', 'Epay default', 'epay', 'wxpay',
+                        '{"pid":"default-pid","key":"default-key","api_url":"https://default.example"}'),
+                       (?, 'epay-empty', 'Epay empty', 'epay', 'alipay', NULL),
+                       (?, 'other-provider', 'Other provider', 'other', 'alipay',
+                        jsonb_build_object(?::text, true, 'merchant', 'unchanged')::text)
+                """, pageChannelId, legacyCreateModeKey, apiChannelId, legacyCreateModeKey,
+                defaultChannelId, emptyChannelId, otherProviderId, legacyCreateModeKey);
+
+        flyway().migrate();
+
+        assertEquals("17", flyway().info().current().getVersion().getVersion());
+        assertEquals("page", paymentChannelConfigValue(pageChannelId, "create_mode"));
+        assertEquals("api", paymentChannelConfigValue(apiChannelId, "create_mode"));
+        assertEquals("api", paymentChannelConfigValue(defaultChannelId, "create_mode"));
+        assertEquals("api", paymentChannelConfigValue(emptyChannelId, "create_mode"));
+        for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId, emptyChannelId)) {
+            assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
+        }
+        assertEquals("page-pid", paymentChannelConfigValue(pageChannelId, "pid"));
+        assertEquals("page-key", paymentChannelConfigValue(pageChannelId, "key"));
+        assertEquals("https://page.example", paymentChannelConfigValue(pageChannelId, "api_url"));
+        assertEquals("open_in_client", paymentChannelConfigValue(pageChannelId, "carrier_mode"));
+        assertEquals("true", paymentChannelConfigValue(otherProviderId, legacyCreateModeKey));
+        assertNull(paymentChannelConfigValue(otherProviderId, "create_mode"));
     }
 
     @Test
@@ -1016,6 +1063,14 @@ class MigrationChainIntegrationTest {
     private String configValue(String key) {
         return jdbcTemplate.queryForObject(
                 "SELECT config_value FROM site_configs WHERE config_key = ?", String.class, key);
+    }
+
+    private String paymentChannelConfigValue(UUID channelId, String key) {
+        return jdbcTemplate.queryForObject("""
+                SELECT jsonb_extract_path_text(config_data::jsonb, ?)
+                FROM payment_channels
+                WHERE id = ?
+                """, String.class, key, channelId);
     }
 
     private int configCount(String key) {

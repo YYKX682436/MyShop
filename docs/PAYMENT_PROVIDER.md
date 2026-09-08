@@ -97,17 +97,32 @@ The Epay adapter declares these channel-level fields:
 - `pid` — required merchant ID;
 - `key` — required secret, masked in administrator responses;
 - `api_url` — required gateway root or `mapi.php` URL;
-- `submit_fallback_enabled` — switch, default `false`. When enabled for this
-  channel only, a successful create response without a usable carrier may use
-  the signed `submit.php` page;
+- `create_mode` — select, default `api`, with `api` (the server calls
+  `mapi.php`) and `page` (the browser submits `submit.php`);
 - `carrier_mode` — select, default `auto`, with `auto`, `qr_code`,
   `redirect`, and `open_in_client`. This is an administrator declaration of
-  what the gateway's returned carrier means; it is not a whitelist of which
-  response fields may be read.
+  what the API gateway's returned carrier means and applies only in `api`
+  mode.
 
-The Epay adapter first extracts the returned values without assigning domain
-semantics to their provider-specific field names. The configured mode then
-chooses the standard action:
+The two Epay creation protocols are separate:
+
+- In `api` mode, MyShop builds the common signed fields, POSTs them to
+  `mapi.php`, requires a successful response code, reads the provider trade
+  number, and normalizes the returned carrier according to `carrier_mode`. If
+  the successful response has no carrier compatible with the selected API
+  carrier mode, creation fails with `支付创建失败：API 模式下网关未返回可用支付载体`;
+  `submit.php` is never requested.
+- In `page` mode, MyShop does not request `mapi.php`. It returns a
+  `form_post` action whose URL is the gateway base plus `/submit.php` and whose
+  fields are the signed `pid`, `type`, `out_trade_no`, `notify_url`,
+  `return_url`, `name`, `money`, `clientip`, `device`, `sign`, and
+  `sign_type=MD5`. The merchant key is never included in those browser
+  fields, and the provider trade number is null until the gateway reports it.
+  `carrier_mode` is not read in this mode.
+
+The API adapter first extracts returned values without assigning domain
+semantics to their provider-specific field names. The configured API carrier
+mode then chooses the standard action:
 
 - `auto` follows the common Epay convention: a valid non-HTTP(S) `urlscheme`
   becomes `deep_link`; otherwise `qrcode`/`qr_code` becomes `qr_code`; otherwise
@@ -124,8 +139,7 @@ chooses the standard action:
 
 `redirect` and `open_in_client` reject app schemes, `javascript:`, `data:`,
 `file:`, and malformed URLs. A forced mode with a returned but incompatible
-carrier fails closed; only a response with no carrier can use the optional
-`submit.php` fallback. Some Epay gateways put a payment-page URL in the
+carrier fails closed. Some Epay gateways put a payment-page URL in the
 `qrcode` field. For those gateways do not leave the channel in `auto`: choose
 `redirect` or `open_in_client` according to the gateway's actual behavior.
 

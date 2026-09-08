@@ -42,6 +42,10 @@ export function resolvePaymentEntry(
   return { mode, action, decision }
 }
 
+export function shouldSeedPaymentAction(entry: Pick<PaymentEntry, "mode">): boolean {
+  return entry.mode === "payment_page"
+}
+
 export function buildPaymentPageHref(orderId: string, orderNo: number | string, method: string): string {
   const query = new URLSearchParams({
     orderNo: String(orderNo),
@@ -90,12 +94,17 @@ function isPaymentNextAction(value: unknown): value is PaymentNextAction {
 export function savePaymentAction(orderId: string, action: PaymentNextAction | null | undefined): void {
   const storage = getPaymentActionStorage()
   if (!storage) return
+  const key = paymentActionStorageKey(orderId)
   try {
     if (!action) {
-      storage.removeItem(paymentActionStorageKey(orderId))
+      storage.removeItem(key)
       return
     }
-    storage.setItem(paymentActionStorageKey(orderId), JSON.stringify(action))
+    if (!shouldSeedPaymentAction(resolvePaymentEntry(action, getPaymentActionEnvironment()))) {
+      storage.removeItem(key)
+      return
+    }
+    storage.setItem(key, JSON.stringify(action))
   } catch {
     // sessionStorage is an optimization; server status remains authoritative.
   }
@@ -109,7 +118,10 @@ export function readPaymentAction(orderId: string): PaymentNextAction | null {
     const raw = storage.getItem(key)
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
-    if (isPaymentNextAction(parsed)) return parsed
+    if (isPaymentNextAction(parsed)
+      && shouldSeedPaymentAction(resolvePaymentEntry(parsed, getPaymentActionEnvironment()))) {
+      return parsed
+    }
     storage.removeItem(key)
   } catch {
     try {

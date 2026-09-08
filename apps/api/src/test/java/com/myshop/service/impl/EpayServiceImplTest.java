@@ -16,13 +16,15 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -53,83 +55,108 @@ class EpayServiceImplTest {
     }
 
     @Test
-    void mapsGatewayResponsesToNeutralActions() {
-        EpayService.EpayCreateResult deepLink = createPaymentResponse(
+    void mapsApiGatewayResponsesToNeutralActions() {
+        EpayService.EpayCreateResult deepLink = createApiPaymentResponse(
                 "{\"code\":1,\"trade_no\":\"trade-1\",\"urlscheme\":\"weixin://dl/business/?ticket=xxx\"}",
-                "wxpay", false, "auto");
+                "wxpay", "auto");
         assertEquals("trade-1", deepLink.providerTradeNo());
         assertEquals(new PaymentNextAction.DeepLink(
                 "weixin://dl/business/?ticket=xxx", "wechat"), deepLink.nextAction());
 
-        EpayService.EpayCreateResult qrCode = createPaymentResponse(
+        EpayService.EpayCreateResult qrCode = createApiPaymentResponse(
                 "{\"code\":1,\"qrcode\":\"weixin://qr/123\"}",
-                "wxpay", false, "auto");
+                "wxpay", "auto");
         assertEquals(new PaymentNextAction.QrCode("weixin://qr/123"), qrCode.nextAction());
 
-        EpayService.EpayCreateResult redirect = createPaymentResponse(
+        EpayService.EpayCreateResult redirect = createApiPaymentResponse(
                 "{\"code\":1,\"payurl2\":\"https://pay.example/checkout\"}",
-                "alipay", false, "auto");
+                "alipay", "auto");
         assertEquals(new PaymentNextAction.Redirect("https://pay.example/checkout"), redirect.nextAction());
     }
 
     @Test
     void forcedModesUseDeclaredSemanticsAndFailClosedForIncompatibleCarriers() {
-        EpayService.EpayCreateResult qrCode = createPaymentResponse(
+        EpayService.EpayCreateResult qrCode = createApiPaymentResponse(
                 "{\"code\":1,\"payurl\":\"https://pay.example/checkout\"}",
-                "alipay", false, "qr_code");
+                "alipay", "qr_code");
         assertEquals(new PaymentNextAction.QrCode("https://pay.example/checkout"), qrCode.nextAction());
 
-        EpayService.EpayCreateResult client = createPaymentResponse(
+        EpayService.EpayCreateResult client = createApiPaymentResponse(
                 "{\"code\":1,\"payurl\":\"https://pay.example/checkout\"}",
-                "wxpay", false, "open_in_client");
+                "wxpay", "open_in_client");
         assertEquals(new PaymentNextAction.OpenInClient(
                 "https://pay.example/checkout", "wechat"), client.nextAction());
 
-        BusinessException invalidMode = assertThrows(BusinessException.class, () -> createPaymentResponse(
-                "{\"code\":1,\"qrcode\":\"qr\"}", "wxpay", false, "unsupported"));
+        BusinessException invalidMode = assertThrows(BusinessException.class, () -> createApiPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"qr\"}", "wxpay", "unsupported"));
         assertTrue(invalidMode.getMessage().contains("载体模式无效"));
 
-        BusinessException incompatible = assertThrows(BusinessException.class, () -> createPaymentResponse(
-                "{\"code\":1,\"qrcode\":\"weixin://qr/123\"}", "wxpay", true, "redirect"));
-        assertTrue(incompatible.getMessage().contains("兼容"));
+        BusinessException incompatible = assertThrows(BusinessException.class, () -> createApiPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"weixin://qr/123\"}", "wxpay", "redirect"));
+        assertTrue(incompatible.getMessage().contains("API 模式下网关未返回可用支付载体"));
     }
 
     @Test
-    void submitPageFallbackIsDisabledByDefaultAndExplicitlyEnabledPerChannel() {
-        String noAction = "{\"code\":1,\"trade_no\":\"trade-1\",\"payurl\":\"\",\"qrcode\":\"\"}";
-        BusinessException disabled = assertThrows(BusinessException.class,
-                () -> createPaymentResponse(noAction, "wxpay", false, "auto"));
-        assertTrue(disabled.getMessage().contains("兼容"));
+    void apiModeWithoutCarrierFailsImmediatelyAndNeverRequestsSubmitPage() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.postForEntity(eq("https://pay.example.com/mapi.php"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(
+                        "{\"code\":1,\"trade_no\":\"trade-1\",\"payurl\":\"\",\"qrcode\":\"\"}"));
+        EpayServiceImpl service = new EpayServiceImpl(restTemplate, new ObjectMapper());
 
-        EpayService.EpayCreateResult fallback = createPaymentResponse(noAction, "wxpay", true, "auto");
-        PaymentNextAction.Redirect action = assertInstanceOf(PaymentNextAction.Redirect.class,
-                fallback.nextAction());
-        assertTrue(action.url().startsWith("https://pay.example.com/submit.php?"));
-        assertTrue(action.url().contains("pid=pid"));
-        assertTrue(action.url().contains("out_trade_no=merchant-1"));
-        assertTrue(action.url().contains("sign_type=MD5"));
-        assertFalse(action.url().contains("key=secret"));
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.createApiPayment(
+                new EpayService.ChannelConfig("pid", "secret", "https://pay.example.com"),
+                "merchant-1", "wxpay", "商品", BigDecimal.TEN, "127.0.0.1", "pc",
+                "https://shop.example.com/api/payments/webhook/epay",
+                "https://shop.example.com/order/query?orderNo=100001&paymentReturn=1", "auto"));
 
-        EpayService.EpayCreateResult withoutProviderTradeNo = createPaymentResponse(
-                "{\"code\":1,\"payurl\":\"\",\"qrcode\":\"\"}",
-                "wxpay", true, "auto");
-        assertTrue(withoutProviderTradeNo.nextAction() instanceof PaymentNextAction.Redirect);
+        assertEquals("支付创建失败：API 模式下网关未返回可用支付载体", exception.getMessage());
+        verify(restTemplate).postForEntity(eq("https://pay.example.com/mapi.php"), any(), eq(String.class));
+        verify(restTemplate, never()).postForEntity(eq("https://pay.example.com/submit.php"), any(), eq(String.class));
+    }
+
+    @Test
+    void pageModeReturnsSignedFormPostWithoutCallingEitherGatewayEndpoint() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        EpayServiceImpl service = new EpayServiceImpl(restTemplate, new ObjectMapper());
+
+        EpayService.EpayCreateResult result = service.createPagePayment(
+                new EpayService.ChannelConfig("pid", "secret", "https://pay.example.com"),
+                "merchant-1", "wxpay", "商品", BigDecimal.TEN, "127.0.0.1", "pc",
+                "https://shop.example.com/api/payments/webhook/epay",
+                "https://shop.example.com/order/query?orderNo=100001&paymentReturn=1");
+
+        PaymentNextAction.FormPost action = assertInstanceOf(
+                PaymentNextAction.FormPost.class, result.nextAction());
+        assertNull(result.providerTradeNo());
+        assertEquals("https://pay.example.com/submit.php", action.url());
+        for (String field : List.of(
+                "pid", "type", "out_trade_no", "notify_url", "return_url", "name",
+                "money", "clientip", "device", "sign", "sign_type")) {
+            assertTrue(action.fields().containsKey(field), "missing form field: " + field);
+        }
+        assertEquals("MD5", action.fields().get("sign_type"));
+        assertEquals(action.fields().get("sign"),
+                service.buildSign("secret", action.fields()));
+        assertTrue(!action.fields().containsKey("key"));
+        assertTrue(!action.fields().containsKey("api_url"));
+        verifyNoInteractions(restTemplate);
     }
 
     @Test
     void autoKeepsTraditionalQrFieldSemanticsEvenWhenTheValueIsHttp() {
-        EpayService.EpayCreateResult result = createPaymentResponse(
+        EpayService.EpayCreateResult result = createApiPaymentResponse(
                 "{\"code\":1,\"qrcode\":\"https://pay.example/qr-content\"}",
-                "wxpay", false, "auto");
+                "wxpay", "auto");
 
         assertEquals(new PaymentNextAction.QrCode("https://pay.example/qr-content"), result.nextAction());
     }
 
     @Test
     void redirectModeCanConsumeAnHttpQrcodeAfterNormalizingItsGatewayRelativePath() {
-        EpayService.EpayCreateResult result = createPaymentResponse(
+        EpayService.EpayCreateResult result = createApiPaymentResponse(
                 "{\"code\":1,\"qrcode\":\"/api/pay/toapp/123\"}",
-                "wxpay", false, "redirect");
+                "wxpay", "redirect");
 
         assertEquals(new PaymentNextAction.Redirect(
                 "https://pay.example.com/api/pay/toapp/123"), result.nextAction());
@@ -137,9 +164,9 @@ class EpayServiceImplTest {
 
     @Test
     void explicitRedirectUsesTheFirstLegalCarrierInTheDeclaredFieldOrder() {
-        EpayService.EpayCreateResult result = createPaymentResponse(
+        EpayService.EpayCreateResult result = createApiPaymentResponse(
                 "{\"code\":1,\"payurl\":\"/api/pay/preferred\",\"qrcode\":\"/api/pay/qr\"}",
-                "wxpay", false, "redirect");
+                "wxpay", "redirect");
 
         assertEquals(new PaymentNextAction.Redirect(
                 "https://pay.example.com/api/pay/preferred"), result.nextAction());
@@ -147,9 +174,9 @@ class EpayServiceImplTest {
 
     @Test
     void openInClientModeCanConsumeAnHttpQrcodeForWechat() {
-        EpayService.EpayCreateResult result = createPaymentResponse(
+        EpayService.EpayCreateResult result = createApiPaymentResponse(
                 "{\"code\":1,\"qrcode\":\"/api/pay/toapp/123\"}",
-                "wxpay", false, "open_in_client");
+                "wxpay", "open_in_client");
 
         assertEquals(new PaymentNextAction.OpenInClient(
                 "https://pay.example.com/api/pay/toapp/123", "wechat"), result.nextAction());
@@ -157,24 +184,24 @@ class EpayServiceImplTest {
 
     @Test
     void qrCodeModeCanEncodeAnHttpQrcodeOrPayurlAsQrContent() {
-        EpayService.EpayCreateResult httpQrcode = createPaymentResponse(
+        EpayService.EpayCreateResult httpQrcode = createApiPaymentResponse(
                 "{\"code\":1,\"qrcode\":\"https://pay.example/qr-content\"}",
-                "wxpay", false, "qr_code");
+                "wxpay", "qr_code");
         assertEquals(new PaymentNextAction.QrCode("https://pay.example/qr-content"), httpQrcode.nextAction());
 
-        EpayService.EpayCreateResult payurl = createPaymentResponse(
+        EpayService.EpayCreateResult payurl = createApiPaymentResponse(
                 "{\"code\":1,\"payurl\":\"https://pay.example/checkout\"}",
-                "alipay", false, "qr_code");
+                "alipay", "qr_code");
         assertEquals(new PaymentNextAction.QrCode("https://pay.example/checkout"), payurl.nextAction());
     }
 
     @Test
     void redirectModeRejectsAnAppSchemeFromTheQrcodeField() {
-        BusinessException exception = assertThrows(BusinessException.class, () -> createPaymentResponse(
+        BusinessException exception = assertThrows(BusinessException.class, () -> createApiPaymentResponse(
                 "{\"code\":1,\"qrcode\":\"weixin://qr/123\"}",
-                "wxpay", false, "redirect"));
+                "wxpay", "redirect"));
 
-        assertTrue(exception.getMessage().contains("兼容"));
+        assertTrue(exception.getMessage().contains("API 模式下网关未返回可用支付载体"));
     }
 
     @Test
@@ -184,10 +211,10 @@ class EpayServiceImplTest {
                 "data:text/html,<script>alert(1)</script>",
                 "file:///tmp/payment",
                 "https://[malformed")) {
-            BusinessException exception = assertThrows(BusinessException.class, () -> createPaymentResponse(
+            BusinessException exception = assertThrows(BusinessException.class, () -> createApiPaymentResponse(
                     "{\"code\":1,\"qrcode\":\"" + value + "\"}",
-                    "wxpay", false, "open_in_client"), value);
-            assertTrue(exception.getMessage().contains("兼容"), value);
+                    "wxpay", "open_in_client"), value);
+            assertTrue(exception.getMessage().contains("API 模式下网关未返回可用支付载体"), value);
         }
     }
 
@@ -232,30 +259,29 @@ class EpayServiceImplTest {
 
     @Test
     void acceptsOnlyNumericSuccessCodes() {
-        EpayService.EpayCreateResult result = createPaymentResponse(
+        EpayService.EpayCreateResult result = createApiPaymentResponse(
                 "{\"code\":\"1\",\"payurl\":\"https://pay.example/checkout\"}",
-                "alipay", false, "auto");
+                "alipay", "auto");
         assertEquals(new PaymentNextAction.Redirect("https://pay.example/checkout"), result.nextAction());
 
-        BusinessException exception = assertThrows(BusinessException.class, () -> createPaymentResponse(
+        BusinessException exception = assertThrows(BusinessException.class, () -> createApiPaymentResponse(
                 "{\"code\":true,\"payurl\":\"https://pay.example/checkout\"}",
-                "alipay", false, "auto"));
+                "alipay", "auto"));
         assertTrue(exception.getMessage().contains("支付创建失败"));
     }
 
-    private EpayService.EpayCreateResult createPaymentResponse(String responseBody,
-                                                                 String type,
-                                                                 boolean fallbackEnabled,
-                                                                 String carrierMode) {
+    private EpayService.EpayCreateResult createApiPaymentResponse(String responseBody,
+                                                                   String type,
+                                                                   String carrierMode) {
         RestTemplate restTemplate = mock(RestTemplate.class);
         when(restTemplate.postForEntity(eq("https://pay.example.com/mapi.php"), any(), eq(String.class)))
                 .thenReturn(ResponseEntity.ok(responseBody));
         EpayServiceImpl service = new EpayServiceImpl(restTemplate, new ObjectMapper());
-        return service.createPayment(
+        return service.createApiPayment(
                 new EpayService.ChannelConfig("pid", "secret", "https://pay.example.com/mapi.php"),
                 "merchant-1", type, "商品", BigDecimal.TEN, "127.0.0.1", "pc",
                 "https://shop.example.com/api/payments/webhook/epay",
                 "https://shop.example.com/pay/order-1?orderNo=100001&method=" + type,
-                fallbackEnabled, carrierMode);
+                carrierMode);
     }
 }

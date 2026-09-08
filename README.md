@@ -76,7 +76,7 @@ BOOTSTRAP_SUPER_ADMIN_PASSWORD  # 6-72 位 ASCII 可见字符；仅首次初始�
 
 每次外部支付都创建独立 `PaymentAttempt`，保存 merchant trade number、渠道/Provider/支付类型快照、敏感配置快照、标准 `next_action` 和状态。重复创建会复用有效的 `PENDING` attempt；重新支付会关闭旧 attempt 并生成新的 merchant trade number。回调永远使用 attempt 快照，因此修改、禁用或软删除渠道不会影响历史交易。订单与支付 API 只传输标准 `PaymentStatus` 和 `PaymentNextAction`。新增 Provider 的接口约定见 [docs/PAYMENT_PROVIDER.md](docs/PAYMENT_PROVIDER.md)。
 
-易支付兼容协议渠道配置 `pid`、`key`、`api_url`、`submit_fallback_enabled` 和 `carrier_mode`。`carrier_mode` 是管理员对上游载体语义的明确声明：自动按易支付常见字段约定，二维码将返回载体编码展示，跳转直接打开 HTTP(S) 载体，在客户端打开则将 HTTP(S) 载体交给微信/支付宝环境处理。某些网关会把支付页面 URL 放在 `qrcode` 字段，此时不要使用自动，应按实际行为选择“跳转”或“在客户端打开”。回调地址与支付完成回跳地址由服务端根据 `PUBLIC_SITE_URL` 自动生成；`key` 等敏感字段在后台响应中会被掩码，公开接口不会返回 Provider 配置或密钥。详细的标准动作、快照和 Epay 渠道规则见 [docs/PAYMENT_PROVIDER.md](docs/PAYMENT_PROVIDER.md)。
+易支付兼容协议渠道配置 `pid`、`key`、`api_url`、`create_mode` 和 `carrier_mode`。`create_mode=api` 时服务端请求 `mapi.php`，由 API 返回支付载体；`create_mode=page` 时服务端不请求 `mapi.php`，而是让浏览器直接 POST `submit.php`，由网关负责后续页面流程。`carrier_mode` 只在 API 模式生效，是管理员对上游载体语义的明确声明：自动按易支付常见字段约定，二维码将返回载体编码展示，跳转直接打开 HTTP(S) 载体，在客户端打开则将 HTTP(S) 载体交给微信/支付宝环境处理。某些网关会把支付页面 URL 放在 `qrcode` 字段，此时不要使用自动，应按实际行为选择“跳转”或“在客户端打开”。回调地址与支付完成回跳地址由服务端根据 `PUBLIC_SITE_URL` 自动生成；`key` 等敏感字段在后台响应中会被掩码，公开接口不会返回 Provider 配置或密钥。详细的标准动作、快照和 Epay 渠道规则见 [docs/PAYMENT_PROVIDER.md](docs/PAYMENT_PROVIDER.md)。
 
 ## 验证命令
 

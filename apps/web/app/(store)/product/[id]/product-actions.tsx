@@ -14,7 +14,7 @@ import { cn, formatYuan, detectPaymentDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel } from "@/lib/payment-channel"
 import { executePaymentAction, isExecutablePaymentAction } from "@/lib/payment-action-executor"
-import { buildPaymentPageHref, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction } from "@/lib/payment-entry"
+import { buildPaymentPageHref, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PublicPaymentChannel } from "@/types"
 import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
@@ -120,13 +120,15 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       const paymentHref = buildPaymentPageHref(result.payment.order_id, result.order.order_no, paymentType || "")
       const action = result.payment.next_action
       if (action) {
-        savePaymentAction(result.payment.order_id, action)
         const entry = resolvePaymentEntry(action, getPaymentActionEnvironment())
         if (entry.mode === "execute" && isExecutablePaymentAction(entry.decision)) {
           setPaymentFallbackHref(paymentHref)
           toast.success(t("payment.redirectingToPay"))
           executePaymentAction(entry.decision)
           return
+        }
+        if (shouldSeedPaymentAction(entry)) {
+          savePaymentAction(result.payment.order_id, action)
         }
       }
       toast.success(t("payment.redirectingToPay"))
