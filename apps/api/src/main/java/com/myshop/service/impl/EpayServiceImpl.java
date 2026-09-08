@@ -105,7 +105,8 @@ public class EpayServiceImpl implements EpayService {
                 String providerTradeNo = presentValue(body.get("trade_no"));
                 String gatewayOrigin = origin(parseHttpUrl(config.apiUrl()));
                 String responseFields = responseFieldNames(body);
-                Carrier selected = firstAvailableCarrier(body, gatewayOrigin);
+                CarrierCandidates candidates = extractCarrierCandidates(body, gatewayOrigin);
+                Carrier selected = firstAvailableCarrier(candidates);
                 log.info("Epay API response: merchantTradeNo={}, paymentType={}, responseCode={}, responseFields=[{}], selectedCarrier={}",
                         merchantTradeNo, type, responseCode, responseFields,
                         selected == null ? "none" : selected.fieldName());
@@ -118,7 +119,7 @@ public class EpayServiceImpl implements EpayService {
                 }
 
                 PaymentNextAction nextAction = selectNextAction(
-                        body, gatewayOrigin, type, submitFallbackEnabled, carrierMode,
+                        candidates, type, submitFallbackEnabled, carrierMode,
                         params, config.apiUrl());
                 return new EpayCreateResult(providerTradeNo, nextAction);
             } catch (BusinessException exception) {
@@ -136,42 +137,50 @@ public class EpayServiceImpl implements EpayService {
         throw new BusinessException(ErrorCode.WEBHOOK_VERIFY_FAIL, "支付创建失败：网络超时，请重试");
     }
 
-    private PaymentNextAction selectNextAction(Map<String, Object> body, String gatewayOrigin,
+    private PaymentNextAction selectNextAction(CarrierCandidates candidates,
                                                 String paymentType, boolean submitFallbackEnabled,
                                                 String rawCarrierMode, Map<String, String> signedParams,
                                                 String apiUrl) {
         String carrierMode = normalizeCarrierMode(rawCarrierMode);
-        Carrier scheme = firstCarrier(body, gatewayOrigin, "urlscheme");
-        Carrier qrCode = firstCarrier(body, gatewayOrigin, "qrcode", "qr_code");
-        Carrier redirect = firstCarrier(body, gatewayOrigin,
-                "payurl", "payurl2", "url", "pay_action_url");
 
         return switch (carrierMode) {
             case "auto" -> {
-                if (scheme != null) {
-                    if (!isAppScheme(scheme.value())) throw noCompatibleCarrier();
-                    yield new PaymentNextAction.DeepLink(scheme.value(), clientFor(paymentType));
+                if (candidates.scheme() != null && isAppScheme(candidates.scheme().value())) {
+                    yield new PaymentNextAction.DeepLink(candidates.scheme().value(), clientFor(paymentType));
                 }
-                if (qrCode != null) yield new PaymentNextAction.QrCode(qrCode.value());
+                if (candidates.qrCode() != null) {
+                    yield new PaymentNextAction.QrCode(candidates.qrCode().value());
+                }
+                Carrier redirect = firstHttpUrlCarrier(candidates.redirectCandidates());
                 if (redirect != null) yield new PaymentNextAction.Redirect(redirect.value());
+                if (!candidates.redirectCandidates().isEmpty()) throw noCompatibleCarrier();
                 yield fallbackAction(submitFallbackEnabled, signedParams,
                         paymentType, carrierMode, apiUrl);
             }
             case "qr_code" -> {
-                if (qrCode == null) throw noCompatibleCarrier();
-                yield new PaymentNextAction.QrCode(qrCode.value());
+                if (candidates.qrCode() != null) {
+                    yield new PaymentNextAction.QrCode(candidates.qrCode().value());
+                }
+                Carrier fallbackQr = firstCarrier(candidates.qrCodeFallbackCandidates());
+                if (fallbackQr != null) yield new PaymentNextAction.QrCode(fallbackQr.value());
+                if (candidates.scheme() != null && isAppScheme(candidates.scheme().value())) {
+                    yield new PaymentNextAction.QrCode(candidates.scheme().value());
+                }
+                throw noCompatibleCarrier();
             }
             case "redirect" -> {
+                Carrier redirect = firstHttpUrlCarrier(candidates.redirectCandidates());
                 if (redirect == null) {
-                    if (scheme != null || qrCode != null) throw noCompatibleCarrier();
+                    if (candidates.hasAnyCarrier()) throw noCompatibleCarrier();
                     yield fallbackAction(submitFallbackEnabled, signedParams,
                             paymentType, carrierMode, apiUrl);
                 }
                 yield new PaymentNextAction.Redirect(redirect.value());
             }
             case "open_in_client" -> {
+                Carrier redirect = firstHttpUrlCarrier(candidates.redirectCandidates());
                 if (redirect == null) {
-                    if (scheme != null || qrCode != null) throw noCompatibleCarrier();
+                    if (candidates.hasAnyCarrier()) throw noCompatibleCarrier();
                     yield fallbackAction(submitFallbackEnabled, signedParams,
                             paymentType, carrierMode, apiUrl);
                 }
@@ -199,20 +208,45 @@ public class EpayServiceImpl implements EpayService {
                 "支付创建失败：网关未返回与渠道载体模式兼容的载体");
     }
 
-    private Carrier firstAvailableCarrier(Map<String, Object> body, String gatewayOrigin) {
-        Carrier scheme = firstCarrier(body, gatewayOrigin, "urlscheme");
-        if (scheme != null) return scheme;
-        Carrier qrCode = firstCarrier(body, gatewayOrigin, "qrcode", "qr_code");
-        if (qrCode != null) return qrCode;
-        return firstCarrier(body, gatewayOrigin, "payurl", "payurl2", "url", "pay_action_url");
+    private CarrierCandidates extractCarrierCandidates(Map<String, Object> body, String gatewayOrigin) {
+        return new CarrierCandidates(
+                firstCarrier(body, gatewayOrigin, "urlscheme"),
+                firstCarrier(body, gatewayOrigin, "qrcode", "qr_code"),
+                carriers(body, gatewayOrigin,
+                        "payurl", "payurl2", "url", "pay_action_url", "qrcode", "qr_code"),
+                carriers(body, gatewayOrigin, "payurl", "payurl2", "url", "pay_action_url"));
+    }
+
+    private Carrier firstAvailableCarrier(CarrierCandidates candidates) {
+        if (candidates.scheme() != null && isAppScheme(candidates.scheme().value())) {
+            return candidates.scheme();
+        }
+        if (candidates.qrCode() != null) return candidates.qrCode();
+        return firstHttpUrlCarrier(candidates.redirectCandidates());
     }
 
     private Carrier firstCarrier(Map<String, Object> body, String gatewayOrigin, String... fieldNames) {
+        return firstCarrier(carriers(body, gatewayOrigin, fieldNames));
+    }
+
+    private Carrier firstCarrier(List<Carrier> carriers) {
+        return carriers.isEmpty() ? null : carriers.get(0);
+    }
+
+    private List<Carrier> carriers(Map<String, Object> body, String gatewayOrigin, String... fieldNames) {
+        List<Carrier> carriers = new ArrayList<>();
         for (String fieldName : fieldNames) {
             String value = normalizeResponseField(fieldName, body.get(fieldName), gatewayOrigin);
-            if (value != null) return new Carrier(fieldName, value);
+            if (value != null) carriers.add(new Carrier(fieldName, value));
         }
-        return null;
+        return List.copyOf(carriers);
+    }
+
+    private Carrier firstHttpUrlCarrier(List<Carrier> candidates) {
+        return candidates.stream()
+                .filter(candidate -> isHttpUrl(candidate.value()))
+                .findFirst()
+                .orElse(null);
     }
 
     private String normalizeResponseField(String fieldName, Object rawValue, String gatewayOrigin) {
@@ -229,13 +263,26 @@ public class EpayServiceImpl implements EpayService {
         };
     }
 
+    private boolean isHttpUrl(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            URI uri = URI.create(value);
+            String scheme = uri.getScheme();
+            return ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                    && uri.getHost() != null && !uri.getHost().isBlank();
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
     private boolean isAppScheme(String value) {
         try {
             URI uri = URI.create(value);
             String scheme = uri.getScheme();
             return scheme != null && !"http".equalsIgnoreCase(scheme)
                     && !"https".equalsIgnoreCase(scheme) && uri.getSchemeSpecificPart() != null
-                    && !uri.getSchemeSpecificPart().isBlank();
+                    && !uri.getSchemeSpecificPart().isBlank()
+                    && !List.of("javascript", "data", "file").contains(scheme.toLowerCase(Locale.ROOT));
         } catch (IllegalArgumentException exception) {
             return false;
         }
@@ -294,6 +341,19 @@ public class EpayServiceImpl implements EpayService {
     }
 
     private record Carrier(String fieldName, String value) { }
+
+    private record CarrierCandidates(Carrier scheme, Carrier qrCode,
+                                     List<Carrier> redirectCandidates,
+                                     List<Carrier> qrCodeFallbackCandidates) {
+        private CarrierCandidates {
+            redirectCandidates = List.copyOf(redirectCandidates);
+            qrCodeFallbackCandidates = List.copyOf(qrCodeFallbackCandidates);
+        }
+
+        private boolean hasAnyCarrier() {
+            return scheme != null || qrCode != null || !redirectCandidates.isEmpty();
+        }
+    }
 
     @Override
     public String buildSign(String merchantKey, Map<String, String> params) {

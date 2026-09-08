@@ -55,12 +55,12 @@ public class EpayPaymentProvider implements PaymentProvider {
                         "https://pay.example.com 或 https://pay.example.com/mapi.php", null, List.of()),
                 new ConfigField("submit_fallback_enabled", "无载体时启用 submit.php", "switch", false, false,
                         null, false, List.of()),
-                new ConfigField("carrier_mode", "支付载体模式", "select", false, false,
+                new ConfigField("carrier_mode", "支付载体语义（按网关实际行为选择）", "select", false, false,
                         null, "auto", List.of(
-                                new ConfigOption("auto", "自动"),
-                                new ConfigOption("qr_code", "二维码"),
-                                new ConfigOption("redirect", "跳转"),
-                                new ConfigOption("open_in_client", "在客户端打开")
+                                new ConfigOption("auto", "自动（按易支付常见字段）"),
+                                new ConfigOption("qr_code", "二维码（将返回载体编码展示）"),
+                                new ConfigOption("redirect", "跳转（直接打开 HTTP(S) 载体）"),
+                                new ConfigOption("open_in_client", "在客户端打开（交给微信/支付宝）")
                         ))
         );
     }

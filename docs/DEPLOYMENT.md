@@ -158,7 +158,7 @@ checks are not a public health or metrics API.
 ## Payment callback checklist
 
 - Set the canonical public storefront origin in `PUBLIC_SITE_URL`, aligned with `SITE_DOMAIN` and without a query or fragment.
-- Configure one enabled Epay-compatible channel with `pid`, `key`, `api_url`, `submit_fallback_enabled`, and `carrier_mode`. The API URL may be the gateway root or its complete `mapi.php` endpoint; the two carrier settings are stored on that channel and default to disabled/automatic.
+- Configure one enabled Epay-compatible channel with `pid`, `key`, `api_url`, `submit_fallback_enabled`, and `carrier_mode`. The API URL may be the gateway root or its complete `mapi.php` endpoint; the two carrier settings are stored on that channel and default to disabled/automatic. `carrier_mode` is the gateway-semantic declaration: use `auto` for common Epay field conventions, `qr_code` to encode the returned carrier, `redirect` to open an HTTP(S) carrier directly, or `open_in_client` to hand an HTTP(S) carrier to WeChat/Alipay. If the gateway returns a payment-page URL in `qrcode`, select `redirect` or `open_in_client` based on the gateway behavior rather than guessing from the field name.
 - The server generates the provider-generic callback route `/api/payments/webhook/{providerId}` and the storefront payment-result return page; no callback or return URL is entered in the admin UI.
 - Verify the generated callback route is reachable through Caddy while the API remains private.
 - Test a successful callback, wrong amount, bad signature, unpaid server query, query-unavailable policy, and duplicate webhook before accepting real orders.

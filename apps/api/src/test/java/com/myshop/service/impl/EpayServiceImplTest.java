@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -72,11 +73,11 @@ class EpayServiceImplTest {
     }
 
     @Test
-    void forcedModesFailClosedWhenTheGatewayCannotSupplyThatAction() {
-        BusinessException qrFailure = assertThrows(BusinessException.class, () -> createPaymentResponse(
+    void forcedModesUseDeclaredSemanticsAndFailClosedForIncompatibleCarriers() {
+        EpayService.EpayCreateResult qrCode = createPaymentResponse(
                 "{\"code\":1,\"payurl\":\"https://pay.example/checkout\"}",
-                "alipay", false, "qr_code"));
-        assertTrue(qrFailure.getMessage().contains("兼容"));
+                "alipay", false, "qr_code");
+        assertEquals(new PaymentNextAction.QrCode("https://pay.example/checkout"), qrCode.nextAction());
 
         EpayService.EpayCreateResult client = createPaymentResponse(
                 "{\"code\":1,\"payurl\":\"https://pay.example/checkout\"}",
@@ -89,7 +90,7 @@ class EpayServiceImplTest {
         assertTrue(invalidMode.getMessage().contains("载体模式无效"));
 
         BusinessException incompatible = assertThrows(BusinessException.class, () -> createPaymentResponse(
-                "{\"code\":1,\"qrcode\":\"qr\"}", "wxpay", true, "redirect"));
+                "{\"code\":1,\"qrcode\":\"weixin://qr/123\"}", "wxpay", true, "redirect"));
         assertTrue(incompatible.getMessage().contains("兼容"));
     }
 
@@ -116,18 +117,78 @@ class EpayServiceImplTest {
     }
 
     @Test
-    void normalizesRelativeResponseValuesAgainstTheGatewayOrigin() {
-        EpayService.EpayCreateResult relative = createPaymentResponse(
-                "{\"code\":1,\"qrcode\":\"/api/pay/toapp/123\"}",
+    void autoKeepsTraditionalQrFieldSemanticsEvenWhenTheValueIsHttp() {
+        EpayService.EpayCreateResult result = createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"https://pay.example/qr-content\"}",
                 "wxpay", false, "auto");
-        assertEquals(new PaymentNextAction.QrCode(
-                "https://pay.example.com/api/pay/toapp/123"), relative.nextAction());
 
-        EpayService.EpayCreateResult absolute = createPaymentResponse(
-                "{\"code\":1,\"payurl\":\"https://other.example.com/checkout\"}",
-                "alipay", false, "auto");
+        assertEquals(new PaymentNextAction.QrCode("https://pay.example/qr-content"), result.nextAction());
+    }
+
+    @Test
+    void redirectModeCanConsumeAnHttpQrcodeAfterNormalizingItsGatewayRelativePath() {
+        EpayService.EpayCreateResult result = createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"/api/pay/toapp/123\"}",
+                "wxpay", false, "redirect");
+
         assertEquals(new PaymentNextAction.Redirect(
-                "https://other.example.com/checkout"), absolute.nextAction());
+                "https://pay.example.com/api/pay/toapp/123"), result.nextAction());
+    }
+
+    @Test
+    void explicitRedirectUsesTheFirstLegalCarrierInTheDeclaredFieldOrder() {
+        EpayService.EpayCreateResult result = createPaymentResponse(
+                "{\"code\":1,\"payurl\":\"/api/pay/preferred\",\"qrcode\":\"/api/pay/qr\"}",
+                "wxpay", false, "redirect");
+
+        assertEquals(new PaymentNextAction.Redirect(
+                "https://pay.example.com/api/pay/preferred"), result.nextAction());
+    }
+
+    @Test
+    void openInClientModeCanConsumeAnHttpQrcodeForWechat() {
+        EpayService.EpayCreateResult result = createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"/api/pay/toapp/123\"}",
+                "wxpay", false, "open_in_client");
+
+        assertEquals(new PaymentNextAction.OpenInClient(
+                "https://pay.example.com/api/pay/toapp/123", "wechat"), result.nextAction());
+    }
+
+    @Test
+    void qrCodeModeCanEncodeAnHttpQrcodeOrPayurlAsQrContent() {
+        EpayService.EpayCreateResult httpQrcode = createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"https://pay.example/qr-content\"}",
+                "wxpay", false, "qr_code");
+        assertEquals(new PaymentNextAction.QrCode("https://pay.example/qr-content"), httpQrcode.nextAction());
+
+        EpayService.EpayCreateResult payurl = createPaymentResponse(
+                "{\"code\":1,\"payurl\":\"https://pay.example/checkout\"}",
+                "alipay", false, "qr_code");
+        assertEquals(new PaymentNextAction.QrCode("https://pay.example/checkout"), payurl.nextAction());
+    }
+
+    @Test
+    void redirectModeRejectsAnAppSchemeFromTheQrcodeField() {
+        BusinessException exception = assertThrows(BusinessException.class, () -> createPaymentResponse(
+                "{\"code\":1,\"qrcode\":\"weixin://qr/123\"}",
+                "wxpay", false, "redirect"));
+
+        assertTrue(exception.getMessage().contains("兼容"));
+    }
+
+    @Test
+    void openInClientModeRejectsNonHttpAndMalformedCarriers() {
+        for (String value : List.of(
+                "javascript:alert(1)",
+                "data:text/html,<script>alert(1)</script>",
+                "file:///tmp/payment",
+                "https://[malformed")) {
+            BusinessException exception = assertThrows(BusinessException.class, () -> createPaymentResponse(
+                    "{\"code\":1,\"qrcode\":\"" + value + "\"}",
+                    "wxpay", false, "open_in_client"), value);
+            assertTrue(exception.getMessage().contains("兼容"), value);
+        }
     }
 
     @Test

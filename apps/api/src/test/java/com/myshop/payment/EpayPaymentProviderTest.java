@@ -38,6 +38,14 @@ class EpayPaymentProviderTest {
                 provider.configSchema().stream().map(PaymentProvider.ConfigField::required).toList());
         assertEquals(false, provider.configSchema().get(3).defaultValue());
         assertEquals("auto", provider.configSchema().get(4).defaultValue());
+        assertEquals("支付载体语义（按网关实际行为选择）", provider.configSchema().get(4).label());
+        assertEquals(List.of(
+                        "自动（按易支付常见字段）",
+                        "二维码（将返回载体编码展示）",
+                        "跳转（直接打开 HTTP(S) 载体）",
+                        "在客户端打开（交给微信/支付宝）"),
+                provider.configSchema().get(4).options().stream()
+                        .map(PaymentProvider.ConfigOption::label).toList());
     }
 
     @Test

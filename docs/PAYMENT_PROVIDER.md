@@ -101,13 +101,33 @@ The Epay adapter declares these channel-level fields:
   channel only, a successful create response without a usable carrier may use
   the signed `submit.php` page;
 - `carrier_mode` — select, default `auto`, with `auto`, `qr_code`,
-  `redirect`, and `open_in_client`.
+  `redirect`, and `open_in_client`. This is an administrator declaration of
+  what the gateway's returned carrier means; it is not a whitelist of which
+  response fields may be read.
 
-In `auto`, an explicit app scheme becomes `deep_link`, an Epay QR field becomes
-`qr_code`, and a URL carrier becomes `redirect`. `open_in_client` wraps a URL
-carrier and selects `wechat` for `wxpay` or `alipay` for `alipay`. A forced
-mode without a compatible returned carrier fails closed. The adapter never
-turns a QR value into a browser page based on the device.
+The Epay adapter first extracts the returned values without assigning domain
+semantics to their provider-specific field names. The configured mode then
+chooses the standard action:
+
+- `auto` follows the common Epay convention: a valid non-HTTP(S) `urlscheme`
+  becomes `deep_link`; otherwise `qrcode`/`qr_code` becomes `qr_code`; otherwise
+  `payurl`, `payurl2`, `url`, or `pay_action_url` becomes `redirect`. An HTTP
+  value in a QR field is not guessed into a redirect in this mode.
+- `qr_code` treats the returned carrier as QR content. It prefers
+  `qrcode`/`qr_code`, then the URL fields, and finally a valid app scheme. This
+  explicit mode may encode an HTTP URL or deep link as the QR content.
+- `redirect` searches, in order, `payurl`, `payurl2`, `url`, `pay_action_url`,
+  `qrcode`, and `qr_code` for the first valid HTTP(S) URL and opens it as a
+  payment page.
+- `open_in_client` uses the same HTTP(S) carrier order, then selects `wechat`
+  for `wxpay` or `alipay` for `alipay`.
+
+`redirect` and `open_in_client` reject app schemes, `javascript:`, `data:`,
+`file:`, and malformed URLs. A forced mode with a returned but incompatible
+carrier fails closed; only a response with no carrier can use the optional
+`submit.php` fallback. Some Epay gateways put a payment-page URL in the
+`qrcode` field. For those gateways do not leave the channel in `auto`: choose
+`redirect` or `open_in_client` according to the gateway's actual behavior.
 
 Epay protocol statuses and fields are translated to the standard SPI only
 inside the Epay adapter/service. The generic payment and webhook services do
