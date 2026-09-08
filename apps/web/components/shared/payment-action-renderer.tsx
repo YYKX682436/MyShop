@@ -40,6 +40,12 @@ const FALLBACK_ENVIRONMENT: PaymentActionEnvironment = {
   isAlipayBrowser: false,
 }
 
+function QrSurface({ children }: { children: ReactNode }) {
+  return <div className="flex min-h-52 w-52 items-center justify-center rounded-xl bg-white p-3">
+    {children}
+  </div>
+}
+
 export function PaymentActionRenderer({
   action,
   loadState,
@@ -57,11 +63,15 @@ export function PaymentActionRenderer({
   }, [])
 
   const needsEnvironment = action?.type === "open_in_client" || action?.type === "deep_link"
+  const waitingForEnvironment = Boolean(action && needsEnvironment && !environment)
   const decision = useMemo(() => {
-    if (!action) return null
-    if (needsEnvironment && !environment) return null
-    return resolvePaymentAction(action, environment ?? FALLBACK_ENVIRONMENT)
-  }, [action, environment, needsEnvironment])
+    if (!action || waitingForEnvironment) return null
+    try {
+      return resolvePaymentAction(action, environment ?? FALLBACK_ENVIRONMENT) ?? null
+    } catch {
+      return null
+    }
+  }, [action, environment, waitingForEnvironment])
 
   const triggerExecution = useCallback((executable: ExecutablePaymentAction) => {
     setAutoExecutionPending(true)
@@ -102,7 +112,10 @@ export function PaymentActionRenderer({
 
   if (!action) {
     if (loadState === "loading") {
-      return <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label={t("common.loading")} />
+      return <div className="flex flex-col items-center gap-2 py-4 text-center" role="status" aria-live="polite">
+        <Loader2 className="h-8 w-8 animate-spin text-white" aria-label={t("common.loading")} />
+        <span className="text-sm text-white/90">{t("common.loading")}</span>
+      </div>
     }
     if (loadState === "error" || statusError) {
       return <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert">
@@ -116,12 +129,24 @@ export function PaymentActionRenderer({
     </div>
   }
 
-  if (!decision || (needsEnvironment && !environment)) {
-    return <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-label={t("common.loading")} />
+  if (waitingForEnvironment) {
+    return <div className="flex flex-col items-center gap-2 py-4 text-center" role="status" aria-live="polite">
+      <Loader2 className="h-8 w-8 animate-spin text-white" aria-label={t("common.loading")} />
+      <span className="text-sm text-white/90">{t("common.loading")}</span>
+    </div>
+  }
+
+  if (!decision) {
+    return <div className="flex flex-col items-center gap-3 px-3 text-center" role="alert">
+      <p className="text-sm text-white">{statusError || t("payment.loadFailed")}</p>
+      {retryStatusAction || retryAction}
+    </div>
   }
 
   if (decision.kind === "qr_code") {
-    return <QRCodeSVG value={decision.value} size={184} aria-label={t("payment.scanQrCode")} />
+    return <QrSurface>
+      <QRCodeSVG value={decision.value} size={184} aria-label={t("payment.scanQrCode")} />
+    </QrSurface>
   }
 
   if (decision.kind === "redirect") {
@@ -137,10 +162,12 @@ export function PaymentActionRenderer({
 
   if (decision.kind === "open_in_client") {
     if (decision.mode === "qr_code") {
-      return <div className="flex flex-col items-center gap-2 text-center">
-        <QRCodeSVG value={decision.url} size={184} aria-label={scanClientHint(decision.client, t)} />
-        <p className="text-xs text-muted-foreground">{scanClientHint(decision.client, t)}</p>
-      </div>
+      return <QrSurface>
+        <div className="flex flex-col items-center gap-2 text-center">
+          <QRCodeSVG value={decision.url} size={184} aria-label={scanClientHint(decision.client, t)} />
+          <p className="text-xs text-muted-foreground">{scanClientHint(decision.client, t)}</p>
+        </div>
+      </QrSurface>
     }
     if (decision.mode === "copy") {
       return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">
@@ -167,10 +194,12 @@ export function PaymentActionRenderer({
 
   if (decision.kind === "deep_link") {
     if (decision.mode === "qr_code") {
-      return <div className="flex flex-col items-center gap-2 text-center">
-        <QRCodeSVG value={decision.url} size={184} aria-label={scanClientHint(decision.client, t)} />
-        <p className="text-xs text-muted-foreground">{scanClientHint(decision.client, t)}</p>
-      </div>
+      return <QrSurface>
+        <div className="flex flex-col items-center gap-2 text-center">
+          <QRCodeSVG value={decision.url} size={184} aria-label={scanClientHint(decision.client, t)} />
+          <p className="text-xs text-muted-foreground">{scanClientHint(decision.client, t)}</p>
+        </div>
+      </QrSurface>
     }
     return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">
       <p className="text-sm text-muted-foreground">

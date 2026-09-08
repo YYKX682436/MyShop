@@ -21,6 +21,7 @@ const desktop = { isMobile: false, isWechatBrowser: false, isAlipayBrowser: fals
 const mobile = { isMobile: true, isWechatBrowser: false, isAlipayBrowser: false }
 const productActionsSource = readFileSync(new URL("../app/(store)/product/[id]/product-actions.tsx", import.meta.url), "utf8")
 const paymentPageSource = readFileSync(new URL("../app/(store)/pay/[orderId]/page.tsx", import.meta.url), "utf8")
+const paymentActionRendererSource = readFileSync(new URL("../components/shared/payment-action-renderer.tsx", import.meta.url), "utf8")
 
 test("redirect is an immediate entry and never needs /pay", () => {
   const entry = resolvePaymentEntry(redirect, desktop)
@@ -134,4 +135,66 @@ test("payment page uses explicit load state and does not hide status errors", ()
   assert.match(paymentPageSource, /applyPaymentStatusError\(/)
   assert.doesNotMatch(paymentPageSource, /statusLoaded/)
   assert.doesNotMatch(paymentPageSource, /catch\(\(\) => undefined\)/)
+})
+
+test("payment page delegates QR surface ownership to the action renderer", () => {
+  const rendererIndex = paymentPageSource.indexOf("<PaymentActionRenderer")
+  assert.notEqual(rendererIndex, -1)
+  const parentMarkup = paymentPageSource.slice(Math.max(0, rendererIndex - 300), rendererIndex)
+
+  assert.doesNotMatch(parentMarkup, /min-h-52|w-52|bg-white/)
+})
+
+test("only QR decisions render a QR surface", () => {
+  assert.match(paymentActionRendererSource, /function QrSurface[\s\S]*bg-white/)
+  assert.equal((paymentActionRendererSource.match(/<QrSurface>/g) || []).length, 3)
+
+  const qrBranch = paymentActionRendererSource.slice(
+    paymentActionRendererSource.indexOf('if (decision.kind === "qr_code")'),
+    paymentActionRendererSource.indexOf('if (decision.kind === "redirect")'),
+  )
+  assert.match(qrBranch, /<QrSurface>[\s\S]*QRCodeSVG/)
+
+  const openClientBranch = paymentActionRendererSource.slice(
+    paymentActionRendererSource.indexOf('if (decision.kind === "open_in_client")'),
+    paymentActionRendererSource.indexOf('if (decision.kind === "deep_link")'),
+  )
+  assert.match(openClientBranch, /if \(decision\.mode === "qr_code"\)[\s\S]*<QrSurface>[\s\S]*QRCodeSVG/)
+
+  const deepLinkBranch = paymentActionRendererSource.slice(
+    paymentActionRendererSource.indexOf('if (decision.kind === "deep_link")'),
+    paymentActionRendererSource.lastIndexOf('return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">'),
+  )
+  assert.match(deepLinkBranch, /if \(decision\.mode === "qr_code"\)[\s\S]*<QrSurface>[\s\S]*QRCodeSVG/)
+
+  const loadAndErrorBranches = paymentActionRendererSource.slice(
+    paymentActionRendererSource.indexOf("if (!action)"),
+    paymentActionRendererSource.indexOf('if (decision.kind === "qr_code")'),
+  )
+  assert.doesNotMatch(loadAndErrorBranches, /<QrSurface>|min-h-52|w-52|bg-white/)
+
+  const redirectBranch = paymentActionRendererSource.slice(
+    paymentActionRendererSource.indexOf('if (decision.kind === "redirect")'),
+    paymentActionRendererSource.indexOf('if (decision.kind === "open_in_client")'),
+  )
+  assert.doesNotMatch(redirectBranch, /<QrSurface>|min-h-52|w-52|bg-white/)
+
+  const formPostBranch = paymentActionRendererSource.slice(
+    paymentActionRendererSource.lastIndexOf('return <div className="flex flex-col items-center gap-3 px-3 text-center" role="status">'),
+  )
+  assert.doesNotMatch(formPostBranch, /<QrSurface>|min-h-52|w-52|bg-white/)
+})
+
+test("an action without a decision uses an explicit retry error instead of a permanent spinner", () => {
+  const unresolvedBranchStart = paymentActionRendererSource.indexOf("if (!decision) {")
+  const qrBranchStart = paymentActionRendererSource.indexOf('if (decision.kind === "qr_code")')
+  const unresolvedBranch = paymentActionRendererSource.slice(unresolvedBranchStart, qrBranchStart)
+
+  assert.notEqual(unresolvedBranchStart, -1)
+  assert.match(paymentActionRendererSource, /const waitingForEnvironment = Boolean\(action && needsEnvironment && !environment\)/)
+  assert.match(paymentActionRendererSource, /if \(waitingForEnvironment\)[\s\S]*Loader2/)
+  assert.match(unresolvedBranch, /role="alert"/)
+  assert.match(unresolvedBranch, /statusError \|\| t\("payment\.loadFailed"\)/)
+  assert.match(unresolvedBranch, /retryStatusAction \|\| retryAction/)
+  assert.doesNotMatch(unresolvedBranch, /Loader2|animate-spin|QrSurface/)
 })

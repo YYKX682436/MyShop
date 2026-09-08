@@ -164,15 +164,13 @@ export default function PaymentPage({ params }: { params: Promise<{ orderId: str
       <div className="flex w-72 flex-col items-center gap-4 rounded-surface px-6 pb-8 pt-6" style={{ backgroundColor: brandColor || "#374151" }}>
         <div className="flex items-center gap-2.5"><PaymentIcon method={method} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div>
         <p className="text-sm font-medium text-white/90">{getPaymentScanHint(method, t)}</p>
-        <div className="flex min-h-52 w-52 items-center justify-center rounded-xl bg-white p-3">
-          <PaymentActionRenderer
-            action={paymentState.nextAction}
-            loadState={paymentState.phase}
-            statusError={paymentState.errorMessage}
-            retryAction={retryButton}
-            retryStatusAction={retryStatusButton}
-          />
-        </div>
+        <PaymentActionRenderer
+          action={paymentState.nextAction}
+          loadState={paymentState.phase}
+          statusError={paymentState.errorMessage}
+          retryAction={retryButton}
+          retryStatusAction={retryStatusButton}
+        />
       </div>
       <div className="flex w-full items-center justify-between border-t border-border-subtle pt-4 text-sm"><span className="text-muted-foreground">{t("payment.orderNo")}</span><button type="button" onClick={() => copy(orderNo)} disabled={!orderNo} className="flex items-center gap-1 rounded-control px-2 py-1 font-mono text-xs transition-colors hover:bg-surface-muted disabled:opacity-50"><span>{orderNo || "加载中"}</span><Copy className="h-3.5 w-3.5" /></button></div>
     </div>

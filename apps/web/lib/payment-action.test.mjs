@@ -3,6 +3,7 @@ import test from "node:test"
 import { resolvePaymentAction } from "./payment-action.ts"
 
 const qrCode = { type: "qr_code", value: "weixin://qr/demo" }
+const httpQrCode = { type: "qr_code", value: "https://pay.example/checkout" }
 const redirect = { type: "redirect", url: "https://pay.example/checkout" }
 const wechatClient = { type: "open_in_client", url: "https://pay.example/open", client: "wechat" }
 const alipayClient = { type: "open_in_client", url: "https://pay.example/alipay", client: "alipay" }
@@ -15,6 +16,12 @@ const mobile = { isMobile: true, isWechatBrowser: false, isAlipayBrowser: false 
 test("qr_code always renders the exact provider value", () => {
   assert.deepEqual(resolvePaymentAction(qrCode, desktop), {
     kind: "qr_code", value: "weixin://qr/demo",
+  })
+})
+
+test("an HTTP qrcode remains a raw QR payload instead of becoming a redirect", () => {
+  assert.deepEqual(resolvePaymentAction(httpQrCode, desktop), {
+    kind: "qr_code", value: "https://pay.example/checkout",
   })
 })
 
