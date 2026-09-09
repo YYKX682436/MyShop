@@ -1,10 +1,11 @@
-import type {
+  import type {
   ApiResponse,
   PaginatedData,
   UserProfile,
   RegisterRequest,
   OrderBrief,
   OrderStatus,
+  OrderPaymentMethod,
   ProductCard,
   ProductDetail,
   AdminProductDetail,
@@ -368,7 +369,7 @@ export const orderApi = {
     return request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) })
   },
   getStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
-    request<{ order_id: string; order_no: number; status: OrderStatus; payment_id?: string | null; next_action?: PaymentNextAction | null; expires_at: string | null; remaining_seconds: number }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`),
+    request<{ order_id: string; order_no: number; status: OrderStatus; payment_method: OrderPaymentMethod | null; payment_channel_code: string | null; payment_id?: string | null; next_action?: PaymentNextAction | null; expires_at: string | null; remaining_seconds: number }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`),
   refreshStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
     request<{ status: OrderStatus; order_no: number }>(`/orders/${orderId}/refresh?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`, { method: "POST" }),
   query: (data: { orders: { order_no: number | string; lookup_token?: string }[] }) =>
@@ -805,6 +806,8 @@ const ERROR_CODE_I18N: Record<number, string> = {
   40007: "error.priceChanged",
   // Payment
   50001: "error.channelUnavailable",
+  50003: "error.balancePaymentRequiresLogin",
+  50004: "error.insufficientBalance",
   // Admin card-key pickup conflicts are safe to translate in both locales.
   70011: "error.cardKeyUnavailable",
 }

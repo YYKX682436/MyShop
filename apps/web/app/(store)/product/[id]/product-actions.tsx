@@ -7,7 +7,7 @@ import { motion } from "motion/react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
-import { ApiError, orderApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
+import { ApiError, orderApi, userApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, formatYuan, detectPaymentDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
@@ -15,7 +15,8 @@ import { getPaymentTypeForChannel } from "@/lib/payment-channel"
 import { executePaymentAction, isExecutablePaymentAction, type ExecutablePaymentAction } from "@/lib/payment-action-executor"
 import { buildPaymentPageHref, clearPaymentAction, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
 import { PaymentSelector } from "@/components/shared/payment-selector"
-import type { ProductDetail, ProductSpec, PublicPaymentChannel } from "@/types"
+import type { ProductDetail, ProductSpec, PublicPaymentChannel, OrderPaymentMethod } from "@/types"
+import { getBalancePaymentAvailability, isImmediateBalancePaymentSuccess, paymentMethodForRequest } from "@/lib/payment-method"
 import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
 
 interface ProductActionsProps {
@@ -25,7 +26,7 @@ interface ProductActionsProps {
 
 export function ProductActions({ product, channels }: ProductActionsProps) {
   const { t } = useLocale()
-  const { user } = useAuth()
+  const { user, setUser } = useAuth()
   const router = useRouter()
   const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
@@ -45,9 +46,17 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     Object.fromEntries(customerInputFields.map(field => [field.id, ""]))
   )
   const [customerInputErrors, setCustomerInputErrors] = useState<Record<string, string>>({})
-  const [selectedPayment, setSelectedPayment] = useState(
-    enabledChannels.length > 0 ? enabledChannels[0].channel_code : ""
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<OrderPaymentMethod>("ONLINE")
+  const [selectedPaymentChannelCode, setSelectedPaymentChannelCode] = useState(
+    enabledChannels[0]?.channel_code || "",
   )
+  useEffect(() => {
+    setSelectedPaymentChannelCode((current) =>
+      enabledChannels.some((channel) => channel.channel_code === current)
+        ? current
+        : enabledChannels[0]?.channel_code || "",
+    )
+  }, [enabledChannels])
   const [submitting, setSubmitting] = useState(false)
   const [paymentFallbackAction, setPaymentFallbackAction] = useState<ExecutablePaymentAction | null>(null)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
@@ -59,6 +68,15 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const finiteStock = currentStock ?? 0
   const isOutOfStock = !unlimited && finiteStock === 0
   const deliveryType = product.delivery_type === "MANUAL" ? "manual" : "auto"
+  const balanceAvailability = getBalancePaymentAvailability(
+    Boolean(user),
+    user?.role,
+    user?.balance,
+    totalPrice,
+  )
+  const onlineAvailable = enabledChannels.length > 0 && Boolean(selectedPaymentChannelCode)
+  const paymentReady = adminPickup
+    || (selectedPaymentMethod === "BALANCE" ? balanceAvailability.selectable : onlineAvailable)
 
   const validateCustomerInputsForAction = () => {
     const result = validateCustomerInputs(customerInputFields, customerInputs)
@@ -83,9 +101,17 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
   const handleBuyNow = async () => {
     const normalizedCustomerInputs = validateCustomerInputsForAction()
     if (!normalizedCustomerInputs) return
-    if (!adminPickup && !selectedPayment) {
-      toast.error(t("product.paymentMethod"))
-      return
+    if (!adminPickup) {
+      if (selectedPaymentMethod === "BALANCE" && !balanceAvailability.selectable) {
+        toast.error(balanceAvailability.reason === "login_required"
+          ? t("product.balanceLoginRequired")
+          : t("product.balanceInsufficient"))
+        return
+      }
+      if (selectedPaymentMethod === "ONLINE" && !onlineAvailable) {
+        toast.error(t("product.noOnlineChannels"))
+        return
+      }
     }
     if (product.specs.length > 0 && !selectedSpec) return
     if (isOutOfStock) {
@@ -95,12 +121,21 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
 
     setSubmitting(true)
     setPaymentFallbackAction(null)
+    const requestPaymentIntent = adminPickup
+      ? {}
+      : paymentMethodForRequest(selectedPaymentMethod, selectedPaymentChannelCode)
+    const fingerprintPaymentIntent = adminPickup
+      ? { payment_method: null, payment_channel_code: null }
+      : {
+          payment_method: selectedPaymentMethod,
+          payment_channel_code: selectedPaymentMethod === "ONLINE" ? selectedPaymentChannelCode : null,
+        }
     const intent = getOrCreateIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, {
       product_id: product.id,
       spec_id: selectedSpec?.id ?? null,
       quantity,
       customer_inputs: normalizedCustomerInputs,
-      payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
+      ...fingerprintPaymentIntent,
       expected_unit_price: Number(currentPrice.toFixed(2)),
     })
     try {
@@ -111,7 +146,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           spec_id: selectedSpec?.id ?? null,
           quantity,
           customer_inputs: normalizedCustomerInputs,
-          payment_method: adminPickup ? "ADMIN_PICKUP" : selectedPayment,
+           ...requestPaymentIntent,
           expected_unit_price: Number(currentPrice.toFixed(2)),
           idempotency_key: intent.key,
           idempotency_fingerprint: intent.fingerprint,
@@ -124,7 +159,23 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         router.push(`/order/query?orderNo=${encodeURIComponent(String(result.order.order_no))}`)
         return
       }
-
+      if (isImmediateBalancePaymentSuccess(result)) {
+        try {
+          const refreshedProfile = await requestOrThrow(() => userApi.getProfile())
+          setUser(refreshedProfile)
+        } catch {
+          // The order result is already authoritative; a later profile load
+          // will reconcile the navigation balance if this refresh is transient.
+        }
+        toast.success(t("payment.success"))
+        router.push(`/order/query?orderNo=${encodeURIComponent(String(result.order.order_no))}&paymentReturn=1`)
+        return
+      }
+      const paymentType = getPaymentTypeForChannel(
+        enabledChannels,
+        result.payment.payment_channel_code || selectedPaymentChannelCode,
+      )
+      const paymentHref = buildPaymentPageHref(result.payment.order_id, result.order.order_no, paymentType || "")
       const action = result.payment.next_action
       if (!action) {
         clearPaymentAction(result.payment.order_id)
@@ -141,8 +192,6 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
       }
 
       if (shouldSeedPaymentAction(entry)) {
-        const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
-        const paymentHref = buildPaymentPageHref(result.payment.order_id, result.order.order_no, paymentType || "")
         savePaymentAction(result.payment.order_id, action)
         toast.success(t("payment.redirectingToPay"))
         router.push(paymentHref)
@@ -337,11 +386,56 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
               {t("payment.adminPickup")}
             </div>
           ) : (
-            <PaymentSelector
-              channels={enabledChannels}
-              selected={selectedPayment}
-              onSelect={setSelectedPayment}
-            />
+            <>
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("product.paymentMethod")}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={selectedPaymentMethod === "BALANCE"}
+                  disabled={!balanceAvailability.selectable}
+                  onClick={() => setSelectedPaymentMethod("BALANCE")}
+                  className={cn(
+                    "flex min-h-16 flex-col items-start justify-center rounded-control border px-3 py-2.5 text-left text-sm transition-[border-color,background-color,opacity] duration-180",
+                    selectedPaymentMethod === "BALANCE" ? "border-primary/25 bg-primary/10" : "border-border-subtle hover:border-border-strong hover:bg-surface-muted",
+                    !balanceAvailability.selectable && "cursor-not-allowed opacity-60",
+                  )}
+                >
+                  <span className="font-medium text-foreground">{t("product.balancePayment")}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {balanceAvailability.reason === "login_required"
+                      ? t("product.balanceLoginRequired")
+                      : balanceAvailability.reason === "insufficient"
+                        ? `${t("product.balanceInsufficient")}（${t("product.balanceCurrent").replace("{balance}", formatYuan(user?.balance ?? 0))}）`
+                        : t("product.balanceCurrent").replace("{balance}", formatYuan(user?.balance ?? 0))}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={selectedPaymentMethod === "ONLINE"}
+                  onClick={() => setSelectedPaymentMethod("ONLINE")}
+                  className={cn(
+                    "flex min-h-16 flex-col items-start justify-center rounded-control border px-3 py-2.5 text-left text-sm transition-[border-color,background-color] duration-180",
+                    selectedPaymentMethod === "ONLINE" ? "border-primary/25 bg-primary/10" : "border-border-subtle hover:border-border-strong hover:bg-surface-muted",
+                  )}
+                >
+                  <span className="font-medium text-foreground">{t("product.onlinePayment")}</span>
+                  <span className="text-xs text-muted-foreground">{enabledChannels.length > 0 ? t("product.paymentHint") : t("product.noOnlineChannels")}</span>
+                </button>
+              </div>
+              {selectedPaymentMethod === "ONLINE" && enabledChannels.length > 0 && (
+                <div className="mt-3">
+                  <PaymentSelector
+                    channels={enabledChannels}
+                    selected={selectedPaymentChannelCode}
+                    onSelect={setSelectedPaymentChannelCode}
+                  />
+                </div>
+              )}
+              {selectedPaymentMethod === "ONLINE" && enabledChannels.length === 0 && (
+                <p className="mt-2 text-xs text-destructive">{t("product.noOnlineChannels")}</p>
+              )}
+            </>
           )}
         </div>
 
@@ -361,7 +455,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         <div>
           <button
             onClick={handleBuyNow}
-            disabled={submitting || isOutOfStock}
+            disabled={submitting || isOutOfStock || !paymentReady}
             className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
           >
             {submitting ? (
@@ -369,7 +463,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             ) : (
               <Zap className="h-4 w-4" />
             )}
-            {isOutOfStock ? t("product.outOfStock") : adminPickup ? t("product.adminPickup") : t("product.buyNow")}
+            {isOutOfStock ? t("product.outOfStock") : adminPickup ? t("product.adminPickup") : !paymentReady ? t("product.paymentUnavailable") : t("product.buyNow")}
           </button>
           {paymentFallbackAction && (
             <div className="mt-3 flex flex-col items-center gap-2 rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-center" role="alert">

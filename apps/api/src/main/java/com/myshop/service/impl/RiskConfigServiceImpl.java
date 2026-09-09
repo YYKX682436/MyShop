@@ -98,7 +98,8 @@ public class RiskConfigServiceImpl implements RiskConfigService {
             map.put("actual_amount", o.getActualAmount());
             map.put("status", o.getStatus().name());
             map.put("order_type", o.getOrderType());
-            map.put("payment_method", o.getPaymentMethod());
+            map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
+            map.put("payment_channel_code", o.getPaymentChannelCode());
             map.put("created_at", o.getCreatedAt());
             User user = o.getUserId() == null ? null : usersById.get(o.getUserId());
             map.put("customer_type", user == null ? "GUEST" : "REGISTERED");

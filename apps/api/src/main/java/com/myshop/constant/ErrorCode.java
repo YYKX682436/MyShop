@@ -44,6 +44,8 @@ public final class ErrorCode {
     // ── Payment 50001~50099 ──
     public static final int CHANNEL_UNAVAILABLE = 50001;
     public static final int WEBHOOK_VERIFY_FAIL = 50002;
+    public static final int BALANCE_PAYMENT_REQUIRES_LOGIN = 50003;
+    public static final int INSUFFICIENT_BALANCE = 50004;
     // ── Security 60001~60099 ──
     public static final int TURNSTILE_FAILED = 60001;
     public static final int DEVICE_RATE_LIMITED = 60002;

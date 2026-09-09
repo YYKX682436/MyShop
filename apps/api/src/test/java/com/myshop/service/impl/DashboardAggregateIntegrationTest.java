@@ -217,13 +217,15 @@ class DashboardAggregateIntegrationTest {
                              LocalDateTime createdAt, LocalDateTime paidAt, String amount, String orderType) {
         UUID id = UUID.randomUUID();
         LocalDateTime deliveredAt = "DELIVERED".equals(status) ? paidAt : null;
+        String paymentMethod = "ADMIN_PICKUP".equals(orderType) ? null : "ONLINE";
+        String paymentChannelCode = "ADMIN_PICKUP".equals(orderType) ? null : "dashboard-channel";
         jdbcTemplate.update("""
                 INSERT INTO orders(id, created_at, updated_at, user_id, session_token, actual_amount, total_amount,
-                                   status, order_type, paid_at, delivered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                   status, order_type, payment_method, payment_channel_code, paid_at, delivered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, id, createdAt, createdAt, userId, sessionToken,
                 "ADMIN_PICKUP".equals(orderType) ? BigDecimal.ZERO : new BigDecimal(amount),
-                new BigDecimal(amount), status, orderType, paidAt, deliveredAt);
+                new BigDecimal(amount), status, orderType, paymentMethod, paymentChannelCode, paidAt, deliveredAt);
         return id;
     }
 

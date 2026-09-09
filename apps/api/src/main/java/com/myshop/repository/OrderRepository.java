@@ -1,6 +1,7 @@
 package com.myshop.repository;
 
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import org.springframework.data.domain.Page;
@@ -19,7 +20,7 @@ import java.util.UUID;
 
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
-    boolean existsByPaymentMethodAndStatusAndOrderType(String paymentMethod,
+    boolean existsByPaymentMethodAndStatusAndOrderType(OrderPaymentMethod paymentMethod,
                                                         OrderStatus status,
                                                         OrderType orderType);
 
@@ -179,6 +180,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                     OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.payment_channel_code, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR EXISTS (
                         SELECT 1
                         FROM payment_attempts pa
@@ -238,6 +240,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                     OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR COALESCE(o.payment_channel_code, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR EXISTS (
                         SELECT 1
                         FROM payment_attempts pa

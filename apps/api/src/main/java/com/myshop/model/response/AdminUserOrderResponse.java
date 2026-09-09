@@ -3,6 +3,7 @@ package com.myshop.model.response;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 
 import java.math.BigDecimal;
@@ -18,7 +19,8 @@ public record AdminUserOrderResponse(
         BigDecimal actualAmount,
         OrderStatus status,
         OrderType orderType,
-        String paymentMethod,
+        @JsonProperty("payment_method") OrderPaymentMethod paymentMethod,
+        @JsonProperty("payment_channel_code") String paymentChannelCode,
         LocalDateTime createdAt,
         LocalDateTime paidAt,
         LocalDateTime deliveredAt,

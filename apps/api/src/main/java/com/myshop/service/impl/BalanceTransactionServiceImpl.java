@@ -75,6 +75,54 @@ public class BalanceTransactionServiceImpl implements BalanceTransactionService 
     }
 
     @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BalanceTransaction recordOrderPayment(UUID userId,
+                                                 BigDecimal amount,
+                                                 BigDecimal balanceBefore,
+                                                 BigDecimal balanceAfter,
+                                                 UUID orderId,
+                                                 UUID operatorId) {
+        if (userId == null || operatorId == null || orderId == null
+                || amount == null || balanceBefore == null || balanceAfter == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额支付流水参数不完整");
+        }
+        validateLedgerValues(amount, amount.negate(), balanceBefore, balanceAfter);
+        BalanceTransaction transaction = new BalanceTransaction();
+        transaction.setUserId(userId);
+        transaction.setType(BalanceTransactionType.ORDER_PAYMENT);
+        transaction.setAmount(amount.setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setDelta(amount.negate().setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setBalanceBefore(balanceBefore.setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setBalanceAfter(balanceAfter.setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setReason("订单余额支付");
+        transaction.setOperatorId(operatorId);
+        transaction.setOrderId(orderId);
+        return balanceTransactionRepository.save(transaction);
+    }
+
+    private void validateLedgerValues(BigDecimal amount, BigDecimal delta,
+                                      BigDecimal balanceBefore, BigDecimal balanceAfter) {
+        if (amount.signum() <= 0 || delta.signum() == 0
+                || balanceBefore.signum() < 0 || balanceAfter.signum() < 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水金额无效");
+        }
+        if (balanceBefore.compareTo(MAX_BALANCE) > 0 || balanceAfter.compareTo(MAX_BALANCE) > 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水金额超出系统支持范围");
+        }
+        if (amount.scale() > 2 || delta.scale() > 2
+                || balanceBefore.scale() > 2 || balanceAfter.scale() > 2) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水金额最多支持两位小数");
+        }
+        if (delta.abs().compareTo(amount) != 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水变动金额不一致");
+        }
+        BigDecimal expectedAfter = balanceBefore.add(delta).setScale(2, RoundingMode.UNNECESSARY);
+        if (expectedAfter.compareTo(balanceAfter.setScale(2, RoundingMode.UNNECESSARY)) != 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "余额流水前后余额不一致");
+        }
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Page<BalanceTransaction> listByUser(UUID userId, Pageable pageable) {
         return balanceTransactionRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);

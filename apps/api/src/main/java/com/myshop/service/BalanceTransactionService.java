@@ -22,5 +22,12 @@ public interface BalanceTransactionService {
                                              String reason,
                                              UUID operatorId);
 
+    BalanceTransaction recordOrderPayment(UUID userId,
+                                          BigDecimal amount,
+                                          BigDecimal balanceBefore,
+                                          BigDecimal balanceAfter,
+                                          UUID orderId,
+                                          UUID operatorId);
+
     Page<BalanceTransaction> listByUser(UUID userId, Pageable pageable);
 }

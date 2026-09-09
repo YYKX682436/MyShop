@@ -139,7 +139,6 @@ class PostgresDeliveryIntegrationTest {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
         request.put("quantity", 1);
-        request.put("payment_method", "alipay");
         request.put("admin_pickup", false);
 
         Map<String, Object> result = orderService.createDirectOrder(request, adminId,
@@ -149,7 +148,8 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = (UUID) orderResult.get("id");
 
         assertEquals(OrderType.ADMIN_PICKUP, orderResult.get("order_type"));
-        assertEquals("ADMIN_PICKUP", orderResult.get("payment_method"));
+        assertEquals(null, orderResult.get("payment_method"));
+        assertEquals(null, orderResult.get("payment_channel_code"));
         assertEquals(new BigDecimal("10.00"), orderResult.get("total_amount"));
         assertEquals(new BigDecimal("0.00"), orderResult.get("actual_amount"));
         assertEquals(true, paymentResult.get("paid"));
@@ -163,6 +163,152 @@ class PostgresDeliveryIntegrationTest {
         assertTrue(number("select count(*) from card_keys where id = ? and order_item_id is not null and sold_at is not null", cardId) == 1);
         verify(epayPaymentProvider, never()).create(any(PaymentProvider.PaymentRequest.class));
         verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
+    }
+
+    @Test
+    void balancePaymentDebitsExactlyOnceAndFulfillsAfterTheOrderIsPaid() {
+        UUID userId = insertUser("balance-buyer-" + UUID.randomUUID(), "balance-buyer-" + UUID.randomUUID() + "@example.com");
+        setBalance(userId, new BigDecimal("10.00"));
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID cardId = insertCard(productId, "balance-card");
+
+        Map<String, Object> result = orderService.createDirectOrder(
+                balanceOrderRequest(productId, "balance-success-key", "balance-success-fingerprint"),
+                userId, "203.0.113.31", "balance-success-session");
+        Map<?, ?> order = (Map<?, ?>) result.get("order");
+        Map<?, ?> payment = (Map<?, ?>) result.get("payment");
+        UUID orderId = (UUID) order.get("id");
+
+        assertEquals("PAID", order.get("status"));
+        assertEquals("BALANCE", order.get("payment_method"));
+        assertEquals(null, order.get("payment_channel_code"));
+        assertEquals("PAID", payment.get("status"));
+        assertEquals(true, payment.get("paid"));
+        assertEquals("BALANCE", payment.get("payment_method"));
+        assertEquals(null, payment.get("payment_channel_code"));
+        assertEquals(null, payment.get("next_action"));
+        assertEquals(new BigDecimal("0.00"), scalar("select balance from users where id = ?", BigDecimal.class, userId));
+        assertEquals(1, number("select count(*) from balance_transactions "
+                + "where user_id = ? and type = 'ORDER_PAYMENT' and order_id = ?", userId, orderId));
+        assertEquals(new BigDecimal("10.00"), scalar(
+                "select amount from balance_transactions where order_id = ?", BigDecimal.class, orderId));
+        assertEquals(new BigDecimal("-10.00"), scalar(
+                "select delta from balance_transactions where order_id = ?", BigDecimal.class, orderId));
+        assertEquals(new BigDecimal("10.00"), scalar(
+                "select balance_before from balance_transactions where order_id = ?", BigDecimal.class, orderId));
+        assertEquals(new BigDecimal("0.00"), scalar(
+                "select balance_after from balance_transactions where order_id = ?", BigDecimal.class, orderId));
+        assertEquals(orderId, scalar("select order_id from balance_transactions where order_id = ?", UUID.class, orderId));
+        assertEquals(userId, scalar("select operator_id from balance_transactions where order_id = ?", UUID.class, orderId));
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
+        assertEquals(0, number("select count(*) from payment_attempts where order_id = ?", orderId));
+        verify(epayPaymentProvider, never()).create(any(PaymentProvider.PaymentRequest.class));
+    }
+
+    @Test
+    void balanceShortageRollsBackOrderItemsManualReservationLedgerAndBalance() {
+        UUID userId = insertUser("balance-shortage-" + UUID.randomUUID(), "balance-shortage-" + UUID.randomUUID() + "@example.com");
+        setBalance(userId, new BigDecimal("9.99"));
+        UUID productId = UUID.randomUUID();
+        insertManualProduct(productId);
+        insertManualStock(productId, null, 1, 0);
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> orderService.createDirectOrder(
+                balanceOrderRequest(productId, "balance-shortage-key", "balance-shortage-fingerprint"),
+                userId, "203.0.113.32", "balance-shortage-session"));
+
+        assertEquals(ErrorCode.INSUFFICIENT_BALANCE, exception.getCode());
+        assertEquals(new BigDecimal("9.99"), scalar("select balance from users where id = ?", BigDecimal.class, userId));
+        assertEquals(0, number("select count(*) from orders where user_id = ?", userId));
+        assertEquals(0, number("select count(*) from balance_transactions where user_id = ?", userId));
+        assertEquals(1, number("select available_quantity from manual_stocks "
+                + "where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select reserved_quantity from manual_stocks "
+                + "where product_id = ? and spec_id is null", productId));
+    }
+
+    @Test
+    void guestBalancePaymentIsRejectedAndLeavesNoPendingOrder() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertCard(productId, "guest-balance-card");
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> orderService.createDirectOrder(
+                balanceOrderRequest(productId, "guest-balance-key", "guest-balance-fingerprint"),
+                null, "203.0.113.33", "guest-balance-session"));
+
+        assertEquals(ErrorCode.BALANCE_PAYMENT_REQUIRES_LOGIN, exception.getCode());
+        assertEquals(0, number("select count(*) from orders where session_token = ?", "guest-balance-session"));
+    }
+
+    @Test
+    void concurrentBalanceOrdersLockTheUserAndOnlyOneCanSpendTheAvailableBalance() throws Exception {
+        UUID userId = insertUser("balance-concurrent-" + UUID.randomUUID(), "balance-concurrent-" + UUID.randomUUID() + "@example.com");
+        setBalance(userId, new BigDecimal("10.00"));
+        UUID productId = UUID.randomUUID();
+        insertUnlimitedProduct(productId);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> first = executor.submit(() -> tryBalanceOrder(
+                    ready, start, productId, userId, "balance-concurrent-key-a", "balance-concurrent-fingerprint-a"));
+            Future<Boolean> second = executor.submit(() -> tryBalanceOrder(
+                    ready, start, productId, userId, "balance-concurrent-key-b", "balance-concurrent-fingerprint-b"));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            assertNotEquals(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertEquals(new BigDecimal("0.00"), scalar("select balance from users where id = ?", BigDecimal.class, userId));
+        assertEquals(1, number("select count(*) from orders where user_id = ?", userId));
+        assertEquals(1, number("select count(*) from balance_transactions "
+                + "where user_id = ? and type = 'ORDER_PAYMENT'", userId));
+    }
+
+    @Test
+    void balanceIdempotencyReplayReturnsPaidOrderWithoutSecondDebitLedgerOrFulfillment() {
+        UUID userId = insertUser("balance-idempotent-" + UUID.randomUUID(), "balance-idempotent-" + UUID.randomUUID() + "@example.com");
+        setBalance(userId, new BigDecimal("10.00"));
+        UUID productId = UUID.randomUUID();
+        insertUnlimitedProduct(productId);
+        Map<String, Object> request = balanceOrderRequest(
+                productId, "balance-idempotent-key", "balance-idempotent-fingerprint");
+
+        Map<String, Object> first = orderService.createDirectOrder(
+                request, userId, "203.0.113.34", "balance-idempotent-session");
+        Map<String, Object> second = orderService.createDirectOrder(
+                new java.util.LinkedHashMap<>(request), userId, "203.0.113.34", "balance-idempotent-session");
+        UUID firstOrderId = (UUID) ((Map<?, ?>) first.get("order")).get("id");
+        UUID secondOrderId = (UUID) ((Map<?, ?>) second.get("order")).get("id");
+
+        assertEquals(firstOrderId, secondOrderId);
+        assertEquals("PAID", ((Map<?, ?>) second.get("payment")).get("status"));
+        assertEquals(1, number("select count(*) from orders where idempotency_key = ?", "balance-idempotent-key"));
+        assertEquals(1, number("select count(*) from balance_transactions "
+                + "where order_id = ? and type = 'ORDER_PAYMENT'", firstOrderId));
+        assertEquals(0, number("select count(*) from payment_attempts where order_id = ?", firstOrderId));
+    }
+
+    @Test
+    void normalOrderRejectsBalanceRequestThatIncludesAnOnlineChannel() {
+        UUID userId = insertUser("balance-protocol-" + UUID.randomUUID(), "balance-protocol-" + UUID.randomUUID() + "@example.com");
+        setBalance(userId, new BigDecimal("10.00"));
+        UUID productId = UUID.randomUUID();
+        insertUnlimitedProduct(productId);
+        Map<String, Object> request = balanceOrderRequest(productId, "balance-protocol-key", "balance-protocol-fingerprint");
+        request.put("payment_channel_code", "alipay");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> orderService.createDirectOrder(request, userId, "203.0.113.35", "balance-protocol-session"));
+
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
+        assertEquals(0, number("select count(*) from orders where user_id = ?", userId));
     }
 
     @Test
@@ -650,7 +796,8 @@ class PostgresDeliveryIntegrationTest {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
         request.put("quantity", 1);
-        request.put("payment_method", "idempotent-channel");
+        request.put("payment_method", "ONLINE");
+        request.put("payment_channel_code", "idempotent-channel");
         request.put("expected_unit_price", "10.00");
         request.put("idempotency_key", "guest-idempotency-key");
         request.put("idempotency_fingerprint", "fingerprint-1");
@@ -863,9 +1010,10 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO orders(id, created_at, updated_at, user_id, total_amount, actual_amount,
-                                   status, order_type, payment_method, paid_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'NORMAL', 'alipay', ?)
-                """, orderId, createdAt, createdAt, userId, amount, amount, status, createdAt);
+                                   status, order_type, payment_method, payment_channel_code, paid_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'NORMAL', 'ONLINE', ?, ?)
+                """, orderId, createdAt, createdAt, userId, amount, amount, status,
+                "search-channel-" + tradeNo, createdAt);
         jdbcTemplate.update("""
                 INSERT INTO payment_attempts(id, created_at, updated_at, order_id, channel_id,
                     channel_code_snapshot, provider_type, payment_type, provider_config_snapshot,
@@ -882,8 +1030,9 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into orders (id, created_at, updated_at, actual_amount, total_amount, status,
-                    lookup_token_hash)
-                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PAID', ?)
+                    order_type, payment_method, payment_channel_code, lookup_token_hash)
+                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PAID',
+                    'NORMAL', 'ONLINE', 'integration-channel', ?)
                 """, orderId, com.myshop.utils.LookupTokens.hash(lookupToken));
         return orderId;
     }
@@ -912,25 +1061,27 @@ class PostgresDeliveryIntegrationTest {
         return userId;
     }
 
-    private UUID insertPendingOrder(String paymentMethod) {
+    private UUID insertPendingOrder(String paymentChannelCode) {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into orders (id, created_at, updated_at, actual_amount, total_amount, status,
-                    payment_method, expires_at)
-                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING', ?,
+                    order_type, payment_method, payment_channel_code, expires_at)
+                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING',
+                    'NORMAL', 'ONLINE', ?,
                     current_timestamp + interval '15 minutes')
-                """, orderId, paymentMethod);
+                """, orderId, paymentChannelCode);
         return orderId;
     }
 
-    private UUID insertPendingOrder(String paymentMethod, UUID userId, String clientIp) {
+    private UUID insertPendingOrder(String paymentChannelCode, UUID userId, String clientIp) {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into orders (id, created_at, updated_at, user_id, actual_amount, total_amount,
-                    status, payment_method, expires_at, client_ip)
-                values (?, current_timestamp, current_timestamp, ?, 10.00, 10.00, 'PENDING', ?,
+                    status, order_type, payment_method, payment_channel_code, expires_at, client_ip)
+                values (?, current_timestamp, current_timestamp, ?, 10.00, 10.00, 'PENDING',
+                    'NORMAL', 'ONLINE', ?,
                     current_timestamp + interval '15 minutes', ?)
-                """, orderId, userId, paymentMethod, clientIp);
+                """, orderId, userId, paymentChannelCode, clientIp);
         return orderId;
     }
 
@@ -938,8 +1089,9 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into orders (id, created_at, updated_at, actual_amount, total_amount, status,
-                    lookup_token_hash, expires_at)
-                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING', ?,
+                    order_type, payment_method, payment_channel_code, lookup_token_hash, expires_at)
+                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING',
+                    'NORMAL', 'ONLINE', 'integration-channel', ?,
                     current_timestamp - interval '1 minute')
                 """, orderId, com.myshop.utils.LookupTokens.hash(lookupToken));
         return orderId;
@@ -958,6 +1110,70 @@ class PostgresDeliveryIntegrationTest {
                     nextval('product_no_sequence'), 10.00, 10.00, ?,
                     'AUTO', true, 0)
                 """, productId, categoryId);
+    }
+
+    private void insertUnlimitedProduct(UUID productId) {
+        UUID categoryId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into product_categories (id, created_at, updated_at, name, sort_order, is_deleted)
+                values (?, current_timestamp, current_timestamp, ?, 0, 0)
+                """, categoryId, "Unlimited integration category " + productId);
+        jdbcTemplate.update("""
+                insert into products (id, created_at, updated_at, title, product_no, retail_price, cost_price, category_id,
+                    delivery_type, stock_mode, is_enabled, is_deleted)
+                values (?, current_timestamp, current_timestamp, 'Unlimited integration product',
+                    nextval('product_no_sequence'), 10.00, 10.00, ?,
+                    'AUTO', 'UNLIMITED', true, 0)
+                """, productId, categoryId);
+    }
+
+    private void insertManualProduct(UUID productId) {
+        UUID categoryId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into product_categories (id, created_at, updated_at, name, sort_order, is_deleted)
+                values (?, current_timestamp, current_timestamp, ?, 0, 0)
+                """, categoryId, "Manual integration category " + productId);
+        jdbcTemplate.update("""
+                insert into products (id, created_at, updated_at, title, product_no, retail_price, cost_price, category_id,
+                    delivery_type, stock_mode, is_enabled, is_deleted)
+                values (?, current_timestamp, current_timestamp, 'Manual integration product',
+                    nextval('product_no_sequence'), 10.00, 10.00, ?,
+                    'MANUAL', 'MANUAL', true, 0)
+                """, productId, categoryId);
+    }
+
+    private void setBalance(UUID userId, BigDecimal balance) {
+        jdbcTemplate.update("UPDATE users SET balance = ? WHERE id = ?", balance, userId);
+    }
+
+    private Map<String, Object> balanceOrderRequest(UUID productId, String idempotencyKey,
+                                                     String idempotencyFingerprint) {
+        Map<String, Object> request = new java.util.LinkedHashMap<>();
+        request.put("product_id", productId.toString());
+        request.put("quantity", 1);
+        request.put("payment_method", "BALANCE");
+        request.put("expected_unit_price", "10.00");
+        request.put("idempotency_key", idempotencyKey);
+        request.put("idempotency_fingerprint", idempotencyFingerprint);
+        return request;
+    }
+
+    private boolean tryBalanceOrder(CountDownLatch ready, CountDownLatch start,
+                                    UUID productId, UUID userId, String idempotencyKey,
+                                    String idempotencyFingerprint) throws InterruptedException {
+        ready.countDown();
+        if (!start.await(20, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("balance concurrency test did not start");
+        }
+        try {
+            orderService.createDirectOrder(
+                    balanceOrderRequest(productId, idempotencyKey, idempotencyFingerprint),
+                    userId, "203.0.113.36", idempotencyKey + "-session");
+            return true;
+        } catch (BusinessException exception) {
+            if (exception.getCode() == ErrorCode.INSUFFICIENT_BALANCE) return false;
+            throw exception;
+        }
     }
 
     private void insertPaymentChannel(String channelCode) {
@@ -997,7 +1213,8 @@ class PostgresDeliveryIntegrationTest {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
         request.put("quantity", 1);
-        request.put("payment_method", paymentMethod);
+        request.put("payment_method", "ONLINE");
+        request.put("payment_channel_code", paymentMethod);
         request.put("expected_unit_price", "10.00");
         return request;
     }

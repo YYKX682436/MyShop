@@ -238,6 +238,7 @@ export interface UserLevel {
 
 export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED'
 export type OrderType = 'NORMAL' | 'ADMIN_PICKUP'
+export type OrderPaymentMethod = 'BALANCE' | 'ONLINE'
 
 export interface OrderBrief {
   id: string
@@ -246,7 +247,8 @@ export interface OrderBrief {
   actual_amount: number
   status: OrderStatus
   order_type: OrderType
-  payment_method: string
+  payment_method: OrderPaymentMethod | null
+  payment_channel_code: string | null
   created_at: string
   items?: OrderItemDetail[]
 }
@@ -281,6 +283,8 @@ export interface PaymentCreateResult {
   order_id: string
   order_no: number
   status: PaymentStatus
+  payment_method?: OrderPaymentMethod | null
+  payment_channel_code?: string | null
   next_action?: PaymentNextAction | null
   expires_at: string | null
   order_type?: OrderType
@@ -424,7 +428,8 @@ export interface CreateOrderRequest {
   product_id: string
   spec_id: string | null
   quantity: number
-  payment_method: string
+  payment_method?: OrderPaymentMethod
+  payment_channel_code?: string
   idempotency_key: string
   idempotency_fingerprint?: string
   expected_unit_price?: number
@@ -609,7 +614,8 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
 
 export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at"> {
   items: AdminOrderItemDetail[]
-  payment_method?: string | null
+  payment_method?: OrderPaymentMethod | null
+  payment_channel_code: string | null
   expires_at?: string | null
   paid_at?: string | null
   delivered_at?: string | null
@@ -692,7 +698,8 @@ export interface AdminUserOrder {
   actual_amount: number | null
   status: OrderStatus
   order_type: OrderType
-  payment_method: string | null
+  payment_method: OrderPaymentMethod | null
+  payment_channel_code: string | null
   created_at: string
   paid_at: string | null
   delivered_at: string | null

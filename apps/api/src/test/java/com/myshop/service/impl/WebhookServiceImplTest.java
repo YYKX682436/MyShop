@@ -2,6 +2,8 @@ package com.myshop.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
+import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.WebhookEvent;
@@ -11,7 +13,7 @@ import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.WebhookEventRepository;
-import com.myshop.service.AutoFulfillmentService;
+import com.myshop.service.OrderPaymentCompletionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,7 +46,7 @@ class WebhookServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private PaymentAttemptRepository paymentAttemptRepository;
     @Mock private PaymentProvider provider;
-    @Mock private AutoFulfillmentService autoFulfillmentService;
+    @Mock private OrderPaymentCompletionService orderPaymentCompletionService;
 
     private WebhookServiceImpl service;
 
@@ -58,7 +60,7 @@ class WebhookServiceImplTest {
         ObjectMapper objectMapper = new ObjectMapper();
         PaymentConfirmationTransactionService confirmationService = new PaymentConfirmationTransactionService(
                 webhookEventRepository, orderRepository, paymentAttemptRepository,
-                autoFulfillmentService, objectMapper);
+                orderPaymentCompletionService, objectMapper);
         service = new WebhookServiceImpl(webhookEventRepository, paymentAttemptRepository,
                 List.of(provider), objectMapper, confirmationService);
     }
@@ -136,6 +138,11 @@ class WebhookServiceImplTest {
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(paymentAttemptRepository.save(any(PaymentAttempt.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
+        when(orderPaymentCompletionService.completeFirstPayment(order)).thenAnswer(invocation -> {
+            order.setStatus(OrderStatus.PAID);
+            orderRepository.save(order);
+            return true;
+        });
 
         PaymentProvider.WebhookAcknowledgement acknowledgement = service.handleWebhook(
                 "epay", request("merchant-3", "trade-3"));
@@ -154,7 +161,7 @@ class WebhookServiceImplTest {
         assertEquals(attempt.getId(), event.getPaymentAttemptId());
         assertFalse(event.getPayload().contains("secret"));
         assertFalse(event.getPayload().contains("provider_config_snapshot"));
-        verify(autoFulfillmentService).trigger(order.getId());
+        verify(orderPaymentCompletionService).completeFirstPayment(order);
     }
 
     @Test
@@ -301,6 +308,9 @@ class WebhookServiceImplTest {
         Order order = new Order();
         order.setId(orderId);
         order.setStatus(OrderStatus.PENDING);
+        order.setOrderType(OrderType.NORMAL);
+        order.setPaymentMethod(OrderPaymentMethod.ONLINE);
+        order.setPaymentChannelCode("old-channel");
         order.setActualAmount(new BigDecimal("10.00"));
         return order;
     }

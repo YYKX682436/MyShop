@@ -4,8 +4,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
-import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentAttempt;
@@ -64,29 +64,25 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    public Map<String, Object> createPayment(UUID orderId, String paymentMethod, BigDecimal amount) {
-        return createPayment(orderId, paymentMethod, amount, null);
+    public Map<String, Object> createPayment(UUID orderId, String paymentChannelCode, BigDecimal amount) {
+        return createPayment(orderId, paymentChannelCode, amount, null);
     }
 
     @Override
     @Transactional
-    public Map<String, Object> createPayment(UUID orderId, String paymentMethod,
+    public Map<String, Object> createPayment(UUID orderId, String paymentChannelCode,
                                               BigDecimal amount, String device) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        validateRequestedChannel(order, paymentMethod);
-
-        if (isAdminPickup(order)) {
-            validateAmount(order, amount);
-            return buildAdminPickupResult(order);
-        }
+        validateOnlineOrder(order);
+        validateRequestedChannel(order, paymentChannelCode);
 
         validatePendingOrder(order);
         validateAmount(order, amount);
         PaymentAttempt active = findActiveAttempt(order.getId());
         if (active != null) return buildResult(order, active);
 
-        PaymentContext context = resolveCreationContext(order.getPaymentMethod());
+        PaymentContext context = resolveCreationContext(order.getPaymentChannelCode());
         return createAttempt(order, context.channel(), context.provider(), device);
     }
 
@@ -100,9 +96,7 @@ public class PaymentServiceImpl implements PaymentService {
         if (!owner && !LookupTokens.matches(lookupToken, order.getLookupTokenHash())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作此订单");
         }
-        if (isAdminPickup(order)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员提卡订单不支持重新支付");
-        }
+        validateOnlineOrder(order);
         validatePendingOrder(order);
         if (order.getUpdatedAt() != null
                 && order.getUpdatedAt().plusSeconds(REPAY_COOLDOWN_SECONDS).isAfter(LocalDateTime.now())) {
@@ -112,7 +106,7 @@ public class PaymentServiceImpl implements PaymentService {
         // Resolve the current enabled channel before closing the old attempt.
         // A repay is a new external transaction and must never use a disabled
         // channel, while history remains usable by the webhook path.
-        PaymentContext context = resolveCreationContext(order.getPaymentMethod());
+        PaymentContext context = resolveCreationContext(order.getPaymentChannelCode());
         closePendingAttempts(order.getId());
         return createAttempt(order, context.channel(), context.provider(), device);
     }
@@ -201,21 +195,11 @@ public class PaymentServiceImpl implements PaymentService {
         result.put("order_id", order.getId());
         result.put("order_no", order.getOrderNo());
         result.put("status", attempt.getStatus());
+        result.put("payment_method", OrderPaymentMethod.ONLINE.name());
+        result.put("payment_channel_code", order.getPaymentChannelCode());
         result.put("next_action", PaymentNextActionPayload.from(
                 deserializeNextAction(attempt.getNextAction())));
         result.put("expires_at", attempt.getExpiresAt());
-        return result;
-    }
-
-    private Map<String, Object> buildAdminPickupResult(Order order) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("order_id", order.getId());
-        result.put("order_no", order.getOrderNo());
-        result.put("status", PaymentStatus.PAID);
-        result.put("expires_at", order.getExpiresAt());
-        result.put("order_type", OrderType.ADMIN_PICKUP);
-        result.put("admin_pickup", true);
-        result.put("paid", true);
         return result;
     }
 
@@ -264,10 +248,19 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     private void validateRequestedChannel(Order order, String requestedChannel) {
-        String actual = clean(order.getPaymentMethod());
+        String actual = clean(order.getPaymentChannelCode());
         String requested = clean(requestedChannel);
-        if (actual == null || (requested != null && !actual.equalsIgnoreCase(requested))) {
+        if (actual == null || requested == null || !actual.equalsIgnoreCase(requested)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单支付渠道不匹配");
+        }
+    }
+
+    private void validateOnlineOrder(Order order) {
+        if (order.getOrderType() != com.myshop.constant.OrderType.NORMAL
+                || order.getPaymentMethod() != OrderPaymentMethod.ONLINE
+                || order.getPaymentChannelCode() == null
+                || order.getPaymentChannelCode().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有在线支付订单支持该操作");
         }
     }
 
@@ -289,11 +282,6 @@ public class PaymentServiceImpl implements PaymentService {
                 || order.getActualAmount().compareTo(amount) != 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
         }
-    }
-
-    private boolean isAdminPickup(Order order) {
-        return order.getOrderType() == OrderType.ADMIN_PICKUP
-                || "ADMIN_PICKUP".equalsIgnoreCase(order.getPaymentMethod());
     }
 
     private String buildProductName(UUID orderId) {

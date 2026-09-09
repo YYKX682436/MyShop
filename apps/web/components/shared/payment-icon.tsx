@@ -1,4 +1,4 @@
-import { CreditCard, KeyRound } from "lucide-react"
+import { CreditCard, KeyRound, Wallet } from "lucide-react"
 import Image from "next/image"
 import { cn } from "@/lib/utils"
 
@@ -34,6 +34,8 @@ export function getPaymentBrandColor(method: string): string | undefined {
 
 /** 支付方式 code → 中文名称（不依赖 i18n，用于无 hook 的场景） */
 const PAYMENT_LABELS: Record<string, string> = {
+  balance: "余额支付",
+  online: "在线支付",
   alipay: "支付宝",
   wxpay: "微信支付",
   admin_pickup: "管理员提卡",
@@ -44,6 +46,8 @@ const PAYMENT_LABELS: Record<string, string> = {
 export function getPaymentLabel(method: string, t?: (key: any) => string): string {
   const m = normalize(method)
   if (t) {
+    if (m === "balance") return t("payment.balance")
+    if (m === "online") return t("payment.online")
     if (m === "alipay") return t("payment.alipay")
     if (m === "wxpay") return t("payment.wechat")
     if (m === "admin_pickup") return t("payment.adminPickup")
@@ -55,6 +59,8 @@ export function getPaymentLabel(method: string, t?: (key: any) => string): strin
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function getPaymentScanHint(method: string, t: (key: any) => string): string {
   const m = normalize(method)
+  if (m === "balance") return t("payment.balance")
+  if (m === "online") return t("payment.online")
   if (m === "alipay") return t("payment.scanWithAlipay")
   if (m === "wxpay") return t("payment.scanWithWechat")
   if (m === "admin_pickup") return t("payment.adminPickup")
@@ -68,6 +74,14 @@ export function PaymentIcon({ method, className = "h-5 w-5", variant = "badge" }
     return (
       <span className={cn("inline-flex items-center justify-center rounded bg-primary/10 text-primary", className)}>
         <KeyRound className="h-3/5 w-3/5" aria-hidden="true" />
+      </span>
+    )
+  }
+
+  if (normalize(method) === "balance") {
+    return (
+      <span className={cn("inline-flex items-center justify-center rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-300", className)}>
+        <Wallet className="h-3/5 w-3/5" aria-hidden="true" />
       </span>
     )
   }

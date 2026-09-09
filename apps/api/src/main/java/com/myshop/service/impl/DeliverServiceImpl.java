@@ -207,7 +207,8 @@ public class DeliverServiceImpl implements DeliverService {
         map.put("actual_amount", order.getActualAmount());
         map.put("status", order.getStatus().name());
         map.put("order_type", order.getOrderType());
-        map.put("payment_method", order.getPaymentMethod());
+        map.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());
+        map.put("payment_channel_code", order.getPaymentChannelCode());
         map.put("created_at", order.getCreatedAt());
         map.put("items", orderItemRepository.findByOrderId(order.getId()).stream().map(item -> {
             Map<String, Object> itemMap = new LinkedHashMap<>();

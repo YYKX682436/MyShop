@@ -127,6 +127,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
         map.put("order_type", o.getOrderType());
+        map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
+        map.put("payment_channel_code", o.getPaymentChannelCode());
         map.put("created_at", o.getCreatedAt());
         map.put("customer_type", user == null ? "GUEST" : "REGISTERED");
         map.put("username", user == null ? null : user.getUsername());
@@ -169,7 +171,6 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             map.put("phone", user == null ? null : user.getPhone());
             map.put("user_level_id_snapshot", o.getUserLevelIdSnapshot());
             map.put("user_level_name_snapshot", o.getUserLevelNameSnapshot());
-            map.put("payment_method", o.getPaymentMethod());
             map.put("expires_at", o.getExpiresAt());
             map.put("paid_at", o.getPaidAt());
             map.put("delivered_at", o.getDeliveredAt());

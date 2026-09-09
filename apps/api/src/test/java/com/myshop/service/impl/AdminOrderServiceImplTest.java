@@ -1,6 +1,7 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 import com.myshop.constant.PricingSource;
 import com.myshop.entity.Order;
@@ -164,7 +165,8 @@ class AdminOrderServiceImplTest {
         order.setOrderType(OrderType.NORMAL);
         order.setUserLevelIdSnapshot(UUID.fromString("11111111-1111-1111-1111-111111111111"));
         order.setUserLevelNameSnapshot("黄金会员");
-        order.setPaymentMethod("alipay");
+        order.setPaymentMethod(OrderPaymentMethod.ONLINE);
+        order.setPaymentChannelCode("alipay");
         return order;
     }
 

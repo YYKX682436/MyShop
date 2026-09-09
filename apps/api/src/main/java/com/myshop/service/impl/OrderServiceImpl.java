@@ -5,6 +5,7 @@ import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 import com.myshop.constant.PricingSource;
 import com.myshop.constant.StockMode;
@@ -18,6 +19,7 @@ import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.*;
 import com.myshop.service.OrderService;
 import com.myshop.service.AutoFulfillmentService;
+import com.myshop.service.BalanceOrderPaymentService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import com.myshop.service.ProductRules;
@@ -49,6 +51,7 @@ public class OrderServiceImpl implements OrderService {
     private final PaymentChannelRepository paymentChannelRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final PaymentService paymentService;
+    private final BalanceOrderPaymentService balanceOrderPaymentService;
     private final ManualStockService manualStockService;
     private final UserRepository userRepository;
     private final UserLevelRepository userLevelRepository;
@@ -62,6 +65,7 @@ public class OrderServiceImpl implements OrderService {
                              CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
                              PaymentChannelRepository paymentChannelRepository,
                              PaymentAttemptRepository paymentAttemptRepository, PaymentService paymentService,
+                             BalanceOrderPaymentService balanceOrderPaymentService,
                              ManualStockService manualStockService,
                              UserRepository userRepository,
                              UserLevelRepository userLevelRepository,
@@ -76,6 +80,7 @@ public class OrderServiceImpl implements OrderService {
         this.paymentChannelRepository = paymentChannelRepository;
         this.paymentAttemptRepository = paymentAttemptRepository;
         this.paymentService = paymentService;
+        this.balanceOrderPaymentService = balanceOrderPaymentService;
         this.manualStockService = manualStockService;
         this.userRepository = userRepository;
         this.userLevelRepository = userLevelRepository;
@@ -116,11 +121,15 @@ public class OrderServiceImpl implements OrderService {
                     Map.of("max", maxQuantity));
         }
 
-        String paymentMethod = clean(asString(req.get("payment_method")));
+        OrderPaymentMethod paymentMethod = null;
+        String paymentChannelCode = null;
         if (adminPickup) {
-            paymentMethod = "ADMIN_PICKUP";
+            // ADMIN_PICKUP is expressed only by order_type. Both payment
+            // columns remain null regardless of client-supplied values.
         } else {
-            validatePaymentMethod(paymentMethod);
+            paymentMethod = parsePaymentMethod(req.get("payment_method"));
+            paymentChannelCode = clean(asString(req.get("payment_channel_code")));
+            validatePaymentRequest(req, paymentMethod, paymentChannelCode);
         }
 
         Product product = productRepository.findById(productId)
@@ -169,6 +178,7 @@ public class OrderServiceImpl implements OrderService {
         order.setOrderType(adminPickup ? OrderType.ADMIN_PICKUP : OrderType.NORMAL);
         order.setStatus(adminPickup ? OrderStatus.PAID : OrderStatus.PENDING);
         order.setPaymentMethod(paymentMethod);
+        order.setPaymentChannelCode(paymentChannelCode);
         LocalDateTime now = LocalDateTime.now();
         order.setExpiresAt(adminPickup ? null : now.plusMinutes(expireMinutes));
         order.setPaidAt(adminPickup ? now : null);
@@ -202,6 +212,10 @@ public class OrderServiceImpl implements OrderService {
         setItemSnapshot(item, product, customerInputs, quantity, stockMode);
         orderItemRepository.save(item);
 
+        if (!adminPickup && paymentMethod == OrderPaymentMethod.BALANCE) {
+            balanceOrderPaymentService.pay(order, userId);
+        }
+
         return buildOrderResult(order, device, lookupToken.plaintext());
     }
 
@@ -220,6 +234,8 @@ public class OrderServiceImpl implements OrderService {
         result.put("order_id", order.getId());
         result.put("order_no", order.getOrderNo());
         result.put("status", order.getStatus().name());
+        result.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());
+        result.put("payment_channel_code", order.getPaymentChannelCode());
         result.put("expires_at", order.getExpiresAt());
         // 返回服务端计算的剩余秒数，前端倒计时以此为准，不受客户端时钟影响
         if (order.getStatus() == OrderStatus.PENDING && order.getExpiresAt() != null) {
@@ -282,7 +298,6 @@ public class OrderServiceImpl implements OrderService {
 
     private Map<String, Object> buildOrderResult(Order order, String device, String lookupToken) {
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        Map<String, Object> orderDetail = toOrderDetail(order, items);
         Map<String, Object> payment;
         if (isAdminPickup(order)) {
             payment = new LinkedHashMap<>();
@@ -293,13 +308,18 @@ public class OrderServiceImpl implements OrderService {
             payment.put("paid", true);
             payment.put("expires_at", null);
             triggerAdminPickupAfterCommit(order);
+        } else if (order.getPaymentMethod() == OrderPaymentMethod.BALANCE) {
+            payment = balanceOrderPaymentService.buildPaymentResult(order);
         } else {
             payment = paymentService.createPayment(
-                    order.getId(), order.getPaymentMethod(), order.getActualAmount(), device);
+                    order.getId(), order.getPaymentChannelCode(), order.getActualAmount(), device);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("order", orderDetail);
+        // BALANCE completion changes the managed order to PAID before the
+        // response is built; serialize the order only after every payment
+        // branch has reached its final synchronous state.
+        result.put("order", toOrderDetail(order, items));
         result.put("payment", payment);
         if (lookupToken != null) result.put("lookup_token", lookupToken);
         return result;
@@ -320,7 +340,8 @@ public class OrderServiceImpl implements OrderService {
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
         map.put("order_type", o.getOrderType());
-        map.put("payment_method", o.getPaymentMethod());
+        map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
+        map.put("payment_channel_code", o.getPaymentChannelCode());
         map.put("created_at", o.getCreatedAt());
         map.put("expires_at", o.getExpiresAt());
         map.put("paid_at", o.getPaidAt());
@@ -380,16 +401,36 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    /**
-     * 支付渠道前置校验 — 在订单落库前确认渠道存在且启用，防止伪造不存在的支付方式绕过后续校验
-     */
-    private void validatePaymentMethod(String paymentMethod) {
-        if (paymentMethod == null || paymentMethod.isBlank()) {
+    private OrderPaymentMethod parsePaymentMethod(Object raw) {
+        String value = clean(asString(raw));
+        if (value == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "支付方式不能为空");
         }
-        paymentChannelRepository.findByChannelCodeAndIsDeleted(paymentMethod, 0)
-                .filter(PaymentChannel::isEnabled)
-                .orElseThrow(() -> new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道不可用"));
+        try {
+            return OrderPaymentMethod.valueOf(value.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "支付方式只能是 BALANCE 或 ONLINE");
+        }
+    }
+
+    /** Validates the normal-order method/channel protocol before reserving stock. */
+    private void validatePaymentRequest(Map<String, Object> request,
+                                        OrderPaymentMethod paymentMethod,
+                                        String paymentChannelCode) {
+        if (paymentMethod == OrderPaymentMethod.ONLINE) {
+            if (paymentChannelCode == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "在线支付必须提供 payment_channel_code");
+            }
+            paymentChannelRepository.findByChannelCodeAndIsDeleted(paymentChannelCode, 0)
+                    .filter(PaymentChannel::isEnabled)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付渠道不可用"));
+            return;
+        }
+        if (request.containsKey("payment_channel_code")) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "余额支付不能提供 payment_channel_code");
+        }
     }
 
     private boolean sameIdempotencyOwner(Order order, UUID userId, String sessionToken) {
@@ -418,8 +459,7 @@ public class OrderServiceImpl implements OrderService {
     }
 
     private boolean isAdminPickup(Order order) {
-        return order.getOrderType() == OrderType.ADMIN_PICKUP
-                || "ADMIN_PICKUP".equalsIgnoreCase(order.getPaymentMethod());
+        return order.getOrderType() == OrderType.ADMIN_PICKUP;
     }
 
     private void triggerAdminPickupAfterCommit(Order order) {

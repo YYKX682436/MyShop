@@ -117,8 +117,8 @@ export default function MyOrdersPage() {
               {/* Order Summary */}
               <div className="mb-3 flex items-center gap-3 text-sm text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
-                  <PaymentIcon method={order.payment_method} className="h-4 w-4" />
-                  {getPaymentLabel(order.payment_method, t)}
+                  <PaymentIcon method={order.order_type === "ADMIN_PICKUP" ? "ADMIN_PICKUP" : order.payment_method || ""} className="h-4 w-4" />
+                  {order.order_type === "ADMIN_PICKUP" ? getPaymentLabel("ADMIN_PICKUP", t) : order.payment_method ? <>{getPaymentLabel(order.payment_method, t)}{order.payment_method === "ONLINE" && order.payment_channel_code ? `（${order.payment_channel_code}）` : null}</> : ""}
                 </span>
               </div>
 
@@ -147,9 +147,9 @@ export default function MyOrdersPage() {
                   </span>
                 </span>
                 <div className="flex gap-2">
-                  {order.status === "PENDING" && order.payment_method && (
+                  {order.status === "PENDING" && order.order_type === "NORMAL" && order.payment_method === "ONLINE" && order.payment_channel_code && (
                     <Link
-                      href={`/pay/${order.id}?orderNo=${order.order_no}&method=${order.payment_method}`}
+                      href={`/pay/${order.id}?orderNo=${order.order_no}&method=${order.payment_channel_code}`}
                       className="inline-flex h-9 items-center gap-1 rounded-control bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98]"
                     >
                       {t("payment.continuePay")}

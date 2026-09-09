@@ -3,6 +3,7 @@ package com.myshop.service.impl;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 import com.myshop.constant.PricingType;
 import com.myshop.constant.UserRole;
@@ -31,6 +32,7 @@ import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.PaymentService;
+import com.myshop.service.BalanceOrderPaymentService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,6 +60,7 @@ import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -72,6 +75,7 @@ class OrderServiceImplTest {
     @Mock private PaymentChannelRepository paymentChannelRepository;
     @Mock private PaymentAttemptRepository paymentAttemptRepository;
     @Mock private PaymentService paymentService;
+    @Mock private BalanceOrderPaymentService balanceOrderPaymentService;
     @Mock private ManualStockService manualStockService;
     @Mock private com.myshop.repository.UserRepository userRepository;
     @Mock private UserLevelRepository userLevelRepository;
@@ -84,6 +88,7 @@ class OrderServiceImplTest {
         service = new OrderServiceImpl(orderRepository, orderItemRepository, productRepository,
                 productSpecRepository, cardKeyRepository,
                 siteConfigRepository, paymentChannelRepository, paymentAttemptRepository, paymentService,
+                balanceOrderPaymentService,
                 manualStockService, userRepository, userLevelRepository, autoFulfillmentService,
                 new PricingServiceImpl(userRepository, userLevelRepository, null), new ObjectMapper());
 
@@ -304,6 +309,72 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void normalOrderRequiresAnEnabledOnlineChannelCode() {
+        UUID productId = UUID.randomUUID();
+        Map<String, Object> missingChannel = request(productId, null, 1);
+        missingChannel.remove("payment_channel_code");
+
+        BusinessException missing = assertThrows(BusinessException.class,
+                () -> service.createDirectOrder(missingChannel, null, "203.0.113.17", "missing-channel"));
+        assertEquals(ErrorCode.BAD_REQUEST, missing.getCode());
+
+        Map<String, Object> invalidChannel = request(productId, null, 1);
+        invalidChannel.put("payment_channel_code", "missing-channel");
+        when(paymentChannelRepository.findByChannelCodeAndIsDeleted("missing-channel", 0))
+                .thenReturn(Optional.empty());
+        BusinessException invalid = assertThrows(BusinessException.class,
+                () -> service.createDirectOrder(invalidChannel, null, "203.0.113.17", "invalid-channel"));
+        assertEquals(ErrorCode.CHANNEL_UNAVAILABLE, invalid.getCode());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void balanceOrderMustNotCarryAnOnlineChannelCode() {
+        UUID productId = UUID.randomUUID();
+        Map<String, Object> request = request(productId, null, 1);
+        request.put("payment_method", "BALANCE");
+        request.put("payment_channel_code", "alipay");
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.createDirectOrder(request, null, "203.0.113.18", "balance-channel"));
+
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
+        verify(orderRepository, never()).save(any(Order.class));
+    }
+
+    @Test
+    void balancePaymentResponseSerializesTheOrderAfterThePaidTransition() {
+        UUID userId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID levelId = UUID.randomUUID();
+        User buyer = user(userId, "balance-buyer", "balance@example.com");
+        buyer.setRole(UserRole.USER);
+        buyer.setUserLevelId(levelId);
+        UserLevel level = new UserLevel();
+        level.setId(levelId);
+        level.setName("普通会员");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(buyer));
+        when(userLevelRepository.findById(levelId)).thenReturn(Optional.of(level));
+        stubProduct(product(productId, "10.00"), 1);
+        Map<String, Object> request = request(productId, null, 1, "10.00");
+        request.put("payment_method", "BALANCE");
+        request.remove("payment_channel_code");
+        doAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            order.setStatus(OrderStatus.PAID);
+            order.setPaidAt(LocalDateTime.now());
+            return null;
+        }).when(balanceOrderPaymentService).pay(any(Order.class), eq(userId));
+
+        Map<String, Object> result = service.createDirectOrder(request, userId,
+                "203.0.113.19", "balance-response-session");
+
+        assertEquals(OrderStatus.PAID.name(), ((Map<?, ?>) result.get("order")).get("status"));
+        verify(balanceOrderPaymentService).pay(any(Order.class), eq(userId));
+        verify(paymentService, never()).createPayment(any(), anyString(), any(BigDecimal.class), nullable(String.class));
+    }
+
+    @Test
     void enabledAdminPickupKeepsNormalAmountAndUsesTheRealFulfillmentBoundary() {
         UUID adminId = UUID.randomUUID();
         UUID productId = UUID.randomUUID();
@@ -313,7 +384,8 @@ class OrderServiceImplTest {
 
         Map<String, Object> request = request(productId, null, 1);
         request.put("admin_pickup", false);
-        request.put("payment_method", "alipay");
+        request.put("payment_method", "ONLINE");
+        request.put("payment_channel_code", "alipay");
 
         Map<String, Object> result = service.createDirectOrder(request, adminId,
                 "203.0.113.20", "admin-session");
@@ -322,7 +394,8 @@ class OrderServiceImplTest {
         verify(orderRepository).save(orderCaptor.capture());
         Order saved = orderCaptor.getValue();
         assertEquals(OrderType.ADMIN_PICKUP, saved.getOrderType());
-        assertEquals("ADMIN_PICKUP", saved.getPaymentMethod());
+        assertEquals(null, saved.getPaymentMethod());
+        assertEquals(null, saved.getPaymentChannelCode());
         assertEquals(new BigDecimal("12.50"), saved.getTotalAmount());
         assertEquals(new BigDecimal("0.00"), saved.getActualAmount());
         assertEquals(OrderStatus.PAID, saved.getStatus());
@@ -359,7 +432,8 @@ class OrderServiceImplTest {
         Order saved = orderCaptor.getValue();
         assertEquals(OrderType.NORMAL, saved.getOrderType());
         assertEquals(OrderStatus.PENDING, saved.getStatus());
-        assertEquals("alipay", saved.getPaymentMethod());
+        assertEquals(OrderPaymentMethod.ONLINE, saved.getPaymentMethod());
+        assertEquals("alipay", saved.getPaymentChannelCode());
         assertEquals(new BigDecimal("12.50"), saved.getActualAmount());
         assertEquals(levelId, saved.getUserLevelIdSnapshot());
         assertEquals("普通会员", saved.getUserLevelNameSnapshot());
@@ -450,7 +524,8 @@ class OrderServiceImplTest {
         verify(orderRepository).save(orderCaptor.capture());
         Order saved = orderCaptor.getValue();
         assertEquals(OrderType.ADMIN_PICKUP, saved.getOrderType());
-        assertEquals("ADMIN_PICKUP", saved.getPaymentMethod());
+        assertEquals(null, saved.getPaymentMethod());
+        assertEquals(null, saved.getPaymentChannelCode());
         assertEquals(OrderStatus.PAID, saved.getStatus());
         assertEquals(new BigDecimal("0.00"), saved.getActualAmount());
         assertEquals(OrderType.ADMIN_PICKUP, ((Map<?, ?>) result.get("payment")).get("order_type"));
@@ -520,7 +595,8 @@ class OrderServiceImplTest {
         Map<String, Object> request = new java.util.LinkedHashMap<>();
         request.put("product_id", productId.toString());
         request.put("quantity", quantity);
-        request.put("payment_method", "alipay");
+        request.put("payment_method", "ONLINE");
+        request.put("payment_channel_code", "alipay");
         if (specId != null) request.put("spec_id", specId.toString());
         if (expectedUnitPrice != null) request.put("expected_unit_price", expectedUnitPrice);
         return request;

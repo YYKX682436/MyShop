@@ -273,7 +273,7 @@ export function OrderDetailSheet({
             <DefinitionRow label="创建"><span>{formatDateTime(order.created_at, locale)}</span></DefinitionRow>
             <DefinitionRow label="支付"><span>{order.paid_at ? formatDateTime(order.paid_at, locale) : empty}</span></DefinitionRow>
             <DefinitionRow label="完成"><span>{order.delivered_at ? formatDateTime(order.delivered_at, locale) : empty}</span></DefinitionRow>
-            <DefinitionRow label={t("admin.paymentMethod")}><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.payment_method || ""} className="size-4" />{order.payment_method ? getPaymentLabel(order.payment_method, t) : empty}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.paymentMethod")}><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.order_type === "ADMIN_PICKUP" ? "ADMIN_PICKUP" : order.payment_method || ""} className="size-4" />{order.order_type === "ADMIN_PICKUP" ? getPaymentLabel("ADMIN_PICKUP", t) : order.payment_method ? <>{getPaymentLabel(order.payment_method, t)}{order.payment_method === "ONLINE" && order.payment_channel_code ? <span className="text-xs text-muted-foreground">（{order.payment_channel_code}）</span> : null}</> : empty}</span></DefinitionRow>
             <DefinitionRow label="风险状态"><span className={order.is_risk_flagged ? "font-medium text-destructive" : "text-emerald-700 dark:text-emerald-300"}>{order.is_risk_flagged ? t("admin.riskFlagged") : "正常"}</span></DefinitionRow>
           </Panel>
         </aside>

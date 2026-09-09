@@ -4,17 +4,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentAttempt;
+import com.myshop.constant.OrderPaymentMethod;
+import com.myshop.constant.OrderType;
 import com.myshop.entity.WebhookEvent;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.WebhookEventRepository;
-import com.myshop.service.AutoFulfillmentService;
+import com.myshop.service.OrderPaymentCompletionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -29,18 +29,18 @@ public class PaymentConfirmationTransactionService {
     private final WebhookEventRepository webhookEventRepository;
     private final OrderRepository orderRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
-    private final AutoFulfillmentService autoFulfillmentService;
+    private final OrderPaymentCompletionService orderPaymentCompletionService;
     private final ObjectMapper objectMapper;
 
     public PaymentConfirmationTransactionService(WebhookEventRepository webhookEventRepository,
                                                  OrderRepository orderRepository,
                                                  PaymentAttemptRepository paymentAttemptRepository,
-                                                 AutoFulfillmentService autoFulfillmentService,
+                                                 OrderPaymentCompletionService orderPaymentCompletionService,
                                                  ObjectMapper objectMapper) {
         this.webhookEventRepository = webhookEventRepository;
         this.orderRepository = orderRepository;
         this.paymentAttemptRepository = paymentAttemptRepository;
-        this.autoFulfillmentService = autoFulfillmentService;
+        this.orderPaymentCompletionService = orderPaymentCompletionService;
         this.objectMapper = objectMapper;
     }
 
@@ -55,6 +55,12 @@ public class PaymentConfirmationTransactionService {
         if (source == null) return "FAIL";
         Order order = orderRepository.findByIdForUpdate(source.getOrderId()).orElse(null);
         if (order == null) return "FAIL";
+        if (order.getOrderType() != OrderType.NORMAL
+                || order.getPaymentMethod() != OrderPaymentMethod.ONLINE
+                || order.getPaymentChannelCode() == null
+                || order.getPaymentChannelCode().isBlank()) {
+            return "FAIL";
+        }
         PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentAttemptId).orElse(null);
         if (attempt == null) return "FAIL";
 
@@ -79,9 +85,7 @@ public class PaymentConfirmationTransactionService {
         if (orderWasPending) {
             attempt.setStatus(PaymentStatus.PAID);
             paymentAttemptRepository.save(attempt);
-            order.setStatus(OrderStatus.PAID);
-            order.setPaidAt(LocalDateTime.now());
-            orderRepository.save(order);
+            orderPaymentCompletionService.completeFirstPayment(order);
         } else {
             // Preserve the payment fact even if another trusted path already
             // paid the order; the attempt and event still remain consistent.
@@ -98,19 +102,6 @@ public class PaymentConfirmationTransactionService {
         event.setProcessResult(orderWasPending ? "SUCCESS" : "SKIPPED_" + order.getStatus().name());
         webhookEventRepository.save(event);
 
-        if (orderWasPending) {
-            Runnable trigger = () -> autoFulfillmentService.trigger(order.getId());
-            if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        trigger.run();
-                    }
-                });
-            } else {
-                trigger.run();
-            }
-        }
         return "SUCCESS";
     }
 

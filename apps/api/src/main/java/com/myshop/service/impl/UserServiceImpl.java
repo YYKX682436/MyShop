@@ -120,7 +120,8 @@ public class UserServiceImpl implements UserService {
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
         map.put("order_type", o.getOrderType());
-        map.put("payment_method", o.getPaymentMethod());
+        map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
+        map.put("payment_channel_code", o.getPaymentChannelCode());
         map.put("created_at", o.getCreatedAt());
         map.put("items", orderItemRepository.findByOrderId(o.getId()).stream().map(this::toOrderItemBrief).toList());
         return map;

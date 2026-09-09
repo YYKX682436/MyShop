@@ -1,6 +1,7 @@
 package com.myshop.entity;
 
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -48,7 +49,12 @@ public class Order extends BaseEntity {
     @Column(name = "user_level_name_snapshot", length = 100)
     private String userLevelNameSnapshot;
 
-    private String paymentMethod;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_method", length = 64)
+    private OrderPaymentMethod paymentMethod;
+
+    @Column(name = "payment_channel_code", length = 128)
+    private String paymentChannelCode;
 
     private LocalDateTime expiresAt;
 

@@ -356,7 +356,8 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         order.setActualAmount(BigDecimal.ZERO.setScale(2));
         order.setOrderType(OrderType.ADMIN_PICKUP);
         order.setStatus(OrderStatus.DELIVERED);
-        order.setPaymentMethod("ADMIN_PICKUP");
+        order.setPaymentMethod(null);
+        order.setPaymentChannelCode(null);
         order.setDeliveredAt(now);
         order.setOrderNo(orderRepository.nextOrderNo());
         orderRepository.saveAndFlush(order);

@@ -3,6 +3,7 @@ package com.myshop.service.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentAttempt;
@@ -221,23 +222,39 @@ class PaymentServiceImplTest {
     }
 
     @Test
-    void adminPickupReturnsPaidResultWithoutResolvingChannelOrCallingProvider() {
+    void adminPickupCannotEnterTheOnlinePaymentService() {
         UUID orderId = UUID.randomUUID();
         Order order = new Order();
         order.setId(orderId);
         order.setOrderType(OrderType.ADMIN_PICKUP);
-        order.setPaymentMethod("ADMIN_PICKUP");
+        order.setPaymentMethod(null);
+        order.setPaymentChannelCode(null);
         order.setActualAmount(new BigDecimal("0.00"));
         order.setTotalAmount(new BigDecimal("10.00"));
         order.setStatus(OrderStatus.PAID);
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
 
-        Map<String, Object> result = service.createPayment(orderId, "ADMIN_PICKUP",
-                new BigDecimal("0.00"), "pc");
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.createPayment(orderId, "alipay", new BigDecimal("0.00"), "pc"));
 
-        assertEquals(true, result.get("paid"));
-        assertEquals(PaymentStatus.PAID, result.get("status"));
-        assertEquals(OrderType.ADMIN_PICKUP, result.get("order_type"));
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
+        verifyNoInteractions(paymentChannelRepository, provider, paymentAttemptRepository);
+    }
+
+    @Test
+    void repayRejectsNonOnlineOrdersBeforeCreatingAnAttempt() {
+        UUID orderId = UUID.randomUUID();
+        Order order = pendingOrder(orderId, "10.00");
+        order.setPaymentMethod(OrderPaymentMethod.BALANCE);
+        order.setPaymentChannelCode(null);
+        UUID userId = UUID.randomUUID();
+        order.setUserId(userId);
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.repay(orderId, "pc", userId, null));
+
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
         verifyNoInteractions(paymentChannelRepository, provider, paymentAttemptRepository);
     }
 
@@ -302,7 +319,8 @@ class PaymentServiceImplTest {
         order.setStatus(OrderStatus.PENDING);
         order.setActualAmount(new BigDecimal(amount));
         order.setTotalAmount(new BigDecimal(amount));
-        order.setPaymentMethod("alipay");
+        order.setPaymentMethod(OrderPaymentMethod.ONLINE);
+        order.setPaymentChannelCode("alipay");
         order.setExpiresAt(LocalDateTime.now().plusMinutes(10));
         return order;
     }

@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("18", flyway.info().current().getVersion().getVersion());
-        assertEquals(18, flyway.info().all().length);
+        assertEquals("19", flyway.info().current().getVersion().getVersion());
+        assertEquals(19, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -74,6 +74,10 @@ class MigrationChainIntegrationTest {
         assertTrue(defaultValue("orders", "order_type").contains("NORMAL"));
         assertTrue(checkConstraintExists("orders_order_type_check"));
         assertTrue(indexExists("idx_orders_type_created"));
+        assertTrue(columnExists("orders", "payment_channel_code"));
+        assertTrue(checkConstraintExists("orders_payment_method_channel_check"));
+        assertTrue(indexExists("idx_orders_payment_method_channel_status"));
+        assertTrue(indexExists("uq_balance_transactions_order_payment"));
         assertTrue(columnExists("products", "product_no"));
         assertEquals("bigint", dataType("products", "product_no"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -347,7 +351,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("18", flyway().info().current().getVersion().getVersion());
+        assertEquals("19", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -363,6 +367,61 @@ class MigrationChainIntegrationTest {
         assertEquals("https://page.example", paymentChannelConfigValue(pageChannelId, "api_url"));
         assertEquals("true", paymentChannelConfigValue(otherProviderId, legacyCreateModeKey));
         assertNull(paymentChannelConfigValue(otherProviderId, "create_mode"));
+    }
+
+    @Test
+    void v19BackfillsOnlineChannelsClearsPickupFieldsAndEnforcesPaymentContract() {
+        flyway("18").migrate();
+        UUID onlineOrderId = UUID.randomUUID();
+        UUID pickupOrderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL', 'legacy-alipay')
+                """, onlineOrderId);
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, 0.00, 0.00, 'PAID', 'ADMIN_PICKUP', 'ADMIN_PICKUP')
+                """, pickupOrderId);
+
+        flyway().migrate();
+
+        assertEquals("ONLINE", jdbcTemplate.queryForObject(
+                "SELECT payment_method FROM orders WHERE id = ?", String.class, onlineOrderId));
+        assertEquals("legacy-alipay", jdbcTemplate.queryForObject(
+                "SELECT payment_channel_code FROM orders WHERE id = ?", String.class, onlineOrderId));
+        assertNull(jdbcTemplate.queryForObject(
+                "SELECT payment_method FROM orders WHERE id = ?", String.class, pickupOrderId));
+        assertNull(jdbcTemplate.queryForObject(
+                "SELECT payment_channel_code FROM orders WHERE id = ?", String.class, pickupOrderId));
+
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type,
+                                   payment_method, payment_channel_code)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL', 'ONLINE', NULL)
+                """, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type,
+                                   payment_method, payment_channel_code)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL', 'BALANCE', 'alipay')
+                """, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type,
+                                   payment_method, payment_channel_code)
+                VALUES (?, 0.00, 0.00, 'PAID', 'ADMIN_PICKUP', 'ONLINE', 'alipay')
+                """, UUID.randomUUID()));
+
+        UUID userId = UUID.randomUUID();
+        UUID ledgerOrderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'ORDER_PAYMENT', 1.00, -1.00, 2.00, 1.00, 'test', ?, ?)
+                """, userId, userId, ledgerOrderId);
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'ORDER_PAYMENT', 1.00, -1.00, 1.00, 0.00, 'test', ?, ?)
+                """, userId, userId, ledgerOrderId));
     }
 
     @Test
@@ -413,8 +472,8 @@ class MigrationChainIntegrationTest {
                 VALUES (?, ?, ?, 'v10-second', 12.00, 6.00, ?, -2)
                 """, secondProductId, secondCreatedAt, secondCreatedAt, categoryId);
         jdbcTemplate.update("""
-                INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
-                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL')
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL', 'legacy-channel')
                 """, orderId);
         jdbcTemplate.update("""
                 INSERT INTO order_items(id, order_id, product_id, product_title, quantity, unit_price,
@@ -424,7 +483,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("18", flyway().info().current().getVersion().getVersion());
+        assertEquals("19", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -482,8 +541,8 @@ class MigrationChainIntegrationTest {
                 VALUES (?, 'v11-138', 10.00, 5.00, ?, 'P000138')
                 """, product138Id, categoryId);
         jdbcTemplate.update("""
-                INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
-                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL')
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL', 'legacy-channel')
                 """, orderId);
         jdbcTemplate.update("""
                 INSERT INTO order_items(id, order_id, product_id, product_code, product_title, quantity,
@@ -494,7 +553,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("18", flyway().info().current().getVersion().getVersion());
+        assertEquals("19", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -533,17 +592,17 @@ class MigrationChainIntegrationTest {
         LocalDateTime secondCreatedAt = firstCreatedAt.plusMinutes(1);
 
         jdbcTemplate.update("""
-                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type)
-                VALUES (?, ?, ?, 10.00, 10.00, 'PENDING', 'NORMAL')
+                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, ?, ?, 10.00, 10.00, 'PENDING', 'NORMAL', 'legacy-channel')
                 """, secondOrderId, secondCreatedAt, secondCreatedAt);
         jdbcTemplate.update("""
-                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type)
-                VALUES (?, ?, ?, 20.00, 20.00, 'PENDING', 'NORMAL')
+                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, ?, ?, 20.00, 20.00, 'PENDING', 'NORMAL', 'legacy-channel')
                 """, firstOrderId, firstCreatedAt, firstCreatedAt);
 
         flyway().migrate();
 
-        assertEquals("18", flyway().info().current().getVersion().getVersion());
+        assertEquals("19", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         assertEquals("bigint", dataType("orders", "order_no"));
@@ -568,12 +627,12 @@ class MigrationChainIntegrationTest {
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
                 "UPDATE orders SET order_no = 999 WHERE id = ?", firstOrderId));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
-                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, order_no)
-                VALUES (?, 1.00, 1.00, 'PENDING', 'NORMAL', 1000000001)
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, payment_method, order_no)
+                VALUES (?, 1.00, 1.00, 'PENDING', 'NORMAL', 'legacy-channel', 1000000001)
                 """, UUID.randomUUID()));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
-                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, order_no)
-                VALUES (?, 1.00, 1.00, 'PENDING', 'NORMAL', 0)
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, payment_method, order_no)
+                VALUES (?, 1.00, 1.00, 'PENDING', 'NORMAL', 'legacy-channel', 0)
                 """, UUID.randomUUID()));
     }
 
@@ -718,7 +777,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("18", flyway().info().current().getVersion().getVersion());
+        assertEquals("19", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -753,8 +812,8 @@ class MigrationChainIntegrationTest {
                 VALUES (?, ?, 'legacy-v8-spec', 15.67)
                 """, specId, productId);
         jdbcTemplate.update("""
-                INSERT INTO orders(id, user_id, total_amount, actual_amount, status, order_type)
-                VALUES (?, ?, 15.67, 15.67, 'PENDING', 'NORMAL')
+                INSERT INTO orders(id, user_id, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, ?, 15.67, 15.67, 'PENDING', 'NORMAL', 'legacy-channel')
                 """, orderId, userId);
         jdbcTemplate.update("""
                 INSERT INTO order_items(id, order_id, product_id, product_title, spec_id, spec_name,
@@ -764,7 +823,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("18", flyway().info().current().getVersion().getVersion());
+        assertEquals("19", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));
@@ -916,8 +975,8 @@ class MigrationChainIntegrationTest {
                 """, productId, categoryId,
                 "[{\"id\":\"account\",\"label\":\"账号\"},{\"id\":\"zone\",\"label\":\"区服\"}]");
         jdbcTemplate.update("""
-                INSERT INTO orders(id, total_amount, actual_amount, status)
-                VALUES (?, 10.00, 10.00, 'PENDING')
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type, payment_method, payment_channel_code)
+                VALUES (?, 10.00, 10.00, 'PENDING', 'NORMAL', 'ONLINE', 'migration-channel')
                 """, orderId);
         jdbcTemplate.update("""
                 INSERT INTO order_items(id, order_id, product_id, product_no, product_title, quantity, unit_price,
