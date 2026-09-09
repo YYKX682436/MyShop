@@ -1180,7 +1180,7 @@ class PostgresDeliveryIntegrationTest {
         jdbcTemplate.update("""
                 insert into payment_channels (id, created_at, updated_at, channel_code, channel_name,
                     provider_type, payment_type, config_data, is_enabled, sort_order, is_deleted)
-                values (?, current_timestamp, current_timestamp, ?, ?, 'epay', 'alipay', ?, true, 0, 0)
+                values (?, current_timestamp, current_timestamp, ?, ?, 'epay', 'wxpay', ?, true, 0, 0)
                 """, UUID.randomUUID(), channelCode, channelCode,
                 "{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\"}");
     }
