@@ -104,6 +104,19 @@ test("product actions consume create response actions instead of unconditionally
   assert.doesNotMatch(productActionsSource, /router\.push\(`\/pay\//)
 })
 
+test("missing create response action fails on the product page instead of opening /pay", () => {
+  const noActionStart = productActionsSource.indexOf("if (!action) {")
+  const entryStart = productActionsSource.indexOf("const entry = resolvePaymentEntry", noActionStart)
+  const noActionBranch = productActionsSource.slice(noActionStart, entryStart)
+
+  assert.notEqual(noActionStart, -1)
+  assert.notEqual(entryStart, -1)
+  assert.match(noActionBranch, /clearPaymentAction\(result\.payment\.order_id\)/)
+  assert.match(noActionBranch, /toast\.error\(t\("payment\.loadFailed"\)\)/)
+  assert.match(noActionBranch, /return/)
+  assert.doesNotMatch(noActionBranch, /router\.push|buildPaymentPageHref|savePaymentAction/)
+})
+
 test("checkout form_post response executes directly without a payment-page seed", () => {
   const createResponse = {
     payment: {
@@ -123,11 +136,34 @@ test("checkout form_post response executes directly without a payment-page seed"
   assert.match(productActionsSource, /executePaymentAction\(entry\.decision\)/)
   assert.match(productActionsSource, /if \(shouldSeedPaymentAction\(entry\)\)/)
   const executeBranchStart = productActionsSource.indexOf('if (entry.mode === "execute"')
-  const paymentPageNavigationStart = productActionsSource.indexOf("router.push(paymentHref)")
-  const executeBranch = productActionsSource.slice(executeBranchStart, paymentPageNavigationStart)
+  const seedBranchStart = productActionsSource.indexOf("if (shouldSeedPaymentAction(entry))")
+  const executeBranch = productActionsSource.slice(executeBranchStart, seedBranchStart)
   assert.doesNotMatch(executeBranch, /router\.push/)
   assert.match(executeBranch, /executePaymentAction\(entry\.decision\)/)
   assert.match(executeBranch, /return/)
+})
+
+test("/pay navigation is reachable only after a concrete payment-page action is seeded", () => {
+  const seedBranchStart = productActionsSource.indexOf("if (shouldSeedPaymentAction(entry))")
+  const seedBranchEnd = productActionsSource.indexOf("clearPaymentAction(result.payment.order_id)", seedBranchStart)
+  const seedBranch = productActionsSource.slice(seedBranchStart, seedBranchEnd)
+  const beforeSeed = productActionsSource.slice(productActionsSource.indexOf("const action = result.payment.next_action"), seedBranchStart)
+
+  assert.notEqual(seedBranchStart, -1)
+  assert.match(seedBranch, /savePaymentAction\(result\.payment\.order_id, action\)/)
+  assert.match(seedBranch, /router\.push\(paymentHref\)/)
+  assert.match(seedBranch, /return/)
+  assert.doesNotMatch(beforeSeed, /router\.push\(paymentHref\)/)
+  assert.equal((productActionsSource.match(/router\.push\(paymentHref\)/g) || []).length, 1)
+})
+
+test("direct-payment fallback retries the original browser action without linking to /pay", () => {
+  assert.match(productActionsSource, /paymentFallbackAction/)
+  assert.match(productActionsSource, /setPaymentFallbackAction\(entry\.decision\)/)
+  assert.match(productActionsSource, /const retryPaymentExecution = \(\) =>/)
+  assert.match(productActionsSource, /executePaymentAction\(paymentFallbackAction\)/)
+  assert.match(productActionsSource, /onClick=\{retryPaymentExecution\}/)
+  assert.doesNotMatch(productActionsSource, /paymentFallbackHref/)
 })
 
 test("payment page uses explicit load state and does not hide status errors", () => {
