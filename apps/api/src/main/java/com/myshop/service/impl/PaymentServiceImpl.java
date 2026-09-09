@@ -12,6 +12,7 @@ import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.exception.BusinessException;
 import com.myshop.payment.PaymentNextAction;
+import com.myshop.payment.PaymentNextActionPayload;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.OrderItemRepository;
@@ -200,7 +201,8 @@ public class PaymentServiceImpl implements PaymentService {
         result.put("order_id", order.getId());
         result.put("order_no", order.getOrderNo());
         result.put("status", attempt.getStatus());
-        result.put("next_action", deserializeNextAction(attempt.getNextAction()));
+        result.put("next_action", PaymentNextActionPayload.from(
+                deserializeNextAction(attempt.getNextAction())));
         result.put("expires_at", attempt.getExpiresAt());
         return result;
     }

@@ -13,6 +13,7 @@ import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.pricing.PriceResolution;
 import com.myshop.payment.PaymentNextAction;
+import com.myshop.payment.PaymentNextActionPayload;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.*;
 import com.myshop.service.OrderService;
@@ -233,7 +234,8 @@ public class OrderServiceImpl implements OrderService {
                             order.getId(), PaymentStatus.PENDING, LocalDateTime.now())
                     .ifPresent(attempt -> {
                         result.put("payment_id", attempt.getId());
-                        result.put("next_action", readNextAction(attempt.getNextAction()));
+                        result.put("next_action", PaymentNextActionPayload.from(
+                                readNextAction(attempt.getNextAction())));
                     });
         }
         return result;

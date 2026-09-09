@@ -293,8 +293,9 @@ class OrderServiceImplTest {
         Map<String, Object> guestResult = service.getOrderStatus(orderId, lookupToken, null);
         assertEquals("PENDING", guestResult.get("status"));
         assertEquals(attempt.getId(), guestResult.get("payment_id"));
-        assertEquals(new PaymentNextAction.DeepLink(
-                "weixin://dl/business/?ticket=qr-token", "wechat"), guestResult.get("next_action"));
+        assertEquals(Map.of("type", "deep_link",
+                "url", "weixin://dl/business/?ticket=qr-token", "client", "wechat"),
+                guestResult.get("next_action"));
 
         UUID userId = UUID.randomUUID();
         order.setUserId(userId);

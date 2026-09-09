@@ -101,8 +101,8 @@ class PaymentServiceImplTest {
         assertEquals(saved.getId(), first.get("payment_id"));
         assertEquals(saved.getId(), second.get("payment_id"));
         assertEquals(PaymentStatus.PENDING, first.get("status"));
-        assertEquals(action, first.get("next_action"));
-        assertEquals(action, second.get("next_action"));
+        assertEquals(Map.of("type", "redirect", "url", action.url()), first.get("next_action"));
+        assertEquals(Map.of("type", "redirect", "url", action.url()), second.get("next_action"));
         assertEquals("trade-1", saved.getProviderTradeNo());
         assertEquals("{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\"}",
                 saved.getProviderConfigSnapshot());
@@ -215,7 +215,8 @@ class PaymentServiceImplTest {
         Map<String, Object> result = service.createPayment(orderId, "alipay", new BigDecimal("10.00"), "pc");
 
         assertEquals(existing.getId(), result.get("payment_id"));
-        assertEquals(new PaymentNextAction.Redirect("https://pay.example/existing"), result.get("next_action"));
+        assertEquals(Map.of("type", "redirect", "url", "https://pay.example/existing"),
+                result.get("next_action"));
         verifyNoInteractions(paymentChannelRepository, provider);
     }
 

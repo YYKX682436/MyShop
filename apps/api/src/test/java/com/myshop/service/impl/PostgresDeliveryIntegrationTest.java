@@ -576,7 +576,8 @@ class PostgresDeliveryIntegrationTest {
             Map<String, Object> firstResult = first.get(20, TimeUnit.SECONDS);
             Map<String, Object> secondResult = second.get(20, TimeUnit.SECONDS);
             assertEquals(firstResult.get("next_action"), secondResult.get("next_action"));
-            assertEquals(new PaymentNextAction.QrCode("qr-payment-concurrency"), firstResult.get("next_action"));
+            assertEquals(Map.of("type", "qr_code", "value", "qr-payment-concurrency"),
+                    firstResult.get("next_action"));
             assertEquals(1, providerCreateCalls.get(), "Provider.create must run once");
 
             Map<String, Object> stored = jdbcTemplate.queryForMap(
@@ -1009,7 +1010,9 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(OrderType.NORMAL, order.get("order_type"));
         assertEquals("PENDING", order.get("status"));
         assertEquals("PENDING", scalar("select status from orders where id = ?", String.class, orderId));
-        assertTrue(payment.get("next_action") instanceof PaymentNextAction.Redirect);
+        Map<?, ?> nextAction = (Map<?, ?>) payment.get("next_action");
+        assertEquals("redirect", nextAction.get("type"));
+        assertTrue(String.valueOf(nextAction.get("url")).startsWith("https://pay.example/"));
     }
 
     private PaymentProvider.WebhookRequest callback(String merchantTradeNo, String tradeNo) {
