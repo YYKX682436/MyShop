@@ -35,7 +35,7 @@ public class RiskConfigServiceImpl implements RiskConfigService {
             "turnstile_enabled",
             // 设备指纹限流
             "device_rate_limit_enabled",
-            "device_order_limit_per_hour", "device_query_limit_per_hour",
+            "device_order_limit_per_hour",
             "device_login_limit_per_hour", "device_register_limit_per_hour",
             // 已有配置
             "rate_limit_per_second", "login_attempt_limit", "max_purchase_per_user", "order_expire_minutes"
@@ -93,7 +93,6 @@ public class RiskConfigServiceImpl implements RiskConfigService {
         var list = orderPage.getContent().stream().map(o -> {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("id", o.getId());
-            map.put("order_no", o.getOrderNo());
             map.put("total_amount", o.getTotalAmount());
             map.put("actual_amount", o.getActualAmount());
             map.put("status", o.getStatus().name());

@@ -356,7 +356,7 @@ public class AdminUserServiceImpl implements AdminUserService {
                 .map(this::toOrderItemResponse)
                 .toList();
         return new AdminUserOrderResponse(
-                order.getId(), order.getOrderNo(), order.getTotalAmount(), order.getActualAmount(), order.getStatus(),
+                order.getId(), order.getTotalAmount(), order.getActualAmount(), order.getStatus(),
                 order.getOrderType(), order.getPaymentMethod(), order.getPaymentChannelCode(), order.getCreatedAt(),
                 order.getPaidAt(), order.getDeliveredAt(), items);
     }

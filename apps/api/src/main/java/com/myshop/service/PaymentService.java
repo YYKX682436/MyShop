@@ -17,10 +17,12 @@ public interface PaymentService {
      */
     Map<String, Object> createPayment(UUID orderId, String paymentChannelCode, java.math.BigDecimal amount, String device);
 
+    /** Confirm the active attempt through its provider without changing authorization context. */
+    void refreshPayment(UUID orderId);
+
     /**
      * Re-initiate payment for a PENDING order by closing its current attempt
      * and creating a new independent attempt.
-     * @param requestUserId 当前请求用户的 ID（可为 null，表示未登录/游客）
      */
-    Map<String, Object> repay(UUID orderId, String device, UUID requestUserId, String lookupToken);
+    Map<String, Object> repay(UUID orderId, String device);
 }

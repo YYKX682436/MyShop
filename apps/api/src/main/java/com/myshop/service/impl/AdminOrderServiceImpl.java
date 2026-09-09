@@ -122,7 +122,6 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private Map<String, Object> toAdminOrder(Order o, List<OrderItem> items, User user, boolean detail) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", o.getId());
-        map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
@@ -165,7 +164,6 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("gross_margin_total", grossMarginTotal(items));
 
         if (detail) {
-            map.put("internal_order_id", o.getId());
             map.put("user_id", o.getUserId());
             map.put("registered_email", user == null ? null : user.getEmail());
             map.put("phone", user == null ? null : user.getPhone());

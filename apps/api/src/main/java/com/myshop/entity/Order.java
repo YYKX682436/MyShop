@@ -11,7 +11,6 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Objects;
 import java.util.UUID;
 
 @Getter
@@ -21,10 +20,6 @@ import java.util.UUID;
 @Entity
 @Table(name = "orders")
 public class Order extends BaseEntity {
-
-    /** Public business identifier. The UUID inherited from BaseEntity remains the internal primary key. */
-    @Column(name = "order_no", nullable = false, unique = true, updatable = false)
-    private Long orderNo;
 
     private UUID userId;
 
@@ -65,19 +60,6 @@ public class Order extends BaseEntity {
     @Column(unique = true)
     private String idempotencyKey;
 
-    /** SHA-256 of the guest lookup token used for normal constant-time authorization. */
-    @Column(name = "lookup_token_hash", length = 64)
-    private String lookupTokenHash;
-
-    /**
-     * Recoverable guest credential for this self-hosted, low-volume deployment.
-     * It is deliberately never serialized or logged; the hash above remains the
-     * authorization primitive. See the deployment documentation for handling
-     * backups containing this sensitive field.
-     */
-    @Column(name = "guest_lookup_token", length = 128)
-    private String guestLookupToken;
-
     /** Optional client fingerprint used to reject a changed payload on replay. */
     @Column(name = "idempotency_fingerprint", length = 64)
     private String idempotencyFingerprint;
@@ -88,13 +70,5 @@ public class Order extends BaseEntity {
     private String clientIp;
 
     private String sessionToken;
-
-    /** The visible business number is assigned once and must never change. */
-    public void setOrderNo(Long value) {
-        if (orderNo != null && !Objects.equals(orderNo, value)) {
-            throw new IllegalStateException("order_no is immutable");
-        }
-        orderNo = value;
-    }
 
 }

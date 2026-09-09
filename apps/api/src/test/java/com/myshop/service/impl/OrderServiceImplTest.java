@@ -9,7 +9,6 @@ import com.myshop.constant.PricingType;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
-import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
@@ -39,20 +38,19 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -90,7 +88,7 @@ class OrderServiceImplTest {
                 siteConfigRepository, paymentChannelRepository, paymentAttemptRepository, paymentService,
                 balanceOrderPaymentService,
                 manualStockService, userRepository, userLevelRepository, autoFulfillmentService,
-                new PricingServiceImpl(userRepository, userLevelRepository, null), new ObjectMapper());
+                new PricingServiceImpl(userRepository, userLevelRepository, null));
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
         lenient().when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))
@@ -102,7 +100,6 @@ class OrderServiceImplTest {
                 .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
                         any(), eq(PaymentStatus.PENDING), any(LocalDateTime.class)))
                 .thenReturn(Optional.empty());
-        lenient().when(orderRepository.nextOrderNo()).thenReturn(1000000001L);
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
             Order order = invocation.getArgument(0);
             if (order.getId() == null) order.setId(UUID.randomUUID());
@@ -112,7 +109,7 @@ class OrderServiceImplTest {
     }
 
     @Test
-    void calculatesBasicPriceOnServerAndReturnsGuestTokenOnce() {
+    void calculatesBasicPriceOnServerAndReturnsOnlyTheOrderView() {
         UUID productId = UUID.randomUUID();
         Product product = product(productId, "10.00");
         stubProduct(product, 3);
@@ -128,10 +125,12 @@ class OrderServiceImplTest {
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
         assertEquals(OrderType.NORMAL, saved.getOrderType());
         assertEquals(OrderStatus.PENDING, saved.getStatus());
-        assertNotNull(first.get("lookup_token"));
-        assertTrue(String.valueOf(first.get("lookup_token")).length() >= 40);
         Map<?, ?> orderResult = (Map<?, ?>) first.get("order");
-        assertEquals(1000000001L, orderResult.get("order_no"));
+        assertNotNull(orderResult.get("id"));
+        assertEquals(Set.of("order", "payment"), first.keySet());
+        assertEquals(Set.of("id", "total_amount", "actual_amount", "status", "order_type",
+                "payment_method", "payment_channel_code", "created_at", "expires_at", "paid_at",
+                "delivered_at", "items"), orderResult.keySet());
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
         assertFalse(request.containsKey("email"));
         assertFalse(orderResult.containsKey("email"));
@@ -264,48 +263,6 @@ class OrderServiceImplTest {
                         "203.0.113.13", "guest-session"));
         assertEquals(ErrorCode.PURCHASE_LIMIT_EXCEEDED, exception.getCode());
         org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.never()).save(any(Order.class));
-    }
-
-    @Test
-    void guestOrderRequiresLookupTokenButOwnerMayUseIdentity() {
-        UUID orderId = UUID.randomUUID();
-        String lookupToken = "guest-lookup-token-123456789";
-        Order order = new Order();
-        order.setId(orderId);
-        order.setStatus(OrderStatus.PENDING);
-        order.setExpiresAt(LocalDateTime.now().plusMinutes(10));
-        order.setLookupTokenHash(com.myshop.utils.LookupTokens.hash(lookupToken));
-        order.setOrderNo(1000000002L);
-        PaymentAttempt attempt = new PaymentAttempt();
-        attempt.setId(UUID.randomUUID());
-        attempt.setOrderId(orderId);
-        attempt.setStatus(PaymentStatus.PENDING);
-        attempt.setNextAction("{\"type\":\"deep_link\",\"url\":\"weixin://dl/business/?ticket=qr-token\",\"client\":\"wechat\"}");
-        when(paymentAttemptRepository
-                .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
-                        eq(orderId), eq(PaymentStatus.PENDING), any(LocalDateTime.class)))
-                .thenReturn(Optional.of(attempt));
-        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
-
-        BusinessException noCredential = assertThrows(BusinessException.class,
-                () -> service.getOrderStatus(orderId, null, null));
-        assertEquals(ErrorCode.FORBIDDEN, noCredential.getCode());
-
-        BusinessException wrongCredential = assertThrows(BusinessException.class,
-                () -> service.getOrderStatus(orderId, "wrong-token", null));
-        assertEquals(ErrorCode.FORBIDDEN, wrongCredential.getCode());
-
-        Map<String, Object> guestResult = service.getOrderStatus(orderId, lookupToken, null);
-        assertEquals("PENDING", guestResult.get("status"));
-        assertEquals(attempt.getId(), guestResult.get("payment_id"));
-        assertEquals(Map.of("type", "deep_link",
-                "url", "weixin://dl/business/?ticket=qr-token", "client", "wechat"),
-                guestResult.get("next_action"));
-
-        UUID userId = UUID.randomUUID();
-        order.setUserId(userId);
-        Map<String, Object> ownerResult = service.getOrderStatus(orderId, null, userId);
-        assertEquals("PENDING", ownerResult.get("status"));
     }
 
     @Test

@@ -49,14 +49,13 @@ public class DeviceRateLimitFilter implements Filter {
     // ── 配置缓存 ──
     private volatile boolean cachedEnabled = true;
     private volatile int orderLimit = 10;
-    private volatile int queryLimit = 20;
     private volatile int loginLimit = 10;
     private volatile int registerLimit = 5;
     private volatile long configCacheExpiry = 0;
 
     /** 限流类别 */
     private enum Category {
-        ORDER, QUERY, LOGIN, REGISTER, NONE
+        ORDER, LOGIN, REGISTER, NONE
     }
 
     @Override
@@ -85,7 +84,6 @@ public class DeviceRateLimitFilter implements Filter {
         // 设备/IP 维度限流
         int limit = switch (category) {
             case ORDER -> orderLimit;
-            case QUERY -> queryLimit;
             case LOGIN -> loginLimit;
             case REGISTER -> registerLimit;
             default -> 20;
@@ -120,8 +118,8 @@ public class DeviceRateLimitFilter implements Filter {
             if ("/api/orders".equals(path)) {
                 return Category.ORDER;
             }
-            if ("/api/orders/query".equals(path) || "/api/orders/deliver".equals(path)) {
-                return Category.QUERY;
+            if (path.matches("^/api/orders/[^/]+/(refresh|repay)$")) {
+                return Category.ORDER;
             }
             if ("/api/auth/login".equals(path)) {
                 return Category.LOGIN;
@@ -133,7 +131,7 @@ public class DeviceRateLimitFilter implements Filter {
 
         // GET 动态路径：export
         if ("GET".equalsIgnoreCase(method) && path.matches("^/api/orders/[^/]+/export$")) {
-            return Category.QUERY;
+            return Category.ORDER;
         }
 
         return Category.NONE;
@@ -158,7 +156,6 @@ public class DeviceRateLimitFilter implements Filter {
             try {
                 cachedEnabled = getConfigBool("device_rate_limit_enabled", false);
                 orderLimit = getConfigInt("device_order_limit_per_hour", 10);
-                queryLimit = getConfigInt("device_query_limit_per_hour", 20);
                 loginLimit = getConfigInt("device_login_limit_per_hour", 10);
                 registerLimit = getConfigInt("device_register_limit_per_hour", 5);
             } catch (Exception e) {

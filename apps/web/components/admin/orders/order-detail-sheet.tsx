@@ -178,8 +178,8 @@ export function OrderDetailSheet({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-lg font-semibold tracking-tight text-foreground">{order.order_no}</span>
-              <CopyButton value={String(order.order_no)} label={t("admin.orderNo")} onCopy={copyToClipboard} />
+              <span className="font-mono text-lg font-semibold tracking-tight text-foreground">{order.id}</span>
+              <CopyButton value={order.id} label={t("admin.orderId")} onCopy={copyToClipboard} />
               <OrderStatusBadge status={order.status} />
               <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${order.is_risk_flagged ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>
                 {order.is_risk_flagged ? t("admin.riskFlagged") : "风险正常"}
@@ -286,7 +286,7 @@ export function OrderDetailSheet({
         </summary>
         <div className="border-t border-border-subtle px-5 py-4 sm:px-6">
           <dl className="grid gap-x-8 divide-y divide-border-subtle/70 sm:grid-cols-2 sm:divide-y-0">
-            <CopyDefinitionRow label="内部订单 UUID" value={order.internal_order_id || order.id} onCopy={copyToClipboard} empty={empty} mono />
+            <CopyDefinitionRow label={t("admin.orderId")} value={order.id} onCopy={copyToClipboard} empty={empty} mono />
             <CopyDefinitionRow label="用户 UUID" value={order.user_id} onCopy={copyToClipboard} empty={empty} mono />
             {productIds.map((id, index) => <CopyDefinitionRow key={`product-${id}`} label={`商品 UUID${productIds.length > 1 ? ` ${index + 1}` : ""}`} value={id} onCopy={copyToClipboard} empty={empty} mono />)}
             {specIds.map((id, index) => <CopyDefinitionRow key={`spec-${id}`} label={`规格 UUID${specIds.length > 1 ? ` ${index + 1}` : ""}`} value={id} onCopy={copyToClipboard} empty={empty} mono />)}

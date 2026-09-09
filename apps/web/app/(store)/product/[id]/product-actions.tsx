@@ -7,13 +7,12 @@ import { motion } from "motion/react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
-import { ApiError, orderApi, userApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders, saveOrderLookupToken } from "@/services/api"
+import { ApiError, orderApi, userApi, requestOrThrow, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, formatYuan, detectPaymentDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
-import { getPaymentTypeForChannel } from "@/lib/payment-channel"
 import { executePaymentAction, isExecutablePaymentAction, type ExecutablePaymentAction } from "@/lib/payment-action-executor"
-import { buildPaymentPageHref, clearPaymentAction, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
+import { buildOrderPageHref, clearPaymentAction, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PublicPaymentChannel, OrderPaymentMethod } from "@/types"
 import { getBalancePaymentAvailability, isImmediateBalancePaymentSuccess, paymentMethodForRequest } from "@/lib/payment-method"
@@ -152,11 +151,10 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           idempotency_fingerprint: intent.fingerprint,
           device,
         }))
-      saveOrderLookupToken(result.order.order_no, result.lookup_token)
       clearIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, intent.key)
       if (adminPickup || result.payment.admin_pickup || result.order.order_type === "ADMIN_PICKUP") {
         toast.success(t("payment.adminPickupSuccess"))
-        router.push(`/order/query?orderNo=${encodeURIComponent(String(result.order.order_no))}`)
+        router.push(buildOrderPageHref(result.order.id))
         return
       }
       if (isImmediateBalancePaymentSuccess(result)) {
@@ -168,14 +166,10 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
           // will reconcile the navigation balance if this refresh is transient.
         }
         toast.success(t("payment.success"))
-        router.push(`/order/query?orderNo=${encodeURIComponent(String(result.order.order_no))}&paymentReturn=1`)
+        router.push(buildOrderPageHref(result.order.id))
         return
       }
-      const paymentType = getPaymentTypeForChannel(
-        enabledChannels,
-        result.payment.payment_channel_code || selectedPaymentChannelCode,
-      )
-      const paymentHref = buildPaymentPageHref(result.payment.order_id, result.order.order_no, paymentType || "")
+      const paymentHref = buildOrderPageHref(result.payment.order_id)
       const action = result.payment.next_action
       if (!action) {
         clearPaymentAction(result.payment.order_id)

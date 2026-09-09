@@ -174,13 +174,15 @@ the order row, locks every requested available card-key pool with PostgreSQL
 keys and the order. A shortage throws and rolls back the earlier locks and
 mutations while leaving the committed order `PAID`. A one-minute scheduler
 retries a bounded batch of paid, undelivered orders after stock is restored.
-A second delivery request or compensation attempt waits on the order lock and
-then observes DELIVERED, so it cannot allocate a second set of keys. Browser
-`/orders/{id}/deliver` remains only a credential-gated idempotent fallback.
+A second scheduler or compensation attempt waits on the order lock and then
+observes DELIVERED, so it cannot allocate a second set of keys. Fulfillment is
+started by the internal service and scheduler paths; it has no browser-facing
+fallback endpoint.
 
 The PostgreSQL integration tests cover automatic callback delivery without a
 browser request, duplicate callbacks, shortage rollback plus later retry,
-guest idempotency/token recovery, and two concurrent delivery/payment attempts.
+guest idempotency and session ownership, and two concurrent delivery/payment
+attempts.
 They require Docker because they start real PostgreSQL Testcontainers instances.
 
 ## Authentication and sensitive data
@@ -191,10 +193,11 @@ separate fixed test value; `application.yml` has no production fallback. Login
 and registration JSON contains only the public user profile. The JWT is created
 only as an internal result and written to an HttpOnly cookie by the controller.
 
-Guest lookup tokens are recoverable by deliberate project choice for this
-single-owner, low-volume deployment. Treat the `guest_lookup_token` column and
-all database backups as sensitive credentials. Never add it to admin exports,
-operation logs, exception messages, screenshots, or support bundles.
+Guest ownership is bound to the browser session captured when the order is
+created. The session token is sent through the request header and must never be
+copied into admin exports, operation logs, exception messages, screenshots, or
+support bundles. A signed-in user cannot use authentication alone to access a
+guest order without that order's matching session.
 
 ## Runtime support gate
 

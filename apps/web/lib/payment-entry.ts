@@ -46,12 +46,8 @@ export function shouldSeedPaymentAction(entry: Pick<PaymentEntry, "mode">): bool
   return entry.mode === "payment_page"
 }
 
-export function buildPaymentPageHref(orderId: string, orderNo: number | string, method: string): string {
-  const query = new URLSearchParams({
-    orderNo: String(orderNo),
-    method,
-  })
-  return `/pay/${encodeURIComponent(orderId)}?${query.toString()}`
+export function buildOrderPageHref(orderId: string): string {
+  return `/order/${encodeURIComponent(orderId)}`
 }
 
 export function paymentActionStorageKey(orderId: string): string {

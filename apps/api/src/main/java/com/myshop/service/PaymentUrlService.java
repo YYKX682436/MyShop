@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -29,10 +28,9 @@ public class PaymentUrlService {
         return publicSiteUrl + "/api/payments/webhook/" + provider;
     }
 
-    public String paymentReturnUrl(String orderNo) {
-        String visibleOrderNo = requiredText(orderNo, "orderNo");
-        return publicSiteUrl + "/order/query?orderNo=" + encodeQuery(visibleOrderNo)
-                + "&paymentReturn=1";
+    public String paymentReturnUrl(String orderId) {
+        return publicSiteUrl + "/order/" + requiredPathSegment(orderId, "orderId")
+                + "?paymentReturn=1";
     }
 
     public String publicSiteUrl() {
@@ -80,10 +78,6 @@ public class PaymentUrlService {
     }
 
     private String encodePath(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
-    }
-
-    private String encodeQuery(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 }

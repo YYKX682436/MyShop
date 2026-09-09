@@ -21,8 +21,6 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -53,7 +51,7 @@ public class EmailServiceImpl implements EmailService {
 
     @Async
     @Override
-    public void sendDeliveryEmail(UUID orderId, String lookupToken, List<UUID> orderItemIds) {
+    public void sendDeliveryEmail(UUID orderId, List<UUID> orderItemIds) {
         if (!mailEnabled) {
             return;
         }
@@ -94,13 +92,13 @@ public class EmailServiceImpl implements EmailService {
                     .map(c -> c.getConfigValue())
                     .orElse("MyShop");
 
-            String html = buildHtml(order, itemMap, grouped, siteName, lookupToken);
+            String html = buildHtml(order, itemMap, grouped, siteName);
 
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(fromAddress);
             helper.setTo(recipient);
-            helper.setSubject("【" + siteName + "】订单发货通知 - " + order.getOrderNo());
+            helper.setSubject("【" + siteName + "】订单发货通知");
             helper.setText(html, true);
 
             mailSender.send(message);
@@ -113,14 +111,10 @@ public class EmailServiceImpl implements EmailService {
     }
 
     private String buildHtml(Order order, Map<UUID, OrderItem> itemMap,
-                             Map<UUID, List<CardKey>> grouped, String siteName, String lookupToken) {
-        Long orderNo = order.getOrderNo();
+                             Map<UUID, List<CardKey>> grouped, String siteName) {
         BigDecimal amount = order.getActualAmount() != null ? order.getActualAmount() : order.getTotalAmount();
         LocalDateTime createdAt = order.getCreatedAt();
-        String orderUrl = siteUrl + "/order/query?orderNo=" + orderNo;
-        if (lookupToken != null && !lookupToken.isBlank()) {
-            orderUrl += "&lookup_token=" + URLEncoder.encode(lookupToken, StandardCharsets.UTF_8);
-        }
+        String orderUrl = siteUrl + "/order/" + order.getId();
 
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html>");
@@ -148,9 +142,6 @@ public class EmailServiceImpl implements EmailService {
         // Order info
         sb.append("<tr><td style=\"padding:24px 40px;\">");
         sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#f8f9fa;border-radius:6px;padding:16px;\">");
-        sb.append("<tr><td style=\"padding:4px 16px;\"><span style=\"color:#888;font-size:13px;\">订单编号</span></td>");
-        sb.append("<td style=\"padding:4px 16px;text-align:right;\"><span style=\"color:#333;font-size:13px;font-family:monospace;\">")
-          .append(orderNo).append("</span></td></tr>");
         sb.append("<tr><td style=\"padding:4px 16px;\"><span style=\"color:#888;font-size:13px;\">支付金额</span></td>");
         sb.append("<td style=\"padding:4px 16px;text-align:right;\"><span style=\"color:#333;font-size:13px;font-weight:600;\">¥")
           .append(amount).append("</span></td></tr>");

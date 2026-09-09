@@ -228,23 +228,21 @@ public class FulfillmentTransactionService implements FulfillmentService {
         }
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             UUID orderId = order.getId();
-            String lookupToken = order.getGuestLookupToken();
             List<UUID> selectedItems = List.copyOf(orderItemIds);
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    emailService.sendDeliveryEmail(orderId, lookupToken, selectedItems);
+                    emailService.sendDeliveryEmail(orderId, selectedItems);
                 }
             });
         } else {
-            emailService.sendDeliveryEmail(order.getId(), order.getGuestLookupToken(), orderItemIds);
+            emailService.sendDeliveryEmail(order.getId(), orderItemIds);
         }
     }
 
     private Map<String, Object> result(Order order, List<Map<String, Object>> groups) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", order.getId());
-        result.put("order_no", order.getOrderNo());
         result.put("status", order.getStatus().name());
         result.put("groups", groups);
         result.put("item_statuses", orderItemRepository.findByOrderId(order.getId()).stream().map(item -> {

@@ -48,8 +48,7 @@ public class SecurityConfig {
                         // Public endpoints
                         .requestMatchers("/auth/captcha", "/auth/register", "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/products/**", "/categories", "/site/config", "/payment-channels", "/payment-providers").permitAll()
-                        .requestMatchers("/orders/query", "/orders/deliver").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/orders/*/status", "/orders/*/export").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/orders/*", "/orders/*/export").permitAll()
                         .requestMatchers(HttpMethod.POST, "/orders").permitAll()
                         .requestMatchers(HttpMethod.POST, "/orders/*/refresh").permitAll()
                         .requestMatchers(HttpMethod.POST, "/orders/*/repay").permitAll()

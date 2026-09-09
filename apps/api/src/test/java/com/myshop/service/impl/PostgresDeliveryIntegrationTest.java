@@ -13,7 +13,6 @@ import com.myshop.payment.PaymentStatus;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.AdminCardKeyService;
 import com.myshop.service.AdminOrderService;
-import com.myshop.service.DeliverService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.OrderService;
@@ -54,7 +53,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -70,9 +68,6 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
-
-    @Autowired
-    private DeliverService deliverService;
 
     @Autowired
     private OrderService orderService;
@@ -154,7 +149,7 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(new BigDecimal("0.00"), orderResult.get("actual_amount"));
         assertEquals(true, paymentResult.get("paid"));
         assertEquals(true, paymentResult.get("admin_pickup"));
-        assertEquals(java.util.Set.of("order_id", "order_no", "expires_at",
+        assertEquals(java.util.Set.of("order_id", "expires_at",
                         "order_type", "admin_pickup", "paid"), paymentResult.keySet());
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals("ADMIN_PICKUP", scalar("select order_type from orders where id = ?", String.class, orderId));
@@ -162,7 +157,7 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(orderId, scalar("select order_id from card_keys where id = ?", UUID.class, cardId));
         assertTrue(number("select count(*) from card_keys where id = ? and order_item_id is not null and sold_at is not null", cardId) == 1);
         verify(epayPaymentProvider, never()).create(any(PaymentProvider.PaymentRequest.class));
-        verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
+        verify(emailService, never()).sendDeliveryEmail(any(), anyList());
     }
 
     @Test
@@ -340,7 +335,7 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(2, number("select count(*) from card_keys where order_id = ? and order_item_id is not null "
                 + "and status = 'SOLD' and sold_at is not null", orderId));
         assertEquals(2, number("select count(*) from card_keys where id in (?, ?) and order_id = ?", firstCardId, secondCardId, orderId));
-        verify(emailService, never()).sendDeliveryEmail(any(), any(), anyList());
+        verify(emailService, never()).sendDeliveryEmail(any(), anyList());
     }
 
     @Test
@@ -443,27 +438,27 @@ class PostgresDeliveryIntegrationTest {
                 WHERE id = ?
                 """, orderId, secondItemId, secondCardId);
 
-        Long orderNo = scalar("SELECT order_no FROM orders WHERE id = ?", Long.class, orderId);
         Long productNo = scalar("SELECT product_no FROM products WHERE id = ?", Long.class, productId);
         Long userNo = scalar("SELECT user_no FROM users WHERE id = ?", Long.class, userId);
         List<String> matchingKeywords = List.of(
-                orderNo.toString(), orderId.toString(),
+                orderId.toString(),
                 "Search Product Title", "Search Spec Name",
                 "search-customer-value", "search-user-" + suffix,
                 userId.toString(), "registered-search-" + suffix + "@example.com",
                 "13800138000", cardId.toString(), "search-card-password",
                 "search-epay-" + suffix, "search-channel-search-epay-" + suffix, "alipay");
         for (String keyword : matchingKeywords) {
-            assertSearchMatches(keyword, orderId, orderNo);
+            assertSearchMatches(keyword, orderId);
         }
-        assertSearchContains(productNo.toString(), orderId, orderNo);
-        assertSearchContains(userNo.toString(), orderId, orderNo);
+        assertSearchContains(productNo.toString(), orderId);
+        assertSearchContains(userNo.toString(), orderId);
         assertEquals(0L, adminOrderService.searchOrders(new AdminOrderSearchRequest(
                 1, 20, "definitely-no-order-match-" + suffix, null, null, null, "desc"))
                 .getPagination().getTotal());
 
         var summary = (Map<?, ?>) adminOrderService.searchOrders(new AdminOrderSearchRequest(
-                1, 20, orderNo.toString(), null, null, null, "desc")).getList().get(0);
+                1, 20, orderId.toString(), null, null, null, "desc")).getList().get(0);
+        assertEquals(orderId, summary.get("id"));
         assertEquals("REGISTERED", summary.get("customer_type"));
         assertEquals("search-user-" + suffix, summary.get("username"));
         assertEquals(userNo, summary.get("user_no"));
@@ -593,7 +588,7 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void shortageRollsBackAllEarlierCardPoolMutations() {
-        UUID orderId = insertOrder("rollback-token");
+        UUID orderId = insertOrder("rollback-session");
         UUID firstProductId = UUID.randomUUID();
         UUID secondProductId = UUID.randomUUID();
         insertProduct(firstProductId);
@@ -602,8 +597,7 @@ class PostgresDeliveryIntegrationTest {
         insertOrderItem(orderId, secondProductId);
         UUID cardId = insertCard(firstProductId, "rollback-card");
 
-        Map<String, Object> request = request(orderId, "rollback-token");
-        assertThrows(BusinessException.class, () -> deliverService.deliverOrders(request, null));
+        assertThrows(BusinessException.class, () -> fulfillmentService.fulfillOrder(orderId));
 
         assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals("AVAILABLE", scalar("select status from card_keys where id = ?", String.class, cardId));
@@ -613,7 +607,7 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void concurrentDeliveryOfOneOrderAllocatesExactlyOnce() throws Exception {
-        UUID orderId = insertOrder("concurrent-token");
+        UUID orderId = insertOrder("concurrent-session");
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
         insertOrderItem(orderId, productId);
@@ -623,13 +617,13 @@ class PostgresDeliveryIntegrationTest {
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
-            Future<List<?>> first = executor.submit(() -> deliverAfter(start, ready, orderId, "concurrent-token"));
-            Future<List<?>> second = executor.submit(() -> deliverAfter(start, ready, orderId, "concurrent-token"));
+            Future<Map<String, Object>> first = executor.submit(() -> fulfillResultAfter(start, ready, orderId));
+            Future<Map<String, Object>> second = executor.submit(() -> fulfillResultAfter(start, ready, orderId));
             assertTrue(ready.await(10, java.util.concurrent.TimeUnit.SECONDS));
             start.countDown();
 
-            assertEquals("DELIVERED", ((Map<?, ?>) first.get().get(0)).get("status"));
-            assertEquals("DELIVERED", ((Map<?, ?>) second.get().get(0)).get("status"));
+            assertEquals("DELIVERED", first.get().get("status"));
+            assertEquals("DELIVERED", second.get().get("status"));
         } finally {
             executor.shutdownNow();
         }
@@ -640,7 +634,7 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void automaticItemsSharingOnePoolKeepTheirCardBoundaries() {
-        UUID orderId = insertOrder("shared-pool-token");
+        UUID orderId = insertOrder("shared-pool-session");
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
         UUID firstItemId = insertOrderItem(orderId, productId);
@@ -648,8 +642,7 @@ class PostgresDeliveryIntegrationTest {
         insertCard(productId, "shared-pool-card-1");
         insertCard(productId, "shared-pool-card-2");
 
-        Map<?, ?> delivery = (Map<?, ?>) deliverService.deliverOrders(
-                request(orderId, "shared-pool-token"), null).get(0);
+        Map<?, ?> delivery = fulfillmentService.fulfillOrder(orderId);
 
         assertEquals("DELIVERED", delivery.get("status"));
         assertEquals(2, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
@@ -784,7 +777,7 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
-    void guestIdempotencyReplayReturnsSameOrderAndRecoverableToken() {
+    void guestIdempotencyReplayReturnsSameOrderAndSessionOwnership() {
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
         insertCard(productId, "idempotent-card");
@@ -808,7 +801,8 @@ class PostgresDeliveryIntegrationTest {
         Map<?, ?> secondOrder = (Map<?, ?>) second.get("order");
 
         assertEquals(firstOrder.get("id"), secondOrder.get("id"));
-        assertEquals(first.get("lookup_token"), second.get("lookup_token"));
+        assertEquals("guest-session-a", scalar("select session_token from orders where id = ?", String.class,
+                firstOrder.get("id")));
         assertEquals(1, number("select count(*) from orders where idempotency_key = ?", "guest-idempotency-key"));
 
         Map<String, Object> differentSession = new java.util.LinkedHashMap<>(request);
@@ -846,14 +840,13 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void manualOnlyOrderWaitsForAdminAndIsNotSelectedByAutomaticRetry() {
-        UUID orderId = insertOrder("manual-token");
+        UUID orderId = insertOrder("manual-session");
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
         UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 1, 1);
         insertManualStock(productId, null, 0, 1);
 
-        Map<?, ?> delivery = (Map<?, ?>) deliverService.deliverOrders(request(orderId, "manual-token"), null)
-                .get(0);
+        Map<?, ?> delivery = fulfillmentService.fulfillOrder(orderId);
         assertEquals("PAID", delivery.get("status"));
         assertEquals("WAITING_MANUAL", scalar(
                 "select fulfillment_status from order_items where id = ?", String.class, itemId));
@@ -878,7 +871,7 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void mixedOrderDeliversAutomaticItemWhileManualItemWaits() {
-        UUID orderId = insertOrder("mixed-token");
+        UUID orderId = insertOrder("mixed-session");
         UUID autoProductId = UUID.randomUUID();
         UUID manualProductId = UUID.randomUUID();
         insertProduct(autoProductId);
@@ -888,18 +881,17 @@ class PostgresDeliveryIntegrationTest {
         insertCard(autoProductId, "mixed-auto-card");
         insertManualStock(manualProductId, null, 0, 1);
 
-        Map<?, ?> first = (Map<?, ?>) deliverService.deliverOrders(request(orderId, "mixed-token"), null)
-                .get(0);
+        Map<?, ?> first = fulfillmentService.fulfillOrder(orderId);
         assertEquals("PAID", first.get("status"));
         assertEquals("DELIVERED", scalar("select fulfillment_status from order_items where id = ?", String.class, autoItemId));
         assertEquals("WAITING_MANUAL", scalar("select fulfillment_status from order_items where id = ?", String.class, manualItemId));
         assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
-        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), nullable(String.class), eq(List.of(autoItemId)));
+        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(autoItemId)));
 
         // A retry while the manual lane is still waiting must not resend the
         // already-completed automatic item or its card body.
-        deliverService.deliverOrders(request(orderId, "mixed-token"), null);
-        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), nullable(String.class), eq(List.of(autoItemId)));
+        fulfillmentService.fulfillOrder(orderId);
+        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(autoItemId)));
 
         Map<?, ?> second = fulfillmentService.completeManualItem(orderId, manualItemId);
         assertEquals("DELIVERED", second.get("status"));
@@ -908,7 +900,7 @@ class PostgresDeliveryIntegrationTest {
 
     @Test
     void expiredManualOrderReleasesReservationOnce() {
-        UUID orderId = insertExpiredOrder("expired-manual-token");
+        UUID orderId = insertExpiredOrder("expired-manual-session");
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
         UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 2, 2);
@@ -926,11 +918,11 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
     }
 
-    private List<?> deliverAfter(CountDownLatch start, CountDownLatch ready,
-                                 UUID orderId, String lookupToken) throws Exception {
+    private Map<String, Object> fulfillResultAfter(CountDownLatch start, CountDownLatch ready,
+                                                    UUID orderId) throws Exception {
         ready.countDown();
         start.await();
-        return deliverService.deliverOrders(request(orderId, lookupToken), null);
+        return fulfillmentService.fulfillOrder(orderId);
     }
 
     private boolean pickupAfter(CountDownLatch start, CountDownLatch ready,
@@ -977,31 +969,22 @@ class PostgresDeliveryIntegrationTest {
                 new BigDecimal("10.00"), "pc");
     }
 
-    private Map<String, Object> request(UUID orderId, String lookupToken) {
-        Long orderNo = scalar("select order_no from orders where id = ?", Long.class, orderId);
-        return Map.of("orders", List.of(Map.of(
-                "order_no", orderNo.toString(),
-                "lookup_token", lookupToken)));
-    }
-
-    private void assertSearchMatches(String keyword, UUID expectedOrderId, Long expectedOrderNo) {
+    private void assertSearchMatches(String keyword, UUID expectedOrderId) {
         var result = adminOrderService.searchOrders(new AdminOrderSearchRequest(
                 1, 20, keyword, null, null, null, "desc"));
         assertEquals(1L, result.getPagination().getTotal(), "keyword=" + keyword);
         assertEquals(1, result.getList().size(), "keyword=" + keyword);
         Map<?, ?> row = (Map<?, ?>) result.getList().get(0);
         assertEquals(expectedOrderId, row.get("id"), "keyword=" + keyword);
-        assertEquals(expectedOrderNo, row.get("order_no"), "keyword=" + keyword);
     }
 
-    private void assertSearchContains(String keyword, UUID expectedOrderId, Long expectedOrderNo) {
+    private void assertSearchContains(String keyword, UUID expectedOrderId) {
         var result = adminOrderService.searchOrders(new AdminOrderSearchRequest(
                 1, 20, keyword, null, null, null, "desc"));
         assertTrue(result.getPagination().getTotal() >= 1, "keyword=" + keyword);
         assertTrue(result.getList().stream().anyMatch(value -> {
             Map<?, ?> row = (Map<?, ?>) value;
-            return expectedOrderId.equals(row.get("id"))
-                    && expectedOrderNo.equals(row.get("order_no"));
+            return expectedOrderId.equals(row.get("id"));
         }), "keyword=" + keyword);
     }
 
@@ -1026,14 +1009,14 @@ class PostgresDeliveryIntegrationTest {
         return orderId;
     }
 
-    private UUID insertOrder(String lookupToken) {
+    private UUID insertOrder(String sessionToken) {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into orders (id, created_at, updated_at, actual_amount, total_amount, status,
-                    order_type, payment_method, payment_channel_code, lookup_token_hash)
+                    order_type, payment_method, payment_channel_code, session_token)
                 values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PAID',
                     'NORMAL', 'ONLINE', 'integration-channel', ?)
-                """, orderId, com.myshop.utils.LookupTokens.hash(lookupToken));
+                """, orderId, sessionToken);
         return orderId;
     }
 
@@ -1085,15 +1068,15 @@ class PostgresDeliveryIntegrationTest {
         return orderId;
     }
 
-    private UUID insertExpiredOrder(String lookupToken) {
+    private UUID insertExpiredOrder(String sessionToken) {
         UUID orderId = UUID.randomUUID();
         jdbcTemplate.update("""
                 insert into orders (id, created_at, updated_at, actual_amount, total_amount, status,
-                    order_type, payment_method, payment_channel_code, lookup_token_hash, expires_at)
+                    order_type, payment_method, payment_channel_code, session_token, expires_at)
                 values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PENDING',
                     'NORMAL', 'ONLINE', 'integration-channel', ?,
                     current_timestamp - interval '1 minute')
-                """, orderId, com.myshop.utils.LookupTokens.hash(lookupToken));
+                """, orderId, sessionToken);
         return orderId;
     }
 

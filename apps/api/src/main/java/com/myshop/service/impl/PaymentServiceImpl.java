@@ -20,8 +20,8 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.ManualStockService;
+import com.myshop.service.OrderPaymentCompletionService;
 import com.myshop.service.PaymentService;
-import com.myshop.utils.LookupTokens;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +45,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final List<PaymentProvider> paymentProviders;
     private final ObjectMapper objectMapper;
     private final ManualStockService manualStockService;
+    private final OrderPaymentCompletionService orderPaymentCompletionService;
 
     @Autowired
     public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
@@ -53,7 +54,8 @@ public class PaymentServiceImpl implements PaymentService {
                               PaymentAttemptRepository paymentAttemptRepository,
                               List<PaymentProvider> paymentProviders,
                               ObjectMapper objectMapper,
-                              ManualStockService manualStockService) {
+                              ManualStockService manualStockService,
+                              OrderPaymentCompletionService orderPaymentCompletionService) {
         this.paymentChannelRepository = paymentChannelRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
@@ -61,6 +63,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.paymentProviders = paymentProviders == null ? List.of() : List.copyOf(paymentProviders);
         this.objectMapper = objectMapper;
         this.manualStockService = manualStockService;
+        this.orderPaymentCompletionService = orderPaymentCompletionService;
     }
 
     @Override
@@ -88,14 +91,9 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     @Transactional
-    public Map<String, Object> repay(UUID orderId, String device, UUID requestUserId,
-                                     String lookupToken) {
+    public Map<String, Object> repay(UUID orderId, String device) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        boolean owner = requestUserId != null && requestUserId.equals(order.getUserId());
-        if (!owner && !LookupTokens.matches(lookupToken, order.getLookupTokenHash())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "无权操作此订单");
-        }
         validateOnlineOrder(order);
         validatePendingOrder(order);
         if (order.getUpdatedAt() != null
@@ -109,6 +107,42 @@ public class PaymentServiceImpl implements PaymentService {
         PaymentContext context = resolveCreationContext(order.getPaymentChannelCode());
         closePendingAttempts(order.getId());
         return createAttempt(order, context.channel(), context.provider(), device);
+    }
+
+    @Override
+    @Transactional
+    public void refreshPayment(UUID orderId) {
+        Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
+        if (order == null || order.getStatus() != OrderStatus.PENDING) return;
+        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(LocalDateTime.now())) {
+            expireOrder(order);
+            return;
+        }
+
+        PaymentAttempt attempt = findActiveAttempt(order.getId());
+        if (attempt == null) return;
+        PaymentProvider provider = paymentProviders.stream()
+                .filter(candidate -> candidate.id().equalsIgnoreCase(attempt.getProviderType()))
+                .findFirst()
+                .orElse(null);
+        if (provider == null || !provider.supportsServerSideQuery()) return;
+
+        PaymentProvider.PaymentQueryResult query;
+        try {
+            query = provider.query(new PaymentProvider.PaymentQueryRequest(
+                    attempt.getMerchantTradeNo(), parseConfig(attempt.getProviderConfigSnapshot())));
+        } catch (RuntimeException ignored) {
+            return;
+        }
+        if (query == null || query.status() != PaymentStatus.PAID
+                || !sameAmount(query.amount(), attempt.getAmount())
+                || !sameProviderTrade(query.providerTradeNo(), attempt.getProviderTradeNo())) {
+            return;
+        }
+        attempt.setProviderTradeNo(query.providerTradeNo());
+        attempt.setStatus(PaymentStatus.PAID);
+        paymentAttemptRepository.save(attempt);
+        orderPaymentCompletionService.completeFirstPayment(order);
     }
 
     private Map<String, Object> createAttempt(Order order, PaymentChannel channel,
@@ -126,7 +160,7 @@ public class PaymentServiceImpl implements PaymentService {
                         order.getClientIp(),
                         device,
                         providerConfig,
-                        order.getOrderNo() == null ? null : order.getOrderNo().toString()));
+                        order.getId().toString()));
         if (providerResult == null || providerResult.nextAction() == null) {
             throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付提供商未返回有效支付动作");
         }
@@ -193,14 +227,30 @@ public class PaymentServiceImpl implements PaymentService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("payment_id", attempt.getId());
         result.put("order_id", order.getId());
-        result.put("order_no", order.getOrderNo());
         result.put("status", attempt.getStatus());
         result.put("payment_method", OrderPaymentMethod.ONLINE.name());
+        result.put("payment_type", attempt.getPaymentType());
         result.put("payment_channel_code", order.getPaymentChannelCode());
         result.put("next_action", PaymentNextActionPayload.from(
                 deserializeNextAction(attempt.getNextAction())));
         result.put("expires_at", attempt.getExpiresAt());
+        result.put("remaining_seconds", remainingSeconds(attempt.getExpiresAt()));
         return result;
+    }
+
+    private long remainingSeconds(LocalDateTime expiresAt) {
+        if (expiresAt == null) return 0;
+        return Math.max(0, java.time.Duration.between(LocalDateTime.now(), expiresAt).getSeconds());
+    }
+
+    private boolean sameProviderTrade(String queried, String stored) {
+        String queryTrade = clean(queried);
+        String storedTrade = clean(stored);
+        return queryTrade != null && (storedTrade == null || queryTrade.equals(storedTrade));
+    }
+
+    private boolean sameAmount(BigDecimal actual, BigDecimal expected) {
+        return actual != null && expected != null && actual.compareTo(expected) == 0;
     }
 
     private String serializeNextAction(PaymentNextAction action) {

@@ -163,7 +163,7 @@ public class EpayServiceImpl implements EpayService {
             try {
                 body = objectMapper.readValue(raw, new TypeReference<>() { });
             } catch (Exception e) {
-                if (isHtml(response, raw)) throw new PaymentQueryUnavailableException("易支付网关未提供可用的订单查询接口");
+                if (isHtml(response, raw)) throw new PaymentQueryUnavailableException("易支付网关未提供可用的支付状态查询接口");
                 return null;
             }
             if (body.containsKey("code") && !isSuccessCode(body.get("code"))) return null;

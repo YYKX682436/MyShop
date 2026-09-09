@@ -15,8 +15,8 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
-import com.myshop.utils.LookupTokens;
 import java.time.Duration;
+import java.util.UUID;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -66,7 +66,7 @@ public class AuthController {
     private void writeAuthCookies(HttpServletResponse response, String token) {
         response.addHeader("Set-Cookie", ResponseCookie.from("myshop_access_token", token)
                 .httpOnly(true).secure(cookieSecure).sameSite("Lax").path("/").maxAge(Duration.ofHours(24)).build().toString());
-        response.addHeader("Set-Cookie", ResponseCookie.from("myshop_csrf", LookupTokens.issue().plaintext())
+        response.addHeader("Set-Cookie", ResponseCookie.from("myshop_csrf", UUID.randomUUID().toString())
                 .secure(cookieSecure).sameSite("Lax").path("/").maxAge(Duration.ofHours(24)).build().toString());
     }
 }

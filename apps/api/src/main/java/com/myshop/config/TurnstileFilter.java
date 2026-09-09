@@ -48,9 +48,8 @@ public class TurnstileFilter implements Filter {
     /**
      * Turnstile 保护的路径（一次性高风险操作）。
      * <p>
-     * 订单查询不在此列：它是同一页面可重复触发的查看操作，
-     * Cloudflare token 单次消费特性会导致连续操作失败。
-     * 该路径由设备指纹/IP 限流保护。
+     * 订单生命周期读取和状态刷新不在此列：它们是同一页面可重复触发的
+     * 查看操作，Cloudflare token 单次消费特性会导致连续操作失败。
      */
     private static final Set<String> EXACT_PATHS = Set.of(
             "/api/orders",

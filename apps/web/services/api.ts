@@ -4,8 +4,7 @@
   UserProfile,
   RegisterRequest,
   OrderBrief,
-  OrderStatus,
-  OrderPaymentMethod,
+  OrderView,
   ProductCard,
   ProductDetail,
   AdminProductDetail,
@@ -14,7 +13,6 @@
   Category,
   CreateOrderRequest,
   CreateOrderResult,
-  DeliverResult,
   SiteConfig,
   SiteConfigKV,
   DashboardStats,
@@ -36,7 +34,6 @@
   PublicPaymentChannel,
   AdminPaymentChannel,
   PaymentProviderMetadata,
-  PaymentNextAction,
   OperationLog,
   RiskConfig,
   UserLevel,
@@ -107,28 +104,24 @@ export function getOrCreateGuestSessionToken(): string {
   if (typeof window === "undefined") return ""
   const existing = getSessionToken()
   if (existing) return existing
-  const token = typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  const webCrypto = window.crypto
+  let token: string
+  if (typeof webCrypto.randomUUID === "function") {
+    token = webCrypto.randomUUID()
+  } else {
+    if (typeof webCrypto.getRandomValues !== "function") {
+      throw new Error("当前浏览器不支持安全的游客会话")
+    }
+    const bytes = new Uint8Array(32)
+    webCrypto.getRandomValues(bytes)
+    token = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("")
+  }
   setSessionToken(token)
   return token
 }
 
 export function clearSessionToken() {
   localStorage.removeItem("session_token")
-}
-
-const ORDER_TOKEN_PREFIX = "myshop_order_lookup_by_no:"
-
-export function saveOrderLookupToken(orderNo: number | string, token: string | undefined) {
-  if (typeof window !== "undefined" && token) {
-    localStorage.setItem(`${ORDER_TOKEN_PREFIX}${orderNo}`, token)
-  }
-}
-
-export function getOrderLookupToken(orderNo: number | string): string | undefined {
-  if (typeof window === "undefined") return undefined
-  return localStorage.getItem(`${ORDER_TOKEN_PREFIX}${orderNo}`) || undefined
 }
 
 // ============================================================
@@ -368,20 +361,16 @@ export const orderApi = {
     getOrCreateGuestSessionToken()
     return request<CreateOrderResult>("/orders", { method: "POST", body: JSON.stringify(data) })
   },
-  getStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
-    request<{ order_id: string; order_no: number; status: OrderStatus; payment_method: OrderPaymentMethod | null; payment_channel_code: string | null; payment_id?: string | null; next_action?: PaymentNextAction | null; expires_at: string | null; remaining_seconds: number }>(`/orders/${orderId}/status?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`),
-  refreshStatus: (orderId: string, lookupToken?: string, orderNo?: number | string) =>
-    request<{ status: OrderStatus; order_no: number }>(`/orders/${orderId}/refresh?${buildQuery({ lookup_token: lookupToken || (orderNo === undefined ? undefined : getOrderLookupToken(orderNo)) })}`, { method: "POST" }),
-  query: (data: { orders: { order_no: number | string; lookup_token?: string }[] }) =>
-    request<OrderBrief[]>("/orders/query", { method: "POST", body: JSON.stringify(data) }),
-  deliver: (data: { orders: { order_no: number | string; lookup_token?: string }[] }) =>
-    request<DeliverResult[]>("/orders/deliver", { method: "POST", body: JSON.stringify(data) }),
-  exportKeys: (orderId: string, orderNo: number | string, lookupToken?: string) =>
-    requestText(`/orders/${orderId}/export?${buildQuery({ order_no: orderNo, lookup_token: lookupToken || getOrderLookupToken(orderNo) })}`),
-  repay: (orderId: string, orderNo: number | string, device?: string, lookupToken?: string) =>
-    request<import("@/types").PaymentCreateResult>(`/orders/${orderId}/repay`, {
+  get: (orderId: string) =>
+    request<OrderView>(`/orders/${encodeURIComponent(orderId)}`),
+  refresh: (orderId: string) =>
+    request<OrderView>(`/orders/${encodeURIComponent(orderId)}/refresh`, { method: "POST" }),
+  exportKeys: (orderId: string) =>
+    requestText(`/orders/${encodeURIComponent(orderId)}/export`),
+  repay: (orderId: string, device?: string) =>
+    request<import("@/types").PaymentCreateResult>(`/orders/${encodeURIComponent(orderId)}/repay`, {
       method: "POST",
-      body: JSON.stringify({ device, lookup_token: lookupToken || getOrderLookupToken(orderNo) }),
+      body: JSON.stringify({ device }),
     }),
 }
 
@@ -797,9 +786,9 @@ const ERROR_CODE_I18N: Record<number, string> = {
   30005: "error.specHasCardKeys",
   30006: "error.specNameDuplicate",
   // Order
-  40001: "error.orderNotFound",
+  40001: "error.orderMissing",
   40002: "error.orderExpired",
-  40003: "error.orderNotPaid",
+  40003: "error.orderPaymentRequired",
   40004: "error.orderOutOfStock",
   40005: "error.orderProcessing",
   40006: "error.purchaseLimitPerUser",

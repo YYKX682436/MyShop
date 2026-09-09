@@ -26,13 +26,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     Optional<Order> findByIdempotencyKey(String idempotencyKey);
 
-    Optional<Order> findByLookupTokenHash(String lookupTokenHash);
-
-    Optional<Order> findByOrderNo(Long orderNo);
-
-    @Query(value = "SELECT nextval('order_no_sequence')", nativeQuery = true)
-    Long nextOrderNo();
-
     List<Order> findByStatusAndDeliveredAtIsNullOrderByCreatedAtAsc(OrderStatus status, Pageable pageable);
 
     /** Only paid orders with unfinished automatic card delivery are retryable. */
@@ -178,7 +171,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
                     CAST(:keywordPattern AS text) IS NULL
-                    OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_channel_code, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
@@ -240,7 +232,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
                     CAST(:keywordPattern AS text) IS NULL
-                    OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_channel_code, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'

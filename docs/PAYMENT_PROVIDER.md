@@ -123,7 +123,7 @@ these protocol field semantics:
   resolved against the normalized gateway base. If no compatible carrier is
   returned, creation fails closed.
 
-For order queries, the adapter removes `/mapi.php`, `/pay/apisubmit`, or
+For server-side payment status checks, the adapter removes `/mapi.php`, `/pay/apisubmit`, or
 `/submit.php` from the configured URL and calls `/api.php` on the normalized
 gateway root. Root URLs with a trailing slash are normalized before endpoint
 construction, so no double slash is generated. The admin schema rejects every

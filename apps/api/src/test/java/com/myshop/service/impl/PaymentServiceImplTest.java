@@ -17,7 +17,7 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.ManualStockService;
-import com.myshop.utils.LookupTokens;
+import com.myshop.service.OrderPaymentCompletionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -56,6 +56,7 @@ class PaymentServiceImplTest {
     @Mock private PaymentAttemptRepository paymentAttemptRepository;
     @Mock private PaymentProvider provider;
     @Mock private ManualStockService manualStockService;
+    @Mock private OrderPaymentCompletionService orderPaymentCompletionService;
 
     private PaymentServiceImpl service;
 
@@ -73,7 +74,8 @@ class PaymentServiceImplTest {
                 });
         lenient().when(paymentAttemptRepository.existsByMerchantTradeNo(anyString())).thenReturn(false);
         service = new PaymentServiceImpl(paymentChannelRepository, orderRepository, orderItemRepository,
-                paymentAttemptRepository, List.of(provider), new ObjectMapper(), manualStockService);
+                paymentAttemptRepository, List.of(provider), new ObjectMapper(), manualStockService,
+                orderPaymentCompletionService);
     }
 
     @Test
@@ -107,8 +109,8 @@ class PaymentServiceImplTest {
         assertEquals("trade-1", saved.getProviderTradeNo());
         assertEquals("{\"pid\":\"pid\",\"key\":\"secret\",\"api_url\":\"https://pay.example\"}",
                 saved.getProviderConfigSnapshot());
-        assertNotEquals(order.getOrderNo() == null ? null : order.getOrderNo().toString(),
-                saved.getMerchantTradeNo());
+        assertEquals(orderId.toString(), capturedPaymentRequest().orderId());
+        assertNotEquals(orderId.toString(), saved.getMerchantTradeNo());
         assertFalse(first.containsKey("provider_config_snapshot"));
         verify(provider).create(any(PaymentProvider.PaymentRequest.class));
     }
@@ -252,7 +254,7 @@ class PaymentServiceImplTest {
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
 
         BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.repay(orderId, "pc", userId, null));
+                () -> service.repay(orderId, "pc"));
 
         assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
         verifyNoInteractions(paymentChannelRepository, provider, paymentAttemptRepository);
@@ -261,9 +263,7 @@ class PaymentServiceImplTest {
     @Test
     void repayClosesOldPendingAttemptAndCreatesASeparateAttempt() {
         UUID orderId = UUID.randomUUID();
-        String lookupToken = "payment-lookup-token-123456";
         Order order = pendingOrder(orderId, "10.00");
-        order.setLookupTokenHash(LookupTokens.hash(lookupToken));
         order.setUpdatedAt(LocalDateTime.now().minusSeconds(20));
         PaymentAttempt oldAttempt = attempt(orderId, "merchant-old", new PaymentNextAction.Redirect(
                 "https://pay.example/old"));
@@ -276,7 +276,7 @@ class PaymentServiceImplTest {
                 .thenReturn(new PaymentProvider.PaymentResult(
                         "trade-new", new PaymentNextAction.Redirect("https://pay.example/new")));
 
-        Map<String, Object> result = service.repay(orderId, "pc", null, lookupToken);
+        Map<String, Object> result = service.repay(orderId, "pc");
 
         assertEquals(PaymentStatus.CLOSED, oldAttempt.getStatus());
         assertEquals(PaymentStatus.PENDING, result.get("status"));
@@ -288,6 +288,13 @@ class PaymentServiceImplTest {
     private PaymentAttempt capturedAttempt() {
         ArgumentCaptor<PaymentAttempt> captor = ArgumentCaptor.forClass(PaymentAttempt.class);
         verify(paymentAttemptRepository, org.mockito.Mockito.atLeastOnce()).save(captor.capture());
+        return captor.getAllValues().get(captor.getAllValues().size() - 1);
+    }
+
+    private PaymentProvider.PaymentRequest capturedPaymentRequest() {
+        ArgumentCaptor<PaymentProvider.PaymentRequest> captor =
+                ArgumentCaptor.forClass(PaymentProvider.PaymentRequest.class);
+        verify(provider, org.mockito.Mockito.atLeastOnce()).create(captor.capture());
         return captor.getAllValues().get(captor.getAllValues().size() - 1);
     }
 
@@ -315,7 +322,6 @@ class PaymentServiceImplTest {
     private Order pendingOrder(UUID id, String amount) {
         Order order = new Order();
         order.setId(id);
-        order.setOrderNo(100001L);
         order.setStatus(OrderStatus.PENDING);
         order.setActualAmount(new BigDecimal(amount));
         order.setTotalAmount(new BigDecimal(amount));

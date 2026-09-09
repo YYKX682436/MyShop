@@ -152,7 +152,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   if (presentation === "full") {
     return (
       <AdminPage>
-        <PageHeader title={t("admin.orderWorkspace")} description={order ? String(order.order_no) : t("common.loading")} actions={markPaidButton} />
+        <PageHeader title={t("admin.orderWorkspace")} description={order ? order.id : t("common.loading")} actions={markPaidButton} />
         <div className="surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
         {confirmDialog}
       </AdminPage>
@@ -163,7 +163,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     <>
       <WorkspaceSheet
         title={t("admin.orderWorkspace")}
-        description={order ? String(order.order_no) : t("common.loading")}
+        description={order ? order.id : t("common.loading")}
         onClose={close}
         headerActions={markPaidButton}
       >

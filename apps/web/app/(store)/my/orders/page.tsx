@@ -11,6 +11,7 @@ import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import type { OrderBrief, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
 import { cn, formatYuan } from "@/lib/utils"
+import { buildOrderPageHref } from "@/lib/payment-entry"
 
 const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "EXPIRED"]
 
@@ -104,9 +105,6 @@ export default function MyOrdersPage() {
               {/* Order Header */}
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-xs font-medium text-foreground">
-                    {order.order_no}
-                  </span>
                   <OrderStatusBadge status={order.status} />
                 </div>
                 <span className="text-xs text-muted-foreground">
@@ -149,15 +147,15 @@ export default function MyOrdersPage() {
                 <div className="flex gap-2">
                   {order.status === "PENDING" && order.order_type === "NORMAL" && order.payment_method === "ONLINE" && order.payment_channel_code && (
                     <Link
-                      href={`/pay/${order.id}?orderNo=${order.order_no}&method=${order.payment_channel_code}`}
+                      href={buildOrderPageHref(order.id)}
                       className="inline-flex h-9 items-center gap-1 rounded-control bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98]"
                     >
                       {t("payment.continuePay")}
                     </Link>
                   )}
-                  {order.status === "DELIVERED" && (
+                  {(order.status === "PAID" || order.status === "DELIVERED") && (
                     <Link
-                      href={`/order/query?orderNo=${order.order_no}`}
+                      href={buildOrderPageHref(order.id)}
                       className="inline-flex h-9 items-center gap-1 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
                     >
                       <ExternalLink className="h-3 w-3" />

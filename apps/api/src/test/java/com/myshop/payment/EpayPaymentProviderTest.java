@@ -41,7 +41,7 @@ class EpayPaymentProviderTest {
             config.remove(missing);
             BusinessException exception = assertThrows(BusinessException.class, () -> provider.create(
                     new PaymentProvider.PaymentRequest("merchant-1", "alipay", "商品", BigDecimal.TEN,
-                            "127.0.0.1", "pc", config, "100001")));
+                            "127.0.0.1", "pc", config, "6d7f2a1e-7f5d-4b17-a1d1-9bf80f0d9b2a")));
             assertEquals(50001, exception.getCode(), missing);
         }
     }
@@ -57,7 +57,7 @@ class EpayPaymentProviderTest {
 
         PaymentProvider.PaymentResult result = provider.create(new PaymentProvider.PaymentRequest(
                 "merchant-1", "wxpay", "商品", new BigDecimal("10.00"),
-                "127.0.0.1", "pc", validConfig(), "100001"));
+                "127.0.0.1", "pc", validConfig(), "6d7f2a1e-7f5d-4b17-a1d1-9bf80f0d9b2a"));
 
         assertEquals("trade-1", result.providerTradeNo());
         assertEquals(action, result.nextAction());
@@ -65,7 +65,7 @@ class EpayPaymentProviderTest {
                 new EpayService.ChannelConfig("https://pay.example", "pid", "secret"),
                 "merchant-1", "wxpay", "商品", new BigDecimal("10.00"), "127.0.0.1", "pc",
                 "https://shop.example.com/api/payments/webhook/epay",
-                "https://shop.example.com/order/query?orderNo=100001&paymentReturn=1");
+                "https://shop.example.com/order/6d7f2a1e-7f5d-4b17-a1d1-9bf80f0d9b2a?paymentReturn=1");
     }
 
     @Test

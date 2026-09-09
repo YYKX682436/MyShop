@@ -31,8 +31,8 @@ public class AutoFulfillmentServiceImpl implements AutoFulfillmentService {
             // a different committed transaction and remains PAID.
             log.warn("Automatic fulfillment deferred for order {}: {}", orderId, exception.getMessage());
         } catch (RuntimeException exception) {
-            // Do not include provider credentials, card content, or lookup
-            // credentials in a retry log. The scheduler will retry safely.
+            // Do not include provider credentials or card content in a retry
+            // log. The scheduler will retry safely.
             log.warn("Automatic fulfillment failed for order {}", orderId);
         }
     }

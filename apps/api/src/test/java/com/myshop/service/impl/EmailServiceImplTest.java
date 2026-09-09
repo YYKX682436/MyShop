@@ -57,7 +57,7 @@ class EmailServiceImplTest {
         UUID orderId = UUID.randomUUID();
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order(orderId, null)));
 
-        service.sendDeliveryEmail(orderId, "guest-token", List.of());
+        service.sendDeliveryEmail(orderId, List.of());
 
         verify(orderRepository).findById(orderId);
         verifyNoInteractions(userRepository, mailSenderProvider, mailSender);
@@ -79,7 +79,7 @@ class EmailServiceImplTest {
         when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of());
         when(siteConfigRepository.findByConfigKey("site_name")).thenReturn(Optional.empty());
 
-        service.sendDeliveryEmail(orderId, null, List.of());
+        service.sendDeliveryEmail(orderId, List.of());
 
         verify(userRepository).findById(userId);
         verify(mailSender).send(any(MimeMessage.class));
@@ -89,7 +89,6 @@ class EmailServiceImplTest {
         Order order = new Order();
         order.setId(id);
         order.setUserId(userId);
-        order.setOrderNo(1000000001L);
         order.setOrderType(OrderType.NORMAL);
         order.setStatus(OrderStatus.DELIVERED);
         order.setActualAmount(new BigDecimal("10.00"));

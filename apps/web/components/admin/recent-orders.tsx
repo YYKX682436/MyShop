@@ -5,7 +5,7 @@ import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { useLocale } from "@/lib/context"
-import { formatAdminOrderCustomer, formatAdminOrderNumber, formatAdminOrderProductMeta } from "@/lib/admin-order-display"
+import { formatAdminOrderCustomer, formatAdminOrderProductMeta } from "@/lib/admin-order-display"
 import { formatDateTime, formatYuan } from "@/lib/utils"
 import type { AdminOrderItem } from "@/types"
 
@@ -50,7 +50,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
               </colgroup>
               <thead>
                 <tr className="border-b border-border-subtle text-left">
-                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.orderNo")}</th>
+                  <th className="pb-3 font-medium text-muted-foreground">{t("admin.orderId")}</th>
                   <th className="pb-3 font-medium text-muted-foreground">{t("admin.product")}</th>
                   <th className="pb-3 font-medium text-muted-foreground">{t("admin.user")}</th>
                   <th className="pb-3 font-medium text-muted-foreground">{t("admin.amount")}</th>
@@ -62,7 +62,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                 {orders.map((order) => (
                   <tr key={order.id} className="border-b border-border-subtle last:border-0">
                     <td className="py-3 font-mono text-sm text-foreground">
-                      <CopyOrderButton orderNo={order.order_no} onCopy={copyToClipboard} />
+                      <CopyOrderIdButton orderId={order.id} onCopy={copyToClipboard} />
                     </td>
                     <td className="py-3 text-sm text-foreground">
                       <ProductSummary order={order} />
@@ -83,7 +83,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
             {orders.map((order) => (
               <article key={order.id} className="min-w-0 rounded-control border border-border-subtle bg-surface-muted/45 p-3">
                 <div className="flex min-w-0 items-start justify-between gap-3">
-                  <CopyOrderButton orderNo={order.order_no} onCopy={copyToClipboard} />
+                  <CopyOrderIdButton orderId={order.id} onCopy={copyToClipboard} />
                   <OrderStatusBadge status={order.status} />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
@@ -112,9 +112,9 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
   )
 }
 
-function CopyOrderButton({ orderNo, onCopy }: { orderNo: number; onCopy: (value: string) => void }) {
+function CopyOrderIdButton({ orderId, onCopy }: { orderId: string; onCopy: (value: string) => void }) {
   const { t } = useLocale()
-  const value = formatAdminOrderNumber(orderNo)
+  const value = orderId
   return (
     <button
       type="button"

@@ -83,11 +83,11 @@ public class UserServiceImpl implements UserService {
             orderPage = orderRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
         }
 
-        // 主动过期检查：PENDING 且已超时的订单标记为 EXPIRED（与 queryOrders 逻辑一致）
+        // 主动过期检查：PENDING 且已超时的订单标记为 EXPIRED。
         LocalDateTime now = LocalDateTime.now();
         for (Order o : orderPage.getContent()) {
             if (o.getStatus() == OrderStatus.PENDING && o.getExpiresAt() != null && o.getExpiresAt().isBefore(now)) {
-                // The list query may race the payment/expiry worker. Lock the
+                // The order list may race the payment/expiry worker. Lock the
                 // order before touching its item reservation so recovery is
                 // idempotent across all expiry entry points.
                 Order locked = orderRepository.findByIdForUpdate(o.getId()).orElse(o);
@@ -115,7 +115,6 @@ public class UserServiceImpl implements UserService {
     private Map<String, Object> toOrderBrief(Order o) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", o.getId());
-        map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());

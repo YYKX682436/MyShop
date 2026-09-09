@@ -5,10 +5,6 @@ export interface AdminOrderProductSummaryItem {
   quantity: number
 }
 
-export function formatAdminOrderNumber(orderNo: number | null | undefined): string {
-  return orderNo === null || orderNo === undefined ? "" : String(orderNo)
-}
-
 export function formatAdminOrderProductMeta(item: AdminOrderProductSummaryItem): string {
   return `商品 #${item.product_no} · ${item.spec_name || "无规格"} · ×${item.quantity}`
 }

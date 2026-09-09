@@ -1,6 +1,5 @@
 package com.myshop.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
@@ -13,8 +12,6 @@ import com.myshop.constant.UserRole;
 import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.pricing.PriceResolution;
-import com.myshop.payment.PaymentNextAction;
-import com.myshop.payment.PaymentNextActionPayload;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.*;
 import com.myshop.service.OrderService;
@@ -24,7 +21,6 @@ import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import com.myshop.service.ProductRules;
 import com.myshop.service.PricingService;
-import com.myshop.utils.LookupTokens;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -34,7 +30,6 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -57,7 +52,6 @@ public class OrderServiceImpl implements OrderService {
     private final UserLevelRepository userLevelRepository;
     private final AutoFulfillmentService autoFulfillmentService;
     private final PricingService pricingService;
-    private final ObjectMapper objectMapper;
 
     @Autowired
     public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
@@ -70,7 +64,7 @@ public class OrderServiceImpl implements OrderService {
                              UserRepository userRepository,
                              UserLevelRepository userLevelRepository,
                              AutoFulfillmentService autoFulfillmentService,
-                             PricingService pricingService, ObjectMapper objectMapper) {
+                             PricingService pricingService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.productRepository = productRepository;
@@ -86,7 +80,6 @@ public class OrderServiceImpl implements OrderService {
         this.userLevelRepository = userLevelRepository;
         this.autoFulfillmentService = autoFulfillmentService;
         this.pricingService = pricingService;
-        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -96,6 +89,10 @@ public class OrderServiceImpl implements OrderService {
         Object requestedPaymentMethod = req.get("payment_method");
         User currentUser = reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
         boolean adminPickup = isEnabledAdministrator(currentUser);
+        String guestSession = userId == null ? clean(sessionToken) : null;
+        if (userId == null && guestSession == null) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "游客会话无效");
+        }
         String idempotencyKey = clean((String) req.get("idempotency_key"));
         String idempotencyFingerprint = clean((String) req.get("idempotency_fingerprint"));
         if (idempotencyKey != null) {
@@ -105,7 +102,7 @@ public class OrderServiceImpl implements OrderService {
                 boolean sameOwner = sameIdempotencyOwner(existingOrder, userId, sessionToken);
                 if (sameOwner) {
                     verifyIdempotencyFingerprint(existingOrder, idempotencyFingerprint);
-                    return buildOrderResult(existingOrder, device, existingOrder.getGuestLookupToken());
+                    return buildOrderResult(existingOrder, device);
                 }
                 throw new BusinessException(ErrorCode.FORBIDDEN, "幂等键不属于当前用户或会话");
             }
@@ -186,12 +183,8 @@ public class OrderServiceImpl implements OrderService {
         order.setIdempotencyKey(idempotencyKey);
         order.setIdempotencyFingerprint(idempotencyFingerprint);
         order.setClientIp(clientIp);
-        order.setSessionToken(sessionToken);
+        order.setSessionToken(guestSession);
         setUserLevelSnapshot(order, userLevel, adminPickup);
-        LookupTokens.Issued lookupToken = LookupTokens.issue();
-        order.setLookupTokenHash(lookupToken.hash());
-        if (userId == null) order.setGuestLookupToken(lookupToken.plaintext());
-        order.setOrderNo(orderRepository.nextOrderNo());
         orderRepository.save(order);
 
         String specName = null;
@@ -217,62 +210,7 @@ public class OrderServiceImpl implements OrderService {
             balanceOrderPaymentService.pay(order, currentUser);
         }
 
-        return buildOrderResult(order, device, lookupToken.plaintext());
-    }
-
-    @Override
-    @Transactional
-    public Map<String, Object> getOrderStatus(UUID orderId, String lookupToken, UUID requestUserId) {
-        Order order = findOrderForStatus(orderId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        authorize(order, lookupToken, requestUserId);
-        // Auto expire check
-        if (order.getStatus() == OrderStatus.PENDING && order.getExpiresAt() != null
-                && order.getExpiresAt().isBefore(LocalDateTime.now())) {
-            expireOrder(order);
-        }
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("order_id", order.getId());
-        result.put("order_no", order.getOrderNo());
-        result.put("status", order.getStatus().name());
-        result.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());
-        result.put("payment_channel_code", order.getPaymentChannelCode());
-        result.put("expires_at", order.getExpiresAt());
-        // 返回服务端计算的剩余秒数，前端倒计时以此为准，不受客户端时钟影响
-        if (order.getStatus() == OrderStatus.PENDING && order.getExpiresAt() != null) {
-            long remainingSeconds = Duration.between(LocalDateTime.now(), order.getExpiresAt()).getSeconds();
-            result.put("remaining_seconds", Math.max(0, remainingSeconds));
-        } else {
-            result.put("remaining_seconds", 0);
-        }
-        if (order.getStatus() == OrderStatus.PENDING) {
-            paymentAttemptRepository
-                    .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
-                            order.getId(), PaymentStatus.PENDING, LocalDateTime.now())
-                    .ifPresent(attempt -> {
-                        result.put("payment_id", attempt.getId());
-                        result.put("next_action", PaymentNextActionPayload.from(
-                                readNextAction(attempt.getNextAction())));
-                    });
-        }
-        return result;
-    }
-
-    private PaymentNextAction readNextAction(String raw) {
-        try {
-            if (raw == null || raw.isBlank()) throw new IllegalArgumentException();
-            return objectMapper.readValue(raw, PaymentNextAction.class);
-        } catch (Exception exception) {
-            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付动作数据无效");
-        }
-    }
-
-    @Override
-    @Transactional
-    public Map<String, Object> refreshOrderStatus(UUID orderId, String lookupToken, UUID requestUserId) {
-        // Refresh currently reuses the locked server-side status read; it does
-        // not contact the payment provider.
-        return getOrderStatus(orderId, lookupToken, requestUserId);
+        return buildOrderResult(order, device);
     }
 
     @Override
@@ -289,6 +227,14 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
+    @Override
+    public void expireIfNeeded(Order order) {
+        if (order != null && order.getStatus() == OrderStatus.PENDING
+                && order.getExpiresAt() != null && order.getExpiresAt().isBefore(LocalDateTime.now())) {
+            expireOrder(order);
+        }
+    }
+
     private void setUserLevelSnapshot(Order order, UserLevel level, boolean adminPickup) {
         if (adminPickup || level == null) {
             return;
@@ -297,13 +243,12 @@ public class OrderServiceImpl implements OrderService {
         order.setUserLevelNameSnapshot(level.getName());
     }
 
-    private Map<String, Object> buildOrderResult(Order order, String device, String lookupToken) {
+    private Map<String, Object> buildOrderResult(Order order, String device) {
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         Map<String, Object> payment;
         if (isAdminPickup(order)) {
             payment = new LinkedHashMap<>();
             payment.put("order_id", order.getId());
-            payment.put("order_no", order.getOrderNo());
             payment.put("order_type", OrderType.ADMIN_PICKUP);
             payment.put("admin_pickup", true);
             payment.put("paid", true);
@@ -322,21 +267,12 @@ public class OrderServiceImpl implements OrderService {
         // branch has reached its final synchronous state.
         result.put("order", toOrderDetail(order, items));
         result.put("payment", payment);
-        if (lookupToken != null) result.put("lookup_token", lookupToken);
         return result;
-    }
-
-    private void authorize(Order order, String lookupToken, UUID requestUserId) {
-        boolean owner = requestUserId != null && requestUserId.equals(order.getUserId());
-        if (!owner && !LookupTokens.matches(lookupToken, order.getLookupTokenHash())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "订单查询凭证无效");
-        }
     }
 
     private Map<String, Object> toOrderDetail(Order o, List<OrderItem> items) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", o.getId());
-        map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
@@ -436,10 +372,10 @@ public class OrderServiceImpl implements OrderService {
 
     private boolean sameIdempotencyOwner(Order order, UUID userId, String sessionToken) {
         if (userId != null) return userId.equals(order.getUserId());
+        String providedSession = clean(sessionToken);
         return order.getUserId() == null
-                && sessionToken != null
-                && !sessionToken.isBlank()
-                && sessionToken.equals(order.getSessionToken());
+                && providedSession != null
+                && providedSession.equals(order.getSessionToken());
     }
 
     /**
@@ -521,10 +457,6 @@ public class OrderServiceImpl implements OrderService {
                     try { return Integer.parseInt(c.getConfigValue()); }
                     catch (Exception e) { return defaultValue; }
                 }).orElse(defaultValue);
-    }
-
-    private Optional<Order> findOrderForStatus(UUID orderId) {
-        return orderRepository.findByIdForUpdate(orderId);
     }
 
     private StockView getStock(Product product, UUID specId) {

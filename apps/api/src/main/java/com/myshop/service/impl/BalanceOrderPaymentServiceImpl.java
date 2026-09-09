@@ -75,14 +75,15 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
     public Map<String, Object> buildPaymentResult(Order order) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", order.getId());
-        result.put("order_no", order.getOrderNo());
         result.put("status", order.getStatus().name());
         result.put("paid", order.getStatus() == OrderStatus.PAID
                 || order.getStatus() == OrderStatus.DELIVERED);
         result.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());
+        result.put("payment_type", null);
         result.put("payment_channel_code", order.getPaymentChannelCode());
         result.put("next_action", null);
         result.put("expires_at", order.getExpiresAt());
+        result.put("remaining_seconds", 0);
         return result;
     }
 

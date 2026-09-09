@@ -9,7 +9,7 @@ public interface FulfillmentService {
     /**
      * Fulfill one order in its own transaction. The caller must already have
      * established that this is an internal operation; this method never accepts
-     * or fabricates a guest credential.
+     * a browser authorization value.
      */
     Map<String, Object> fulfillOrder(UUID orderId);
 

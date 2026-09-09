@@ -46,7 +46,6 @@ class AdminOrderServiceImplTest {
         UUID orderId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         Order order = order(orderId, userId);
-        order.setOrderNo(1000000001L);
         OrderItem item = item(orderId, new BigDecimal("30.00"), new BigDecimal("80.00"),
                 new BigDecimal("100.00"), 2);
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
@@ -58,7 +57,7 @@ class AdminOrderServiceImplTest {
         Map<String, Object> response = (Map<String, Object>) new AdminOrderServiceImpl(
                 orderRepository, orderItemRepository, userRepository, fulfillmentService).getOrderDetail(orderId);
 
-        assertEquals(1000000001L, response.get("order_no"));
+        assertEquals(orderId, response.get("id"));
         assertEquals(UUID.fromString("11111111-1111-1111-1111-111111111111"), response.get("user_level_id_snapshot"));
         assertEquals("黄金会员", response.get("user_level_name_snapshot"));
         assertEquals(new BigDecimal("160.00"), response.get("cost_total"));
@@ -105,9 +104,7 @@ class AdminOrderServiceImplTest {
         UUID guestOrderId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         Order registeredOrder = order(registeredOrderId, userId);
-        registeredOrder.setOrderNo(1000000001L);
         Order guestOrder = order(guestOrderId, null);
-        guestOrder.setOrderNo(1000000002L);
 
         OrderItem registeredItem = item(registeredOrderId, new BigDecimal("30.00"),
                 new BigDecimal("20.00"), new BigDecimal("30.00"), 1);
@@ -133,14 +130,14 @@ class AdminOrderServiceImplTest {
 
         assertEquals(2L, result.getPagination().getTotal());
         Map<?, ?> registered = (Map<?, ?>) result.getList().get(0);
-        assertEquals(1000000001L, registered.get("order_no"));
+        assertEquals(registeredOrderId, registered.get("id"));
         assertEquals("REGISTERED", registered.get("customer_type"));
         assertEquals("registered-buyer", registered.get("username"));
         assertEquals(12345L, registered.get("user_no"));
         org.junit.jupiter.api.Assertions.assertFalse(registered.containsKey("email"));
         org.junit.jupiter.api.Assertions.assertFalse(registered.containsKey("order_email"));
         Map<?, ?> guest = (Map<?, ?>) result.getList().get(1);
-        assertEquals(1000000002L, guest.get("order_no"));
+        assertEquals(guestOrderId, guest.get("id"));
         assertEquals("GUEST", guest.get("customer_type"));
         assertEquals(null, guest.get("username"));
         assertEquals(null, guest.get("user_no"));

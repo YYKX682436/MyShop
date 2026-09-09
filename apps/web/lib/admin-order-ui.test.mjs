@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 
-import { formatAdminOrderCustomer, formatAdminOrderNumber, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "./admin-order-display.ts"
+import { formatAdminOrderCustomer, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "./admin-order-display.ts"
 import { buildAdminOrderSearchBody } from "./admin-order-search.ts"
 
 const readSource = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8")
@@ -31,10 +31,7 @@ test("admin order search sends defaults and all filters in the JSON body", () =>
   assert.equal(buildAdminOrderSearchBody().sort_direction, "desc")
 })
 
-test("admin order display keeps the numeric order number and compactly limits products", () => {
-  assert.equal(formatAdminOrderNumber(1000000001), "1000000001")
-  assert.notEqual(formatAdminOrderNumber(1000000001), "11111111-1111-1111-1111-111111111111")
-
+test("admin order display uses the UUID identity and compactly limits products", () => {
   const items = [
     { product_title: "商品 A", product_no: 12, spec_name: "标准", quantity: 2 },
     { product_title: "商品 B", product_no: 13, spec_name: null, quantity: 1 },
@@ -104,11 +101,14 @@ test("order details use the wide workspace route and keep the workbench structur
   assert.doesNotMatch(detailSource, /\b[A-G]\.\s/)
 })
 
-test("order query lets authenticated owners omit lookup tokens while guests still need one", () => {
-  const source = readSource("../app/(store)/order/query/page.tsx")
-  assert.match(source, /useAuth/)
-  assert.match(source, /!user && !token/)
-  assert.match(source, /lookup_token/)
-  assert.match(source, /if \(storedToken \|\| user\)/)
-  assert.match(source, /else void search\(requested, storedToken\)/)
+test("the order lifecycle page owns status, payment, delivery, copy, and export", () => {
+  const source = readSource("../app/(store)/order/[orderId]/page.tsx")
+  assert.match(source, /orderApi\.get\(orderId\)/)
+  assert.match(source, /orderApi\.refresh\(orderId\)/)
+  assert.match(source, /orderApi\.repay\(orderId/)
+  assert.match(source, /orderApi\.exportKeys\(orderId\)/)
+  assert.match(source, /PaymentActionRenderer/)
+  assert.match(source, /deliveryWaitingManual/)
+  assert.match(source, /deliveryReady/)
+  assert.match(source, /paymentReturn/)
 })

@@ -4,7 +4,7 @@ import { useCallback, useRef, useState, useEffect } from "react"
 import { usePathname } from "next/navigation"
 import Link from "next/link"
 import Image from "next/image"
-import { User, LogIn, Menu, X, Globe, Moon, Sun, Package, Search, Settings, ChevronDown, SlidersHorizontal, LogOut, ClipboardList } from "lucide-react"
+import { User, LogIn, Menu, X, Globe, Moon, Sun, Package, Search, Settings, ChevronDown, SlidersHorizontal, LogOut } from "lucide-react"
 import { useAuth, useLocale, useTheme, useSearch, useSiteConfig, type SortKey } from "@/lib/context"
 import { cn } from "@/lib/utils"
 import { isAdminRole } from "@/lib/hooks"
@@ -68,7 +68,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
 
   const navLinks = [
     { href: "/", label: t("nav.home") },
-    { href: "/order/query", label: t("nav.orders") },
   ]
 
   const toggleTheme = () => setTheme(resolvedTheme === "dark" ? "light" : "dark")
@@ -165,15 +164,6 @@ export function StoreHeader({ siteName }: StoreHeaderProps) {
           >
             <Globe className="h-4 w-4" />
           </button>
-
-          {/* Order Query (mobile only) */}
-          <Link
-            href="/order/query"
-            className="relative inline-flex h-9 w-9 items-center justify-center rounded-control text-muted-foreground transition-colors duration-180 hover:bg-surface-muted hover:text-foreground md:hidden"
-            aria-label={t("nav.orders")}
-          >
-            <ClipboardList className="h-4 w-4" />
-          </Link>
 
           {/* User / Auth — auth 未就绪时显示占位，避免登录按钮闪烁 */}
           {!authLoaded ? (

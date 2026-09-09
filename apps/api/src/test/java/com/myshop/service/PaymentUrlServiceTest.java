@@ -3,7 +3,6 @@ package com.myshop.service;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PaymentUrlServiceTest {
@@ -14,9 +13,8 @@ class PaymentUrlServiceTest {
 
         assertEquals("https://shop.example.com/api/payments/webhook/epay",
                 service.webhookUrl("epay"));
-        String returnUrl = service.paymentReturnUrl("100001");
-        assertEquals("https://shop.example.com/order/query?orderNo=100001&paymentReturn=1", returnUrl);
-        assertFalse(returnUrl.contains("lookup_token"));
+        String returnUrl = service.paymentReturnUrl("6d7f2a1e-7f5d-4b17-a1d1-9bf80f0d9b2a");
+        assertEquals("https://shop.example.com/order/6d7f2a1e-7f5d-4b17-a1d1-9bf80f0d9b2a?paymentReturn=1", returnUrl);
     }
 
     @Test

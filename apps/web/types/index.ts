@@ -242,7 +242,6 @@ export type OrderPaymentMethod = 'BALANCE' | 'ONLINE'
 
 export interface OrderBrief {
   id: string
-  order_no: number
   total_amount: number
   actual_amount: number
   status: OrderStatus
@@ -281,12 +280,13 @@ export interface OrderDetail extends OrderBrief {
 export interface PaymentCreateResult {
   payment_id?: string | null
   order_id: string
-  order_no: number
   status: PaymentStatus
   payment_method?: OrderPaymentMethod | null
+  payment_type?: string | null
   payment_channel_code?: string | null
   next_action?: PaymentNextAction | null
   expires_at: string | null
+  remaining_seconds?: number
   order_type?: OrderType
   admin_pickup?: boolean
   paid?: boolean
@@ -295,10 +295,9 @@ export interface PaymentCreateResult {
 export interface CreateOrderResult {
   order: OrderDetail
   payment: PaymentCreateResult
-  lookup_token?: string
 }
 
-export interface DeliverResultGroup {
+export interface OrderDeliveryGroup {
   product_no: number
   product_title: string
   spec_name: string | null
@@ -308,12 +307,15 @@ export interface DeliverResultGroup {
   delivery_items: { content_parts: string[] }[]
 }
 
-export interface DeliverResult {
-  order_id: string
-  order_no: number
-  status: OrderStatus
-  groups: DeliverResultGroup[]
+export interface OrderDeliveryView {
+  groups: OrderDeliveryGroup[]
   item_statuses?: { id: string; product_no: number; product_title: string; fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"; delivery_type: string }[]
+}
+
+export interface OrderView {
+  order: OrderDetail
+  payment: PaymentCreateResult
+  delivery: OrderDeliveryView
 }
 
 // ============================================================
@@ -557,7 +559,6 @@ export interface CardKeyListItem {
   content_parts: string[]
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'
   order_id: string | null
-  order_no: number | null
   created_at: string
   sold_at: string | null
 }
@@ -569,7 +570,6 @@ export interface AdminCardKeyPickupCard {
 
 export interface AdminCardKeyPickupResult {
   order_id: string
-  order_no: number
   count: number
   cards: AdminCardKeyPickupCard[]
 }
@@ -591,7 +591,7 @@ export interface CardImportBatch {
 
 export interface OrderCardKey {
   card_key_id: string
-  order_no?: number | null
+  order_id?: string | null
   order_item_id?: string | null
   content_parts: string[]
   product_no?: number | null
@@ -626,7 +626,6 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   is_risk_flagged: boolean
   registered_email?: string | null
   phone?: string | null
-  internal_order_id?: string
   user_level_id_snapshot?: string | null
   user_level_name_snapshot?: string | null
   client_ip?: string | null
@@ -693,7 +692,6 @@ export interface AdminUserOrderItem {
 
 export interface AdminUserOrder {
   id: string
-  order_no: number
   total_amount: number | null
   actual_amount: number | null
   status: OrderStatus
@@ -785,7 +783,6 @@ export interface RiskConfig {
   // 设备指纹限流
   device_rate_limit_enabled: boolean
   device_order_limit_per_hour: number
-  device_query_limit_per_hour: number
   device_login_limit_per_hour: number
   device_register_limit_per_hour: number
   // 已有配置

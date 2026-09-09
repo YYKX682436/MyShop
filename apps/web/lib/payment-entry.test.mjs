@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 import {
-  buildPaymentPageHref,
+  buildOrderPageHref,
   clearPaymentAction,
   paymentActionStorageKey,
   readPaymentAction,
@@ -20,30 +20,30 @@ const formPost = { type: "form_post", url: "https://pay.example/form", fields: {
 const desktop = { isMobile: false, isWechatBrowser: false, isAlipayBrowser: false }
 const mobile = { isMobile: true, isWechatBrowser: false, isAlipayBrowser: false }
 const productActionsSource = readFileSync(new URL("../app/(store)/product/[id]/product-actions.tsx", import.meta.url), "utf8")
-const paymentPageSource = readFileSync(new URL("../app/(store)/pay/[orderId]/page.tsx", import.meta.url), "utf8")
+const paymentPageSource = readFileSync(new URL("../app/(store)/order/[orderId]/page.tsx", import.meta.url), "utf8")
 const paymentActionRendererSource = readFileSync(new URL("../components/shared/payment-action-renderer.tsx", import.meta.url), "utf8")
 
-test("redirect is an immediate entry and never needs /pay", () => {
+test("redirect is an immediate entry and never needs a separate payment page", () => {
   const entry = resolvePaymentEntry(redirect, desktop)
   assert.equal(entry.mode, "execute")
   assert.equal(entry.decision.kind, "redirect")
 })
 
-test("form_post is submitted immediately and never needs /pay", () => {
+test("form_post is submitted immediately and never needs a separate payment page", () => {
   const entry = resolvePaymentEntry(formPost, mobile)
   assert.equal(entry.mode, "execute")
   assert.equal(entry.decision.kind, "form_post")
   assert.equal(shouldSeedPaymentAction(entry), false)
 })
 
-test("qr_code enters /pay with an initial action seed", () => {
+test("qr_code enters the order lifecycle page with an initial action seed", () => {
   const entry = resolvePaymentEntry(qrCode, desktop)
   assert.equal(entry.mode, "payment_page")
   assert.equal(entry.decision.kind, "qr_code")
-  assert.match(buildPaymentPageHref("order-1", 1001, "wxpay"), /^\/pay\/order-1\?orderNo=1001&method=wxpay$/)
+  assert.equal(buildOrderPageHref("order-1"), "/order/order-1")
 })
 
-test("desktop open_in_client enters /pay for the client QR code", () => {
+test("desktop open_in_client enters the order lifecycle page for the client QR code", () => {
   const entry = resolvePaymentEntry(wechatClient, desktop)
   assert.equal(entry.mode, "payment_page")
   assert.equal(entry.decision.kind, "open_in_client")
@@ -56,13 +56,13 @@ test("mobile target-client open_in_client executes directly", () => {
   assert.equal(entry.decision.mode, "direct")
 })
 
-test("mobile ordinary browser open_in_client enters /pay for copy UI", () => {
+test("mobile ordinary browser open_in_client enters the order lifecycle page for copy UI", () => {
   const entry = resolvePaymentEntry(wechatClient, mobile)
   assert.equal(entry.mode, "payment_page")
   assert.equal(entry.decision.mode, "copy")
 })
 
-test("mobile deep_link executes directly while desktop deep_link enters /pay", () => {
+test("mobile deep_link executes directly while desktop deep_link enters the order lifecycle page", () => {
   assert.equal(resolvePaymentEntry(deepLink, mobile).mode, "execute")
   assert.equal(resolvePaymentEntry(deepLink, desktop).mode, "payment_page")
 })
@@ -97,14 +97,14 @@ test("ablation guard: unconditional payment-page routing would reject a redirect
   assert.equal(resolvePaymentEntry(redirect, desktop).mode, "execute")
 })
 
-test("product actions consume create response actions instead of unconditionally pushing /pay", () => {
+test("product actions consume create response actions instead of unconditionally pushing the lifecycle page", () => {
   assert.match(productActionsSource, /result\.payment\.next_action/)
   assert.match(productActionsSource, /resolvePaymentEntry\(/)
   assert.match(productActionsSource, /executePaymentAction\(/)
-  assert.doesNotMatch(productActionsSource, /router\.push\(`\/pay\//)
+  assert.doesNotMatch(productActionsSource, /buildPaymentPageHref/)
 })
 
-test("missing create response action fails on the product page instead of opening /pay", () => {
+test("missing create response action fails on the product page instead of opening a payment page", () => {
   const noActionStart = productActionsSource.indexOf("if (!action) {")
   const entryStart = productActionsSource.indexOf("const entry = resolvePaymentEntry", noActionStart)
   const noActionBranch = productActionsSource.slice(noActionStart, entryStart)
@@ -143,7 +143,7 @@ test("checkout form_post response executes directly without a payment-page seed"
   assert.match(executeBranch, /return/)
 })
 
-test("/pay navigation is reachable only after a concrete payment-page action is seeded", () => {
+test("lifecycle navigation is reachable only after a concrete payment-page action is seeded", () => {
   const seedBranchStart = productActionsSource.indexOf("if (shouldSeedPaymentAction(entry))")
   const seedBranchEnd = productActionsSource.indexOf("clearPaymentAction(result.payment.order_id)", seedBranchStart)
   const seedBranch = productActionsSource.slice(seedBranchStart, seedBranchEnd)
@@ -157,7 +157,7 @@ test("/pay navigation is reachable only after a concrete payment-page action is 
   assert.equal((productActionsSource.match(/router\.push\(paymentHref\)/g) || []).length, 1)
 })
 
-test("direct-payment fallback retries the original browser action without linking to /pay", () => {
+test("direct-payment fallback retries the original browser action without linking to a separate payment page", () => {
   assert.match(productActionsSource, /paymentFallbackAction/)
   assert.match(productActionsSource, /setPaymentFallbackAction\(entry\.decision\)/)
   assert.match(productActionsSource, /const retryPaymentExecution = \(\) =>/)
@@ -166,14 +166,14 @@ test("direct-payment fallback retries the original browser action without linkin
   assert.doesNotMatch(productActionsSource, /paymentFallbackHref/)
 })
 
-test("payment page uses explicit load state and does not hide status errors", () => {
+test("order lifecycle page uses explicit load state and does not hide status errors", () => {
   assert.match(paymentPageSource, /readPaymentAction\(/)
   assert.match(paymentPageSource, /applyPaymentStatusError\(/)
   assert.doesNotMatch(paymentPageSource, /statusLoaded/)
   assert.doesNotMatch(paymentPageSource, /catch\(\(\) => undefined\)/)
 })
 
-test("payment page delegates QR surface ownership to the action renderer", () => {
+test("order lifecycle page delegates QR surface ownership to the action renderer", () => {
   const rendererIndex = paymentPageSource.indexOf("<PaymentActionRenderer")
   assert.notEqual(rendererIndex, -1)
   const parentMarkup = paymentPageSource.slice(Math.max(0, rendererIndex - 300), rendererIndex)
