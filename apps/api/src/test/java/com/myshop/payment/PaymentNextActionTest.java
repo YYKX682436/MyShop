@@ -2,6 +2,9 @@ package com.myshop.payment;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myshop.common.ApiResponse;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -10,9 +13,11 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+@SpringBootTest
 class PaymentNextActionTest {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Test
     void nestedActionsKeepTheirDiscriminatorAtTheUntypedApiResponseBoundary() throws Exception {
@@ -29,7 +34,9 @@ class PaymentNextActionTest {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("next_action", actions.get(index));
 
-            JsonNode action = objectMapper.valueToTree(response).get("next_action");
+            JsonNode action = objectMapper.valueToTree(ApiResponse.success(response))
+                    .get("data")
+                    .get("next_action");
 
             assertEquals(expectedTypes.get(index), action.get("type").asText(), expectedTypes.get(index));
         }

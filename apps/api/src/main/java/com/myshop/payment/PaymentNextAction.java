@@ -48,6 +48,7 @@ public sealed interface PaymentNextAction
     }
 
     @JsonTypeName("qr_code")
+    @JsonSerialize(using = PaymentNextActionJsonSerializer.class)
     record QrCode(String value) implements PaymentNextAction {
         public QrCode {
             value = requiredValue(value, "value");
@@ -61,6 +62,7 @@ public sealed interface PaymentNextAction
     }
 
     @JsonTypeName("redirect")
+    @JsonSerialize(using = PaymentNextActionJsonSerializer.class)
     record Redirect(String url) implements PaymentNextAction {
         public Redirect {
             url = requiredValue(url, "url");
@@ -74,6 +76,7 @@ public sealed interface PaymentNextAction
     }
 
     @JsonTypeName("open_in_client")
+    @JsonSerialize(using = PaymentNextActionJsonSerializer.class)
     record OpenInClient(String url, String client) implements PaymentNextAction {
         public OpenInClient {
             url = requiredValue(url, "url");
@@ -88,6 +91,7 @@ public sealed interface PaymentNextAction
     }
 
     @JsonTypeName("deep_link")
+    @JsonSerialize(using = PaymentNextActionJsonSerializer.class)
     record DeepLink(String url, String client) implements PaymentNextAction {
         public DeepLink {
             url = requiredValue(url, "url");
@@ -102,6 +106,7 @@ public sealed interface PaymentNextAction
     }
 
     @JsonTypeName("form_post")
+    @JsonSerialize(using = PaymentNextActionJsonSerializer.class)
     record FormPost(String url, Map<String, String> fields) implements PaymentNextAction {
         public FormPost {
             url = requiredValue(url, "url");
