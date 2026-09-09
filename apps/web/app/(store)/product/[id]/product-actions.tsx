@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useMemo, useRef, useEffect } from "react"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Zap, Minus, Plus, Package, TrendingUp } from "lucide-react"
 import { motion } from "motion/react"
@@ -13,8 +12,8 @@ import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { cn, formatYuan, detectPaymentDevice } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import { getPaymentTypeForChannel } from "@/lib/payment-channel"
-import { executePaymentAction, isExecutablePaymentAction } from "@/lib/payment-action-executor"
-import { buildPaymentPageHref, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
+import { executePaymentAction, isExecutablePaymentAction, type ExecutablePaymentAction } from "@/lib/payment-action-executor"
+import { buildPaymentPageHref, clearPaymentAction, getPaymentActionEnvironment, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import type { ProductDetail, ProductSpec, PublicPaymentChannel } from "@/types"
 import { validateCustomerInputs, validateCustomerInputValue } from "@/lib/customer-inputs"
@@ -50,7 +49,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     enabledChannels.length > 0 ? enabledChannels[0].channel_code : ""
   )
   const [submitting, setSubmitting] = useState(false)
-  const [paymentFallbackHref, setPaymentFallbackHref] = useState<string | null>(null)
+  const [paymentFallbackAction, setPaymentFallbackAction] = useState<ExecutablePaymentAction | null>(null)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
 
   const currentPrice = selectedSpec ? selectedSpec.price : product.price
@@ -72,6 +71,15 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     return result.values
   }
 
+  const retryPaymentExecution = () => {
+    if (!paymentFallbackAction) return
+    try {
+      executePaymentAction(paymentFallbackAction)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("common.error"))
+    }
+  }
+
   const handleBuyNow = async () => {
     const normalizedCustomerInputs = validateCustomerInputsForAction()
     if (!normalizedCustomerInputs) return
@@ -86,7 +94,7 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
     }
 
     setSubmitting(true)
-    setPaymentFallbackHref(null)
+    setPaymentFallbackAction(null)
     const intent = getOrCreateIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, {
       product_id: product.id,
       spec_id: selectedSpec?.id ?? null,
@@ -116,23 +124,33 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
         router.push(`/order/query?orderNo=${encodeURIComponent(String(result.order.order_no))}`)
         return
       }
-      const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
-      const paymentHref = buildPaymentPageHref(result.payment.order_id, result.order.order_no, paymentType || "")
+
       const action = result.payment.next_action
-      if (action) {
-        const entry = resolvePaymentEntry(action, getPaymentActionEnvironment())
-        if (entry.mode === "execute" && isExecutablePaymentAction(entry.decision)) {
-          setPaymentFallbackHref(paymentHref)
-          toast.success(t("payment.redirectingToPay"))
-          executePaymentAction(entry.decision)
-          return
-        }
-        if (shouldSeedPaymentAction(entry)) {
-          savePaymentAction(result.payment.order_id, action)
-        }
+      if (!action) {
+        clearPaymentAction(result.payment.order_id)
+        toast.error(t("payment.loadFailed"))
+        return
       }
-      toast.success(t("payment.redirectingToPay"))
-      router.push(paymentHref)
+
+      const entry = resolvePaymentEntry(action, getPaymentActionEnvironment())
+      if (entry.mode === "execute" && isExecutablePaymentAction(entry.decision)) {
+        setPaymentFallbackAction(entry.decision)
+        toast.success(t("payment.redirectingToPay"))
+        executePaymentAction(entry.decision)
+        return
+      }
+
+      if (shouldSeedPaymentAction(entry)) {
+        const paymentType = getPaymentTypeForChannel(enabledChannels, selectedPayment)
+        const paymentHref = buildPaymentPageHref(result.payment.order_id, result.order.order_no, paymentType || "")
+        savePaymentAction(result.payment.order_id, action)
+        toast.success(t("payment.redirectingToPay"))
+        router.push(paymentHref)
+        return
+      }
+
+      clearPaymentAction(result.payment.order_id)
+      toast.error(t("payment.loadFailed"))
     } catch (err: unknown) {
       if (err instanceof ApiError && err.code === 40007) {
         const current = err.params?.current_unit_price
@@ -353,12 +371,12 @@ export function ProductActions({ product, channels }: ProductActionsProps) {
             )}
             {isOutOfStock ? t("product.outOfStock") : adminPickup ? t("product.adminPickup") : t("product.buyNow")}
           </button>
-          {paymentFallbackHref && (
+          {paymentFallbackAction && (
             <div className="mt-3 flex flex-col items-center gap-2 rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-center" role="alert">
               <p className="text-xs text-muted-foreground">{t("payment.actionFallback")}</p>
-              <Link href={paymentFallbackHref} className="inline-flex h-9 items-center rounded-control bg-primary px-4 text-sm font-medium text-primary-foreground">
+              <button type="button" onClick={retryPaymentExecution} className="inline-flex h-9 items-center rounded-control bg-primary px-4 text-sm font-medium text-primary-foreground">
                 {t("payment.continuePay")}
-              </Link>
+              </button>
             </div>
           )}
         </div>
