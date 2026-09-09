@@ -353,7 +353,7 @@ class OrderServiceImplTest {
         UserLevel level = new UserLevel();
         level.setId(levelId);
         level.setName("普通会员");
-        when(userRepository.findById(userId)).thenReturn(Optional.of(buyer));
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(buyer));
         when(userLevelRepository.findById(levelId)).thenReturn(Optional.of(level));
         stubProduct(product(productId, "10.00"), 1);
         Map<String, Object> request = request(productId, null, 1, "10.00");
@@ -364,13 +364,15 @@ class OrderServiceImplTest {
             order.setStatus(OrderStatus.PAID);
             order.setPaidAt(LocalDateTime.now());
             return null;
-        }).when(balanceOrderPaymentService).pay(any(Order.class), eq(userId));
+        }).when(balanceOrderPaymentService).pay(any(Order.class), eq(buyer));
 
         Map<String, Object> result = service.createDirectOrder(request, userId,
                 "203.0.113.19", "balance-response-session");
 
         assertEquals(OrderStatus.PAID.name(), ((Map<?, ?>) result.get("order")).get("status"));
-        verify(balanceOrderPaymentService).pay(any(Order.class), eq(userId));
+        verify(balanceOrderPaymentService).pay(any(Order.class), eq(buyer));
+        verify(userRepository).findByIdForUpdate(userId);
+        verify(userRepository, never()).findById(userId);
         verify(paymentService, never()).createPayment(any(), anyString(), any(BigDecimal.class), nullable(String.class));
     }
 
@@ -442,6 +444,8 @@ class OrderServiceImplTest {
         assertFalse(request.containsKey("email"));
         assertFalse(((Map<?, ?>) result.get("order")).containsKey("email"));
         verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
+        verify(userRepository).findById(userId);
+        verify(userRepository, never()).findByIdForUpdate(userId);
         verify(autoFulfillmentService, never()).trigger(any());
     }
 

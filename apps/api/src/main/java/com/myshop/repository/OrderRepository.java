@@ -172,6 +172,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             SELECT o.*
             FROM orders o
             WHERE o.order_type = 'NORMAL'
+              AND CAST(:sortDirection AS text) IN ('asc', 'desc')
               AND (CAST(:status AS text) IS NULL OR o.status = CAST(:status AS text))
               AND (CAST(:createdFrom AS timestamp) IS NULL OR o.created_at >= CAST(:createdFrom AS timestamp))
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
@@ -185,7 +186,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                         SELECT 1
                         FROM payment_attempts pa
                         WHERE pa.order_id = o.id
-                          AND (COALESCE(pa.merchant_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          AND (COALESCE(pa.channel_code_snapshot, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                               OR COALESCE(pa.payment_type, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                               OR COALESCE(pa.merchant_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                OR COALESCE(pa.provider_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\')
                     )
                     OR EXISTS (
@@ -245,7 +248,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                         SELECT 1
                         FROM payment_attempts pa
                         WHERE pa.order_id = o.id
-                          AND (COALESCE(pa.merchant_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                          AND (COALESCE(pa.channel_code_snapshot, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                               OR COALESCE(pa.payment_type, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                               OR COALESCE(pa.merchant_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                OR COALESCE(pa.provider_trade_no, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\')
                     )
                     OR EXISTS (

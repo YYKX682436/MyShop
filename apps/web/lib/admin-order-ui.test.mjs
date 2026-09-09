@@ -70,6 +70,26 @@ test("checkout no longer renders or sends an order email", () => {
   assert.doesNotMatch(source, /fingerprint[\s\S]*email/i)
 })
 
+test("shopper checkout renders both payment method entries while administrators render pickup only", () => {
+  const source = readSource("../app/(store)/product/[id]/product-actions.tsx")
+  const paymentMethodStart = source.indexOf("{adminPickup ? (")
+  const shopperBranchStart = source.indexOf(") : (", paymentMethodStart)
+  const paymentMethodEnd = source.indexOf("{/* Total */}", shopperBranchStart)
+
+  assert.notEqual(paymentMethodStart, -1)
+  assert.notEqual(shopperBranchStart, -1)
+  assert.notEqual(paymentMethodEnd, -1)
+
+  const administratorBranch = source.slice(paymentMethodStart, shopperBranchStart)
+  const shopperBranch = source.slice(shopperBranchStart, paymentMethodEnd)
+
+  assert.match(administratorBranch, /t\("payment\.adminPickup"\)/)
+  assert.doesNotMatch(administratorBranch, /balancePayment|onlinePayment|PaymentSelector/)
+  assert.match(shopperBranch, /t\("product\.balancePayment"\)/)
+  assert.match(shopperBranch, /t\("product\.onlinePayment"\)/)
+  assert.match(shopperBranch, /PaymentSelector/)
+})
+
 test("order details use the wide workspace route and keep the workbench structure", () => {
   const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
   const detailSource = readSource("../components/admin/orders/order-detail-sheet.tsx")

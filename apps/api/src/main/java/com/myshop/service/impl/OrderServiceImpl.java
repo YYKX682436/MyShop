@@ -93,7 +93,8 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public Map<String, Object> createDirectOrder(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
         String device = (String) req.get("device");
-        User currentUser = reloadAuthenticatedUser(userId);
+        Object requestedPaymentMethod = req.get("payment_method");
+        User currentUser = reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
         boolean adminPickup = isEnabledAdministrator(currentUser);
         String idempotencyKey = clean((String) req.get("idempotency_key"));
         String idempotencyFingerprint = clean((String) req.get("idempotency_fingerprint"));
@@ -213,7 +214,7 @@ public class OrderServiceImpl implements OrderService {
         orderItemRepository.save(item);
 
         if (!adminPickup && paymentMethod == OrderPaymentMethod.BALANCE) {
-            balanceOrderPaymentService.pay(order, userId);
+            balanceOrderPaymentService.pay(order, currentUser);
         }
 
         return buildOrderResult(order, device, lookupToken.plaintext());
@@ -441,15 +442,27 @@ public class OrderServiceImpl implements OrderService {
                 && sessionToken.equals(order.getSessionToken());
     }
 
-    /** Always reloads an authenticated shopper from the database before using role-sensitive flags. */
-    private User reloadAuthenticatedUser(UUID userId) {
+    /**
+     * Loads the authenticated shopper before any price or balance decision. A
+     * balance order must acquire the user's row lock on this first read and
+     * pass that same managed instance through pricing and payment.
+     */
+    private User reloadAuthenticatedUser(UUID userId, boolean lockForBalance) {
         if (userId == null) return null;
         if (userRepository == null) {
             throw new IllegalStateException("Authenticated order creation requires the user repository");
         }
-        return userRepository.findById(userId)
-                .filter(user -> user.getIsDeleted() == 0)
+        Optional<User> loadedUser = lockForBalance
+                ? userRepository.findByIdForUpdate(userId)
+                : userRepository.findById(userId);
+        return loadedUser
+                .filter(candidate -> candidate.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "登录账号不存在或已被禁用"));
+    }
+
+    private boolean isBalancePaymentRequested(Object rawPaymentMethod) {
+        return rawPaymentMethod != null
+                && "BALANCE".equalsIgnoreCase(String.valueOf(rawPaymentMethod).trim());
     }
 
     private boolean isEnabledAdministrator(User user) {

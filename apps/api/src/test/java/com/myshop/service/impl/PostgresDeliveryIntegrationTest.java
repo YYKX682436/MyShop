@@ -452,7 +452,7 @@ class PostgresDeliveryIntegrationTest {
                 "search-customer-value", "search-user-" + suffix,
                 userId.toString(), "registered-search-" + suffix + "@example.com",
                 "13800138000", cardId.toString(), "search-card-password",
-                "search-epay-" + suffix, "alipay");
+                "search-epay-" + suffix, "search-channel-search-epay-" + suffix, "alipay");
         for (String keyword : matchingKeywords) {
             assertSearchMatches(keyword, orderId, orderNo);
         }

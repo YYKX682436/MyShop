@@ -8,7 +8,6 @@ import com.myshop.constant.UserRole;
 import com.myshop.entity.Order;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
-import com.myshop.repository.UserRepository;
 import com.myshop.service.BalanceOrderPaymentService;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OrderPaymentCompletionService;
@@ -20,7 +19,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /** Atomic balance payment boundary; it never resolves a payment channel/provider. */
 @Service
@@ -28,41 +26,33 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2);
 
-    private final UserRepository userRepository;
     private final BalanceTransactionService balanceTransactionService;
     private final OrderPaymentCompletionService orderPaymentCompletionService;
 
-    public BalanceOrderPaymentServiceImpl(UserRepository userRepository,
-                                          BalanceTransactionService balanceTransactionService,
+    public BalanceOrderPaymentServiceImpl(BalanceTransactionService balanceTransactionService,
                                           OrderPaymentCompletionService orderPaymentCompletionService) {
-        this.userRepository = userRepository;
         this.balanceTransactionService = balanceTransactionService;
         this.orderPaymentCompletionService = orderPaymentCompletionService;
     }
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void pay(Order order, UUID userId) {
+    public void pay(Order order, User user) {
         if (order == null || order.getOrderType() != OrderType.NORMAL
                 || order.getPaymentMethod() != OrderPaymentMethod.BALANCE) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只有余额支付订单可以使用余额支付");
         }
-        if (userId == null) {
+        if (user == null || user.getIsDeleted() != 0 || user.getRole() != UserRole.USER) {
             throw new BusinessException(ErrorCode.BALANCE_PAYMENT_REQUIRES_LOGIN,
                     "余额支付仅支持已登录普通用户");
         }
-        if (order.getUserId() == null || !userId.equals(order.getUserId())) {
+        if (order.getUserId() == null || user.getId() == null || !user.getId().equals(order.getUserId())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "余额支付用户与订单不匹配");
         }
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单状态不允许余额支付");
         }
 
-        User user = userRepository.findByIdForUpdate(userId)
-                .filter(candidate -> candidate.getIsDeleted() == 0
-                        && candidate.getRole() == UserRole.USER)
-                .orElseThrow(() -> new BusinessException(ErrorCode.BALANCE_PAYMENT_REQUIRES_LOGIN,
-                        "余额支付仅支持已登录普通用户"));
         BigDecimal amount = money(order.getActualAmount());
         if (amount.signum() <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
@@ -74,10 +64,9 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
         }
         BigDecimal after = before.subtract(amount).setScale(2, RoundingMode.UNNECESSARY);
         user.setBalance(after);
-        userRepository.save(user);
 
         balanceTransactionService.recordOrderPayment(
-                userId, amount, before, after, order.getId(), userId);
+                user.getId(), amount, before, after, order.getId(), user.getId());
         order.setExpiresAt(null);
         orderPaymentCompletionService.completeFirstPayment(order);
     }
