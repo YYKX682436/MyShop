@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonTypeName;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -21,6 +22,7 @@ import java.util.Map;
         @JsonSubTypes.Type(value = PaymentNextAction.DeepLink.class, name = "deep_link"),
         @JsonSubTypes.Type(value = PaymentNextAction.FormPost.class, name = "form_post")
 })
+@JsonSerialize(using = PaymentNextActionJsonSerializer.class)
 public sealed interface PaymentNextAction
         permits PaymentNextAction.QrCode, PaymentNextAction.Redirect,
         PaymentNextAction.OpenInClient, PaymentNextAction.DeepLink,
