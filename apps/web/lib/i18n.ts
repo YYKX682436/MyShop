@@ -3,6 +3,10 @@ export type Locale = "zh" | "en"
 const zh = {
   // Nav
   "nav.home": "首页",
+  "nav.orders": "订单",
+  "nav.me": "我",
+  "nav.search": "搜索",
+  "nav.main": "主要导航",
   "nav.login": "登录",
   "nav.register": "注册",
   "nav.profile": "个人中心",
@@ -11,33 +15,28 @@ const zh = {
   "nav.admin": "管理后台",
 
   // Home
-  "home.title": "全部商品",
   "home.search": "搜索商品...",
-  "home.searchButton": "搜索商品",
+  "home.clearSearch": "清空搜索",
+  "home.searchActive": "搜索或筛选已生效",
   "home.allCategories": "全部分类",
-  "home.exploreProducts": "浏览商品",
   "home.noProducts": "暂无商品",
+  "home.loadFailed": "商品暂时无法加载，请检查网络后重试。",
   "home.stock": "库存",
   "home.inStock": "有库存",
   "home.outOfStock": "暂时缺货",
   "home.sales": "已售",
   "home.startFrom": "起",
-  "home.heroTitle": "Unlock Your AI Potential",
-  "home.heroSub": "ChatGPT / Claude / Midjourney 等 AI 账号与密钥，自动发货，安全可靠",
-  "home.trustAuto": "自动发货",
-  "home.trustInstant": "秒发到账",
-  "home.trustTrack": "订单可追踪",
-  "home.trustSecure": "支付安全",
   "home.instantDelivery": "秒发货",
+  "home.sortLabel": "排序",
   "home.sortDefault": "综合排序",
   "home.sortHot": "热销优先",
   "home.sortPriceLow": "价格低到高",
   "home.sortPriceHigh": "价格高到低",
   "home.sortNew": "最新上架",
   "home.filterTitle": "筛选",
-  "home.filterPrice": "价格区间",
+  "home.filterMin": "最低价格",
+  "home.filterMax": "最高价格",
   "home.filterInStock": "仅有货",
-  "home.filterApply": "应用",
   "home.filterReset": "重置",
 
   // Product Detail
@@ -191,6 +190,11 @@ const zh = {
   "profile.balance": "余额",
   "profile.administrator": "管理员",
 
+  // My settings
+  "my.title": "我的",
+  "my.darkMode": "深色模式",
+  "my.english": "English",
+
   // My Orders
   "myOrders.title": "购买记录",
   "myOrders.all": "全部",
@@ -221,6 +225,8 @@ const zh = {
   "common.noData": "暂无数据",
   "common.success": "操作成功",
   "common.close": "关闭",
+  "common.announcement": "公告",
+  "common.acknowledge": "我知道了",
   "common.prev": "上一页",
   "common.next": "下一页",
   "common.page": "页",
@@ -1116,6 +1122,10 @@ const zh = {
 const en: Record<keyof typeof zh, string> = {
   // Nav
   "nav.home": "Home",
+  "nav.orders": "Orders",
+  "nav.me": "Me",
+  "nav.search": "Search",
+  "nav.main": "Primary navigation",
   "nav.login": "Login",
   "nav.register": "Register",
   "nav.profile": "Profile",
@@ -1124,33 +1134,28 @@ const en: Record<keyof typeof zh, string> = {
   "nav.admin": "Admin",
 
   // Home
-  "home.title": "All Products",
   "home.search": "Search products...",
-  "home.searchButton": "Search",
+  "home.clearSearch": "Clear search",
+  "home.searchActive": "Search or filters active",
   "home.allCategories": "All",
-  "home.exploreProducts": "Browse products",
   "home.noProducts": "No products found",
+  "home.loadFailed": "Products are temporarily unavailable. Check your connection and try again.",
   "home.stock": "Stock",
   "home.inStock": "In stock",
   "home.outOfStock": "Out of stock",
   "home.sales": "Sold",
   "home.startFrom": "from",
-  "home.heroTitle": "Unlock Your AI Potential",
-  "home.heroSub": "ChatGPT / Claude / Midjourney and more AI accounts & keys, auto-delivered, secure",
-  "home.trustAuto": "Auto Delivery",
-  "home.trustInstant": "Instant",
-  "home.trustTrack": "Trackable",
-  "home.trustSecure": "Secure Pay",
   "home.instantDelivery": "Instant",
+  "home.sortLabel": "Sort",
   "home.sortDefault": "Default",
   "home.sortHot": "Best Selling",
   "home.sortPriceLow": "Price: Low",
   "home.sortPriceHigh": "Price: High",
   "home.sortNew": "Newest",
   "home.filterTitle": "Filter",
-  "home.filterPrice": "Price Range",
+  "home.filterMin": "Minimum price",
+  "home.filterMax": "Maximum price",
   "home.filterInStock": "In Stock Only",
-  "home.filterApply": "Apply",
   "home.filterReset": "Reset",
 
   // Product Detail
@@ -1304,6 +1309,11 @@ const en: Record<keyof typeof zh, string> = {
   "profile.balance": "Balance",
   "profile.administrator": "Administrator",
 
+  // My settings
+  "my.title": "Me",
+  "my.darkMode": "Dark mode",
+  "my.english": "English",
+
   // My Orders
   "myOrders.title": "My Orders",
   "myOrders.all": "All",
@@ -1334,6 +1344,8 @@ const en: Record<keyof typeof zh, string> = {
   "common.noData": "No Data",
   "common.success": "Success",
   "common.close": "Close",
+  "common.announcement": "Announcement",
+  "common.acknowledge": "Got it",
   "common.prev": "Previous",
   "common.next": "Next",
   "common.page": "Page",
