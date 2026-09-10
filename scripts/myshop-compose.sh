@@ -28,10 +28,10 @@ reject_project_override "$@"
 command -v docker >/dev/null 2>&1 || die "docker is unavailable"
 docker compose version >/dev/null 2>&1 || die "docker compose is unavailable"
 
-# The explicit environment assignment wins over a caller-provided
-# COMPOSE_PROJECT_NAME while the command-line options pin the file and root.
-exec COMPOSE_PROJECT_NAME="$PRODUCTION_PROJECT_NAME" \
-  docker compose \
+# The exported value wins over a caller-provided COMPOSE_PROJECT_NAME while
+# the command-line options pin the file and root.
+export COMPOSE_PROJECT_NAME="$PRODUCTION_PROJECT_NAME"
+exec docker compose \
   --project-directory "$PROJECT_ROOT" \
   --file "$COMPOSE_FILE" \
   "$@"
