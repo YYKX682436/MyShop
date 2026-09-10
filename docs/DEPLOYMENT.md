@@ -3,6 +3,36 @@
 This document describes the intended single-host deployment. It is a runbook,
 not a production deployment action performed by CI or this acceptance pass.
 
+## Compose project identity and production entrypoint
+
+The top-level `name: myshop` in `docker-compose.yml` is the canonical
+production Compose project identity. The basename of a checkout or of a
+release directory such as `/opt/myshop/releases/<SHA>` must never change the
+stack name. Production therefore keeps using the existing resources
+`myshop_postgres_data`, `myshop_caddy_data`, `myshop_caddy_config`, and
+`myshop_internal`.
+
+From a checkout or release directory, use the repository wrapper for every
+production Compose operation:
+
+```bash
+release=/opt/myshop/releases/<full-sha>
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env config
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env build api web
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env up -d db node-exporter api web caddy
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
+```
+
+`scripts/myshop-compose.sh` resolves its own repository/release root, pins
+`docker-compose.yml` and `--project-directory` to that root, and explicitly
+sets `COMPOSE_PROJECT_NAME=myshop`. It accepts normal Compose arguments such
+as `--env-file`, `config`, `build`, `up`, `ps`, `logs`, and `exec`, but rejects
+caller-supplied `-p`/`--project-name`, `-f`/`--file`, and
+`--project-directory` overrides. Do not rely on `docker compose -p myshop` or
+pass the old server-side runtime override as a second Compose file. Local or
+CI experiments may call Compose directly when they intentionally need an
+isolated project name; that does not change the production rule.
+
 ## Topology
 
 Use one Docker Compose project with five services:
@@ -41,7 +71,7 @@ Prometheus or Grafana for this dashboard.
 3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, matching `PUBLIC_SITE_URL`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
 4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
-6. Create the configured upload directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because its bind uses `create_host_path: false`. Provision the two official non-empty XDB files there when available, then run `docker compose up -d --build` and inspect `docker compose ps` and API logs. Missing XDB files only degrade the detail estimate to `未知`; they do not prevent API startup.
+6. Create the configured upload directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because its bind uses `create_host_path: false`. Provision the two official non-empty XDB files there when available, then run `bash scripts/myshop-compose.sh --env-file .env up -d --build`, inspect `bash scripts/myshop-compose.sh --env-file .env ps`, and read API logs with `bash scripts/myshop-compose.sh --env-file .env logs api`. Missing XDB files only degrade the detail estimate to `未知`; they do not prevent API startup.
 7. After API and Web health checks pass, run `bash /opt/myshop/scripts/cleanup-docker-retention.sh` to retain only the active release and two rollback releases and to remove unused Docker build cache. The script never touches Docker volumes, uploads, or database backups.
 
 Before startup, `bash scripts/check-compose.sh` verifies that Compose receives
@@ -113,7 +143,7 @@ findmnt -M /data
 docker info --format '{{.DockerRootDir}}' # must be /data/docker
 docker volume inspect myshop_postgres_data myshop_caddy_data myshop_caddy_config \
   --format '{{.Name}} {{.Mountpoint}}' # each mountpoint must be under /data/docker/volumes
-docker compose config
+bash /opt/myshop/current/scripts/myshop-compose.sh --env-file /opt/myshop/.env config
 ```
 
 Never remove Docker volumes as part of a data-disk or schema migration. Verify
@@ -208,20 +238,48 @@ production deployment requires a successful CI run for the exact revision and
 explicit browser acceptance. After deployment, record the exact deployed
 revision in /opt/myshop/DEPLOYED_SHA.
 
+## Release deployment sequence
+
+Deploy the exact pushed SHA as a release snapshot; do not run production from
+a Git checkout. Before changing containers, record `/opt/myshop/DEPLOYED_SHA`,
+the `/opt/myshop/current` target, the active Compose labels, the existing
+`myshop_*` volumes and `myshop_internal` network, and a verified PostgreSQL
+custom backup. Extract the release to
+`/opt/myshop/releases/<full-sha>`, set the protected production `.env` image
+tags to `myshop-api:<full-sha>` and `myshop-web:<full-sha>`, and validate it
+from the SHA directory:
+
+```bash
+release=/opt/myshop/releases/<full-sha>
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env config
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env build api web
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env up -d db node-exporter api web caddy
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
+```
+
+The rendered project must be `myshop`; the deployment must reuse
+`myshop_postgres_data`, `myshop_caddy_data`, `myshop_caddy_config`, and
+`myshop_internal`. It must not create resources named with the release SHA.
+After the services are healthy, atomically update `DEPLOYED_SHA` and
+`current`, perform the smoke/schema/health checks below, and only then run
+retention cleanup. Never delete or recreate the PostgreSQL volume as part of
+this sequence.
+
 ## Backup and rollback
 
 Before every schema or image change:
 
 ```bash
 mkdir -p /data/myshop/backups
-docker compose exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom > /data/myshop/backups/myshop-$(date +%Y%m%d-%H%M%S).dump
-docker compose ps
+release=/opt/myshop/current
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom > /data/myshop/backups/myshop-$(date +%Y%m%d-%H%M%S).dump
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
 ```
 
 Keep backups in `/data/myshop/backups`, outside the repository, and periodically
 perform a restore test into an isolated PostgreSQL instance. To roll back an application image,
 change `API_IMAGE`/`WEB_IMAGE` to the previous immutable tags and run
-`docker compose up -d`; never roll back a database migration by deleting rows
+`bash /opt/myshop/current/scripts/myshop-compose.sh --env-file /opt/myshop/.env up -d`; never roll back a database migration by deleting rows
 or editing Flyway history. A migration requiring rollback must ship a new
 forward migration after a reviewed backup.
 
@@ -241,7 +299,10 @@ bash /opt/myshop/scripts/cleanup-docker-retention.sh
 The script removes unused application images, dangling images, and all unused
 BuildKit cache, then removes release directories outside the three-version
 window. It verifies `DEPLOYED_SHA`, the `current` symlink, and the running
-API/Web image before deleting anything. It must not be replaced with
+API/Web image plus `com.docker.compose.project=myshop` and
+`com.docker.compose.service=api|web` labels before deleting anything. If the
+active service labels identify a SHA-named or otherwise ambiguous project,
+retention fails closed without deleting an image or release. It must not be replaced with
 `docker volume prune` or `docker system prune --volumes`; PostgreSQL, Caddy,
 uploads, and backups are outside the cleanup scope.
 

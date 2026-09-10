@@ -5,7 +5,10 @@ repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 valid_env="$(mktemp)"
 missing_env="$(mktemp)"
 production_env="$(mktemp)"
-trap 'rm -f "$valid_env" "$missing_env" "$production_env"' EXIT
+regression_parent="$(mktemp -d)"
+sha_release_dir="$regression_parent/0123456789abcdef0123456789abcdef01234567"
+mkdir -p "$sha_release_dir"
+trap 'rm -f "$valid_env" "$missing_env" "$production_env"; rm -rf "$regression_parent"' EXIT
 
 cat >"$valid_env" <<'EOF'
 SITE_DOMAIN=store.example.test
@@ -31,8 +34,63 @@ cat >"$missing_env" <<'EOF'
 DB_PASSWORD=compose-validation-password
 EOF
 
+assert_project_name() {
+  local rendered_config="$1"
+  local context="$2"
+  local project_name
+
+  if ! project_name="$(awk '
+    /^name: / { count++; value=substr($0, 7) }
+    END {
+      if (count != 1) exit 1
+      print value
+    }
+  ' <<<"$rendered_config")"; then
+    echo "compose validation could not find exactly one top-level project name ($context)" >&2
+    exit 1
+  fi
+  if [[ "$project_name" != "myshop" ]]; then
+    echo "compose validation resolved the wrong project name ($context): $project_name" >&2
+    exit 1
+  fi
+}
+
 rendered_config="$(docker compose --project-directory "$repo_dir" --env-file "$valid_env" config)"
 production_config="$(docker compose --project-directory "$repo_dir" --env-file "$production_env" config)"
+assert_project_name "$rendered_config" "normal repository"
+assert_project_name "$production_config" "production environment"
+
+# A release directory is named by its full commit SHA in production. Copy the
+# minimum Compose inputs into a temporary SHA-named directory and let Compose
+# discover docker-compose.yml from that directory, reproducing the incident.
+cp "$repo_dir/docker-compose.yml" "$sha_release_dir/docker-compose.yml"
+cp "$repo_dir/Caddyfile" "$sha_release_dir/Caddyfile"
+sha_release_config="$(
+  cd "$sha_release_dir"
+  docker compose --env-file "$valid_env" config
+)"
+assert_project_name "$sha_release_config" "SHA-named release directory"
+
+wrapper_path="$repo_dir/scripts/myshop-compose.sh"
+wrapper_config="$(COMPOSE_PROJECT_NAME=wrong "$wrapper_path" --env-file "$valid_env" config)"
+assert_project_name "$wrapper_config" "production wrapper"
+
+wrapper_must_reject() {
+  local label="$1"
+  shift
+  if "$wrapper_path" "$@" --env-file "$valid_env" config >/dev/null 2>&1; then
+    echo "production wrapper unexpectedly accepted override: $label" >&2
+    exit 1
+  fi
+}
+
+wrapper_must_reject '-p' -p wrong
+wrapper_must_reject '--project-name' --project-name wrong
+wrapper_must_reject '--project-name=...' --project-name=wrong
+wrapper_must_reject '-f' -f "$repo_dir/docker-compose.yml"
+wrapper_must_reject '--file' --file "$repo_dir/docker-compose.yml"
+wrapper_must_reject '--project-directory' --project-directory "$sha_release_dir"
+wrapper_must_reject '--project-directory=...' --project-directory="$sha_release_dir"
 
 for expected in \
   "subnet: 172.30.0.0/24" \
@@ -141,4 +199,5 @@ if docker compose --project-directory "$repo_dir" --env-file "$missing_env" conf
   exit 1
 fi
 
+echo "docker compose project identity validation passed: myshop"
 echo "docker compose required-variable validation passed"

@@ -9,6 +9,7 @@ readonly PROJECT_ROOT="/opt/myshop"
 readonly RELEASE_ROOT="${PROJECT_ROOT}/releases"
 readonly RETAIN_RELEASES=3
 readonly LOCK_FILE="${MYSHOP_LOCK_FILE:-${PROJECT_ROOT}/.docker-retention.lock}"
+readonly COMPOSE_PROJECT_NAME="myshop"
 
 dry_run=0
 case "${1:-}" in
@@ -74,9 +75,33 @@ expected_release_real="$(realpath -e "$current_release")"
 
 api_ref="myshop-api:${current_sha}"
 web_ref="myshop-web:${current_sha}"
-running_images="$(docker ps --format '{{.Image}}')"
-grep -Fqx "$api_ref" <<<"$running_images" || die "running API does not use $api_ref"
-grep -Fqx "$web_ref" <<<"$running_images" || die "running Web does not use $web_ref"
+
+# Retention is destructive. Only continue when the active API and Web
+# containers are unambiguously managed by the canonical Compose project and
+# still run the immutable images for DEPLOYED_SHA. A SHA-named or otherwise
+# unknown project must fail closed before any image or release deletion.
+running_compose_services="$(docker ps --format '{{.ID}}\t{{.Image}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}')"
+require_active_service() {
+  local expected_service="$1"
+  local expected_image="$2"
+  local matches=0
+  local container_id image compose_project compose_service
+
+  while IFS=$'\t' read -r container_id image compose_project compose_service; do
+    [[ -n "$container_id" ]] || continue
+    [[ "$compose_service" == "$expected_service" ]] || continue
+    matches=$((matches + 1))
+    if [[ "$compose_project" != "$COMPOSE_PROJECT_NAME" ]]; then
+      die "project identity mismatch: active ${expected_service} container ${container_id} belongs to Compose project '${compose_project:-<none>}', expected '${COMPOSE_PROJECT_NAME}'"
+    fi
+    [[ "$image" == "$expected_image" ]] || die "running ${expected_service} container ${container_id} uses image '$image'; expected '$expected_image'"
+  done <<<"$running_compose_services"
+
+  (( matches == 1 )) || die "project identity mismatch: expected exactly one active Compose ${expected_service} service in project ${COMPOSE_PROJECT_NAME}, found ${matches}"
+}
+
+require_active_service api "$api_ref"
+require_active_service web "$web_ref"
 docker image inspect "$api_ref" >/dev/null 2>&1 || die "current API image is missing: $api_ref"
 docker image inspect "$web_ref" >/dev/null 2>&1 || die "current Web image is missing: $web_ref"
 

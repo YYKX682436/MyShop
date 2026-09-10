@@ -1,6 +1,9 @@
 # MyShop Phase 1: PostgreSQL, API, Web, node-exporter, and one reverse proxy.
 # API, Web, and node-exporter have no host port; all public traffic enters through Caddy.
 
+# Keep the Compose stack identity independent of the release directory name.
+name: myshop
+
 services:
   db:
     image: postgres:16-alpine

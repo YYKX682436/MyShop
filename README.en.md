@@ -48,6 +48,26 @@ docker compose ps
 docker compose logs -f api
 ```
 
+The top-level `name: myshop` in `docker-compose.yml` is the canonical Compose
+project identity. A checkout or production release directory may be named by
+its SHA, but that basename must never create a different stack. Production
+operations use the protected entrypoint from the release root:
+
+```bash
+bash scripts/myshop-compose.sh --env-file /opt/myshop/.env config
+bash scripts/myshop-compose.sh --env-file /opt/myshop/.env up -d --build
+bash scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
+```
+
+The entrypoint pins `docker-compose.yml` and `--project-directory`, explicitly
+sets `COMPOSE_PROJECT_NAME=myshop`, and rejects `-p`, `--project-name`, `-f`,
+`--file`, and `--project-directory` overrides. Production operators do not
+need to remember `docker compose -p myshop`, and must not supply another
+project name. Local or CI experiments may call Compose directly when they
+intentionally need an isolated stack; that does not change the production
+rule. Production persistence remains in the `myshop` project, including
+`myshop_postgres_data`, the Caddy volumes, and `myshop_internal`.
+
 The default Compose topology contains only PostgreSQL, API, Web, and Caddy. PostgreSQL is persistent; API and Web have no host-facing ports, and public traffic enters through Caddy. Server setup, backup, restore, and rollback are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Administrator bootstrap
@@ -89,6 +109,10 @@ mvn -B verify
 
 # PostgreSQL delivery integration tests (requires local Docker)
 mvn -B -Dtest=PostgresDeliveryIntegrationTest test
+
+# Compose topology, project identity, and Caddy checks (requires Compose v2)
+cd ../..
+bash scripts/check-compose.sh
 ```
 
 GitHub Actions runs build and test jobs only; it contains no server deployment step.
