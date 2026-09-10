@@ -116,6 +116,19 @@ test("the order lifecycle page owns status, payment, delivery, copy, and export"
   assert.match(source, /paymentReturn/)
 })
 
+test("the order lifecycle page polls paid fulfillment and refreshes after visibility or focus recovery", () => {
+  const source = readSource("../app/(store)/order/[orderId]/page.tsx")
+
+  assert.match(source, /shouldPollOrderStatus/)
+  assert.match(source, /getOrderStatusPollInterval/)
+  assert.match(source, /getOrderStatusPollInterval\(view\.order\.status, checkingReturn\)/)
+  assert.match(source, /document\.addEventListener\("visibilitychange"/)
+  assert.match(source, /window\.addEventListener\("focus"/)
+  assert.match(source, /document\.visibilityState !== "visible"/)
+  assert.match(source, /setPageVisible\(visible\)/)
+  assert.doesNotMatch(source, /window\.location\.reload/)
+})
+
 test("manual storefront delivery is separate from automatic card-key delivery", () => {
   const source = readSource("../app/(store)/order/[orderId]/page.tsx")
 
@@ -143,6 +156,21 @@ test("admin manual fulfillment confirms in a form dialog before sending one batc
   assert.match(dialogSource, /manualFulfillmentConfirm/)
   assert.doesNotMatch(routeSource, /completeManualItem/)
   assert.doesNotMatch(dialogSource, /window\.confirm/)
+})
+
+test("admin order mutations publish one shared invalidation after the detail refresh", () => {
+  const listSource = readSource("../app/admin/orders/page.tsx")
+  const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
+  const invalidationSource = readSource("./admin-order-invalidation.ts")
+
+  assert.match(invalidationSource, /useSyncExternalStore/)
+  assert.match(invalidationSource, /invalidateAdminOrders/)
+  assert.match(listSource, /useAdminOrderInvalidation/)
+  assert.match(listSource, /\[loadOrders, orderInvalidationRevision\]/)
+  assert.match(listSource, /invalidateAdminOrders\(\)/)
+  assert.doesNotMatch(listSource, /await loadOrders\(\)/)
+  assert.match(routeSource, /await load\(\)[\s\S]*invalidateAdminOrders\(\)/)
+  assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 2)
 })
 
 test("storefront markdown surfaces use the shared safe renderer", () => {

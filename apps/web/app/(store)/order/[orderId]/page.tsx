@@ -17,11 +17,10 @@ import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { ContactSupport } from "@/components/shared/contact-methods"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { isManualFulfillmentItem } from "@/lib/order-status"
+import { getOrderStatusPollInterval, shouldPollOrderStatus } from "@/lib/order-polling"
 import type { TranslationKey } from "@/lib/i18n"
 import type { OrderItemDetail } from "@/types"
 
-const PAYMENT_RETURN_POLL_INTERVAL = 1000
-const NORMAL_POLL_INTERVAL = 3000
 const PAYMENT_RETURN_TIMEOUT = 20000
 const MANUAL_REFRESH_COOLDOWN = 10
 
@@ -40,7 +39,9 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const [checkingReturn, setCheckingReturn] = useState(paymentReturn)
   const [returnTimedOut, setReturnTimedOut] = useState(false)
   const [paymentState, setPaymentState] = useState(() => createPaymentPageActionState(initialAction))
+  const [pageVisible, setPageVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible")
   const requestInFlight = useRef(false)
+  const viewRef = useRef<OrderView | null>(null)
   const returnDeadline = useRef<number | null>(paymentReturn ? Date.now() + PAYMENT_RETURN_TIMEOUT : null)
 
   const fetchView = useCallback(async (requestKind: PaymentStatusRequestKind, forceRefresh = false): Promise<string | null> => {
@@ -48,6 +49,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     requestInFlight.current = true
     try {
       const result = forceRefresh ? await orderApi.refresh(orderId) : await orderApi.get(orderId)
+      viewRef.current = result
       setView(result)
       setTimeLeft(result.payment?.remaining_seconds ?? 0)
       setPaymentState(current => applyPaymentStatus(current, result.order.status, result.payment?.next_action))
@@ -75,9 +77,11 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   }, [fetchView, paymentReturn])
 
   useEffect(() => {
-    if (view?.order.status !== "PENDING") return
-    const interval = checkingReturn ? PAYMENT_RETURN_POLL_INTERVAL : NORMAL_POLL_INTERVAL
+    if (!view || !pageVisible || !shouldPollOrderStatus(view.order.status, view.order.items)) return
+    const interval = getOrderStatusPollInterval(view.order.status, checkingReturn)
+    if (interval === null) return
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return
       if (checkingReturn && returnDeadline.current !== null && Date.now() >= returnDeadline.current) {
         setCheckingReturn(false)
         setReturnTimedOut(true)
@@ -86,7 +90,28 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       void fetchView("poll")
     }, interval)
     return () => window.clearInterval(timer)
-  }, [checkingReturn, fetchView, view?.order.status])
+  }, [checkingReturn, fetchView, pageVisible, view])
+
+  useEffect(() => {
+    const refreshIfOrderCanChange = () => {
+      if (document.visibilityState !== "visible") return
+      const currentView = viewRef.current
+      if (!currentView || !shouldPollOrderStatus(currentView.order.status, currentView.order.items)) return
+      void fetchView("poll")
+    }
+    const handleVisibilityChange = () => {
+      const visible = document.visibilityState === "visible"
+      setPageVisible(visible)
+      if (visible) refreshIfOrderCanChange()
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+    window.addEventListener("focus", refreshIfOrderCanChange)
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+      window.removeEventListener("focus", refreshIfOrderCanChange)
+    }
+  }, [fetchView])
 
   useEffect(() => {
     if (view?.order.status !== "PENDING" || timeLeft < 0) return

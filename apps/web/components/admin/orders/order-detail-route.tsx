@@ -11,6 +11,7 @@ import { AdminPage, ConfirmAlert, PageHeader } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminOrders } from "@/lib/admin-order-invalidation"
 import { adminCardKeyApi, adminOrderApi, adminProductApi, requestOrThrow } from "@/services/api"
 import { isManualFulfillmentItem } from "@/lib/order-status"
 import type { AdminManualFulfillmentItem, AdminOrderItem, OrderCardKey } from "@/types"
@@ -76,6 +77,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       toast.success(t("admin.manualDeliveryCompleted"))
       setManualFulfillmentOpen(false)
       await load()
+      invalidateAdminOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -96,6 +98,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       setMarkPaidOpen(false)
       setMarkPaidReason("")
       await load()
+      invalidateAdminOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {

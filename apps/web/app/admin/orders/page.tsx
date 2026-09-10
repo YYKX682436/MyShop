@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { formatAdminOrderCustomer, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
+import { invalidateAdminOrders, useAdminOrderInvalidation } from "@/lib/admin-order-invalidation"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItem } from "@/types"
@@ -80,6 +81,7 @@ function ProductSummary({ order, emptyLabel }: { order: AdminOrderItem; emptyLab
 
 export default function AdminOrdersPage() {
   const { t, locale } = useLocale()
+  const orderInvalidationRevision = useAdminOrderInvalidation()
   const [orders, setOrders] = useState<AdminOrderItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -130,7 +132,7 @@ export default function AdminOrdersPage() {
     }
   }, [bounds, debouncedSearch, page, sortDirection, statusFilter])
 
-  useEffect(() => { void loadOrders() }, [loadOrders])
+  useEffect(() => { void loadOrders() }, [loadOrders, orderInvalidationRevision])
 
   const handleMarkPaid = async () => {
     if (!markPaidOrderId) return
@@ -145,7 +147,7 @@ export default function AdminOrdersPage() {
       toast.success(t("admin.markedPaid"))
       setMarkPaidOrderId(null)
       setMarkPaidReason("")
-      await loadOrders()
+      invalidateAdminOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
