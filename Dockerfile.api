@@ -10,7 +10,10 @@ RUN mvn -B -f apps/api/pom.xml package
 # user creation below uses Debian/Ubuntu's documented adduser/addgroup flags.
 FROM eclipse-temurin:25-jre-noble
 WORKDIR /app
-RUN groupadd --gid 10001 myshop \
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes wget \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 myshop \
  && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin myshop
 COPY --from=build /build/apps/api/target/myshop-api-*.jar /app/app.jar
 RUN mkdir -p /app/uploads && chown -R 10001:10001 /app
