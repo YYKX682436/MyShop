@@ -125,37 +125,61 @@
   .hairline { border-color: hsl(var(--border-subtle)); }
 }
 
-/* Storefront floating surfaces: translucent enough to reveal content, solid enough to stay readable. */
+/* Storefront Liquid Glass surfaces: shared by the sticky header, Dock and search panel. */
 .store-glass {
-  background-color: hsl(var(--surface) / 0.74);
-  border: 1px solid hsl(var(--foreground) / 0.11);
+  background-color: hsl(var(--surface) / 0.72);
+  background-image: linear-gradient(180deg, hsl(0 0% 100% / 0.12), hsl(0 0% 100% / 0) 46%, hsl(var(--foreground) / 0.025));
+  border: 1px solid hsl(var(--foreground) / 0.105);
   box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.62),
-    inset 0 -1px 0 hsl(var(--foreground) / 0.06),
-    0 18px 42px hsl(var(--overlay) / 0.14),
-    0 4px 12px hsl(var(--overlay) / 0.08);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
-  backdrop-filter: blur(22px) saturate(150%);
+    inset 0 1px 0 hsl(0 0% 100% / 0.52),
+    inset 0 -1px 0 hsl(var(--foreground) / 0.055),
+    0 16px 38px hsl(var(--overlay) / 0.12),
+    0 4px 12px hsl(var(--overlay) / 0.07);
+  -webkit-backdrop-filter: blur(20px) saturate(145%);
+  backdrop-filter: blur(20px) saturate(145%);
 }
 
 .dark .store-glass {
-  background-color: hsl(var(--surface) / 0.78);
-  border-color: hsl(var(--foreground) / 0.14);
+  background-color: hsl(var(--surface) / 0.8);
+  background-image: linear-gradient(180deg, hsl(var(--foreground) / 0.09), hsl(var(--foreground) / 0) 46%, hsl(0 0% 0% / 0.08));
+  border-color: hsl(var(--foreground) / 0.135);
   box-shadow:
-    inset 0 1px 0 hsl(var(--foreground) / 0.17),
-    inset 0 -1px 0 hsl(0 0% 0% / 0.28),
-    0 18px 42px hsl(0 0% 0% / 0.32),
-    0 4px 12px hsl(0 0% 0% / 0.2);
+    inset 0 1px 0 hsl(var(--foreground) / 0.16),
+    inset 0 -1px 0 hsl(0 0% 0% / 0.24),
+    0 16px 38px hsl(0 0% 0% / 0.28),
+    0 4px 12px hsl(0 0% 0% / 0.18);
 }
 
 @supports not ((backdrop-filter: blur(1px))) {
   .store-glass {
+    background-image: none;
     background-color: hsl(var(--surface) / 0.96);
   }
 
   .dark .store-glass {
+    background-image: none;
     background-color: hsl(var(--surface) / 0.97);
   }
+}
+
+.store-header-glass {
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+  box-shadow:
+    inset 0 1px 0 hsl(0 0% 100% / 0.42),
+    inset 0 -1px 0 hsl(var(--foreground) / 0.055),
+    0 5px 18px hsl(var(--overlay) / 0.055);
+  -webkit-backdrop-filter: blur(19px) saturate(142%);
+  backdrop-filter: blur(19px) saturate(142%);
+}
+
+.dark .store-header-glass {
+  box-shadow:
+    inset 0 1px 0 hsl(var(--foreground) / 0.13),
+    inset 0 -1px 0 hsl(0 0% 0% / 0.22),
+    0 5px 18px hsl(0 0% 0% / 0.2);
 }
 
 .store-dock-viewport,
@@ -173,21 +197,28 @@
 }
 
 .store-dock {
-  display: flex;
+  position: relative;
+  display: block;
   width: 100%;
-  align-items: stretch;
-  gap: 8px;
+  overflow: hidden;
+  border-radius: 999px;
   pointer-events: auto;
+  background-color: hsl(var(--surface) / 0.84);
+  -webkit-backdrop-filter: blur(28px) saturate(152%);
+  backdrop-filter: blur(28px) saturate(152%);
 }
 
-.store-dock-pill {
+.dark .store-dock {
+  background-color: hsl(var(--surface) / 0.86);
+}
+
+.store-dock-track {
+  position: relative;
   display: flex;
-  min-width: 0;
-  flex: 1;
   align-items: stretch;
   gap: 2px;
-  padding: 5px;
-  border-radius: 999px;
+  padding: 4px;
+  user-select: none;
 }
 
 .store-dock-item {
@@ -202,20 +233,19 @@
   border-radius: 999px;
   -webkit-tap-highlight-color: transparent;
   transition: color 180ms ease, background-color 180ms ease, transform 180ms ease;
+  touch-action: pan-y;
 }
 
 .store-dock-item:hover {
   background-color: hsl(var(--foreground) / 0.045);
 }
 
-.store-dock-item:focus-visible,
-.store-dock-search:focus-visible {
+.store-dock-item:focus-visible {
   outline: 2px solid hsl(var(--ring) / 0.75);
   outline-offset: 2px;
 }
 
-.store-dock-item:active,
-.store-dock-search:active {
+.store-dock-item:active {
   transform: scale(0.985);
 }
 
@@ -242,59 +272,55 @@
 
 .store-dock-active {
   position: absolute;
-  inset: 3px;
+  top: 4px;
+  bottom: 4px;
+  z-index: 2;
   border-radius: 999px;
-  background-color: hsl(var(--primary) / 0.11);
+  border: 1px solid hsl(0 0% 100% / 0.35);
+  background-color: hsl(var(--surface) / 0.58);
+  background-image: linear-gradient(180deg, hsl(0 0% 100% / 0.24), hsl(0 0% 100% / 0) 54%, hsl(var(--foreground) / 0.035));
   box-shadow:
-    inset 0 1px 0 hsl(0 0% 100% / 0.56),
-    inset 0 -1px 0 hsl(var(--foreground) / 0.06),
-    0 2px 8px hsl(var(--overlay) / 0.08);
+    inset 0 1px 0 hsl(0 0% 100% / 0.5),
+    inset 0 -1px 0 hsl(var(--foreground) / 0.055),
+    0 2px 6px hsl(var(--overlay) / 0.09),
+    0 8px 18px hsl(var(--overlay) / 0.075);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-drag: none;
+  touch-action: pan-y;
 }
 
 .dark .store-dock-active {
-  background-color: hsl(var(--foreground) / 0.12);
+  border-color: hsl(var(--foreground) / 0.24);
+  background-color: hsl(var(--surface) / 0.64);
+  background-image: linear-gradient(180deg, hsl(var(--foreground) / 0.16), hsl(var(--foreground) / 0) 54%, hsl(0 0% 0% / 0.12));
   box-shadow:
-    inset 0 1px 0 hsl(var(--foreground) / 0.18),
+    inset 0 1px 0 hsl(var(--foreground) / 0.2),
     inset 0 -1px 0 hsl(0 0% 0% / 0.24),
-    0 2px 8px hsl(0 0% 0% / 0.18);
+    0 2px 6px hsl(0 0% 0% / 0.22),
+    0 8px 18px hsl(0 0% 0% / 0.18);
 }
 
-.store-dock-search {
-  position: relative;
-  display: inline-flex;
-  height: 58px;
-  width: 58px;
-  flex: 0 0 58px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: hsl(var(--foreground));
-  -webkit-tap-highlight-color: transparent;
-  transition: color 180ms ease, background-color 180ms ease, transform 180ms ease;
-  pointer-events: auto;
+.store-dock-active:active {
+  cursor: grabbing;
 }
 
-.store-dock-search:hover,
-.store-dock-search-open {
-  color: hsl(var(--primary));
-  background-color: hsl(var(--primary) / 0.1);
-}
-
-.store-dock-search-indicator {
+.store-dock-state-dot {
   position: absolute;
   top: 12px;
-  right: 12px;
-  height: 7px;
-  width: 7px;
+  left: calc(50% + 10px);
+  height: 6px;
+  width: 6px;
   border: 1px solid hsl(var(--surface) / 0.9);
   border-radius: 50%;
   background-color: hsl(var(--primary));
-  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.16);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.14);
+  pointer-events: none;
 }
 
 .store-search-viewport {
   position: fixed;
-  bottom: calc(78px + env(safe-area-inset-bottom));
+  bottom: calc(86px + env(safe-area-inset-bottom));
   z-index: 40;
 }
 
@@ -315,27 +341,38 @@
 }
 
 @media (min-width: 640px) {
-  .store-dock-pill {
+  .store-dock-track {
     gap: 4px;
-    padding: 6px;
+    padding: 5px;
   }
 
   .store-dock-item {
     min-height: 60px;
   }
 
-  .store-dock-search {
-    height: 60px;
-    width: 60px;
-    flex-basis: 60px;
-  }
-
   .store-search-viewport {
-    bottom: calc(84px + env(safe-area-inset-bottom));
+    bottom: calc(92px + env(safe-area-inset-bottom));
   }
 
   .store-search-panel {
     padding: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .store-dock-item {
+    transition-duration: 0ms;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px))) {
+  .store-dock {
+    background-image: none;
+    background-color: hsl(var(--surface) / 0.96);
+  }
+
+  .dark .store-dock {
+    background-color: hsl(var(--surface) / 0.97);
   }
 }
 

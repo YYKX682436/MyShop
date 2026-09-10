@@ -140,7 +140,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
           </button>
         </div>
       ) : filteredProducts.length > 0 ? (
-        <div id="products" className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div id="products" className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 lg:gap-5 xl:grid-cols-5 2xl:grid-cols-6">
           {filteredProducts.map((product) => (
             <div key={product.id} className="min-w-0">
               <ProductCard product={product} />
