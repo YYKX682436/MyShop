@@ -106,6 +106,7 @@ export default function MyOrdersPage() {
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <OrderStatusBadge status={order.status} />
+                  <span className="font-mono text-xs font-medium text-foreground">{t("order.orderNo")} {order.order_no}</span>
                 </div>
                 <span className="text-xs text-muted-foreground">
                   {new Date(order.created_at).toLocaleString()}

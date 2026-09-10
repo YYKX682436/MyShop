@@ -183,6 +183,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm text-muted-foreground">{view.order.items[0]?.product_title || t("order.lifecycleTitle")}</p>
+          <p className="mt-1 font-mono text-sm font-medium text-foreground">{t("order.orderNo")} {view.order.order_no}</p>
           {view.order.items.length > 1 && <p className="mt-1 text-xs text-muted-foreground">{t("order.itemsCount").replace("{count}", String(view.order.items.length))}</p>}
           <p className="mt-3 text-3xl font-semibold tracking-tight text-foreground">{formatYuan(view.order.actual_amount ?? view.order.total_amount)}</p>
         </div>

@@ -153,8 +153,8 @@ export default function AdminOrdersPage() {
     }
   }
 
-  const copyOrderId = (value: string) => {
-    const cleanValue = stripInvisible(value)
+  const copyOrderNo = (value: number) => {
+    const cleanValue = stripInvisible(String(value))
     const fallback = () => {
       const textarea = document.createElement("textarea")
       textarea.value = cleanValue
@@ -207,8 +207,8 @@ export default function AdminOrdersPage() {
       <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
         <table className="w-full min-w-[1180px] text-sm">
           <thead><tr className="border-b border-border-subtle bg-surface-muted">
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">商品</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderId")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">客户</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">金额</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">利润</th>
@@ -222,8 +222,8 @@ export default function AdminOrdersPage() {
             {!loading && !error && orders.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noOrderData")}</TableEmptyState>}
             {!loading && !error && orders.map((order) => (
               <tr key={order.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
+                <td className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={`${t("admin.orderNo")} ${order.order_no}`} onClick={() => copyOrderNo(order.order_no)}>{order.order_no}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
                 <td className="px-4 py-3"><ProductSummary order={order} emptyLabel={t("admin.systemNoData")} /></td>
-                <td className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={order.id} onClick={() => copyOrderId(order.id)}>{order.id}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
                 <td className="px-4 py-3"><CustomerCell order={order} guestLabel={t("admin.guest")} /></td>
                 <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
                 <td className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>

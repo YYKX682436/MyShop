@@ -1,7 +1,7 @@
 "use client"
 
 import { Fragment, type ReactNode } from "react"
-import { ChevronDown, Copy, Loader2 } from "lucide-react"
+import { Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
@@ -42,12 +42,19 @@ function pricingSourceLabel(source: AdminOrderItemDetail["pricing_source"], t: T
   return t("admin.pricingSourceRetail")
 }
 
-function formatMoney(value: number | null | undefined, empty: string) {
-  return value === null || value === undefined ? empty : formatYuan(value)
+function stockModeLabel(mode: OrderItemDetail["stock_mode"], t: Translator) {
+  if (mode === "CARD_KEY") return t("admin.cardKeyStock")
+  if (mode === "MANUAL") return t("admin.manualStock")
+  if (mode === "UNLIMITED") return t("admin.unlimitedStock")
+  return mode || t("admin.systemNoData")
 }
 
 function uniqueValues(values: (string | null | undefined)[]) {
   return [...new Set(values.filter((value): value is string => Boolean(value)))]
+}
+
+function formatMoney(value: number | null | undefined, empty: string) {
+  return value === null || value === undefined ? empty : formatYuan(value)
 }
 
 function CopyButton({ value, label, onCopy, className = "" }: { value: string; label: string; onCopy: (value: string) => void; className?: string }) {
@@ -155,6 +162,8 @@ export function OrderDetailSheet({
 
   const identity = formatAdminOrderCustomer(order, t("admin.guest"))
   const mainItem = order.items[0]
+  const pricingSources = uniqueValues(order.items.map(item => pricingSourceLabel(item.pricing_source, t)))
+  const stockModes = uniqueValues(order.items.map(item => stockModeLabel(item.stock_mode, t)))
   const cardGroups = new Map<string, { title: string; cards: OrderCardKey[] }>()
   detailCardKeys.forEach((card) => {
     const groupKey = card.order_item_id || `${card.product_title}\u0000${card.spec_name || ""}`
@@ -163,11 +172,6 @@ export function OrderDetailSheet({
     if (group) group.cards.push(card)
     else cardGroups.set(groupKey, { title, cards: [card] })
   })
-
-  const productIds = uniqueValues(order.items.map(item => item.product_id))
-  const specIds = uniqueValues(order.items.map(item => item.spec_id))
-  const pricingSources = [...new Set(order.items.map(item => pricingSourceLabel(item.pricing_source, t)))]
-  const stockModes = [...new Set(order.items.map(item => item.stock_mode).filter(Boolean))]
 
   return (
     <div className="space-y-6">
@@ -178,8 +182,8 @@ export function OrderDetailSheet({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-lg font-semibold tracking-tight text-foreground">{order.id}</span>
-              <CopyButton value={order.id} label={t("admin.orderId")} onCopy={copyToClipboard} />
+              <span className="font-mono text-lg font-semibold tracking-tight text-foreground">{order.order_no}</span>
+              <CopyButton value={String(order.order_no)} label={t("admin.orderNo")} onCopy={copyToClipboard} />
               <OrderStatusBadge status={order.status} />
               <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${order.is_risk_flagged ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>
                 {order.is_risk_flagged ? t("admin.riskFlagged") : "风险正常"}
@@ -189,7 +193,7 @@ export function OrderDetailSheet({
           </div>
         </div>
         <dl className="mt-5 grid gap-4 border-t border-border-subtle pt-5 sm:grid-cols-2 xl:grid-cols-4">
-          <DefinitionRow label="主要商品"><span className="font-medium">{mainItem?.product_title || empty}</span></DefinitionRow>
+          <DefinitionRow label="主要商品"><span className="font-medium">{mainItem ? `#${mainItem.product_no} ${mainItem.product_title}` : empty}</span></DefinitionRow>
           <DefinitionRow label="客户"><span className="font-medium">{identity.primary}</span>{identity.secondary && <span className="block text-xs text-muted-foreground">{identity.secondary}</span>}</DefinitionRow>
           <DefinitionRow label={t("admin.paymentAmount")}><span className="font-semibold">{formatMoney(order.actual_amount, empty)}</span></DefinitionRow>
           <DefinitionRow label={t("admin.createdAt")}><span>{formatDateTime(order.created_at, locale)}</span></DefinitionRow>
@@ -256,9 +260,10 @@ export function OrderDetailSheet({
           <Panel title="客户">
             {order.customer_type === "REGISTERED" ? <>
               <DefinitionRow label="用户名"><span className="font-medium">{order.username || identity.primary}</span></DefinitionRow>
-              <CopyDefinitionRow label="UID" value={order.user_no} onCopy={copyToClipboard} empty={empty} mono />
+              <CopyDefinitionRow label={t("admin.userNumber")} value={order.user_no} onCopy={copyToClipboard} empty={empty} mono />
               <CopyDefinitionRow label="账户邮箱" value={order.registered_email} onCopy={copyToClipboard} empty={empty} />
               <CopyDefinitionRow label="手机号" value={order.phone} onCopy={copyToClipboard} empty={empty} />
+              <DefinitionRow label="下单时等级"><span>{order.user_level_name_snapshot || empty}</span></DefinitionRow>
             </> : <DefinitionRow label="客户"><span className="font-medium">{t("admin.guest")}</span></DefinitionRow>}
           </Panel>
 
@@ -276,30 +281,16 @@ export function OrderDetailSheet({
             <DefinitionRow label={t("admin.paymentMethod")}><span className="inline-flex items-center gap-1.5"><PaymentIcon method={order.order_type === "ADMIN_PICKUP" ? "ADMIN_PICKUP" : order.payment_method || ""} className="size-4" />{order.order_type === "ADMIN_PICKUP" ? getPaymentLabel("ADMIN_PICKUP", t) : order.payment_method ? <>{getPaymentLabel(order.payment_method, t)}{order.payment_method === "ONLINE" && order.payment_channel_code ? <span className="text-xs text-muted-foreground">（{order.payment_channel_code}）</span> : null}</> : empty}</span></DefinitionRow>
             <DefinitionRow label="风险状态"><span className={order.is_risk_flagged ? "font-medium text-destructive" : "text-emerald-700 dark:text-emerald-300"}>{order.is_risk_flagged ? t("admin.riskFlagged") : "正常"}</span></DefinitionRow>
           </Panel>
+
+          <Panel title={t("admin.orderDetails")}>
+            <DefinitionRow label={t("admin.pricingSource")}><span>{pricingSources.join("、") || empty}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.stockMode")}><span>{stockModes.join("、") || empty}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.orderType")}><span>{order.order_type}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.expiresAt")}><span>{order.expires_at ? formatDateTime(order.expires_at, locale) : empty}</span></DefinitionRow>
+          </Panel>
         </aside>
       </div>
 
-      <details className="rounded-surface border border-border-subtle bg-surface shadow-sm">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 text-sm font-semibold text-foreground [&::-webkit-details-marker]:hidden">
-          <span>技术信息 / 高级信息</span>
-          <ChevronDown className="size-4 text-muted-foreground transition-transform" aria-hidden="true" />
-        </summary>
-        <div className="border-t border-border-subtle px-5 py-4 sm:px-6">
-          <dl className="grid gap-x-8 divide-y divide-border-subtle/70 sm:grid-cols-2 sm:divide-y-0">
-            <CopyDefinitionRow label={t("admin.orderId")} value={order.id} onCopy={copyToClipboard} empty={empty} mono />
-            <CopyDefinitionRow label="用户 UUID" value={order.user_id} onCopy={copyToClipboard} empty={empty} mono />
-            {productIds.map((id, index) => <CopyDefinitionRow key={`product-${id}`} label={`商品 UUID${productIds.length > 1 ? ` ${index + 1}` : ""}`} value={id} onCopy={copyToClipboard} empty={empty} mono />)}
-            {specIds.map((id, index) => <CopyDefinitionRow key={`spec-${id}`} label={`规格 UUID${specIds.length > 1 ? ` ${index + 1}` : ""}`} value={id} onCopy={copyToClipboard} empty={empty} mono />)}
-            <DefinitionRow label="定价来源"><span>{pricingSources.join("、") || empty}</span></DefinitionRow>
-            <DefinitionRow label="库存模式"><span>{stockModes.join("、") || empty}</span></DefinitionRow>
-            <CopyDefinitionRow label="下单时等级 UUID" value={order.user_level_id_snapshot} onCopy={copyToClipboard} empty={empty} mono />
-            <DefinitionRow label="下单时等级"><span>{order.user_level_name_snapshot || empty}</span></DefinitionRow>
-            <DefinitionRow label="客户端 IP"><span className="font-mono">{order.client_ip || empty}</span></DefinitionRow>
-            <DefinitionRow label="订单类型"><span>{order.order_type}</span></DefinitionRow>
-            <DefinitionRow label="过期时间"><span>{order.expires_at ? formatDateTime(order.expires_at, locale) : empty}</span></DefinitionRow>
-          </dl>
-        </div>
-      </details>
     </div>
   )
 }

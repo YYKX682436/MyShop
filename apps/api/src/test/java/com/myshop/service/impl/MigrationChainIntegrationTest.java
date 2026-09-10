@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("20", flyway.info().current().getVersion().getVersion());
-        assertEquals(20, flyway.info().all().length);
+        assertEquals("21", flyway.info().current().getVersion().getVersion());
+        assertEquals(21, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -69,20 +69,22 @@ class MigrationChainIntegrationTest {
         assertFalse(tableExists("wholesale_rules"));
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
-        String retiredNumber = String.join("_", "order", "no");
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
         String retiredGuestCredential = String.join("_", "guest", "lookup", "token");
-        assertFalse(columnExists("orders", retiredNumber));
+        assertTrue(columnExists("orders", "order_no"));
+        assertEquals("bigint", dataType("orders", "order_no"));
+        assertEquals("NO", nullableValue("orders", "order_no"));
+        assertTrue(defaultValue("orders", "order_no").contains("order_no_sequence"));
         assertFalse(columnExists("orders", retiredLookupHash));
         assertFalse(columnExists("orders", retiredGuestCredential));
-        assertFalse(checkConstraintExists(String.join("_", "orders", "order", "no", "positive")));
-        assertFalse(indexExists(String.join("_", "orders", "order", "no", "key")));
-        assertFalse(sequenceExists(String.join("_", "order", "no", "sequence")));
-        assertFalse(functionExists(String.join("_", "prevent", "order", "no", "update")));
-        assertEquals(0, jdbcTemplate.queryForObject("""
+        assertTrue(checkConstraintExists("orders_order_no_positive"));
+        assertTrue(indexExists("orders_order_no_key"));
+        assertTrue(sequenceExists("order_no_sequence"));
+        assertTrue(functionExists("prevent_order_no_update"));
+        assertEquals(1, jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM pg_trigger
                 WHERE tgname = ?
-                """, Integer.class, String.join("_", "trg", "orders", "order", "no", "immutable")));
+                """, Integer.class, "trg_orders_order_no_immutable"));
         assertTrue(indexExists("idx_card_keys_order"));
         assertTrue(columnExists("orders", "order_type"));
         assertEquals("NO", nullableValue("orders", "order_type"));
@@ -366,7 +368,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("20", flyway().info().current().getVersion().getVersion());
+        assertEquals("21", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -498,7 +500,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("20", flyway().info().current().getVersion().getVersion());
+        assertEquals("21", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -568,7 +570,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("20", flyway().info().current().getVersion().getVersion());
+        assertEquals("21", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -599,7 +601,7 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
-    void finalMigrationRemovesRetiredOrderObjectsAndKeepsCardKeyIndex() {
+    void finalMigrationRestoresOrderNumbersAndKeepsGuestLookupCredentialsRetired() {
         flyway("11").migrate();
         UUID firstOrderId = UUID.randomUUID();
         UUID secondOrderId = UUID.randomUUID();
@@ -617,27 +619,63 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("20", flyway().info().current().getVersion().getVersion());
+        assertEquals("21", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
-        String retiredNumber = String.join("_", "order", "no");
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
         String retiredGuestCredential = String.join("_", "guest", "lookup", "token");
-        assertFalse(columnExists("orders", retiredNumber));
+        assertTrue(columnExists("orders", "order_no"));
+        assertEquals(1000000001L, jdbcTemplate.queryForObject(
+                "SELECT order_no FROM orders WHERE id = ?", Long.class, firstOrderId));
+        assertEquals(1000000002L, jdbcTemplate.queryForObject(
+                "SELECT order_no FROM orders WHERE id = ?", Long.class, secondOrderId));
+        assertEquals(1000000003L, jdbcTemplate.queryForObject(
+                "SELECT nextval('order_no_sequence')", Long.class));
         assertFalse(columnExists("orders", retiredLookupHash));
         assertFalse(columnExists("orders", retiredGuestCredential));
-        assertFalse(checkConstraintExists(String.join("_", "orders", "order", "no", "positive")));
-        assertFalse(indexExists(String.join("_", "orders", "order", "no", "key")));
+        assertTrue(checkConstraintExists("orders_order_no_positive"));
+        assertTrue(indexExists("orders_order_no_key"));
         assertTrue(indexExists("idx_card_keys_order"));
-        assertFalse(sequenceExists(String.join("_", "order", "no", "sequence")));
-        assertFalse(functionExists(String.join("_", "prevent", "order", "no", "update")));
-        String retiredTrigger = String.join("_", "trg", "orders", "order", "no", "immutable");
-        assertEquals(0, jdbcTemplate.queryForObject("""
+        assertTrue(sequenceExists("order_no_sequence"));
+        assertTrue(functionExists("prevent_order_no_update"));
+        assertEquals(1, jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM pg_trigger
                 WHERE tgname = ?
-                """, Integer.class, retiredTrigger));
+                """, Integer.class, "trg_orders_order_no_immutable"));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "UPDATE orders SET order_no = 9999999999 WHERE id = ?", firstOrderId));
+        assertEquals(1000000001L, jdbcTemplate.queryForObject(
+                "SELECT order_no FROM orders WHERE id = ?", Long.class, firstOrderId));
         assertNotNull(firstOrderId);
         assertNotNull(secondOrderId);
+    }
+
+    @Test
+    void orderNumberBackfillUsesOrderIdAsTheDeterministicCreatedAtTieBreaker() {
+        flyway("11").migrate();
+        UUID lowerId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID higherId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        LocalDateTime createdAt = LocalDateTime.of(2026, 2, 1, 0, 0);
+
+        // Insert in the opposite order so the id tie-breaker, rather than
+        // insertion order, is what determines the business number.
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, ?, ?, 10.00, 10.00, 'PENDING', 'NORMAL', 'legacy-channel')
+                """, higherId, createdAt, createdAt);
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type, payment_method)
+                VALUES (?, ?, ?, 20.00, 20.00, 'PENDING', 'NORMAL', 'legacy-channel')
+                """, lowerId, createdAt, createdAt);
+
+        flyway().migrate();
+
+        assertEquals(1000000001L, jdbcTemplate.queryForObject(
+                "SELECT order_no FROM orders WHERE id = ?", Long.class, lowerId));
+        assertEquals(1000000002L, jdbcTemplate.queryForObject(
+                "SELECT order_no FROM orders WHERE id = ?", Long.class, higherId));
+        assertEquals(1000000003L, jdbcTemplate.queryForObject(
+                "SELECT nextval('order_no_sequence')", Long.class));
     }
 
     @Test
@@ -781,7 +819,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("20", flyway().info().current().getVersion().getVersion());
+        assertEquals("21", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -827,7 +865,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("20", flyway().info().current().getVersion().getVersion());
+        assertEquals("21", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

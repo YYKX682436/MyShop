@@ -14,6 +14,7 @@ import {
   TableEmptyState,
   TableErrorState,
   TableLoadingState,
+  maskTechnicalIdsInText,
 } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -407,7 +408,7 @@ export default function AdministratorsPage() {
                 {logsLoading && <TableLoadingState colSpan={4} />}
                 {!logsLoading && logsError && <TableErrorState colSpan={4} onRetry={() => logsTarget && void loadLogs(logsTarget, logsPage)} />}
                 {!logsLoading && !logsError && logs.length === 0 && <TableEmptyState colSpan={4}>{t("admin.administratorNoLogs")}</TableEmptyState>}
-                {!logsLoading && !logsError && logs.map((log) => <tr key={log.id} className="border-b border-border-subtle last:border-0"><td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td className="px-3 py-2">{log.action}</td><td className="max-w-[28rem] truncate px-3 py-2" title={log.detail || ""}>{log.detail || "—"}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr>)}
+                {!logsLoading && !logsError && logs.map((log) => { const detail = maskTechnicalIdsInText(log.detail); return <tr key={log.id} className="border-b border-border-subtle last:border-0"><td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td className="px-3 py-2">{log.action}</td><td className="max-w-[28rem] truncate px-3 py-2" title={detail}>{detail || "—"}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr> })}
               </tbody>
             </table>
           </div>

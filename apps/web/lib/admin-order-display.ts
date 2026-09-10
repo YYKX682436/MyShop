@@ -15,16 +15,16 @@ export interface AdminOrderCustomerIdentity {
   user_no?: number | null
 }
 
-/** Keep guest rows to one line and make the business UID the registered fallback. */
+/** Keep guest rows to one line and make the business user number explicit. */
 export function formatAdminOrderCustomer(identity: AdminOrderCustomerIdentity, guestLabel = "游客") {
   if (identity.customer_type !== "REGISTERED") {
     return { primary: guestLabel, secondary: null }
   }
   const username = identity.username?.trim() || ""
-  const uid = identity.user_no === null || identity.user_no === undefined ? null : `UID ${identity.user_no}`
+  const userNumber = identity.user_no === null || identity.user_no === undefined ? null : `用户号 ${identity.user_no}`
   return {
-    primary: username || uid || "注册用户",
-    secondary: username && uid ? uid : null,
+    primary: username || userNumber || "注册用户",
+    secondary: username && userNumber ? userNumber : null,
   }
 }
 

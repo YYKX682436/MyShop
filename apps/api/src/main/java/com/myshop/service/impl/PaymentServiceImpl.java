@@ -227,6 +227,7 @@ public class PaymentServiceImpl implements PaymentService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("payment_id", attempt.getId());
         result.put("order_id", order.getId());
+        result.put("order_no", order.getOrderNo());
         result.put("status", attempt.getStatus());
         result.put("payment_method", OrderPaymentMethod.ONLINE.name());
         result.put("payment_type", attempt.getPaymentType());

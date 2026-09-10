@@ -587,7 +587,6 @@ export default function AdminCardKeysPage() {
           <DataTableShell footer={<AdminPagination page={importPage} total={importTotal} pageSize={PAGE_SIZE} onPageChange={setImportPage} />}>
             <table className="w-full min-w-[850px] text-sm">
               <thead><tr className="border-b border-border-subtle bg-surface-muted">
-                <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.batchId")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.product")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.columnCount")}</th>
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.importCount")}</th>
@@ -597,13 +596,12 @@ export default function AdminCardKeysPage() {
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
               </tr></thead>
               <tbody>
-                {importLoading && <TableLoadingState colSpan={8} />}
-                {!importLoading && importError && <TableErrorState colSpan={8} onRetry={() => void loadImportBatches()} />}
-                {!importLoading && !importError && importBatches.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noImportData")}</TableEmptyState>}
+                {importLoading && <TableLoadingState colSpan={7} />}
+                {!importLoading && importError && <TableErrorState colSpan={7} onRetry={() => void loadImportBatches()} />}
+                {!importLoading && !importError && importBatches.length === 0 && <TableEmptyState colSpan={7}>{t("admin.noImportData")}</TableEmptyState>}
                 {!importLoading && !importError && importBatches.map((batch) => (
                   <tr key={batch.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                    <td className="px-4 py-3 font-mono text-xs">{batch.id.length > 16 ? `${batch.id.slice(0, 8)}…` : batch.id}</td>
-                    <td className="px-4 py-3">{products.find((product) => product.id === batch.product_id)?.title || batch.product_id}</td>
+                    <td className="px-4 py-3">{products.find((product) => product.id === batch.product_id)?.title || t("admin.systemNoData")}</td>
                     <td className="px-4 py-3">{batch.column_count ?? 1}</td>
                     <td className="px-4 py-3">{batch.total_count}</td>
                     <td className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
@@ -733,7 +731,7 @@ export default function AdminCardKeysPage() {
           <DialogHeader>
             <DialogTitle>{t("admin.pickupResult")}</DialogTitle>
             <DialogDescription>
-              {pickupResult ? `${t("admin.pickedUpCount").replace("{count}", String(pickupResult.count))} · ${t("admin.orderId")} ${pickupResult.order_id}` : ""}
+              {pickupResult ? `${t("admin.pickedUpCount").replace("{count}", String(pickupResult.count))} · ${t("admin.orderNo")} ${pickupResult.order_no}` : ""}
             </DialogDescription>
           </DialogHeader>
           {pickupResult && (
@@ -742,7 +740,6 @@ export default function AdminCardKeysPage() {
                 <div key={card.id} className="rounded-card border border-border-subtle bg-surface-muted/40 p-3">
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-semibold text-foreground">#{index + 1}</span>
-                    <span className="font-mono">{card.id}</span>
                   </div>
                   <CardContentParts parts={card.content_parts} onCopy={copyToClipboard} expandedByDefault />
                 </div>
@@ -771,7 +768,7 @@ export default function AdminCardKeysPage() {
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardContentColumnLabel")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardStatus")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardCreatedAt")}</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderId")}</th>
+                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
                   <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.cardSoldAt")}</th>
                   <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
                 </tr></thead>
@@ -784,7 +781,7 @@ export default function AdminCardKeysPage() {
                       <td className="px-4 py-3 align-top"><CardContentParts parts={key.content_parts} onCopy={copyToClipboard} /></td>
                       <td className="px-4 py-3 align-top"><StatusBadge label={cardStatusLabel(key.status)} tone={cardStatusTone[key.status]} /></td>
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{formatDateTime(key.created_at, locale)}</td>
-                      <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_id ?? t("admin.systemNoData")}</td>
+                      <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_no ?? t("admin.systemNoData")}</td>
                       <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{key.sold_at ? formatDateTime(key.sold_at, locale) : t("admin.systemNoData")}</td>
                       <td className="px-4 py-3 text-right align-top"><div className="flex justify-end gap-1">
                         {key.status === "AVAILABLE" && <Button type="button" variant="ghost" size="icon" title={t("admin.pickupCard")} aria-label={t("admin.pickupCard")} disabled={singlePickingUp} onClick={() => setSinglePickupTarget(key)}><Download className="h-4 w-4" aria-hidden="true" /></Button>}

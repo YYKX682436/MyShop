@@ -198,6 +198,8 @@ class AdminUserServiceImplTest {
 
         assertEquals("第一商品", result.getList().get(0).items().get(0).productTitle());
         assertEquals("第二商品", result.getList().get(1).items().get(0).productTitle());
+        assertEquals(1000000001L, result.getList().get(0).orderNo());
+        assertEquals(1000000001L, result.getList().get(1).orderNo());
         verify(orderItemRepository).findByOrderIdIn(List.of(firstOrderId, secondOrderId));
         verify(orderItemRepository, never()).findByOrderId(any());
     }
@@ -457,6 +459,7 @@ class AdminUserServiceImplTest {
     private Order order(UUID id, UUID userId) {
         Order order = new Order();
         order.setId(id);
+        order.setOrderNo(1000000001L);
         order.setUserId(userId);
         order.setStatus(OrderStatus.PAID);
         order.setTotalAmount(new BigDecimal("1.00"));

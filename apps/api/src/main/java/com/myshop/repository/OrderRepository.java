@@ -110,7 +110,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             SELECT COUNT(DISTINCT CASE
                        WHEN o.user_id IS NOT NULL THEN 'u:' || CAST(o.user_id AS text)
                        WHEN NULLIF(o.session_token, '') IS NOT NULL THEN 's:' || o.session_token
-                       ELSE 'o:' || CAST(o.id AS text)
+                       ELSE 'o:' || CAST(o.order_no AS text)
                    END)
             FROM orders o
             WHERE o.status IN ('PAID', 'DELIVERED')
@@ -171,7 +171,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
                     CAST(:keywordPattern AS text) IS NULL
-                    OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_channel_code, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR EXISTS (
@@ -201,7 +201,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                           AND (
                                 COALESCE(u.username, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                 OR CAST(u.user_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                                OR CAST(u.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                 OR COALESCE(u.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                 OR COALESCE(u.phone, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                           )
@@ -211,8 +210,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                         FROM card_keys ck
                         WHERE ck.order_id = o.id
                           AND (
-                                CAST(ck.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                                OR CAST(ck.content_parts AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                CAST(ck.content_parts AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                           )
                     )
               )
@@ -232,7 +230,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
               AND (CAST(:createdTo AS timestamp) IS NULL OR o.created_at < CAST(:createdTo AS timestamp))
               AND (
                     CAST(:keywordPattern AS text) IS NULL
-                    OR CAST(o.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                    OR CAST(o.order_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_method, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR COALESCE(o.payment_channel_code, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                     OR EXISTS (
@@ -262,7 +260,6 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                           AND (
                                 COALESCE(u.username, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                 OR CAST(u.user_no AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                                OR CAST(u.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                 OR COALESCE(u.email, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                                 OR COALESCE(u.phone, '') ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                           )
@@ -272,8 +269,7 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                         FROM card_keys ck
                         WHERE ck.order_id = o.id
                           AND (
-                                CAST(ck.id AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
-                                OR CAST(ck.content_parts AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
+                                CAST(ck.content_parts AS text) ILIKE CAST(:keywordPattern AS text) ESCAPE '\\'
                           )
                     )
               )

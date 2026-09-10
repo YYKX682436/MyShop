@@ -70,7 +70,7 @@ public class AdminCardKeyController {
             action = "cardkey.batch_pickup",
             targetType = "CARD_KEY",
             targetId = "#request.productId()",
-            detail = "'批量提卡，规格=' + #request.specId() + '，数量=' + #request.quantity()")
+            detail = "'批量提卡，数量=' + #request.quantity()")
     @PostMapping("/batch-pickup")
     public ApiResponse<AdminCardKeyPickupResponse> batchPickup(
             @Valid @RequestBody AdminCardKeyBatchPickupRequest request) {
@@ -81,7 +81,7 @@ public class AdminCardKeyController {
             action = "cardkey.pickup",
             targetType = "CARD_KEY",
             targetId = "#id",
-            detail = "'单张提卡，卡密 ID=' + #id")
+            detail = "'单张提卡'")
     @PostMapping("/{id}/pickup")
     public ApiResponse<AdminCardKeyPickupResponse> pickup(@PathVariable UUID id) {
         return ApiResponse.success(adminCardKeyService.pickupCardKey(id, RequestContext.getUserId()));

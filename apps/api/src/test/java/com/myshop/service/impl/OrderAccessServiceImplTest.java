@@ -71,6 +71,7 @@ class OrderAccessServiceImplTest {
 
         Map<String, Object> view = service.getOrder(orderId, null, "session-a");
         assertEquals(orderId, ((Map<?, ?>) view.get("order")).get("id"));
+        assertEquals(1000000001L, ((Map<?, ?>) view.get("order")).get("order_no"));
         Map<?, ?> delivery = (Map<?, ?>) view.get("delivery");
         List<?> groups = (List<?>) delivery.get("groups");
         Map<?, ?> group = (Map<?, ?>) groups.get(0);
@@ -134,6 +135,7 @@ class OrderAccessServiceImplTest {
     private Order guestOrder(UUID id, String sessionToken) {
         Order order = new Order();
         order.setId(id);
+        order.setOrderNo(1000000001L);
         order.setSessionToken(sessionToken);
         order.setStatus(OrderStatus.PAID);
         order.setTotalAmount(java.math.BigDecimal.TEN);

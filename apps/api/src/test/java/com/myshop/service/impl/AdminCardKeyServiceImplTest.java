@@ -27,6 +27,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -91,6 +93,7 @@ class AdminCardKeyServiceImplTest {
         when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(invocation -> {
             Order order = invocation.getArgument(0);
             order.setId(orderId);
+            order.setOrderNo(1000000001L);
             return order;
         });
         when(orderItemRepository.saveAndFlush(any(OrderItem.class))).thenAnswer(invocation -> {
@@ -280,6 +283,7 @@ class AdminCardKeyServiceImplTest {
         var result = service.pickupCardKey(cardId, UUID.randomUUID());
 
         assertEquals(orderId, result.orderId());
+        assertEquals(1000000001L, result.orderNo());
         assertEquals(1, result.count());
         assertEquals(1, result.cards().size());
         assertEquals(List.of("账号", "密码"), result.cards().get(0).contentParts());
@@ -322,6 +326,7 @@ class AdminCardKeyServiceImplTest {
         var result = service.batchPickup(new AdminCardKeyBatchPickupRequest(productId, null, 2), UUID.randomUUID());
 
         assertEquals(2, result.count());
+        assertEquals(1000000001L, result.orderNo());
         assertEquals(2, result.cards().size());
         assertEquals(List.of(first.getId(), second.getId()),
                 result.cards().stream().map(card -> card.id()).toList());
@@ -338,6 +343,27 @@ class AdminCardKeyServiceImplTest {
         assertEquals(BigDecimal.ZERO.setScale(2), orderCaptor.getValue().getTotalAmount());
         assertEquals(BigDecimal.ZERO.setScale(2), orderCaptor.getValue().getActualAmount());
         assertNotNull(orderCaptor.getValue().getDeliveredAt());
+    }
+
+    @Test
+    void cardKeyListEnrichesSoldOrderWithBusinessOrderNumber() {
+        UUID orderId = UUID.randomUUID();
+        UUID cardId = UUID.randomUUID();
+        Order order = new Order();
+        order.setId(orderId);
+        order.setOrderNo(1000000001L);
+        CardKey key = card(cardId, List.of("sold"), CardKeyStatus.SOLD);
+        key.setOrderId(orderId);
+        PageRequest pageable = PageRequest.of(0, 20);
+        when(cardKeyRepository.findByProductIdAndOptionalSpecId(productId, null, pageable))
+                .thenReturn(new PageImpl<>(List.of(key), pageable, 1));
+        when(orderRepository.findByIdIn(List.of(orderId))).thenReturn(List.of(order));
+
+        var result = service.listCardKeys(productId, null, 1, 20);
+        Map<?, ?> listed = (Map<?, ?>) result.getList().get(0);
+
+        assertEquals(orderId, listed.get("order_id"));
+        assertEquals(1000000001L, listed.get("order_no"));
     }
 
     @Test

@@ -286,3 +286,4 @@ export function ConfirmAlert({
 }
 
 export { CopyableValue } from "./copyable-value"
+export { maskTechnicalId, maskTechnicalIdsInText, TechnicalId } from "./technical-id"

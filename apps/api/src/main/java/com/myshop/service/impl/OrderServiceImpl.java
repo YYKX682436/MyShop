@@ -185,7 +185,10 @@ public class OrderServiceImpl implements OrderService {
         order.setClientIp(clientIp);
         order.setSessionToken(guestSession);
         setUserLevelSnapshot(order, userLevel, adminPickup);
-        orderRepository.save(order);
+        // Flush the INSERT now so Hibernate can read the database-generated
+        // order_no before the response is assembled. The sequence remains the
+        // sole source of the business number; no entry point allocates one.
+        orderRepository.saveAndFlush(order);
 
         String specName = null;
         if (spec != null) specName = spec.getName();
@@ -249,6 +252,7 @@ public class OrderServiceImpl implements OrderService {
         if (isAdminPickup(order)) {
             payment = new LinkedHashMap<>();
             payment.put("order_id", order.getId());
+            payment.put("order_no", order.getOrderNo());
             payment.put("order_type", OrderType.ADMIN_PICKUP);
             payment.put("admin_pickup", true);
             payment.put("paid", true);
@@ -273,6 +277,7 @@ public class OrderServiceImpl implements OrderService {
     private Map<String, Object> toOrderDetail(Order o, List<OrderItem> items) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", o.getId());
+        map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());

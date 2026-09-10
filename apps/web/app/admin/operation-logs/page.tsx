@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 
-import { AdminPage, AdminPagination, DataTableShell, PageHeader, PageToolbar, StatusBadge, TableEmptyState, TableErrorState, TableLoadingState } from "@/components/admin/shared"
+import { AdminPage, AdminPagination, DataTableShell, PageHeader, PageToolbar, StatusBadge, TableEmptyState, TableErrorState, TableLoadingState, maskTechnicalIdsInText } from "@/components/admin/shared"
 import { useLocale } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
 import { formatDateTime } from "@/lib/utils"
@@ -71,7 +71,7 @@ export default function AdminOperationLogsPage() {
           {loading && <TableLoadingState colSpan={6} />}
           {!loading && error && <TableErrorState colSpan={6} onRetry={() => void loadLogs()} />}
           {!loading && !error && logs.length === 0 && <TableEmptyState colSpan={6}>{t("admin.noLogData")}</TableEmptyState>}
-          {!loading && !error && logs.map((log) => { const action = ACTIONS[log.action]; return <tr key={log.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60"><td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td className="px-4 py-3 font-medium">{log.username}</td><td className="px-4 py-3"><StatusBadge label={action ? t(action.key) : t("admin.unknownAction")} tone={action?.tone || "neutral"} /></td><td className="px-4 py-3">{log.target_type}{log.target_id && <span className="ml-1 font-mono text-xs text-muted-foreground">({log.target_id.length > 12 ? `${log.target_id.slice(0, 8)}…` : log.target_id})</span>}</td><td className="max-w-[28rem] truncate px-4 py-3 text-muted-foreground">{log.detail || t("admin.systemNoData")}</td><td className="px-4 py-3 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr> })}
+          {!loading && !error && logs.map((log) => { const action = ACTIONS[log.action]; const detail = maskTechnicalIdsInText(log.detail); return <tr key={log.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60"><td className="whitespace-nowrap px-4 py-3 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td className="px-4 py-3 font-medium">{log.username}</td><td className="px-4 py-3"><StatusBadge label={action ? t(action.key) : t("admin.unknownAction")} tone={action?.tone || "neutral"} /></td><td className="px-4 py-3">{log.target_type}</td><td className="max-w-[28rem] truncate px-4 py-3 text-muted-foreground">{detail || t("admin.systemNoData")}</td><td className="px-4 py-3 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr> })}
         </tbody></table>
       </DataTableShell>
     </AdminPage>

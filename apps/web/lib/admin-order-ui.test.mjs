@@ -31,7 +31,7 @@ test("admin order search sends defaults and all filters in the JSON body", () =>
   assert.equal(buildAdminOrderSearchBody().sort_direction, "desc")
 })
 
-test("admin order display uses the UUID identity and compactly limits products", () => {
+test("admin order display uses business identities and compactly limits products", () => {
   const items = [
     { product_title: "商品 A", product_no: 12, spec_name: "标准", quantity: 2 },
     { product_title: "商品 B", product_no: 13, spec_name: null, quantity: 1 },
@@ -44,17 +44,17 @@ test("admin order display uses the UUID identity and compactly limits products",
   assert.equal(formatAdminOrderProductMeta(items[1]), "商品 #13 · 无规格 · ×1")
 })
 
-test("admin order customer identity keeps guests to one line and uses UID as the registered fallback", () => {
+test("admin order customer identity keeps guests to one line and uses the user number as the registered fallback", () => {
   assert.deepEqual(formatAdminOrderCustomer({ customer_type: "GUEST", username: null, user_no: null }), {
     primary: "游客",
     secondary: null,
   })
   assert.deepEqual(formatAdminOrderCustomer({ customer_type: "REGISTERED", username: "buyer", user_no: 10001 }), {
     primary: "buyer",
-    secondary: "UID 10001",
+    secondary: "用户号 10001",
   })
   assert.deepEqual(formatAdminOrderCustomer({ customer_type: "REGISTERED", username: "", user_no: 10001 }), {
-    primary: "UID 10001",
+    primary: "用户号 10001",
     secondary: null,
   })
 })
@@ -97,7 +97,10 @@ test("order details use the wide workspace route and keep the workbench structur
   assert.match(overlaySource, /sm:w-\[88vw\].*lg:w-\[64vw\].*max-w-\[1100px\]/s)
   assert.match(detailSource, /卡券与交付/)
   assert.match(detailSource, /商品与客户填写/)
-  assert.match(detailSource, /技术信息 \/ 高级信息/)
+  assert.doesNotMatch(detailSource, /技术信息 \/ 高级信息/)
+  assert.match(detailSource, /admin\.orderDetails/)
+  assert.match(detailSource, /order\.order_no/)
+  assert.doesNotMatch(detailSource, /用户 UUID|商品 UUID|规格 UUID|下单时等级 UUID/)
   assert.doesNotMatch(detailSource, /\b[A-G]\.\s/)
 })
 
@@ -111,4 +114,18 @@ test("the order lifecycle page owns status, payment, delivery, copy, and export"
   assert.match(source, /deliveryWaitingManual/)
   assert.match(source, /deliveryReady/)
   assert.match(source, /paymentReturn/)
+})
+
+test("operation-log surfaces mask UUIDs instead of rendering technical target identifiers", () => {
+  const sharedSource = readSource("../components/admin/shared/technical-id.tsx")
+  const globalLogsSource = readSource("../app/admin/operation-logs/page.tsx")
+  const userLogsSource = readSource("../app/admin/users/[id]/page.tsx")
+  const administratorLogsSource = readSource("../app/admin/administrators/page.tsx")
+
+  assert.match(sharedSource, /UUID_PATTERN/)
+  assert.match(sharedSource, /maskTechnicalIdsInText/)
+  assert.match(globalLogsSource, /maskTechnicalIdsInText\(log\.detail\)/)
+  assert.match(userLogsSource, /maskTechnicalIdsInText\(log\.detail\)/)
+  assert.match(administratorLogsSource, /maskTechnicalIdsInText\(log\.detail\)/)
+  assert.doesNotMatch(globalLogsSource, /log\.target_id/)
 })

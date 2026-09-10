@@ -246,6 +246,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("card_key_id", k.getId());
             map.put("order_id", order.getId());
+            map.put("order_no", order.getOrderNo());
             map.put("order_item_id", k.getOrderItemId());
             map.put("content_parts", List.copyOf(k.getContentParts()));
             OrderItem item = k.getOrderItemId() != null ? itemMap.get(k.getOrderItemId()) : null;
@@ -261,12 +262,22 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
     public PageResult<?> listCardKeys(UUID productId, UUID specId, int page, int pageSize) {
         var pageable = PageRequest.of(page - 1, pageSize);
         var keyPage = cardKeyRepository.findByProductIdAndOptionalSpecId(productId, specId, pageable);
+        Set<UUID> orderIds = keyPage.getContent().stream()
+                .map(CardKey::getOrderId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, Long> orderNumbers = orderIds.isEmpty()
+                ? Map.of()
+                : orderRepository.findByIdIn(new ArrayList<>(orderIds)).stream()
+                .filter(order -> order.getOrderNo() != null)
+                .collect(Collectors.toMap(Order::getId, Order::getOrderNo));
         var list = keyPage.getContent().stream().map(k -> {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("id", k.getId());
             map.put("content_parts", List.copyOf(k.getContentParts()));
             map.put("status", k.getStatus().name());
             map.put("order_id", k.getOrderId());
+            map.put("order_no", k.getOrderId() == null ? null : orderNumbers.get(k.getOrderId()));
             map.put("created_at", k.getCreatedAt());
             map.put("sold_at", k.getSoldAt());
             return map;
@@ -384,7 +395,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         List<AdminCardKeyPickupCardResponse> cards = keys.stream()
                 .map(key -> new AdminCardKeyPickupCardResponse(key.getId(), List.copyOf(key.getContentParts())))
                 .toList();
-        return new AdminCardKeyPickupResponse(order.getId(), cards.size(), cards);
+        return new AdminCardKeyPickupResponse(order.getId(), order.getOrderNo(), cards.size(), cards);
     }
 
     private ProductSpec resolvePickupSpec(Product product, UUID specId) {

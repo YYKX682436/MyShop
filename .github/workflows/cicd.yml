@@ -30,19 +30,20 @@ jobs:
 
           # The test class keeps disabledWithoutDocker=true so local developers
           # can still run ordinary tests without installing Docker. CI must
-          # explicitly prove that Docker is available and must fail if this
-          # PostgreSQL/Testcontainers test is skipped.
+          # explicitly prove that Docker is available and must fail if any of
+          # the PostgreSQL/Testcontainers tests is skipped.
           docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
           docker info --format 'server={{.ServerVersion}} containers={{.Containers}}'
 
           reports=(
             target/surefire-reports/TEST-com.myshop.service.impl.AdminProductAssignedUuidIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.MigrationChainIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.impl.OrderNumberConcurrencyIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.PostgresDeliveryIntegrationTest.xml
           )
           rm -f "${reports[@]}"
           mvn -B \
-            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,PostgresDeliveryIntegrationTest \
+            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,PostgresDeliveryIntegrationTest \
             -Dsurefire.failIfNoSpecifiedTests=true \
             test
 

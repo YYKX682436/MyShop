@@ -8,9 +8,12 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.Generated;
+import org.hibernate.generator.EventType;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.UUID;
 
 @Getter
@@ -22,6 +25,14 @@ import java.util.UUID;
 public class Order extends BaseEntity {
 
     private UUID userId;
+
+    /**
+     * Human-facing business identity. PostgreSQL owns generation through the
+     * order_no_sequence default; Hibernate reads it back after INSERT.
+     */
+    @Generated(event = EventType.INSERT)
+    @Column(name = "order_no", nullable = false, insertable = false, updatable = false)
+    private Long orderNo;
 
     @Column(precision = 10, scale = 2)
     private BigDecimal totalAmount;
@@ -70,5 +81,16 @@ public class Order extends BaseEntity {
     private String clientIp;
 
     private String sessionToken;
+
+    /**
+     * The database is the only source for a new value. This guard also keeps
+     * application code from changing a number once Hibernate has read it.
+     */
+    public void setOrderNo(Long orderNo) {
+        if (this.orderNo != null && !Objects.equals(this.orderNo, orderNo)) {
+            throw new IllegalStateException("orderNo is immutable");
+        }
+        this.orderNo = orderNo;
+    }
 
 }

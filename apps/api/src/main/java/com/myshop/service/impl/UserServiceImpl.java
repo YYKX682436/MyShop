@@ -115,6 +115,7 @@ public class UserServiceImpl implements UserService {
     private Map<String, Object> toOrderBrief(Order o) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", o.getId());
+        map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());

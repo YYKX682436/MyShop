@@ -152,8 +152,9 @@ public class AdminUserServiceImpl implements AdminUserService {
         requireRegularUser(id, false);
         Page<BalanceTransaction> transactionPage = balanceTransactionService
                 .listByUser(id, PageRequest.of(page - 1, pageSize));
+        Map<UUID, String> operatorNames = loadOperatorNames(transactionPage.getContent());
         List<BalanceTransactionResponse> list = transactionPage.getContent().stream()
-                .map(this::toBalanceResponse)
+                .map(transaction -> toBalanceResponse(transaction, operatorNames.get(transaction.getOperatorId())))
                 .toList();
         return PageResult.of(transactionPage, list);
     }
@@ -234,7 +235,8 @@ public class AdminUserServiceImpl implements AdminUserService {
         String operation = request.getType() == BalanceAdjustmentType.INCREASE ? "增加" : "扣减";
         logUserOperation("user.adjust_balance", id,
                 adjustmentLogDetail(operation, amount, before, after, reason));
-        return toBalanceResponse(saved);
+        String operatorUsername = RequestContext.get() == null ? null : RequestContext.get().getUsername();
+        return toBalanceResponse(saved, operatorUsername);
     }
 
     @Override
@@ -313,6 +315,19 @@ public class AdminUserServiceImpl implements AdminUserService {
                 .collect(Collectors.groupingBy(OrderItem::getOrderId));
     }
 
+    private Map<UUID, String> loadOperatorNames(List<BalanceTransaction> transactions) {
+        List<UUID> operatorIds = transactions.stream()
+                .map(BalanceTransaction::getOperatorId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (operatorIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return userRepository.findAllById(operatorIds).stream()
+                .collect(Collectors.toMap(User::getId, User::getUsername));
+    }
+
     private AdminUserListResponse toListResponse(User user, UserOrderMetricsProjection metrics, UserLevel level) {
         return new AdminUserListResponse(
                 user.getId(), user.getUserNo(), user.getUsername(), user.getEmail(),
@@ -356,7 +371,7 @@ public class AdminUserServiceImpl implements AdminUserService {
                 .map(this::toOrderItemResponse)
                 .toList();
         return new AdminUserOrderResponse(
-                order.getId(), order.getTotalAmount(), order.getActualAmount(), order.getStatus(),
+                order.getId(), order.getOrderNo(), order.getTotalAmount(), order.getActualAmount(), order.getStatus(),
                 order.getOrderType(), order.getPaymentMethod(), order.getPaymentChannelCode(), order.getCreatedAt(),
                 order.getPaidAt(), order.getDeliveredAt(), items);
     }
@@ -367,11 +382,11 @@ public class AdminUserServiceImpl implements AdminUserService {
                 item.getUnitPrice(), item.getSubtotal());
     }
 
-    private BalanceTransactionResponse toBalanceResponse(BalanceTransaction transaction) {
+    private BalanceTransactionResponse toBalanceResponse(BalanceTransaction transaction, String operatorUsername) {
         return new BalanceTransactionResponse(
                 transaction.getId(), transaction.getType(), transaction.getAmount(), transaction.getDelta(),
                 transaction.getBalanceBefore(), transaction.getBalanceAfter(), transaction.getReason(),
-                transaction.getOperatorId(), transaction.getOrderId(), transaction.getCreatedAt());
+                transaction.getOperatorId(), operatorUsername, transaction.getOrderId(), transaction.getCreatedAt());
     }
 
     private AdminOperationLogResponse toOperationLogResponse(OperationLog log) {

@@ -242,6 +242,7 @@ export type OrderPaymentMethod = 'BALANCE' | 'ONLINE'
 
 export interface OrderBrief {
   id: string
+  order_no: number
   total_amount: number
   actual_amount: number
   status: OrderStatus
@@ -280,6 +281,7 @@ export interface OrderDetail extends OrderBrief {
 export interface PaymentCreateResult {
   payment_id?: string | null
   order_id: string
+  order_no: number
   status: PaymentStatus
   payment_method?: OrderPaymentMethod | null
   payment_type?: string | null
@@ -559,6 +561,7 @@ export interface CardKeyListItem {
   content_parts: string[]
   status: 'AVAILABLE' | 'LOCKED' | 'SOLD' | 'INVALID'
   order_id: string | null
+  order_no: number | null
   created_at: string
   sold_at: string | null
 }
@@ -570,6 +573,7 @@ export interface AdminCardKeyPickupCard {
 
 export interface AdminCardKeyPickupResult {
   order_id: string
+  order_no: number
   count: number
   cards: AdminCardKeyPickupCard[]
 }
@@ -592,6 +596,7 @@ export interface CardImportBatch {
 export interface OrderCardKey {
   card_key_id: string
   order_id?: string | null
+  order_no?: number | null
   order_item_id?: string | null
   content_parts: string[]
   product_no?: number | null
@@ -692,6 +697,7 @@ export interface AdminUserOrderItem {
 
 export interface AdminUserOrder {
   id: string
+  order_no: number
   total_amount: number | null
   actual_amount: number | null
   status: OrderStatus
@@ -741,6 +747,7 @@ export interface BalanceTransaction {
   balance_after: number
   reason: string | null
   operator_id: string
+  operator_username: string | null
   order_id: string | null
   created_at: string
 }

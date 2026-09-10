@@ -8,6 +8,7 @@ import java.util.UUID;
 /** The common result for both single-card and batch administrator pickup. */
 public record AdminCardKeyPickupResponse(
         @JsonProperty("order_id") UUID orderId,
+        @JsonProperty("order_no") Long orderNo,
         int count,
         List<AdminCardKeyPickupCardResponse> cards
 ) {

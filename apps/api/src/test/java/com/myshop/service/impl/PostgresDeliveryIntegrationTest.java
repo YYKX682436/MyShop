@@ -46,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -143,6 +144,7 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = (UUID) orderResult.get("id");
 
         assertEquals(OrderType.ADMIN_PICKUP, orderResult.get("order_type"));
+        assertNotNull(orderResult.get("order_no"));
         assertEquals(null, orderResult.get("payment_method"));
         assertEquals(null, orderResult.get("payment_channel_code"));
         assertEquals(new BigDecimal("10.00"), orderResult.get("total_amount"));
@@ -150,7 +152,7 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(true, paymentResult.get("paid"));
         assertEquals(true, paymentResult.get("admin_pickup"));
         assertEquals(java.util.Set.of("order_id", "expires_at",
-                        "order_type", "admin_pickup", "paid"), paymentResult.keySet());
+                        "order_no", "order_type", "admin_pickup", "paid"), paymentResult.keySet());
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals("ADMIN_PICKUP", scalar("select order_type from orders where id = ?", String.class, orderId));
         assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
@@ -176,9 +178,11 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = (UUID) order.get("id");
 
         assertEquals("PAID", order.get("status"));
+        assertNotNull(order.get("order_no"));
         assertEquals("BALANCE", order.get("payment_method"));
         assertEquals(null, order.get("payment_channel_code"));
         assertEquals("PAID", payment.get("status"));
+        assertEquals(order.get("order_no"), payment.get("order_no"));
         assertEquals(true, payment.get("paid"));
         assertEquals("BALANCE", payment.get("payment_method"));
         assertEquals(null, payment.get("payment_channel_code"));
@@ -319,6 +323,7 @@ class PostgresDeliveryIntegrationTest {
                 new AdminCardKeyBatchPickupRequest(productId, null, 2), operatorId);
 
         assertEquals(2, result.count());
+        assertNotNull(result.orderNo());
         assertEquals(2, result.cards().size());
         assertEquals(List.of(firstCardId, secondCardId),
                 result.cards().stream().map(card -> card.id()).toList());
@@ -366,6 +371,7 @@ class PostgresDeliveryIntegrationTest {
         var result = adminCardKeyService.pickupCardKey(requestedCardId, operatorId);
 
         assertEquals(1, result.count());
+        assertNotNull(result.orderNo());
         assertEquals(requestedCardId, result.cards().get(0).id());
         assertEquals("AVAILABLE", scalar("select status from card_keys where id = ?", String.class, firstCardId));
         assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, requestedCardId));
@@ -440,25 +446,30 @@ class PostgresDeliveryIntegrationTest {
 
         Long productNo = scalar("SELECT product_no FROM products WHERE id = ?", Long.class, productId);
         Long userNo = scalar("SELECT user_no FROM users WHERE id = ?", Long.class, userId);
+        Long orderNo = scalar("SELECT order_no FROM orders WHERE id = ?", Long.class, orderId);
         List<String> matchingKeywords = List.of(
-                orderId.toString(),
+                orderNo.toString(),
                 "Search Product Title", "Search Spec Name",
                 "search-customer-value", "search-user-" + suffix,
-                userId.toString(), "registered-search-" + suffix + "@example.com",
-                "13800138000", cardId.toString(), "search-card-password",
+                "registered-search-" + suffix + "@example.com",
+                "13800138000", "search-card-password",
                 "search-epay-" + suffix, "search-channel-search-epay-" + suffix, "alipay");
         for (String keyword : matchingKeywords) {
             assertSearchMatches(keyword, orderId);
         }
         assertSearchContains(productNo.toString(), orderId);
         assertSearchContains(userNo.toString(), orderId);
+        assertSearchDoesNotMatch(orderId.toString());
+        assertSearchDoesNotMatch(userId.toString());
+        assertSearchDoesNotMatch(cardId.toString());
         assertEquals(0L, adminOrderService.searchOrders(new AdminOrderSearchRequest(
                 1, 20, "definitely-no-order-match-" + suffix, null, null, null, "desc"))
                 .getPagination().getTotal());
 
         var summary = (Map<?, ?>) adminOrderService.searchOrders(new AdminOrderSearchRequest(
-                1, 20, orderId.toString(), null, null, null, "desc")).getList().get(0);
+                1, 20, orderNo.toString(), null, null, null, "desc")).getList().get(0);
         assertEquals(orderId, summary.get("id"));
+        assertEquals(orderNo, summary.get("order_no"));
         assertEquals("REGISTERED", summary.get("customer_type"));
         assertEquals("search-user-" + suffix, summary.get("username"));
         assertEquals(userNo, summary.get("user_no"));
@@ -988,6 +999,13 @@ class PostgresDeliveryIntegrationTest {
         }), "keyword=" + keyword);
     }
 
+    private void assertSearchDoesNotMatch(String keyword) {
+        var result = adminOrderService.searchOrders(new AdminOrderSearchRequest(
+                1, 20, keyword, null, null, null, "desc"));
+        assertEquals(0L, result.getPagination().getTotal(), "keyword=" + keyword);
+        assertTrue(result.getList().isEmpty(), "keyword=" + keyword);
+    }
+
     private UUID insertSearchOrder(UUID userId, String tradeNo,
                                    LocalDateTime createdAt, String status, BigDecimal amount) {
         UUID orderId = UUID.randomUUID();
@@ -1208,6 +1226,8 @@ class PostgresDeliveryIntegrationTest {
         UUID orderId = (UUID) order.get("id");
 
         assertEquals(OrderType.NORMAL, order.get("order_type"));
+        assertNotNull(order.get("order_no"));
+        assertEquals(order.get("order_no"), payment.get("order_no"));
         assertEquals("PENDING", order.get("status"));
         assertEquals("PENDING", scalar("select status from orders where id = ?", String.class, orderId));
         Map<?, ?> nextAction = (Map<?, ?>) payment.get("next_action");

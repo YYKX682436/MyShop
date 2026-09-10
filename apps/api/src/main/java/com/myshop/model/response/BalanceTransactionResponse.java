@@ -1,6 +1,7 @@
 package com.myshop.model.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.myshop.constant.BalanceTransactionType;
 
 import java.math.BigDecimal;
@@ -17,6 +18,7 @@ public record BalanceTransactionResponse(
         BigDecimal balanceAfter,
         String reason,
         UUID operatorId,
+        @JsonProperty("operator_username") String operatorUsername,
         UUID orderId,
         LocalDateTime createdAt
 ) {

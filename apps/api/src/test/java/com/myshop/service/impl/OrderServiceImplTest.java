@@ -103,6 +103,13 @@ class OrderServiceImplTest {
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
             Order order = invocation.getArgument(0);
             if (order.getId() == null) order.setId(UUID.randomUUID());
+            if (order.getOrderNo() == null) order.setOrderNo(1000000001L);
+            return order;
+        });
+        lenient().when(orderRepository.saveAndFlush(any(Order.class))).thenAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            if (order.getId() == null) order.setId(UUID.randomUUID());
+            if (order.getOrderNo() == null) order.setOrderNo(1000000001L);
             return order;
         });
         lenient().when(orderItemRepository.findByOrderId(any())).thenReturn(List.of());
@@ -120,15 +127,16 @@ class OrderServiceImplTest {
                 null, "203.0.113.10", "guest-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        org.mockito.Mockito.verify(orderRepository).save(orderCaptor.capture());
+        org.mockito.Mockito.verify(orderRepository).saveAndFlush(orderCaptor.capture());
         Order saved = orderCaptor.getValue();
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
         assertEquals(OrderType.NORMAL, saved.getOrderType());
         assertEquals(OrderStatus.PENDING, saved.getStatus());
         Map<?, ?> orderResult = (Map<?, ?>) first.get("order");
         assertNotNull(orderResult.get("id"));
+        assertEquals(1000000001L, orderResult.get("order_no"));
         assertEquals(Set.of("order", "payment"), first.keySet());
-        assertEquals(Set.of("id", "total_amount", "actual_amount", "status", "order_type",
+        assertEquals(Set.of("id", "order_no", "total_amount", "actual_amount", "status", "order_type",
                 "payment_method", "payment_channel_code", "created_at", "expires_at", "paid_at",
                 "delivered_at", "items"), orderResult.keySet());
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
@@ -143,6 +151,17 @@ class OrderServiceImplTest {
 
         assertEquals(1L, item.getProductNo());
         assertThrows(IllegalStateException.class, () -> item.setProductNo(2L));
+    }
+
+    @Test
+    void generatedOrderNoCannotBeChangedAfterItIsAssigned() {
+        Order order = new Order();
+        order.setOrderNo(1000000001L);
+
+        order.setOrderNo(1000000001L);
+
+        assertEquals(1000000001L, order.getOrderNo());
+        assertThrows(IllegalStateException.class, () -> order.setOrderNo(1000000002L));
     }
 
     @Test
@@ -185,7 +204,7 @@ class OrderServiceImplTest {
         service.createDirectOrder(request(productId, specId, 2, "5.00"), null, "203.0.113.11", "guest-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.atLeastOnce()).save(orderCaptor.capture());
+        org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.atLeastOnce()).saveAndFlush(orderCaptor.capture());
         assertEquals(new BigDecimal("10.00"), orderCaptor.getAllValues().get(0).getActualAmount());
 
         UUID otherProductId = UUID.randomUUID();
@@ -206,7 +225,7 @@ class OrderServiceImplTest {
         service.createDirectOrder(request(productId, null, 5, "10.00"), null, "203.0.113.12", "guest-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.atLeastOnce()).save(orderCaptor.capture());
+        org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.atLeastOnce()).saveAndFlush(orderCaptor.capture());
         assertEquals(new BigDecimal("50.00"), orderCaptor.getAllValues().get(0).getActualAmount());
 
         ArgumentCaptor<com.myshop.entity.OrderItem> itemCaptor =
@@ -231,7 +250,7 @@ class OrderServiceImplTest {
 
         assertEquals(ErrorCode.PRICE_CHANGED, exception.getCode());
         assertEquals(new BigDecimal("10.00"), exception.getParams().get("current_unit_price"));
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
         verify(manualStockService, never()).reserveOrThrow(any(), any(), any(Integer.class));
     }
 
@@ -251,7 +270,7 @@ class OrderServiceImplTest {
             assertEquals(ErrorCode.BAD_REQUEST, exception.getCode(), "invalid value at index " + index);
         }
 
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
         verify(manualStockService, never()).reserveOrThrow(any(), any(), any(Integer.class));
     }
 
@@ -262,7 +281,7 @@ class OrderServiceImplTest {
                 () -> service.createDirectOrder(request(productId, null, 0), null,
                         "203.0.113.13", "guest-session"));
         assertEquals(ErrorCode.PURCHASE_LIMIT_EXCEEDED, exception.getCode());
-        org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.never()).save(any(Order.class));
+        org.mockito.Mockito.verify(orderRepository, org.mockito.Mockito.never()).saveAndFlush(any(Order.class));
     }
 
     @Test
@@ -282,7 +301,7 @@ class OrderServiceImplTest {
         BusinessException invalid = assertThrows(BusinessException.class,
                 () -> service.createDirectOrder(invalidChannel, null, "203.0.113.17", "invalid-channel"));
         assertEquals(ErrorCode.CHANNEL_UNAVAILABLE, invalid.getCode());
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
     }
 
     @Test
@@ -296,7 +315,7 @@ class OrderServiceImplTest {
                 () -> service.createDirectOrder(request, null, "203.0.113.18", "balance-channel"));
 
         assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
     }
 
     @Test
@@ -350,7 +369,7 @@ class OrderServiceImplTest {
                 "203.0.113.20", "admin-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository).save(orderCaptor.capture());
+        verify(orderRepository).saveAndFlush(orderCaptor.capture());
         Order saved = orderCaptor.getValue();
         assertEquals(OrderType.ADMIN_PICKUP, saved.getOrderType());
         assertEquals(null, saved.getPaymentMethod());
@@ -387,7 +406,7 @@ class OrderServiceImplTest {
                 "203.0.113.21", "user-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository).save(orderCaptor.capture());
+        verify(orderRepository).saveAndFlush(orderCaptor.capture());
         Order saved = orderCaptor.getValue();
         assertEquals(OrderType.NORMAL, saved.getOrderType());
         assertEquals(OrderStatus.PENDING, saved.getStatus());
@@ -431,7 +450,7 @@ class OrderServiceImplTest {
                 userId, "203.0.113.23", "markup-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository).save(orderCaptor.capture());
+        verify(orderRepository).saveAndFlush(orderCaptor.capture());
         assertEquals(new BigDecimal("88.00"), orderCaptor.getValue().getActualAmount());
         assertEquals(new BigDecimal("88.00"), ((Map<?, ?>) result.get("order")).get("actual_amount"));
     }
@@ -482,7 +501,7 @@ class OrderServiceImplTest {
                 superAdminId, "203.0.113.22", "super-session");
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
-        verify(orderRepository).save(orderCaptor.capture());
+        verify(orderRepository).saveAndFlush(orderCaptor.capture());
         Order saved = orderCaptor.getValue();
         assertEquals(OrderType.ADMIN_PICKUP, saved.getOrderType());
         assertEquals(null, saved.getPaymentMethod());

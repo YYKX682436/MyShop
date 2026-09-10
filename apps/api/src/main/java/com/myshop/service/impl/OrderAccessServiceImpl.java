@@ -157,6 +157,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private Map<String, Object> orderDetail(Order order, List<OrderItem> items) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", order.getId());
+        result.put("order_no", order.getOrderNo());
         result.put("total_amount", order.getTotalAmount());
         result.put("actual_amount", order.getActualAmount());
         result.put("status", order.getStatus().name());
@@ -196,6 +197,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", order.getId());
+        result.put("order_no", order.getOrderNo());
         result.put("status", paymentStatus(order));
         result.put("paid", order.getStatus() == OrderStatus.PAID || order.getStatus() == OrderStatus.DELIVERED);
         result.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());

@@ -1,9 +1,12 @@
 package com.myshop.service.impl;
 
+import com.myshop.entity.Order;
 import com.myshop.entity.SiteConfig;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserRepository;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,7 +15,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.List;
+import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -59,6 +65,25 @@ class RiskConfigServiceImplTest {
                 retiredKey("user"), 20));
 
         verify(siteConfigRepository, never()).save(any(SiteConfig.class));
+    }
+
+    @Test
+    void flaggedOrderResponseUsesBusinessOrderNumber() {
+        UUID orderId = UUID.randomUUID();
+        Order order = new Order();
+        order.setId(orderId);
+        order.setOrderNo(1000000001L);
+        order.setRiskFlagged(true);
+        PageRequest pageable = PageRequest.of(0, 20);
+        when(orderRepository.findRiskFlaggedOrders(pageable))
+                .thenReturn(new PageImpl<>(List.of(order), pageable, 1));
+
+        var result = service.getFlaggedOrders(1, 20);
+        Map<?, ?> flagged = (Map<?, ?>) result.getList().get(0);
+
+        assertEquals(orderId, flagged.get("id"));
+        assertEquals(1000000001L, flagged.get("order_no"));
+        assertEquals(true, flagged.get("is_risk_flagged"));
     }
 
     private static String retiredKey(String dimension) {

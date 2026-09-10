@@ -122,6 +122,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private Map<String, Object> toAdminOrder(Order o, List<OrderItem> items, User user, boolean detail) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", o.getId());
+        map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
