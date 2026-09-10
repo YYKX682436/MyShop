@@ -379,7 +379,8 @@ public class AdminUserServiceImpl implements AdminUserService {
     private AdminUserOrderResponse.AdminUserOrderItemResponse toOrderItemResponse(OrderItem item) {
         return new AdminUserOrderResponse.AdminUserOrderItemResponse(
                 item.getId(), item.getProductNo(), item.getProductTitle(), item.getSpecName(), item.getQuantity(),
-                item.getUnitPrice(), item.getSubtotal());
+                item.getUnitPrice(), item.getSubtotal(), item.getDeliveryType(), item.getStockMode(),
+                item.getFulfillmentStatus());
     }
 
     private BalanceTransactionResponse toBalanceResponse(BalanceTransaction transaction, String operatorUsername) {

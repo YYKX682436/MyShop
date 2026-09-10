@@ -1,6 +1,6 @@
-import ReactMarkdown from "react-markdown"
 import { useLocale } from "@/lib/context"
 import { cn } from "@/lib/utils"
+import { MarkdownContent } from "@/components/shared/markdown-content"
 
 interface MarkdownPreviewProps {
   value: string
@@ -19,15 +19,5 @@ export function MarkdownPreview({ value, emptyMessage, className }: MarkdownPrev
     )
   }
 
-  return (
-    <div
-      className={cn(
-        "min-w-0 max-w-full overflow-hidden break-words prose prose-sm text-muted-foreground dark:prose-invert",
-        "[&_img]:my-3 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-card",
-        className,
-      )}
-    >
-      <ReactMarkdown>{value}</ReactMarkdown>
-    </div>
-  )
+  return <MarkdownContent value={value} className={className} />
 }

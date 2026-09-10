@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useCallback } from "react"
 import { usePathname } from "next/navigation"
 import { Wrench } from "lucide-react"
-import ReactMarkdown from "react-markdown"
 import { StoreFooter } from "@/components/layout/store-footer"
 import { StoreBottomNav } from "@/components/layout/store-bottom-nav"
 import { StoreSearchPanel } from "@/components/layout/store-search-panel"
@@ -11,6 +10,7 @@ import { VisitTracker } from "@/components/store/visit-tracker"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
 import { ContactSupport } from "@/components/shared/contact-methods"
+import { MarkdownContent } from "@/components/shared/markdown-content"
 import { isAdminRole } from "@/lib/hooks"
 
 function AnnouncementBar() {
@@ -95,9 +95,7 @@ function PopupAnnouncement() {
           <DialogTitle className="text-base">{t("common.announcement")}</DialogTitle>
         </DialogHeader>
         <div className="px-6 py-4">
-          <div className="prose prose-sm max-w-none text-muted-foreground dark:prose-invert">
-            <ReactMarkdown>{config!.popup_content!}</ReactMarkdown>
-          </div>
+          <MarkdownContent value={config!.popup_content!} />
         </div>
         <DialogFooter className="border-t border-border px-6 py-3">
           <button

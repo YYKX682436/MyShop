@@ -7,6 +7,8 @@ import com.myshop.constant.PricingSource;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
+import com.myshop.exception.BusinessException;
+import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
@@ -26,12 +28,17 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class AdminOrderServiceImplTest {
@@ -172,6 +179,67 @@ class AdminOrderServiceImplTest {
                 org.mockito.ArgumentMatchers.eq("%1000000001%"),
                 org.mockito.ArgumentMatchers.eq("desc"),
                 org.mockito.ArgumentMatchers.eq(PageRequest.of(0, 20)));
+    }
+
+    @Test
+    void manualFulfillmentRequiresExplicitConfirmationAndRejectsDuplicateItems() {
+        UUID orderId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        var service = new AdminOrderServiceImpl(
+                orderRepository, orderItemRepository, userRepository, fulfillmentService);
+
+        assertThrows(BusinessException.class, () -> service.completeManualItems(orderId,
+                new AdminManualFulfillRequest(false, List.of(
+                        new AdminManualFulfillRequest.Item(itemId, "content")))));
+        assertThrows(BusinessException.class, () -> service.completeManualItems(orderId,
+                new AdminManualFulfillRequest(null, List.of(
+                        new AdminManualFulfillRequest.Item(itemId, "content")))));
+        assertThrows(BusinessException.class, () -> service.completeManualItems(orderId,
+                new AdminManualFulfillRequest(true, List.of(
+                        new AdminManualFulfillRequest.Item(itemId, "content"),
+                        new AdminManualFulfillRequest.Item(itemId, "content")))));
+
+        verifyNoInteractions(fulfillmentService);
+    }
+
+    @Test
+    void manualFulfillmentAuditDetailContainsMetadataButNeverCustomerContent() {
+        UUID firstItemId = UUID.randomUUID();
+        UUID secondItemId = UUID.randomUUID();
+        String sensitiveContent = "账号 buyer@example.com 密码 super-secret";
+        var request = new AdminManualFulfillRequest(true, List.of(
+                new AdminManualFulfillRequest.Item(firstItemId, sensitiveContent),
+                new AdminManualFulfillRequest.Item(secondItemId, null)));
+
+        String detail = request.auditDetail();
+
+        assertTrue(detail.contains(firstItemId.toString()));
+        assertTrue(detail.contains(secondItemId.toString()));
+        assertTrue(detail.contains("填写发货内容=1/2"));
+        assertFalse(detail.contains(sensitiveContent));
+        assertFalse(detail.contains("super-secret"));
+    }
+
+    @Test
+    void manualFulfillmentForwardsEachItemContentToTheLockedFulfillmentService() {
+        UUID orderId = UUID.randomUUID();
+        UUID firstItemId = UUID.randomUUID();
+        UUID secondItemId = UUID.randomUUID();
+        when(fulfillmentService.completeManualItems(eq(orderId), anyList()))
+                .thenReturn(Map.of("status", "DELIVERED"));
+
+        var result = new AdminOrderServiceImpl(
+                orderRepository, orderItemRepository, userRepository, fulfillmentService)
+                .completeManualItems(orderId, new AdminManualFulfillRequest(true, List.of(
+                        new AdminManualFulfillRequest.Item(firstItemId, "first"),
+                        new AdminManualFulfillRequest.Item(secondItemId, null))));
+
+        assertEquals("DELIVERED", result.get("status"));
+        var captor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(fulfillmentService).completeManualItems(eq(orderId), captor.capture());
+        List<?> forwarded = captor.getValue();
+        assertEquals(new FulfillmentService.ManualFulfillmentItem(firstItemId, "first"), forwarded.get(0));
+        assertEquals(new FulfillmentService.ManualFulfillmentItem(secondItemId, null), forwarded.get(1));
     }
 
     private Order order(UUID id, UUID userId) {

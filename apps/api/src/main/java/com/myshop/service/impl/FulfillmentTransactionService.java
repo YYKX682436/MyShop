@@ -13,6 +13,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
+import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.service.EmailService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
@@ -25,9 +26,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -43,23 +46,31 @@ public class FulfillmentTransactionService implements FulfillmentService {
     private final CardKeyRepository cardKeyRepository;
     private final EmailService emailService;
     private final ManualStockService manualStockService;
+    private final ManualFulfillmentPreparationService manualFulfillmentPreparationService;
 
     @Autowired
     public FulfillmentTransactionService(OrderRepository orderRepository,
                                          OrderItemRepository orderItemRepository,
                                          CardKeyRepository cardKeyRepository,
                                          EmailService emailService,
-                                         ManualStockService manualStockService) {
+                                         ManualStockService manualStockService,
+                                         ManualFulfillmentPreparationService manualFulfillmentPreparationService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.cardKeyRepository = cardKeyRepository;
         this.emailService = emailService;
         this.manualStockService = manualStockService;
+        this.manualFulfillmentPreparationService = manualFulfillmentPreparationService;
     }
 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Map<String, Object> fulfillOrder(UUID orderId) {
+        // Persist the manual lane before attempting automatic allocation. If
+        // a later card-pool shortage rolls back this transaction, the paid
+        // manual items still remain visibly WAITING_MANUAL.
+        manualFulfillmentPreparationService.markWaitingManual(orderId);
+
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
 
@@ -175,44 +186,108 @@ public class FulfillmentTransactionService implements FulfillmentService {
 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Map<String, Object> completeManualItem(UUID orderId, UUID orderItemId) {
+    public Map<String, Object> completeManualItems(
+            UUID orderId, List<FulfillmentService.ManualFulfillmentItem> requestedItems) {
+        validateManualRequest(requestedItems);
+
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        OrderItem item = orderItemRepository.findById(orderItemId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "订单项不存在"));
-        if (!orderId.equals(item.getOrderId())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "订单项不属于当前订单");
-        }
-        if (!isManual(item)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "只有人工发货订单项可以手动完成");
-        }
-        if (item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED) {
-            return result(order, buildDeliveryGroups(order.getId()));
-        }
-        if (item.getFulfillmentStatus() == FulfillmentStatus.CANCELLED) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "已取消的订单项不能完成发货");
-        }
         if (order.getStatus() != OrderStatus.PAID) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只有已支付订单可以完成人工发货");
         }
 
-        int reserved = item.getManualStockReserved();
-        if (reserved > 0 && item.getStockMode() == StockMode.MANUAL) {
-            manualStockService.consumeReservation(item.getProductId(), item.getSpecId(), reserved);
-            item.setManualStockReserved(0);
+        List<OrderItem> currentItems = orderItemRepository.findByOrderId(order.getId());
+        Map<UUID, OrderItem> itemsById = new LinkedHashMap<>();
+        for (OrderItem item : currentItems) {
+            itemsById.put(item.getId(), item);
         }
-        LocalDateTime deliveredAt = LocalDateTime.now();
-        item.setFulfillmentStatus(FulfillmentStatus.DELIVERED);
-        item.setDeliveredAt(deliveredAt);
-        orderItemRepository.save(item);
 
-        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        if (allItemsDelivered(items)) {
+        Set<UUID> waitingManualIds = new HashSet<>();
+        for (OrderItem item : currentItems) {
+            if (isManual(item) && item.getFulfillmentStatus() == FulfillmentStatus.WAITING_MANUAL) {
+                waitingManualIds.add(item.getId());
+            }
+        }
+        if (waitingManualIds.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前订单没有待人工发货订单项");
+        }
+
+        Set<UUID> requestedIds = new HashSet<>();
+        for (FulfillmentService.ManualFulfillmentItem requested : requestedItems) {
+            OrderItem item = itemsById.get(requested.orderItemId());
+            if (item == null) {
+                throw new BusinessException(ErrorCode.FORBIDDEN, "订单项不属于当前订单");
+            }
+            if (!isManual(item)) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "只有人工发货订单项可以手动完成");
+            }
+            if (item.getStockMode() == StockMode.CARD_KEY) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "人工发货订单项的库存模式无效");
+            }
+            if (item.getFulfillmentStatus() != FulfillmentStatus.WAITING_MANUAL) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "订单项不是待人工发货状态，不能重复完成");
+            }
+            requestedIds.add(requested.orderItemId());
+        }
+        if (!requestedIds.equals(waitingManualIds)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "请求必须包含当前订单全部待人工发货订单项，不能漏发");
+        }
+
+        LocalDateTime deliveredAt = LocalDateTime.now();
+        List<UUID> newlyCompletedManualItems = new ArrayList<>();
+        for (FulfillmentService.ManualFulfillmentItem requested : requestedItems) {
+            OrderItem item = itemsById.get(requested.orderItemId());
+            int reserved = item.getManualStockReserved();
+            if (reserved > 0 && item.getStockMode() == StockMode.MANUAL) {
+                manualStockService.consumeReservation(item.getProductId(), item.getSpecId(), reserved);
+                item.setManualStockReserved(0);
+            }
+            item.setCustomerDeliveryContent(normalizeCustomerContent(
+                    requested.customerDeliveryContent()));
+            item.setFulfillmentStatus(FulfillmentStatus.DELIVERED);
+            item.setDeliveredAt(deliveredAt);
+            if (item.getDeliveryNotifiedAt() == null) {
+                item.setDeliveryNotifiedAt(deliveredAt);
+                newlyCompletedManualItems.add(item.getId());
+            }
+            orderItemRepository.save(item);
+        }
+
+        if (allItemsDelivered(currentItems)) {
             markOrderDelivered(order, deliveredAt);
         } else {
             orderRepository.save(order);
         }
+        if (!newlyCompletedManualItems.isEmpty()) {
+            notifyAfterCommit(order, newlyCompletedManualItems);
+        }
         return result(order, buildDeliveryGroups(order.getId()));
+    }
+
+    private void validateManualRequest(List<FulfillmentService.ManualFulfillmentItem> requestedItems) {
+        if (requestedItems == null || requestedItems.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "至少选择一个待人工发货订单项");
+        }
+        Set<UUID> ids = new HashSet<>();
+        for (FulfillmentService.ManualFulfillmentItem requested : requestedItems) {
+            if (requested == null || requested.orderItemId() == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "订单项不能为空");
+            }
+            if (!ids.add(requested.orderItemId())) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "不能重复提交同一订单项");
+            }
+            String content = requested.customerDeliveryContent();
+            if (content != null && content.length() > AdminManualFulfillRequest.MAX_CUSTOMER_CONTENT_LENGTH) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "发货内容不能超过 20000 个字符");
+            }
+        }
+    }
+
+    private String normalizeCustomerContent(String content) {
+        if (content == null) return null;
+        String normalized = content.trim();
+        return normalized.isEmpty() ? null : normalized;
     }
 
     private void markOrderDelivered(Order order, LocalDateTime deliveredAt) {
@@ -270,6 +345,9 @@ public class FulfillmentTransactionService implements FulfillmentService {
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (OrderItem item : items) {
+            if (isManual(item)) {
+                continue;
+            }
             List<CardKey> itemKeys = byItem.getOrDefault(item.getId(), List.of());
             if (itemKeys.isEmpty()) continue;
             Map<String, Object> group = new LinkedHashMap<>();

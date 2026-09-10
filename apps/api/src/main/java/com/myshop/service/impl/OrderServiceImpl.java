@@ -303,6 +303,9 @@ public class OrderServiceImpl implements OrderService {
             im.put("stock_mode", i.getStockMode());
             im.put("fulfillment_status", i.getFulfillmentStatus());
             im.put("delivered_at", i.getDeliveredAt());
+            if (i.getFulfillmentStatus() == FulfillmentStatus.DELIVERED) {
+                im.put("customer_delivery_content", i.getCustomerDeliveryContent());
+            }
             return im;
         }).toList());
         return map;

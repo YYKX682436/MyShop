@@ -1,7 +1,9 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
@@ -125,6 +127,34 @@ class OrderAccessServiceImplTest {
         assertForbidden(() -> service.getOrder(orderId, otherUserId, "session-a"));
         assertForbidden(() -> service.getOrder(orderId, null, "session-a"));
         verify(orderRepository, never()).findById(orderId);
+    }
+
+    @Test
+    void manualDeliveryContentIsPublicOnlyAfterTheItemIsDelivered() {
+        UUID orderId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+        Order order = guestOrder(orderId, "session-a");
+        order.setUserId(ownerId);
+        OrderItem item = item(UUID.randomUUID());
+        item.setOrderId(orderId);
+        item.setDeliveryType("MANUAL");
+        item.setStockMode(StockMode.MANUAL);
+        item.setFulfillmentStatus(FulfillmentStatus.WAITING_MANUAL);
+        item.setCustomerDeliveryContent("buyer-only delivery instructions");
+
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of());
+        when(paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId)).thenReturn(List.of());
+
+        Map<?, ?> waitingItem = (Map<?, ?>) ((List<?>) ((Map<?, ?>) service
+                .getOrder(orderId, ownerId, null).get("order")).get("items")).get(0);
+        org.junit.jupiter.api.Assertions.assertFalse(waitingItem.containsKey("customer_delivery_content"));
+
+        item.setFulfillmentStatus(FulfillmentStatus.DELIVERED);
+        Map<?, ?> deliveredItem = (Map<?, ?>) ((List<?>) ((Map<?, ?>) service
+                .getOrder(orderId, ownerId, null).get("order")).get("items")).get(0);
+        assertEquals("buyer-only delivery instructions", deliveredItem.get("customer_delivery_content"));
     }
 
     private void assertForbidden(Runnable action) {

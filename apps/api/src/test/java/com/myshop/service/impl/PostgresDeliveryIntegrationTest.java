@@ -47,6 +47,7 @@ import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -617,6 +618,28 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
+    void automaticShortageDoesNotRollBackTheManualWaitingStateInAMixedOrder() {
+        UUID orderId = insertOrder("mixed-shortage-session");
+        UUID autoProductId = UUID.randomUUID();
+        UUID manualProductId = UUID.randomUUID();
+        insertProduct(autoProductId);
+        insertManualProduct(manualProductId);
+        insertOrderItem(orderId, autoProductId, "AUTO", "CARD_KEY", 1, 0);
+        UUID manualItemId = insertOrderItem(orderId, manualProductId, "MANUAL", "MANUAL", 1, 1);
+        insertManualStock(manualProductId, null, 0, 1);
+
+        assertThrows(BusinessException.class, () -> fulfillmentService.fulfillOrder(orderId));
+
+        assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("PENDING", scalar(
+                "select fulfillment_status from order_items where product_id = ?", String.class, autoProductId));
+        assertEquals("WAITING_MANUAL", scalar(
+                "select fulfillment_status from order_items where id = ?", String.class, manualItemId));
+        assertEquals(1, number(
+                "select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", manualProductId));
+    }
+
+    @Test
     void concurrentDeliveryOfOneOrderAllocatesExactlyOnce() throws Exception {
         UUID orderId = insertOrder("concurrent-session");
         UUID productId = UUID.randomUUID();
@@ -867,17 +890,67 @@ class PostgresDeliveryIntegrationTest {
         assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
         assertEquals(0, number("select count(*) from card_keys where order_id = ?", orderId));
 
-        Map<?, ?> completed = fulfillmentService.completeManualItem(orderId, itemId);
+        Map<?, ?> completed = fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(itemId, "账号：buyer\n\n已为你开通。")));
         assertEquals("DELIVERED", completed.get("status"));
         assertEquals("DELIVERED", scalar(
                 "select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals("账号：buyer\n\n已为你开通。", scalar(
+                "select customer_delivery_content from order_items where id = ?", String.class, itemId));
         assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
 
-        // Idempotent replay cannot consume the same reservation or repeat the
-        // delivery transition.
-        Map<?, ?> replay = fulfillmentService.completeManualItem(orderId, itemId);
-        assertEquals("DELIVERED", replay.get("status"));
+        // A replay is rejected before any mutation and cannot consume the
+        // same reservation or repeat the delivery transition.
+        assertThrows(BusinessException.class, () -> fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(itemId, "replacement"))));
         assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+    }
+
+    @Test
+    void manualFulfillmentBatchRequiresEveryWaitingItemAndMutatesAtomically() {
+        UUID orderId = insertOrder("manual-batch-session");
+        UUID firstProductId = UUID.randomUUID();
+        UUID secondProductId = UUID.randomUUID();
+        insertProduct(firstProductId);
+        insertProduct(secondProductId);
+        UUID firstItemId = insertOrderItem(orderId, firstProductId, "MANUAL", "MANUAL", 1, 1);
+        UUID secondItemId = insertOrderItem(orderId, secondProductId, "MANUAL", "MANUAL", 1, 1);
+        insertManualStock(firstProductId, null, 0, 1);
+        insertManualStock(secondProductId, null, 0, 1);
+
+        fulfillmentService.fulfillOrder(orderId);
+        assertEquals("WAITING_MANUAL", scalar(
+                "select fulfillment_status from order_items where id = ?", String.class, firstItemId));
+        assertEquals("WAITING_MANUAL", scalar(
+                "select fulfillment_status from order_items where id = ?", String.class, secondItemId));
+
+        assertThrows(BusinessException.class, () -> fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(firstItemId, "only one"))));
+        assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("WAITING_MANUAL", scalar(
+                "select fulfillment_status from order_items where id = ?", String.class, firstItemId));
+        assertEquals("WAITING_MANUAL", scalar(
+                "select fulfillment_status from order_items where id = ?", String.class, secondItemId));
+        assertNull(scalar("select customer_delivery_content from order_items where id = ?", String.class, firstItemId));
+        assertNull(scalar("select customer_delivery_content from order_items where id = ?", String.class, secondItemId));
+        assertEquals(1, number(
+                "select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", firstProductId));
+        assertEquals(1, number(
+                "select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", secondProductId));
+
+        Map<?, ?> completed = fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(firstItemId, "first result"),
+                new FulfillmentService.ManualFulfillmentItem(secondItemId, "second result")));
+        assertEquals("DELIVERED", completed.get("status"));
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("first result", scalar(
+                "select customer_delivery_content from order_items where id = ?", String.class, firstItemId));
+        assertEquals("second result", scalar(
+                "select customer_delivery_content from order_items where id = ?", String.class, secondItemId));
+        assertEquals(0, number(
+                "select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", firstProductId));
+        assertEquals(0, number(
+                "select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", secondProductId));
     }
 
     @Test
@@ -904,9 +977,11 @@ class PostgresDeliveryIntegrationTest {
         fulfillmentService.fulfillOrder(orderId);
         verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(autoItemId)));
 
-        Map<?, ?> second = fulfillmentService.completeManualItem(orderId, manualItemId);
+        Map<?, ?> second = fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(manualItemId, null)));
         assertEquals("DELIVERED", second.get("status"));
         assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(manualItemId)));
     }
 
     @Test

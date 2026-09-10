@@ -12,6 +12,7 @@ import type { OrderBrief, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
 import { cn, formatYuan } from "@/lib/utils"
 import { buildOrderPageHref } from "@/lib/payment-entry"
+import { isManualFulfillmentItem } from "@/lib/order-status"
 
 const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "EXPIRED"]
 
@@ -53,7 +54,7 @@ export default function MyOrdersPage() {
 
   const statusKeys: Record<OrderStatus, TranslationKey> = {
     PENDING: "status.PENDING",
-    PAID: "status.PAID",
+    PAID: "status.PAID_FILTER",
     DELIVERED: "status.DELIVERED",
     EXPIRED: "status.EXPIRED",
   }
@@ -105,7 +106,7 @@ export default function MyOrdersPage() {
               {/* Order Header */}
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <OrderStatusBadge status={order.status} />
+                  <OrderStatusBadge status={order.status} items={order.items} />
                   <span className="font-mono text-xs font-medium text-foreground">{t("order.orderNo")} {order.order_no}</span>
                 </div>
                 <span className="text-xs text-muted-foreground">
@@ -123,7 +124,7 @@ export default function MyOrdersPage() {
 
               {order.items?.some(item => item.customer_inputs.length > 0) && (
                 <div className="mb-3 rounded-card border border-border-subtle bg-surface-muted p-3 text-xs">
-                  <p className="mb-2 font-medium text-muted-foreground">购买填写信息</p>
+                  <p className="mb-2 font-medium text-muted-foreground">{t("order.customerInputs")}</p>
                   <div className="space-y-2">
                     {order.items.filter(item => item.customer_inputs.length > 0).map(item => (
                       <div key={item.id}>
@@ -160,7 +161,9 @@ export default function MyOrdersPage() {
                       className="inline-flex h-9 items-center gap-1 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
                     >
                       <ExternalLink className="h-3 w-3" />
-                      {t("order.cardKeys")}
+                      {order.items?.some(item => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")
+                        ? t("order.cardKeys")
+                        : t("order.viewDelivery")}
                     </Link>
                   )}
                 </div>

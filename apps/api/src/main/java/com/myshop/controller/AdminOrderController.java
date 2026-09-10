@@ -2,8 +2,10 @@ package com.myshop.controller;
 
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
+import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.service.AdminOrderService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -33,10 +35,11 @@ public class AdminOrderController {
         return ApiResponse.success();
     }
 
-    @LogOperation(action = "order.manual_deliver", targetType = "ORDER", targetId = "#id", detail = "'完成人工发货订单项'")
-    @PostMapping("/{id}/items/{itemId}/complete-manual")
-    public ApiResponse<?> completeManualItem(@PathVariable UUID id, @PathVariable UUID itemId) {
-        return ApiResponse.success(adminOrderService.completeManualItem(id, itemId));
+    @LogOperation(action = "order.manual_deliver", targetType = "ORDER", targetId = "#id", detail = "#request.auditDetail()")
+    @PostMapping("/{id}/fulfill")
+    public ApiResponse<?> completeManualItems(@PathVariable UUID id,
+                                              @Valid @RequestBody AdminManualFulfillRequest request) {
+        return ApiResponse.success(adminOrderService.completeManualItems(id, request));
     }
 
     public record MarkPaidRequest(String reason, boolean confirmed) {}

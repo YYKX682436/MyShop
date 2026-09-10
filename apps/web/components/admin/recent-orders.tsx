@@ -71,7 +71,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
                       <CustomerIdentity order={order} guestLabel={t("admin.guest")} />
                     </td>
                     <td className="py-3 font-medium text-foreground">{formatYuan(order.actual_amount)}</td>
-                    <td className="py-3"><OrderStatusBadge status={order.status} /></td>
+                    <td className="py-3"><OrderStatusBadge status={order.status} items={order.items} /></td>
                     <td className="py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
                   </tr>
                 ))}
@@ -84,7 +84,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
               <article key={order.id} className="min-w-0 rounded-control border border-border-subtle bg-surface-muted/45 p-3">
                 <div className="flex min-w-0 items-start justify-between gap-3">
                   <CopyOrderNoButton orderNo={order.order_no} onCopy={copyToClipboard} />
-                  <OrderStatusBadge status={order.status} />
+                  <OrderStatusBadge status={order.status} items={order.items} />
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                   <div className="min-w-0 col-span-2">

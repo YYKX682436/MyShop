@@ -18,6 +18,7 @@ const ACTIONS: Record<string, { key: TranslationKey; tone: "success" | "info" | 
   "cardkey.import": { key: "admin.actionCardImport", tone: "purple" },
   "cardkey.invalidate": { key: "admin.actionCardInvalidate", tone: "danger" },
   "order.mark_paid": { key: "admin.actionOrderMarkPaid", tone: "warning" },
+  "order.manual_deliver": { key: "admin.actionOrderManualDeliver", tone: "success" },
   "user.disable": { key: "admin.actionUserDisable", tone: "danger" },
   "user.enable": { key: "admin.actionUserEnable", tone: "success" },
   "config.update": { key: "admin.actionConfigUpdate", tone: "info" },

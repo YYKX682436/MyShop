@@ -1,6 +1,7 @@
 package com.myshop.service;
 
 import com.myshop.common.PageResult;
+import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
 
 import java.util.Map;
@@ -14,5 +15,5 @@ public interface AdminOrderService {
 
     void markPaid(UUID id, String reason, boolean confirmed);
 
-    Map<String, Object> completeManualItem(UUID orderId, UUID orderItemId);
+    Map<String, Object> completeManualItems(UUID orderId, AdminManualFulfillRequest request);
 }

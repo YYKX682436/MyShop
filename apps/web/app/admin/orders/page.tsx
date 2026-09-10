@@ -180,26 +180,26 @@ export default function AdminOrdersPage() {
           <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} aria-label={t("admin.statusLabel")}>
             <option value="">{t("admin.allStatus")}</option>
             <option value="PENDING">{t("status.PENDING")}</option>
-            <option value="PAID">{t("status.PAID")}</option>
+            <option value="PAID">{t("status.PAID_FILTER")}</option>
             <option value="DELIVERED">{t("status.DELIVERED")}</option>
             <option value="EXPIRED">{t("status.EXPIRED")}</option>
           </select>
-          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label="创建时间范围">
-            <option value="all">全部时间</option>
-            <option value="today">今天</option>
-            <option value="yesterday">昨天</option>
-            <option value="7d">近 7 天</option>
-            <option value="30d">近 30 天</option>
-            <option value="custom">自定义</option>
+          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label={t("admin.timeRangeLabel")}>
+            <option value="all">{t("admin.allTime")}</option>
+            <option value="today">{t("admin.today")}</option>
+            <option value="yesterday">{t("admin.yesterday")}</option>
+            <option value="7d">{t("admin.last7Days")}</option>
+            <option value="30d">{t("admin.last30Days")}</option>
+            <option value="custom">{t("admin.custom")}</option>
           </select>
-          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={sortDirection} onChange={(event) => { setSortDirection(event.target.value as "asc" | "desc"); setPage(1) }} aria-label="创建时间排序">
-            <option value="desc">最新在前</option>
-            <option value="asc">最早在前</option>
+          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={sortDirection} onChange={(event) => { setSortDirection(event.target.value as "asc" | "desc"); setPage(1) }} aria-label={t("admin.timeSortLabel")}>
+            <option value="desc">{t("admin.newestFirst")}</option>
+            <option value="asc">{t("admin.oldestFirst")}</option>
           </select>
           {timeRange === "custom" && <div className="flex items-center gap-2">
-            <Input type="date" value={customFrom} onChange={(event) => { setCustomFrom(event.target.value); setPage(1) }} aria-label="开始日期" />
-            <span className="text-sm text-muted-foreground">至</span>
-            <Input type="date" value={customTo} onChange={(event) => { setCustomTo(event.target.value); setPage(1) }} aria-label="结束日期" />
+            <Input type="date" value={customFrom} onChange={(event) => { setCustomFrom(event.target.value); setPage(1) }} aria-label={t("admin.startDate")} />
+            <span className="text-sm text-muted-foreground">{t("admin.to")}</span>
+            <Input type="date" value={customTo} onChange={(event) => { setCustomTo(event.target.value); setPage(1) }} aria-label={t("admin.endDate")} />
           </div>}
         </div>
       </PageToolbar>
@@ -208,10 +208,10 @@ export default function AdminOrdersPage() {
         <table className="w-full min-w-[1180px] text-sm">
           <thead><tr className="border-b border-border-subtle bg-surface-muted">
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.orderNo")}</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">商品</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">客户</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">金额</th>
-            <th className="px-4 py-3 text-left font-medium text-muted-foreground">利润</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.product")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.customer")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.amount")}</th>
+            <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.profit")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.statusLabel")}</th>
             <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th>
             <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
@@ -227,7 +227,7 @@ export default function AdminOrdersPage() {
                 <td className="px-4 py-3"><CustomerCell order={order} guestLabel={t("admin.guest")} /></td>
                 <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
                 <td className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>
-                <td className="px-4 py-3"><OrderStatusBadge status={order.status} /></td>
+                <td className="px-4 py-3"><OrderStatusBadge status={order.status} items={order.items} /></td>
                 <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button>{order.status === "PENDING" && <Button type="button" variant="ghost" size="icon" title={t("admin.markPaid")} aria-label={t("admin.markPaid")} onClick={() => { setMarkPaidOrderId(order.id); setMarkPaidReason("") }}><CheckCircle className="h-4 w-4 text-emerald-600" aria-hidden="true" /></Button>}</div></td>
               </tr>

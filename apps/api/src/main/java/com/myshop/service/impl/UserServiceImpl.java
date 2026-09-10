@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.myshop.common.PageResult;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
@@ -142,6 +143,9 @@ public class UserServiceImpl implements UserService {
         map.put("stock_mode", item.getStockMode());
         map.put("fulfillment_status", item.getFulfillmentStatus());
         map.put("delivered_at", item.getDeliveredAt());
+        if (item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED) {
+            map.put("customer_delivery_content", item.getCustomerDeliveryContent());
+        }
         return map;
     }
 }

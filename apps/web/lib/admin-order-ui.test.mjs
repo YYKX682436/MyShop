@@ -95,8 +95,8 @@ test("order details use the wide workspace route and keep the workbench structur
   assert.match(routeSource, /WorkspaceSheet/)
   assert.doesNotMatch(routeSource, /InspectorSheet/)
   assert.match(overlaySource, /sm:w-\[88vw\].*lg:w-\[64vw\].*max-w-\[1100px\]/s)
-  assert.match(detailSource, /卡券与交付/)
-  assert.match(detailSource, /商品与客户填写/)
+  assert.match(detailSource, /t\("admin\.cardDelivery"\)/)
+  assert.match(detailSource, /t\("admin\.productAndCustomerInputs"\)/)
   assert.doesNotMatch(detailSource, /技术信息 \/ 高级信息/)
   assert.match(detailSource, /admin\.orderDetails/)
   assert.match(detailSource, /order\.order_no/)
@@ -114,6 +114,45 @@ test("the order lifecycle page owns status, payment, delivery, copy, and export"
   assert.match(source, /deliveryWaitingManual/)
   assert.match(source, /deliveryReady/)
   assert.match(source, /paymentReturn/)
+})
+
+test("manual storefront delivery is separate from automatic card-key delivery", () => {
+  const source = readSource("../app/(store)/order/[orderId]/page.tsx")
+
+  assert.match(source, /isManualFulfillmentItem/)
+  assert.match(source, /ManualDeliveryItem/)
+  assert.match(source, /MarkdownContent/)
+  assert.match(source, /deliveryWaitingManual/)
+  assert.match(source, /manualDeliveryContentTitle/)
+  assert.match(source, /manualDeliveryEmpty/)
+  assert.match(source, /delivery_type\?\.toUpperCase\(\) === "AUTO"/)
+  assert.doesNotMatch(source, /ReactMarkdown/)
+})
+
+test("admin manual fulfillment confirms in a form dialog before sending one batch request", () => {
+  const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
+  const detailSource = readSource("../components/admin/orders/order-detail-sheet.tsx")
+  const dialogSource = readSource("../components/admin/orders/manual-fulfillment-dialog.tsx")
+
+  assert.match(detailSource, /onOpenManualFulfillment/)
+  assert.match(routeSource, /setManualFulfillmentOpen\(true\)/)
+  assert.match(routeSource, /adminOrderApi\.fulfill/)
+  assert.match(routeSource, /confirmed: true/)
+  assert.match(dialogSource, /<MarkdownEditor/)
+  assert.match(dialogSource, /customer_delivery_content/)
+  assert.match(dialogSource, /manualFulfillmentConfirm/)
+  assert.doesNotMatch(routeSource, /completeManualItem/)
+  assert.doesNotMatch(dialogSource, /window\.confirm/)
+})
+
+test("storefront markdown surfaces use the shared safe renderer", () => {
+  const productSource = readSource("../app/(store)/product/[id]/product-description.tsx")
+  const shellSource = readSource("../app/(store)/store-shell-client.tsx")
+
+  assert.match(productSource, /MarkdownContent/)
+  assert.match(shellSource, /MarkdownContent/)
+  assert.doesNotMatch(productSource, /ReactMarkdown/)
+  assert.doesNotMatch(shellSource, /ReactMarkdown/)
 })
 
 test("operation-log surfaces mask UUIDs instead of rendering technical target identifiers", () => {

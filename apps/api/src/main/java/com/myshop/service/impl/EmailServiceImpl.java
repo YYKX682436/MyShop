@@ -92,7 +92,10 @@ public class EmailServiceImpl implements EmailService {
                     .map(c -> c.getConfigValue())
                     .orElse("MyShop");
 
-            String html = buildHtml(order, itemMap, grouped, siteName);
+            boolean containsManualItem = itemMap.values().stream().anyMatch(this::isManualItem);
+            String html = containsManualItem
+                    ? buildManualHtml(order, siteName)
+                    : buildHtml(order, itemMap, grouped, siteName);
 
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
@@ -108,6 +111,44 @@ public class EmailServiceImpl implements EmailService {
         } catch (Exception e) {
             log.error("Unexpected error sending delivery email for order {}: {}", orderId, e.getMessage(), e);
         }
+    }
+
+    private boolean isManualItem(OrderItem item) {
+        return "MANUAL".equalsIgnoreCase(item.getDeliveryType());
+    }
+
+    private String buildManualHtml(Order order, String siteName) {
+        BigDecimal amount = order.getActualAmount() != null ? order.getActualAmount() : order.getTotalAmount();
+        LocalDateTime createdAt = order.getCreatedAt();
+        String orderUrl = siteUrl + "/order/" + order.getId();
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("<!DOCTYPE html>");
+        sb.append("<html lang=\"zh-CN\"><head><meta charset=\"UTF-8\">");
+        sb.append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">");
+        sb.append("</head><body style=\"margin:0;padding:0;background-color:#f4f4f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;\">");
+        sb.append("<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#f4f4f7;padding:24px 0;\">");
+        sb.append("<tr><td align=\"center\"><table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);\">");
+        sb.append("<tr><td style=\"background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);padding:32px 40px;text-align:center;\"><h1 style=\"margin:0;color:#ffffff;font-size:24px;font-weight:600;letter-spacing:1px;\">")
+                .append(escapeHtml(siteName)).append("</h1></td></tr>");
+        sb.append("<tr><td style=\"padding:32px 40px 0;\"><h2 style=\"margin:0 0 8px;color:#333333;font-size:20px;font-weight:600;\">订单发货通知</h2>");
+        sb.append("<p style=\"margin:0;color:#666666;font-size:14px;line-height:1.6;\">商家已完成发货，请前往订单详情查看发货结果。</p></td></tr>");
+        sb.append("<tr><td style=\"padding:24px 40px;\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background-color:#f8f9fa;border-radius:6px;padding:16px;\">");
+        sb.append("<tr><td style=\"padding:4px 16px;\"><span style=\"color:#888;font-size:13px;\">支付金额</span></td><td style=\"padding:4px 16px;text-align:right;\"><span style=\"color:#333;font-size:13px;font-weight:600;\">¥")
+                .append(amount).append("</span></td></tr>");
+        if (createdAt != null) {
+            sb.append("<tr><td style=\"padding:4px 16px;\"><span style=\"color:#888;font-size:13px;\">下单时间</span></td><td style=\"padding:4px 16px;text-align:right;\"><span style=\"color:#333;font-size:13px;\">")
+                    .append(createdAt.format(DATE_FMT)).append("</span></td></tr>");
+        }
+        sb.append("</table></td></tr>");
+        sb.append("<tr><td style=\"padding:0 40px 32px;text-align:center;\"><a href=\"")
+                .append(escapeHtml(orderUrl))
+                .append("\" style=\"display:inline-block;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#ffffff;text-decoration:none;padding:12px 32px;border-radius:6px;font-size:14px;font-weight:600;\">查看订单详情</a></td></tr>");
+        sb.append("<tr><td style=\"background-color:#f8f9fa;padding:20px 40px;text-align:center;border-top:1px solid #eee;\"><p style=\"margin:0 0 4px;color:#999;font-size:12px;\">此邮件由系统自动发送，请勿直接回复</p><p style=\"margin:0;color:#bbb;font-size:11px;\">&copy; ")
+                .append(java.time.Year.now().getValue()).append(" ").append(escapeHtml(siteName))
+                .append("</p></td></tr>");
+        sb.append("</table></td></tr></table></body></html>");
+        return sb.toString();
     }
 
     private String buildHtml(Order order, Map<UUID, OrderItem> itemMap,

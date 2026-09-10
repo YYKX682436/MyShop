@@ -53,7 +53,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/orders/*/refresh").permitAll()
                         .requestMatchers(HttpMethod.POST, "/orders/*/repay").permitAll()
                         .requestMatchers("/payments/webhook/**").permitAll()
-                        .requestMatchers("/uploads/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/uploads/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/visit/track").permitAll()
                         // Authenticated user endpoints
                         .requestMatchers("/auth/logout").authenticated()

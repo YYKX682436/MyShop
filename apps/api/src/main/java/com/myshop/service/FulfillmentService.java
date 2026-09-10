@@ -1,5 +1,6 @@
 package com.myshop.service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -13,6 +14,12 @@ public interface FulfillmentService {
      */
     Map<String, Object> fulfillOrder(UUID orderId);
 
-    /** Idempotently completes one manual-delivery order item. */
-    Map<String, Object> completeManualItem(UUID orderId, UUID orderItemId);
+    /**
+     * Completes the exact current set of waiting manual items under the order
+     * lock. A duplicate or stale item is rejected before any mutation.
+     */
+    Map<String, Object> completeManualItems(UUID orderId, List<ManualFulfillmentItem> items);
+
+    record ManualFulfillmentItem(UUID orderItemId, String customerDeliveryContent) {
+    }
 }

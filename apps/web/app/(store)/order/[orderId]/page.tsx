@@ -15,6 +15,10 @@ import { PaymentActionRenderer } from "@/components/shared/payment-action-render
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { ContactSupport } from "@/components/shared/contact-methods"
+import { MarkdownContent } from "@/components/shared/markdown-content"
+import { isManualFulfillmentItem } from "@/lib/order-status"
+import type { TranslationKey } from "@/lib/i18n"
+import type { OrderItemDetail } from "@/types"
 
 const PAYMENT_RETURN_POLL_INTERVAL = 1000
 const NORMAL_POLL_INTERVAL = 3000
@@ -156,8 +160,22 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const paymentMethod = view?.payment?.payment_type || view?.payment?.payment_method || "online"
   const methodName = getPaymentLabel(paymentMethod, t)
   const brandColor = getPaymentBrandColor(paymentMethod)
-  const deliveredGroups = view?.delivery.groups ?? []
-  const waitingManual = view?.delivery.item_statuses?.some(item => item.fulfillment_status === "WAITING_MANUAL") ?? false
+  const deliveredGroups = view?.delivery.groups?.filter(group => group.delivery_type?.toUpperCase() === "AUTO") ?? []
+  const orderItems = view?.order.items ?? []
+  const automaticCardItems = orderItems.filter(item =>
+    !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
+  )
+  const waitingManualItems = orderItems.filter(item =>
+    isManualFulfillmentItem(item) && item.fulfillment_status === "WAITING_MANUAL"
+  )
+  const deliveredManualItems = orderItems.filter(item =>
+    isManualFulfillmentItem(item) && item.fulfillment_status === "DELIVERED"
+  )
+  const pendingAutomaticItems = orderItems.filter(item =>
+    !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
+    && item.fulfillment_status !== "DELIVERED"
+    && item.fulfillment_status !== "CANCELLED"
+  )
   const hasCards = deliveredGroups.length > 0
   const retryButton = <button type="button" onClick={() => void retryPayment()} disabled={retrying} className="inline-flex h-11 items-center gap-2 rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", retrying && "animate-spin")} />{t("order.retryPayment")}</button>
   const retryStatusButton = <button type="button" onClick={() => void manualRefresh()} disabled={refreshing} className="inline-flex h-10 items-center gap-2 rounded-control border border-border-strong bg-surface px-4 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{t("payment.retryLoad")}</button>
@@ -176,7 +194,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
         <p className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("order.lifecycleTitle")}</h1>
       </div>
-      <OrderStatusBadge status={status} />
+      <OrderStatusBadge status={status} items={orderItems} />
     </div>
 
     <section className="surface space-y-5 p-5 sm:p-7">
@@ -206,23 +224,26 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
               <PaymentActionRenderer action={paymentState.nextAction} loadState={paymentState.phase} statusError={paymentState.errorMessage} retryAction={retryButton} retryStatusAction={retryStatusButton} />
             </div>
           )}
-          {view.order.payment_method !== "ONLINE" && <p className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</p>}
+          {view.order.payment_method !== "ONLINE" && automaticCardItems.length > 0 && <p className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</p>}
         </div>
       )}
 
       {(status === "PAID" || status === "DELIVERED") && (
         <div className="space-y-4 border-t border-border-subtle pt-5">
-          {waitingManual ? <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p><p className="mt-1 text-xs opacity-80">{t("order.manualHint")}</p></div> : hasCards ? <div className="rounded-control border border-emerald-300/50 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.deliveryReady")}</div> : <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
+          {waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
+          {pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
+          {hasCards && <div className="rounded-control border border-emerald-300/50 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.deliveryReady")}</div>}
           {hasCards && <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => copy(allCardText(deliveredGroups))} className="inline-flex h-9 items-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"><Copy className="h-3.5 w-3.5" />{t("order.copyAll")}</button><button type="button" onClick={() => void exportKeys()} className="inline-flex h-9 items-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"><Download className="h-3.5 w-3.5" />{t("order.exportKeys")}</button></div>}
           <div className="space-y-3">{deliveredGroups.map((group, index) => <DeliveryGroup key={`${group.product_no}-${index}`} group={group} index={index} onCopy={copy} copyLabel={t("order.copyKey")} countLabel={t("order.deliveredCount").replace("{count}", String(group.delivery_items.length))} />)}</div>
-          {!hasCards && !waitingManual && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
+          <div className="space-y-3">{deliveredManualItems.map((item, index) => <ManualDeliveryItem key={item.id} item={item} index={index} statusLabel={t("status.DELIVERED")} emptyLabel={t("order.manualDeliveryEmpty")} contentTitle={t("order.manualDeliveryContentTitle")} />)}</div>
+          {!hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
         </div>
       )}
     </section>
 
     <section className="surface space-y-3 p-5 sm:p-7">
       <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><KeyRound className="h-4 w-4 text-primary" />{t("order.orderItems")}</h2>
-      <div className="divide-y divide-border-subtle">{view.order.items.map(item => <div key={item.id} className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"><div><p className="text-sm font-medium text-foreground">{item.product_title}{item.spec_name ? ` · ${item.spec_name}` : ""}</p><p className="mt-1 text-xs text-muted-foreground">×{item.quantity} · {item.delivery_type === "MANUAL" ? t("product.deliveryManual") : t("product.deliveryAuto")}</p></div><span className="text-sm font-semibold text-foreground">{formatYuan(item.subtotal)}</span></div>)}</div>
+      <div className="divide-y divide-border-subtle">{view.order.items.map(item => <div key={item.id} className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"><div><p className="text-sm font-medium text-foreground">{item.product_title}{item.spec_name ? ` · ${item.spec_name}` : ""}</p><p className="mt-1 text-xs text-muted-foreground">×{item.quantity} · {isManualFulfillmentItem(item) ? t("product.deliveryManual") : t("product.deliveryAuto")}</p><p className="mt-1 text-xs text-muted-foreground">{itemFulfillmentLabel(item, t)}</p></div><span className="text-sm font-semibold text-foreground">{formatYuan(item.subtotal)}</span></div>)}</div>
     </section>
 
     <div className="flex flex-wrap items-center justify-center gap-3">
@@ -230,6 +251,51 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} emailLabel={t("payment.contactSupport")} />
     </div>
   </div>
+}
+
+function ManualDeliveryItem({
+  item,
+  index,
+  statusLabel,
+  emptyLabel,
+  contentTitle,
+}: {
+  item: OrderItemDetail
+  index: number
+  statusLabel: string
+  emptyLabel: string
+  contentTitle: string
+}) {
+  return (
+    <article className="overflow-hidden rounded-card border border-primary/20 bg-primary/5">
+      <div className="border-b border-primary/10 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-foreground">{index + 1}. {item.product_title}</p>
+          <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">{statusLabel}</span>
+        </div>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {item.spec_name || ""}{item.spec_name ? " · " : ""}×{item.quantity}
+        </p>
+      </div>
+      <div className="space-y-2 p-4">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-primary">{contentTitle}</h3>
+        {item.customer_delivery_content?.trim()
+          ? <MarkdownContent value={item.customer_delivery_content} />
+          : <p className="text-sm text-muted-foreground">{emptyLabel}</p>}
+      </div>
+    </article>
+  )
+}
+
+function itemFulfillmentLabel(
+  item: OrderItemDetail,
+  t: (key: TranslationKey) => string,
+) {
+  if (item.fulfillment_status === "WAITING_MANUAL") return t("status.WAITING_MANUAL")
+  if (item.fulfillment_status === "DELIVERED") return t("status.DELIVERED")
+  if (item.fulfillment_status === "CANCELLED") return t("order.itemCancelled")
+  if (item.fulfillment_status === "PENDING") return t("status.PENDING")
+  return isManualFulfillmentItem(item) ? t("status.WAITING_MANUAL") : t("status.WAITING_AUTO")
 }
 
 function DeliveryGroup({ group, index, onCopy, copyLabel, countLabel }: { group: OrderDeliveryGroup; index: number; onCopy: (value: string) => void; copyLabel: string; countLabel: string }) {

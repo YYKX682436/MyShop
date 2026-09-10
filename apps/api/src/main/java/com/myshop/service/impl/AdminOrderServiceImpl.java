@@ -7,6 +7,7 @@ import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
+import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
@@ -115,8 +116,27 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
     @Override
     @Transactional
-    public Map<String, Object> completeManualItem(UUID orderId, UUID orderItemId) {
-        return fulfillmentService.completeManualItem(orderId, orderItemId);
+    public Map<String, Object> completeManualItems(UUID orderId, AdminManualFulfillRequest request) {
+        if (request == null || !Boolean.TRUE.equals(request.confirmed())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "必须明确确认完成发货");
+        }
+        if (request.items() == null || request.items().isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "至少选择一个待人工发货订单项");
+        }
+
+        Set<UUID> seen = new HashSet<>();
+        List<FulfillmentService.ManualFulfillmentItem> items = new ArrayList<>(request.items().size());
+        for (AdminManualFulfillRequest.Item item : request.items()) {
+            if (item == null || item.orderItemId() == null) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "订单项不能为空");
+            }
+            if (!seen.add(item.orderItemId())) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "不能重复提交同一订单项");
+            }
+            items.add(new FulfillmentService.ManualFulfillmentItem(
+                    item.orderItemId(), item.customerDeliveryContent()));
+        }
+        return fulfillmentService.completeManualItems(orderId, items);
     }
 
     private Map<String, Object> toAdminOrder(Order o, List<OrderItem> items, User user, boolean detail) {
@@ -156,6 +176,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             im.put("stock_mode", i.getStockMode());
             im.put("fulfillment_status", i.getFulfillmentStatus());
             im.put("delivered_at", i.getDeliveredAt());
+            im.put("customer_delivery_content", i.getCustomerDeliveryContent());
             im.put("manual_stock_reserved", i.getManualStockReserved());
             return im;
         }).toList();

@@ -5,13 +5,15 @@ import { CheckCircle, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { WorkspaceSheet, useRouteOverlayClose } from "@/components/admin/route-overlay"
+import { ManualFulfillmentDialog } from "@/components/admin/orders/manual-fulfillment-dialog"
 import { OrderDetailSheet } from "@/components/admin/orders/order-detail-sheet"
 import { AdminPage, ConfirmAlert, PageHeader } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
-import { adminCardKeyApi, adminOrderApi, requestOrThrow } from "@/services/api"
-import type { AdminOrderItem, OrderCardKey } from "@/types"
+import { adminCardKeyApi, adminOrderApi, adminProductApi, requestOrThrow } from "@/services/api"
+import { isManualFulfillmentItem } from "@/lib/order-status"
+import type { AdminManualFulfillmentItem, AdminOrderItem, OrderCardKey } from "@/types"
 
 interface AdminOrderDetailRouteProps {
   orderId: string
@@ -26,7 +28,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [error, setError] = useState(false)
   const [cardKeysLoading, setCardKeysLoading] = useState(false)
   const [cardKeysError, setCardKeysError] = useState(false)
-  const [completingManualItem, setCompletingManualItem] = useState<string | null>(null)
+  const [manualFulfillmentOpen, setManualFulfillmentOpen] = useState(false)
+  const [manualFulfillmentLoading, setManualFulfillmentLoading] = useState(false)
   const [markPaidOpen, setMarkPaidOpen] = useState(false)
   const [markPaidReason, setMarkPaidReason] = useState("")
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
@@ -39,7 +42,10 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       setOrder(detail)
       setCardKeys([])
       setCardKeysError(false)
-      if (detail.status === "PAID" || detail.status === "DELIVERED") {
+      const hasAutomaticCardItems = detail.items.some((item) =>
+        !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
+      )
+      if ((detail.status === "PAID" || detail.status === "DELIVERED") && hasAutomaticCardItems) {
         setCardKeysLoading(true)
         try {
           setCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
@@ -62,16 +68,18 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
 
   const close = useRouteOverlayClose(false, presentation === "inspector")
 
-  const handleCompleteManualItem = async (currentOrderId: string, orderItemId: string) => {
-    setCompletingManualItem(orderItemId)
+  const handleCompleteManualFulfillment = async (items: AdminManualFulfillmentItem[]) => {
+    if (!order || manualFulfillmentLoading) return
+    setManualFulfillmentLoading(true)
     try {
-      await requestOrThrow(() => adminOrderApi.completeManualItem(currentOrderId, orderItemId))
+      await requestOrThrow(() => adminOrderApi.fulfill(order.id, { confirmed: true, items }))
       toast.success(t("admin.manualDeliveryCompleted"))
+      setManualFulfillmentOpen(false)
       await load()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
-      setCompletingManualItem(null)
+      setManualFulfillmentLoading(false)
     }
   }
 
@@ -96,7 +104,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   }
 
   const retryCardKeys = () => {
-    if (!order || (order.status !== "PAID" && order.status !== "DELIVERED")) return
+    if (!order || (order.status !== "PAID" && order.status !== "DELIVERED")
+      || !order.items.some((item) => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")) return
     setCardKeysLoading(true)
     setCardKeysError(false)
     void requestOrThrow(() => adminCardKeyApi.getByOrder(order.id)).then(setCardKeys).catch(() => {
@@ -119,8 +128,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           detailCardKeysLoading={cardKeysLoading}
           detailCardKeysError={cardKeysError}
           onRetryCardKeys={retryCardKeys}
-          completingManualItem={completingManualItem}
-          onCompleteManualItem={(currentOrderId, orderItemId) => void handleCompleteManualItem(currentOrderId, orderItemId)}
+          manualFulfillmentLoading={manualFulfillmentLoading}
+          onOpenManualFulfillment={() => setManualFulfillmentOpen(true)}
         />
       )}
     </>
@@ -149,12 +158,26 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     </ConfirmAlert>
   )
 
+  const manualFulfillmentDialog = (
+    <ManualFulfillmentDialog
+      open={manualFulfillmentOpen}
+      items={order?.items.filter((item) =>
+        isManualFulfillmentItem(item) && item.fulfillment_status === "WAITING_MANUAL"
+      ) ?? []}
+      loading={manualFulfillmentLoading}
+      uploadImage={(file) => adminProductApi.uploadImage(file).then((result) => result.url)}
+      onOpenChange={setManualFulfillmentOpen}
+      onConfirm={(items) => void handleCompleteManualFulfillment(items)}
+    />
+  )
+
   if (presentation === "full") {
     return (
       <AdminPage>
         <PageHeader title={t("admin.orderWorkspace")} description={order ? `${t("admin.orderNo")} ${order.order_no}` : t("common.loading")} actions={markPaidButton} />
         <div className="surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
         {confirmDialog}
+        {manualFulfillmentDialog}
       </AdminPage>
     )
   }
@@ -170,6 +193,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         {detailContent}
       </WorkspaceSheet>
       {confirmDialog}
+      {manualFulfillmentDialog}
     </>
   )
 }

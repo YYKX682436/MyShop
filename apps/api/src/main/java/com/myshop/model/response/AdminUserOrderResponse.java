@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.FulfillmentStatus;
+import com.myshop.constant.StockMode;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -35,7 +37,10 @@ public record AdminUserOrderResponse(
             String specName,
             int quantity,
             BigDecimal unitPrice,
-            BigDecimal subtotal
+            BigDecimal subtotal,
+            @JsonProperty("delivery_type") String deliveryType,
+            @JsonProperty("stock_mode") StockMode stockMode,
+            @JsonProperty("fulfillment_status") FulfillmentStatus fulfillmentStatus
     ) {
     }
 }

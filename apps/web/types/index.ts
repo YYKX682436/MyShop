@@ -268,6 +268,7 @@ export interface OrderItemDetail {
   stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
   fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
   delivered_at?: string | null
+  customer_delivery_content?: string | null
   manual_stock_reserved?: number
 }
 
@@ -318,6 +319,30 @@ export interface OrderView {
   order: OrderDetail
   payment: PaymentCreateResult
   delivery: OrderDeliveryView
+}
+
+export interface AdminManualFulfillmentItem {
+  order_item_id: string
+  customer_delivery_content: string | null
+}
+
+export interface AdminManualFulfillmentRequest {
+  confirmed: true
+  items: AdminManualFulfillmentItem[]
+}
+
+export interface AdminFulfillmentResult {
+  order_id: string
+  order_no: number
+  status: OrderStatus
+  groups: OrderDeliveryGroup[]
+  item_statuses: {
+    id: string
+    product_no: number
+    product_title: string
+    fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
+    delivery_type: string
+  }[]
 }
 
 // ============================================================
@@ -693,6 +718,9 @@ export interface AdminUserOrderItem {
   quantity: number
   unit_price: number
   subtotal: number
+  delivery_type?: string | null
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED" | string | null
+  fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED" | string | null
 }
 
 export interface AdminUserOrder {

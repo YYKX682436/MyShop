@@ -187,6 +187,9 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("stock_mode", item.getStockMode());
         result.put("fulfillment_status", item.getFulfillmentStatus());
         result.put("delivered_at", item.getDeliveredAt());
+        if (item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED) {
+            result.put("customer_delivery_content", item.getCustomerDeliveryContent());
+        }
         return result;
     }
 
@@ -257,6 +260,9 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                         LinkedHashMap::new, Collectors.toList()));
         List<Map<String, Object>> groups = new ArrayList<>();
         for (OrderItem item : items) {
+            if ("MANUAL".equalsIgnoreCase(item.getDeliveryType())) {
+                continue;
+            }
             List<CardKey> itemKeys = byItem.getOrDefault(item.getId(), List.of());
             if (itemKeys.isEmpty()) continue;
             Map<String, Object> group = new LinkedHashMap<>();

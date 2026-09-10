@@ -82,6 +82,14 @@ public class OrderItem extends BaseEntity {
     @Column(name = "delivery_notified_at")
     private java.time.LocalDateTime deliveryNotifiedAt;
 
+    /**
+     * Optional customer-facing content for manual fulfillment. This is kept
+     * separate from admin notes and is exposed publicly only after the item
+     * reaches DELIVERED.
+     */
+    @Column(name = "customer_delivery_content", columnDefinition = "TEXT")
+    private String customerDeliveryContent;
+
     @Column(name = "manual_stock_reserved", nullable = false)
     private int manualStockReserved = 0;
 

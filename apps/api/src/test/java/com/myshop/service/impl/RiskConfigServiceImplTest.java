@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.myshop.entity.Order;
 import com.myshop.entity.SiteConfig;
+import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserRepository;
@@ -37,13 +38,16 @@ class RiskConfigServiceImplTest {
     private OrderRepository orderRepository;
 
     @Mock
+    private OrderItemRepository orderItemRepository;
+
+    @Mock
     private UserRepository userRepository;
 
     private RiskConfigServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new RiskConfigServiceImpl(siteConfigRepository, orderRepository, userRepository);
+        service = new RiskConfigServiceImpl(siteConfigRepository, orderRepository, orderItemRepository, userRepository);
     }
 
     @Test

@@ -2,9 +2,11 @@ package com.myshop.service.impl;
 
 import com.myshop.common.PageResult;
 import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
 import com.myshop.entity.SiteConfig;
 import com.myshop.entity.User;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.RiskConfigService;
@@ -28,6 +30,7 @@ public class RiskConfigServiceImpl implements RiskConfigService {
 
     private final SiteConfigRepository siteConfigRepository;
     private final OrderRepository orderRepository;
+    private final OrderItemRepository orderItemRepository;
     private final UserRepository userRepository;
 
     private static final List<String> RISK_KEYS = List.of(
@@ -90,6 +93,11 @@ public class RiskConfigServiceImpl implements RiskConfigService {
                 ? Map.of()
                 : userRepository.findAllById(userIds).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
+        List<UUID> orderIds = orderPage.getContent().stream().map(Order::getId).toList();
+        Map<UUID, List<OrderItem>> itemsByOrderId = orderIds.isEmpty()
+                ? Map.of()
+                : orderItemRepository.findByOrderIdIn(orderIds).stream()
+                .collect(Collectors.groupingBy(OrderItem::getOrderId));
         var list = orderPage.getContent().stream().map(o -> {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("id", o.getId());
@@ -106,6 +114,23 @@ public class RiskConfigServiceImpl implements RiskConfigService {
             map.put("username", user == null ? null : user.getUsername());
             map.put("user_no", user == null ? null : user.getUserNo());
             map.put("is_risk_flagged", o.isRiskFlagged());
+            map.put("items", itemsByOrderId.getOrDefault(o.getId(), List.of()).stream().map(item -> {
+                Map<String, Object> itemMap = new LinkedHashMap<>();
+                itemMap.put("id", item.getId());
+                itemMap.put("product_id", item.getProductId());
+                itemMap.put("product_no", item.getProductNo());
+                itemMap.put("product_title", item.getProductTitle());
+                itemMap.put("spec_name", item.getSpecName());
+                itemMap.put("quantity", item.getQuantity());
+                itemMap.put("unit_price", item.getUnitPrice());
+                itemMap.put("subtotal", item.getSubtotal());
+                itemMap.put("delivery_type", item.getDeliveryType());
+                itemMap.put("customer_inputs", item.getCustomerInputs() == null ? List.of() : item.getCustomerInputs());
+                itemMap.put("stock_mode", item.getStockMode());
+                itemMap.put("fulfillment_status", item.getFulfillmentStatus());
+                itemMap.put("delivered_at", item.getDeliveredAt());
+                return itemMap;
+            }).toList());
             return map;
         }).toList();
         return PageResult.of(orderPage, list);

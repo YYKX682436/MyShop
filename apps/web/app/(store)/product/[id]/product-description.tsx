@@ -1,7 +1,7 @@
 "use client"
 
-import ReactMarkdown from "react-markdown"
 import { useLocale } from "@/lib/context"
+import { MarkdownContent } from "@/components/shared/markdown-content"
 import type { ProductDetail } from "@/types"
 
 export function ProductDescription({ product }: { product: ProductDetail }) {
@@ -19,9 +19,7 @@ export function ProductDescription({ product }: { product: ProductDetail }) {
       </div>
 
       {product.detail_md ? (
-        <div className="min-w-0 max-w-full overflow-hidden break-words prose prose-sm text-muted-foreground dark:prose-invert [&_img]:my-3 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-card">
-          <ReactMarkdown>{product.detail_md}</ReactMarkdown>
-        </div>
+        <MarkdownContent value={product.detail_md} />
       ) : (
         <p className="text-sm text-muted-foreground">{product.description}</p>
       )}

@@ -13,9 +13,11 @@ interface MarkdownEditorProps {
   value: string
   onChange: (value: string) => void
   uploadImage: (file: File) => Promise<string>
+  maxLength?: number
+  id?: string
 }
 
-export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, uploadImage }: MarkdownEditorProps) {
+export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, uploadImage, maxLength, id }: MarkdownEditorProps) {
   const { t } = useLocale()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -156,6 +158,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
         >
           <textarea
             ref={textareaRef}
+            id={id}
             className="block min-h-52 w-full resize-y rounded-card border-0 bg-transparent px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             placeholder={t("admin.markdownPlaceholder")}
             value={value}
@@ -169,6 +172,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
             onSelect={(event) => rememberSelection(event.currentTarget)}
             onKeyUp={(event) => rememberSelection(event.currentTarget)}
             onKeyDown={handleEditorKeyDown}
+            maxLength={maxLength}
             aria-label={t("admin.markdownEditor")}
           />
           {isDragActive && (

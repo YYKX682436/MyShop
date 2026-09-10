@@ -41,6 +41,8 @@
   AuthResult,
   AdministratorItem,
   AdministratorOperationLog,
+  AdminFulfillmentResult,
+  AdminManualFulfillmentRequest,
 } from "@/types"
 import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
 import { buildAdminOrderSearchBody } from "@/lib/admin-order-search"
@@ -539,9 +541,10 @@ export const adminOrderApi = {
       method: "POST",
       body: JSON.stringify({ reason, confirmed: true }),
     }),
-  completeManualItem: (orderId: string, orderItemId: string) =>
-    request<{ order_id: string; status: string }>(`/admin/orders/${orderId}/items/${orderItemId}/complete-manual`, {
+  fulfill: (orderId: string, data: AdminManualFulfillmentRequest) =>
+    request<AdminFulfillmentResult>(`/admin/orders/${orderId}/fulfill`, {
       method: "POST",
+      body: JSON.stringify(data),
     }),
 }
 
