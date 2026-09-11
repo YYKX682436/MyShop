@@ -144,7 +144,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
                 "订单号=" + order.getOrderNo()
                         + "，退款金额=" + refundAmount.toPlainString()
                         + "，退款去向=" + REFUND_DESTINATION
-                        + "，原因长度=" + normalizedReason.length());
+                        + "，原因=" + normalizedReason);
 
         return new AdminOrderRefundResponse(
                 order.getId(), order.getOrderNo(), order.getStatus(), refundAmount,

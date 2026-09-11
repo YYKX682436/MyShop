@@ -113,8 +113,7 @@ class OrderRefundServiceImplTest {
         org.mockito.ArgumentCaptor<String> auditDetail = org.mockito.ArgumentCaptor.forClass(String.class);
         verify(operationLogService).logCurrentRequest(
                 eq("order.refund"), eq("ORDER"), eq(orderId.toString()), auditDetail.capture());
-        assertTrue(auditDetail.getValue().contains("原因长度=6"));
-        assertTrue(!auditDetail.getValue().contains("客户申请退款"));
+        assertTrue(auditDetail.getValue().contains("原因=客户申请退款"));
         var locks = inOrder(orderRepository, userRepository, paymentAttemptRepository);
         locks.verify(orderRepository).findByIdForUpdate(orderId);
         locks.verify(userRepository).findByIdForUpdate(userId);

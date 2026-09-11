@@ -138,7 +138,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         if (!confirmed) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "必须明确确认手动标记已支付");
         }
-        if (reason == null || reason.trim().length() < 3 || reason.trim().length() > 500) {
+        String normalizedReason = reason == null ? null : reason.trim();
+        if (normalizedReason == null || normalizedReason.length() < 3 || normalizedReason.length() > 500) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "请填写 3 至 500 个字符的操作原因");
         }
         Order order = orderRepository.findByIdForUpdate(id)
@@ -190,7 +191,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         }
         operationLogService.logCurrentRequest(
                 "order.mark_paid", "ORDER", order.getId().toString(),
-                "订单号=" + order.getOrderNo() + "，人工确认支付，原因长度=" + reason.trim().length());
+                "订单号=" + order.getOrderNo() + "，人工确认支付，原因=" + normalizedReason);
     }
 
     @Override

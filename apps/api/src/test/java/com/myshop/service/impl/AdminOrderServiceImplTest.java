@@ -264,7 +264,7 @@ class AdminOrderServiceImplTest {
             return true;
         });
 
-        fullService().markPaid(orderId, "线下订单凭证已核验", true);
+        fullService().markPaid(orderId, "  线下订单凭证已核验  ", true);
 
         assertEquals(OrderStatus.PAID, order.getStatus());
         assertEquals(PaymentStatus.CLOSED, oldAttempt.getStatus());
@@ -275,8 +275,7 @@ class AdminOrderServiceImplTest {
         org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
         verify(operationLogService).logCurrentRequest(
                 eq("order.mark_paid"), eq("ORDER"), eq(orderId.toString()), detail.capture());
-        assertTrue(detail.getValue().contains("原因长度=9"));
-        assertTrue(!detail.getValue().contains("线下订单凭证已核验"));
+        assertTrue(detail.getValue().contains("原因=线下订单凭证已核验"));
     }
 
     @Test
