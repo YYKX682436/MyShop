@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { House, ReceiptText, UserRound, type LucideIcon } from "lucide-react"
 import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
@@ -10,6 +10,7 @@ import {
   getStorefrontDockAction,
   isCurrentStorefrontDockAction,
   resolveStorefrontDockNavigation,
+  tryStartStorefrontDockNavigation,
   type StorefrontDockNavigationAttempt,
 } from "@/lib/storefront-dock"
 import { getStorefrontActiveTab, isStorefrontDockVisible, type StorefrontNavKey } from "@/lib/storefront-routes"
@@ -35,7 +36,6 @@ const DOCK_ITEM_DEFINITIONS: readonly StoreDockItemDefinition[] = [
 ]
 
 const SNAP_FALLBACK_MS = 480
-const NAVIGATION_VERIFY_MS = 1200
 
 interface StoreDockItem {
   key: DockKey
@@ -82,6 +82,7 @@ export function StoreBottomNav() {
   const pathname = usePathname()
   const router = useRouter()
   const reducedMotion = useReducedMotion() ?? false
+  const [isNavigationPending, startNavigationTransition] = useTransition()
   const { t } = useLocale()
   const isVisible = isStorefrontDockVisible(pathname)
   const activeKey = isVisible ? getStorefrontActiveTab(pathname) : null
@@ -97,7 +98,7 @@ export function StoreBottomNav() {
   const pathnameRef = useRef(pathname)
   const snapAnimationRef = useRef<ReturnType<typeof animate> | null>(null)
   const snapActionTimerRef = useRef<number | null>(null)
-  const navigationVerifyTimerRef = useRef<number | null>(null)
+  const navigationTransitionRef = useRef<{ actionId: number; observedPending: boolean } | null>(null)
   const indicatorX = useMotionValue(0)
   const [metrics, setMetrics] = useState<DockMetrics | null>(null)
   const [dragPreviewKey, setDragPreviewKey] = useState<DockKey | null>(null)
@@ -118,13 +119,6 @@ export function StoreBottomNav() {
     if (snapActionTimerRef.current !== null) {
       window.clearTimeout(snapActionTimerRef.current)
       snapActionTimerRef.current = null
-    }
-  }, [])
-
-  const clearNavigationVerifyTimer = useCallback(() => {
-    if (navigationVerifyTimerRef.current !== null) {
-      window.clearTimeout(navigationVerifyTimerRef.current)
-      navigationVerifyTimerRef.current = null
     }
   }, [])
 
@@ -242,14 +236,14 @@ export function StoreBottomNav() {
 
     actionGenerationRef.current += 1
     pendingActionRef.current = null
-    clearNavigationVerifyTimer()
+    navigationTransitionRef.current = null
     cancelSnap()
     draggingRef.current = false
     dragMovedRef.current = false
     suppressTapRef.current = false
     setDragPreviewKey(null)
     return true
-  }, [cancelSnap, clearNavigationVerifyTimer])
+  }, [cancelSnap])
 
   const finalizePendingAction = useCallback((expectedActionId: number): boolean => {
     const pending = pendingActionRef.current
@@ -263,13 +257,13 @@ export function StoreBottomNav() {
 
     actionGenerationRef.current += 1
     pendingActionRef.current = null
-    clearNavigationVerifyTimer()
+    navigationTransitionRef.current = null
     cancelSnap()
     draggingRef.current = false
     dragMovedRef.current = false
     setDragPreviewKey(null)
     return true
-  }, [cancelSnap, clearNavigationVerifyTimer])
+  }, [cancelSnap])
 
   const abortPendingAction = useCallback((expectedActionId: number) => {
     if (!pendingActionRef.current || pendingActionRef.current.id !== expectedActionId) return
@@ -302,40 +296,72 @@ export function StoreBottomNav() {
 
     pending.phase = "navigating"
     cancelSnap()
+    navigationTransitionRef.current = { actionId: expectedActionId, observedPending: false }
 
-    try {
-      router.push(pending.targetPathname)
-    } catch {
-      abortPendingAction(expectedActionId)
+    const didStartNavigation = tryStartStorefrontDockNavigation(
+      () => {
+        startNavigationTransition(() => {
+          router.push(pending.targetPathname)
+        })
+      },
+      () => {
+        navigationTransitionRef.current = null
+        abortPendingAction(expectedActionId)
+      },
+    )
+    if (!didStartNavigation) return
+  }, [abortPendingAction, cancelSnap, finalizePendingAction, router, startNavigationTransition])
+
+  useEffect(() => {
+    const pending = pendingActionRef.current
+    const transition = navigationTransitionRef.current
+    if (
+      !pending ||
+      pending.phase !== "navigating" ||
+      !transition ||
+      transition.actionId !== pending.id
+    ) {
       return
     }
 
-    navigationVerifyTimerRef.current = window.setTimeout(() => {
-      navigationVerifyTimerRef.current = null
+    if (isNavigationPending) {
+      transition.observedPending = true
+      return
+    }
+
+    // React can render the action's visual state before the transition has
+    // exposed its first pending frame. Do not infer failure from that initial
+    // false value. A settled transition is meaningful only after pending was
+    // observed at least once.
+    if (!transition.observedPending) return
+
+    const actionId = pending.id
+    queueMicrotask(() => {
       const current = pendingActionRef.current
       if (
         !current ||
-        current.id !== expectedActionId ||
-        !isCurrentStorefrontDockAction(expectedActionId, actionGenerationRef.current) ||
+        current.id !== actionId ||
+        !isCurrentStorefrontDockAction(actionId, actionGenerationRef.current) ||
         current.phase !== "navigating"
       ) {
         return
       }
 
-      const finalResolution = resolveStorefrontDockNavigation(current, pathnameRef.current)
-      if (finalResolution === "succeeded") {
-        finalizePendingAction(expectedActionId)
-      } else {
-        // Both an unchanged source pathname (navigation failure) and another
-        // pathname (navigation interruption) invalidate the stale action.
-        abortPendingAction(expectedActionId)
+      const resolution = resolveStorefrontDockNavigation(current, pathnameRef.current, false)
+      if (resolution === "succeeded") {
+        finalizePendingAction(actionId)
+      } else if (resolution === "interrupted" || resolution === "failed") {
+        // A transition that settled without leaving the source route is a
+        // genuine failure. Unlike the removed watchdog, this never fires
+        // merely because a fixed amount of wall-clock time elapsed.
+        abortPendingAction(actionId)
       }
-    }, NAVIGATION_VERIFY_MS)
-  }, [abortPendingAction, cancelSnap, finalizePendingAction, router])
+    })
+  }, [abortPendingAction, finalizePendingAction, isNavigationPending, pathname])
 
   const beginDockAction = useCallback((key: DockKey): number | null => {
     cancelSnap()
-    clearNavigationVerifyTimer()
+    navigationTransitionRef.current = null
     actionGenerationRef.current += 1
     const actionId = actionGenerationRef.current
     pendingActionRef.current = null
@@ -357,7 +383,7 @@ export function StoreBottomNav() {
     }
     setDragPreviewKey(key)
     return actionId
-  }, [cancelSnap, clearNavigationVerifyTimer])
+  }, [cancelSnap])
 
   const snapAndComplete = useCallback((key: DockKey, actionId: number) => {
     if (!isCurrentStorefrontDockAction(actionId, actionGenerationRef.current)) return
@@ -506,9 +532,9 @@ export function StoreBottomNav() {
   useEffect(() => () => {
     actionGenerationRef.current += 1
     pendingActionRef.current = null
-    clearNavigationVerifyTimer()
+    navigationTransitionRef.current = null
     cancelSnap()
-  }, [cancelSnap, clearNavigationVerifyTimer])
+  }, [cancelSnap])
 
   const visualActiveKey = dragPreviewKey ?? activeKey
 

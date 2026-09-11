@@ -4,6 +4,7 @@ import {
   getStorefrontDockAction,
   isCurrentStorefrontDockAction,
   resolveStorefrontDockNavigation,
+  tryStartStorefrontDockNavigation,
 } from "./storefront-dock.ts"
 
 test("keeps the Dock action model focused on configured primary routes", () => {
@@ -44,8 +45,60 @@ test("resolves navigation against the real pathname", () => {
   }
 
   assert.equal(resolveStorefrontDockNavigation(attempt, "/my/orders/"), "succeeded")
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/"), "pending")
+  assert.equal(resolveStorefrontDockNavigation(attempt, "/", true), "pending")
   assert.equal(resolveStorefrontDockNavigation(attempt, "/my"), "interrupted")
+})
+
+test("does not fail a slow navigation while its transition is pending", () => {
+  const attempt = {
+    fromPathname: "/",
+    targetPathname: "/my/orders",
+  }
+
+  assert.equal(resolveStorefrontDockNavigation(attempt, "/", true), "pending")
+  assert.equal(resolveStorefrontDockNavigation(attempt, "/", true), "pending")
+  assert.equal(resolveStorefrontDockNavigation(attempt, "/my/orders", true), "succeeded")
+})
+
+test("a settled transition at the source route is a navigation failure", () => {
+  const attempt = {
+    fromPathname: "/",
+    targetPathname: "/my/orders",
+  }
+
+  // This is the recovery branch used when a transition settles without a
+  // target pathname, including a synchronous router.push exception.
+  assert.equal(resolveStorefrontDockNavigation(attempt, "/", false), "failed")
+})
+
+test("a synchronous navigation error immediately invokes recovery", () => {
+  let recoveryCalls = 0
+
+  const started = tryStartStorefrontDockNavigation(
+    () => {
+      throw new Error("router.push failed synchronously")
+    },
+    () => {
+      recoveryCalls += 1
+    },
+  )
+
+  assert.equal(started, false)
+  assert.equal(recoveryCalls, 1)
+})
+
+test("a slow navigation never needs a target-source-target rollback", () => {
+  const attempt = {
+    fromPathname: "/",
+    targetPathname: "/my/orders",
+  }
+  const observations = [
+    resolveStorefrontDockNavigation(attempt, "/", true),
+    resolveStorefrontDockNavigation(attempt, "/my/orders", true),
+  ]
+
+  assert.deepEqual(observations, ["pending", "succeeded"])
+  assert.equal(observations.includes("failed"), false)
 })
 
 test("a failed navigation stays tied to the real source route for recovery", () => {
@@ -54,6 +107,6 @@ test("a failed navigation stays tied to the real source route for recovery", () 
     targetPathname: "/my",
   }
 
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/my/orders/"), "pending")
+  assert.equal(resolveStorefrontDockNavigation(attempt, "/my/orders/", true), "pending")
   assert.equal(resolveStorefrontDockNavigation(attempt, "/my"), "succeeded")
 })
