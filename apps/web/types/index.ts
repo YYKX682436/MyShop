@@ -67,6 +67,8 @@ export interface Category {
   id: string
   name: string
   sort_order: number
+  parent_id: string | null
+  children: Category[]
 }
 
 export interface ProductSpec {
@@ -106,6 +108,11 @@ export interface ProductCard {
   price: number
   retail_price: number
   category_id: string
+  category_name?: string | null
+  primary_category_id?: string | null
+  primary_category_name?: string | null
+  secondary_category_id?: string | null
+  secondary_category_name?: string | null
   stock_available: number | null
   unlimited?: boolean
   has_specs: boolean
@@ -198,6 +205,10 @@ export interface AdminProductDetail {
   retail_price: number
   category_id: string
   category_name: string | null
+  primary_category_id: string | null
+  primary_category_name: string | null
+  secondary_category_id: string | null
+  secondary_category_name: string | null
   stock_available: number | null
   unlimited: boolean
   has_specs: boolean

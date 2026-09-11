@@ -17,6 +17,9 @@ public class ProductCategory extends BaseEntity {
     @Column(nullable = false)
     private String name;
 
+    @Column(name = "parent_id")
+    private java.util.UUID parentId;
+
     private int sortOrder = 0;
 
     private int isDeleted = 0;

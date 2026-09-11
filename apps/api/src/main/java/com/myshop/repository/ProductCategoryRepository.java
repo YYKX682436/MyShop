@@ -8,9 +8,15 @@ import java.util.UUID;
 
 public interface ProductCategoryRepository extends JpaRepository<ProductCategory, UUID> {
 
-    List<ProductCategory> findByIsDeletedOrderBySortOrderAsc(int isDeleted);
+    List<ProductCategory> findByIsDeletedOrderBySortOrderAscIdAsc(int isDeleted);
 
-    boolean existsByNameAndIsDeleted(String name, int isDeleted);
+    boolean existsByNameAndParentIdIsNullAndIsDeleted(String name, int isDeleted);
 
-    boolean existsByNameAndIdNotAndIsDeleted(String name, UUID id, int isDeleted);
+    boolean existsByNameAndParentIdAndIsDeleted(String name, UUID parentId, int isDeleted);
+
+    boolean existsByNameAndParentIdIsNullAndIsDeletedAndIdNot(String name, int isDeleted, UUID id);
+
+    boolean existsByNameAndParentIdAndIsDeletedAndIdNot(String name, UUID parentId, int isDeleted, UUID id);
+
+    long countByParentIdAndIsDeleted(UUID parentId, int isDeleted);
 }

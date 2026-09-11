@@ -1,6 +1,7 @@
 package com.myshop.repository;
 
 import com.myshop.entity.Product;
+import com.myshop.entity.ProductCategory;
 import com.myshop.service.ProductListSort;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +17,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 @Transactional
@@ -23,6 +26,9 @@ class ProductRepositoryIntegrationTest {
 
     @Autowired
     private ProductRepository productRepository;
+
+    @Autowired
+    private ProductCategoryRepository categoryRepository;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -74,6 +80,61 @@ class ProductRepositoryIntegrationTest {
                 publicResult.getContent().stream().map(Product::getProductNo).toList());
     }
 
+    @Test
+    void categoryQueriesKeepRootAndChildSemanticsThroughKeywordStatusAndPagination() {
+        ProductCategory rootA = category("Root A", null, 1);
+        categoryRepository.saveAndFlush(rootA);
+        ProductCategory childA1 = category("Child A1", rootA.getId(), 1);
+        ProductCategory childA2 = category("Child A2", rootA.getId(), 2);
+        ProductCategory rootB = category("Root B", null, 2);
+        categoryRepository.saveAndFlush(rootB);
+        ProductCategory childB1 = category("Child B1", rootB.getId(), 1);
+        categoryRepository.saveAllAndFlush(List.of(childA1, childA2, childB1));
+
+        Product direct = product(100L, "Promo direct");
+        direct.setCategoryId(rootA.getId());
+        Product firstChild = product(101L, "Promo child one");
+        firstChild.setCategoryId(childA1.getId());
+        Product secondChild = product(102L, "Promo child two");
+        secondChild.setCategoryId(childA2.getId());
+        Product otherRoot = product(103L, "Promo other root");
+        otherRoot.setCategoryId(rootB.getId());
+        Product otherChild = product(104L, "Promo other child");
+        otherChild.setCategoryId(childB1.getId());
+        Product disabled = product(105L, "Promo disabled");
+        disabled.setCategoryId(childA1.getId());
+        disabled.setEnabled(false);
+        productRepository.saveAllAndFlush(List.of(direct, firstChild, secondChild, otherRoot, otherChild, disabled));
+
+        Page<Product> rootPage = productRepository.findAdminProducts(rootA.getId(), true,
+                PageRequest.of(0, 20, ProductListSort.resolve(null, null)));
+        assertEquals(3, rootPage.getTotalElements());
+        assertIterableEquals(List.of(100L, 101L, 102L),
+                rootPage.getContent().stream().map(Product::getProductNo).sorted().toList());
+
+        Page<Product> childPage = productRepository.findAdminProducts(childA1.getId(), true,
+                PageRequest.of(0, 20, ProductListSort.resolve(null, null)));
+        assertEquals(1, childPage.getTotalElements());
+        assertEquals(101L, childPage.getContent().get(0).getProductNo());
+
+        Page<Product> keywordPage = productRepository.findAdminProductsByKeyword(
+                rootA.getId(), "%promo%", null, true,
+                PageRequest.of(1, 1, ProductListSort.resolve("product_no", "desc")));
+        assertEquals(3, keywordPage.getTotalElements());
+        assertEquals(101L, keywordPage.getContent().get(0).getProductNo());
+
+        Page<Product> publicRootPage = productRepository.findPublicProducts(rootA.getId(),
+                PageRequest.of(0, 20, ProductListSort.resolve(null, null)));
+        assertEquals(3, publicRootPage.getTotalElements());
+        assertTrue(publicRootPage.getContent().stream()
+                .noneMatch(product -> product.getProductNo().equals(105L)));
+
+        Page<Product> publicChildPage = productRepository.findPublicProducts(childA1.getId(),
+                PageRequest.of(0, 20, ProductListSort.resolve(null, null)));
+        assertEquals(1, publicChildPage.getTotalElements());
+        assertEquals(101L, publicChildPage.getContent().get(0).getProductNo());
+    }
+
     private void insertProduct(long productNo, int sortWeight, LocalDateTime createdAt, String id) {
         jdbcTemplate.update("""
                 INSERT INTO products(id, created_at, updated_at, title, product_no, retail_price, cost_price,
@@ -96,5 +157,14 @@ class ProductRepositoryIntegrationTest {
         product.setIsDeleted(0);
         product.setEnabled(true);
         return product;
+    }
+
+    private ProductCategory category(String name, UUID parentId, int sortOrder) {
+        ProductCategory category = new ProductCategory();
+        category.setName(name);
+        category.setParentId(parentId);
+        category.setSortOrder(sortOrder);
+        category.setIsDeleted(0);
+        return category;
     }
 }

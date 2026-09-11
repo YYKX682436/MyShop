@@ -481,9 +481,9 @@ export const adminProductApi = {
 export const adminCategoryApi = {
   getList: () =>
     request<Category[]>("/admin/categories"),
-  create: (data: { name: string; sort_order?: number }) =>
+  create: (data: { name: string; sort_order?: number; parent_id?: string | null }) =>
     request<null>("/admin/categories", { method: "POST", body: JSON.stringify(data) }),
-  update: (id: string, data: { name?: string; sort_order?: number }) =>
+  update: (id: string, data: { name?: string; sort_order?: number; parent_id?: string | null }) =>
     request<null>(`/admin/categories/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   delete: (id: string) =>
     request<null>(`/admin/categories/${id}`, { method: "DELETE" }),

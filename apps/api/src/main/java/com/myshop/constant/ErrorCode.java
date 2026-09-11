@@ -53,6 +53,8 @@ public final class ErrorCode {
     // ── Admin 70001~70099 ──
     public static final int CATEGORY_NAME_EXISTS = 70001;
     public static final int CATEGORY_HAS_PRODUCTS = 70002;
+    public static final int CATEGORY_HAS_CHILDREN = 70013;
+    public static final int CATEGORY_PARENT_INVALID = 70014;
     public static final int CARD_KEY_FORMAT_ERROR = 70003;
     public static final int CARD_KEY_DUPLICATE = 70004;
     public static final int PAYMENT_CONFIG_INCOMPLETE = 70005;

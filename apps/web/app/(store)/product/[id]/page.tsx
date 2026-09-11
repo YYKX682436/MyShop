@@ -48,16 +48,16 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
 
   const inStock = product.unlimited || product.specs?.some(spec => spec.unlimited || (spec.stock_available ?? 0) > 0) || (product.stock_available ?? 0) > 0
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"
+  const categoryPath = [product.primary_category_name, product.secondary_category_name]
+    .filter((name): name is string => Boolean(name))
 
   const breadcrumbLd = {
     "@context": "https://schema.org",
-    "@type": "BreadcrumbList",
-    itemListElement: [
-      { "@type": "ListItem", position: 1, name: "首页", item: baseUrl },
-      ...(product.category_name
-        ? [{ "@type": "ListItem", position: 2, name: product.category_name }]
-        : []),
-      { "@type": "ListItem", position: product.category_name ? 3 : 2, name: product.title },
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "首页", item: baseUrl },
+      ...categoryPath.map((name, index) => ({ "@type": "ListItem", position: index + 2, name })),
+      { "@type": "ListItem", position: categoryPath.length + 2, name: product.title },
     ],
   }
 

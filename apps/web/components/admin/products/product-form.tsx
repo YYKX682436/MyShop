@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
+import { getCategoryChildren, getCategorySelection, getRootCategories } from "@/lib/categories"
 import {
   buildPricingPreviewDraft,
   getCardKeyImportAvailability,
@@ -222,6 +223,9 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   const onDirtyChangeRef = useRef(onDirtyChange)
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({})
   const previousProductIdRef = useRef<string | null | undefined>(undefined)
+  const categorySelection = getCategorySelection(categories, draft.category_id)
+  const rootCategories = getRootCategories(categories)
+  const secondaryCategories = getCategoryChildren(categories, categorySelection.primaryId)
 
   const setDirty = useCallback((nextDirty: boolean) => {
     if (dirtyRef.current === nextDirty) return
@@ -655,13 +659,22 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                   {t("admin.productBrief")}
                   <Input value={draft.description} onChange={(event) => setField("description", event.target.value)} placeholder={t("admin.productBriefPlaceholder")} />
                 </label>
-                <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
-                  {t("admin.categoryReq")}
-                  <select ref={registerField("category_id")} className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal" value={draft.category_id} onChange={(event) => setField("category_id", event.target.value)}>
-                    <option value="">{t("admin.categoryPlaceholder")}</option>
-                    {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-                  </select>
-                </label>
+                <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:col-span-2">
+                  <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
+                    {t("admin.categoryRootLevel")} *
+                    <select ref={registerField("category_id")} className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal" value={categorySelection.primaryId} onChange={(event) => setField("category_id", event.target.value)}>
+                      <option value="">{t("admin.categoryPlaceholder")}</option>
+                      {rootCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
+                    {t("admin.categoryChildLevel")}
+                    <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.secondaryId} onChange={(event) => setField("category_id", event.target.value || categorySelection.primaryId)} disabled={!categorySelection.primaryId || secondaryCategories.length === 0} aria-label={t("admin.categoryChildLevel")}>
+                      <option value="">{secondaryCategories.length === 0 ? t("admin.categoryNoChildren") : t("admin.categoryRootOption")}</option>
+                      {secondaryCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                    </select>
+                  </label>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
                     {t("admin.initialSales")}

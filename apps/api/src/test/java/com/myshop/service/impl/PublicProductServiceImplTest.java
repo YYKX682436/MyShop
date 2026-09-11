@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.PricingSource;
 import com.myshop.entity.Product;
+import com.myshop.entity.ProductCategory;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.UserLevel;
 import com.myshop.model.pricing.PriceResolution;
@@ -32,7 +33,6 @@ import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.ArgumentMatchers.anyIterable;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -68,7 +68,7 @@ class PublicProductServiceImplTest {
         when(pricingService.resolveBatch(anyCollection(), anyMap(), isNull())).thenReturn(prices);
         when(inventoryBatchService.load(anyCollection(), anyMap())).thenReturn(Map.of());
         when(orderItemRepository.sumQuantityByProductIds(any())).thenReturn(List.of());
-        when(categoryRepository.findAllById(anyIterable())).thenReturn(List.of());
+        when(categoryRepository.findByIsDeletedOrderBySortOrderAscIdAsc(0)).thenReturn(List.of());
 
         var result = new PublicProductServiceImpl(productRepository, productSpecRepository,
                 categoryRepository, orderItemRepository, inventoryBatchService, pricingService)
@@ -88,7 +88,7 @@ class PublicProductServiceImplTest {
         verify(pricingService, times(1)).resolveBatch(anyCollection(), anyMap(), isNull());
         verify(inventoryBatchService, times(1)).load(anyCollection(), anyMap());
         verify(orderItemRepository, times(1)).sumQuantityByProductIds(any());
-        verify(categoryRepository, times(1)).findAllById(anyIterable());
+        verify(categoryRepository, times(1)).findByIsDeletedOrderBySortOrderAscIdAsc(0);
     }
 
     @Test
@@ -115,7 +115,7 @@ class PublicProductServiceImplTest {
                         false, null, null, null));
         when(inventoryBatchService.load(anyCollection(), anyMap())).thenReturn(Map.of());
         when(orderItemRepository.sumQuantityByProductIds(any())).thenReturn(List.of());
-        when(categoryRepository.findAllById(anyIterable())).thenReturn(List.of());
+        when(categoryRepository.findByIsDeletedOrderBySortOrderAscIdAsc(0)).thenReturn(List.of());
 
         PublicProductResponse response = new PublicProductServiceImpl(productRepository, productSpecRepository,
                 categoryRepository, orderItemRepository, inventoryBatchService, pricingService)
@@ -129,6 +129,34 @@ class PublicProductServiceImplTest {
                 response.specs().stream().map(com.myshop.model.response.PublicProductSpecResponse::id).toList());
         verify(productSpecRepository).findByProductIdInAndIsDeletedAndVisibleOrderByProductIdAscSortOrderAsc(
                 any(), eq(0), eq(true));
+    }
+
+    @Test
+    void productResponseExposesDerivedPrimaryAndSecondaryCategoryPath() {
+        Product product = product(0);
+        ProductCategory root = category(UUID.randomUUID(), "Software", null);
+        ProductCategory child = category(UUID.randomUUID(), "AI tools", root.getId());
+        product.setCategoryId(child.getId());
+        when(productRepository.findById(product.getId())).thenReturn(java.util.Optional.of(product));
+        when(productSpecRepository.findByProductIdInAndIsDeletedAndVisibleOrderByProductIdAscSortOrderAsc(
+                any(), eq(0), eq(true))).thenReturn(List.of());
+        when(pricingService.resolvePublicLevel(null)).thenReturn(null);
+        when(pricingService.resolveBatch(anyCollection(), anyMap(), isNull())).thenReturn(Map.of(
+                new PriceTarget(product.getId(), null),
+                new PriceResolution(money("10.00"), money("5.00"), money("10.00"), PricingSource.RETAIL,
+                        false, null, null, null)));
+        when(inventoryBatchService.load(anyCollection(), anyMap())).thenReturn(Map.of());
+        when(orderItemRepository.sumQuantityByProductIds(any())).thenReturn(List.of());
+        when(categoryRepository.findByIsDeletedOrderBySortOrderAscIdAsc(0)).thenReturn(List.of(root, child));
+
+        PublicProductResponse response = new PublicProductServiceImpl(productRepository, productSpecRepository,
+                categoryRepository, orderItemRepository, inventoryBatchService, pricingService)
+                .getProduct(product.getId(), null);
+
+        assertEquals(root.getId(), response.primaryCategoryId());
+        assertEquals("Software", response.primaryCategoryName());
+        assertEquals(child.getId(), response.secondaryCategoryId());
+        assertEquals("AI tools", response.secondaryCategoryName());
     }
 
     private Product product(int index) {
@@ -154,6 +182,15 @@ class PublicProductServiceImplTest {
         spec.setVisible(true);
         spec.setIsDeleted(0);
         return spec;
+    }
+
+    private ProductCategory category(UUID id, String name, UUID parentId) {
+        ProductCategory category = new ProductCategory();
+        category.setId(id);
+        category.setName(name);
+        category.setParentId(parentId);
+        category.setIsDeleted(0);
+        return category;
     }
 
     private BigDecimal money(String value) {

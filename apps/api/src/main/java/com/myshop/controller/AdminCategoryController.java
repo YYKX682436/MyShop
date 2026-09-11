@@ -2,11 +2,11 @@ package com.myshop.controller;
 
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
+import com.myshop.model.request.CategoryUpsertRequest;
 import com.myshop.service.CategoryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -23,14 +23,14 @@ public class AdminCategoryController {
 
     @LogOperation(action = "category.create", targetType = "CATEGORY", detail = "'创建分类'")
     @PostMapping
-    public ApiResponse<Void> createCategory(@RequestBody Map<String, Object> request) {
+    public ApiResponse<Void> createCategory(@RequestBody CategoryUpsertRequest request) {
         categoryService.createCategory(request);
         return ApiResponse.success();
     }
 
     @LogOperation(action = "category.update", targetType = "CATEGORY", targetId = "#id", detail = "'修改分类'")
     @PutMapping("/{id}")
-    public ApiResponse<Void> updateCategory(@PathVariable UUID id, @RequestBody Map<String, Object> request) {
+    public ApiResponse<Void> updateCategory(@PathVariable UUID id, @RequestBody CategoryUpsertRequest request) {
         categoryService.updateCategory(id, request);
         return ApiResponse.success();
     }

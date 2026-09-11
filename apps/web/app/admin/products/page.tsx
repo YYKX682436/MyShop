@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useLocale } from "@/lib/context"
+import { getProductCategoryPathLabel, matchesCategory } from "@/lib/categories"
 import { cn, stripInvisible } from "@/lib/utils"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
@@ -96,7 +97,7 @@ export default function AdminProductsPage() {
   useEffect(() => { void loadProducts() }, [loadProducts])
 
   const getCategoryName = (product: AdminProductDetail) =>
-    categories.find((category) => category.id === product.category_id)?.name || product.category_name || t("admin.systemNoData")
+    getProductCategoryPathLabel(product, categories) || t("admin.systemNoData")
   const isUnlimited = (product: AdminProductDetail) => product.stock_mode === "UNLIMITED"
   const isSaving = (product: AdminProductDetail, field: QuickEditField) => savingFields[`${product.id}:${field}`] === true
 
@@ -105,7 +106,7 @@ export default function AdminProductsPage() {
     const matchesSearch = !normalizedSearch
       || updated.title.toLocaleLowerCase().includes(normalizedSearch)
       || (/^\d+$/.test(debouncedSearch) && String(updated.product_no) === debouncedSearch)
-    const matchesFilters = (!categoryFilter || updated.category_id === categoryFilter)
+    const matchesFilters = (!categoryFilter || matchesCategory(updated.category_id, categoryFilter, categories))
       && (!statusFilter || (statusFilter === "enabled" ? updated.is_enabled !== false : updated.is_enabled === false))
       && matchesSearch
     const wasVisible = products.some((product) => product.id === updated.id)
@@ -113,7 +114,7 @@ export default function AdminProductsPage() {
       ? current.map((product) => product.id === updated.id ? updated : product)
       : current.filter((product) => product.id !== updated.id))
     if (wasVisible && !matchesFilters) setTotal((current) => Math.max(0, current - 1))
-  }, [categoryFilter, debouncedSearch, products, statusFilter])
+  }, [categories, categoryFilter, debouncedSearch, products, statusFilter])
 
   const patchProduct = useCallback((id: string, patch: Partial<AdminProductDetail>) => {
     setProducts((current) => current.map((product) => product.id === id ? { ...product, ...patch } : product))
@@ -209,7 +210,14 @@ export default function AdminProductsPage() {
             disabled={categoryError}
           >
             <option value="">{t("admin.allCategoriesFilter")}</option>
-            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            {categories.map((category) => (
+              <optgroup key={category.id} label={category.name}>
+                <option value={category.id}>{t("admin.categoryOnly").replace("{name}", category.name)}</option>
+                {category.children.map((child) => (
+                  <option key={child.id} value={child.id}>↳ {child.name}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
           <select
             className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"

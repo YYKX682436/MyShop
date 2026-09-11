@@ -70,6 +70,12 @@ class AdminProductServiceImplTest {
     @BeforeEach
     void defaultProductNoSequence() {
         lenient().when(productRepository.nextProductNoValue()).thenReturn(1L);
+        lenient().when(categoryRepository.findById(any(UUID.class))).thenAnswer(invocation -> {
+            ProductCategory category = new ProductCategory();
+            category.setId(invocation.getArgument(0));
+            category.setName("Test category");
+            return Optional.of(category);
+        });
     }
 
     private AdminProductServiceImpl service() {
@@ -583,7 +589,7 @@ class AdminProductServiceImplTest {
         ProductCategory category = new ProductCategory();
         category.setId(product.getCategoryId());
         category.setName("Test category");
-        when(categoryRepository.findAllById(anyIterable())).thenReturn(List.of(category));
+        when(categoryRepository.findByIsDeletedOrderBySortOrderAscIdAsc(0)).thenReturn(List.of(category));
         when(orderItemRepository.sumQuantityByProductId(any())).thenReturn(0);
         if (!specs.isEmpty()) {
             when(cardKeyRepository.countByProductIdAndSpecIdExcludingStatus(any(), any(), eq(CardKeyStatus.INVALID)))
@@ -599,7 +605,7 @@ class AdminProductServiceImplTest {
         ProductCategory category = new ProductCategory();
         category.setId(product.getCategoryId());
         category.setName("Test category");
-        when(categoryRepository.findAllById(anyIterable())).thenReturn(List.of(category));
+        when(categoryRepository.findByIsDeletedOrderBySortOrderAscIdAsc(0)).thenReturn(List.of(category));
         when(orderItemRepository.sumQuantityByProductId(any())).thenReturn(0);
     }
 

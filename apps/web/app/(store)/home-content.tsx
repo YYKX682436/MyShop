@@ -9,6 +9,7 @@ import { motion } from "motion/react"
 import { useLocale, useSearch } from "@/lib/context"
 import { ProductCard } from "@/components/store/product-card"
 import { FadeIn } from "@/components/ui/motion"
+import { getRootCategories, matchesCategory } from "@/lib/categories"
 import { cn } from "@/lib/utils"
 import type { ProductCard as ProductCardType, Category } from "@/types"
 
@@ -24,13 +25,18 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
   const { t } = useLocale()
   const { searchQuery, sortBy, inStockOnly, priceMin, priceMax } = useSearch()
 
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [selectedRootCategory, setSelectedRootCategory] = useState<string | null>(null)
+  const [selectedChildCategory, setSelectedChildCategory] = useState<string | null>(null)
+  const rootCategories = getRootCategories(categories)
+  const selectedRoot = rootCategories.find((category) => category.id === selectedRootCategory) ?? null
+  const selectedChildren = selectedRoot?.children ?? []
 
   const filteredProducts = useMemo(() => {
     let result = [...products]
 
+    const selectedCategory = selectedChildCategory ?? selectedRootCategory
     if (selectedCategory) {
-      result = result.filter((p) => p.category_id === selectedCategory)
+      result = result.filter((p) => matchesCategory(p.category_id, selectedCategory, categories))
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
@@ -64,7 +70,20 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
     }
 
     return result
-  }, [products, selectedCategory, searchQuery, sortBy, inStockOnly, priceMin, priceMax])
+  }, [products, categories, selectedRootCategory, selectedChildCategory, searchQuery, sortBy, inStockOnly, priceMin, priceMax])
+
+  const selectRootCategory = (categoryId: string | null) => {
+    if (categoryId === selectedRootCategory) {
+      setSelectedRootCategory(null)
+    } else {
+      setSelectedRootCategory(categoryId)
+    }
+    setSelectedChildCategory(null)
+  }
+
+  const selectChildCategory = (categoryId: string | null) => {
+    setSelectedChildCategory(categoryId === selectedChildCategory ? null : categoryId)
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-8">
@@ -94,34 +113,67 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
 
       {/* Category controls */}
       {categories.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSelectedCategory(null)}
-            aria-pressed={selectedCategory === null}
-            className={cn(
-              "relative rounded-control px-3.5 py-2 text-sm font-semibold transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-              selectedCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
-            )}
-          >
-            {selectedCategory === null && <motion.span layoutId="active-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
-            <span className="relative z-10">{t("home.allCategories")}</span>
-          </button>
-          {categories.map((cat) => (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2" aria-label={t("admin.categoryRootLevel")}>
             <button
               type="button"
-              key={cat.id}
-              onClick={() => setSelectedCategory(cat.id === selectedCategory ? null : cat.id)}
-              aria-pressed={selectedCategory === cat.id}
+              onClick={() => selectRootCategory(null)}
+              aria-pressed={selectedRootCategory === null}
               className={cn(
                 "relative rounded-control px-3.5 py-2 text-sm font-semibold transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                selectedCategory === cat.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                selectedRootCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
               )}
             >
-              {selectedCategory === cat.id && <motion.span layoutId="active-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
-              <span className="relative z-10">{cat.name}</span>
+              {selectedRootCategory === null && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+              <span className="relative z-10">{t("home.allCategories")}</span>
             </button>
-          ))}
+            {rootCategories.map((category) => (
+              <button
+                type="button"
+                key={category.id}
+                onClick={() => selectRootCategory(category.id)}
+                aria-pressed={selectedRootCategory === category.id}
+                className={cn(
+                  "relative rounded-control px-3.5 py-2 text-sm font-semibold transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  selectedRootCategory === category.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                )}
+              >
+                {selectedRootCategory === category.id && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                <span className="relative z-10">{category.name}</span>
+              </button>
+            ))}
+          </div>
+          {selectedRoot && selectedChildren.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-l-2 border-primary/20 pl-3" aria-label={t("home.allSubcategories")}>
+              <button
+                type="button"
+                onClick={() => selectChildCategory(null)}
+                aria-pressed={selectedChildCategory === null}
+                className={cn(
+                  "relative rounded-control px-3 py-1.5 text-sm font-medium transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  selectedChildCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                )}
+              >
+                {selectedChildCategory === null && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                <span className="relative z-10">{t("home.allSubcategories")}</span>
+              </button>
+              {selectedChildren.map((child) => (
+                <button
+                  type="button"
+                  key={child.id}
+                  onClick={() => selectChildCategory(child.id)}
+                  aria-pressed={selectedChildCategory === child.id}
+                  className={cn(
+                    "relative rounded-control px-3 py-1.5 text-sm font-medium transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    selectedChildCategory === child.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                  )}
+                >
+                  {selectedChildCategory === child.id && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                  <span className="relative z-10">{child.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

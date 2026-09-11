@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react"
 import { StatusBadge } from "@/components/admin/shared"
 import { Popover, PopoverTrigger } from "@/components/ui/popover"
 import { useLocale } from "@/lib/context"
+import { findCategory } from "@/lib/categories"
 import type { AdminProductDetail, Category } from "@/types"
 import { QuickEditContent, QuickEditTrigger } from "@/components/admin/shared/quick-edit"
 
@@ -41,7 +42,7 @@ export function ProductCategoryQuickEdit({
 
   const handleChange = async (categoryId: string) => {
     if (saving || saveInFlightRef.current) return
-    const category = categories.find((candidate) => candidate.id === categoryId)
+    const category = findCategory(categories, categoryId)
     if (!category) {
       setSelected(product.category_id)
       return
@@ -83,7 +84,14 @@ export function ProductCategoryQuickEdit({
             disabled={saving}
             aria-label={t("admin.category")}
           >
-            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            {categories.map((category) => (
+              <optgroup key={category.id} label={category.name}>
+                <option value={category.id}>{t("admin.categoryOnly").replace("{name}", category.name)}</option>
+                {category.children.map((child) => (
+                  <option key={child.id} value={child.id}>↳ {child.name}</option>
+                ))}
+              </optgroup>
+            ))}
           </select>
         ) : (
           <p className="text-sm text-muted-foreground">{t("admin.noCategoryData")}</p>

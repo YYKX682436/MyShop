@@ -8,6 +8,7 @@ import com.myshop.entity.ProductSpec;
 import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
+import com.myshop.model.ProductCategoryPath;
 import com.myshop.model.pricing.PriceResolution;
 import com.myshop.model.pricing.PriceTarget;
 import com.myshop.model.response.PublicProductResponse;
@@ -88,20 +89,24 @@ public class PublicProductServiceImpl implements PublicProductService {
         Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock =
                 inventoryBatchService.load(products, specsByProduct);
         Map<UUID, Long> sales = loadSales(productIds);
-        Map<UUID, String> categories = categoryRepository.findAllById(
-                        products.stream().map(Product::getCategoryId).distinct().toList())
-                .stream().collect(java.util.stream.Collectors.toMap(ProductCategory::getId,
-                        ProductCategory::getName));
+        Map<UUID, ProductCategory> categories = categoryRepository
+                .findByIsDeletedOrderBySortOrderAscIdAsc(0).stream()
+                .collect(java.util.stream.Collectors.toMap(ProductCategory::getId, category -> category));
 
-        return products.stream().map(product -> toResponse(product, specsByProduct.getOrDefault(product.getId(), List.of()),
-                prices, stock, sales.getOrDefault(product.getId(), 0L), categories.get(product.getCategoryId()), detail))
+        return products.stream().map(product -> {
+                    ProductCategory category = categories.get(product.getCategoryId());
+                    return toResponse(product, specsByProduct.getOrDefault(product.getId(), List.of()),
+                            prices, stock, sales.getOrDefault(product.getId(), 0L), category,
+                            ProductCategoryPath.from(category, categories), detail);
+                })
                 .toList();
     }
 
     private PublicProductResponse toResponse(Product product, List<ProductSpec> specs,
-                                             Map<PriceTarget, PriceResolution> prices,
-                                             Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock,
-                                             long salesCount, String categoryName, boolean detail) {
+                                              Map<PriceTarget, PriceResolution> prices,
+                                              Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock,
+                                             long salesCount, ProductCategory category,
+                                             ProductCategoryPath categoryPath, boolean detail) {
         boolean hasSpecs = product.isSpecEnabled() && !specs.isEmpty();
         PriceResolution rootPrice = prices.get(new PriceTarget(product.getId(), null));
         if (rootPrice == null) {
@@ -125,7 +130,10 @@ public class PublicProductServiceImpl implements PublicProductService {
         return new PublicProductResponse(
                 product.getId(), product.getTitle(), product.getDescription(),
                 detail ? product.getDetailMd() : null, product.getCoverUrl(),
-                effectivePrice.price(), retailStartingPrice, product.getCategoryId(), categoryName,
+                effectivePrice.price(), retailStartingPrice, product.getCategoryId(),
+                category == null ? null : category.getName(), categoryPath.primaryCategoryId(),
+                categoryPath.primaryCategoryName(), categoryPath.secondaryCategoryId(),
+                categoryPath.secondaryCategoryName(),
                 rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
                 ProductRules.currentFields(product), product.getStockMode().name(), salesCount,
                 product.getInitialSales(), product.isSpecEnabled(), specResponses,

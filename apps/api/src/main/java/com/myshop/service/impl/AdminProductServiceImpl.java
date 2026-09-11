@@ -14,6 +14,7 @@ import com.myshop.entity.ProductSpec;
 import com.myshop.entity.UserLevel;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
+import com.myshop.model.ProductCategoryPath;
 import com.myshop.model.request.AdminProductOverrideRequest;
 import com.myshop.model.request.AdminProductCategoryUpdateRequest;
 import com.myshop.model.request.AdminProductPricesUpdateRequest;
@@ -99,8 +100,9 @@ public class AdminProductServiceImpl implements AdminProductService {
         Page<Product> productPage = normalizedKeyword != null && !normalizedKeyword.isBlank()
                 ? productRepository.findAdminProductsByKeyword(categoryId, "%" + normalizedKeyword.toLowerCase(Locale.ROOT) + "%", productNo, isEnabled, pageable)
                 : productRepository.findAdminProducts(categoryId, isEnabled, pageable);
+        Map<UUID, ProductCategory> categories = loadActiveCategoryMap();
         List<AdminProductResponse> list = productPage.getContent().stream()
-                .map(product -> buildResponse(product, false, null, null)).toList();
+                .map(product -> buildResponse(product, false, null, null, categories)).toList();
         return PageResult.of(productPage, list);
     }
 
@@ -544,11 +546,21 @@ public class AdminProductServiceImpl implements AdminProductService {
         if (initialSales < 0) throw new BusinessException(ErrorCode.BAD_REQUEST, "初始销量不能小于 0");
         int sortWeight = request.sortWeight() == null ? (creating ? 0 : product.getSortWeight()) : request.sortWeight();
         UUID categoryId = request.categoryId() == null ? product.getCategoryId() : request.categoryId();
+        validateCategory(categoryId);
         List<String> warnings = new ArrayList<>();
         return new PreparedAggregate(title, request.description(), request.detailMd(), request.coverUrl(),
                 specEnabled, retailPrice, costPrice, deliveryType, stockMode,
                 fields, categoryId, lowStockThreshold, initialSales, sortWeight, enabled,
                 request.manualStock(), preparedSpecs, warnings);
+    }
+
+    private void validateCategory(UUID categoryId) {
+        if (categoryId == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "商品分类不能为空");
+        }
+        categoryRepository.findById(categoryId)
+                .filter(category -> category.getIsDeleted() == 0)
+                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "商品分类不存在或已删除"));
     }
 
     private void validateVisibleSpecRequirement(boolean specEnabled, boolean enabled, boolean hasVisibleSpec) {
@@ -770,6 +782,13 @@ public class AdminProductServiceImpl implements AdminProductService {
     private AdminProductResponse buildResponse(Product product, boolean detail,
                                                List<ProductLevelPriceOverride> suppliedOverrides,
                                                List<String> suppliedWarnings) {
+        return buildResponse(product, detail, suppliedOverrides, suppliedWarnings, loadActiveCategoryMap());
+    }
+
+    private AdminProductResponse buildResponse(Product product, boolean detail,
+                                               List<ProductLevelPriceOverride> suppliedOverrides,
+                                               List<String> suppliedWarnings,
+                                               Map<UUID, ProductCategory> categories) {
         List<ProductSpec> specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
         Map<UUID, List<ProductSpec>> byProduct = Map.of(product.getId(), specs);
         Map<com.myshop.model.pricing.PriceTarget, ProductInventoryBatchService.StockSnapshot> stock =
@@ -780,8 +799,8 @@ public class AdminProductServiceImpl implements AdminProductService {
         List<AdminPricingMatrixResponse> matrix = detail ? buildMatrix(product, specs, levels, overrides) : List.of();
         List<String> warnings = detail ? buildWarnings(product, specs, levels, overrides) : List.of();
         if (suppliedWarnings != null && !suppliedWarnings.isEmpty()) warnings = suppliedWarnings;
-        Map<UUID, ProductCategory> categories = categoryRepository.findAllById(List.of(product.getCategoryId())).stream()
-                .collect(Collectors.toMap(ProductCategory::getId, category -> category));
+        ProductCategory category = categories.get(product.getCategoryId());
+        ProductCategoryPath categoryPath = ProductCategoryPath.from(category, categories);
         long sales = orderItemRepository.sumQuantityByProductId(product.getId());
         boolean hasSpecs = product.isSpecEnabled() && !specs.isEmpty();
         ProductInventoryBatchService.StockSnapshot rootStock = stock
@@ -789,12 +808,19 @@ public class AdminProductServiceImpl implements AdminProductService {
                         new ProductInventoryBatchService.StockSnapshot(0L, false));
         return new AdminProductResponse(product.getId(), product.getProductNo(), product.getTitle(), product.getDescription(), product.getDetailMd(),
                 product.getCoverUrl(), product.getCostPrice(), product.getRetailPrice(), product.getCategoryId(),
-                categories.get(product.getCategoryId()) == null ? null : categories.get(product.getCategoryId()).getName(),
+                category == null ? null : category.getName(), categoryPath.primaryCategoryId(),
+                categoryPath.primaryCategoryName(), categoryPath.secondaryCategoryId(),
+                categoryPath.secondaryCategoryName(),
                 rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
                 ProductRules.currentFields(product), product.getStockMode().name(), sales, product.getInitialSales(),
                 product.isSpecEnabled(), product.isEnabled(), product.getSortWeight(), product.getLowStockThreshold(),
                 buildSpecResponses(product, specs, stock), overrides.stream().map(this::toOverride).toList(), matrix,
                 warnings, product.getCreatedAt(), product.getUpdatedAt());
+    }
+
+    private Map<UUID, ProductCategory> loadActiveCategoryMap() {
+        return categoryRepository.findByIsDeletedOrderBySortOrderAscIdAsc(0).stream()
+                .collect(Collectors.toMap(ProductCategory::getId, category -> category));
     }
 
     private List<AdminProductSpecResponse> buildSpecResponses(Product product, List<ProductSpec> specs,

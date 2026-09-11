@@ -1,16 +1,18 @@
 package com.myshop.service;
 
+import com.myshop.model.request.CategoryUpsertRequest;
+import com.myshop.model.response.CategoryResponse;
+
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 public interface CategoryService {
 
-    List<?> listCategories();
+    List<CategoryResponse> listCategories();
 
-    void createCategory(Map<String, Object> request);
+    void createCategory(CategoryUpsertRequest request);
 
-    void updateCategory(UUID id, Map<String, Object> request);
+    void updateCategory(UUID id, CategoryUpsertRequest request);
 
     void deleteCategory(UUID id);
 }
