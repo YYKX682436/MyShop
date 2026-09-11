@@ -12,3 +12,4 @@
 - Compose production project 固定为 `myshop`；生产使用 `scripts/myshop-compose.sh`，禁止通过 release 目录名生成新 Compose project。
 - 修改完成后进行安全消融实验；详细生产步骤继续维护在 `docs/DEPLOYMENT.md`。
 - secrets 不得进入仓库或日志。
+- 代码处理干净利落不留后患
