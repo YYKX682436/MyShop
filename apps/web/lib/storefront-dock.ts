@@ -5,9 +5,9 @@ export interface StorefrontDockAction {
 }
 
 /**
- * Describes the navigation performed by one of the three primary Dock slots.
- * Search is intentionally absent: it belongs to the header and is not a
- * navigation destination.
+ * Describes the navigation performed by one of the configured primary Dock
+ * slots. Search is intentionally absent: it belongs to the header and is not
+ * a navigation destination.
  */
 export function getStorefrontDockAction(
   key: StorefrontNavKey,

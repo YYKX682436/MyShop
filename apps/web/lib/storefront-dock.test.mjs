@@ -2,7 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { getStorefrontDockAction } from "./storefront-dock.ts"
 
-test("keeps the Dock action model limited to the three primary routes", () => {
+test("keeps the Dock action model focused on configured primary routes", () => {
   const cases = [
     ["home", "/", null],
     ["home", "/product/abc", "/"],

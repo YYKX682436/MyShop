@@ -1,16 +1,33 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { House, ReceiptText, UserRound, type LucideIcon } from "lucide-react"
 import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
 import { useLocale } from "@/lib/context"
+import type { TranslationKey } from "@/lib/i18n"
 import { getStorefrontDockAction } from "@/lib/storefront-dock"
-import { getStorefrontActiveTab, type StorefrontNavKey } from "@/lib/storefront-routes"
+import { getStorefrontActiveTab, isStorefrontDockVisible, type StorefrontNavKey } from "@/lib/storefront-routes"
+import { cn } from "@/lib/utils"
 
 type DockKey = StorefrontNavKey
 
-const DOCK_KEYS: readonly DockKey[] = ["home", "orders", "me"]
+interface StoreDockItemDefinition {
+  key: DockKey
+  labelKey: TranslationKey
+  icon: LucideIcon
+}
+
+/**
+ * The order and contents of the Dock live in one data list. Adding another
+ * first-level destination only needs another definition plus its route action.
+ */
+const DOCK_ITEM_DEFINITIONS: readonly StoreDockItemDefinition[] = [
+  { key: "home", labelKey: "nav.home", icon: House },
+  { key: "orders", labelKey: "nav.orders", icon: ReceiptText },
+  { key: "me", labelKey: "nav.me", icon: UserRound },
+]
+
 const SNAP_FALLBACK_MS = 480
 
 interface StoreDockItem {
@@ -22,13 +39,13 @@ interface StoreDockItem {
 interface DockMetrics {
   slotCenters: number[]
   slotLefts: number[]
-  indicatorWidth: number
+  capsuleWidth: number
   minX: number
   maxX: number
 }
 
-function getNearestDockKey(center: number, slotCenters: readonly number[]): DockKey | null {
-  if (slotCenters.length !== DOCK_KEYS.length) return null
+function getNearestDockIndex(center: number, slotCenters: readonly number[]): number | null {
+  if (slotCenters.length === 0) return null
 
   let nearestIndex = 0
   let nearestDistance = Math.abs(center - slotCenters[0])
@@ -41,12 +58,12 @@ function getNearestDockKey(center: number, slotCenters: readonly number[]): Dock
     }
   }
 
-  return DOCK_KEYS[nearestIndex]
+  return nearestIndex
 }
 
-function getIndicatorOffset(key: DockKey | null, metrics: DockMetrics): number {
-  const index = key ? DOCK_KEYS.indexOf(key) : 0
-  if (index < 0) return 0
+function getIndicatorOffset(key: DockKey | null, items: readonly StoreDockItem[], metrics: DockMetrics): number {
+  const index = key ? items.findIndex((item) => item.key === key) : 0
+  if (index < 0 || index >= metrics.slotLefts.length) return 0
   return metrics.slotLefts[index] - metrics.minX
 }
 
@@ -55,6 +72,8 @@ export function StoreBottomNav() {
   const router = useRouter()
   const reducedMotion = useReducedMotion() ?? false
   const { t } = useLocale()
+  const isVisible = isStorefrontDockVisible(pathname)
+  const activeKey = isVisible ? getStorefrontActiveTab(pathname) : null
 
   const dockRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -68,36 +87,44 @@ export function StoreBottomNav() {
   const [metrics, setMetrics] = useState<DockMetrics | null>(null)
   const [dragPreviewKey, setDragPreviewKey] = useState<DockKey | null>(null)
 
-  const activeKey = getStorefrontActiveTab(pathname)
-  const navItems: StoreDockItem[] = [
-    { key: "home", label: t("nav.home"), icon: House },
-    { key: "orders", label: t("nav.orders"), icon: ReceiptText },
-    { key: "me", label: t("nav.me"), icon: UserRound },
-  ]
+  const navItems = useMemo<StoreDockItem[]>(
+    () => DOCK_ITEM_DEFINITIONS.map((item) => ({ ...item, label: t(item.labelKey) })),
+    [t],
+  )
+  const itemCount = navItems.length
+
+  const cancelSnap = useCallback(() => {
+    snapAnimationRef.current?.stop()
+    snapAnimationRef.current = null
+    if (snapActionTimerRef.current !== null) {
+      window.clearTimeout(snapActionTimerRef.current)
+      snapActionTimerRef.current = null
+    }
+  }, [])
 
   const measureDock = useCallback(() => {
+    if (!isVisible) return
+
     const dock = dockRef.current
-    const elements = itemRefs.current
+    const elements = itemRefs.current.slice(0, itemCount)
     const rects = elements.filter((element): element is HTMLButtonElement => element !== null)
-    if (!dock || rects.length !== DOCK_KEYS.length) return
+    if (!dock || itemCount === 0 || rects.length !== itemCount) return
 
     const dockRect = dock.getBoundingClientRect()
-    const slotLefts = rects.map((element) => element.getBoundingClientRect().left - dockRect.left)
-    const slotCenters = rects.map((element) => {
-      const rect = element.getBoundingClientRect()
-      return rect.left + rect.width / 2
-    })
+    const slotRects = rects.map((element) => element.getBoundingClientRect())
+    const slotLefts = slotRects.map((rect) => rect.left - dockRect.left)
+    const slotCenters = slotRects.map((rect) => rect.left + rect.width / 2)
     const minX = slotLefts[0]
     const maxX = slotLefts[slotLefts.length - 1] - minX
-    const indicatorWidth = rects[0].getBoundingClientRect().width
+    const capsuleWidth = slotRects[0].width
 
-    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(indicatorWidth)) return
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(capsuleWidth)) return
 
     setMetrics((previous) => {
-      const next = { slotCenters, slotLefts, indicatorWidth, minX, maxX }
+      const next = { slotCenters, slotLefts, capsuleWidth, minX, maxX }
       if (
         previous &&
-        previous.indicatorWidth === next.indicatorWidth &&
+        previous.capsuleWidth === next.capsuleWidth &&
         previous.minX === next.minX &&
         previous.maxX === next.maxX &&
         previous.slotLefts.every((value, index) => value === next.slotLefts[index]) &&
@@ -107,9 +134,11 @@ export function StoreBottomNav() {
       }
       return next
     })
-  }, [])
+  }, [isVisible, itemCount])
 
   useEffect(() => {
+    if (!isVisible) return
+
     let frame = 0
     const scheduleMeasure = () => {
       window.cancelAnimationFrame(frame)
@@ -132,13 +161,19 @@ export function StoreBottomNav() {
       window.removeEventListener("orientationchange", scheduleMeasure)
       observer?.disconnect()
     }
-  }, [measureDock])
+  }, [isVisible, measureDock])
 
   useEffect(() => {
-    if (!metrics || draggingRef.current || !activeKey) return
-    const target = getIndicatorOffset(activeKey, metrics)
-    snapAnimationRef.current?.stop()
-    snapAnimationRef.current = null
+    if (!metrics) return
+
+    const currentOffset = indicatorX.get()
+    const boundedOffset = Math.min(Math.max(currentOffset, 0), metrics.maxX)
+    if (currentOffset !== boundedOffset) indicatorX.set(boundedOffset)
+
+    if (draggingRef.current || !activeKey) return
+
+    const target = getIndicatorOffset(activeKey, navItems, metrics)
+    cancelSnap()
     if (reducedMotion) {
       indicatorX.set(target)
     } else {
@@ -149,16 +184,12 @@ export function StoreBottomNav() {
         mass: 0.45,
       })
     }
-  }, [activeKey, indicatorX, metrics, reducedMotion])
+  }, [activeKey, cancelSnap, indicatorX, metrics, navItems, reducedMotion])
 
-  useEffect(() => () => {
-    snapAnimationRef.current?.stop()
-    if (snapActionTimerRef.current !== null) window.clearTimeout(snapActionTimerRef.current)
-  }, [])
+  useEffect(() => () => cancelSnap(), [cancelSnap])
 
   const snapIndicator = useCallback((target: number, onComplete?: () => void) => {
-    snapAnimationRef.current?.stop()
-    snapAnimationRef.current = null
+    cancelSnap()
 
     if (reducedMotion) {
       indicatorX.set(target)
@@ -178,23 +209,18 @@ export function StoreBottomNav() {
       snapAnimationRef.current = null
       onComplete?.()
     })
-  }, [indicatorX, reducedMotion])
+  }, [cancelSnap, indicatorX, reducedMotion])
 
   const handleDockAction = useCallback((key: DockKey) => {
+    cancelSnap()
     draggingRef.current = false
     dragMovedRef.current = false
-    snapAnimationRef.current?.stop()
-    snapAnimationRef.current = null
-    if (snapActionTimerRef.current !== null) {
-      window.clearTimeout(snapActionTimerRef.current)
-      snapActionTimerRef.current = null
-    }
     pendingActionRef.current = null
     setDragPreviewKey(null)
 
     const action = getStorefrontDockAction(key, pathname)
     if (action.href && action.href !== pathname) router.push(action.href)
-  }, [pathname, router])
+  }, [cancelSnap, pathname, router])
 
   const completePendingAction = useCallback(() => {
     const key = pendingActionRef.current
@@ -204,6 +230,36 @@ export function StoreBottomNav() {
     setDragPreviewKey(null)
     handleDockAction(key)
   }, [handleDockAction])
+
+  const requestDockAction = useCallback((key: DockKey) => {
+    if (!activeKey) return
+
+    cancelSnap()
+    draggingRef.current = false
+    dragMovedRef.current = false
+    suppressTapRef.current = false
+
+    if (!metrics) {
+      handleDockAction(key)
+      return
+    }
+
+    const targetOffset = getIndicatorOffset(key, navItems, metrics)
+    pendingActionRef.current = key
+    setDragPreviewKey(key)
+
+    if (reducedMotion || Math.abs(indicatorX.get() - targetOffset) <= 1) {
+      indicatorX.set(targetOffset)
+      completePendingAction()
+      return
+    }
+
+    snapIndicator(targetOffset, completePendingAction)
+    snapActionTimerRef.current = window.setTimeout(() => {
+      snapActionTimerRef.current = null
+      completePendingAction()
+    }, SNAP_FALLBACK_MS)
+  }, [activeKey, cancelSnap, completePendingAction, handleDockAction, indicatorX, metrics, navItems, reducedMotion, snapIndicator])
 
   const handleDragStart = useCallback(() => {
     if (!activeKey) return
@@ -218,9 +274,10 @@ export function StoreBottomNav() {
     dragMovedRef.current = true
 
     const center = metrics.slotCenters[0] + indicatorX.get()
-    const key = getNearestDockKey(center, metrics.slotCenters)
+    const nearestIndex = getNearestDockIndex(center, metrics.slotCenters)
+    const key = nearestIndex === null ? null : navItems[nearestIndex]?.key
     if (key) setDragPreviewKey(key)
-  }, [indicatorX, metrics])
+  }, [indicatorX, metrics, navItems])
 
   const finishDrag = useCallback(() => {
     if (!draggingRef.current || !metrics) return
@@ -233,44 +290,42 @@ export function StoreBottomNav() {
     suppressTapRef.current = true
 
     const center = metrics.slotCenters[0] + indicatorX.get()
-    const nearestKey = getNearestDockKey(center, metrics.slotCenters)
-    if (!nearestKey) return
-
-    const targetOffset = getIndicatorOffset(nearestKey, metrics)
-    const shouldWaitForSnap = !reducedMotion && Math.abs(indicatorX.get() - targetOffset) > 1
-
-    if (shouldWaitForSnap) {
-      pendingActionRef.current = nearestKey
-      snapIndicator(targetOffset, completePendingAction)
-      snapActionTimerRef.current = window.setTimeout(() => {
-        snapActionTimerRef.current = null
-        completePendingAction()
-      }, SNAP_FALLBACK_MS)
+    const nearestIndex = getNearestDockIndex(center, metrics.slotCenters)
+    const nearestKey = nearestIndex === null ? null : navItems[nearestIndex]?.key
+    if (!nearestKey) {
+      setDragPreviewKey(null)
       return
     }
 
-    pendingActionRef.current = null
-    setDragPreviewKey(null)
-    snapIndicator(targetOffset, () => handleDockAction(nearestKey))
-  }, [completePendingAction, handleDockAction, indicatorX, metrics, reducedMotion, snapIndicator])
+    const targetOffset = getIndicatorOffset(nearestKey, navItems, metrics)
+    pendingActionRef.current = nearestKey
+    setDragPreviewKey(nearestKey)
+
+    if (reducedMotion || Math.abs(indicatorX.get() - targetOffset) <= 1) {
+      indicatorX.set(targetOffset)
+      completePendingAction()
+      return
+    }
+
+    snapIndicator(targetOffset, completePendingAction)
+    snapActionTimerRef.current = window.setTimeout(() => {
+      snapActionTimerRef.current = null
+      completePendingAction()
+    }, SNAP_FALLBACK_MS)
+  }, [completePendingAction, indicatorX, metrics, navItems, reducedMotion, snapIndicator])
 
   const handleIndicatorPointerDown = useCallback(() => {
     if (!activeKey) return
-    snapAnimationRef.current?.stop()
-    snapAnimationRef.current = null
-    if (snapActionTimerRef.current !== null) {
-      window.clearTimeout(snapActionTimerRef.current)
-      snapActionTimerRef.current = null
-    }
+    cancelSnap()
     pendingActionRef.current = null
     draggingRef.current = true
     dragMovedRef.current = false
     suppressTapRef.current = false
     setDragPreviewKey(activeKey)
-  }, [activeKey])
+  }, [activeKey, cancelSnap])
 
   const handleIndicatorTap = useCallback(() => {
-    if (suppressTapRef.current) {
+    if (suppressTapRef.current || dragMovedRef.current) {
       suppressTapRef.current = false
       dragMovedRef.current = false
       return
@@ -278,10 +333,12 @@ export function StoreBottomNav() {
 
     draggingRef.current = false
     dragMovedRef.current = false
-    if (activeKey) handleDockAction(activeKey)
-  }, [activeKey, handleDockAction])
+    if (activeKey) requestDockAction(activeKey)
+  }, [activeKey, requestDockAction])
 
   const visualActiveKey = dragPreviewKey ?? activeKey
+
+  if (!isVisible || activeKey !== "home") return null
 
   return (
     <div className="store-dock-viewport">
@@ -297,14 +354,22 @@ export function StoreBottomNav() {
                 key={item.key}
                 ref={(element) => { itemRefs.current[index] = element }}
                 type="button"
-                onClick={() => handleDockAction(item.key)}
+                onClick={() => requestDockAction(item.key)}
                 aria-label={item.label}
                 aria-current={isActive ? "page" : undefined}
                 aria-pressed={isActive}
-                className={`store-dock-item text-muted-foreground${isPreviewed ? " text-foreground" : ""}`}
+                data-preview-active={isPreviewed ? "true" : "false"}
+                className={cn(
+                  "store-dock-item",
+                  isPreviewed ? "text-foreground" : "text-muted-foreground",
+                )}
               >
                 <span className="store-dock-item-content">
-                  <Icon className="size-[18px]" strokeWidth={1.9} aria-hidden="true" />
+                  <Icon
+                    className="size-[18px]"
+                    strokeWidth={isPreviewed ? 2.1 : 1.75}
+                    aria-hidden="true"
+                  />
                   <span className="store-dock-label">{item.label}</span>
                 </span>
               </button>
@@ -312,24 +377,30 @@ export function StoreBottomNav() {
           })}
 
           {metrics && activeKey && (
-            <motion.div
-              aria-hidden="true"
-              role="presentation"
-              tabIndex={-1}
-              className="store-dock-active"
-              style={{ left: metrics.minX, width: metrics.indicatorWidth, x: indicatorX }}
-              drag="x"
-              dragConstraints={{ left: 0, right: metrics.maxX }}
-              dragElastic={0}
-              dragMomentum={false}
-              onTap={handleIndicatorTap}
-              onPointerDown={handleIndicatorPointerDown}
-              onPointerUp={finishDrag}
-              onPointerCancel={finishDrag}
-              onDragStart={handleDragStart}
-              onDrag={updateDragPreview}
-              onDragEnd={finishDrag}
-            />
+            <>
+              <motion.div
+                aria-hidden="true"
+                role="presentation"
+                className="store-dock-active"
+                style={{ left: metrics.minX, width: metrics.capsuleWidth, x: indicatorX }}
+              />
+              <motion.div
+                aria-hidden="true"
+                role="presentation"
+                className="store-dock-drag-hit-area"
+                style={{ left: metrics.minX, width: metrics.capsuleWidth, x: indicatorX }}
+                drag="x"
+                dragConstraints={{ left: 0, right: metrics.maxX }}
+                dragElastic={0}
+                dragMomentum={false}
+                onTap={handleIndicatorTap}
+                onPointerDown={handleIndicatorPointerDown}
+                onPointerCancel={finishDrag}
+                onDragStart={handleDragStart}
+                onDrag={updateDragPreview}
+                onDragEnd={finishDrag}
+              />
+            </>
           )}
         </div>
       </nav>

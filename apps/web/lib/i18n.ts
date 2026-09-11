@@ -4,7 +4,7 @@ const zh = {
   // Nav
   "nav.home": "首页",
   "nav.orders": "订单",
-  "nav.me": "我",
+  "nav.me": "我的",
   "nav.search": "搜索",
   "nav.main": "主要导航",
   "nav.login": "登录",

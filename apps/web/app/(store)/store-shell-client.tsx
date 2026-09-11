@@ -12,6 +12,8 @@ import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
 import { ContactSupport } from "@/components/shared/contact-methods"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { isAdminRole } from "@/lib/hooks"
+import { cn } from "@/lib/utils"
+import { isStorefrontDockVisible } from "@/lib/storefront-routes"
 
 function AnnouncementBar() {
   const { config } = useSiteConfig()
@@ -118,6 +120,7 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
   const { config, isLoading } = useSiteConfig()
   const { user, isLoggedIn, authLoaded } = useAuth()
   const pathname = usePathname()
+  const hasDock = isStorefrontDockVisible(pathname)
 
   // 维护模式判断需要 config + auth 都就绪才能准确决策
   const configReady = !isLoading && !!config
@@ -138,10 +141,13 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
       <AnnouncementBar />
       {header}
-      <main className="storefront-main mx-auto w-full max-w-[1440px] flex-1 px-4 py-8 sm:px-6 lg:px-8">{children}</main>
-      <StoreFooter />
+      <main className={cn(
+        "storefront-main mx-auto w-full max-w-[1440px] flex-1 px-4 py-8 sm:px-6 lg:px-8",
+        hasDock && "storefront-main--with-dock",
+      )}>{children}</main>
+      <StoreFooter reserveForDock={hasDock} />
       <StoreSearchPanel />
-      <StoreBottomNav />
+      {hasDock && <StoreBottomNav />}
       <PopupAnnouncement />
     </div>
   )
