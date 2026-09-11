@@ -135,7 +135,7 @@ class OrderRefundConcurrencyIntegrationTest {
 
         assertEquals(OrderStatus.REFUNDED.name(), scalar(
                 "SELECT status FROM orders WHERE id = ?", String.class, orderId));
-        assertMoney("17.34", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, userId));
+        assertMoney("18.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, userId));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id = ? AND type = 'REFUND'", Integer.class, orderId));
         assertEquals(1, scalar("SELECT count(*) FROM operation_logs WHERE action = 'order.refund' AND target_id = ?", Integer.class, orderId.toString()));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE user_id = ?", Integer.class, userId));
@@ -149,7 +149,7 @@ class OrderRefundConcurrencyIntegrationTest {
         jdbcTemplate.update("""
                 INSERT INTO balance_transactions(user_id, type, amount, delta, balance_before,
                                                  balance_after, reason, operator_id, order_id)
-                VALUES (?, 'REFUND', 12.34, 12.34, 5.66, 17.99, 'pre-existing test guard', ?, ?)
+                VALUES (?, 'REFUND', 12.34, 12.34, 5.66, 18.00, 'pre-existing test guard', ?, ?)
                 """, userId, operatorId, orderId);
 
         RequestContext.set(new RequestContext.UserInfo(operatorId, "refund-rollback-admin", "ADMIN"));
