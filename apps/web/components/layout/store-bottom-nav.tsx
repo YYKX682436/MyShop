@@ -6,7 +6,12 @@ import { House, ReceiptText, UserRound, type LucideIcon } from "lucide-react"
 import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
 import { useLocale } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
-import { getStorefrontDockAction } from "@/lib/storefront-dock"
+import {
+  getStorefrontDockAction,
+  isCurrentStorefrontDockAction,
+  resolveStorefrontDockNavigation,
+  type StorefrontDockNavigationAttempt,
+} from "@/lib/storefront-dock"
 import { getStorefrontActiveTab, isStorefrontDockVisible, type StorefrontNavKey } from "@/lib/storefront-routes"
 import { cn } from "@/lib/utils"
 
@@ -20,7 +25,8 @@ interface StoreDockItemDefinition {
 
 /**
  * The order and contents of the Dock live in one data list. Adding another
- * first-level destination only needs another definition plus its route action.
+ * first-level destination only needs another definition plus its route
+ * identity/action; the motion code does not assume three slots.
  */
 const DOCK_ITEM_DEFINITIONS: readonly StoreDockItemDefinition[] = [
   { key: "home", labelKey: "nav.home", icon: House },
@@ -29,6 +35,7 @@ const DOCK_ITEM_DEFINITIONS: readonly StoreDockItemDefinition[] = [
 ]
 
 const SNAP_FALLBACK_MS = 480
+const NAVIGATION_VERIFY_MS = 1200
 
 interface StoreDockItem {
   key: DockKey
@@ -42,6 +49,10 @@ interface DockMetrics {
   capsuleWidth: number
   minX: number
   maxX: number
+}
+
+type PendingDockAction = StorefrontDockNavigationAttempt & {
+  key: DockKey
 }
 
 function getNearestDockIndex(center: number, slotCenters: readonly number[]): number | null {
@@ -80,12 +91,20 @@ export function StoreBottomNav() {
   const draggingRef = useRef(false)
   const dragMovedRef = useRef(false)
   const suppressTapRef = useRef(false)
-  const pendingActionRef = useRef<DockKey | null>(null)
+  const actionGenerationRef = useRef(0)
+  const pendingActionRef = useRef<PendingDockAction | null>(null)
+  const previousPathnameRef = useRef(pathname)
+  const pathnameRef = useRef(pathname)
   const snapAnimationRef = useRef<ReturnType<typeof animate> | null>(null)
   const snapActionTimerRef = useRef<number | null>(null)
+  const navigationVerifyTimerRef = useRef<number | null>(null)
   const indicatorX = useMotionValue(0)
   const [metrics, setMetrics] = useState<DockMetrics | null>(null)
   const [dragPreviewKey, setDragPreviewKey] = useState<DockKey | null>(null)
+
+  useEffect(() => {
+    pathnameRef.current = pathname
+  }, [pathname])
 
   const navItems = useMemo<StoreDockItem[]>(
     () => DOCK_ITEM_DEFINITIONS.map((item) => ({ ...item, label: t(item.labelKey) })),
@@ -99,6 +118,13 @@ export function StoreBottomNav() {
     if (snapActionTimerRef.current !== null) {
       window.clearTimeout(snapActionTimerRef.current)
       snapActionTimerRef.current = null
+    }
+  }, [])
+
+  const clearNavigationVerifyTimer = useCallback(() => {
+    if (navigationVerifyTimerRef.current !== null) {
+      window.clearTimeout(navigationVerifyTimerRef.current)
+      navigationVerifyTimerRef.current = null
     }
   }, [])
 
@@ -163,31 +189,6 @@ export function StoreBottomNav() {
     }
   }, [isVisible, measureDock])
 
-  useEffect(() => {
-    if (!metrics) return
-
-    const currentOffset = indicatorX.get()
-    const boundedOffset = Math.min(Math.max(currentOffset, 0), metrics.maxX)
-    if (currentOffset !== boundedOffset) indicatorX.set(boundedOffset)
-
-    if (draggingRef.current || !activeKey) return
-
-    const target = getIndicatorOffset(activeKey, navItems, metrics)
-    cancelSnap()
-    if (reducedMotion) {
-      indicatorX.set(target)
-    } else {
-      snapAnimationRef.current = animate(indicatorX, target, {
-        type: "spring",
-        stiffness: 520,
-        damping: 42,
-        mass: 0.45,
-      })
-    }
-  }, [activeKey, cancelSnap, indicatorX, metrics, navItems, reducedMotion])
-
-  useEffect(() => () => cancelSnap(), [cancelSnap])
-
   const snapIndicator = useCallback((target: number, onComplete?: () => void) => {
     cancelSnap()
 
@@ -211,59 +212,191 @@ export function StoreBottomNav() {
     })
   }, [cancelSnap, indicatorX, reducedMotion])
 
-  const handleDockAction = useCallback((key: DockKey) => {
-    cancelSnap()
-    draggingRef.current = false
-    dragMovedRef.current = false
+  const restoreIndicatorToActive = useCallback(() => {
+    if (!metrics || !activeKey) return
+    snapIndicator(getIndicatorOffset(activeKey, navItems, metrics))
+  }, [activeKey, metrics, navItems, snapIndicator])
+
+  useEffect(() => {
+    if (!metrics) return
+
+    const currentOffset = indicatorX.get()
+    const boundedOffset = Math.min(Math.max(currentOffset, 0), metrics.maxX)
+    if (currentOffset !== boundedOffset) indicatorX.set(boundedOffset)
+
+    // A pending action owns the capsule until it either reaches the real
+    // route or is explicitly invalidated. This prevents a resize/translation
+    // render from snapping it back to the old route mid-action.
+    if (draggingRef.current || pendingActionRef.current || !activeKey) return
+
+    snapIndicator(getIndicatorOffset(activeKey, navItems, metrics))
+  }, [activeKey, indicatorX, metrics, navItems, snapIndicator])
+
+  const invalidateAction = useCallback((expectedActionId?: number): boolean => {
+    if (
+      expectedActionId !== undefined &&
+      !isCurrentStorefrontDockAction(expectedActionId, actionGenerationRef.current)
+    ) {
+      return false
+    }
+
+    actionGenerationRef.current += 1
     pendingActionRef.current = null
-    setDragPreviewKey(null)
-
-    const action = getStorefrontDockAction(key, pathname)
-    if (action.href && action.href !== pathname) router.push(action.href)
-  }, [cancelSnap, pathname, router])
-
-  const completePendingAction = useCallback(() => {
-    const key = pendingActionRef.current
-    if (!key) return
-
-    pendingActionRef.current = null
-    setDragPreviewKey(null)
-    handleDockAction(key)
-  }, [handleDockAction])
-
-  const requestDockAction = useCallback((key: DockKey) => {
-    if (!activeKey) return
-
+    clearNavigationVerifyTimer()
     cancelSnap()
     draggingRef.current = false
     dragMovedRef.current = false
     suppressTapRef.current = false
+    setDragPreviewKey(null)
+    return true
+  }, [cancelSnap, clearNavigationVerifyTimer])
+
+  const finalizePendingAction = useCallback((expectedActionId: number): boolean => {
+    const pending = pendingActionRef.current
+    if (
+      !pending ||
+      !isCurrentStorefrontDockAction(expectedActionId, actionGenerationRef.current) ||
+      pending.id !== expectedActionId
+    ) {
+      return false
+    }
+
+    actionGenerationRef.current += 1
+    pendingActionRef.current = null
+    clearNavigationVerifyTimer()
+    cancelSnap()
+    draggingRef.current = false
+    dragMovedRef.current = false
+    setDragPreviewKey(null)
+    return true
+  }, [cancelSnap, clearNavigationVerifyTimer])
+
+  const abortPendingAction = useCallback((expectedActionId: number) => {
+    if (!pendingActionRef.current || pendingActionRef.current.id !== expectedActionId) return
+    if (!invalidateAction(expectedActionId)) return
+    // pathname is authoritative. A failed or interrupted action always
+    // returns the capsule to the active slot derived from that pathname.
+    restoreIndicatorToActive()
+  }, [invalidateAction, restoreIndicatorToActive])
+
+  const completePendingAction = useCallback((expectedActionId: number) => {
+    const pending = pendingActionRef.current
+    if (
+      !pending ||
+      pending.id !== expectedActionId ||
+      !isCurrentStorefrontDockAction(expectedActionId, actionGenerationRef.current) ||
+      pending.phase !== "snapping"
+    ) {
+      return
+    }
+
+    const resolution = resolveStorefrontDockNavigation(pending, pathnameRef.current)
+    if (resolution === "succeeded") {
+      finalizePendingAction(expectedActionId)
+      return
+    }
+    if (resolution === "interrupted") {
+      abortPendingAction(expectedActionId)
+      return
+    }
+
+    pending.phase = "navigating"
+    cancelSnap()
+
+    try {
+      router.push(pending.targetPathname)
+    } catch {
+      abortPendingAction(expectedActionId)
+      return
+    }
+
+    navigationVerifyTimerRef.current = window.setTimeout(() => {
+      navigationVerifyTimerRef.current = null
+      const current = pendingActionRef.current
+      if (
+        !current ||
+        current.id !== expectedActionId ||
+        !isCurrentStorefrontDockAction(expectedActionId, actionGenerationRef.current) ||
+        current.phase !== "navigating"
+      ) {
+        return
+      }
+
+      const finalResolution = resolveStorefrontDockNavigation(current, pathnameRef.current)
+      if (finalResolution === "succeeded") {
+        finalizePendingAction(expectedActionId)
+      } else {
+        // Both an unchanged source pathname (navigation failure) and another
+        // pathname (navigation interruption) invalidate the stale action.
+        abortPendingAction(expectedActionId)
+      }
+    }, NAVIGATION_VERIFY_MS)
+  }, [abortPendingAction, cancelSnap, finalizePendingAction, router])
+
+  const beginDockAction = useCallback((key: DockKey): number | null => {
+    cancelSnap()
+    clearNavigationVerifyTimer()
+    actionGenerationRef.current += 1
+    const actionId = actionGenerationRef.current
+    pendingActionRef.current = null
+    draggingRef.current = false
+    dragMovedRef.current = false
+
+    const action = getStorefrontDockAction(key, pathnameRef.current)
+    if (!action.href) {
+      setDragPreviewKey(null)
+      return null
+    }
+
+    pendingActionRef.current = {
+      id: actionId,
+      key,
+      fromPathname: pathnameRef.current,
+      targetPathname: action.href,
+      phase: "snapping",
+    }
+    setDragPreviewKey(key)
+    return actionId
+  }, [cancelSnap, clearNavigationVerifyTimer])
+
+  const snapAndComplete = useCallback((key: DockKey, actionId: number) => {
+    if (!isCurrentStorefrontDockAction(actionId, actionGenerationRef.current)) return
 
     if (!metrics) {
-      handleDockAction(key)
+      completePendingAction(actionId)
       return
     }
 
     const targetOffset = getIndicatorOffset(key, navItems, metrics)
-    pendingActionRef.current = key
-    setDragPreviewKey(key)
-
+    const complete = () => completePendingAction(actionId)
     if (reducedMotion || Math.abs(indicatorX.get() - targetOffset) <= 1) {
       indicatorX.set(targetOffset)
-      completePendingAction()
+      complete()
       return
     }
 
-    snapIndicator(targetOffset, completePendingAction)
+    snapIndicator(targetOffset, complete)
     snapActionTimerRef.current = window.setTimeout(() => {
       snapActionTimerRef.current = null
-      completePendingAction()
+      completePendingAction(actionId)
     }, SNAP_FALLBACK_MS)
-  }, [activeKey, cancelSnap, completePendingAction, handleDockAction, indicatorX, metrics, navItems, reducedMotion, snapIndicator])
+  }, [completePendingAction, indicatorX, metrics, navItems, reducedMotion, snapIndicator])
+
+  const requestDockAction = useCallback((key: DockKey) => {
+    if (!activeKey) return
+
+    suppressTapRef.current = false
+    const actionId = beginDockAction(key)
+    if (actionId === null) {
+      restoreIndicatorToActive()
+      return
+    }
+
+    snapAndComplete(key, actionId)
+  }, [activeKey, beginDockAction, restoreIndicatorToActive, snapAndComplete])
 
   const handleDragStart = useCallback(() => {
     if (!activeKey) return
-    pendingActionRef.current = null
     draggingRef.current = true
     dragMovedRef.current = true
     setDragPreviewKey(activeKey)
@@ -280,49 +413,61 @@ export function StoreBottomNav() {
   }, [indicatorX, metrics, navItems])
 
   const finishDrag = useCallback(() => {
-    if (!draggingRef.current || !metrics) return
-    if (!dragMovedRef.current) {
-      draggingRef.current = false
+    if (!draggingRef.current) return
+    if (!metrics) {
+      // A drag that never got measurable slots cannot produce a valid drop.
+      // Treat it as an interruption and restore the real active item.
+      invalidateAction()
+      restoreIndicatorToActive()
       return
     }
 
-    draggingRef.current = false
-    suppressTapRef.current = true
+    if (!dragMovedRef.current) {
+      draggingRef.current = false
+      dragMovedRef.current = false
+      setDragPreviewKey(null)
+      restoreIndicatorToActive()
+      return
+    }
 
     const center = metrics.slotCenters[0] + indicatorX.get()
     const nearestIndex = getNearestDockIndex(center, metrics.slotCenters)
     const nearestKey = nearestIndex === null ? null : navItems[nearestIndex]?.key
     if (!nearestKey) {
-      setDragPreviewKey(null)
+      invalidateAction()
+      suppressTapRef.current = true
+      restoreIndicatorToActive()
       return
     }
 
-    const targetOffset = getIndicatorOffset(nearestKey, navItems, metrics)
-    pendingActionRef.current = nearestKey
-    setDragPreviewKey(nearestKey)
-
-    if (reducedMotion || Math.abs(indicatorX.get() - targetOffset) <= 1) {
-      indicatorX.set(targetOffset)
-      completePendingAction()
+    const actionId = beginDockAction(nearestKey)
+    suppressTapRef.current = true
+    if (actionId === null) {
+      restoreIndicatorToActive()
       return
     }
 
-    snapIndicator(targetOffset, completePendingAction)
-    snapActionTimerRef.current = window.setTimeout(() => {
-      snapActionTimerRef.current = null
-      completePendingAction()
-    }, SNAP_FALLBACK_MS)
-  }, [completePendingAction, indicatorX, metrics, navItems, reducedMotion, snapIndicator])
+    snapAndComplete(nearestKey, actionId)
+  }, [beginDockAction, indicatorX, invalidateAction, metrics, navItems, restoreIndicatorToActive, snapAndComplete])
+
+  const cancelDrag = useCallback(() => {
+    // Once finishDrag has committed a nearest-slot drop, navigation owns the
+    // action. A later pointer-cancel from that pointer must not undo it.
+    if (!draggingRef.current || pendingActionRef.current?.phase === "navigating") return
+
+    invalidateAction()
+    suppressTapRef.current = true
+    restoreIndicatorToActive()
+  }, [invalidateAction, restoreIndicatorToActive])
 
   const handleIndicatorPointerDown = useCallback(() => {
     if (!activeKey) return
-    cancelSnap()
-    pendingActionRef.current = null
+    invalidateAction()
     draggingRef.current = true
     dragMovedRef.current = false
     suppressTapRef.current = false
     setDragPreviewKey(activeKey)
-  }, [activeKey, cancelSnap])
+  }, [activeKey, invalidateAction])
 
   const handleIndicatorTap = useCallback(() => {
     if (suppressTapRef.current || dragMovedRef.current) {
@@ -336,9 +481,38 @@ export function StoreBottomNav() {
     if (activeKey) requestDockAction(activeKey)
   }, [activeKey, requestDockAction])
 
+  useEffect(() => {
+    const previousPathname = previousPathnameRef.current
+    previousPathnameRef.current = pathname
+    if (previousPathname === pathname) return
+
+    const pending = pendingActionRef.current
+    if (pending) {
+      const resolution = resolveStorefrontDockNavigation(pending, pathname)
+      if (resolution === "succeeded") {
+        finalizePendingAction(pending.id)
+      } else {
+        abortPendingAction(pending.id)
+      }
+      return
+    }
+
+    // A route change without a pending Dock action still invalidates any
+    // drag preview/animation left by the previous route.
+    invalidateAction()
+    restoreIndicatorToActive()
+  }, [abortPendingAction, finalizePendingAction, invalidateAction, pathname, restoreIndicatorToActive])
+
+  useEffect(() => () => {
+    actionGenerationRef.current += 1
+    pendingActionRef.current = null
+    clearNavigationVerifyTimer()
+    cancelSnap()
+  }, [cancelSnap, clearNavigationVerifyTimer])
+
   const visualActiveKey = dragPreviewKey ?? activeKey
 
-  if (!isVisible || activeKey !== "home") return null
+  if (!isVisible || !activeKey) return null
 
   return (
     <div className="store-dock-viewport">
@@ -395,7 +569,7 @@ export function StoreBottomNav() {
                 dragMomentum={false}
                 onTap={handleIndicatorTap}
                 onPointerDown={handleIndicatorPointerDown}
-                onPointerCancel={finishDrag}
+                onPointerCancel={cancelDrag}
                 onDragStart={handleDragStart}
                 onDrag={updateDragPreview}
                 onDragEnd={finishDrag}

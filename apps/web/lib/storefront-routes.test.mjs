@@ -1,16 +1,25 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { getStorefrontActiveTab, isStorefrontDockVisible } from "./storefront-routes.ts"
+import {
+  getStorefrontActiveTab,
+  getStorefrontDockDestination,
+  getStorefrontRouteSection,
+  isStorefrontDockVisible,
+} from "./storefront-routes.ts"
 
-test("maps storefront routes to the correct primary tab", () => {
+test("uses exact Dock destinations for active state", () => {
   const cases = [
     ["/", "home"],
-    ["/product/abc", "home"],
+    ["///", "home"],
     ["/my/orders", "orders"],
-    ["/order/abc", "orders"],
+    ["/my/orders/", "orders"],
     ["/my", "me"],
-    ["/profile", "me"],
-    ["/profile/security", "me"],
+    ["/my///", "me"],
+    ["/product/abc", null],
+    ["/order/abc", null],
+    ["/my/orders/receipt", null],
+    ["/profile", null],
+    ["/profile/security", null],
     ["/login", null],
     ["/register", null],
   ]
@@ -20,26 +29,44 @@ test("maps storefront routes to the correct primary tab", () => {
   }
 })
 
-test("keeps the orders route out of the Me tab", () => {
-  assert.equal(getStorefrontActiveTab("/my/orders"), "orders")
-  assert.equal(getStorefrontActiveTab("/my/orders/receipt"), "orders")
+test("keeps broad section matching separate from Dock visibility", () => {
+  assert.equal(getStorefrontRouteSection("/product/abc"), "home")
+  assert.equal(getStorefrontRouteSection("/order/abc"), "orders")
+  assert.equal(getStorefrontRouteSection("/profile/security"), "me")
+
+  assert.equal(getStorefrontActiveTab("/product/abc"), null)
+  assert.equal(getStorefrontActiveTab("/order/abc"), null)
+  assert.equal(getStorefrontActiveTab("/profile/security"), null)
 })
 
-test("shows the Dock only on the storefront home route", () => {
-  const visiblePaths = ["/"]
+test("recognizes only exact first-level Dock destinations", () => {
+  const visiblePaths = ["/", "///", "/my/orders", "/my/orders/", "/my", "/my///"]
   const hiddenPaths = [
-    "///",
     "/product/abc",
     "/product/abc/",
-    "/my",
-    "/my/orders",
+    "/order",
     "/order/abc",
+    "/my/orders/receipt",
+    "/my/orders/receipt/",
     "/profile",
     "/profile/security",
     "/login",
     "/register",
+    "/categories",
   ]
 
   for (const pathname of visiblePaths) assert.equal(isStorefrontDockVisible(pathname), true, pathname)
   for (const pathname of hiddenPaths) assert.equal(isStorefrontDockVisible(pathname), false, pathname)
+})
+
+test("exposes one canonical destination identity for each Dock item", () => {
+  assert.deepEqual(getStorefrontDockDestination("/"), { key: "home", pathname: "/" })
+  assert.deepEqual(getStorefrontDockDestination("/my/orders/"), { key: "orders", pathname: "/my/orders" })
+  assert.deepEqual(getStorefrontDockDestination("/my"), { key: "me", pathname: "/my" })
+  assert.equal(getStorefrontDockDestination("/my/orders/receipt"), null)
+})
+
+test("keeps the orders route out of the Me tab", () => {
+  assert.equal(getStorefrontActiveTab("/my/orders"), "orders")
+  assert.equal(getStorefrontRouteSection("/my/orders/receipt"), "orders")
 })
