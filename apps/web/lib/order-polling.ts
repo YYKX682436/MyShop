@@ -2,7 +2,7 @@ import type { OrderStatus } from "@/types"
 import type { OrderStatusItem } from "@/lib/order-status"
 
 export const PAYMENT_RETURN_POLL_INTERVAL = 1000
-export const PAYMENT_STATUS_POLL_INTERVAL = 3000
+export const PAYMENT_STATUS_POLL_INTERVAL = 1000
 export const FULFILLMENT_STATUS_POLL_INTERVAL = 10000
 
 export function isTerminalFulfillmentStatus(status: OrderStatusItem["fulfillment_status"]): boolean {

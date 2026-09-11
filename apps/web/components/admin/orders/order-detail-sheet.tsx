@@ -25,8 +25,6 @@ interface OrderDetailSheetProps {
   detailCardKeysLoading?: boolean
   detailCardKeysError?: boolean
   onRetryCardKeys?: () => void
-  manualFulfillmentLoading?: boolean
-  onOpenManualFulfillment?: (orderId: string) => void
 }
 
 type Translator = (key: TranslationKey) => string
@@ -137,8 +135,6 @@ export function OrderDetailSheet({
   detailCardKeysLoading = false,
   detailCardKeysError = false,
   onRetryCardKeys,
-  manualFulfillmentLoading = false,
-  onOpenManualFulfillment,
 }: OrderDetailSheetProps) {
   const { t, locale } = useLocale()
   const empty = t("admin.systemNoData")
@@ -165,9 +161,6 @@ export function OrderDetailSheet({
 
   const identity = formatAdminOrderCustomer(order, t("admin.guest"))
   const mainItem = order.items[0]
-  const waitingManualItems = order.items.filter((item) =>
-    isManualFulfillmentItem(item) && item.fulfillment_status === "WAITING_MANUAL"
-  )
   const hasAutomaticCardItems = order.items.some((item) =>
     !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
   )
@@ -200,16 +193,6 @@ export function OrderDetailSheet({
             </div>
             <p className="mt-2 text-xs text-muted-foreground">{t("admin.orderWorkspace")}</p>
           </div>
-          {waitingManualItems.length > 0 && onOpenManualFulfillment && (
-            <Button
-              type="button"
-              onClick={() => onOpenManualFulfillment(order.id)}
-              disabled={manualFulfillmentLoading}
-            >
-              {manualFulfillmentLoading && <Loader2 className="animate-spin" aria-hidden="true" />}
-              {manualFulfillmentLoading ? t("admin.processing") : t("admin.completeDelivery")}
-            </Button>
-          )}
         </div>
         <dl className="mt-5 grid gap-4 border-t border-border-subtle pt-5 sm:grid-cols-2 xl:grid-cols-4">
           <DefinitionRow label={t("admin.primaryProduct")}><span className="font-medium">{mainItem ? `#${mainItem.product_no} ${mainItem.product_title}` : empty}</span></DefinitionRow>
@@ -217,7 +200,30 @@ export function OrderDetailSheet({
           <DefinitionRow label={t("admin.paymentAmount")}><span className="font-semibold">{formatMoney(order.actual_amount, empty)}</span></DefinitionRow>
           <DefinitionRow label={t("admin.createdAt")}><span>{formatDateTime(order.created_at, locale)}</span></DefinitionRow>
         </dl>
+        {order.customer_type === "GUEST" && (
+          <p className="mt-4 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">
+            {t("admin.guestRefundUnsupported")}
+          </p>
+        )}
       </header>
+
+      {order.status === "REFUNDED" && (
+        <section className="rounded-surface border border-violet-300/50 bg-violet-50/70 p-5 shadow-sm dark:border-violet-500/30 dark:bg-violet-950/20 sm:p-6" aria-labelledby="order-refund-title">
+          <h2 id="order-refund-title" className="text-base font-semibold text-foreground">{t("admin.refund")}</h2>
+          <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
+            <DefinitionRow label={t("admin.refundStatus")}><span>{t("status.REFUNDED")}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.refundAmount")}><span className="font-semibold">{formatMoney(order.refund_amount ?? order.actual_amount, empty)}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.refundDestination")}><span>{t("admin.refundBalance")}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.refundedAt")}><span>{order.refunded_at ? formatDateTime(order.refunded_at, locale) : empty}</span></DefinitionRow>
+          </dl>
+          {(order.refund_reason || order.refund_operator_username) && (
+            <dl className="mt-3 grid gap-x-6 gap-y-2 border-t border-violet-300/30 pt-3 text-sm dark:border-violet-500/20 sm:grid-cols-2">
+              {order.refund_reason && <DefinitionRow label={t("admin.refundReason")}><span className="whitespace-pre-wrap">{order.refund_reason}</span></DefinitionRow>}
+              {order.refund_operator_username && <DefinitionRow label={t("admin.refundOperator")}><span>{order.refund_operator_username}</span></DefinitionRow>}
+            </dl>
+          )}
+        </section>
+      )}
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(15rem,1fr)]">
         <main className="min-w-0 space-y-6">
@@ -231,7 +237,7 @@ export function OrderDetailSheet({
             </div>
             {detailCardKeysLoading && <div className="mt-4 flex items-center gap-2 rounded-card border border-border-subtle bg-surface-muted px-3 py-4 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" aria-hidden="true" />{t("admin.loadingCardDelivery")}</div>}
             {!detailCardKeysLoading && detailCardKeysError && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><span>{t("admin.cardDeliveryLoadFailed")}</span>{onRetryCardKeys && <Button type="button" variant="outline" size="sm" onClick={onRetryCardKeys}>{t("common.retry")}</Button>}</div>}
-            {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length === 0 && <div className="mt-4 rounded-card bg-surface-muted/70 p-4 text-sm text-muted-foreground">{order.status === "PAID" ? t("admin.paidCardDeliveryPending") : order.status === "DELIVERED" ? t("admin.deliveredCardContentEmpty") : t("admin.cardDeliveryEmpty")}</div>}
+            {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length === 0 && <div className="mt-4 rounded-card bg-surface-muted/70 p-4 text-sm text-muted-foreground">{order.status === "PAID" ? t("admin.paidCardDeliveryPending") : order.status === "DELIVERED" || order.status === "REFUNDED" ? t("admin.deliveredCardContentEmpty") : t("admin.cardDeliveryEmpty")}</div>}
             {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <div className="mt-4 space-y-4">{[...cardGroups.entries()].map(([groupKey, group]) => <div key={groupKey} className="rounded-card border border-border-subtle bg-surface-muted/45 p-3 sm:p-4"><div className="mb-1 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{group.title}</h3><Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(formatCardContents(group.cards))}>{t("admin.copyGroup")}</Button></div><div className="overflow-x-auto">{group.cards.map((card, index) => <CardRow key={card.card_key_id} card={card} index={index} cardLabel={t("admin.cardNumber")} fieldLabel={t("admin.cardField")} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} />)}</div></div>)}</div>}
           </section>}
 

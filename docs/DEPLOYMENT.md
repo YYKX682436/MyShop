@@ -265,6 +265,67 @@ After the services are healthy, atomically update `DEPLOYED_SHA` and
 retention cleanup. Never delete or recreate the PostgreSQL volume as part of
 this sequence.
 
+## Post-release smoke, schema, and safety checks
+
+Run these checks with the same SHA-named release directory that started the
+containers. They deliberately avoid authentication credentials and real order
+identifiers. The first two checks validate the internal container health
+contracts; the public requests validate the Caddy-to-Web/API path:
+
+```bash
+release=/opt/myshop/releases/<full-sha>
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T api \
+  wget -q -O /dev/null http://127.0.0.1:8083/api/site/config
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T web \
+  wget -q -O /dev/null http://127.0.0.1:3000/
+public_url="$(awk -F= '/^PUBLIC_SITE_URL=/{print $2; exit}' /opt/myshop/.env)"
+curl --fail --silent --show-error --output /dev/null "$public_url/"
+curl --fail --silent --show-error --output /dev/null "$public_url/api/site/config"
+```
+
+Verify Flyway V24 and its database contracts without printing credentials or
+card contents. The query must report one successful V24 migration, the
+`orders.refunded_at` column, the `orders_status_check` constraint, the
+`balance_transactions_refund_contract_check` constraint, and the partial unique
+refund index:
+
+```bash
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
+    SELECT version, success FROM flyway_schema_history WHERE version = '\''24'\'' AND success;
+    SELECT to_regclass('\''public.orders'\'') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = '\''orders'\'' AND column_name = '\''refunded_at'\'')
+      AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '\''orders_status_check'\'')
+      AND EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = '\''balance_transactions_refund_contract_check'\'')
+      AND EXISTS (SELECT 1 FROM pg_indexes
+                  WHERE indexname = '\''uq_balance_transactions_order_refund'\'');
+  "'
+```
+
+Finish the production safety-ablation check with a fixed UUID that is not an
+order identifier. Do not substitute a real order ID. Without an admin session,
+the refund endpoint must reject the request with HTTP 401 or 403 before any
+state change; a successful response is a deployment failure and must be
+investigated before retention cleanup:
+
+```bash
+probe_order_id=00000000-0000-4000-8000-000000000000
+status_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --request POST --header 'Content-Type: application/json' \
+  --data '{"confirmed":true,"reason":"safe deployment negative probe"}' \
+  "$public_url/api/admin/orders/$probe_order_id/refund")"
+test "$status_code" = 401 || test "$status_code" = 403
+```
+
+This probe is only an authorization-boundary check. It is not a substitute for
+the dedicated CI/API refund tests, which cover guest rejection, terminal-state
+rejection, idempotency, balance/ledger constraints, and concurrent refund and
+payment transitions. Never perform a real production refund as part of a
+release smoke test.
+
 ## Backup and rollback
 
 Before every schema or image change:
@@ -272,7 +333,9 @@ Before every schema or image change:
 ```bash
 mkdir -p /data/myshop/backups
 release=/opt/myshop/current
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom > /data/myshop/backups/myshop-$(date +%Y%m%d-%H%M%S).dump
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db \
+  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' \
+  > /data/myshop/backups/myshop-$(date +%Y%m%d-%H%M%S).dump
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
 ```
 

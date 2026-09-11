@@ -29,5 +29,18 @@ public interface BalanceTransactionService {
                                           UUID orderId,
                                           UUID operatorId);
 
+    /**
+     * Persists the immutable positive balance credit for an order refund.
+     * The caller must already hold the order and user row locks and update the
+     * user balance in the same transaction.
+     */
+    BalanceTransaction recordRefund(UUID userId,
+                                    BigDecimal amount,
+                                    BigDecimal balanceBefore,
+                                    BigDecimal balanceAfter,
+                                    UUID orderId,
+                                    String reason,
+                                    UUID operatorId);
+
     Page<BalanceTransaction> listByUser(UUID userId, Pageable pageable);
 }

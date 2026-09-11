@@ -138,7 +138,7 @@ class OrderServiceImplTest {
         assertEquals(Set.of("order", "payment"), first.keySet());
         assertEquals(Set.of("id", "order_no", "total_amount", "actual_amount", "status", "order_type",
                 "payment_method", "payment_channel_code", "created_at", "expires_at", "paid_at",
-                "delivered_at", "items"), orderResult.keySet());
+                "delivered_at", "refunded_at", "items"), orderResult.keySet());
         assertEquals(new BigDecimal("20.00"), saved.getActualAmount());
         assertFalse(request.containsKey("email"));
         assertFalse(orderResult.containsKey("email"));

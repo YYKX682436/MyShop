@@ -3,7 +3,9 @@ package com.myshop.controller;
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
 import com.myshop.model.request.AdminManualFulfillRequest;
+import com.myshop.model.request.AdminRefundRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
+import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.service.AdminOrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -28,11 +30,17 @@ public class AdminOrderController {
         return ApiResponse.success(adminOrderService.getOrderDetail(id));
     }
 
-    @LogOperation(action = "order.mark_paid", targetType = "ORDER", targetId = "#id", detail = "'手动标记已付（管理员确认）'")
     @PostMapping("/{id}/mark-paid")
-    public ApiResponse<Void> markPaid(@PathVariable UUID id, @RequestBody MarkPaidRequest request) {
+    public ApiResponse<Void> markPaid(@PathVariable UUID id, @Valid @RequestBody MarkPaidRequest request) {
         adminOrderService.markPaid(id, request.reason(), request.confirmed());
         return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/refund")
+    public ApiResponse<AdminOrderRefundResponse> refund(@PathVariable UUID id,
+                                                        @Valid @RequestBody AdminRefundRequest request) {
+        return ApiResponse.success(adminOrderService.refund(id, request.reason(),
+                Boolean.TRUE.equals(request.confirmed())));
     }
 
     @LogOperation(action = "order.manual_deliver", targetType = "ORDER", targetId = "#id", detail = "#request.auditDetail()")

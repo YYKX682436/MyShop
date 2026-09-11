@@ -99,7 +99,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query("SELECT o.status, COUNT(o) FROM Order o WHERE o.createdAt >= :start AND o.createdAt < :end " +
             "AND (o.status = com.myshop.constant.OrderStatus.PAID " +
             "OR o.status = com.myshop.constant.OrderStatus.DELIVERED " +
-            "OR o.status = com.myshop.constant.OrderStatus.EXPIRED) " +
+            "OR o.status = com.myshop.constant.OrderStatus.EXPIRED " +
+            "OR o.status = com.myshop.constant.OrderStatus.REFUNDED) " +
             "AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
             "GROUP BY o.status")
     List<Object[]> countPaymentOutcomesBetween(@Param("start") LocalDateTime start,

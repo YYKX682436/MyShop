@@ -68,6 +68,9 @@ public class Order extends BaseEntity {
 
     private LocalDateTime deliveredAt;
 
+    /** Set only by the atomic administrator refund transition. */
+    private LocalDateTime refundedAt;
+
     @Column(unique = true)
     private String idempotencyKey;
 

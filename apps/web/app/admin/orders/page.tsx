@@ -2,13 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { CheckCircle, Copy, Eye } from "lucide-react"
+import { Copy, Eye } from "lucide-react"
 import { toast } from "sonner"
 
 import {
   AdminPage,
   AdminPagination,
-  ConfirmAlert,
   DataTableShell,
   PageHeader,
   PageToolbar,
@@ -20,16 +19,26 @@ import {
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { formatAdminOrderCustomer, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
-import { invalidateAdminOrders, useAdminOrderInvalidation } from "@/lib/admin-order-invalidation"
+import { useAdminOrderInvalidation } from "@/lib/admin-order-invalidation"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
-import type { AdminOrderItem } from "@/types"
+import type { AdminOrderItem, OrderStatus } from "@/types"
+import type { TranslationKey } from "@/lib/i18n"
 
 const PAGE_SIZE = 20
 type TimeRange = "all" | "today" | "yesterday" | "7d" | "30d" | "custom"
+type OrderTab = "ALL" | OrderStatus
+
+const ORDER_STATUS_TABS: { value: OrderTab; label: TranslationKey }[] = [
+  { value: "ALL", label: "admin.orderTabAll" },
+  { value: "PENDING", label: "admin.orderTabPending" },
+  { value: "PAID", label: "admin.orderTabPaid" },
+  { value: "DELIVERED", label: "admin.orderTabDelivered" },
+  { value: "REFUNDED", label: "admin.orderTabRefunded" },
+  { value: "EXPIRED", label: "admin.orderTabExpired" },
+]
 
 function dateValue(date: Date) {
   const year = date.getFullYear()
@@ -88,16 +97,12 @@ export default function AdminOrdersPage() {
   const [error, setError] = useState(false)
   const [search, setSearch] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
-  const [statusFilter, setStatusFilter] = useState("")
+  const [statusFilter, setStatusFilter] = useState<OrderTab>("ALL")
   const [timeRange, setTimeRange] = useState<TimeRange>("all")
   const [customFrom, setCustomFrom] = useState("")
   const [customTo, setCustomTo] = useState("")
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
   const [page, setPage] = useState(1)
-
-  const [markPaidOrderId, setMarkPaidOrderId] = useState<string | null>(null)
-  const [markPaidReason, setMarkPaidReason] = useState("")
-  const [markPaidLoading, setMarkPaidLoading] = useState(false)
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -116,7 +121,7 @@ export default function AdminOrdersPage() {
       const data = await requestOrThrow(() => adminOrderApi.getList({
         page,
         page_size: PAGE_SIZE,
-        status: statusFilter || undefined,
+        status: statusFilter === "ALL" ? undefined : statusFilter,
         keyword: debouncedSearch || undefined,
         ...bounds,
         sort_direction: sortDirection,
@@ -133,27 +138,6 @@ export default function AdminOrdersPage() {
   }, [bounds, debouncedSearch, page, sortDirection, statusFilter])
 
   useEffect(() => { void loadOrders() }, [loadOrders, orderInvalidationRevision])
-
-  const handleMarkPaid = async () => {
-    if (!markPaidOrderId) return
-    const reason = markPaidReason.trim()
-    if (reason.length < 3) {
-      toast.error(t("admin.markPaidReasonTooShort"))
-      return
-    }
-    setMarkPaidLoading(true)
-    try {
-      await requestOrThrow(() => adminOrderApi.markPaid(markPaidOrderId, reason))
-      toast.success(t("admin.markedPaid"))
-      setMarkPaidOrderId(null)
-      setMarkPaidReason("")
-      invalidateAdminOrders()
-    } catch (requestError: unknown) {
-      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
-    } finally {
-      setMarkPaidLoading(false)
-    }
-  }
 
   const copyOrderNo = (value: number) => {
     const cleanValue = stripInvisible(String(value))
@@ -176,16 +160,27 @@ export default function AdminOrdersPage() {
     <AdminPage>
       <PageHeader title={t("admin.orders")} description={t("admin.ordersDesc")} />
 
+      <div className="-mx-1 overflow-x-auto px-1" aria-label={t("admin.statusLabel")}>
+        <div className="flex min-w-max gap-1 border-b border-border-subtle">
+          {ORDER_STATUS_TABS.map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              aria-pressed={statusFilter === tab.value}
+              onClick={() => { setStatusFilter(tab.value); setPage(1) }}
+              className={`whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors ${statusFilter === tab.value
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:border-border-strong hover:text-foreground"}`}
+            >
+              {t(tab.label)}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <PageToolbar>
         <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:flex-wrap">
           <Input className="min-w-0 lg:max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("admin.searchOrder")} aria-label={t("admin.searchOrder")} />
-          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }} aria-label={t("admin.statusLabel")}>
-            <option value="">{t("admin.allStatus")}</option>
-            <option value="PENDING">{t("status.PENDING")}</option>
-            <option value="PAID">{t("status.PAID_FILTER")}</option>
-            <option value="DELIVERED">{t("status.DELIVERED")}</option>
-            <option value="EXPIRED">{t("status.EXPIRED")}</option>
-          </select>
           <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label={t("admin.timeRangeLabel")}>
             <option value="all">{t("admin.allTime")}</option>
             <option value="today">{t("admin.today")}</option>
@@ -231,26 +226,13 @@ export default function AdminOrdersPage() {
                 <td className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>
                 <td className="px-4 py-3"><OrderStatusBadge status={order.status} items={order.items} /></td>
                 <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
-                <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button>{order.status === "PENDING" && <Button type="button" variant="ghost" size="icon" title={t("admin.markPaid")} aria-label={t("admin.markPaid")} onClick={() => { setMarkPaidOrderId(order.id); setMarkPaidReason("") }}><CheckCircle className="h-4 w-4 text-emerald-600" aria-hidden="true" /></Button>}</div></td>
+                <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button></div></td>
               </tr>
             ))}
           </tbody>
         </table>
       </DataTableShell>
 
-      <ConfirmAlert
-        open={markPaidOrderId !== null}
-        onOpenChange={(open) => { if (!open && !markPaidLoading) { setMarkPaidOrderId(null); setMarkPaidReason("") } }}
-        title={t("admin.markPaidConfirm")}
-        description={t("admin.markPaidReasonPlaceholder")}
-        confirmLabel={t("admin.markPaidBtn")}
-        cancelLabel={t("admin.cancel")}
-        loading={markPaidLoading}
-        confirmDisabled={markPaidReason.trim().length < 3}
-        onConfirm={() => void handleMarkPaid()}
-      >
-        <Textarea value={markPaidReason} onChange={(event) => setMarkPaidReason(event.target.value)} placeholder={t("admin.markPaidReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.markPaidReasonPlaceholder")} />
-      </ConfirmAlert>
     </AdminPage>
   )
 }

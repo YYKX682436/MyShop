@@ -1,20 +1,32 @@
 package com.myshop.service.impl;
 
 import com.myshop.common.PageResult;
+import com.myshop.constant.BalanceTransactionType;
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.OrderType;
+import com.myshop.entity.BalanceTransaction;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
+import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
+import com.myshop.model.response.AdminOrderRefundResponse;
+import com.myshop.payment.PaymentStatus;
+import com.myshop.repository.BalanceTransactionRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.AdminOrderService;
 import com.myshop.service.FulfillmentService;
-import lombok.RequiredArgsConstructor;
+import com.myshop.service.OperationLogService;
+import com.myshop.service.OrderPaymentCompletionService;
+import com.myshop.service.OrderRefundService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -30,7 +42,6 @@ import java.time.format.DateTimeParseException;
 import java.util.*;
 
 @Service
-@RequiredArgsConstructor
 public class AdminOrderServiceImpl implements AdminOrderService {
 
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
@@ -39,6 +50,32 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final OrderItemRepository orderItemRepository;
     private final UserRepository userRepository;
     private final FulfillmentService fulfillmentService;
+    private final PaymentAttemptRepository paymentAttemptRepository;
+    private final OrderPaymentCompletionService orderPaymentCompletionService;
+    private final OperationLogService operationLogService;
+    private final OrderRefundService orderRefundService;
+    private final BalanceTransactionRepository balanceTransactionRepository;
+
+    @Autowired
+    public AdminOrderServiceImpl(OrderRepository orderRepository,
+                                 OrderItemRepository orderItemRepository,
+                                 UserRepository userRepository,
+                                 FulfillmentService fulfillmentService,
+                                 PaymentAttemptRepository paymentAttemptRepository,
+                                 OrderPaymentCompletionService orderPaymentCompletionService,
+                                 OperationLogService operationLogService,
+                                 OrderRefundService orderRefundService,
+                                 BalanceTransactionRepository balanceTransactionRepository) {
+        this.orderRepository = orderRepository;
+        this.orderItemRepository = orderItemRepository;
+        this.userRepository = userRepository;
+        this.fulfillmentService = fulfillmentService;
+        this.paymentAttemptRepository = paymentAttemptRepository;
+        this.orderPaymentCompletionService = orderPaymentCompletionService;
+        this.operationLogService = operationLogService;
+        this.orderRefundService = orderRefundService;
+        this.balanceTransactionRepository = balanceTransactionRepository;
+    }
 
     @Override
     public PageResult<?> searchOrders(AdminOrderSearchRequest request) {
@@ -106,12 +143,60 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         }
         Order order = orderRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        if (order.getStatus() != OrderStatus.PENDING && order.getStatus() != OrderStatus.EXPIRED) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅 PENDING 或 EXPIRED 状态订单可标记为已支付");
+        if (order.getStatus() == OrderStatus.PAID || order.getStatus() == OrderStatus.DELIVERED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单已支付");
         }
-        order.setStatus(OrderStatus.PAID);
-        order.setPaidAt(LocalDateTime.now());
-        orderRepository.save(order);
+        if (order.getStatus() == OrderStatus.REFUNDED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单已退款，不能确认支付");
+        }
+        if (order.getStatus() == OrderStatus.EXPIRED) {
+            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期，不能恢复为已支付");
+        }
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前订单状态不允许人工确认支付");
+        }
+        if (order.getOrderType() != OrderType.NORMAL
+                || order.getPaymentMethod() != OrderPaymentMethod.ONLINE
+                || order.getPaymentChannelCode() == null
+                || order.getPaymentChannelCode().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "人工确认支付仅支持 NORMAL 在线支付订单，余额订单不能人工确认");
+        }
+        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期，不能人工确认支付");
+        }
+        // The repository query locks every pending attempt in creation order.
+        // The last one is the current effective attempt; all older pending
+        // attempts are closed so only one payment fact can remain active.
+        List<PaymentAttempt> pendingAttempts = paymentAttemptRepository
+                .findByOrderIdAndStatusForUpdate(order.getId(), PaymentStatus.PENDING);
+        if (pendingAttempts == null || pendingAttempts.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前订单没有可确认的支付尝试");
+        }
+        PaymentAttempt current = pendingAttempts.get(pendingAttempts.size() - 1);
+        if (current.getExpiresAt() != null && !current.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "当前支付尝试已过期，不能人工确认支付");
+        }
+        for (PaymentAttempt attempt : pendingAttempts) {
+            if (attempt == current) {
+                attempt.setStatus(PaymentStatus.PAID);
+            } else {
+                attempt.setStatus(PaymentStatus.CLOSED);
+            }
+            paymentAttemptRepository.save(attempt);
+        }
+        if (!orderPaymentCompletionService.completeFirstPayment(order)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单支付状态未能完成转换");
+        }
+        operationLogService.logCurrentRequest(
+                "order.mark_paid", "ORDER", order.getId().toString(),
+                "订单号=" + order.getOrderNo() + "，人工确认支付，原因长度=" + reason.trim().length());
+    }
+
+    @Override
+    @Transactional
+    public AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed) {
+        return orderRefundService.refund(id, reason, confirmed);
     }
 
     @Override
@@ -150,6 +235,9 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
         map.put("payment_channel_code", o.getPaymentChannelCode());
         map.put("created_at", o.getCreatedAt());
+        map.put("refunded_at", o.getRefundedAt());
+        map.put("refund_amount", o.getStatus() == OrderStatus.REFUNDED ? o.getActualAmount() : null);
+        map.put("refund_destination", o.getStatus() == OrderStatus.REFUNDED ? "BALANCE" : null);
         map.put("customer_type", user == null ? "GUEST" : "REGISTERED");
         map.put("username", user == null ? null : user.getUsername());
         map.put("user_no", user == null ? null : user.getUserNo());
@@ -195,6 +283,18 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             map.put("paid_at", o.getPaidAt());
             map.put("delivered_at", o.getDeliveredAt());
             map.put("client_ip", o.getClientIp());
+            if (o.getStatus() == OrderStatus.REFUNDED) {
+                BalanceTransaction refund = balanceTransactionRepository
+                        .findFirstByOrderIdAndTypeOrderByCreatedAtDesc(
+                                o.getId(), BalanceTransactionType.REFUND)
+                        .orElse(null);
+                map.put("refund_reason", refund == null ? null : refund.getReason());
+                map.put("refund_operator_id", refund == null ? null : refund.getOperatorId());
+                map.put("refund_operator_username", refund == null || refund.getOperatorId() == null
+                        ? null
+                        : userRepository.findById(refund.getOperatorId())
+                        .map(User::getUsername).orElse(null));
+            }
         }
         return map;
     }

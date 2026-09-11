@@ -94,4 +94,52 @@ class BalanceTransactionServiceImplTest {
         assertNull(missing.getReason());
         assertNull(blank.getReason());
     }
+
+    @Test
+    void recordsRefundAsPositiveImmutableOrderLinkedCredit() {
+        when(repository.save(any(BalanceTransaction.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        UUID userId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID operatorId = UUID.randomUUID();
+
+        BalanceTransaction result = service.recordRefund(
+                userId,
+                new BigDecimal("12.34"),
+                new BigDecimal("5.66"),
+                new BigDecimal("18.00"),
+                orderId,
+                "  订单退款  ",
+                operatorId);
+
+        assertEquals(userId, result.getUserId());
+        assertEquals(BalanceTransactionType.REFUND, result.getType());
+        assertEquals(new BigDecimal("12.34"), result.getAmount());
+        assertEquals(new BigDecimal("12.34"), result.getDelta());
+        assertEquals(new BigDecimal("5.66"), result.getBalanceBefore());
+        assertEquals(new BigDecimal("18.00"), result.getBalanceAfter());
+        assertEquals("订单退款", result.getReason());
+        assertEquals(operatorId, result.getOperatorId());
+        assertEquals(orderId, result.getOrderId());
+    }
+
+    @Test
+    void rejectsRefundLedgerWhenReasonOrBalanceChainIsInvalid() {
+        UUID userId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        UUID operatorId = UUID.randomUUID();
+
+        BusinessException shortReason = assertThrows(BusinessException.class,
+                () -> service.recordRefund(userId, new BigDecimal("1.00"),
+                        new BigDecimal("0.00"), new BigDecimal("1.00"), orderId,
+                        "好", operatorId));
+        BusinessException negativeDelta = assertThrows(BusinessException.class,
+                () -> service.recordRefund(userId, new BigDecimal("1.00"),
+                        new BigDecimal("1.00"), new BigDecimal("0.00"), orderId,
+                        "退款原因", operatorId));
+
+        assertEquals(ErrorCode.BAD_REQUEST, shortReason.getCode());
+        assertEquals(ErrorCode.BAD_REQUEST, negativeDelta.getCode());
+        verify(repository, never()).save(any(BalanceTransaction.class));
+    }
 }

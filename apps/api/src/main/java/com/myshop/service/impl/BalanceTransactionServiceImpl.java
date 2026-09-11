@@ -100,6 +100,39 @@ public class BalanceTransactionServiceImpl implements BalanceTransactionService 
         return balanceTransactionRepository.save(transaction);
     }
 
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY)
+    public BalanceTransaction recordRefund(UUID userId,
+                                           BigDecimal amount,
+                                           BigDecimal balanceBefore,
+                                           BigDecimal balanceAfter,
+                                           UUID orderId,
+                                           String reason,
+                                           UUID operatorId) {
+        if (userId == null || operatorId == null || orderId == null
+                || amount == null || balanceBefore == null || balanceAfter == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "退款余额流水参数不完整");
+        }
+        String normalizedReason = reason == null ? null : reason.trim();
+        if (normalizedReason == null || normalizedReason.length() < 3
+                || normalizedReason.length() > 500) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "退款原因必须为 3 至 500 个字符");
+        }
+        validateLedgerValues(amount, amount, balanceBefore, balanceAfter);
+
+        BalanceTransaction transaction = new BalanceTransaction();
+        transaction.setUserId(userId);
+        transaction.setType(BalanceTransactionType.REFUND);
+        transaction.setAmount(amount.setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setDelta(amount.setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setBalanceBefore(balanceBefore.setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setBalanceAfter(balanceAfter.setScale(2, RoundingMode.UNNECESSARY));
+        transaction.setReason(normalizedReason);
+        transaction.setOperatorId(operatorId);
+        transaction.setOrderId(orderId);
+        return balanceTransactionRepository.save(transaction);
+    }
+
     private void validateLedgerValues(BigDecimal amount, BigDecimal delta,
                                       BigDecimal balanceBefore, BigDecimal balanceAfter) {
         if (amount.signum() <= 0 || delta.signum() == 0

@@ -73,7 +73,8 @@ class DashboardServiceImplTest {
         when(orderRepository.countPaidOrdersBetween(yesterday, todayStart)).thenReturn(0L);
         when(orderRepository.countPaidOrdersBetween(monthStart, tomorrow)).thenReturn(5L);
         when(orderRepository.countPaymentOutcomesBetween(todayStart, tomorrow)).thenReturn(List.of(
-                new Object[]{OrderStatus.PAID, 4L}, new Object[]{OrderStatus.EXPIRED, 1L}));
+                new Object[]{OrderStatus.PAID, 4L}, new Object[]{OrderStatus.REFUNDED, 1L},
+                new Object[]{OrderStatus.EXPIRED, 1L}));
         when(orderRepository.countDistinctBuyersBetween(todayStart, tomorrow)).thenReturn(2L);
         when(orderRepository.countByStatus(OrderStatus.PENDING)).thenReturn(2L);
         when(orderRepository.countByStatus(OrderStatus.PAID)).thenReturn(3L);
@@ -120,8 +121,8 @@ class DashboardServiceImplTest {
         assertEquals(3L, result.paidWaitingDelivery());
         assertEquals(1L, result.deliveredToday());
         assertEquals(1L, result.expiredToday());
-        assertEquals(80.0, result.todayPaymentSuccessRate());
-        assertEquals(5L, result.todayPaymentSuccessSampleCount());
+        assertEquals(83.33, result.todayPaymentSuccessRate());
+        assertEquals(6L, result.todayPaymentSuccessSampleCount());
         assertEquals(2L, result.activeProducts());
         assertEquals(1L, result.zeroStockProducts());
         assertEquals(1, result.lowStockProducts().size());

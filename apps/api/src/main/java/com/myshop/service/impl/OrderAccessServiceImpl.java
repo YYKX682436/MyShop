@@ -168,6 +168,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("expires_at", order.getExpiresAt());
         result.put("paid_at", order.getPaidAt());
         result.put("delivered_at", order.getDeliveredAt());
+        result.put("refunded_at", order.getRefundedAt());
         result.put("items", items.stream().map(this::itemDetail).toList());
         return result;
     }
@@ -202,7 +203,9 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("order_id", order.getId());
         result.put("order_no", order.getOrderNo());
         result.put("status", paymentStatus(order));
-        result.put("paid", order.getStatus() == OrderStatus.PAID || order.getStatus() == OrderStatus.DELIVERED);
+        result.put("paid", order.getStatus() == OrderStatus.PAID
+                || order.getStatus() == OrderStatus.DELIVERED
+                || order.getStatus() == OrderStatus.REFUNDED);
         result.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());
         result.put("payment_channel_code", order.getPaymentChannelCode());
         result.put("next_action", null);
@@ -227,7 +230,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
 
     private PaymentStatus paymentStatus(Order order) {
         if (order.getStatus() == OrderStatus.EXPIRED) return PaymentStatus.CLOSED;
-        if (order.getStatus() == OrderStatus.PAID || order.getStatus() == OrderStatus.DELIVERED) {
+        if (order.getStatus() == OrderStatus.PAID || order.getStatus() == OrderStatus.DELIVERED
+                || order.getStatus() == OrderStatus.REFUNDED) {
             return PaymentStatus.PAID;
         }
         return PaymentStatus.PENDING;

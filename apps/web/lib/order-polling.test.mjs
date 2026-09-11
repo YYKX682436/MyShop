@@ -18,6 +18,7 @@ test("polls while payment is pending", () => {
   assert.equal(shouldPollOrderStatus("PENDING", []), true)
   assert.equal(getOrderStatusPollInterval("PENDING", true), PAYMENT_RETURN_POLL_INTERVAL)
   assert.equal(getOrderStatusPollInterval("PENDING", false), PAYMENT_STATUS_POLL_INTERVAL)
+  assert.equal(PAYMENT_STATUS_POLL_INTERVAL, 1000)
 })
 
 test("polls a paid order while manual fulfillment is waiting", () => {
@@ -34,9 +35,11 @@ test("stops once every paid-order item is terminal", () => {
   assert.equal(shouldPollOrderStatus("PAID", [delivered, cancelled]), false)
 })
 
-test("stops for delivered and expired orders", () => {
+test("stops for delivered, refunded, and expired orders", () => {
   assert.equal(shouldPollOrderStatus("DELIVERED", [waitingManual]), false)
+  assert.equal(shouldPollOrderStatus("REFUNDED", [waitingManual]), false)
   assert.equal(shouldPollOrderStatus("EXPIRED", [waitingManual]), false)
   assert.equal(getOrderStatusPollInterval("DELIVERED", false), null)
+  assert.equal(getOrderStatusPollInterval("REFUNDED", false), null)
   assert.equal(getOrderStatusPollInterval("EXPIRED", false), null)
 })

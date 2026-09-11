@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { CheckCircle, Loader2 } from "lucide-react"
+import { CheckCircle, Loader2, ShieldAlert } from "lucide-react"
 import { toast } from "sonner"
 
 import { WorkspaceSheet, useRouteOverlayClose } from "@/components/admin/route-overlay"
@@ -14,6 +14,7 @@ import { useLocale } from "@/lib/context"
 import { invalidateAdminOrders } from "@/lib/admin-order-invalidation"
 import { adminCardKeyApi, adminOrderApi, adminProductApi, requestOrThrow } from "@/services/api"
 import { isManualFulfillmentItem } from "@/lib/order-status"
+import { formatYuan } from "@/lib/utils"
 import type { AdminManualFulfillmentItem, AdminOrderItem, OrderCardKey } from "@/types"
 
 interface AdminOrderDetailRouteProps {
@@ -34,6 +35,9 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [markPaidOpen, setMarkPaidOpen] = useState(false)
   const [markPaidReason, setMarkPaidReason] = useState("")
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
+  const [refundOpen, setRefundOpen] = useState(false)
+  const [refundReason, setRefundReason] = useState("")
+  const [refundLoading, setRefundLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -46,7 +50,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       const hasAutomaticCardItems = detail.items.some((item) =>
         !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
       )
-      if ((detail.status === "PAID" || detail.status === "DELIVERED") && hasAutomaticCardItems) {
+      if ((detail.status === "PAID" || detail.status === "DELIVERED" || detail.status === "REFUNDED") && hasAutomaticCardItems) {
         setCardKeysLoading(true)
         try {
           setCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
@@ -106,8 +110,30 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     }
   }
 
+  const handleRefund = async () => {
+    if (!order || refundLoading) return
+    const reason = refundReason.trim()
+    if (reason.length < 3) {
+      toast.error(t("admin.refundReasonTooShort"))
+      return
+    }
+    setRefundLoading(true)
+    try {
+      await requestOrThrow(() => adminOrderApi.refund(order.id, reason))
+      toast.success(t("admin.refundSuccess"))
+      setRefundOpen(false)
+      setRefundReason("")
+      await load()
+      invalidateAdminOrders()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      setRefundLoading(false)
+    }
+  }
+
   const retryCardKeys = () => {
-    if (!order || (order.status !== "PAID" && order.status !== "DELIVERED")
+    if (!order || (order.status !== "PAID" && order.status !== "DELIVERED" && order.status !== "REFUNDED")
       || !order.items.some((item) => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")) return
     setCardKeysLoading(true)
     setCardKeysError(false)
@@ -131,18 +157,42 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           detailCardKeysLoading={cardKeysLoading}
           detailCardKeysError={cardKeysError}
           onRetryCardKeys={retryCardKeys}
-          manualFulfillmentLoading={manualFulfillmentLoading}
-          onOpenManualFulfillment={() => setManualFulfillmentOpen(true)}
         />
       )}
     </>
   )
 
-  const markPaidButton = order?.status === "PENDING" ? (
+  const canMarkPaid = order?.status === "PENDING"
+    && order.order_type === "NORMAL"
+    && order.payment_method === "ONLINE"
+    && Boolean(order.payment_channel_code)
+    && (!order.expires_at || new Date(order.expires_at).getTime() > Date.now())
+  const markPaidButton = canMarkPaid ? (
     <Button type="button" onClick={() => { setMarkPaidOpen(true); setMarkPaidReason("") }}>
       <CheckCircle className="size-4" aria-hidden="true" />
       {t("admin.markPaid")}
     </Button>
+  ) : null
+
+  const canRefund = order?.customer_type === "REGISTERED"
+    && order.order_type === "NORMAL"
+    && (order.status === "PAID" || order.status === "DELIVERED")
+  const refundButton = canRefund ? (
+    <Button type="button" variant="destructive" onClick={() => { setRefundOpen(true); setRefundReason("") }} disabled={refundLoading}>
+      <ShieldAlert className="size-4" aria-hidden="true" />
+      {t("admin.refund")}
+    </Button>
+  ) : null
+  const canCompleteManualFulfillment = order?.status === "PAID"
+    && order.items.some((item) => isManualFulfillmentItem(item) && item.fulfillment_status === "WAITING_MANUAL")
+  const manualFulfillmentButton = canCompleteManualFulfillment ? (
+    <Button type="button" onClick={() => setManualFulfillmentOpen(true)} disabled={manualFulfillmentLoading}>
+      {manualFulfillmentLoading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+      {manualFulfillmentLoading ? t("admin.processing") : t("admin.completeDelivery")}
+    </Button>
+  ) : null
+  const actionArea = (markPaidButton || refundButton || manualFulfillmentButton) ? (
+    <div className="flex flex-wrap items-center gap-2">{markPaidButton}{manualFulfillmentButton}{refundButton}</div>
   ) : null
 
   const confirmDialog = (
@@ -158,6 +208,34 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       onConfirm={() => void handleMarkPaid()}
     >
       <Textarea value={markPaidReason} onChange={(event) => setMarkPaidReason(event.target.value)} placeholder={t("admin.markPaidReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.markPaidReasonPlaceholder")} />
+    </ConfirmAlert>
+  )
+
+  const refundDialog = (
+    <ConfirmAlert
+      open={refundOpen}
+      onOpenChange={(open) => { if (!open && !refundLoading) { setRefundOpen(false); setRefundReason("") } }}
+      title={t("admin.refundConfirm")}
+      description={t("admin.refundDescription")}
+      confirmLabel={t("admin.refund")}
+      cancelLabel={t("admin.cancel")}
+      destructive
+      loading={refundLoading}
+      confirmDisabled={refundReason.trim().length < 3}
+      onConfirm={() => void handleRefund()}
+    >
+      {order && <div className="space-y-3 rounded-card border border-border-subtle bg-surface-muted/60 p-4 text-sm">
+        <dl className="divide-y divide-border-subtle/70">
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundOrderNo")}</dt><dd className="font-mono">{order.order_no}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundUser")}</dt><dd>{order.username || t("admin.guest")}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundPaidAmount")}</dt><dd className="font-semibold">{formatYuan(order.actual_amount ?? 0)}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundAmount")}</dt><dd className="font-semibold">{formatYuan(order.actual_amount ?? 0)}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundDestination")}</dt><dd>{t("admin.refundBalance")}</dd></div>
+        </dl>
+        {(order.status === "DELIVERED" || order.items.some((item) => item.fulfillment_status === "DELIVERED")) && <p className="flex items-start gap-2 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{t("admin.refundDeliveredWarning")}</p>}
+        <label className="block text-sm font-medium text-foreground" htmlFor="admin-refund-reason">{t("admin.refundReason")}</label>
+        <Textarea id="admin-refund-reason" value={refundReason} onChange={(event) => setRefundReason(event.target.value)} placeholder={t("admin.refundReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.refundReason")} />
+      </div>}
     </ConfirmAlert>
   )
 
@@ -177,9 +255,10 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   if (presentation === "full") {
     return (
       <AdminPage>
-        <PageHeader title={t("admin.orderWorkspace")} description={order ? `${t("admin.orderNo")} ${order.order_no}` : t("common.loading")} actions={markPaidButton} />
+        <PageHeader title={t("admin.orderWorkspace")} description={order ? `${t("admin.orderNo")} ${order.order_no}` : t("common.loading")} actions={actionArea} />
         <div className="surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
         {confirmDialog}
+        {refundDialog}
         {manualFulfillmentDialog}
       </AdminPage>
     )
@@ -191,11 +270,12 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         title={t("admin.orderWorkspace")}
         description={order ? `${t("admin.orderNo")} ${order.order_no}` : t("common.loading")}
         onClose={close}
-        headerActions={markPaidButton}
+        headerActions={actionArea}
       >
         {detailContent}
       </WorkspaceSheet>
       {confirmDialog}
+      {refundDialog}
       {manualFulfillmentDialog}
     </>
   )

@@ -288,6 +288,7 @@ public class OrderServiceImpl implements OrderService {
         map.put("expires_at", o.getExpiresAt());
         map.put("paid_at", o.getPaidAt());
         map.put("delivered_at", o.getDeliveredAt());
+        map.put("refunded_at", o.getRefundedAt());
         map.put("items", items.stream().map(i -> {
             Map<String, Object> im = new LinkedHashMap<>();
             im.put("id", i.getId());

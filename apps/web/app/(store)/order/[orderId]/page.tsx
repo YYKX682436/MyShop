@@ -237,6 +237,19 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
         </div>
       </div>
 
+      {status === "REFUNDED" && (
+        <div className="rounded-control border border-violet-300/50 bg-violet-50/70 px-4 py-3 text-sm dark:border-violet-500/30 dark:bg-violet-950/20" role="status">
+          <p className="font-medium text-foreground">{t("order.refunded")}</p>
+          <p className="mt-1 text-muted-foreground">{t("order.refundedDescription")}</p>
+          <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+            <span>{t("order.refundAmount")}: <strong className="font-semibold text-foreground">{formatYuan(view.order.actual_amount ?? view.order.total_amount)}</strong></span>
+            <span>{t("order.refundDestination")}: <strong className="font-semibold text-foreground">{t("order.refundToBalance")}</strong></span>
+            {view.order.refunded_at && <span>{t("order.refundedAt")}: <strong className="font-semibold text-foreground">{formatDateTime(view.order.refunded_at, locale)}</strong></span>}
+          </div>
+          {(hasCards || deliveredManualItems.length > 0) && <p className="mt-3 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("order.deliveredRefundNotice")}</p>}
+        </div>
+      )}
+
       {status === "PENDING" && (
         <div className="space-y-4 border-t border-border-subtle pt-5">
           {checkingReturn && <div className="rounded-control border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary" role="status">{t("order.paymentReturn")}</div>}
@@ -253,7 +266,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
         </div>
       )}
 
-      {(status === "PAID" || status === "DELIVERED") && (
+      {(status === "PAID" || status === "DELIVERED" || status === "REFUNDED") && (
         <div className="space-y-4 border-t border-border-subtle pt-5">
           {waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
           {pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
@@ -261,7 +274,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
           {hasCards && <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => copy(allCardText(deliveredGroups))} className="inline-flex h-9 items-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"><Copy className="h-3.5 w-3.5" />{t("order.copyAll")}</button><button type="button" onClick={() => void exportKeys()} className="inline-flex h-9 items-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"><Download className="h-3.5 w-3.5" />{t("order.exportKeys")}</button></div>}
           <div className="space-y-3">{deliveredGroups.map((group, index) => <DeliveryGroup key={`${group.product_no}-${index}`} group={group} index={index} onCopy={copy} copyLabel={t("order.copyKey")} countLabel={t("order.deliveredCount").replace("{count}", String(group.delivery_items.length))} />)}</div>
           <div className="space-y-3">{deliveredManualItems.map((item, index) => <ManualDeliveryItem key={item.id} item={item} index={index} statusLabel={t("status.DELIVERED")} emptyLabel={t("order.manualDeliveryEmpty")} contentTitle={t("order.manualDeliveryContentTitle")} />)}</div>
-          {!hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
+          {status !== "REFUNDED" && !hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
         </div>
       )}
     </section>
@@ -272,7 +285,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     </section>
 
     <div className="flex flex-wrap items-center justify-center gap-3">
-      <button type="button" onClick={() => void manualRefresh()} disabled={refreshCooldown > 0 || refreshing} className="inline-flex h-11 items-center gap-2 rounded-control border border-border-strong bg-surface px-5 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{refreshing ? t("order.refreshing") : refreshCooldown > 0 ? `${refreshCooldown}${t("payment.refreshLimit")}` : t("order.refresh")}</button>
+      {status !== "REFUNDED" && <button type="button" onClick={() => void manualRefresh()} disabled={refreshCooldown > 0 || refreshing} className="inline-flex h-11 items-center gap-2 rounded-control border border-border-strong bg-surface px-5 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{refreshing ? t("order.refreshing") : refreshCooldown > 0 ? `${refreshCooldown}${t("payment.refreshLimit")}` : t("order.refresh")}</button>}
       <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} emailLabel={t("payment.contactSupport")} />
     </div>
   </div>

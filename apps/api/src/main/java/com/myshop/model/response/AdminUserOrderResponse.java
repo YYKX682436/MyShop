@@ -26,6 +26,7 @@ public record AdminUserOrderResponse(
         LocalDateTime createdAt,
         LocalDateTime paidAt,
         LocalDateTime deliveredAt,
+        LocalDateTime refundedAt,
         List<AdminUserOrderItemResponse> items
 ) {
 

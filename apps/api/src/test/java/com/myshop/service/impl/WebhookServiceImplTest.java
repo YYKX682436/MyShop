@@ -217,6 +217,30 @@ class WebhookServiceImplTest {
     }
 
     @Test
+    void paidAttemptAfterManualConfirmationAcknowledgesLateCallbackWithoutRepeatingCompletion() {
+        PaymentAttempt attempt = pendingAttempt("merchant-manual-paid", "trade-manual-paid");
+        attempt.setStatus(PaymentStatus.PAID);
+        Order order = pendingOrder(attempt.getOrderId());
+        order.setStatus(OrderStatus.PAID);
+        order.setPaidAt(LocalDateTime.now());
+        stubAttempt(attempt);
+        when(provider.extractMerchantTradeNo(any(PaymentProvider.WebhookRequest.class)))
+                .thenReturn(attempt.getMerchantTradeNo());
+        when(provider.verifyAndParseCallback(any(PaymentProvider.WebhookRequest.class), anyMap()))
+                .thenReturn(callback("event-" + attempt.getMerchantTradeNo(),
+                        attempt.getMerchantTradeNo(), attempt.getProviderTradeNo(), "10.00"));
+
+        PaymentProvider.WebhookAcknowledgement acknowledgement = service.handleWebhook(
+                "epay", request("merchant-manual-paid", "trade-manual-paid"));
+
+        assertEquals("SUCCESS", acknowledgement.body());
+        verify(paymentAttemptRepository, never()).save(any(PaymentAttempt.class));
+        verify(orderRepository, never()).findByIdForUpdate(any(UUID.class));
+        verify(orderPaymentCompletionService, never()).completeFirstPayment(any(Order.class));
+        verify(webhookEventRepository, never()).save(any(WebhookEvent.class));
+    }
+
+    @Test
     void closedAttemptRejectsLatePaidCallback() {
         PaymentAttempt attempt = pendingAttempt("merchant-closed", "trade-closed");
         attempt.setStatus(PaymentStatus.CLOSED);

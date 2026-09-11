@@ -43,6 +43,7 @@
   AdministratorOperationLog,
   AdminFulfillmentResult,
   AdminManualFulfillmentRequest,
+  AdminOrderRefundResponse,
 } from "@/types"
 import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
 import { buildAdminOrderSearchBody } from "@/lib/admin-order-search"
@@ -538,6 +539,11 @@ export const adminOrderApi = {
     request<AdminOrderItem>(`/admin/orders/${id}`),
   markPaid: (id: string, reason: string) =>
     request<null>(`/admin/orders/${id}/mark-paid`, {
+      method: "POST",
+      body: JSON.stringify({ reason, confirmed: true }),
+    }),
+  refund: (id: string, reason: string) =>
+    request<AdminOrderRefundResponse>(`/admin/orders/${id}/refund`, {
       method: "POST",
       body: JSON.stringify({ reason, confirmed: true }),
     }),

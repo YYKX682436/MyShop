@@ -8,6 +8,7 @@ export type OrderDisplayStatus =
   | "PROCESSING"
   | "DELIVERED"
   | "EXPIRED"
+  | "REFUNDED"
 
 export interface OrderStatusItem {
   delivery_type?: string | null
@@ -36,6 +37,7 @@ export function deriveOrderDisplayStatus(
   if (orderStatus === "PENDING") return "PENDING"
   if (orderStatus === "DELIVERED") return "DELIVERED"
   if (orderStatus === "EXPIRED") return "EXPIRED"
+  if (orderStatus === "REFUNDED") return "REFUNDED"
 
   const currentItems = items ?? []
   const unfinishedItems = currentItems.filter((item) =>

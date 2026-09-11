@@ -103,6 +103,8 @@ class DashboardAggregateIntegrationTest {
         insertOrderItem(deliveredOrder, product, "Popular", 1, "5.00", start.plusHours(5));
         UUID adminPickupOrder = insertOrder(null, "DELIVERED", start.plusHours(4), start.plusHours(5), "100.00", "ADMIN_PICKUP");
         insertOrderItem(adminPickupOrder, product, "Popular", 99, "9900.00", start.plusHours(5));
+        UUID refundedOrder = insertOrder(normalUserId, "REFUNDED", start.plusHours(5), start.plusHours(6), "7.00");
+        insertOrderItem(refundedOrder, product, "Popular", 50, "350.00", start.plusHours(6));
         insertOrder(null, "EXPIRED", start.plusHours(6), null, "3.00");
         insertOrder(null, "PENDING", start.plusHours(7), null, "7.00");
         insertOrder(null, "PAID", start.minusDays(10), start.minusDays(9), "99.00");
@@ -119,8 +121,8 @@ class DashboardAggregateIntegrationTest {
         assertEquals(2L, stats.paidWaitingDelivery());
         assertEquals(1L, stats.deliveredToday());
         assertEquals(1L, stats.expiredToday());
-        assertEquals(66.67, stats.todayPaymentSuccessRate());
-        assertEquals(3L, stats.todayPaymentSuccessSampleCount());
+        assertEquals(75.0, stats.todayPaymentSuccessRate());
+        assertEquals(4L, stats.todayPaymentSuccessSampleCount());
         assertEquals(2L, stats.activeProducts());
         assertEquals(1L, stats.availableCardKeys());
         assertEquals(1L, stats.zeroStockProducts());

@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("23", flyway.info().current().getVersion().getVersion());
-        assertEquals(23, flyway.info().all().length);
+        assertEquals("24", flyway.info().current().getVersion().getVersion());
+        assertEquals(24, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -78,6 +78,7 @@ class MigrationChainIntegrationTest {
         assertFalse(columnExists("orders", retiredLookupHash));
         assertFalse(columnExists("orders", retiredGuestCredential));
         assertTrue(checkConstraintExists("orders_order_no_positive"));
+        assertTrue(checkConstraintExists("balance_transactions_refund_contract_check"));
         assertTrue(indexExists("orders_order_no_key"));
         assertTrue(sequenceExists("order_no_sequence"));
         assertTrue(functionExists("prevent_order_no_update"));
@@ -92,9 +93,12 @@ class MigrationChainIntegrationTest {
         assertTrue(checkConstraintExists("orders_order_type_check"));
         assertTrue(indexExists("idx_orders_type_created"));
         assertTrue(columnExists("orders", "payment_channel_code"));
+        assertTrue(columnExists("orders", "refunded_at"));
+        assertTrue(checkConstraintExists("orders_status_check"));
         assertTrue(checkConstraintExists("orders_payment_method_channel_check"));
         assertTrue(indexExists("idx_orders_payment_method_channel_status"));
         assertTrue(indexExists("uq_balance_transactions_order_payment"));
+        assertTrue(indexExists("uq_balance_transactions_order_refund"));
         assertTrue(columnExists("products", "product_no"));
         assertEquals("bigint", dataType("products", "product_no"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -331,7 +335,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("23", flyway().info().current().getVersion().getVersion());
+        assertEquals("24", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -425,7 +429,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-         assertEquals("23", flyway().info().current().getVersion().getVersion());
+         assertEquals("24", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -496,6 +500,43 @@ class MigrationChainIntegrationTest {
                     balance_before, balance_after, reason, operator_id, order_id)
                 VALUES (?, 'ORDER_PAYMENT', 1.00, -1.00, 1.00, 0.00, 'test', ?, ?)
                 """, userId, userId, ledgerOrderId));
+
+        UUID refundOrderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, '退款测试', ?, ?)
+                """, userId, userId, refundOrderId);
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 1.00, 2.00, '重复退款', ?, ?)
+                """, userId, userId, refundOrderId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, -1.00, 1.00, 0.00, '退款测试', ?, ?)
+                """, userId, userId, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 2.00, 1.00, 0.00, 1.00, '退款测试', ?, ?)
+                """, userId, userId, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 2.00, '退款测试', ?, ?)
+                """, userId, userId, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, '  ', ?, ?)
+                """, userId, userId, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, '退款测试', ?, NULL)
+                """, userId, userId));
     }
 
     @Test
@@ -557,7 +598,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("23", flyway().info().current().getVersion().getVersion());
+        assertEquals("24", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -627,7 +668,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("23", flyway().info().current().getVersion().getVersion());
+        assertEquals("24", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -676,7 +717,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("23", flyway().info().current().getVersion().getVersion());
+        assertEquals("24", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -876,7 +917,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("23", flyway().info().current().getVersion().getVersion());
+        assertEquals("24", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -922,7 +963,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("23", flyway().info().current().getVersion().getVersion());
+        assertEquals("24", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

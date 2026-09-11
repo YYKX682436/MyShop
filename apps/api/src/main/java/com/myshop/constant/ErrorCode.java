@@ -40,6 +40,9 @@ public final class ErrorCode {
     public static final int ORDER_ALREADY_DELIVERED = 40005;
     public static final int PURCHASE_LIMIT = 40006;
     public static final int PRICE_CHANGED = 40007;
+    public static final int ORDER_REFUND_NOT_ALLOWED = 40008;
+    public static final int ORDER_ALREADY_REFUNDED = 40009;
+    public static final int ORDER_REFUND_BALANCE_LIMIT = 40010;
 
     // ── Payment 50001~50099 ──
     public static final int CHANNEL_UNAVAILABLE = 50001;

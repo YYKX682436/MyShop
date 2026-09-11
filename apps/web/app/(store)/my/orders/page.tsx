@@ -14,7 +14,7 @@ import { cn, formatYuan } from "@/lib/utils"
 import { buildOrderPageHref } from "@/lib/payment-entry"
 import { isManualFulfillmentItem } from "@/lib/order-status"
 
-const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "EXPIRED"]
+const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "REFUNDED", "EXPIRED"]
 
 export default function MyOrdersPage() {
   const { t } = useLocale()
@@ -57,6 +57,7 @@ export default function MyOrdersPage() {
     PAID: "status.PAID_FILTER",
     DELIVERED: "status.DELIVERED",
     EXPIRED: "status.EXPIRED",
+    REFUNDED: "status.REFUNDED",
   }
 
   const getFilterLabel = (s: OrderStatus | "ALL") => {
@@ -138,6 +139,17 @@ export default function MyOrdersPage() {
                 </div>
               )}
 
+              {order.status === "REFUNDED" && (
+                <div className="mb-3 rounded-card border border-violet-300/50 bg-violet-50/70 p-3 text-sm dark:border-violet-500/30 dark:bg-violet-950/20">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium text-foreground">{t("order.refunded")}</p>
+                    {order.refunded_at && <span className="text-xs text-muted-foreground">{new Date(order.refunded_at).toLocaleString()}</span>}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{t("order.refundToBalance")}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t("order.refundAmount")}: <span className="font-medium text-foreground">{formatYuan(order.actual_amount)}</span></p>
+                </div>
+              )}
+
               {/* Footer */}
               <div className="flex items-center justify-between border-t border-border-subtle pt-3">
                 <span className="text-sm text-muted-foreground">
@@ -155,13 +167,15 @@ export default function MyOrdersPage() {
                       {t("payment.continuePay")}
                     </Link>
                   )}
-                  {(order.status === "PAID" || order.status === "DELIVERED") && (
+                  {(order.status === "PAID" || order.status === "DELIVERED" || order.status === "REFUNDED") && (
                     <Link
                       href={buildOrderPageHref(order.id)}
                       className="inline-flex h-9 items-center gap-1 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
                     >
                       <ExternalLink className="h-3 w-3" />
-                      {order.items?.some(item => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")
+                      {order.status === "REFUNDED"
+                        ? t("order.refunded")
+                        : order.items?.some(item => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")
                         ? t("order.cardKeys")
                         : t("order.viewDelivery")}
                     </Link>

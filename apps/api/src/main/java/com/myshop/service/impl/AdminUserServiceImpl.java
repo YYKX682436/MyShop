@@ -373,7 +373,7 @@ public class AdminUserServiceImpl implements AdminUserService {
         return new AdminUserOrderResponse(
                 order.getId(), order.getOrderNo(), order.getTotalAmount(), order.getActualAmount(), order.getStatus(),
                 order.getOrderType(), order.getPaymentMethod(), order.getPaymentChannelCode(), order.getCreatedAt(),
-                order.getPaidAt(), order.getDeliveredAt(), items);
+                order.getPaidAt(), order.getDeliveredAt(), order.getRefundedAt(), items);
     }
 
     private AdminUserOrderResponse.AdminUserOrderItemResponse toOrderItemResponse(OrderItem item) {

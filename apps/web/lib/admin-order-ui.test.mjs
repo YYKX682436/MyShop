@@ -104,6 +104,18 @@ test("order details use the wide workspace route and keep the workbench structur
   assert.doesNotMatch(detailSource, /\b[A-G]\.\s/)
 })
 
+test("admin order navigation uses fixed horizontal status tabs including refunds", () => {
+  const source = readSource("../app/admin/orders/page.tsx")
+
+  assert.match(source, /const ORDER_STATUS_TABS/)
+  for (const status of ["ALL", "PENDING", "PAID", "DELIVERED", "REFUNDED", "EXPIRED"]) {
+    assert.match(source, new RegExp(`value: "${status}"`))
+  }
+  assert.match(source, /overflow-x-auto/)
+  assert.match(source, /status: statusFilter === "ALL" \? undefined : statusFilter/)
+  assert.doesNotMatch(source, /value=\{statusFilter\}[\s\S]*option/)
+})
+
 test("the order lifecycle page owns status, payment, delivery, copy, and export", () => {
   const source = readSource("../app/(store)/order/[orderId]/page.tsx")
   assert.match(source, /orderApi\.get\(orderId\)/)
@@ -129,6 +141,40 @@ test("the order lifecycle page polls paid fulfillment and refreshes after visibi
   assert.doesNotMatch(source, /window\.location\.reload/)
 })
 
+test("refund detail and storefront lifecycle expose the refund facts without payment actions", () => {
+  const adminRoute = readSource("../components/admin/orders/order-detail-route.tsx")
+  const adminSheet = readSource("../components/admin/orders/order-detail-sheet.tsx")
+  const orderPage = readSource("../app/(store)/order/[orderId]/page.tsx")
+  const ordersPage = readSource("../app/(store)/my/orders/page.tsx")
+
+  assert.match(adminRoute, /adminOrderApi\.refund/)
+  assert.match(adminRoute, /refundDeliveredWarning/)
+  assert.match(adminSheet, /order\.status === "REFUNDED"/)
+  assert.match(adminSheet, /refund_reason/)
+  assert.match(adminSheet, /refund_operator_username/)
+  assert.match(adminSheet, /guestRefundUnsupported/)
+  assert.match(orderPage, /order\.refundedDescription/)
+  assert.match(orderPage, /order\.refundToBalance/)
+  assert.match(orderPage, /order\.deliveredRefundNotice/)
+  assert.match(orderPage, /status !== "REFUNDED"/)
+  assert.match(ordersPage, /"REFUNDED"/)
+  assert.match(ordersPage, /order\.refundAmount/)
+})
+
+test("pending payment polling uses the one-second database GET path and not provider refresh", () => {
+  const source = readSource("../app/(store)/order/[orderId]/page.tsx")
+  const pollingSource = readSource("./order-polling.ts")
+  const pollingStart = source.indexOf("const timer = window.setInterval(() => {")
+  const pollingEnd = source.indexOf("}, interval)", pollingStart)
+  const pollingBody = source.slice(pollingStart, pollingEnd)
+
+  assert.match(pollingSource, /PAYMENT_STATUS_POLL_INTERVAL = 1000/)
+  assert.match(source, /getOrderStatusPollInterval\(view\.order\.status, checkingReturn\)/)
+  assert.match(source, /forceRefresh \? await orderApi\.refresh\(orderId\) : await orderApi\.get\(orderId\)/)
+  assert.match(pollingBody, /fetchView\("poll"\)/)
+  assert.doesNotMatch(pollingBody, /orderApi\.refresh/)
+})
+
 test("manual storefront delivery is separate from automatic card-key delivery", () => {
   const source = readSource("../app/(store)/order/[orderId]/page.tsx")
 
@@ -147,8 +193,9 @@ test("admin manual fulfillment confirms in a form dialog before sending one batc
   const detailSource = readSource("../components/admin/orders/order-detail-sheet.tsx")
   const dialogSource = readSource("../components/admin/orders/manual-fulfillment-dialog.tsx")
 
-  assert.match(detailSource, /onOpenManualFulfillment/)
+  assert.doesNotMatch(detailSource, /onOpenManualFulfillment/)
   assert.match(routeSource, /setManualFulfillmentOpen\(true\)/)
+  assert.match(routeSource, /completeDelivery/)
   assert.match(routeSource, /adminOrderApi\.fulfill/)
   assert.match(routeSource, /confirmed: true/)
   assert.match(dialogSource, /<MarkdownEditor/)
@@ -167,10 +214,10 @@ test("admin order mutations publish one shared invalidation after the detail ref
   assert.match(invalidationSource, /invalidateAdminOrders/)
   assert.match(listSource, /useAdminOrderInvalidation/)
   assert.match(listSource, /\[loadOrders, orderInvalidationRevision\]/)
-  assert.match(listSource, /invalidateAdminOrders\(\)/)
+  assert.doesNotMatch(listSource, /invalidateAdminOrders\(\)/)
   assert.doesNotMatch(listSource, /await loadOrders\(\)/)
   assert.match(routeSource, /await load\(\)[\s\S]*invalidateAdminOrders\(\)/)
-  assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 2)
+  assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 3)
 })
 
 test("storefront markdown surfaces use the shared safe renderer", () => {

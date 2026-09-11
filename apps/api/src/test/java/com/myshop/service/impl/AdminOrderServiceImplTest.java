@@ -6,14 +6,21 @@ import com.myshop.constant.OrderType;
 import com.myshop.constant.PricingSource;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
+import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
+import com.myshop.payment.PaymentStatus;
+import com.myshop.repository.BalanceTransactionRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.FulfillmentService;
+import com.myshop.service.OperationLogService;
+import com.myshop.service.OrderPaymentCompletionService;
+import com.myshop.service.OrderRefundService;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.Test;
@@ -47,6 +54,11 @@ class AdminOrderServiceImplTest {
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private UserRepository userRepository;
     @Mock private FulfillmentService fulfillmentService;
+    @Mock private PaymentAttemptRepository paymentAttemptRepository;
+    @Mock private OrderPaymentCompletionService orderPaymentCompletionService;
+    @Mock private OperationLogService operationLogService;
+    @Mock private OrderRefundService orderRefundService;
+    @Mock private BalanceTransactionRepository balanceTransactionRepository;
 
     @Test
     void adminOrderUsesHistoricalSnapshotsForProfitAndLevelContext() {
@@ -61,8 +73,7 @@ class AdminOrderServiceImplTest {
         user.setUsername("buyer");
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
 
-        Map<String, Object> response = (Map<String, Object>) new AdminOrderServiceImpl(
-                orderRepository, orderItemRepository, userRepository, fulfillmentService).getOrderDetail(orderId);
+        Map<String, Object> response = (Map<String, Object>) fullService().getOrderDetail(orderId);
 
         assertEquals(orderId, response.get("id"));
         assertEquals(1000000001L, response.get("order_no"));
@@ -95,8 +106,7 @@ class AdminOrderServiceImplTest {
         when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
 
-        Map<String, Object> response = (Map<String, Object>) new AdminOrderServiceImpl(
-                orderRepository, orderItemRepository, userRepository, fulfillmentService).getOrderDetail(orderId);
+        Map<String, Object> response = (Map<String, Object>) fullService().getOrderDetail(orderId);
 
         assertEquals(null, response.get("user_level_id_snapshot"));
         assertEquals(1000000001L, response.get("order_no"));
@@ -133,9 +143,8 @@ class AdminOrderServiceImplTest {
         user.setPhone("13800138000");
         when(userRepository.findAllById(List.of(userId))).thenReturn(List.of(user));
 
-        var result = new AdminOrderServiceImpl(
-                orderRepository, orderItemRepository, userRepository, fulfillmentService)
-                .searchOrders(new AdminOrderSearchRequest(1, 20, null, null, null, null, null));
+        var result = fullService().searchOrders(
+                new AdminOrderSearchRequest(1, 20, null, null, null, null, null));
 
         assertEquals(2L, result.getPagination().getTotal());
         Map<?, ?> registered = (Map<?, ?>) result.getList().get(0);
@@ -170,9 +179,8 @@ class AdminOrderServiceImplTest {
                 org.mockito.ArgumentMatchers.eq("desc"), any()))
                 .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
 
-        var result = new AdminOrderServiceImpl(
-                orderRepository, orderItemRepository, userRepository, fulfillmentService)
-                .searchOrders(new AdminOrderSearchRequest(1, 20, "1000000001", null, null, null, null));
+        var result = fullService().searchOrders(
+                new AdminOrderSearchRequest(1, 20, "1000000001", null, null, null, null));
 
         assertEquals(0L, result.getPagination().getTotal());
         verify(orderRepository).searchAdminOrders(isNull(), isNull(), isNull(),
@@ -185,8 +193,7 @@ class AdminOrderServiceImplTest {
     void manualFulfillmentRequiresExplicitConfirmationAndRejectsDuplicateItems() {
         UUID orderId = UUID.randomUUID();
         UUID itemId = UUID.randomUUID();
-        var service = new AdminOrderServiceImpl(
-                orderRepository, orderItemRepository, userRepository, fulfillmentService);
+        var service = fullService();
 
         assertThrows(BusinessException.class, () -> service.completeManualItems(orderId,
                 new AdminManualFulfillRequest(false, List.of(
@@ -228,9 +235,7 @@ class AdminOrderServiceImplTest {
         when(fulfillmentService.completeManualItems(eq(orderId), anyList()))
                 .thenReturn(Map.of("status", "DELIVERED"));
 
-        var result = new AdminOrderServiceImpl(
-                orderRepository, orderItemRepository, userRepository, fulfillmentService)
-                .completeManualItems(orderId, new AdminManualFulfillRequest(true, List.of(
+        var result = fullService().completeManualItems(orderId, new AdminManualFulfillRequest(true, List.of(
                         new AdminManualFulfillRequest.Item(firstItemId, "first"),
                         new AdminManualFulfillRequest.Item(secondItemId, null))));
 
@@ -240,6 +245,108 @@ class AdminOrderServiceImplTest {
         List<?> forwarded = captor.getValue();
         assertEquals(new FulfillmentService.ManualFulfillmentItem(firstItemId, "first"), forwarded.get(0));
         assertEquals(new FulfillmentService.ManualFulfillmentItem(secondItemId, null), forwarded.get(1));
+    }
+
+    @Test
+    void manualPaymentConfirmationPaysLatestAttemptClosesOlderAttemptsAndUsesUnifiedCompletion() {
+        UUID orderId = UUID.randomUUID();
+        Order order = order(orderId, UUID.randomUUID());
+        order.setStatus(OrderStatus.PENDING);
+        order.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+        PaymentAttempt oldAttempt = pendingAttempt(orderId, java.time.LocalDateTime.now().plusMinutes(5));
+        PaymentAttempt currentAttempt = pendingAttempt(orderId, java.time.LocalDateTime.now().plusMinutes(5));
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentAttemptRepository.findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING))
+                .thenReturn(List.of(oldAttempt, currentAttempt));
+        when(orderPaymentCompletionService.completeFirstPayment(order)).thenAnswer(invocation -> {
+            order.setStatus(OrderStatus.PAID);
+            order.setPaidAt(java.time.LocalDateTime.now());
+            return true;
+        });
+
+        fullService().markPaid(orderId, "线下订单凭证已核验", true);
+
+        assertEquals(OrderStatus.PAID, order.getStatus());
+        assertEquals(PaymentStatus.CLOSED, oldAttempt.getStatus());
+        assertEquals(PaymentStatus.PAID, currentAttempt.getStatus());
+        verify(paymentAttemptRepository).save(oldAttempt);
+        verify(paymentAttemptRepository).save(currentAttempt);
+        verify(orderPaymentCompletionService).completeFirstPayment(order);
+        org.mockito.ArgumentCaptor<String> detail = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(operationLogService).logCurrentRequest(
+                eq("order.mark_paid"), eq("ORDER"), eq(orderId.toString()), detail.capture());
+        assertTrue(detail.getValue().contains("原因长度=9"));
+        assertTrue(!detail.getValue().contains("线下订单凭证已核验"));
+    }
+
+    @Test
+    void manualPaymentConfirmationRejectsBalanceExpiredAndMissingAttemptOrders() {
+        UUID balanceOrderId = UUID.randomUUID();
+        Order balanceOrder = order(balanceOrderId, UUID.randomUUID());
+        balanceOrder.setStatus(OrderStatus.PENDING);
+        balanceOrder.setPaymentMethod(OrderPaymentMethod.BALANCE);
+        balanceOrder.setPaymentChannelCode(null);
+        balanceOrder.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+        when(orderRepository.findByIdForUpdate(balanceOrderId)).thenReturn(Optional.of(balanceOrder));
+
+        BusinessException balance = assertThrows(BusinessException.class,
+                () -> fullService().markPaid(balanceOrderId, "余额订单禁止确认", true));
+        assertEquals(com.myshop.constant.ErrorCode.BAD_REQUEST, balance.getCode());
+
+        UUID expiredOrderId = UUID.randomUUID();
+        Order expiredOrder = order(expiredOrderId, UUID.randomUUID());
+        expiredOrder.setStatus(OrderStatus.EXPIRED);
+        when(orderRepository.findByIdForUpdate(expiredOrderId)).thenReturn(Optional.of(expiredOrder));
+        BusinessException expired = assertThrows(BusinessException.class,
+                () -> fullService().markPaid(expiredOrderId, "过期订单禁止恢复", true));
+        assertEquals(com.myshop.constant.ErrorCode.ORDER_EXPIRED, expired.getCode());
+
+        UUID noAttemptOrderId = UUID.randomUUID();
+        Order noAttemptOrder = order(noAttemptOrderId, UUID.randomUUID());
+        noAttemptOrder.setStatus(OrderStatus.PENDING);
+        noAttemptOrder.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+        when(orderRepository.findByIdForUpdate(noAttemptOrderId)).thenReturn(Optional.of(noAttemptOrder));
+        when(paymentAttemptRepository.findByOrderIdAndStatusForUpdate(noAttemptOrderId, PaymentStatus.PENDING))
+                .thenReturn(List.of());
+        BusinessException noAttempt = assertThrows(BusinessException.class,
+                () -> fullService().markPaid(noAttemptOrderId, "没有支付尝试", true));
+        assertEquals(com.myshop.constant.ErrorCode.BAD_REQUEST, noAttempt.getCode());
+        verifyNoInteractions(orderPaymentCompletionService, operationLogService);
+    }
+
+    @Test
+    void manualPaymentConfirmationRejectsExpiredCurrentAttemptBeforeMutation() {
+        UUID orderId = UUID.randomUUID();
+        Order order = order(orderId, UUID.randomUUID());
+        order.setStatus(OrderStatus.PENDING);
+        order.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(10));
+        PaymentAttempt expiredAttempt = pendingAttempt(orderId, java.time.LocalDateTime.now().minusSeconds(1));
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentAttemptRepository.findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING))
+                .thenReturn(List.of(expiredAttempt));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> fullService().markPaid(orderId, "当前支付尝试已过期", true));
+
+        assertEquals(com.myshop.constant.ErrorCode.ORDER_EXPIRED, exception.getCode());
+        assertEquals(PaymentStatus.PENDING, expiredAttempt.getStatus());
+        verify(paymentAttemptRepository, never()).save(any(PaymentAttempt.class));
+        verifyNoInteractions(orderPaymentCompletionService, operationLogService);
+    }
+
+    private AdminOrderServiceImpl fullService() {
+        return new AdminOrderServiceImpl(orderRepository, orderItemRepository, userRepository,
+                fulfillmentService, paymentAttemptRepository, orderPaymentCompletionService,
+                operationLogService, orderRefundService, balanceTransactionRepository);
+    }
+
+    private PaymentAttempt pendingAttempt(UUID orderId, java.time.LocalDateTime expiresAt) {
+        PaymentAttempt attempt = new PaymentAttempt();
+        attempt.setId(UUID.randomUUID());
+        attempt.setOrderId(orderId);
+        attempt.setStatus(PaymentStatus.PENDING);
+        attempt.setExpiresAt(expiresAt);
+        return attempt;
     }
 
     private Order order(UUID id, UUID userId) {

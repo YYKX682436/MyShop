@@ -78,7 +78,8 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
         result.put("order_no", order.getOrderNo());
         result.put("status", order.getStatus().name());
         result.put("paid", order.getStatus() == OrderStatus.PAID
-                || order.getStatus() == OrderStatus.DELIVERED);
+                || order.getStatus() == OrderStatus.DELIVERED
+                || order.getStatus() == OrderStatus.REFUNDED);
         result.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());
         result.put("payment_type", null);
         result.put("payment_channel_code", order.getPaymentChannelCode());

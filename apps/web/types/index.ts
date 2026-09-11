@@ -247,7 +247,7 @@ export interface UserLevel {
 // Order
 // ============================================================
 
-export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED'
+export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED' | 'REFUNDED'
 export type OrderType = 'NORMAL' | 'ADMIN_PICKUP'
 export type OrderPaymentMethod = 'BALANCE' | 'ONLINE'
 
@@ -261,6 +261,9 @@ export interface OrderBrief {
   payment_method: OrderPaymentMethod | null
   payment_channel_code: string | null
   created_at: string
+  paid_at?: string | null
+  delivered_at?: string | null
+  refunded_at?: string | null
   items?: OrderItemDetail[]
 }
 
@@ -287,6 +290,7 @@ export interface OrderDetail extends OrderBrief {
   expires_at: string | null
   paid_at: string | null
   delivered_at: string | null
+  refunded_at: string | null
   items: OrderItemDetail[]
 }
 
@@ -653,13 +657,19 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
   gross_margin: number | null
 }
 
-export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at"> {
+export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at" | "refunded_at"> {
   items: AdminOrderItemDetail[]
   payment_method?: OrderPaymentMethod | null
   payment_channel_code: string | null
   expires_at?: string | null
   paid_at?: string | null
   delivered_at?: string | null
+  refunded_at?: string | null
+  refund_amount?: number | null
+  refund_destination?: "BALANCE" | string | null
+  refund_reason?: string | null
+  refund_operator_id?: string | null
+  refund_operator_username?: string | null
   customer_type: "REGISTERED" | "GUEST"
   user_id?: string | null
   user_no: number | null
@@ -673,6 +683,17 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   cost_total: number
   gross_profit_total: number
   gross_margin_total: number | null
+}
+
+export interface AdminOrderRefundResponse {
+  order_id: string
+  order_no: number
+  status: "REFUNDED"
+  refund_amount: number
+  refunded_at: string
+  refund_destination: "BALANCE" | string
+  balance_before: number
+  balance_after: number
 }
 
 // ============================================================
@@ -746,6 +767,7 @@ export interface AdminUserOrder {
   created_at: string
   paid_at: string | null
   delivered_at: string | null
+  refunded_at: string | null
   items: AdminUserOrderItem[]
 }
 

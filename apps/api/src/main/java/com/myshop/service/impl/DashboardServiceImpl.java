@@ -95,7 +95,8 @@ public class DashboardServiceImpl implements DashboardService {
 
         Map<OrderStatus, Long> outcomes = paymentOutcomes(todayStart, tomorrowStart);
         long successfulPayments = outcomes.getOrDefault(OrderStatus.PAID, 0L)
-                + outcomes.getOrDefault(OrderStatus.DELIVERED, 0L);
+                + outcomes.getOrDefault(OrderStatus.DELIVERED, 0L)
+                + outcomes.getOrDefault(OrderStatus.REFUNDED, 0L);
         long failedPayments = outcomes.getOrDefault(OrderStatus.EXPIRED, 0L);
         long paymentSampleCount = successfulPayments + failedPayments;
         double paymentSuccessRate = paymentSampleCount == 0

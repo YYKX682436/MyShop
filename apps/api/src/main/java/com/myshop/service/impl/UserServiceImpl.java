@@ -124,6 +124,9 @@ public class UserServiceImpl implements UserService {
         map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
         map.put("payment_channel_code", o.getPaymentChannelCode());
         map.put("created_at", o.getCreatedAt());
+        map.put("paid_at", o.getPaidAt());
+        map.put("delivered_at", o.getDeliveredAt());
+        map.put("refunded_at", o.getRefundedAt());
         map.put("items", orderItemRepository.findByOrderId(o.getId()).stream().map(this::toOrderItemBrief).toList());
         return map;
     }
