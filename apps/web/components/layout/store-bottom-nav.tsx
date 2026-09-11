@@ -2,19 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { usePathname, useRouter } from "next/navigation"
-import { House, ReceiptText, Search, UserRound, type LucideIcon } from "lucide-react"
+import { House, ReceiptText, UserRound, type LucideIcon } from "lucide-react"
 import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
-import { useLocale, useSearch } from "@/lib/context"
-import {
-  getStorefrontDockAction,
-  getStorefrontDockKey,
-  type StorefrontDockKey,
-} from "@/lib/storefront-dock"
-import { cn } from "@/lib/utils"
+import { useLocale } from "@/lib/context"
+import { getStorefrontDockAction } from "@/lib/storefront-dock"
+import { getStorefrontActiveTab, type StorefrontNavKey } from "@/lib/storefront-routes"
 
-type DockKey = StorefrontDockKey
+type DockKey = StorefrontNavKey
 
-const DOCK_KEYS: readonly DockKey[] = ["home", "search", "orders", "me"]
+const DOCK_KEYS: readonly DockKey[] = ["home", "orders", "me"]
 const SNAP_FALLBACK_MS = 480
 
 interface StoreDockItem {
@@ -59,15 +55,6 @@ export function StoreBottomNav() {
   const router = useRouter()
   const reducedMotion = useReducedMotion() ?? false
   const { t } = useLocale()
-  const {
-    searchQuery,
-    searchOpen,
-    setSearchOpen,
-    sortBy,
-    inStockOnly,
-    priceMin,
-    priceMax,
-  } = useSearch()
 
   const dockRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
@@ -81,17 +68,9 @@ export function StoreBottomNav() {
   const [metrics, setMetrics] = useState<DockMetrics | null>(null)
   const [dragPreviewKey, setDragPreviewKey] = useState<DockKey | null>(null)
 
-  const activeKey = getStorefrontDockKey(pathname, searchOpen)
-  const hasActiveSearch =
-    searchQuery.trim().length > 0 ||
-    sortBy !== "default" ||
-    inStockOnly ||
-    priceMin.trim().length > 0 ||
-    priceMax.trim().length > 0
-
+  const activeKey = getStorefrontActiveTab(pathname)
   const navItems: StoreDockItem[] = [
     { key: "home", label: t("nav.home"), icon: House },
-    { key: "search", label: t("nav.search"), icon: Search },
     { key: "orders", label: t("nav.orders"), icon: ReceiptText },
     { key: "me", label: t("nav.me"), icon: UserRound },
   ]
@@ -156,7 +135,7 @@ export function StoreBottomNav() {
   }, [measureDock])
 
   useEffect(() => {
-    if (!metrics || draggingRef.current) return
+    if (!metrics || draggingRef.current || !activeKey) return
     const target = getIndicatorOffset(activeKey, metrics)
     snapAnimationRef.current?.stop()
     snapAnimationRef.current = null
@@ -213,10 +192,9 @@ export function StoreBottomNav() {
     pendingActionRef.current = null
     setDragPreviewKey(null)
 
-    const action = getStorefrontDockAction(key, pathname, searchOpen)
-    setSearchOpen(action.searchOpen)
+    const action = getStorefrontDockAction(key, pathname)
     if (action.href && action.href !== pathname) router.push(action.href)
-  }, [pathname, router, searchOpen, setSearchOpen])
+  }, [pathname, router])
 
   const completePendingAction = useCallback(() => {
     const key = pendingActionRef.current
@@ -320,27 +298,15 @@ export function StoreBottomNav() {
                 ref={(element) => { itemRefs.current[index] = element }}
                 type="button"
                 onClick={() => handleDockAction(item.key)}
-                aria-label={
-                  item.key === "search" && hasActiveSearch
-                    ? `${item.label} · ${t("home.searchActive")}`
-                    : item.label
-                }
-                aria-current={isActive && item.key !== "search" ? "page" : undefined}
+                aria-label={item.label}
+                aria-current={isActive ? "page" : undefined}
                 aria-pressed={isActive}
-                aria-expanded={item.key === "search" && pathname === "/" ? searchOpen : undefined}
-                className={cn(
-                  "store-dock-item text-muted-foreground",
-                  isPreviewed && "text-foreground",
-                  isPreviewed && item.key === "search" && "text-primary",
-                )}
+                className={`store-dock-item text-muted-foreground${isPreviewed ? " text-foreground" : ""}`}
               >
                 <span className="store-dock-item-content">
                   <Icon className="size-[18px]" strokeWidth={1.9} aria-hidden="true" />
                   <span className="store-dock-label">{item.label}</span>
                 </span>
-                {item.key === "search" && hasActiveSearch && (
-                  <span className="store-dock-state-dot" aria-hidden="true" />
-                )}
               </button>
             )
           })}

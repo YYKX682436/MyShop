@@ -28,6 +28,7 @@ export function StoreSearchPanel() {
     setPriceMax,
   } = useSearch()
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
 
   const sortOptions: { key: SortKey; label: string }[] = [
     { key: "default", label: t("home.sortDefault") },
@@ -39,26 +40,44 @@ export function StoreSearchPanel() {
 
   const activeFilterCount =
     (inStockOnly ? 1 : 0) + (priceMin ? 1 : 0) + (priceMax ? 1 : 0)
+  const isVisible = searchOpen && pathname === "/"
 
   useEffect(() => {
-    if (!searchOpen || pathname !== "/") return
+    if (pathname === "/" || !searchOpen) return
+    setSearchOpen(false)
+  }, [pathname, searchOpen, setSearchOpen])
+
+  useEffect(() => {
+    if (!isVisible) return
 
     const frame = window.requestAnimationFrame(() => {
       searchInputRef.current?.focus()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [pathname, searchOpen])
+  }, [isVisible])
 
   useEffect(() => {
-    if (!searchOpen || pathname !== "/") return
+    if (!isVisible) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSearchOpen(false)
     }
 
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (panelRef.current?.contains(target)) return
+      if (target.closest("[data-store-search-trigger]")) return
+      setSearchOpen(false)
+    }
+
     document.addEventListener("keydown", handleKeyDown)
-    return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [pathname, searchOpen, setSearchOpen])
+    document.addEventListener("pointerdown", handlePointerDown)
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown)
+      document.removeEventListener("pointerdown", handlePointerDown)
+    }
+  }, [isVisible, setSearchOpen])
 
   const resetFilters = () => {
     setInStockOnly(false)
@@ -66,44 +85,26 @@ export function StoreSearchPanel() {
     setPriceMax("")
   }
 
-  const isVisible = searchOpen && pathname === "/"
-
   return (
     <AnimatePresence initial={false}>
       {isVisible && (
-        <div className="store-search-viewport">
+        <div className="store-search-popover-viewport">
           <motion.section
-            initial={{ opacity: 0, y: 10, scale: 0.985 }}
+            ref={panelRef}
+            id="store-search-popover"
+            initial={{ opacity: 0, y: -4, scale: 0.985 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.985 }}
+            exit={{ opacity: 0, y: -4, scale: 0.985 }}
             transition={
               reducedMotion
                 ? { duration: 0 }
-                : { type: "spring", stiffness: 430, damping: 34, mass: 0.55 }
+                : { type: "spring", stiffness: 500, damping: 36, mass: 0.42 }
             }
-            className="store-search-panel store-glass"
+            className="store-search-popover store-glass"
             aria-label={t("nav.search")}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-foreground">{t("nav.search")}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{t("home.search")}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                aria-label={t("common.close")}
-                className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <X className="size-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="relative mt-3">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
+            <div className="store-search-field">
+              <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <input
                 ref={searchInputRef}
                 type="search"
@@ -111,27 +112,27 @@ export function StoreSearchPanel() {
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder={t("home.search")}
                 aria-label={t("nav.search")}
-                className="h-11 w-full rounded-control border border-input bg-background/60 px-9 pr-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
+                className="min-w-0 flex-1 appearance-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery("")}
                   aria-label={t("home.clearSearch")}
-                  className="absolute right-2 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <X className="size-4" aria-hidden="true" />
                 </button>
               )}
             </div>
 
-            <div className="mt-2 flex gap-2">
+            <div className="store-search-controls">
               <div className="relative min-w-0 flex-1">
                 <select
                   value={sortBy}
                   onChange={(event) => setSortBy(event.target.value as SortKey)}
                   aria-label={t("home.sortLabel")}
-                  className="h-11 w-full appearance-none rounded-control border border-input bg-background/60 px-3 pr-9 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
+                  className="h-10 w-full appearance-none rounded-control border border-input bg-background/55 px-3 pr-8 text-sm font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
                 >
                   {sortOptions.map((option) => (
                     <option key={option.key} value={option.key}>
@@ -140,7 +141,7 @@ export function StoreSearchPanel() {
                   ))}
                 </select>
                 <ChevronDown
-                  className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                  className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
                   aria-hidden="true"
                 />
               </div>
@@ -150,10 +151,10 @@ export function StoreSearchPanel() {
                 aria-expanded={filterOpen}
                 aria-controls="store-search-filters"
                 className={cn(
-                  "inline-flex h-11 shrink-0 items-center gap-1.5 rounded-control border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
+                  "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-control border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
                   filterOpen || activeFilterCount > 0
                     ? "border-primary/30 bg-primary/10 text-foreground"
-                    : "border-input bg-background/60 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
+                    : "border-input bg-background/55 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground",
                 )}
               >
                 <SlidersHorizontal className="size-4" aria-hidden="true" />
@@ -181,7 +182,7 @@ export function StoreSearchPanel() {
                     onChange={(event) => setPriceMin(event.target.value)}
                     placeholder={t("home.filterMin")}
                     aria-label={t("home.filterMin")}
-                    className="h-10 w-full rounded-control border border-input bg-background/55 px-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
+                    className="h-9 w-full rounded-control border border-input bg-background/55 px-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
                   />
                 </label>
                 <label className="min-w-[110px] flex-1 text-xs font-medium text-muted-foreground">
@@ -194,10 +195,10 @@ export function StoreSearchPanel() {
                     onChange={(event) => setPriceMax(event.target.value)}
                     placeholder={t("home.filterMax")}
                     aria-label={t("home.filterMax")}
-                    className="h-10 w-full rounded-control border border-input bg-background/55 px-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
+                    className="h-9 w-full rounded-control border border-input bg-background/55 px-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40"
                   />
                 </label>
-                <label className="flex min-h-10 w-full cursor-pointer items-center gap-2 rounded-control px-1 text-xs font-medium text-foreground sm:w-auto">
+                <label className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-control px-1 text-xs font-medium text-foreground sm:w-auto">
                   <input
                     type="checkbox"
                     checked={inStockOnly}
@@ -210,7 +211,7 @@ export function StoreSearchPanel() {
                   <button
                     type="button"
                     onClick={resetFilters}
-                    className="min-h-10 rounded-control px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="min-h-9 rounded-control px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     {t("home.filterReset")}
                   </button>

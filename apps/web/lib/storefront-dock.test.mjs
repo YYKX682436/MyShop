@@ -1,49 +1,24 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import {
-  getStorefrontDockAction,
-  getStorefrontDockKey,
-} from "./storefront-dock.ts"
+import { getStorefrontDockAction } from "./storefront-dock.ts"
 
-test("maps route and search state to the Dock selection", () => {
+test("keeps the Dock action model limited to the three primary routes", () => {
   const cases = [
-    ["/", false, "home"],
-    ["/", true, "search"],
-    ["/product/abc", true, "home"],
-    ["/my/orders", false, "orders"],
-    ["/my", false, "me"],
+    ["home", "/", null],
+    ["home", "/product/abc", "/"],
+    ["orders", "/", "/my/orders"],
+    ["orders", "/order/abc", "/my/orders"],
+    ["me", "/my", "/my"],
+    ["me", "/profile/security", "/my"],
   ]
 
-  for (const [pathname, searchOpen, expected] of cases) {
-    assert.equal(getStorefrontDockKey(pathname, searchOpen), expected, `${pathname} searchOpen=${searchOpen}`)
+  for (const [key, pathname, href] of cases) {
+    assert.deepEqual(getStorefrontDockAction(key, pathname), { href }, `${key} from ${pathname}`)
   }
 })
 
-test("opens search and navigates home when invoked outside the home route", () => {
-  assert.deepEqual(getStorefrontDockAction("search", "/my/orders", false), {
-    href: "/",
-    searchOpen: true,
-  })
-})
-
-test("clears search state before leaving for orders or Me", () => {
-  assert.deepEqual(getStorefrontDockAction("orders", "/", true), {
-    href: "/my/orders",
-    searchOpen: false,
-  })
-  assert.deepEqual(getStorefrontDockAction("me", "/product/abc", true), {
-    href: "/my",
-    searchOpen: false,
-  })
-})
-
-test("toggles the home search panel without navigation", () => {
-  assert.deepEqual(getStorefrontDockAction("search", "/", false), {
-    href: null,
-    searchOpen: true,
-  })
-  assert.deepEqual(getStorefrontDockAction("search", "/", true), {
-    href: null,
-    searchOpen: false,
-  })
+test("does not expose a search action or search state in Dock results", () => {
+  const action = getStorefrontDockAction("home", "/my/orders")
+  assert.deepEqual(Object.keys(action), ["href"])
+  assert.equal("searchOpen" in action, false)
 })
