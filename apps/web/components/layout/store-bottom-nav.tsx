@@ -301,7 +301,7 @@ export function StoreBottomNav() {
     const didStartNavigation = tryStartStorefrontDockNavigation(
       () => {
         startNavigationTransition(() => {
-          router.push(pending.targetPathname)
+          router.replace(pending.targetPathname)
         })
       },
       () => {

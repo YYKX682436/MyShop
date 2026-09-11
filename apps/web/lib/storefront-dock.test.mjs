@@ -1,11 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
 import {
   getStorefrontDockAction,
   isCurrentStorefrontDockAction,
   resolveStorefrontDockNavigation,
   tryStartStorefrontDockNavigation,
 } from "./storefront-dock.ts"
+
+const readSource = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8")
 
 test("keeps the Dock action model focused on configured primary routes", () => {
   const cases = [
@@ -29,6 +32,40 @@ test("does not expose a search action or search state in Dock results", () => {
   const action = getStorefrontDockAction("home", "/my/orders")
   assert.deepEqual(Object.keys(action), ["href"])
   assert.equal("searchOpen" in action, false)
+})
+
+test("StoreBottomNav submits primary Dock navigation with replace", () => {
+  const source = readSource("../components/layout/store-bottom-nav.tsx")
+
+  assert.match(source, /router\.replace\(pending\.targetPathname\)/)
+  assert.doesNotMatch(source, /router\.push\(/)
+})
+
+test("Dock clicks and capsule drops share the replace submission path", () => {
+  const source = readSource("../components/layout/store-bottom-nav.tsx")
+
+  assert.match(source, /onClick=\{\(\) => requestDockAction\(item\.key\)\}/)
+  assert.match(source, /const requestDockAction = useCallback\([\s\S]*?snapAndComplete\(key, actionId\)/)
+  assert.match(source, /const finishDrag = useCallback\([\s\S]*?snapAndComplete\(nearestKey, actionId\)/)
+})
+
+test("replacing consecutive primary Dock destinations leaves one storefront history entry", () => {
+  const history = ["https://external.example/", "/"]
+  const dockDestinations = ["/my/orders", "/my", "/", "/my/orders", "/my"]
+
+  for (const destination of dockDestinations) {
+    history[history.length - 1] = destination
+  }
+
+  assert.deepEqual(history, ["https://external.example/", "/my"])
+})
+
+test("non-Dock secondary navigation still keeps its push/back boundary", () => {
+  const productActionsSource = readSource("../app/(store)/product/[id]/product-actions.tsx")
+  const ordersPageSource = readSource("../app/(store)/my/orders/page.tsx")
+
+  assert.match(productActionsSource, /router\.push\(buildOrderPageHref\(result\.order\.id\)\)/)
+  assert.match(ordersPageSource, /href=\{buildOrderPageHref\(order\.id\)\}/)
 })
 
 test("stale Dock actions cannot commit after a newer action starts", () => {
@@ -67,7 +104,7 @@ test("a settled transition at the source route is a navigation failure", () => {
   }
 
   // This is the recovery branch used when a transition settles without a
-  // target pathname, including a synchronous router.push exception.
+  // target pathname, including a synchronous router.replace exception.
   assert.equal(resolveStorefrontDockNavigation(attempt, "/", false), "failed")
 })
 
@@ -76,7 +113,7 @@ test("a synchronous navigation error immediately invokes recovery", () => {
 
   const started = tryStartStorefrontDockNavigation(
     () => {
-      throw new Error("router.push failed synchronously")
+      throw new Error("router.replace failed synchronously")
     },
     () => {
       recoveryCalls += 1
