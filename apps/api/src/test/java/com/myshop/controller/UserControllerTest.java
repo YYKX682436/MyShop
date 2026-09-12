@@ -26,7 +26,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -77,20 +76,16 @@ class UserControllerTest {
     }
 
     @Test
-    void avatarEndpointsAlwaysReceiveRequestContextUserIdAndNeverAPathUserId() throws Exception {
+    void avatarUploadAlwaysReceivesRequestContextUserId() throws Exception {
         UserProfileResponse profile = new UserProfileResponse();
         when(userAvatarService.uploadAvatar(eq(currentUserId), any())).thenReturn(profile);
-        when(userAvatarService.deleteAvatar(currentUserId)).thenReturn(profile);
         MockMultipartFile file = new MockMultipartFile(
                 "file", "avatar.png", "image/png", new byte[]{1, 2, 3});
 
         mockMvc.perform(multipart("/user/avatar").file(file))
                 .andExpect(status().isOk());
-        mockMvc.perform(delete("/user/avatar").param("userId", UUID.randomUUID().toString()))
-                .andExpect(status().isOk());
 
         verify(userAvatarService).uploadAvatar(eq(currentUserId), any());
-        verify(userAvatarService).deleteAvatar(currentUserId);
     }
 
     @Test

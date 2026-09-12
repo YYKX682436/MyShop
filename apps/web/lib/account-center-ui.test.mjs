@@ -6,6 +6,7 @@ const readSource = (relativePath) => readFileSync(new URL(relativePath, import.m
 
 test("account home owns the complete logged-in summary and scoped account actions", () => {
   const source = readSource("../app/(store)/my/page.tsx")
+  const avatarSource = readSource("../components/store/account-avatar.tsx")
 
   for (const route of ["/my/orders", "/my/security", "/my/settings"]) {
     assert.equal(source.includes(`href="${route}"`), true, route)
@@ -15,10 +16,29 @@ test("account home owns the complete logged-in summary and scoped account action
   assert.match(source, /user\.balance/)
   assert.match(source, /user\.user_level_name/)
   assert.match(source, /userApi\.uploadAvatar/)
-  assert.match(source, /userApi\.deleteAvatar/)
   assert.match(source, /setUser\(updatedProfile\)/)
   assert.doesNotMatch(source, /\/profile/)
   assert.doesNotMatch(source, /my\.darkMode|my\.english/)
+  assert.match(avatarSource, /<button/)
+  assert.match(avatarSource, /onLoadingStatusChange/)
+  assert.match(avatarSource, /getAvatarDisplayState/)
+  for (const removedToken of [
+    ["Camera"],
+    ["Rotate", "Ccw"],
+    ["<", "Button"],
+    ["on", "Delete"],
+    ["change", "Avatar"],
+    ["restore", "Avatar"],
+  ]) {
+    assert.doesNotMatch(avatarSource, new RegExp(removedToken.join("")))
+  }
+  for (const removedToken of [
+    ["handleAvatar", "Delete"],
+    ["delete", "Avatar"],
+    ["avatar", "Restored"],
+  ]) {
+    assert.doesNotMatch(source, new RegExp(removedToken.join("")))
+  }
 })
 
 test("security flow clears in-memory auth state and navigates to login after password change", () => {
@@ -45,4 +65,11 @@ test("settings flow delegates language and all three theme modes to existing con
 test("the removed profile page has no storefront route or page implementation", () => {
   assert.equal(readSource("./storefront-routes.ts").includes("/profile"), false)
   assert.throws(() => readFileSync(new URL("../app/(store)/profile/page.tsx", import.meta.url)), /ENOENT/)
+})
+
+test("avatar API surface keeps upload and removes default-avatar deletion", () => {
+  const source = readSource("../services/api.ts")
+
+  assert.match(source, /uploadAvatar/)
+  assert.doesNotMatch(source, new RegExp(["delete", "Avatar"].join("")))
 })

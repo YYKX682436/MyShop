@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.UUID;
@@ -30,26 +32,51 @@ public class UserAvatarService {
         User user = findUser(userId);
         String previousAvatarUrl = user.getAvatarUrl();
         ImageUploadService.UploadedImage uploaded = imageUploadService.uploadAvatar(file);
-        user.setAvatarUrl(uploaded.url());
+        boolean cleanupRegistered = false;
 
         try {
+            requireActiveTransactionSynchronization();
+            user.setAvatarUrl(uploaded.url());
             User saved = userRepository.save(user);
-            cleanupPreviousAvatar(previousAvatarUrl);
+            registerFileCleanup(previousAvatarUrl, uploaded.url());
+            cleanupRegistered = true;
             return toProfile(saved);
         } catch (RuntimeException exception) {
-            imageUploadService.deleteManagedAvatar(uploaded.url());
+            // Once the synchronization is registered, afterCompletion owns the
+            // rollback cleanup. Before that point the new file must be removed
+            // immediately, while the previous file remains untouched.
+            if (!cleanupRegistered) {
+                cleanupNewAvatar(uploaded.url());
+            }
             throw exception;
         }
     }
 
-    @Transactional
-    public UserProfileResponse deleteAvatar(UUID userId) {
-        User user = findUser(userId);
-        String previousAvatarUrl = user.getAvatarUrl();
-        user.setAvatarUrl(null);
-        User saved = userRepository.save(user);
-        cleanupPreviousAvatar(previousAvatarUrl);
-        return toProfile(saved);
+    private void requireActiveTransactionSynchronization() {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException("Avatar persistence requires an active transaction");
+        }
+    }
+
+    private void registerFileCleanup(String previousAvatarUrl, String uploadedAvatarUrl) {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                // The database now points at the new file. A cleanup failure
+                // must be observable but must not turn a committed update into
+                // a false failure or attempt a database rollback.
+                cleanupPreviousAvatar(previousAvatarUrl);
+            }
+
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    // The save may have failed during flush/commit. The old
+                    // URL is still authoritative, so only remove the new file.
+                    cleanupNewAvatar(uploadedAvatarUrl);
+                }
+            }
+        });
     }
 
     private User findUser(UUID userId) {
@@ -67,10 +94,25 @@ public class UserAvatarService {
     }
 
     private void cleanupPreviousAvatar(String previousAvatarUrl) {
-        if (!imageUploadService.deleteManagedAvatar(previousAvatarUrl)) {
-            if (previousAvatarUrl != null) {
+        if (previousAvatarUrl == null) {
+            return;
+        }
+        try {
+            if (!imageUploadService.deleteManagedAvatar(previousAvatarUrl)) {
                 log.warn("Previous managed avatar cleanup was skipped or failed");
             }
+        } catch (RuntimeException exception) {
+            log.warn("Previous managed avatar cleanup failed");
+        }
+    }
+
+    private void cleanupNewAvatar(String uploadedAvatarUrl) {
+        try {
+            if (!imageUploadService.deleteManagedAvatar(uploadedAvatarUrl)) {
+                log.warn("Newly uploaded avatar cleanup was skipped or failed");
+            }
+        } catch (RuntimeException exception) {
+            log.warn("Newly uploaded avatar cleanup failed");
         }
     }
 }

@@ -340,8 +340,6 @@ export const userApi = {
     formData.append("file", file)
     return uploadRequest<UserProfile>("/user/avatar", formData)
   },
-  deleteAvatar: () =>
-    request<UserProfile>("/user/avatar", { method: "DELETE" }),
   getOrders: (params: { page?: number; page_size?: number; status?: string }) => {
     const qs = buildQuery(params)
     return request<PaginatedData<OrderBrief>>(`/user/orders?${qs}`)

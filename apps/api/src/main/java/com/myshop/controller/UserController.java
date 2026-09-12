@@ -41,11 +41,6 @@ public class UserController {
         return ApiResponse.success(userAvatarService.uploadAvatar(RequestContext.getUserId(), file));
     }
 
-    @DeleteMapping("/avatar")
-    public ApiResponse<UserProfileResponse> deleteAvatar() {
-        return ApiResponse.success(userAvatarService.deleteAvatar(RequestContext.getUserId()));
-    }
-
     @GetMapping("/orders")
     public ApiResponse<PageResult<?>> getOrders(
             @RequestParam(defaultValue = "1") int page,

@@ -57,7 +57,7 @@ function LoadingAccount() {
       </div>
       <div className="store-glass space-y-5 rounded-card p-5 sm:p-6" aria-hidden="true">
         <div className="flex items-center gap-4">
-          <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07]" />
+          <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07] sm:size-24" />
           <div className="space-y-2">
             <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
             <div className="h-3 w-48 animate-pulse rounded-full bg-foreground/[0.07]" />
@@ -142,20 +142,6 @@ export default function MyPage() {
     }
   }
 
-  const handleAvatarDelete = async () => {
-    if (!user.avatar_url) return
-    setIsAvatarBusy(true)
-    try {
-      const updatedProfile = await requestOrThrow(() => userApi.deleteAvatar())
-      setUser(updatedProfile)
-      toast.success(t("my.avatarRestored"))
-    } catch (error: unknown) {
-      toast.error(getApiErrorMessage(error, t))
-    } finally {
-      setIsAvatarBusy(false)
-    }
-  }
-
   const handleCopyUserId = async () => {
     if (user.user_no === null) return
     const copied = await copyText(String(user.user_no))
@@ -178,7 +164,6 @@ export default function MyPage() {
             username={user.username}
             isBusy={isAvatarBusy}
             onUpload={handleAvatarUpload}
-            onDelete={handleAvatarDelete}
           />
           <div className="min-w-0 flex-1 pt-1">
             <div className="flex flex-wrap items-center gap-2">
