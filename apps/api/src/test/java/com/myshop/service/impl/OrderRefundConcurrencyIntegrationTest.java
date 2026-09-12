@@ -206,8 +206,9 @@ class OrderRefundConcurrencyIntegrationTest {
                 "SELECT status FROM orders WHERE id = ?", String.class, fixture.orderId()));
         assertEquals("CANCELLED", scalar(
                 "SELECT fulfillment_status FROM order_items WHERE id = ?", String.class, fixture.itemId()));
-        assertEquals(2, scalar("SELECT count(*) FROM card_keys WHERE order_id = ? AND status = 'AVAILABLE'",
-                Integer.class, fixture.orderId()));
+        assertEquals(2, scalar("SELECT count(*) FROM card_keys WHERE id IN (?, ?) AND status = 'AVAILABLE' "
+                        + "AND order_id IS NULL AND order_item_id IS NULL",
+                Integer.class, fixture.cardKeyIds().get(0), fixture.cardKeyIds().get(1)));
         assertEquals(0, scalar("SELECT count(*) FROM card_keys WHERE order_id = ? OR order_item_id = ?",
                 Integer.class, fixture.orderId(), fixture.itemId()));
         assertEquals(2, scalar("SELECT count(*) FROM card_key_reclaims WHERE order_id = ?",
