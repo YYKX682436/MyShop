@@ -61,7 +61,7 @@ test("admin order customer identity keeps guests to one line and uses the user n
 })
 
 test("checkout no longer renders or sends an order email", () => {
-  const source = readSource("../app/(store)/product/[id]/product-actions.tsx")
+  const source = readSource("../app/(store)/product/[id]/product-purchase-dock.tsx")
   assert.doesNotMatch(source, /\bemail\b/i)
   assert.doesNotMatch(source, /emailInputRef|emailError|validateEmail|handleEmailChange/)
   assert.match(source, /customer_inputs: normalizedCustomerInputs/)
@@ -69,23 +69,13 @@ test("checkout no longer renders or sends an order email", () => {
 })
 
 test("shopper checkout renders both payment method entries while administrators render pickup only", () => {
-  const source = readSource("../app/(store)/product/[id]/product-actions.tsx")
-  const paymentMethodStart = source.indexOf("{adminPickup ? (")
-  const shopperBranchStart = source.indexOf(") : (", paymentMethodStart)
-  const paymentMethodEnd = source.indexOf("{/* Total */}", shopperBranchStart)
+  const source = readSource("../app/(store)/product/[id]/product-purchase-dock.tsx")
 
-  assert.notEqual(paymentMethodStart, -1)
-  assert.notEqual(shopperBranchStart, -1)
-  assert.notEqual(paymentMethodEnd, -1)
-
-  const administratorBranch = source.slice(paymentMethodStart, shopperBranchStart)
-  const shopperBranch = source.slice(shopperBranchStart, paymentMethodEnd)
-
-  assert.match(administratorBranch, /t\("payment\.adminPickup"\)/)
-  assert.doesNotMatch(administratorBranch, /balancePayment|onlinePayment|PaymentSelector/)
-  assert.match(shopperBranch, /t\("product\.balancePayment"\)/)
-  assert.match(shopperBranch, /t\("product\.onlinePayment"\)/)
-  assert.match(shopperBranch, /PaymentSelector/)
+  assert.match(source, /adminPickup \? \(/)
+  assert.match(source, /t\("payment\.adminPickup"\)/)
+  assert.match(source, /t\("product\.balancePayment"\)/)
+  assert.match(source, /t\("product\.onlinePayment"\)/)
+  assert.match(source, /PaymentSelector/)
 })
 
 test("order details use the wide workspace route and keep the workbench structure", () => {

@@ -2,9 +2,10 @@ import { notFound } from "next/navigation"
 import Image from "next/image"
 import { Package } from "lucide-react"
 import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels } from "@/services/api-server"
-import { ProductActions } from "./product-actions"
+import { ProductPurchaseDock } from "./product-purchase-dock"
 import { ProductBreadcrumb } from "./product-breadcrumb"
 import { ProductDescription } from "./product-description"
+import { ProductSummary } from "./product-summary"
 import { ScrollToTop } from "./scroll-to-top"
 import type { Metadata } from "next"
 import type { PublicPaymentChannel } from "@/types"
@@ -78,7 +79,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="product-detail-page flex flex-col gap-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -91,10 +92,10 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       {/* Breadcrumb */}
       <ProductBreadcrumb title={product.title} />
 
-      <div className="grid gap-7 lg:grid-cols-5 lg:items-start">
+      <div className="grid gap-8 lg:grid-cols-5 lg:items-start lg:gap-12">
         {/* Left: Image — server rendered */}
-        <div className="lg:col-span-2">
-          <div className="surface relative aspect-square overflow-hidden bg-surface-muted">
+        <div className="lg:col-span-3">
+          <div className="surface relative aspect-square overflow-hidden bg-surface-muted p-3 sm:p-6">
             {product.cover_url ? (
               <Image
                 src={product.cover_url}
@@ -102,7 +103,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                 fill
                 unoptimized
                 sizes="(min-width: 1024px) 60vw, 100vw"
-                className="object-cover"
+                className="object-contain"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center">
@@ -112,14 +113,16 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           </div>
         </div>
 
-        {/* Right: Interactive purchase section */}
-        <div className="lg:col-span-3">
-          <ProductActions product={product} channels={channels} />
+        {/* Right: Product-first summary; purchase controls live in the Dock. */}
+        <div className="min-w-0 lg:col-span-2">
+          <ProductSummary product={product} />
         </div>
       </div>
 
       {/* Product Description */}
       <ProductDescription product={product} />
+
+      <ProductPurchaseDock product={product} channels={channels} />
 
       {/* Scroll to top */}
       <ScrollToTop />

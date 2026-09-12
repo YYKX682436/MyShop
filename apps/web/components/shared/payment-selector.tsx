@@ -19,6 +19,7 @@ export function PaymentSelector({ channels, selected, onSelect }: PaymentSelecto
         return (
           <button
             key={ch.channel_code}
+            type="button"
             onClick={() => onSelect(ch.channel_code)}
             className={cn(
               "flex min-h-14 flex-col items-stretch justify-center gap-1 rounded-control border px-3 py-2.5 text-sm font-medium transition-[border-color,background-color,transform] duration-180",

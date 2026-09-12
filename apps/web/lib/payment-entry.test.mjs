@@ -19,7 +19,7 @@ const formPost = { type: "form_post", url: "https://pay.example/form", fields: {
 
 const desktop = { isMobile: false, isWechatBrowser: false, isAlipayBrowser: false }
 const mobile = { isMobile: true, isWechatBrowser: false, isAlipayBrowser: false }
-const productActionsSource = readFileSync(new URL("../app/(store)/product/[id]/product-actions.tsx", import.meta.url), "utf8")
+const productPurchaseDockSource = readFileSync(new URL("../app/(store)/product/[id]/product-purchase-dock.tsx", import.meta.url), "utf8")
 const paymentPageSource = readFileSync(new URL("../app/(store)/order/[orderId]/page.tsx", import.meta.url), "utf8")
 const paymentActionRendererSource = readFileSync(new URL("../components/shared/payment-action-renderer.tsx", import.meta.url), "utf8")
 
@@ -97,17 +97,17 @@ test("ablation guard: unconditional payment-page routing would reject a redirect
   assert.equal(resolvePaymentEntry(redirect, desktop).mode, "execute")
 })
 
-test("product actions consume create response actions instead of unconditionally pushing the lifecycle page", () => {
-  assert.match(productActionsSource, /result\.payment\.next_action/)
-  assert.match(productActionsSource, /resolvePaymentEntry\(/)
-  assert.match(productActionsSource, /executePaymentAction\(/)
-  assert.doesNotMatch(productActionsSource, /buildPaymentPageHref/)
+test("the purchase Dock consumes create response actions instead of unconditionally pushing the lifecycle page", () => {
+  assert.match(productPurchaseDockSource, /result\.payment\.next_action/)
+  assert.match(productPurchaseDockSource, /resolvePaymentEntry\(/)
+  assert.match(productPurchaseDockSource, /executePaymentAction\(/)
+  assert.doesNotMatch(productPurchaseDockSource, /buildPaymentPageHref/)
 })
 
 test("missing create response action fails on the product page instead of opening a payment page", () => {
-  const noActionStart = productActionsSource.indexOf("if (!action) {")
-  const entryStart = productActionsSource.indexOf("const entry = resolvePaymentEntry", noActionStart)
-  const noActionBranch = productActionsSource.slice(noActionStart, entryStart)
+  const noActionStart = productPurchaseDockSource.indexOf("if (!action) {")
+  const entryStart = productPurchaseDockSource.indexOf("const entry = resolvePaymentEntry", noActionStart)
+  const noActionBranch = productPurchaseDockSource.slice(noActionStart, entryStart)
 
   assert.notEqual(noActionStart, -1)
   assert.notEqual(entryStart, -1)
@@ -132,38 +132,38 @@ test("checkout form_post response executes directly without a payment-page seed"
   assert.equal(entry.mode, "execute")
   assert.equal(entry.decision.kind, "form_post")
   assert.equal(shouldSeedPaymentAction(entry), false)
-  assert.match(productActionsSource, /if \(entry\.mode === "execute"/)
-  assert.match(productActionsSource, /executePaymentAction\(entry\.decision\)/)
-  assert.match(productActionsSource, /if \(shouldSeedPaymentAction\(entry\)\)/)
-  const executeBranchStart = productActionsSource.indexOf('if (entry.mode === "execute"')
-  const seedBranchStart = productActionsSource.indexOf("if (shouldSeedPaymentAction(entry))")
-  const executeBranch = productActionsSource.slice(executeBranchStart, seedBranchStart)
+  assert.match(productPurchaseDockSource, /if \(entry\.mode === "execute"/)
+  assert.match(productPurchaseDockSource, /executePaymentAction\(entry\.decision\)/)
+  assert.match(productPurchaseDockSource, /if \(shouldSeedPaymentAction\(entry\)\)/)
+  const executeBranchStart = productPurchaseDockSource.indexOf('if (entry.mode === "execute"')
+  const seedBranchStart = productPurchaseDockSource.indexOf("if (shouldSeedPaymentAction(entry))")
+  const executeBranch = productPurchaseDockSource.slice(executeBranchStart, seedBranchStart)
   assert.doesNotMatch(executeBranch, /router\.push/)
   assert.match(executeBranch, /executePaymentAction\(entry\.decision\)/)
   assert.match(executeBranch, /return/)
 })
 
 test("lifecycle navigation is reachable only after a concrete payment-page action is seeded", () => {
-  const seedBranchStart = productActionsSource.indexOf("if (shouldSeedPaymentAction(entry))")
-  const seedBranchEnd = productActionsSource.indexOf("clearPaymentAction(result.payment.order_id)", seedBranchStart)
-  const seedBranch = productActionsSource.slice(seedBranchStart, seedBranchEnd)
-  const beforeSeed = productActionsSource.slice(productActionsSource.indexOf("const action = result.payment.next_action"), seedBranchStart)
+  const seedBranchStart = productPurchaseDockSource.indexOf("if (shouldSeedPaymentAction(entry))")
+  const seedBranchEnd = productPurchaseDockSource.indexOf("clearPaymentAction(result.payment.order_id)", seedBranchStart)
+  const seedBranch = productPurchaseDockSource.slice(seedBranchStart, seedBranchEnd)
+  const beforeSeed = productPurchaseDockSource.slice(productPurchaseDockSource.indexOf("const action = result.payment.next_action"), seedBranchStart)
 
   assert.notEqual(seedBranchStart, -1)
   assert.match(seedBranch, /savePaymentAction\(result\.payment\.order_id, action\)/)
   assert.match(seedBranch, /router\.push\(paymentHref\)/)
   assert.match(seedBranch, /return/)
   assert.doesNotMatch(beforeSeed, /router\.push\(paymentHref\)/)
-  assert.equal((productActionsSource.match(/router\.push\(paymentHref\)/g) || []).length, 1)
+  assert.equal((productPurchaseDockSource.match(/router\.push\(paymentHref\)/g) || []).length, 1)
 })
 
 test("direct-payment fallback retries the original browser action without linking to a separate payment page", () => {
-  assert.match(productActionsSource, /paymentFallbackAction/)
-  assert.match(productActionsSource, /setPaymentFallbackAction\(entry\.decision\)/)
-  assert.match(productActionsSource, /const retryPaymentExecution = \(\) =>/)
-  assert.match(productActionsSource, /executePaymentAction\(paymentFallbackAction\)/)
-  assert.match(productActionsSource, /onClick=\{retryPaymentExecution\}/)
-  assert.doesNotMatch(productActionsSource, /paymentFallbackHref/)
+  assert.match(productPurchaseDockSource, /paymentFallbackAction/)
+  assert.match(productPurchaseDockSource, /setPaymentFallbackAction\(entry\.decision\)/)
+  assert.match(productPurchaseDockSource, /const retryPaymentExecution = \(\) =>/)
+  assert.match(productPurchaseDockSource, /executePaymentAction\(paymentFallbackAction\)/)
+  assert.match(productPurchaseDockSource, /onClick=\{retryPaymentExecution\}/)
+  assert.doesNotMatch(productPurchaseDockSource, /paymentFallbackHref/)
 })
 
 test("order lifecycle page uses explicit load state and does not hide status errors", () => {

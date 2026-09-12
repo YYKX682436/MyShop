@@ -5,6 +5,21 @@ export interface BalancePaymentAvailability {
   reason: "available" | "login_required" | "insufficient"
 }
 
+/** Choose the payment method once when a fresh purchase flow is opened. */
+export function getDefaultPaymentMethod(
+  availability: BalancePaymentAvailability,
+): OrderPaymentMethod {
+  return availability.selectable ? "BALANCE" : "ONLINE"
+}
+
+/** Keep an explicit online choice; only an invalid balance choice may fall back. */
+export function reconcilePaymentMethod(
+  method: OrderPaymentMethod,
+  availability: BalancePaymentAvailability,
+): OrderPaymentMethod {
+  return method === "BALANCE" && !availability.selectable ? "ONLINE" : method
+}
+
 export function getBalancePaymentAvailability(
   isLoggedIn: boolean,
   role: string | null | undefined,

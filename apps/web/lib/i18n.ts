@@ -20,12 +20,7 @@ const zh = {
   "home.allSubcategories": "全部二级分类",
   "home.noProducts": "暂无商品",
   "home.loadFailed": "商品暂时无法加载，请检查网络后重试。",
-  "home.stock": "库存",
-  "home.inStock": "有库存",
-  "home.outOfStock": "暂时缺货",
-  "home.sales": "已售",
   "home.startFrom": "起",
-  "home.instantDelivery": "秒发货",
   "home.sortLabel": "排序",
   "home.sortDefault": "综合排序",
   "home.sortHot": "热销优先",
@@ -48,6 +43,8 @@ const zh = {
   "product.sold": "已售",
   "product.description": "商品详情",
   "product.outOfStock": "库存不足",
+  "product.soldOut": "已售罄",
+  "product.unlimitedStock": "不限库存",
   "product.stockInsufficient": "库存不足，请减少数量",
   "product.adminPickup": "管理员提卡",
   "product.paymentMethod": "支付方式",
@@ -62,6 +59,10 @@ const zh = {
   "product.deliveryAuto": "自动发货",
   "product.deliveryManual": "手动发货",
   "product.perPiece": "件",
+  "product.customerInputSection": "填写信息",
+  "product.customerInputPlaceholder": "请输入{label}",
+  "product.decreaseQuantity": "减少数量",
+  "product.increaseQuantity": "增加数量",
   "product.notFound": "商品未找到",
 
   // Order
@@ -259,6 +260,7 @@ const zh = {
 
   // Common
   "common.loading": "加载中...",
+  "common.processing": "处理中...",
   "common.error": "出错了",
   "common.retry": "重试",
   "common.confirm": "确认",
@@ -1281,12 +1283,7 @@ const en: Record<keyof typeof zh, string> = {
   "home.allSubcategories": "All subcategories",
   "home.noProducts": "No products found",
   "home.loadFailed": "Products are temporarily unavailable. Check your connection and try again.",
-  "home.stock": "Stock",
-  "home.inStock": "In stock",
-  "home.outOfStock": "Out of stock",
-  "home.sales": "Sold",
   "home.startFrom": "from",
-  "home.instantDelivery": "Instant",
   "home.sortLabel": "Sort",
   "home.sortDefault": "Default",
   "home.sortHot": "Best Selling",
@@ -1309,6 +1306,8 @@ const en: Record<keyof typeof zh, string> = {
   "product.sold": "Sold",
   "product.description": "Description",
   "product.outOfStock": "Out of Stock",
+  "product.soldOut": "Sold out",
+  "product.unlimitedStock": "Unlimited stock",
   "product.stockInsufficient": "Insufficient stock, please reduce quantity",
   "product.adminPickup": "Admin pickup",
   "product.paymentMethod": "Payment",
@@ -1323,6 +1322,10 @@ const en: Record<keyof typeof zh, string> = {
   "product.deliveryAuto": "Auto Delivery",
   "product.deliveryManual": "Manual Delivery",
   "product.perPiece": "pcs",
+  "product.customerInputSection": "Customer information",
+  "product.customerInputPlaceholder": "Enter {label}",
+  "product.decreaseQuantity": "Decrease quantity",
+  "product.increaseQuantity": "Increase quantity",
   "product.notFound": "Product not found",
 
   // Order
@@ -1520,6 +1523,7 @@ const en: Record<keyof typeof zh, string> = {
 
   // Common
   "common.loading": "Loading...",
+  "common.processing": "Processing...",
   "common.error": "Error",
   "common.retry": "Retry",
   "common.confirm": "Confirm",

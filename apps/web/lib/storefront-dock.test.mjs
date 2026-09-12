@@ -61,10 +61,10 @@ test("replacing consecutive primary Dock destinations leaves one storefront hist
 })
 
 test("non-Dock secondary navigation still keeps its push/back boundary", () => {
-  const productActionsSource = readSource("../app/(store)/product/[id]/product-actions.tsx")
+  const productPurchaseDockSource = readSource("../app/(store)/product/[id]/product-purchase-dock.tsx")
   const ordersPageSource = readSource("../app/(store)/my/orders/page.tsx")
 
-  assert.match(productActionsSource, /router\.push\(buildOrderPageHref\(result\.order\.id\)\)/)
+  assert.match(productPurchaseDockSource, /router\.push\(buildOrderPageHref\(result\.order\.id\)\)/)
   assert.match(ordersPageSource, /href=\{buildOrderPageHref\(order\.id\)\}/)
 })
 
