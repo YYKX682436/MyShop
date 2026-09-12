@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { invalidateAdminOrders } from "@/lib/admin-order-invalidation"
+import { getRefundCardKeyAvailability, normalizeRefundCardKeySelection } from "@/lib/admin-refund-ui"
 import { adminCardKeyApi, adminOrderApi, adminProductApi, requestOrThrow } from "@/services/api"
 import { isManualFulfillmentItem } from "@/lib/order-status"
 import { formatYuan } from "@/lib/utils"
@@ -43,12 +44,13 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const load = useCallback(async () => {
     setLoading(true)
     setError(false)
+    setCardKeys([])
+    setCardKeysLoading(false)
+    setCardKeysError(false)
+    setReclaimCardKeys(false)
     try {
       const detail = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
       setOrder(detail)
-      setCardKeys([])
-      setCardKeysError(false)
-      setReclaimCardKeys(false)
       const hasAutomaticCardItems = detail.items.some((item) =>
         !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
       )
@@ -59,6 +61,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         } catch {
           setCardKeys([])
           setCardKeysError(true)
+          setReclaimCardKeys(false)
         } finally {
           setCardKeysLoading(false)
         }
@@ -115,9 +118,19 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const handleRefund = async () => {
     if (!order || refundLoading) return
     const reason = refundReason.trim()
+    const reclaimSelection = normalizeRefundCardKeySelection(reclaimCardKeys, {
+      loading: cardKeysLoading,
+      error: cardKeysError,
+      count: reclaimableCardKeyCount,
+    })
+    if (reclaimCardKeys && !reclaimSelection) {
+      toast.error(cardKeysLoading || cardKeysError ? t("admin.refundReclaimError") : t("admin.refundReclaimEmpty"))
+      setReclaimCardKeys(false)
+      return
+    }
     setRefundLoading(true)
     try {
-      await requestOrThrow(() => adminOrderApi.refund(order.id, reason, reclaimCardKeys))
+      await requestOrThrow(() => adminOrderApi.refund(order.id, reason, reclaimSelection))
       toast.success(t("admin.refundSuccess"))
       setRefundOpen(false)
       setRefundReason("")
@@ -134,6 +147,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const retryCardKeys = () => {
     if (!order || (order.status !== "PAID" && order.status !== "DELIVERED" && order.status !== "REFUNDED")
       || !order.items.some((item) => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")) return
+    setReclaimCardKeys(false)
     setCardKeysLoading(true)
     setCardKeysError(false)
     void requestOrThrow(() => adminCardKeyApi.getByOrder(order.id)).then(setCardKeys).catch(() => {
@@ -186,6 +200,12 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         && item.fulfillment_status === "DELIVERED")
     }).length
     : 0
+  const refundCardKeyAvailability = getRefundCardKeyAvailability({
+    loading: cardKeysLoading,
+    error: cardKeysError,
+    count: reclaimableCardKeyCount,
+  })
+  const reclaimCardKeysEnabled = refundCardKeyAvailability === "available"
   const hasDeliveredManualItems = order?.items.some((item) =>
     isManualFulfillmentItem(item) && item.fulfillment_status === "DELIVERED"
   ) ?? false
@@ -247,10 +267,19 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundDestination")}</dt><dd>{t("admin.refundBalance")}</dd></div>
         </dl>
         {hasDeliveredItems && <p className="flex items-start gap-2 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{t("admin.refundDeliveredWarning")}</p>}
-        {reclaimableCardKeyCount > 0 && <label className="flex cursor-pointer items-start gap-3 rounded-control border border-border-subtle bg-surface px-3 py-3" htmlFor="admin-refund-reclaim-card-keys">
-          <input id="admin-refund-reclaim-card-keys" type="checkbox" checked={reclaimCardKeys} onChange={(event) => setReclaimCardKeys(event.target.checked)} disabled={refundLoading} className="mt-0.5 size-4 accent-primary" />
-          <span className="min-w-0"><span className="block font-medium text-foreground">{t("admin.refundReclaimLabel")}</span><span className="mt-1 block text-xs text-muted-foreground">{t("admin.refundReclaimEstimate").replace("{count}", String(reclaimableCardKeyCount))}</span></span>
-        </label>}
+        <div className="space-y-2 rounded-control border border-border-subtle bg-surface px-3 py-3">
+          <p className="font-medium text-foreground">{t("admin.refundCardHandling")}</p>
+          <label className={`flex items-start gap-3 ${reclaimCardKeysEnabled && !refundLoading ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`} htmlFor="admin-refund-reclaim-card-keys">
+            <input id="admin-refund-reclaim-card-keys" type="checkbox" checked={reclaimCardKeys} onChange={(event) => setReclaimCardKeys(event.target.checked)} disabled={refundLoading || !reclaimCardKeysEnabled} className="mt-0.5 size-4 accent-primary" />
+            <span className="min-w-0">
+              <span className="block font-medium text-foreground">{t("admin.refundReclaimLabel")}</span>
+              {refundCardKeyAvailability === "available" && <span className="mt-1 block text-xs text-muted-foreground">{t("admin.refundReclaimEstimate").replace("{count}", String(reclaimableCardKeyCount))}</span>}
+              {refundCardKeyAvailability === "empty" && <span className="mt-1 block text-xs text-muted-foreground">{t("admin.refundReclaimEmpty")}</span>}
+              {refundCardKeyAvailability === "loading" && <span className="mt-1 block text-xs text-muted-foreground">{t("admin.refundReclaimLoading")}</span>}
+              {refundCardKeyAvailability === "error" && <span className="mt-1 block text-xs text-destructive">{t("admin.refundReclaimError")}</span>}
+            </span>
+          </label>
+        </div>
         {reclaimCardKeys && <p className="rounded-control border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{t("admin.refundReclaimRiskWarning")}</p>}
         {hasDeliveredManualItems && <p className="rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("admin.refundManualContentWarning")}</p>}
         <label className="block text-sm font-medium text-foreground" htmlFor="admin-refund-reason">{t("admin.refundReason")}</label>

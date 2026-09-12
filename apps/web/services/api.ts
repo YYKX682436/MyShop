@@ -45,6 +45,7 @@
   AdminManualFulfillmentRequest,
   AdminOrderRefundResponse,
 } from "@/types"
+import { buildAdminRefundPayload } from "@/lib/admin-refund-ui"
 import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
 import { buildAdminOrderSearchBody } from "@/lib/admin-order-search"
 import type { AdminOrderSearchParams } from "@/lib/admin-order-search"
@@ -545,7 +546,7 @@ export const adminOrderApi = {
   refund: (id: string, reason: string, reclaimCardKeys: boolean) =>
     request<AdminOrderRefundResponse>(`/admin/orders/${id}/refund`, {
       method: "POST",
-      body: JSON.stringify({ reason, confirmed: true, reclaim_card_keys: reclaimCardKeys }),
+      body: JSON.stringify(buildAdminRefundPayload(reason, reclaimCardKeys)),
     }),
   fulfill: (orderId: string, data: AdminManualFulfillmentRequest) =>
     request<AdminFulfillmentResult>(`/admin/orders/${orderId}/fulfill`, {

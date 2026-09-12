@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 
+import { buildAdminRefundPayload, canReclaimCardKeys, getRefundCardKeyAvailability, normalizeRefundCardKeySelection } from "./admin-refund-ui.ts"
 import { formatAdminOrderCustomer, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "./admin-order-display.ts"
 import { buildAdminOrderSearchBody } from "./admin-order-search.ts"
 
@@ -168,7 +169,7 @@ test("refund reclaim payload and surfaces keep the safe default and never requir
   const orderPage = readSource("../app/(store)/order/[orderId]/page.tsx")
   const ordersPage = readSource("../app/(store)/my/orders/page.tsx")
 
-  assert.match(apiSource, /reclaim_card_keys: reclaimCardKeys/)
+  assert.match(apiSource, /buildAdminRefundPayload\(reason, reclaimCardKeys\)/)
   assert.match(routeSource, /const \[reclaimCardKeys, setReclaimCardKeys\] = useState\(false\)/)
   assert.match(routeSource, /reclaimableCardKeyCount/)
   assert.match(routeSource, /refundReclaimRiskWarning/)
@@ -178,6 +179,65 @@ test("refund reclaim payload and surfaces keep the safe default and never requir
   assert.match(sheetSource, /refundReclaimed/)
   assert.match(orderPage, /reclaimedCardKeys/)
   assert.match(ordersPage, /reclaimed_card_key_count/)
+})
+
+test("refund card-key availability keeps the checkbox visible while gating reclaim safely", () => {
+  const available = { loading: false, error: false, count: 3 }
+  assert.equal(getRefundCardKeyAvailability(available), "available")
+  assert.equal(canReclaimCardKeys(available), true)
+  assert.equal(normalizeRefundCardKeySelection(true, available), true)
+  assert.equal(normalizeRefundCardKeySelection(false, available), false)
+
+  const empty = { loading: false, error: false, count: 0 }
+  assert.equal(getRefundCardKeyAvailability(empty), "empty")
+  assert.equal(canReclaimCardKeys(empty), false)
+  assert.equal(normalizeRefundCardKeySelection(true, empty), false)
+
+  const loading = { loading: true, error: false, count: 0 }
+  assert.equal(getRefundCardKeyAvailability(loading), "loading")
+  assert.equal(canReclaimCardKeys(loading), false)
+  assert.equal(normalizeRefundCardKeySelection(true, loading), false)
+
+  const failed = { loading: false, error: true, count: 3 }
+  assert.equal(getRefundCardKeyAvailability(failed), "error")
+  assert.equal(canReclaimCardKeys(failed), false)
+  assert.equal(normalizeRefundCardKeySelection(true, failed), false)
+})
+
+test("refund payload preserves the reason and sends the explicit reclaim boolean", () => {
+  assert.deepEqual(buildAdminRefundPayload("人工退款", true), {
+    reason: "人工退款",
+    confirmed: true,
+    reclaim_card_keys: true,
+  })
+  assert.deepEqual(buildAdminRefundPayload("", false), {
+    reason: "",
+    confirmed: true,
+    reclaim_card_keys: false,
+  })
+})
+
+test("refund dialog always exposes card handling states and resets reclaim selection", () => {
+  const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
+  const i18nSource = readSource("./i18n.ts")
+
+  assert.doesNotMatch(routeSource, /reclaimableCardKeyCount > 0 &&/)
+  assert.match(routeSource, /t\("admin\.refundCardHandling"\)/)
+  assert.match(routeSource, /refundCardKeyAvailability === "available"/)
+  assert.match(routeSource, /refundCardKeyAvailability === "empty"/)
+  assert.match(routeSource, /refundCardKeyAvailability === "loading"/)
+  assert.match(routeSource, /refundCardKeyAvailability === "error"/)
+  assert.match(routeSource, /disabled=\{refundLoading \|\| !reclaimCardKeysEnabled\}/)
+  assert.match(routeSource, /normalizeRefundCardKeySelection\(reclaimCardKeys/)
+  assert.match(routeSource, /setRefundOpen\(true\); setRefundReason\(""\); setReclaimCardKeys\(false\)/)
+  assert.match(routeSource, /setRefundOpen\(false\); setRefundReason\(""\); setReclaimCardKeys\(false\)/)
+  assert.match(routeSource, /setCardKeys\(\[\]\)[\s\S]*setCardKeysLoading\(false\)[\s\S]*setCardKeysError\(false\)[\s\S]*setReclaimCardKeys\(false\)/)
+  assert.match(i18nSource, /"admin\.refundReclaimEstimate": "可回收 \{count\} 张已发卡密"/)
+  assert.match(i18nSource, /"admin\.refundReclaimEmpty": "当前订单没有已发出的可回收卡密"/)
+  assert.match(i18nSource, /"admin\.refundReclaimLoading": "正在检查可回收卡密…"/)
+  assert.match(i18nSource, /"admin\.refundReclaimError": "无法确认当前订单的卡密状态，请刷新订单后重试"/)
+  assert.match(routeSource, /refundReasonPlaceholder/)
+  assert.doesNotMatch(routeSource, /confirmDisabled=\{refundReason/)
 })
 
 test("pending payment polling uses the one-second database GET path and not provider refresh", () => {
