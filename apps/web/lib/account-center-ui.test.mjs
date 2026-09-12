@@ -15,8 +15,21 @@ test("account home owns the complete logged-in summary and scoped account action
   assert.match(source, /user\.user_no/)
   assert.match(source, /user\.balance/)
   assert.match(source, /user\.user_level_name/)
+  assert.match(source, /user\.user_no !== null[\s\S]*handleCopyUserId/)
+  assert.match(source, /copyText\(String\(user\.user_no\)\)/)
+  assert.match(source, /formatYuan\(user\.balance\)/)
+  assert.match(source, /WalletCards/)
   assert.match(source, /userApi\.uploadAvatar/)
   assert.match(source, /setUser\(updatedProfile\)/)
+  assert.doesNotMatch(source, /user\.email/)
+  assert.doesNotMatch(source, /\bCopy\b/)
+  assert.doesNotMatch(source, /<Copy/)
+  assert.doesNotMatch(source, /AccountStat/)
+  assert.doesNotMatch(source, /my\.userLevel|my\.role/)
+  assert.doesNotMatch(source, /user\.id/)
+  assert.doesNotMatch(source, /user\.user_no \?\?|user\.user_no \|\|/)
+  assert.match(source, /<Badge[\s\S]*Crown[\s\S]*user\.user_level_name/)
+  assert.match(source, /user\.unlimited \? "∞" : formatYuan\(user\.balance\)/)
   assert.doesNotMatch(source, /\/profile/)
   assert.doesNotMatch(source, /my\.darkMode|my\.english/)
   assert.match(avatarSource, /<button/)
@@ -39,6 +52,19 @@ test("account home owns the complete logged-in summary and scoped account action
   ]) {
     assert.doesNotMatch(source, new RegExp(removedToken.join("")))
   }
+})
+
+test("security page presents the current email before the password form", () => {
+  const source = readSource("../app/(store)/my/security/page.tsx")
+  const dictionary = readSource("./i18n.ts")
+
+  assert.match(source, /user\.email/)
+  assert.match(source, /security\.email/)
+  assert.match(source, /security\.emailNotBound/)
+  assert.match(source, /Mail/)
+  assert.ok(source.indexOf("security.email") < source.indexOf("<ChangePasswordForm"))
+  assert.equal((dictionary.match(/"security\.email"/g) || []).length, 2)
+  assert.equal((dictionary.match(/"security\.emailNotBound"/g) || []).length, 2)
 })
 
 test("security flow clears in-memory auth state and navigates to login after password change", () => {

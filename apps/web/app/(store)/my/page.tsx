@@ -4,7 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import {
   ChevronRight,
-  Copy,
+  Crown,
   LayoutDashboard,
   LogIn,
   LogOut,
@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldCheck,
   UserPlus,
+  WalletCards,
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -56,17 +57,15 @@ function LoadingAccount() {
         <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
       </div>
       <div className="store-glass space-y-5 rounded-card p-5 sm:p-6" aria-hidden="true">
-        <div className="flex items-center gap-4">
+        <div className="flex items-start gap-4">
           <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07] sm:size-24" />
-          <div className="space-y-2">
-            <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="h-3 w-48 animate-pulse rounded-full bg-foreground/[0.07]" />
+          <div className="min-w-0 flex-1 space-y-2 pt-1">
+            <div className="h-5 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="h-3 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="h-6 w-28 animate-pulse rounded-full bg-foreground/[0.07]" />
           </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="h-20 animate-pulse rounded-card bg-foreground/[0.07]" />
-          <div className="h-20 animate-pulse rounded-card bg-foreground/[0.07]" />
-        </div>
+        <div className="h-28 w-full animate-pulse rounded-card bg-foreground/[0.07]" />
       </div>
     </div>
   )
@@ -165,42 +164,54 @@ export default function MyPage() {
             isBusy={isAvatarBusy}
             onUpload={handleAvatarUpload}
           />
-          <div className="min-w-0 flex-1 pt-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">{user.username}</h2>
-              {isAdminRole(user.role) && (
-                <Badge variant="secondary" className="gap-1 border-primary/15 bg-primary/10 text-primary">
-                  <ShieldCheck className="size-3.5" aria-hidden="true" />
-                  {roleLabel}
-                </Badge>
-              )}
-            </div>
-            <p className="mt-1 truncate text-sm text-muted-foreground">{user.email || "—"}</p>
-          </div>
-        </div>
-
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
-          <AccountStat label={t("my.balance")} value={user.unlimited ? "∞" : formatYuan(user.balance)} valueClassName="text-2xl" />
-          <div className="rounded-card border border-border-subtle bg-surface-muted p-3.5">
-            <p className="text-xs text-muted-foreground">{isAdminRole(user.role) ? t("my.role") : t("my.userId")}</p>
-            {isAdminRole(user.role) ? (
-              <p className="mt-1 text-sm font-semibold text-foreground">{roleLabel}</p>
-            ) : (
+          <div className="flex min-w-0 flex-1 flex-col items-start gap-2 pt-1">
+            <h2 className="max-w-full truncate text-xl font-semibold tracking-tight text-foreground">{user.username}</h2>
+            {!isAdminRole(user.role) && user.user_no !== null && (
               <button
                 type="button"
                 onClick={handleCopyUserId}
-                disabled={user.user_no === null}
                 aria-label={t("my.copyUserId")}
-                className="mt-1 inline-flex max-w-full items-center gap-2 rounded-control text-left font-mono text-lg font-semibold text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
+                className="-mx-1 inline-flex max-w-full items-center rounded px-1 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
-                <span className="truncate">{user.user_no ?? "—"}</span>
-                <Copy className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span className="truncate">{t("my.userId").replace("{id}", String(user.user_no))}</span>
               </button>
             )}
+            {isAdminRole(user.role) ? (
+              <Badge
+                variant="secondary"
+                className="gap-1.5 border-primary/20 bg-gradient-to-r from-primary/[0.08] via-primary/[0.12] to-primary/[0.06] text-primary dark:border-primary/30"
+              >
+                <ShieldCheck className="size-3.5" aria-hidden="true" />
+                {roleLabel}
+              </Badge>
+            ) : user.user_level_name ? (
+              <Badge
+                variant="secondary"
+                className="gap-1.5 border-amber-300/80 bg-gradient-to-r from-amber-50 via-amber-100/80 to-yellow-50 text-amber-800 dark:border-amber-400/35 dark:from-amber-950/70 dark:via-amber-900/55 dark:to-yellow-950/55 dark:text-amber-200"
+              >
+                <Crown className="size-3.5" aria-hidden="true" />
+                {user.user_level_name}
+              </Badge>
+            ) : null}
           </div>
-          {user.user_level_name && (
-            <AccountStat label={t("my.userLevel")} value={user.user_level_name} />
-          )}
+        </div>
+      </section>
+
+      <section
+        className="relative overflow-hidden rounded-card border border-amber-300/70 bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:border-amber-400/35 dark:from-amber-950/50 dark:via-yellow-950/35 dark:to-orange-950/45"
+        aria-label={t("my.balance")}
+      >
+        <div className="pointer-events-none absolute -right-16 -top-24 size-48 rounded-full bg-amber-300/20 blur-3xl dark:bg-amber-400/10" aria-hidden="true" />
+        <div className="relative flex items-center gap-4 p-5 sm:p-6">
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 ring-1 ring-inset ring-amber-500/20 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/25">
+            <WalletCards className="size-5" strokeWidth={1.8} aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-amber-800/80 dark:text-amber-200/80">{t("my.balance")}</p>
+            <p className="mt-1 text-3xl font-semibold tracking-tight text-amber-950 tabular-nums dark:text-amber-50">
+              {user.unlimited ? "∞" : formatYuan(user.balance)}
+            </p>
+          </div>
         </div>
       </section>
 
@@ -230,15 +241,6 @@ export default function MyPage() {
           <span>{t("nav.logout")}</span>
         </button>
       </section>
-    </div>
-  )
-}
-
-function AccountStat({ label, value, valueClassName = "text-lg" }: { label: string; value: string; valueClassName?: string }) {
-  return (
-    <div className="rounded-card border border-border-subtle bg-surface-muted p-3.5">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 font-semibold text-foreground ${valueClassName}`}>{value}</p>
     </div>
   )
 }
