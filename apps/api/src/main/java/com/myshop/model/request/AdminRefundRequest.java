@@ -10,6 +10,9 @@ public record AdminRefundRequest(
         @NotNull(message = "必须明确确认退款")
         Boolean confirmed,
         String reason,
-        @JsonProperty("reclaim_card_keys") boolean reclaimCardKeys
+        @JsonProperty("reclaim_card_keys") Boolean reclaimCardKeys
 ) {
+    public AdminRefundRequest {
+        reclaimCardKeys = Boolean.TRUE.equals(reclaimCardKeys);
+    }
 }
