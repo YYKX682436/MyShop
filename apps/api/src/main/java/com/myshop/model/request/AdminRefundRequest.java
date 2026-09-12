@@ -1,6 +1,7 @@
 package com.myshop.model.request;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotNull;
 
@@ -14,5 +15,10 @@ public record AdminRefundRequest(
 ) {
     public AdminRefundRequest {
         reclaimCardKeys = Boolean.TRUE.equals(reclaimCardKeys);
+    }
+
+    @JsonAnySetter
+    public void rejectUnknownProperty(String ignoredName, Object ignoredValue) {
+        throw new IllegalArgumentException("退款请求包含不支持的字段");
     }
 }
