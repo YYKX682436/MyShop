@@ -4,10 +4,12 @@ import test from "node:test"
 
 const source = readFileSync(new URL("../app/(store)/product/[id]/product-purchase-dock.tsx", import.meta.url), "utf8")
 
-test("the purchase Dock is the only entry point and cannot open for a sold-out selection", () => {
+test("the purchase Dock is the only entry point and cannot open before auth or for a sold-out selection", () => {
   assert.match(source, /<Drawer[\s\S]*<DrawerTrigger asChild>/)
-  assert.match(source, /disabled=\{isOutOfStock\}/)
-  assert.match(source, /if \(isOutOfStock\) return/)
+  assert.match(source, /const \{ user, setUser, authLoaded \} = useAuth\(\)/)
+  assert.match(source, /disabled=\{isOutOfStock \|\| !authLoaded\}/)
+  assert.match(source, /if \(isOutOfStock \|\| !authLoaded\) return/)
+  assert.match(source, /setSelectedPaymentMethod\(getDefaultPaymentMethod\(balanceAvailability\)\)/)
   assert.match(source, /t\("product\.soldOut"\)/)
 })
 

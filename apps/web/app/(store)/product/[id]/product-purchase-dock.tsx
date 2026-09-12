@@ -69,7 +69,7 @@ function firstPurchasableSpec(specs: ProductSpec[]): ProductSpec | null {
 
 export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockProps) {
   const { t } = useLocale()
-  const { user, setUser } = useAuth()
+  const { user, setUser, authLoaded } = useAuth()
   const router = useRouter()
   const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const [open, setOpen] = useState(false)
@@ -137,7 +137,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
-      if (isOutOfStock) return
+      if (isOutOfStock || !authLoaded) return
       resetPanelUiState()
       setSelectedPaymentMethod(getDefaultPaymentMethod(balanceAvailability))
       setOpen(true)
@@ -313,7 +313,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
           <DrawerTrigger asChild>
             <button
               type="button"
-              disabled={isOutOfStock}
+              disabled={isOutOfStock || !authLoaded}
               className="inline-flex min-h-12 min-w-[7.5rem] shrink-0 items-center justify-center gap-2 rounded-control bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
               aria-label={isOutOfStock ? t("product.soldOut") : t("product.buyNow")}
             >
