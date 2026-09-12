@@ -12,6 +12,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.LinkOption;
 
 /**
  * Owns the configured upload directory and proves it is usable before the
@@ -64,7 +65,80 @@ public class UploadStorage {
     }
 
     public Path resolve(String filename) {
-        return uploadDirectory.resolve(filename);
+        return resolveManagedPath(filename);
+    }
+
+    /**
+     * Prepare a generated upload path for writing after resolving any parent
+     * directories and proving that symlinks cannot redirect the write outside
+     * the configured storage root.
+     */
+    public Path prepareManagedFile(String relativePath) {
+        Path target = resolveManagedPath(relativePath);
+        try {
+            Files.createDirectories(target.getParent());
+            Path realDirectory = uploadDirectory.toRealPath();
+            Path realParent = target.getParent().toRealPath();
+            if (!realParent.startsWith(realDirectory)) {
+                throw new IllegalArgumentException("managed upload path escapes storage");
+            }
+            return target;
+        } catch (IOException | SecurityException exception) {
+            throw new IllegalArgumentException("managed upload path is not writable", exception);
+        }
+    }
+
+    /** Resolve a relative path without allowing it to escape UploadStorage. */
+    public Path resolveManagedPath(String relativePath) {
+        if (relativePath == null || relativePath.isBlank()) {
+            throw new IllegalArgumentException("managed upload path is blank");
+        }
+
+        try {
+            Path requested = Paths.get(relativePath);
+            if (requested.isAbsolute()) {
+                throw new IllegalArgumentException("managed upload path must be relative");
+            }
+            Path resolved = uploadDirectory.resolve(requested).normalize();
+            if (!resolved.startsWith(uploadDirectory)) {
+                throw new IllegalArgumentException("managed upload path escapes storage");
+            }
+            return resolved;
+        } catch (InvalidPathException | SecurityException exception) {
+            throw new IllegalArgumentException("managed upload path is invalid", exception);
+        }
+    }
+
+    /**
+     * Delete one regular file only after proving both the normalized and real
+     * path remain under the configured storage directory.
+     */
+    public boolean deleteManagedFile(String relativePath) {
+        final Path target;
+        try {
+            target = resolveManagedPath(relativePath);
+        } catch (IllegalArgumentException exception) {
+            log.warn("Managed upload deletion rejected");
+            return false;
+        }
+
+        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                || !Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+            return false;
+        }
+
+        try {
+            Path realDirectory = uploadDirectory.toRealPath();
+            Path realTarget = target.toRealPath();
+            if (!realTarget.startsWith(realDirectory)) {
+                log.warn("Managed upload deletion rejected outside storage");
+                return false;
+            }
+            return Files.deleteIfExists(target);
+        } catch (IOException | SecurityException exception) {
+            log.warn("Managed upload deletion failed");
+            return false;
+        }
     }
 
     private static Path resolveConfiguredPath(String configuredPath) {

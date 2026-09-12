@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.web.FilterChainProxy;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -20,6 +21,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
@@ -73,6 +75,23 @@ class SecurityAuthorizationIntegrationTest {
         mockMvc.perform(get("/api/admin/administrators")
                         .contextPath("/api")
                         .with(user("ordinary-admin").roles("ADMIN")))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void avatarUploadRequiresLoginAndAdminImageUploadRemainsAdminOnly() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "avatar.png", "image/png", new byte[]{1, 2, 3});
+
+        mockMvc.perform(multipart("/api/user/avatar")
+                        .contextPath("/api")
+                        .file(file))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(multipart("/api/upload/image")
+                        .contextPath("/api")
+                        .file(file)
+                        .with(user("buyer").roles("USER")))
                 .andExpect(status().isForbidden());
     }
 }

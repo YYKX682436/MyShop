@@ -23,6 +23,8 @@ public final class ErrorCode {
     public static final int ACCOUNT_LOCKED = 20007;
     public static final int PHONE_EXISTS = 20008;
     public static final int IDENTIFIER_CONFLICT = 20009;
+    public static final int AVATAR_FORMAT_INVALID = 20010;
+    public static final int AVATAR_SIZE_EXCEEDED = 20011;
 
     // ── Product 30001~30099 ──
     public static final int PRODUCT_NOT_FOUND = 30001;

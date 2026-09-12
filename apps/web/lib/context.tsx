@@ -9,7 +9,7 @@ import { siteApi, userApi, authApi, requestOrThrow } from "@/services/api"
 // Theme
 // ============================================================
 
-type Theme = "light" | "dark" | "system"
+export type Theme = "light" | "dark" | "system"
 
 interface ThemeContextValue {
   theme: Theme

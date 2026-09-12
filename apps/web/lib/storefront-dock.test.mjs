@@ -20,7 +20,7 @@ test("keeps the Dock action model focused on configured primary routes", () => {
     ["orders", "/my/orders/", null],
     ["me", "/my", null],
     ["me", "/my/", null],
-    ["me", "/profile/security", "/my"],
+    ["me", "/my/security", "/my"],
   ]
 
   for (const [key, pathname, href] of cases) {

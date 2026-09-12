@@ -284,17 +284,21 @@ curl --fail --silent --show-error --output /dev/null "$public_url/"
 curl --fail --silent --show-error --output /dev/null "$public_url/api/site/config"
 ```
 
-Verify Flyway V25 and its database contracts without printing credentials or
-card contents. The query must report one successful V25 migration, the
-`orders.refunded_at` column, the `orders_status_check` constraint, the
+Verify Flyway V26 and its database contracts without printing credentials or
+card contents. The query must report one successful V26 migration, the
+`users.avatar_url` column, the `orders.refunded_at` column, the `orders_status_check` constraint, the
 `balance_transactions_refund_contract_check` constraint, and the partial unique
 refund index:
 
 ```bash
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
-    SELECT version, success FROM flyway_schema_history WHERE version = '\''25'\'' AND success;
-    SELECT to_regclass('\''public.orders'\'') IS NOT NULL
+    SELECT version, success FROM flyway_schema_history WHERE version = '\''26'\'' AND success;
+    SELECT to_regclass('\''public.users'\'') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = '\''users'\'' AND column_name = '\''avatar_url'\''
+                    AND is_nullable = '\''YES'\'' AND character_maximum_length = 500)
+      AND to_regclass('\''public.orders'\'') IS NOT NULL
       AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name = '\''orders'\'' AND column_name = '\''refunded_at'\'')
       AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '\''orders_status_check'\'')

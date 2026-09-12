@@ -79,4 +79,17 @@ class UploadStorageTest {
             }
         }
     }
+
+    @Test
+    void managedDeletionRejectsTraversalAndAbsolutePathsWithoutTouchingSiblings() throws IOException {
+        UploadStorage storage = new UploadStorage(tempDirectory.resolve("uploads").toString());
+        storage.initialize();
+        Path outside = tempDirectory.resolve("outside.txt");
+        Files.writeString(outside, "must remain");
+
+        assertFalse(storage.deleteManagedFile("../outside.txt"));
+        assertFalse(storage.deleteManagedFile(outside.toString()));
+        assertTrue(Files.exists(outside));
+        assertTrue(Files.readString(outside).equals("must remain"));
+    }
 }

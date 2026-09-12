@@ -2,6 +2,7 @@ package com.myshop.model.response;
 
 import com.myshop.entity.User;
 import com.myshop.entity.UserLevel;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -17,6 +18,8 @@ public class UserProfileResponse {
     private UUID id;
     private String username;
     private String email;
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    private String avatarUrl;
     private String role;
     private Long userNo;
     private UUID userLevelId;
@@ -35,6 +38,7 @@ public class UserProfileResponse {
         r.setId(user.getId());
         r.setUsername(user.getUsername());
         r.setEmail(user.getEmail());
+        r.setAvatarUrl(user.getAvatarUrl());
         r.setRole(user.getRole().name());
         r.setUserNo(user.getUserNo());
         r.setUserLevelId(user.getUserLevelId());

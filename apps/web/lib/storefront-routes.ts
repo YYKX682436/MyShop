@@ -79,9 +79,7 @@ export function getStorefrontRouteSection(pathname: string): StorefrontNavKey | 
 
   if (
     normalizedPath === "/my" ||
-    normalizedPath.startsWith("/my/") ||
-    normalizedPath === "/profile" ||
-    normalizedPath.startsWith("/profile/")
+    normalizedPath.startsWith("/my/")
   ) {
     return "me"
   }

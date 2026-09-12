@@ -8,15 +8,11 @@ import com.myshop.model.response.AuthResult;
 import com.myshop.model.response.CaptchaResponse;
 import com.myshop.config.ClientIpResolver;
 import com.myshop.service.AuthService;
+import com.myshop.service.AuthCookieService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseCookie;
-import org.springframework.http.ResponseEntity;
-import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
-import java.time.Duration;
-import java.util.UUID;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -26,9 +22,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final ClientIpResolver clientIpResolver;
-
-    @Value("${security.cookie-secure:false}")
-    private boolean cookieSecure;
+    private final AuthCookieService authCookieService;
 
     @GetMapping("/captcha")
     public ApiResponse<CaptchaResponse> getCaptcha() {
@@ -40,7 +34,7 @@ public class AuthController {
                                               HttpServletRequest servletRequest,
                                               HttpServletResponse response) {
         AuthResult result = authService.register(request, clientIpResolver.resolve(servletRequest));
-        writeAuthCookies(response, result.token());
+        authCookieService.writeAuthCookies(response, result.token());
         return ApiResponse.success(new AuthResponse(result.user()));
     }
 
@@ -49,24 +43,14 @@ public class AuthController {
                                            HttpServletRequest servletRequest,
                                            HttpServletResponse response) {
         AuthResult result = authService.login(request, clientIpResolver.resolve(servletRequest));
-        writeAuthCookies(response, result.token());
+        authCookieService.writeAuthCookies(response, result.token());
         return ApiResponse.success(new AuthResponse(result.user()));
     }
 
     @PostMapping("/logout")
     public ApiResponse<Void> logout(HttpServletResponse response) {
         authService.logout();
-        response.addHeader("Set-Cookie", ResponseCookie.from("myshop_access_token", "")
-                .httpOnly(true).secure(cookieSecure).sameSite("Lax").path("/").maxAge(Duration.ZERO).build().toString());
-        response.addHeader("Set-Cookie", ResponseCookie.from("myshop_csrf", "")
-                .secure(cookieSecure).sameSite("Lax").path("/").maxAge(Duration.ZERO).build().toString());
+        authCookieService.clearAuthCookies(response);
         return ApiResponse.success();
-    }
-
-    private void writeAuthCookies(HttpServletResponse response, String token) {
-        response.addHeader("Set-Cookie", ResponseCookie.from("myshop_access_token", token)
-                .httpOnly(true).secure(cookieSecure).sameSite("Lax").path("/").maxAge(Duration.ofHours(24)).build().toString());
-        response.addHeader("Set-Cookie", ResponseCookie.from("myshop_csrf", UUID.randomUUID().toString())
-                .secure(cookieSecure).sameSite("Lax").path("/").maxAge(Duration.ofHours(24)).build().toString());
     }
 }

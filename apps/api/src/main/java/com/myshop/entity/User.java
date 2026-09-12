@@ -25,6 +25,9 @@ public class User extends BaseEntity {
     @Column
     private String email;
 
+    @Column(name = "avatar_url", length = 500)
+    private String avatarUrl;
+
     /** Mainland China mobile number, stored without the +86 country code. */
     @Column(length = 11)
     private String phone;

@@ -20,6 +20,8 @@ test("uses exact Dock destinations for active state", () => {
     ["/my/orders/receipt", null],
     ["/profile", null],
     ["/profile/security", null],
+    ["/my/security", null],
+    ["/my/settings", null],
     ["/login", null],
     ["/register", null],
   ]
@@ -32,11 +34,13 @@ test("uses exact Dock destinations for active state", () => {
 test("keeps broad section matching separate from Dock visibility", () => {
   assert.equal(getStorefrontRouteSection("/product/abc"), "home")
   assert.equal(getStorefrontRouteSection("/order/abc"), "orders")
-  assert.equal(getStorefrontRouteSection("/profile/security"), "me")
+  assert.equal(getStorefrontRouteSection("/my/security"), "me")
+  assert.equal(getStorefrontRouteSection("/my/settings"), "me")
 
   assert.equal(getStorefrontActiveTab("/product/abc"), null)
   assert.equal(getStorefrontActiveTab("/order/abc"), null)
-  assert.equal(getStorefrontActiveTab("/profile/security"), null)
+  assert.equal(getStorefrontActiveTab("/my/security"), null)
+  assert.equal(getStorefrontActiveTab("/my/settings"), null)
 })
 
 test("recognizes only exact first-level Dock destinations", () => {
@@ -50,6 +54,8 @@ test("recognizes only exact first-level Dock destinations", () => {
     "/my/orders/receipt/",
     "/profile",
     "/profile/security",
+    "/my/security",
+    "/my/settings",
     "/login",
     "/register",
     "/categories",
@@ -69,4 +75,5 @@ test("exposes one canonical destination identity for each Dock item", () => {
 test("keeps the orders route out of the Me tab", () => {
   assert.equal(getStorefrontActiveTab("/my/orders"), "orders")
   assert.equal(getStorefrontRouteSection("/my/orders/receipt"), "orders")
+  assert.equal(getStorefrontRouteSection("/my/security"), "me")
 })

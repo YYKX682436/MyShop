@@ -17,6 +17,30 @@ export const QR_ALLOWED_IMAGE_TYPES = [
 
 export const QR_ALLOWED_IMAGE_ACCEPT = ".jpg,.jpeg,.png,.webp"
 
+export const AVATAR_ALLOWED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const
+
+export const AVATAR_ALLOWED_IMAGE_ACCEPT = ".jpg,.jpeg,.png,.webp"
+export const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024
+
+export type AvatarFileValidationError = "format" | "size"
+
+export function getAvatarFileValidationError(
+  file: Pick<File, "type" | "size">,
+): AvatarFileValidationError | null {
+  const fileType = file.type.toLowerCase()
+  if (!(AVATAR_ALLOWED_IMAGE_TYPES as readonly string[]).includes(fileType)) {
+    return "format"
+  }
+  if (file.size > MAX_AVATAR_SIZE_BYTES) {
+    return "size"
+  }
+  return null
+}
+
 export function validateImageFile(file: Pick<File, "type" | "size">): string | null {
   const fileType = file.type.toLowerCase()
   if (!(ALLOWED_IMAGE_TYPES as readonly string[]).includes(fileType)) {

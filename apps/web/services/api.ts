@@ -335,6 +335,13 @@ export const userApi = {
     request<UserProfile>("/user/profile"),
   updatePassword: (data: { old_password: string; new_password: string }) =>
     request<null>("/user/password", { method: "PUT", body: JSON.stringify(data) }),
+  uploadAvatar: (file: File) => {
+    const formData = new FormData()
+    formData.append("file", file)
+    return uploadRequest<UserProfile>("/user/avatar", formData)
+  },
+  deleteAvatar: () =>
+    request<UserProfile>("/user/avatar", { method: "DELETE" }),
   getOrders: (params: { page?: number; page_size?: number; status?: string }) => {
     const qs = buildQuery(params)
     return request<PaginatedData<OrderBrief>>(`/user/orders?${qs}`)
@@ -788,6 +795,8 @@ const ERROR_CODE_I18N: Record<number, string> = {
   20006: "error.accountDisabled",
   20008: "error.phoneExists",
   20009: "error.identifierConflict",
+  20010: "my.avatarFormatError",
+  20011: "my.avatarSizeError",
   // Product
   30001: "error.productNotFound",
   30002: "error.insufficientStock",

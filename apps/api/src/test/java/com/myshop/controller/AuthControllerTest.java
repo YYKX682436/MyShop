@@ -6,6 +6,7 @@ import com.myshop.model.request.RegisterRequest;
 import com.myshop.model.response.AuthResult;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.service.AuthService;
+import com.myshop.service.AuthCookieService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,12 +32,14 @@ class AuthControllerTest {
     private AuthService authService;
     @Mock
     private ClientIpResolver clientIpResolver;
+    @Mock
+    private AuthCookieService authCookieService;
 
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, clientIpResolver)).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new AuthController(authService, clientIpResolver, authCookieService)).build();
     }
 
     @Test

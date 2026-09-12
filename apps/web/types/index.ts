@@ -50,6 +50,7 @@ export interface UserProfile {
   id: string
   username: string
   email: string | null
+  avatar_url: string | null
   role: 'USER' | 'ADMIN' | 'SUPER_ADMIN'
   user_no: number | null
   user_level_id: string | null
