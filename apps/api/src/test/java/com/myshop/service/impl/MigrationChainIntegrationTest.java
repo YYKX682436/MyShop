@@ -55,14 +55,15 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("24", flyway.info().current().getVersion().getVersion());
-        assertEquals(24, flyway.info().all().length);
+        assertEquals("25", flyway.info().current().getVersion().getVersion());
+        assertEquals(25, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
                 "card_import_batches", "orders", "order_items", "card_keys",
                 "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
-                "visit_stats", "webhook_events", "manual_stocks", "payment_attempts")) {
+                "visit_stats", "webhook_events", "manual_stocks", "payment_attempts",
+                "card_key_reclaims")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
         assertFalse(tableExists("cart_items"));
@@ -79,6 +80,14 @@ class MigrationChainIntegrationTest {
         assertFalse(columnExists("orders", retiredGuestCredential));
         assertTrue(checkConstraintExists("orders_order_no_positive"));
         assertTrue(checkConstraintExists("balance_transactions_refund_contract_check"));
+        for (String column : List.of(
+                "card_key_id", "order_id", "order_item_id", "product_id", "spec_id",
+                "operator_id", "original_sold_at", "reclaimed_at", "created_at")) {
+            assertTrue(columnExists("card_key_reclaims", column),
+                    "missing card key reclaim column: " + column);
+        }
+        assertTrue(indexExists("uq_card_key_reclaims_order_card_key"));
+        assertTrue(indexExists("idx_card_key_reclaims_order"));
         assertTrue(indexExists("orders_order_no_key"));
         assertTrue(sequenceExists("order_no_sequence"));
         assertTrue(functionExists("prevent_order_no_update"));
@@ -335,7 +344,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("24", flyway().info().current().getVersion().getVersion());
+        assertEquals("25", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -429,7 +438,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-         assertEquals("24", flyway().info().current().getVersion().getVersion());
+         assertEquals("25", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -507,6 +516,18 @@ class MigrationChainIntegrationTest {
                     balance_before, balance_after, reason, operator_id, order_id)
                 VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, '退款测试', ?, ?)
                 """, userId, userId, refundOrderId);
+        UUID refundWithoutReasonOrderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, NULL, ?, ?)
+                """, userId, userId, refundWithoutReasonOrderId);
+        UUID singleCharacterReasonOrderId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, '好', ?, ?)
+                """, userId, userId, singleCharacterReasonOrderId);
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
                 INSERT INTO balance_transactions(user_id, type, amount, delta,
                     balance_before, balance_after, reason, operator_id, order_id)
@@ -535,8 +556,28 @@ class MigrationChainIntegrationTest {
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
                 INSERT INTO balance_transactions(user_id, type, amount, delta,
                     balance_before, balance_after, reason, operator_id, order_id)
+                VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, ?, ?, ?)
+                """, userId, "a".repeat(501), userId, UUID.randomUUID()));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO balance_transactions(user_id, type, amount, delta,
+                    balance_before, balance_after, reason, operator_id, order_id)
                 VALUES (?, 'REFUND', 1.00, 1.00, 0.00, 1.00, '退款测试', ?, NULL)
                 """, userId, userId));
+
+        UUID reclaimOrderId = UUID.randomUUID();
+        UUID reclaimCardKeyId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO card_key_reclaims(id, card_key_id, order_id, product_id,
+                                              operator_id, reclaimed_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), reclaimCardKeyId, reclaimOrderId,
+                UUID.randomUUID(), userId);
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO card_key_reclaims(id, card_key_id, order_id, product_id,
+                                              operator_id, reclaimed_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), reclaimCardKeyId, reclaimOrderId,
+                UUID.randomUUID(), userId));
     }
 
     @Test
@@ -598,7 +639,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("24", flyway().info().current().getVersion().getVersion());
+        assertEquals("25", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -668,7 +709,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("24", flyway().info().current().getVersion().getVersion());
+        assertEquals("25", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -717,7 +758,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("24", flyway().info().current().getVersion().getVersion());
+        assertEquals("25", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -917,7 +958,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("24", flyway().info().current().getVersion().getVersion());
+        assertEquals("25", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -963,7 +1004,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("24", flyway().info().current().getVersion().getVersion());
+        assertEquals("25", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

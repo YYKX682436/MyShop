@@ -147,6 +147,7 @@ export default function MyOrdersPage() {
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{t("order.refundToBalance")}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{t("order.refundAmount")}: <span className="font-medium text-foreground">{formatYuan(order.actual_amount)}</span></p>
+                  {(order.reclaimed_card_key_count ?? 0) > 0 && <p className="mt-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">{t("order.reclaimedCardKeys").replace("{count}", String(order.reclaimed_card_key_count))}</p>}
                 </div>
               )}
 

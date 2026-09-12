@@ -18,13 +18,18 @@ class AdminRefundRequestTest {
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     @Test
-    void requestAcceptsOnlyConfirmationAndReasonFields() throws Exception {
+    void requestDefaultsReclaimToFalseAndAcceptsExplicitReclaimFlag() throws Exception {
         AdminRefundRequest request = objectMapper.readValue(
                 "{\"confirmed\":true,\"reason\":\"客户申请整单退款\"}",
                 AdminRefundRequest.class);
 
         assertEquals(Boolean.TRUE, request.confirmed());
         assertEquals("客户申请整单退款", request.reason());
+        assertEquals(false, request.reclaimCardKeys());
+        AdminRefundRequest reclaim = objectMapper.readValue(
+                "{\"confirmed\":true,\"reason\":null,\"reclaim_card_keys\":true}",
+                AdminRefundRequest.class);
+        assertEquals(true, reclaim.reclaimCardKeys());
         assertThrows(Exception.class, () -> objectMapper.readValue(
                 "{\"confirmed\":true,\"reason\":\"有效原因\",\"amount\":1}",
                 AdminRefundRequest.class));
@@ -40,12 +45,14 @@ class AdminRefundRequestTest {
                 LocalDateTime.of(2026, 9, 11, 23, 0),
                 "BALANCE",
                 new BigDecimal("5.66"),
-                new BigDecimal("18.00")));
+                new BigDecimal("18.00"),
+                2));
 
         org.junit.jupiter.api.Assertions.assertTrue(json.contains("\"order_id\""));
         org.junit.jupiter.api.Assertions.assertTrue(json.contains("\"refund_amount\""));
         org.junit.jupiter.api.Assertions.assertTrue(json.contains("\"refunded_at\""));
         org.junit.jupiter.api.Assertions.assertTrue(json.contains("\"balance_before\""));
         org.junit.jupiter.api.Assertions.assertTrue(json.contains("\"balance_after\""));
+        org.junit.jupiter.api.Assertions.assertTrue(json.contains("\"reclaimed_card_key_count\":2"));
     }
 }

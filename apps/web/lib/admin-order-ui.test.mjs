@@ -161,6 +161,25 @@ test("refund detail and storefront lifecycle expose the refund facts without pay
   assert.match(ordersPage, /order\.refundAmount/)
 })
 
+test("refund reclaim payload and surfaces keep the safe default and never require a reason", () => {
+  const apiSource = readSource("../services/api.ts")
+  const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
+  const sheetSource = readSource("../components/admin/orders/order-detail-sheet.tsx")
+  const orderPage = readSource("../app/(store)/order/[orderId]/page.tsx")
+  const ordersPage = readSource("../app/(store)/my/orders/page.tsx")
+
+  assert.match(apiSource, /reclaim_card_keys: reclaimCardKeys/)
+  assert.match(routeSource, /const \[reclaimCardKeys, setReclaimCardKeys\] = useState\(false\)/)
+  assert.match(routeSource, /reclaimableCardKeyCount/)
+  assert.match(routeSource, /refundReclaimRiskWarning/)
+  assert.doesNotMatch(routeSource, /refundReasonTooShort/)
+  assert.match(sheetSource, /refundCardHandling/)
+  assert.match(sheetSource, /refundNotReclaimed/)
+  assert.match(sheetSource, /refundReclaimed/)
+  assert.match(orderPage, /reclaimedCardKeys/)
+  assert.match(ordersPage, /reclaimed_card_key_count/)
+})
+
 test("pending payment polling uses the one-second database GET path and not provider refresh", () => {
   const source = readSource("../app/(store)/order/[orderId]/page.tsx")
   const pollingSource = readSource("./order-polling.ts")

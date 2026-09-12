@@ -17,6 +17,7 @@ import com.myshop.model.request.AdminOrderSearchRequest;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.BalanceTransactionRepository;
+import com.myshop.service.CardKeyReclaimService;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
@@ -55,6 +56,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final OperationLogService operationLogService;
     private final OrderRefundService orderRefundService;
     private final BalanceTransactionRepository balanceTransactionRepository;
+    private final CardKeyReclaimService cardKeyReclaimService;
 
     @Autowired
     public AdminOrderServiceImpl(OrderRepository orderRepository,
@@ -65,7 +67,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                                  OrderPaymentCompletionService orderPaymentCompletionService,
                                  OperationLogService operationLogService,
                                  OrderRefundService orderRefundService,
-                                 BalanceTransactionRepository balanceTransactionRepository) {
+                                 BalanceTransactionRepository balanceTransactionRepository,
+                                 CardKeyReclaimService cardKeyReclaimService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.userRepository = userRepository;
@@ -75,6 +78,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         this.operationLogService = operationLogService;
         this.orderRefundService = orderRefundService;
         this.balanceTransactionRepository = balanceTransactionRepository;
+        this.cardKeyReclaimService = cardKeyReclaimService;
     }
 
     @Override
@@ -196,8 +200,9 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
     @Override
     @Transactional
-    public AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed) {
-        return orderRefundService.refund(id, reason, confirmed);
+    public AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed,
+                                           boolean reclaimCardKeys) {
+        return orderRefundService.refund(id, reason, confirmed, reclaimCardKeys);
     }
 
     @Override
@@ -289,12 +294,16 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                         .findFirstByOrderIdAndTypeOrderByCreatedAtDesc(
                                 o.getId(), BalanceTransactionType.REFUND)
                         .orElse(null);
-                map.put("refund_reason", refund == null ? null : refund.getReason());
+                if (refund != null && refund.getReason() != null && !refund.getReason().isBlank()) {
+                    map.put("refund_reason", refund.getReason().trim());
+                }
                 map.put("refund_operator_id", refund == null ? null : refund.getOperatorId());
                 map.put("refund_operator_username", refund == null || refund.getOperatorId() == null
                         ? null
                         : userRepository.findById(refund.getOperatorId())
                         .map(User::getUsername).orElse(null));
+                map.put("reclaimed_card_key_count", Math.toIntExact(
+                        cardKeyReclaimService.countByOrderId(o.getId())));
             }
         }
         return map;

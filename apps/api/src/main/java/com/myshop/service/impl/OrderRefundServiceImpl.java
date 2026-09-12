@@ -1,12 +1,15 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
 import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
+import com.myshop.entity.CardKey;
+import com.myshop.entity.CardKeyReclaim;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentAttempt;
@@ -14,11 +17,13 @@ import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.payment.PaymentStatus;
+import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.BalanceTransactionService;
+import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderRefundService;
@@ -28,7 +33,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -44,31 +55,38 @@ public class OrderRefundServiceImpl implements OrderRefundService {
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
+    private final CardKeyRepository cardKeyRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final UserRepository userRepository;
     private final ManualStockService manualStockService;
     private final BalanceTransactionService balanceTransactionService;
     private final OperationLogService operationLogService;
+    private final CardKeyReclaimService cardKeyReclaimService;
 
     public OrderRefundServiceImpl(OrderRepository orderRepository,
                                   OrderItemRepository orderItemRepository,
+                                  CardKeyRepository cardKeyRepository,
                                   PaymentAttemptRepository paymentAttemptRepository,
                                   UserRepository userRepository,
                                   ManualStockService manualStockService,
                                   BalanceTransactionService balanceTransactionService,
-                                  OperationLogService operationLogService) {
+                                  OperationLogService operationLogService,
+                                  CardKeyReclaimService cardKeyReclaimService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
+        this.cardKeyRepository = cardKeyRepository;
         this.paymentAttemptRepository = paymentAttemptRepository;
         this.userRepository = userRepository;
         this.manualStockService = manualStockService;
         this.balanceTransactionService = balanceTransactionService;
         this.operationLogService = operationLogService;
+        this.cardKeyReclaimService = cardKeyReclaimService;
     }
 
     @Override
     @Transactional
-    public AdminOrderRefundResponse refund(UUID orderId, String reason, boolean confirmed) {
+    public AdminOrderRefundResponse refund(UUID orderId, String reason, boolean confirmed,
+                                           boolean reclaimCardKeys) {
         String normalizedReason = validateRequest(reason, confirmed);
         RequestContext.UserInfo operator = RequestContext.get();
         UUID operatorId = operator == null ? null : operator.getUserId();
@@ -120,16 +138,38 @@ public class OrderRefundServiceImpl implements OrderRefundService {
                     "退款后账户余额超出系统支持范围");
         }
 
+        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+        LocalDateTime refundedAt = LocalDateTime.now();
+        ReclaimPlan reclaimPlan = reclaimCardKeys
+                ? prepareReclaimPlan(order, items, operatorId, refundedAt)
+                : ReclaimPlan.empty();
+
+        // Persist the immutable proof before releasing any key. A later
+        // failure still rolls the whole transaction back, while a committed
+        // refund can always explain which inventory units were returned.
+        if (!reclaimPlan.records().isEmpty()) {
+            cardKeyReclaimService.recordAll(reclaimPlan.records());
+        }
+
         for (PaymentAttempt pendingAttempt : pendingAttempts) {
             pendingAttempt.setStatus(PaymentStatus.CLOSED);
             paymentAttemptRepository.save(pendingAttempt);
         }
-        cancelUnfinishedFulfillment(order);
+        cancelUnfinishedFulfillment(items, reclaimPlan.itemIds());
+
+        if (!reclaimPlan.keys().isEmpty()) {
+            for (CardKey key : reclaimPlan.keys()) {
+                key.setStatus(CardKeyStatus.AVAILABLE);
+                key.setOrderId(null);
+                key.setOrderItemId(null);
+                key.setSoldAt(null);
+            }
+            cardKeyRepository.saveAll(reclaimPlan.keys());
+        }
 
         user.setBalance(balanceAfter);
         userRepository.save(user);
 
-        LocalDateTime refundedAt = LocalDateTime.now();
         order.setStatus(OrderStatus.REFUNDED);
         order.setRefundedAt(refundedAt);
         orderRepository.save(order);
@@ -144,11 +184,14 @@ public class OrderRefundServiceImpl implements OrderRefundService {
                 "订单号=" + order.getOrderNo()
                         + "，退款金额=" + refundAmount.toPlainString()
                         + "，退款去向=" + REFUND_DESTINATION
-                        + "，原因=" + normalizedReason);
+                        + "，回收卡密=" + (reclaimCardKeys ? "是" : "否")
+                        + "，回收数量=" + reclaimPlan.keys().size()
+                        + "，原因=" + auditReason(normalizedReason));
 
         return new AdminOrderRefundResponse(
                 order.getId(), order.getOrderNo(), order.getStatus(), refundAmount,
-                refundedAt, REFUND_DESTINATION, balanceBefore, balanceAfter);
+                refundedAt, REFUND_DESTINATION, balanceBefore, balanceAfter,
+                reclaimPlan.keys().size());
     }
 
     private String validateRequest(String reason, boolean confirmed) {
@@ -156,10 +199,10 @@ public class OrderRefundServiceImpl implements OrderRefundService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "必须明确确认退款");
         }
         String normalized = reason == null ? null : reason.trim();
-        if (normalized == null || normalized.length() < 3 || normalized.length() > 500) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "退款原因必须为 3 至 500 个字符");
+        if (normalized != null && normalized.length() > 500) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "退款原因不能超过 500 个字符");
         }
-        return normalized;
+        return normalized == null || normalized.isBlank() ? null : normalized;
     }
 
     private void validateRefundableOrder(Order order) {
@@ -176,10 +219,17 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         }
     }
 
-    private void cancelUnfinishedFulfillment(Order order) {
-        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+    private void cancelUnfinishedFulfillment(List<OrderItem> items, Set<UUID> reclaimedItemIds) {
         for (OrderItem item : items) {
-            // A delivered item is immutable from the refund path. In
+            if (reclaimedItemIds.contains(item.getId())) {
+                // Reclaimed automatic card-key delivery is the one explicit
+                // inverse transition. Delivery timestamps remain historical;
+                // only the item state becomes cancelled.
+                item.setFulfillmentStatus(FulfillmentStatus.CANCELLED);
+                orderItemRepository.save(item);
+                continue;
+            }
+            // A delivered item is immutable from the default refund path. In
             // particular, do not try to repair or release a stale reservation
             // here: it could turn a previously delivered stock record into a
             // reusable inventory unit.
@@ -193,6 +243,98 @@ public class OrderRefundServiceImpl implements OrderRefundService {
             }
             item.setFulfillmentStatus(FulfillmentStatus.CANCELLED);
             orderItemRepository.save(item);
+        }
+    }
+
+    private ReclaimPlan prepareReclaimPlan(Order order, List<OrderItem> items,
+                                           UUID operatorId, LocalDateTime reclaimedAt) {
+        List<CardKey> keys = cardKeyRepository.findByOrderIdForUpdate(order.getId());
+        if (keys == null || keys.isEmpty()) {
+            throw invalidReclaim("当前订单没有可回收的自动卡密");
+        }
+
+        if (items == null || items.isEmpty()) {
+            throw invalidReclaim("当前订单没有可回收的自动卡密");
+        }
+        Map<UUID, OrderItem> itemsById = new HashMap<>();
+        for (OrderItem item : items) {
+            if (item == null || item.getId() == null
+                    || !Objects.equals(order.getId(), item.getOrderId())
+                    || itemsById.put(item.getId(), item) != null) {
+                throw invalidReclaim("订单项数据异常，无法安全回收卡密");
+            }
+        }
+        List<OrderItem> deliveredAutoCardItems = items.stream()
+                .filter(this::isDeliveredAutoCardItem)
+                .toList();
+        if (deliveredAutoCardItems.isEmpty()) {
+            throw invalidReclaim("当前订单没有可回收的自动卡密");
+        }
+
+        Map<UUID, Integer> keyCountsByItem = new HashMap<>();
+        List<CardKeyReclaim> records = new ArrayList<>(keys.size());
+        Set<UUID> itemIds = new HashSet<>();
+        for (CardKey key : keys) {
+            if (key == null || key.getId() == null || key.getStatus() != CardKeyStatus.SOLD
+                    || !Objects.equals(order.getId(), key.getOrderId())
+                    || key.getOrderItemId() == null || key.getProductId() == null) {
+                throw invalidReclaim("订单关联卡密状态异常，无法安全回收");
+            }
+            OrderItem item = itemsById.get(key.getOrderItemId());
+            if (item == null || !isDeliveredAutoCardItem(item)
+                    || item.getProductId() == null
+                    || !Objects.equals(item.getProductId(), key.getProductId())
+                    || !Objects.equals(item.getSpecId(), key.getSpecId())
+                    || item.getManualStockReserved() != 0) {
+                throw invalidReclaim("订单关联卡密与自动发货订单项不一致");
+            }
+            keyCountsByItem.merge(item.getId(), 1, Integer::sum);
+            itemIds.add(item.getId());
+
+            CardKeyReclaim reclaim = new CardKeyReclaim();
+            reclaim.setCardKeyId(key.getId());
+            reclaim.setOrderId(order.getId());
+            reclaim.setOrderItemId(item.getId());
+            reclaim.setProductId(key.getProductId());
+            reclaim.setSpecId(key.getSpecId());
+            reclaim.setOperatorId(operatorId);
+            reclaim.setOriginalSoldAt(key.getSoldAt());
+            reclaim.setReclaimedAt(reclaimedAt);
+            records.add(reclaim);
+        }
+
+        int expectedCount = 0;
+        for (OrderItem item : deliveredAutoCardItems) {
+            if (item.getQuantity() <= 0
+                    || keyCountsByItem.getOrDefault(item.getId(), 0) != item.getQuantity()) {
+                throw invalidReclaim("自动卡密数量与已发货订单项不一致，无法安全回收");
+            }
+            expectedCount += item.getQuantity();
+        }
+        if (expectedCount != keys.size()) {
+            throw invalidReclaim("订单关联卡密数量异常，无法安全回收");
+        }
+        return new ReclaimPlan(List.copyOf(keys), List.copyOf(records), Set.copyOf(itemIds));
+    }
+
+    private boolean isDeliveredAutoCardItem(OrderItem item) {
+        return item != null && item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED
+                && "AUTO".equalsIgnoreCase(item.getDeliveryType())
+                && item.getStockMode() == StockMode.CARD_KEY;
+    }
+
+    private BusinessException invalidReclaim(String message) {
+        return new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED, message);
+    }
+
+    private String auditReason(String normalizedReason) {
+        return normalizedReason == null ? "未填写" : normalizedReason;
+    }
+
+    private record ReclaimPlan(List<CardKey> keys, List<CardKeyReclaim> records,
+                               Set<UUID> itemIds) {
+        private static ReclaimPlan empty() {
+            return new ReclaimPlan(List.of(), List.of(), Set.of());
         }
     }
 

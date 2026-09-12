@@ -14,6 +14,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.service.BalanceOrderPaymentService;
+import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,6 +47,7 @@ class OrderAccessServiceImplTest {
     @Mock private OrderService orderService;
     @Mock private PaymentService paymentService;
     @Mock private BalanceOrderPaymentService balanceOrderPaymentService;
+    @Mock private CardKeyReclaimService cardKeyReclaimService;
 
     private OrderAccessServiceImpl service;
 
@@ -53,7 +55,7 @@ class OrderAccessServiceImplTest {
     void setUp() {
         service = new OrderAccessServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
                 paymentAttemptRepository, orderService, paymentService, balanceOrderPaymentService,
-                new ObjectMapper());
+                cardKeyReclaimService, new ObjectMapper());
     }
 
     @Test
@@ -108,7 +110,8 @@ class OrderAccessServiceImplTest {
         clearInvocations(orderRepository);
         assertForbidden(() -> service.getOrder(orderId, UUID.randomUUID(), null));
 
-        verifyNoInteractions(orderItemRepository, cardKeyRepository, paymentAttemptRepository, paymentService);
+        verifyNoInteractions(orderItemRepository, cardKeyRepository, paymentAttemptRepository,
+                paymentService, cardKeyReclaimService);
     }
 
     @Test

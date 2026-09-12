@@ -13,6 +13,7 @@ import com.myshop.model.request.ChangePasswordRequest;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.OrderItemRepository;
+import com.myshop.service.CardKeyReclaimService;
 import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.UserService;
@@ -40,6 +41,7 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final ManualStockService manualStockService;
     private final UserLevelRepository userLevelRepository;
+    private final CardKeyReclaimService cardKeyReclaimService;
 
     @Override
     public UserProfileResponse getProfile(UUID userId) {
@@ -127,6 +129,9 @@ public class UserServiceImpl implements UserService {
         map.put("paid_at", o.getPaidAt());
         map.put("delivered_at", o.getDeliveredAt());
         map.put("refunded_at", o.getRefundedAt());
+        if (o.getStatus() == OrderStatus.REFUNDED) {
+            map.put("reclaimed_card_key_count", cardKeyReclaimService.countByOrderId(o.getId()));
+        }
         map.put("items", orderItemRepository.findByOrderId(o.getId()).stream().map(this::toOrderItemBrief).toList());
         return map;
     }

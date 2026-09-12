@@ -114,9 +114,8 @@ public class BalanceTransactionServiceImpl implements BalanceTransactionService 
             throw new BusinessException(ErrorCode.BAD_REQUEST, "退款余额流水参数不完整");
         }
         String normalizedReason = reason == null ? null : reason.trim();
-        if (normalizedReason == null || normalizedReason.length() < 3
-                || normalizedReason.length() > 500) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "退款原因必须为 3 至 500 个字符");
+        if (normalizedReason != null && normalizedReason.length() > 500) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "退款原因不能超过 500 个字符");
         }
         validateLedgerValues(amount, amount, balanceBefore, balanceAfter);
 
@@ -127,7 +126,8 @@ public class BalanceTransactionServiceImpl implements BalanceTransactionService 
         transaction.setDelta(amount.setScale(2, RoundingMode.UNNECESSARY));
         transaction.setBalanceBefore(balanceBefore.setScale(2, RoundingMode.UNNECESSARY));
         transaction.setBalanceAfter(balanceAfter.setScale(2, RoundingMode.UNNECESSARY));
-        transaction.setReason(normalizedReason);
+        transaction.setReason(normalizedReason == null || normalizedReason.isBlank()
+                ? null : normalizedReason);
         transaction.setOperatorId(operatorId);
         transaction.setOrderId(orderId);
         return balanceTransactionRepository.save(transaction);

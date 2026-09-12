@@ -18,6 +18,7 @@ public record AdminOrderRefundResponse(
         @JsonProperty("refunded_at") LocalDateTime refundedAt,
         @JsonProperty("refund_destination") String refundDestination,
         @JsonProperty("balance_before") BigDecimal balanceBefore,
-        @JsonProperty("balance_after") BigDecimal balanceAfter
+        @JsonProperty("balance_after") BigDecimal balanceAfter,
+        @JsonProperty("reclaimed_card_key_count") int reclaimedCardKeyCount
 ) {
 }

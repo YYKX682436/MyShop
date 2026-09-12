@@ -8,6 +8,7 @@ import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.User;
+import com.myshop.entity.BalanceTransaction;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
@@ -18,6 +19,7 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.FulfillmentService;
+import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderPaymentCompletionService;
 import com.myshop.service.OrderRefundService;
@@ -59,6 +61,7 @@ class AdminOrderServiceImplTest {
     @Mock private OperationLogService operationLogService;
     @Mock private OrderRefundService orderRefundService;
     @Mock private BalanceTransactionRepository balanceTransactionRepository;
+    @Mock private CardKeyReclaimService cardKeyReclaimService;
 
     @Test
     void adminOrderUsesHistoricalSnapshotsForProfitAndLevelContext() {
@@ -115,6 +118,28 @@ class AdminOrderServiceImplTest {
         assertEquals(new BigDecimal("20.00"), itemResponse.get("gross_profit"));
         assertEquals(new BigDecimal("20.00"), itemResponse.get("gross_margin"));
         assertEquals(PricingSource.RETAIL, itemResponse.get("pricing_source"));
+    }
+
+    @Test
+    void refundedOrderDetailHidesAnUnprovidedReasonAndShowsTheReclaimCount() {
+        UUID orderId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Order order = order(orderId, userId);
+        order.setStatus(OrderStatus.REFUNDED);
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of());
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        BalanceTransaction refund = new BalanceTransaction();
+        refund.setReason(null);
+        when(balanceTransactionRepository.findFirstByOrderIdAndTypeOrderByCreatedAtDesc(
+                orderId, com.myshop.constant.BalanceTransactionType.REFUND))
+                .thenReturn(Optional.of(refund));
+        when(cardKeyReclaimService.countByOrderId(orderId)).thenReturn(2L);
+
+        Map<String, Object> response = (Map<String, Object>) fullService().getOrderDetail(orderId);
+
+        assertFalse(response.containsKey("refund_reason"));
+        assertEquals(2, response.get("reclaimed_card_key_count"));
     }
 
     @Test
@@ -336,7 +361,8 @@ class AdminOrderServiceImplTest {
     private AdminOrderServiceImpl fullService() {
         return new AdminOrderServiceImpl(orderRepository, orderItemRepository, userRepository,
                 fulfillmentService, paymentAttemptRepository, orderPaymentCompletionService,
-                operationLogService, orderRefundService, balanceTransactionRepository);
+                operationLogService, orderRefundService, balanceTransactionRepository,
+                cardKeyReclaimService);
     }
 
     private PaymentAttempt pendingAttempt(UUID orderId, java.time.LocalDateTime expiresAt) {

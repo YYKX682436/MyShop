@@ -124,22 +124,43 @@ class BalanceTransactionServiceImplTest {
     }
 
     @Test
-    void rejectsRefundLedgerWhenReasonOrBalanceChainIsInvalid() {
+    void allowsMissingRefundReasonButRejectsAnInvalidBalanceChain() {
         UUID userId = UUID.randomUUID();
         UUID orderId = UUID.randomUUID();
         UUID operatorId = UUID.randomUUID();
 
-        BusinessException shortReason = assertThrows(BusinessException.class,
-                () -> service.recordRefund(userId, new BigDecimal("1.00"),
-                        new BigDecimal("0.00"), new BigDecimal("1.00"), orderId,
-                        "好", operatorId));
+        when(repository.save(any(BalanceTransaction.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        BalanceTransaction missing = service.recordRefund(userId, new BigDecimal("1.00"),
+                new BigDecimal("0.00"), new BigDecimal("1.00"), orderId,
+                null, operatorId);
+        BalanceTransaction blank = service.recordRefund(userId, new BigDecimal("1.00"),
+                new BigDecimal("1.00"), new BigDecimal("2.00"), orderId,
+                "  ", operatorId);
+        BalanceTransaction shortReason = service.recordRefund(userId, new BigDecimal("1.00"),
+                new BigDecimal("2.00"), new BigDecimal("3.00"), orderId,
+                "好", operatorId);
+
+        assertNull(missing.getReason());
+        assertNull(blank.getReason());
+        assertEquals("好", shortReason.getReason());
+
         BusinessException negativeDelta = assertThrows(BusinessException.class,
                 () -> service.recordRefund(userId, new BigDecimal("1.00"),
-                        new BigDecimal("1.00"), new BigDecimal("0.00"), orderId,
+                        new BigDecimal("3.00"), new BigDecimal("2.00"), orderId,
                         "退款原因", operatorId));
 
-        assertEquals(ErrorCode.BAD_REQUEST, shortReason.getCode());
         assertEquals(ErrorCode.BAD_REQUEST, negativeDelta.getCode());
+    }
+
+    @Test
+    void rejectsRefundLedgerReasonLongerThanFiveHundredCharacters() {
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.recordRefund(UUID.randomUUID(), new BigDecimal("1.00"),
+                        new BigDecimal("0.00"), new BigDecimal("1.00"), UUID.randomUUID(),
+                        "字".repeat(501), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
         verify(repository, never()).save(any(BalanceTransaction.class));
     }
 }

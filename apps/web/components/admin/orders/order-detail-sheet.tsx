@@ -166,6 +166,7 @@ export function OrderDetailSheet({
   )
   const pricingSources = uniqueValues(order.items.map(item => pricingSourceLabel(item.pricing_source, t)))
   const stockModes = uniqueValues(order.items.map(item => stockModeLabel(item.stock_mode, t)))
+  const reclaimedCardKeyCount = order.reclaimed_card_key_count ?? 0
   const cardGroups = new Map<string, { title: string; cards: OrderCardKey[] }>()
   detailCardKeys.forEach((card) => {
     const groupKey = card.order_item_id || `${card.product_title}\u0000${card.spec_name || ""}`
@@ -215,10 +216,11 @@ export function OrderDetailSheet({
             <DefinitionRow label={t("admin.refundAmount")}><span className="font-semibold">{formatMoney(order.refund_amount ?? order.actual_amount, empty)}</span></DefinitionRow>
             <DefinitionRow label={t("admin.refundDestination")}><span>{t("admin.refundBalance")}</span></DefinitionRow>
             <DefinitionRow label={t("admin.refundedAt")}><span>{order.refunded_at ? formatDateTime(order.refunded_at, locale) : empty}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.refundCardHandling")}><span>{reclaimedCardKeyCount > 0 ? t("admin.refundReclaimed").replace("{count}", String(reclaimedCardKeyCount)) : t("admin.refundNotReclaimed")}</span></DefinitionRow>
           </dl>
-          {(order.refund_reason || order.refund_operator_username) && (
+          {(order.refund_reason || order.refund_operator_username || order.status === "REFUNDED") && (
             <dl className="mt-3 grid gap-x-6 gap-y-2 border-t border-violet-300/30 pt-3 text-sm dark:border-violet-500/20 sm:grid-cols-2">
-              {order.refund_reason && <DefinitionRow label={t("admin.refundReason")}><span className="whitespace-pre-wrap">{order.refund_reason}</span></DefinitionRow>}
+              <DefinitionRow label={t("admin.refundReason")}><span className="whitespace-pre-wrap">{order.refund_reason?.trim() || t("admin.refundReasonNotProvided")}</span></DefinitionRow>
               {order.refund_operator_username && <DefinitionRow label={t("admin.refundOperator")}><span>{order.refund_operator_username}</span></DefinitionRow>}
             </dl>
           )}

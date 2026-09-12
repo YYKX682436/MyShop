@@ -18,6 +18,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.service.BalanceOrderPaymentService;
+import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.OrderAccessService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
@@ -47,6 +48,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private final OrderService orderService;
     private final PaymentService paymentService;
     private final BalanceOrderPaymentService balanceOrderPaymentService;
+    private final CardKeyReclaimService cardKeyReclaimService;
     private final ObjectMapper objectMapper;
 
     public OrderAccessServiceImpl(OrderRepository orderRepository,
@@ -56,6 +58,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                                   OrderService orderService,
                                   PaymentService paymentService,
                                   BalanceOrderPaymentService balanceOrderPaymentService,
+                                  CardKeyReclaimService cardKeyReclaimService,
                                   ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
@@ -64,6 +67,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         this.orderService = orderService;
         this.paymentService = paymentService;
         this.balanceOrderPaymentService = balanceOrderPaymentService;
+        this.cardKeyReclaimService = cardKeyReclaimService;
         this.objectMapper = objectMapper;
     }
 
@@ -169,6 +173,9 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("paid_at", order.getPaidAt());
         result.put("delivered_at", order.getDeliveredAt());
         result.put("refunded_at", order.getRefundedAt());
+        if (order.getStatus() == OrderStatus.REFUNDED) {
+            result.put("reclaimed_card_key_count", cardKeyReclaimService.countByOrderId(order.getId()));
+        }
         result.put("items", items.stream().map(this::itemDetail).toList());
         return result;
     }

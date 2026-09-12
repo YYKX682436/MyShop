@@ -542,10 +542,10 @@ export const adminOrderApi = {
       method: "POST",
       body: JSON.stringify({ reason, confirmed: true }),
     }),
-  refund: (id: string, reason: string) =>
+  refund: (id: string, reason: string, reclaimCardKeys: boolean) =>
     request<AdminOrderRefundResponse>(`/admin/orders/${id}/refund`, {
       method: "POST",
-      body: JSON.stringify({ reason, confirmed: true }),
+      body: JSON.stringify({ reason, confirmed: true, reclaim_card_keys: reclaimCardKeys }),
     }),
   fulfill: (orderId: string, data: AdminManualFulfillmentRequest) =>
     request<AdminFulfillmentResult>(`/admin/orders/${orderId}/fulfill`, {

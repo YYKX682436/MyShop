@@ -40,6 +40,11 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
     @Query("SELECT ck FROM CardKey ck WHERE ck.id = :id")
     java.util.Optional<CardKey> findByIdForUpdate(@Param("id") UUID id);
 
+    /** Locks every key currently bound to an order while its order is held. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT ck FROM CardKey ck WHERE ck.orderId = :orderId ORDER BY ck.createdAt ASC")
+    List<CardKey> findByOrderIdForUpdate(@Param("orderId") UUID orderId);
+
     long countByProductIdAndStatus(UUID productId, CardKeyStatus status);
 
     long countByStatus(CardKeyStatus status);

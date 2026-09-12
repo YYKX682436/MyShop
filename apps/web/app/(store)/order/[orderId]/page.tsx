@@ -246,7 +246,9 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
             <span>{t("order.refundDestination")}: <strong className="font-semibold text-foreground">{t("order.refundToBalance")}</strong></span>
             {view.order.refunded_at && <span>{t("order.refundedAt")}: <strong className="font-semibold text-foreground">{formatDateTime(view.order.refunded_at, locale)}</strong></span>}
           </div>
-          {(hasCards || deliveredManualItems.length > 0) && <p className="mt-3 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("order.deliveredRefundNotice")}</p>}
+          {(view.order.reclaimed_card_key_count ?? 0) > 0
+            ? <p className="mt-3 rounded-control border border-emerald-300/50 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.reclaimedCardKeys").replace("{count}", String(view.order.reclaimed_card_key_count))}</p>
+            : (hasCards || deliveredManualItems.length > 0) && <p className="mt-3 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("order.deliveredRefundNotice")}</p>}
         </div>
       )}
 

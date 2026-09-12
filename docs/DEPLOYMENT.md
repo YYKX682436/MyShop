@@ -284,8 +284,8 @@ curl --fail --silent --show-error --output /dev/null "$public_url/"
 curl --fail --silent --show-error --output /dev/null "$public_url/api/site/config"
 ```
 
-Verify Flyway V24 and its database contracts without printing credentials or
-card contents. The query must report one successful V24 migration, the
+Verify Flyway V25 and its database contracts without printing credentials or
+card contents. The query must report one successful V25 migration, the
 `orders.refunded_at` column, the `orders_status_check` constraint, the
 `balance_transactions_refund_contract_check` constraint, and the partial unique
 refund index:
@@ -293,7 +293,7 @@ refund index:
 ```bash
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
-    SELECT version, success FROM flyway_schema_history WHERE version = '\''24'\'' AND success;
+    SELECT version, success FROM flyway_schema_history WHERE version = '\''25'\'' AND success;
     SELECT to_regclass('\''public.orders'\'') IS NOT NULL
       AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name = '\''orders'\'' AND column_name = '\''refunded_at'\'')
@@ -301,7 +301,13 @@ bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db
       AND EXISTS (SELECT 1 FROM pg_constraint
                   WHERE conname = '\''balance_transactions_refund_contract_check'\'')
       AND EXISTS (SELECT 1 FROM pg_indexes
-                  WHERE indexname = '\''uq_balance_transactions_order_refund'\'');
+                  WHERE indexname = '\''uq_balance_transactions_order_refund'\'')
+      AND EXISTS (SELECT 1 FROM pg_class
+                  WHERE relname = '\''card_key_reclaims'\'')
+      AND EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = '\''uq_card_key_reclaims_order_card_key'\'')
+      AND EXISTS (SELECT 1 FROM pg_indexes
+                  WHERE indexname = '\''idx_card_key_reclaims_order'\'');
   "'
 ```
 
@@ -321,10 +327,11 @@ test "$status_code" = 401 || test "$status_code" = 403
 ```
 
 This probe is only an authorization-boundary check. It is not a substitute for
-the dedicated CI/API refund tests, which cover guest rejection, terminal-state
-rejection, idempotency, balance/ledger constraints, and concurrent refund and
-payment transitions. Never perform a real production refund as part of a
-release smoke test.
+the dedicated CI/API refund tests, which cover optional reason normalization,
+guest rejection, terminal-state rejection, idempotency, balance/ledger
+constraints, safe card-key reclaim with rollback on anomalies, and concurrent
+refund, fulfillment, and payment transitions. Never perform a real production
+refund as part of a release smoke test.
 
 ## Backup and rollback
 

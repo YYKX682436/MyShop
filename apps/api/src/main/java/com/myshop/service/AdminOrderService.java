@@ -16,7 +16,8 @@ public interface AdminOrderService {
 
     void markPaid(UUID id, String reason, boolean confirmed);
 
-    AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed);
+    AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed,
+                                    boolean reclaimCardKeys);
 
     Map<String, Object> completeManualItems(UUID orderId, AdminManualFulfillRequest request);
 }

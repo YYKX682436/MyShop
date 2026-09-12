@@ -6,6 +6,7 @@ import com.myshop.context.RequestContext;
 import com.myshop.exception.BusinessException;
 import com.myshop.service.AdminOrderService;
 import com.myshop.service.AutoFulfillmentService;
+import com.myshop.service.FulfillmentService;
 import com.myshop.service.OrderRefundService;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import com.myshop.payment.PaymentProvider;
@@ -26,6 +27,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -57,6 +59,9 @@ class OrderRefundConcurrencyIntegrationTest {
     @Autowired
     private PaymentConfirmationTransactionService paymentConfirmationTransactionService;
 
+    @Autowired
+    private FulfillmentService fulfillmentService;
+
     @MockitoBean
     private AutoFulfillmentService autoFulfillmentService;
 
@@ -77,10 +82,12 @@ class OrderRefundConcurrencyIntegrationTest {
 
     @BeforeEach
     void resetDatabase() {
+        jdbcTemplate.update("DELETE FROM card_key_reclaims");
         jdbcTemplate.update("DELETE FROM balance_transactions");
         jdbcTemplate.update("DELETE FROM operation_logs");
         jdbcTemplate.update("DELETE FROM webhook_events");
         jdbcTemplate.update("DELETE FROM payment_attempts");
+        jdbcTemplate.update("DELETE FROM card_keys");
         jdbcTemplate.update("DELETE FROM order_items");
         jdbcTemplate.update("DELETE FROM orders");
         jdbcTemplate.update("DELETE FROM users");
@@ -109,7 +116,7 @@ class OrderRefundConcurrencyIntegrationTest {
                     RequestContext.set(new RequestContext.UserInfo(
                             operatorId, "refund-concurrency-admin", "ADMIN"));
                     try {
-                        orderRefundService.refund(orderId, "并发退款请求", true);
+                        orderRefundService.refund(orderId, "并发退款请求", true, false);
                         return new Outcome(true, null);
                     } catch (BusinessException exception) {
                         return new Outcome(false, exception.getCode());
@@ -154,13 +161,141 @@ class OrderRefundConcurrencyIntegrationTest {
 
         RequestContext.set(new RequestContext.UserInfo(operatorId, "refund-rollback-admin", "ADMIN"));
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
-                () -> orderRefundService.refund(orderId, "触发唯一约束回滚", true));
+                () -> orderRefundService.refund(orderId, "触发唯一约束回滚", true, false));
 
         assertEquals(OrderStatus.PAID.name(), scalar(
                 "SELECT status FROM orders WHERE id = ?", String.class, orderId));
         assertMoney("5.66", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, userId));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id = ? AND type = 'REFUND'", Integer.class, orderId));
         assertEquals(0, scalar("SELECT count(*) FROM operation_logs WHERE action = 'order.refund' AND target_id = ?", Integer.class, orderId.toString()));
+    }
+
+    @Test
+    void refundWithoutReclaimLeavesDeliveredAutomaticKeyAndItemUntouched() {
+        UUID operatorId = insertAdmin("refund-no-reclaim-admin");
+        UUID userId = insertUser("refund-no-reclaim-buyer", "0.00");
+        DeliveredCardOrder fixture = insertDeliveredCardOrder(userId, 1);
+
+        RequestContext.set(new RequestContext.UserInfo(operatorId, "refund-no-reclaim-admin", "ADMIN"));
+        var response = orderRefundService.refund(fixture.orderId(), "不回收已发卡密", true, false);
+
+        assertEquals(0, response.reclaimedCardKeyCount());
+        assertEquals(OrderStatus.REFUNDED.name(), scalar(
+                "SELECT status FROM orders WHERE id = ?", String.class, fixture.orderId()));
+        assertEquals("DELIVERED", scalar(
+                "SELECT fulfillment_status FROM order_items WHERE id = ?", String.class, fixture.itemId()));
+        assertEquals("SOLD", scalar(
+                "SELECT status FROM card_keys WHERE id = ?", String.class, fixture.cardKeyIds().get(0)));
+        assertEquals(fixture.orderId(), scalar(
+                "SELECT order_id FROM card_keys WHERE id = ?", UUID.class, fixture.cardKeyIds().get(0)));
+        assertEquals(0, scalar("SELECT count(*) FROM card_key_reclaims WHERE order_id = ?",
+                Integer.class, fixture.orderId()));
+    }
+
+    @Test
+    void refundWithReclaimReleasesAllDeliveredAutomaticKeysAndKeepsImmutableProof() {
+        UUID operatorId = insertAdmin("refund-reclaim-admin");
+        UUID userId = insertUser("refund-reclaim-buyer", "0.00");
+        DeliveredCardOrder fixture = insertDeliveredCardOrder(userId, 2);
+
+        RequestContext.set(new RequestContext.UserInfo(operatorId, "refund-reclaim-admin", "ADMIN"));
+        var response = orderRefundService.refund(fixture.orderId(), "确认卡密未使用", true, true);
+
+        assertEquals(2, response.reclaimedCardKeyCount());
+        assertEquals(OrderStatus.REFUNDED.name(), scalar(
+                "SELECT status FROM orders WHERE id = ?", String.class, fixture.orderId()));
+        assertEquals("CANCELLED", scalar(
+                "SELECT fulfillment_status FROM order_items WHERE id = ?", String.class, fixture.itemId()));
+        assertEquals(2, scalar("SELECT count(*) FROM card_keys WHERE order_id = ? AND status = 'AVAILABLE'",
+                Integer.class, fixture.orderId()));
+        assertEquals(0, scalar("SELECT count(*) FROM card_keys WHERE order_id = ? OR order_item_id = ?",
+                Integer.class, fixture.orderId(), fixture.itemId()));
+        assertEquals(2, scalar("SELECT count(*) FROM card_key_reclaims WHERE order_id = ?",
+                Integer.class, fixture.orderId()));
+        assertEquals(0, scalar("SELECT count(*) FROM card_key_reclaims WHERE order_id = ? AND card_key_id IS NULL",
+                Integer.class, fixture.orderId()));
+        String audit = scalar("SELECT detail FROM operation_logs WHERE action = 'order.refund' AND target_id = ?",
+                String.class, fixture.orderId().toString());
+        assertTrue(audit.contains("回收卡密=是"));
+        assertTrue(audit.contains("回收数量=2"));
+        assertTrue(audit.contains("原因=确认卡密未使用"));
+        assertTrue(!audit.contains("test-key"));
+    }
+
+    @Test
+    void invalidReclaimRollsBackBeforeChangingRefundOrInventoryFacts() {
+        UUID operatorId = insertAdmin("refund-invalid-reclaim-admin");
+        UUID userId = insertUser("refund-invalid-reclaim-buyer", "0.00");
+        DeliveredCardOrder fixture = insertDeliveredCardOrder(userId, 1);
+        jdbcTemplate.update("UPDATE card_keys SET status = 'AVAILABLE' WHERE id = ?",
+                fixture.cardKeyIds().get(0));
+
+        RequestContext.set(new RequestContext.UserInfo(
+                operatorId, "refund-invalid-reclaim-admin", "ADMIN"));
+        org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class,
+                () -> orderRefundService.refund(fixture.orderId(), "异常卡密状态", true, true));
+
+        assertEquals(OrderStatus.DELIVERED.name(), scalar(
+                "SELECT status FROM orders WHERE id = ?", String.class, fixture.orderId()));
+        assertMoney("0.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, userId));
+        assertEquals("AVAILABLE", scalar(
+                "SELECT status FROM card_keys WHERE id = ?", String.class, fixture.cardKeyIds().get(0)));
+        assertEquals(0, scalar("SELECT count(*) FROM card_key_reclaims WHERE order_id = ?",
+                Integer.class, fixture.orderId()));
+        assertEquals(0, scalar("SELECT count(*) FROM operation_logs WHERE target_id = ?",
+                Integer.class, fixture.orderId().toString()));
+    }
+
+    @Test
+    void refundAndFulfillmentRaceOnTheOrderFirstLockWithoutPartialFacts() throws Exception {
+        UUID operatorId = insertAdmin("refund-fulfillment-race-admin");
+        UUID userId = insertUser("refund-fulfillment-race-buyer", "0.00");
+        PendingCardOrder fixture = insertPendingCardOrder(userId);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        Future<Outcome> refund = executor.submit(() -> {
+            ready.countDown();
+            assertTrue(start.await(10, TimeUnit.SECONDS));
+            RequestContext.set(new RequestContext.UserInfo(
+                    operatorId, "refund-fulfillment-race-admin", "ADMIN"));
+            try {
+                orderRefundService.refund(fixture.orderId(), "退款与发货竞态", true, false);
+                return new Outcome(true, null);
+            } catch (BusinessException exception) {
+                return new Outcome(false, exception.getCode());
+            } finally {
+                RequestContext.clear();
+            }
+        });
+        Future<Map<String, Object>> fulfillment = executor.submit(() -> {
+            ready.countDown();
+            assertTrue(start.await(10, TimeUnit.SECONDS));
+            return fulfillmentService.fulfillOrder(fixture.orderId());
+        });
+        try {
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            Outcome refundOutcome = refund.get(30, TimeUnit.SECONDS);
+            Map<String, Object> fulfillmentOutcome = fulfillment.get(30, TimeUnit.SECONDS);
+            assertTrue(refundOutcome.success());
+            assertTrue("REFUNDED".equals(fulfillmentOutcome.get("status"))
+                    || "DELIVERED".equals(fulfillmentOutcome.get("status")));
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertEquals(OrderStatus.REFUNDED.name(), scalar(
+                "SELECT status FROM orders WHERE id = ?", String.class, fixture.orderId()));
+        String keyStatus = scalar("SELECT status FROM card_keys WHERE id = ?", String.class,
+                fixture.cardKeyIds().get(0));
+        String itemStatus = scalar("SELECT fulfillment_status FROM order_items WHERE id = ?", String.class,
+                fixture.itemId());
+        assertTrue(("AVAILABLE".equals(keyStatus) && "CANCELLED".equals(itemStatus))
+                || ("SOLD".equals(keyStatus) && "DELIVERED".equals(itemStatus)));
+        assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id = ? AND type = 'REFUND'",
+                Integer.class, fixture.orderId()));
     }
 
     @Test
@@ -272,6 +407,64 @@ class OrderRefundConcurrencyIntegrationTest {
         return attemptId;
     }
 
+    private DeliveredCardOrder insertDeliveredCardOrder(UUID userId, int keyCount) {
+        UUID orderId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, user_id, total_amount, actual_amount, status, order_type,
+                                   payment_method, payment_channel_code, paid_at)
+                VALUES (?, ?, ?, ?, 'DELIVERED', 'NORMAL', 'ONLINE', 'refund-fixture-channel', CURRENT_TIMESTAMP)
+                """, orderId, userId, BigDecimal.valueOf(keyCount), BigDecimal.valueOf(keyCount));
+        jdbcTemplate.update("""
+                INSERT INTO order_items(id, order_id, product_id, product_no, product_title, quantity,
+                                        unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source,
+                                        subtotal, delivery_type, customer_inputs, stock_mode, fulfillment_status,
+                                        delivered_at, delivery_notified_at, manual_stock_reserved)
+                VALUES (?, ?, ?, 1, 'Refund fixture product', ?, 1.00, 0.10, 1.00, 'RETAIL',
+                        ?, 'AUTO', '[]'::jsonb, 'CARD_KEY', 'DELIVERED',
+                        CURRENT_TIMESTAMP - INTERVAL '5 minutes', CURRENT_TIMESTAMP - INTERVAL '4 minutes', 0)
+                """, itemId, orderId, productId, keyCount, BigDecimal.valueOf(keyCount));
+        List<UUID> keyIds = new ArrayList<>();
+        for (int index = 0; index < keyCount; index++) {
+            UUID keyId = UUID.randomUUID();
+            keyIds.add(keyId);
+            jdbcTemplate.update("""
+                    INSERT INTO card_keys(id, product_id, content_parts, content_fingerprint, status,
+                                          order_id, order_item_id, sold_at)
+                    VALUES (?, ?, '["test-key"]'::jsonb, ?, 'SOLD', ?, ?,
+                            CURRENT_TIMESTAMP - INTERVAL '10 minutes')
+                    """, keyId, productId, "refund-fixture-" + keyId,
+                    orderId, itemId);
+        }
+        return new DeliveredCardOrder(orderId, itemId, keyIds);
+    }
+
+    private PendingCardOrder insertPendingCardOrder(UUID userId) {
+        UUID orderId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        UUID keyId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, user_id, total_amount, actual_amount, status, order_type,
+                                   payment_method, payment_channel_code, paid_at)
+                VALUES (?, ?, 1.00, 1.00, 'PAID', 'NORMAL', 'ONLINE', 'refund-race-channel', CURRENT_TIMESTAMP)
+                """, orderId, userId);
+        jdbcTemplate.update("""
+                INSERT INTO order_items(id, order_id, product_id, product_no, product_title, quantity,
+                                        unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source,
+                                        subtotal, delivery_type, customer_inputs, stock_mode, fulfillment_status,
+                                        manual_stock_reserved)
+                VALUES (?, ?, ?, 1, 'Refund race product', 1, 1.00, 0.10, 1.00, 'RETAIL',
+                        1.00, 'AUTO', '[]'::jsonb, 'CARD_KEY', 'PENDING', 0)
+                """, itemId, orderId, productId);
+        jdbcTemplate.update("""
+                INSERT INTO card_keys(id, product_id, content_parts, content_fingerprint, status)
+                VALUES (?, ?, '["race-key"]'::jsonb, ?, 'AVAILABLE')
+                """, keyId, productId, "refund-race-" + keyId);
+        return new PendingCardOrder(orderId, itemId, List.of(keyId));
+    }
+
     private <T> T scalar(String sql, Class<T> type, Object... args) {
         return jdbcTemplate.queryForObject(sql, type, args);
     }
@@ -282,5 +475,11 @@ class OrderRefundConcurrencyIntegrationTest {
     }
 
     private record Outcome(boolean success, Integer errorCode) {
+    }
+
+    private record DeliveredCardOrder(UUID orderId, UUID itemId, List<UUID> cardKeyIds) {
+    }
+
+    private record PendingCardOrder(UUID orderId, UUID itemId, List<UUID> cardKeyIds) {
     }
 }

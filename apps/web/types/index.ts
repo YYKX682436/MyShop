@@ -264,6 +264,7 @@ export interface OrderBrief {
   paid_at?: string | null
   delivered_at?: string | null
   refunded_at?: string | null
+  reclaimed_card_key_count?: number | null
   items?: OrderItemDetail[]
 }
 
@@ -670,6 +671,7 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   refund_reason?: string | null
   refund_operator_id?: string | null
   refund_operator_username?: string | null
+  reclaimed_card_key_count?: number | null
   customer_type: "REGISTERED" | "GUEST"
   user_id?: string | null
   user_no: number | null
@@ -694,6 +696,7 @@ export interface AdminOrderRefundResponse {
   refund_destination: "BALANCE" | string
   balance_before: number
   balance_after: number
+  reclaimed_card_key_count: number
 }
 
 // ============================================================

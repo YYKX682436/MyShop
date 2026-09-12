@@ -40,7 +40,7 @@ public class AdminOrderController {
     public ApiResponse<AdminOrderRefundResponse> refund(@PathVariable UUID id,
                                                         @Valid @RequestBody AdminRefundRequest request) {
         return ApiResponse.success(adminOrderService.refund(id, request.reason(),
-                Boolean.TRUE.equals(request.confirmed())));
+                Boolean.TRUE.equals(request.confirmed()), request.reclaimCardKeys()));
     }
 
     @LogOperation(action = "order.manual_deliver", targetType = "ORDER", targetId = "#id", detail = "#request.auditDetail()")
