@@ -8,8 +8,6 @@
 
 ## 修改与验收
 - 修改完成后必须依次完成：本地验证、push `main`、精确 SHA 的 CI 全绿、部署该精确 SHA，以及生产 smoke/schema/health 验收。
-- 生产验收不得因为“没有真实用户”而随意跳过。
-- Compose production project 固定为 `myshop`；生产使用 `scripts/myshop-compose.sh`，禁止通过 release 目录名生成新 Compose project。
-- 修改完成后进行安全消融实验；详细生产步骤继续维护在 `docs/DEPLOYMENT.md`。
-- secrets 不得进入仓库或日志。
+- 可用管理员账号 `codex-admin`，可用普通用户账号 `ceshi`；密码通过安全渠道提供，不得写入仓库、日志或文档。
+- 修改完成后进行安全消融实验
 - 代码处理干净利落不留后患
