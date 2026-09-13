@@ -38,8 +38,10 @@ test("stops once every paid-order item is terminal", () => {
 test("stops for delivered, refunded, and expired orders", () => {
   assert.equal(shouldPollOrderStatus("DELIVERED", [waitingManual]), false)
   assert.equal(shouldPollOrderStatus("REFUNDED", [waitingManual]), false)
+  assert.equal(shouldPollOrderStatus("AFTER_SALE", [waitingManual]), false)
   assert.equal(shouldPollOrderStatus("EXPIRED", [waitingManual]), false)
   assert.equal(getOrderStatusPollInterval("DELIVERED", false), null)
   assert.equal(getOrderStatusPollInterval("REFUNDED", false), null)
+  assert.equal(getOrderStatusPollInterval("AFTER_SALE", false), null)
   assert.equal(getOrderStatusPollInterval("EXPIRED", false), null)
 })

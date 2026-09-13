@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { CheckCircle, Loader2, ShieldAlert } from "lucide-react"
+import { CheckCircle, Loader2, ShieldAlert, XCircle } from "lucide-react"
 import { toast } from "sonner"
 
 import { WorkspaceSheet, useRouteOverlayClose } from "@/components/admin/route-overlay"
@@ -40,6 +40,11 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [refundReason, setRefundReason] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
   const [reclaimCardKeys, setReclaimCardKeys] = useState(false)
+  const [afterSaleRejectOpen, setAfterSaleRejectOpen] = useState(false)
+  const [afterSaleReply, setAfterSaleReply] = useState("")
+  const [afterSaleRejectLoading, setAfterSaleRejectLoading] = useState(false)
+  const [afterSaleApproveOpen, setAfterSaleApproveOpen] = useState(false)
+  const [afterSaleApproveLoading, setAfterSaleApproveLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -54,7 +59,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       const hasAutomaticCardItems = detail.items.some((item) =>
         !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
       )
-      if ((detail.status === "PAID" || detail.status === "DELIVERED" || detail.status === "REFUNDED") && hasAutomaticCardItems) {
+      if ((detail.status === "PAID" || detail.status === "DELIVERED" || detail.status === "AFTER_SALE" || detail.status === "REFUNDED") && hasAutomaticCardItems) {
         setCardKeysLoading(true)
         try {
           setCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
@@ -144,8 +149,57 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     }
   }
 
+  const handleRejectAfterSale = async () => {
+    if (!order || afterSaleRejectLoading) return
+    const reply = afterSaleReply.trim()
+    if ([...reply].length < 1 || [...reply].length > 500) {
+      toast.error(t("admin.afterSaleRejectReplyInvalid"))
+      return
+    }
+    setAfterSaleRejectLoading(true)
+    try {
+      await requestOrThrow(() => adminOrderApi.rejectAfterSale(order.id, reply))
+      toast.success(t("admin.afterSaleRejectSuccess"))
+      setAfterSaleRejectOpen(false)
+      setAfterSaleReply("")
+      await load()
+      invalidateAdminOrders()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      setAfterSaleRejectLoading(false)
+    }
+  }
+
+  const handleApproveAfterSale = async () => {
+    if (!order || afterSaleApproveLoading) return
+    const reclaimSelection = normalizeRefundCardKeySelection(reclaimCardKeys, {
+      loading: cardKeysLoading,
+      error: cardKeysError,
+      count: reclaimableCardKeyCount,
+    })
+    if (reclaimCardKeys && !reclaimSelection) {
+      toast.error(cardKeysLoading || cardKeysError ? t("admin.refundReclaimError") : t("admin.refundReclaimEmpty"))
+      setReclaimCardKeys(false)
+      return
+    }
+    setAfterSaleApproveLoading(true)
+    try {
+      await requestOrThrow(() => adminOrderApi.approveAfterSale(order.id, Boolean(reclaimSelection)))
+      toast.success(t("admin.afterSaleApproveSuccess"))
+      setAfterSaleApproveOpen(false)
+      setReclaimCardKeys(false)
+      await load()
+      invalidateAdminOrders()
+    } catch (requestError: unknown) {
+      toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
+    } finally {
+      setAfterSaleApproveLoading(false)
+    }
+  }
+
   const retryCardKeys = () => {
-    if (!order || (order.status !== "PAID" && order.status !== "DELIVERED" && order.status !== "REFUNDED")
+    if (!order || (order.status !== "PAID" && order.status !== "DELIVERED" && order.status !== "AFTER_SALE" && order.status !== "REFUNDED")
       || !order.items.some((item) => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")) return
     setReclaimCardKeys(false)
     setCardKeysLoading(true)
@@ -217,6 +271,22 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       {t("admin.refund")}
     </Button>
   ) : null
+  const canReviewAfterSale = order?.customer_type === "REGISTERED"
+    && order.order_type === "NORMAL"
+    && order.status === "AFTER_SALE"
+    && order.after_sale?.status === "PENDING"
+  const afterSaleRejectButton = canReviewAfterSale ? (
+    <Button type="button" variant="outline" onClick={() => { setAfterSaleRejectOpen(true); setAfterSaleReply("") }} disabled={afterSaleRejectLoading || afterSaleApproveLoading}>
+      <XCircle className="size-4" aria-hidden="true" />
+      {t("admin.afterSaleReject")}
+    </Button>
+  ) : null
+  const afterSaleApproveButton = canReviewAfterSale ? (
+    <Button type="button" variant="destructive" onClick={() => { setAfterSaleApproveOpen(true); setReclaimCardKeys(false) }} disabled={afterSaleApproveLoading || afterSaleRejectLoading}>
+      <ShieldAlert className="size-4" aria-hidden="true" />
+      {t("admin.afterSaleApprove")}
+    </Button>
+  ) : null
   const canCompleteManualFulfillment = order?.status === "PAID"
     && order.items.some((item) => isManualFulfillmentItem(item) && item.fulfillment_status === "WAITING_MANUAL")
   const manualFulfillmentButton = canCompleteManualFulfillment ? (
@@ -225,8 +295,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       {manualFulfillmentLoading ? t("admin.processing") : t("admin.completeDelivery")}
     </Button>
   ) : null
-  const actionArea = (markPaidButton || refundButton || manualFulfillmentButton) ? (
-    <div className="flex flex-wrap items-center gap-2">{markPaidButton}{manualFulfillmentButton}{refundButton}</div>
+  const actionArea = (markPaidButton || refundButton || manualFulfillmentButton || afterSaleRejectButton || afterSaleApproveButton) ? (
+    <div className="flex flex-wrap items-center gap-2">{markPaidButton}{manualFulfillmentButton}{refundButton}{afterSaleRejectButton}{afterSaleApproveButton}</div>
   ) : null
 
   const confirmDialog = (
@@ -288,6 +358,65 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     </ConfirmAlert>
   )
 
+  const afterSaleRejectDialog = (
+    <ConfirmAlert
+      open={afterSaleRejectOpen}
+      onOpenChange={(open) => { if (!open && !afterSaleRejectLoading) { setAfterSaleRejectOpen(false); setAfterSaleReply("") } }}
+      title={t("admin.afterSaleRejectConfirm")}
+      description={t("admin.afterSaleRejectDescription")}
+      confirmLabel={t("admin.afterSaleReject")}
+      cancelLabel={t("admin.cancel")}
+      destructive
+      loading={afterSaleRejectLoading}
+      confirmDisabled={(() => { const length = [...afterSaleReply.trim()].length; return length < 1 || length > 500 })()}
+      onConfirm={() => void handleRejectAfterSale()}
+    >
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-foreground" htmlFor="admin-after-sale-reply">{t("admin.afterSaleRejectReply")}</label>
+        <Textarea id="admin-after-sale-reply" value={afterSaleReply} onChange={(event) => setAfterSaleReply(event.target.value)} placeholder={t("admin.afterSaleRejectReplyPlaceholder")} rows={4} aria-label={t("admin.afterSaleRejectReply")} />
+        <p className="text-right text-xs tabular-nums text-muted-foreground">{[...afterSaleReply].length}/500</p>
+      </div>
+    </ConfirmAlert>
+  )
+
+  const afterSaleApproveDialog = (
+    <ConfirmAlert
+      open={afterSaleApproveOpen}
+      onOpenChange={(open) => { if (!open && !afterSaleApproveLoading) { setAfterSaleApproveOpen(false); setReclaimCardKeys(false) } }}
+      title={t("admin.afterSaleApproveConfirm")}
+      description={t("admin.afterSaleApproveDescription")}
+      confirmLabel={t("admin.afterSaleApprove")}
+      cancelLabel={t("admin.cancel")}
+      destructive
+      loading={afterSaleApproveLoading}
+      confirmDisabled={afterSaleApproveLoading}
+      onConfirm={() => void handleApproveAfterSale()}
+    >
+      {order && <div className="space-y-3 rounded-card border border-border-subtle bg-surface-muted/60 p-4 text-sm">
+        <dl className="divide-y divide-border-subtle/70">
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundOrderNo")}</dt><dd className="font-mono">{order.order_no}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.afterSaleApproveAmount")}</dt><dd className="font-semibold">{formatYuan(order.actual_amount ?? 0)}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.afterSaleApproveDestination")}</dt><dd>{t("admin.refundBalance")}</dd></div>
+        </dl>
+        <p className="rounded-control border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary">{t("admin.afterSaleApproveBalanceNotice")}</p>
+        <div className="space-y-2 rounded-control border border-border-subtle bg-surface px-3 py-3">
+          <p className="font-medium text-foreground">{t("admin.refundCardHandling")}</p>
+          <label className={`flex items-start gap-3 ${reclaimCardKeysEnabled && !afterSaleApproveLoading ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`} htmlFor="admin-after-sale-reclaim-card-keys">
+            <input id="admin-after-sale-reclaim-card-keys" type="checkbox" checked={reclaimCardKeys} onChange={(event) => setReclaimCardKeys(event.target.checked)} disabled={afterSaleApproveLoading || !reclaimCardKeysEnabled} className="mt-0.5 size-4 accent-primary" />
+            <span className="min-w-0">
+              <span className="block font-medium text-foreground">{t("admin.refundReclaimLabel")}</span>
+              {refundCardKeyAvailability === "available" && <span className="mt-1 block text-xs text-muted-foreground">{t("admin.refundReclaimEstimate").replace("{count}", String(reclaimableCardKeyCount))}</span>}
+              {refundCardKeyAvailability === "empty" && <span className="mt-1 block text-xs text-muted-foreground">{t("admin.refundReclaimEmpty")}</span>}
+              {refundCardKeyAvailability === "loading" && <span className="mt-1 block text-xs text-muted-foreground">{t("admin.refundReclaimLoading")}</span>}
+              {refundCardKeyAvailability === "error" && <span className="mt-1 block text-xs text-destructive">{t("admin.refundReclaimError")}</span>}
+            </span>
+          </label>
+        </div>
+        {reclaimCardKeys && <p className="rounded-control border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{t("admin.refundReclaimRiskWarning")}</p>}
+      </div>}
+    </ConfirmAlert>
+  )
+
   const manualFulfillmentDialog = (
     <ManualFulfillmentDialog
       open={manualFulfillmentOpen}
@@ -308,6 +437,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         <div className="surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
         {confirmDialog}
         {refundDialog}
+        {afterSaleRejectDialog}
+        {afterSaleApproveDialog}
         {manualFulfillmentDialog}
       </AdminPage>
     )
@@ -325,6 +456,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       </WorkspaceSheet>
       {confirmDialog}
       {refundDialog}
+      {afterSaleRejectDialog}
+      {afterSaleApproveDialog}
       {manualFulfillmentDialog}
     </>
   )

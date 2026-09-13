@@ -15,6 +15,7 @@ test("derives payment and fulfillment display states from order items", () => {
   assert.equal(deriveOrderDisplayStatus("DELIVERED", [delivered]), "DELIVERED")
   assert.equal(deriveOrderDisplayStatus("EXPIRED", [manualWaiting]), "EXPIRED")
   assert.equal(deriveOrderDisplayStatus("REFUNDED", [manualWaiting]), "REFUNDED")
+  assert.equal(deriveOrderDisplayStatus("AFTER_SALE", [manualWaiting]), "AFTER_SALE")
 })
 
 test("does not classify an incomplete paid order as completed", () => {

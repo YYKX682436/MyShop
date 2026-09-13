@@ -14,6 +14,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.service.BalanceOrderPaymentService;
+import com.myshop.service.AfterSaleService;
 import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
@@ -48,6 +49,7 @@ class OrderAccessServiceImplTest {
     @Mock private PaymentService paymentService;
     @Mock private BalanceOrderPaymentService balanceOrderPaymentService;
     @Mock private CardKeyReclaimService cardKeyReclaimService;
+    @Mock private AfterSaleService afterSaleService;
 
     private OrderAccessServiceImpl service;
 
@@ -55,7 +57,7 @@ class OrderAccessServiceImplTest {
     void setUp() {
         service = new OrderAccessServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
                 paymentAttemptRepository, orderService, paymentService, balanceOrderPaymentService,
-                cardKeyReclaimService, new ObjectMapper());
+                cardKeyReclaimService, afterSaleService, new ObjectMapper());
     }
 
     @Test

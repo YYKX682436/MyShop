@@ -8,12 +8,13 @@ import { useLocale } from "@/lib/context"
 import { useRequireAuth } from "@/lib/hooks"
 import { userApi, requestOrThrow } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
+import { AfterSaleRequestDialog } from "@/components/shared/after-sale-request-dialog"
 import type { OrderBrief, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
 import { cn, formatDateTime, formatYuan } from "@/lib/utils"
 import { buildOrderPageHref } from "@/lib/payment-entry"
 
-const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "REFUNDED", "EXPIRED"]
+const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "AFTER_SALE", "REFUNDED", "EXPIRED"]
 
 export default function MyOrdersPage() {
   const { t, locale } = useLocale()
@@ -23,6 +24,9 @@ export default function MyOrdersPage() {
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const [afterSaleOrder, setAfterSaleOrder] = useState<OrderBrief | null>(null)
+  const [afterSaleOpen, setAfterSaleOpen] = useState(false)
   const pageSize = 20
 
   useEffect(() => {
@@ -49,7 +53,7 @@ export default function MyOrdersPage() {
     }
     fetchOrders()
     return () => { cancelled = true }
-  }, [user, statusFilter, page])
+  }, [user, statusFilter, page, refreshNonce])
 
   const statusKeys: Record<OrderStatus, TranslationKey> = {
     PENDING: "status.PENDING",
@@ -57,6 +61,7 @@ export default function MyOrdersPage() {
     DELIVERED: "status.DELIVERED",
     EXPIRED: "status.EXPIRED",
     REFUNDED: "status.REFUNDED",
+    AFTER_SALE: "status.AFTER_SALE",
   }
 
   const getFilterLabel = (s: OrderStatus | "ALL") => {
@@ -135,14 +140,17 @@ export default function MyOrdersPage() {
                   {(order.status === "PAID" || order.status === "DELIVERED") && (
                     <button
                       type="button"
-                      disabled
-                      title={t("order.afterSalesUnavailable")}
-                      aria-label={`${t("order.applyAfterSales")}: ${t("order.afterSalesUnavailable")}`}
-                      className="inline-flex min-h-9 min-w-0 flex-1 flex-col items-center justify-center rounded-control border border-border-subtle bg-surface-muted px-3 py-1.5 text-center text-xs font-medium leading-4 text-muted-foreground opacity-70 sm:flex-none"
+                      onClick={() => { setAfterSaleOrder(order); setAfterSaleOpen(true) }}
+                      aria-label={t("order.applyAfterSales")}
+                      className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center rounded-control border border-primary/30 bg-primary/5 px-3 py-2 text-center text-xs font-medium text-primary transition-colors hover:bg-primary/10 sm:flex-none"
                     >
-                      <span>{t("order.applyAfterSales")}</span>
-                      <span className="text-[10px] font-normal">{t("order.afterSalesUnavailable")}</span>
+                      {t("order.applyAfterSales")}
                     </button>
+                  )}
+                  {order.status === "AFTER_SALE" && (
+                    <span className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center rounded-control border border-orange-300/50 bg-orange-50 px-3 py-2 text-center text-xs font-medium text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200 sm:flex-none">
+                      {t("status.AFTER_SALE")}
+                    </span>
                   )}
                   <Link
                     href={buildOrderPageHref(order.id)}
@@ -190,6 +198,16 @@ export default function MyOrdersPage() {
           <Package className="mb-3 h-10 w-10 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">{t("common.noData")}</p>
         </div>
+      )}
+      {afterSaleOrder && (
+        <AfterSaleRequestDialog
+          open={afterSaleOpen}
+          orderId={afterSaleOrder.id}
+          orderNo={afterSaleOrder.order_no}
+          productSummary={afterSaleOrder.items.map(item => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、")}
+          onOpenChange={open => { setAfterSaleOpen(open); if (!open) setAfterSaleOrder(null) }}
+          onSubmitted={() => setRefreshNonce(value => value + 1)}
+        />
       )}
     </div>
   )

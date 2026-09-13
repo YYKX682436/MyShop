@@ -55,15 +55,15 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("27", flyway.info().current().getVersion().getVersion());
-        assertEquals(27, flyway.info().all().length);
+        assertEquals("28", flyway.info().current().getVersion().getVersion());
+        assertEquals(28, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
                 "card_import_batches", "orders", "order_items", "card_keys",
                 "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks", "payment_attempts",
-                "card_key_reclaims")) {
+                "card_key_reclaims", "after_sale_requests", "after_sale_attachments")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
         assertFalse(tableExists("cart_items"));
@@ -108,6 +108,41 @@ class MigrationChainIntegrationTest {
         assertTrue(indexExists("idx_orders_payment_method_channel_status"));
         assertTrue(indexExists("uq_balance_transactions_order_payment"));
         assertTrue(indexExists("uq_balance_transactions_order_refund"));
+
+        for (String column : List.of(
+                "order_id", "user_id", "status", "source_order_status", "reason",
+                "admin_reply", "handled_by", "submitted_at", "handled_at", "created_at", "updated_at")) {
+            assertTrue(columnExists("after_sale_requests", column),
+                    "missing after-sale request column: " + column);
+        }
+        assertTrue(foreignKeyExists("after_sale_requests_order_id_fkey"));
+        assertTrue(foreignKeyExists("after_sale_requests_user_id_fkey"));
+        assertTrue(foreignKeyExists("after_sale_requests_handled_by_fkey"));
+        assertTrue(checkConstraintExists("after_sale_requests_status_check"));
+        assertTrue(checkConstraintExists("after_sale_requests_source_status_check"));
+        assertTrue(checkConstraintExists("after_sale_requests_reason_check"));
+        assertTrue(checkConstraintExists("after_sale_requests_admin_reply_check"));
+        assertTrue(checkConstraintExists("after_sale_requests_handled_check"));
+        assertTrue(indexExists("idx_after_sale_requests_user_submitted"));
+        assertTrue(indexExists("idx_after_sale_requests_order_submitted"));
+        assertTrue(indexExists("idx_after_sale_requests_status_submitted"));
+        assertTrue(indexExists("uq_after_sale_requests_pending_order"));
+        String pendingIndexDefinition = jdbcTemplate.queryForObject(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = ?",
+                String.class, "uq_after_sale_requests_pending_order");
+        assertTrue(pendingIndexDefinition.contains("UNIQUE"));
+        assertTrue(pendingIndexDefinition.contains("WHERE"));
+        assertTrue(pendingIndexDefinition.contains("PENDING"));
+
+        for (String column : List.of(
+                "request_id", "storage_key", "original_filename", "content_type",
+                "file_size", "created_at", "updated_at")) {
+            assertTrue(columnExists("after_sale_attachments", column),
+                    "missing after-sale attachment column: " + column);
+        }
+        assertTrue(foreignKeyExists("after_sale_attachments_request_id_fkey"));
+        assertTrue(checkConstraintExists("after_sale_attachments_file_size_check"));
+        assertTrue(indexExists("idx_after_sale_attachments_request_created"));
         assertTrue(columnExists("products", "product_no"));
         assertEquals("bigint", dataType("products", "product_no"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -383,7 +418,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("28", flyway().info().current().getVersion().getVersion());
         assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
                 "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
         assertNull(jdbcTemplate.queryForObject(
@@ -413,7 +448,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("28", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -507,7 +542,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-         assertEquals("27", flyway().info().current().getVersion().getVersion());
+         assertEquals("28", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -708,7 +743,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("28", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -778,7 +813,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("28", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -827,7 +862,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("28", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -1027,7 +1062,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("28", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1073,7 +1108,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("28", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

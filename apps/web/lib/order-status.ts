@@ -9,6 +9,7 @@ export type OrderDisplayStatus =
   | "DELIVERED"
   | "EXPIRED"
   | "REFUNDED"
+  | "AFTER_SALE"
 
 export interface OrderStatusItem {
   delivery_type?: string | null
@@ -38,6 +39,7 @@ export function deriveOrderDisplayStatus(
   if (orderStatus === "DELIVERED") return "DELIVERED"
   if (orderStatus === "EXPIRED") return "EXPIRED"
   if (orderStatus === "REFUNDED") return "REFUNDED"
+  if (orderStatus === "AFTER_SALE") return "AFTER_SALE"
 
   const currentItems = items ?? []
   const unfinishedItems = currentItems.filter((item) =>

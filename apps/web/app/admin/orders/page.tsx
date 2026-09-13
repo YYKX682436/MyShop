@@ -36,6 +36,7 @@ const ORDER_STATUS_TABS: { value: OrderTab; label: TranslationKey }[] = [
   { value: "PENDING", label: "admin.orderTabPending" },
   { value: "PAID", label: "admin.orderTabPaid" },
   { value: "DELIVERED", label: "admin.orderTabDelivered" },
+  { value: "AFTER_SALE", label: "admin.orderTabAfterSale" },
   { value: "REFUNDED", label: "admin.orderTabRefunded" },
   { value: "EXPIRED", label: "admin.orderTabExpired" },
 ]

@@ -18,6 +18,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.service.BalanceOrderPaymentService;
+import com.myshop.service.AfterSaleService;
 import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.OrderAccessService;
 import com.myshop.service.OrderService;
@@ -49,6 +50,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private final PaymentService paymentService;
     private final BalanceOrderPaymentService balanceOrderPaymentService;
     private final CardKeyReclaimService cardKeyReclaimService;
+    private final AfterSaleService afterSaleService;
     private final ObjectMapper objectMapper;
 
     public OrderAccessServiceImpl(OrderRepository orderRepository,
@@ -59,6 +61,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                                   PaymentService paymentService,
                                   BalanceOrderPaymentService balanceOrderPaymentService,
                                   CardKeyReclaimService cardKeyReclaimService,
+                                  AfterSaleService afterSaleService,
                                   ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
@@ -68,6 +71,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         this.paymentService = paymentService;
         this.balanceOrderPaymentService = balanceOrderPaymentService;
         this.cardKeyReclaimService = cardKeyReclaimService;
+        this.afterSaleService = afterSaleService;
         this.objectMapper = objectMapper;
     }
 
@@ -152,9 +156,25 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private Map<String, Object> view(Order order) {
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("order", orderDetail(order, items));
+        Map<String, Object> orderResult = orderDetail(order, items);
+        Map<String, Object> afterSale = afterSaleService.buildOrderView(order.getId());
+        if (afterSale == null) {
+            afterSale = emptyAfterSaleView();
+        }
+        orderResult.putAll(afterSale);
+        result.put("order", orderResult);
         result.put("payment", paymentView(order));
         result.put("delivery", deliveryView(order, items));
+        // Keep the same top-level fields used by the admin order detail while
+        // the nested order object remains self-contained for storefront code.
+        result.putAll(afterSale);
+        return result;
+    }
+
+    private Map<String, Object> emptyAfterSaleView() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("after_sale", null);
+        result.put("after_sale_history", List.of());
         return result;
     }
 
@@ -213,7 +233,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("status", paymentStatus(order));
         result.put("paid", order.getStatus() == OrderStatus.PAID
                 || order.getStatus() == OrderStatus.DELIVERED
-                || order.getStatus() == OrderStatus.REFUNDED);
+                || order.getStatus() == OrderStatus.REFUNDED
+                || order.getStatus() == OrderStatus.AFTER_SALE);
         result.put("payment_method", order.getPaymentMethod() == null ? null : order.getPaymentMethod().name());
         result.put("payment_channel_code", order.getPaymentChannelCode());
         result.put("next_action", null);
@@ -239,7 +260,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private PaymentStatus paymentStatus(Order order) {
         if (order.getStatus() == OrderStatus.EXPIRED) return PaymentStatus.CLOSED;
         if (order.getStatus() == OrderStatus.PAID || order.getStatus() == OrderStatus.DELIVERED
-                || order.getStatus() == OrderStatus.REFUNDED) {
+                || order.getStatus() == OrderStatus.REFUNDED
+                || order.getStatus() == OrderStatus.AFTER_SALE) {
             return PaymentStatus.PAID;
         }
         return PaymentStatus.PENDING;

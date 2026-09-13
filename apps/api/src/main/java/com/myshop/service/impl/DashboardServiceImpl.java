@@ -96,7 +96,8 @@ public class DashboardServiceImpl implements DashboardService {
         Map<OrderStatus, Long> outcomes = paymentOutcomes(todayStart, tomorrowStart);
         long successfulPayments = outcomes.getOrDefault(OrderStatus.PAID, 0L)
                 + outcomes.getOrDefault(OrderStatus.DELIVERED, 0L)
-                + outcomes.getOrDefault(OrderStatus.REFUNDED, 0L);
+                + outcomes.getOrDefault(OrderStatus.REFUNDED, 0L)
+                + outcomes.getOrDefault(OrderStatus.AFTER_SALE, 0L);
         long failedPayments = outcomes.getOrDefault(OrderStatus.EXPIRED, 0L);
         long paymentSampleCount = successfulPayments + failedPayments;
         double paymentSuccessRate = paymentSampleCount == 0
@@ -159,6 +160,7 @@ public class DashboardServiceImpl implements DashboardService {
                 totalUsers,
                 orderRepository.countDistinctBuyersBetween(todayStart, tomorrowStart),
                 orderRepository.countByStatus(OrderStatus.PENDING),
+                orderRepository.countByStatus(OrderStatus.AFTER_SALE),
                 orderRepository.countByStatus(OrderStatus.PAID),
                 orderRepository.countDeliveredBetween(todayStart, tomorrowStart),
                 // EXPIRED has no transition timestamp in the current schema;

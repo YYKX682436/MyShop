@@ -54,6 +54,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/orders/*/repay").permitAll()
                         .requestMatchers("/payments/webhook/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/uploads/**").permitAll()
+                        // Private after-sale evidence is authorized again by
+                        // the database ownership service before it is streamed.
+                        .requestMatchers(HttpMethod.GET, "/after-sale-attachments/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/visit/track").permitAll()
                         // Authenticated user endpoints
                         .requestMatchers("/auth/logout").authenticated()

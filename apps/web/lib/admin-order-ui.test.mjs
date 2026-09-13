@@ -99,7 +99,7 @@ test("admin order navigation uses fixed horizontal status tabs including refunds
   const source = readSource("../app/admin/orders/page.tsx")
 
   assert.match(source, /const ORDER_STATUS_TABS/)
-  for (const status of ["ALL", "PENDING", "PAID", "DELIVERED", "REFUNDED", "EXPIRED"]) {
+  for (const status of ["ALL", "PENDING", "PAID", "DELIVERED", "AFTER_SALE", "REFUNDED", "EXPIRED"]) {
     assert.match(source, new RegExp(`value: "${status}"`))
   }
   assert.match(source, /overflow-x-auto/)
@@ -314,7 +314,7 @@ test("admin order mutations publish one shared invalidation after the detail ref
   assert.doesNotMatch(listSource, /invalidateAdminOrders\(\)/)
   assert.doesNotMatch(listSource, /await loadOrders\(\)/)
   assert.match(routeSource, /await load\(\)[\s\S]*invalidateAdminOrders\(\)/)
-  assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 3)
+  assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 5)
 })
 
 test("storefront markdown surfaces use the shared safe renderer", () => {

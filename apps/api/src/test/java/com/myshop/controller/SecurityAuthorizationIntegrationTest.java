@@ -91,7 +91,14 @@ class SecurityAuthorizationIntegrationTest {
         mockMvc.perform(multipart("/api/upload/image")
                         .contextPath("/api")
                         .file(file)
-                        .with(user("buyer").roles("USER")))
+                .with(user("buyer").roles("USER")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void privateAfterSaleAttachmentReadRequiresAuthenticationBeforeDatabaseLookup() throws Exception {
+        mockMvc.perform(get("/api/after-sale-attachments/11111111-1111-1111-1111-111111111111")
+                        .contextPath("/api"))
+                .andExpect(status().isUnauthorized());
     }
 }

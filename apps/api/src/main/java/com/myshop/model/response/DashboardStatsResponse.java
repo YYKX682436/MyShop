@@ -25,6 +25,7 @@ public record DashboardStatsResponse(
         long totalUsers,
         long todayBuyers,
         long pendingOrders,
+        long afterSaleOrders,
         long paidWaitingDelivery,
         long deliveredToday,
         long expiredToday,

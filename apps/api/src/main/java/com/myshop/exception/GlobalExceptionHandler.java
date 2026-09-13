@@ -51,7 +51,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
-                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "图片大小不能超过 10MB"));
+                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "本次上传总大小不能超过 30MB"));
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

@@ -58,8 +58,11 @@ spring:
             enable: true
   servlet:
     multipart:
+      # Preserve the existing public single-file limit. The after-sale
+      # endpoint accepts up to five independent 5MB files and enforces that
+      # narrower per-file image policy in the service.
       max-file-size: 10MB
-      max-request-size: 10MB
+      max-request-size: 30MB
 
 # JWT
 jwt:
@@ -83,6 +86,11 @@ bootstrap:
 upload:
   path: ${UPLOAD_PATH:./uploads}
   url-prefix: ${UPLOAD_URL_PREFIX:/api/uploads}
+
+# Private after-sale evidence. This root must remain separate from UPLOAD_PATH
+# and has no static resource mapping.
+private-upload:
+  path: ${PRIVATE_UPLOAD_PATH:./private-uploads}
 
 # Mail
 mail:

@@ -16,7 +16,8 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, UUID> {
 
     @Query("SELECT COALESCE(SUM(oi.quantity), 0) FROM OrderItem oi JOIN Order o ON oi.orderId = o.id " +
             "WHERE oi.productId = :productId AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
-            "AND (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED)")
+            "AND (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED " +
+            "OR o.status = com.myshop.constant.OrderStatus.AFTER_SALE)")
     int sumQuantityByProductId(@Param("productId") UUID productId);
 
     @Query("SELECT oi.productId AS productId, COALESCE(SUM(oi.quantity), 0) AS quantity "
@@ -24,7 +25,8 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, UUID> {
             + "WHERE oi.productId IN :productIds "
             + "AND o.orderType = com.myshop.constant.OrderType.NORMAL "
             + "AND (o.status = com.myshop.constant.OrderStatus.PAID "
-            + "OR o.status = com.myshop.constant.OrderStatus.DELIVERED) "
+            + "OR o.status = com.myshop.constant.OrderStatus.DELIVERED "
+            + "OR o.status = com.myshop.constant.OrderStatus.AFTER_SALE) "
             + "GROUP BY oi.productId")
     List<ProductSalesProjection> sumQuantityByProductIds(@Param("productIds") List<UUID> productIds);
 
@@ -36,7 +38,7 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, UUID> {
                    COALESCE(SUM(oi.subtotal), 0) AS sales_amount
             FROM order_items oi
             JOIN orders o ON o.id = oi.order_id
-            WHERE o.status IN ('PAID', 'DELIVERED')
+            WHERE o.status IN ('PAID', 'DELIVERED', 'AFTER_SALE')
               AND o.order_type = 'NORMAL'
               AND o.paid_at >= :since
               AND o.paid_at < :until

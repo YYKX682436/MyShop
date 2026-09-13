@@ -43,8 +43,12 @@ Internet -> Caddy (80/443) -> Web (private) -> API (private) -> PostgreSQL (priv
 ```
 
 Only Caddy publishes host ports. PostgreSQL uses a named persistent volume;
-uploads use the explicit `UPLOAD_HOST_PATH` bind on the host (production uses
-`/data/myshop/uploads`, never a release-local directory or symlink); IP
+public uploads use the explicit `UPLOAD_HOST_PATH` bind and private after-sale
+evidence uses the separate `PRIVATE_UPLOAD_HOST_PATH` bind (production uses
+`/data/myshop/uploads` and `/data/myshop/private-uploads`, never release-local
+directories or symlinks). The private directory is mounted at
+`PRIVATE_UPLOAD_PATH=/app/private-uploads` and has no static resource mapping;
+the API streams an attachment only after its database ownership check. IP
 geography XDB files use the separate `/data/myshop/ipdb` bind mounted
 read-only at `/app/ipdb`; Caddy uses persistent certificate/config volumes. The
 application services have restart policies and health checks; node-exporter is
@@ -68,10 +72,10 @@ Prometheus or Grafana for this dashboard.
 
 1. Provision a supported Linux host with Docker Engine and Compose v2.
 2. Copy the repository and `.env.example` to a protected deployment directory.
-3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, matching `PUBLIC_SITE_URL`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
+3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, matching `PUBLIC_SITE_URL`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, `PRIVATE_UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
 4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
-6. Create the configured upload directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because its bind uses `create_host_path: false`. Provision the two official non-empty XDB files there when available, then run `bash scripts/myshop-compose.sh --env-file .env up -d --build`, inspect `bash scripts/myshop-compose.sh --env-file .env ps`, and read API logs with `bash scripts/myshop-compose.sh --env-file .env logs api`. Missing XDB files only degrade the detail estimate to `未知`; they do not prevent API startup.
+6. Create the public upload directory and the separate private after-sale directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because all three binds use `create_host_path: false`. Provision the two official non-empty XDB files there when available, then run `bash scripts/myshop-compose.sh --env-file .env up -d --build`, inspect `bash scripts/myshop-compose.sh --env-file .env ps`, and read API logs with `bash scripts/myshop-compose.sh --env-file .env logs api`. Missing XDB files only degrade the detail estimate to `未知`; they do not prevent API startup.
 7. After API and Web health checks pass, run `bash /opt/myshop/scripts/cleanup-docker-retention.sh` to retain only the active release and two rollback releases and to remove unused Docker build cache. The script never touches Docker volumes, uploads, or database backups.
 
 Before startup, `bash scripts/check-compose.sh` verifies that Compose receives
@@ -108,13 +112,15 @@ system and release files on the root filesystem, and mount the data disk at
 /data/docker             Docker metadata, containers, and named volumes
 /data/containerd         Docker image layers and BuildKit/containerd snapshots
 /data/myshop/uploads     Product and site uploads
+/data/myshop/private-uploads  Private after-sale evidence
 /data/myshop/ipdb        Official ip2region IPv4/IPv6 XDB files
 /data/myshop/backups     PostgreSQL backups
 /opt/myshop              Releases, Compose files, and runtime configuration
 ```
 
 Configure Docker's `data-root` to `/data/docker` and set the production `.env`
-values `UPLOAD_HOST_PATH=/data/myshop/uploads` and
+values `UPLOAD_HOST_PATH=/data/myshop/uploads`,
+`PRIVATE_UPLOAD_HOST_PATH=/data/myshop/private-uploads`, and
 `IP_GEO_HOST_PATH=/data/myshop/ipdb`. Do not create or depend on an
 `/opt/myshop/uploads` symlink. Set `DATA_DISK_MOUNTPOINT=/data` so the
 Dashboard reports the real data filesystem. Do not format an existing disk as
@@ -284,17 +290,19 @@ curl --fail --silent --show-error --output /dev/null "$public_url/"
 curl --fail --silent --show-error --output /dev/null "$public_url/api/site/config"
 ```
 
-Verify Flyway V27 and its database contracts without printing credentials or
-card contents. The query must report one successful V27 migration, the
-`users.avatar_url` column, the `orders.refunded_at` column, the `orders_status_check` constraint, the
+Verify Flyway V28 and its database contracts without printing credentials or
+card contents. The query must report one successful V28 migration, the
+`users.avatar_url` column, the `orders.refunded_at` column, an
+`orders_status_check` constraint containing `AFTER_SALE`, the
 `order_items.product_cover_url` column, the
-`balance_transactions_refund_contract_check` constraint, and the partial unique
-refund index:
+`balance_transactions_refund_contract_check` constraint, the partial unique
+refund index, both after-sale tables, their core constraints, and the partial
+unique pending-request index:
 
 ```bash
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
-    SELECT version, success FROM flyway_schema_history WHERE version = '\''27'\'' AND success;
+    SELECT version, success FROM flyway_schema_history WHERE version = '\''28'\'' AND success;
     SELECT to_regclass('\''public.users'\'') IS NOT NULL
       AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name = '\''users'\'' AND column_name = '\''avatar_url'\''
@@ -305,7 +313,9 @@ bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db
       AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name = '\''order_items'\'' AND column_name = '\''product_cover_url'\''
                     AND is_nullable = '\''YES'\'')
-      AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '\''orders_status_check'\'')
+      AND EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = '\''orders_status_check'\''
+                    AND pg_get_constraintdef(oid) LIKE '\''%AFTER_SALE%'\'')
       AND EXISTS (SELECT 1 FROM pg_constraint
                   WHERE conname = '\''balance_transactions_refund_contract_check'\'')
       AND EXISTS (SELECT 1 FROM pg_indexes
@@ -315,7 +325,27 @@ bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db
       AND EXISTS (SELECT 1 FROM pg_constraint
                   WHERE conname = '\''uq_card_key_reclaims_order_card_key'\'')
       AND EXISTS (SELECT 1 FROM pg_indexes
-                  WHERE indexname = '\''idx_card_key_reclaims_order'\'');
+                  WHERE indexname = '\''idx_card_key_reclaims_order'\'')
+      AND to_regclass('\''public.after_sale_requests'\'') IS NOT NULL
+      AND to_regclass('\''public.after_sale_attachments'\'') IS NOT NULL
+      AND EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = '\''after_sale_requests'\''
+                    AND column_name = '\''source_order_status'\'')
+      AND EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = '\''after_sale_requests'\''
+                    AND column_name = '\''admin_reply'\'')
+      AND EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = '\''after_sale_attachments'\''
+                    AND column_name = '\''storage_key'\'')
+      AND EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = '\''after_sale_requests_status_check'\'')
+      AND EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = '\''after_sale_requests_source_status_check'\'')
+      AND EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = '\''after_sale_attachments_file_size_check'\'')
+      AND EXISTS (SELECT 1 FROM pg_indexes
+                  WHERE indexname = '\''uq_after_sale_requests_pending_order'\''
+                    AND indexdef LIKE '\''%WHERE%PENDING%'\'');
   "'
 ```
 

@@ -61,6 +61,43 @@ class AdminOrderControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void afterSaleRejectApiRequiresReplyAndForwardsIt() throws Exception {
+        UUID orderId = UUID.randomUUID();
+
+        mockMvc().perform(post("/admin/orders/{id}/after-sale/reject", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"admin_reply\":\"请补充凭证\"}"))
+                .andExpect(status().isOk());
+
+        verify(adminOrderService).rejectAfterSale(orderId, "请补充凭证");
+
+        mockMvc().perform(post("/admin/orders/{id}/after-sale/reject", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"admin_reply\":\"\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void afterSaleApproveApiRequiresExplicitConfirmationAndDefaultsReclaimOff() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        when(adminOrderService.approveAfterSale(orderId, true, false))
+                .thenReturn(response(orderId, 0));
+
+        mockMvc().perform(post("/admin/orders/{id}/after-sale/approve", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"confirmed\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.refund_destination").value("BALANCE"));
+
+        verify(adminOrderService).approveAfterSale(orderId, true, false);
+
+        mockMvc().perform(post("/admin/orders/{id}/after-sale/approve", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"confirmed\":false}"))
+                .andExpect(status().isBadRequest());
+    }
+
     private MockMvc mockMvc() {
         return MockMvcBuilders.standaloneSetup(new AdminOrderController(adminOrderService)).build();
     }

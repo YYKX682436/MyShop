@@ -23,6 +23,7 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.AdminOrderService;
+import com.myshop.service.AfterSaleService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderPaymentCompletionService;
@@ -57,6 +58,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final OrderRefundService orderRefundService;
     private final BalanceTransactionRepository balanceTransactionRepository;
     private final CardKeyReclaimService cardKeyReclaimService;
+    private final AfterSaleService afterSaleService;
 
     @Autowired
     public AdminOrderServiceImpl(OrderRepository orderRepository,
@@ -68,7 +70,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                                  OperationLogService operationLogService,
                                  OrderRefundService orderRefundService,
                                  BalanceTransactionRepository balanceTransactionRepository,
-                                 CardKeyReclaimService cardKeyReclaimService) {
+                                 CardKeyReclaimService cardKeyReclaimService,
+                                 AfterSaleService afterSaleService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.userRepository = userRepository;
@@ -79,6 +82,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         this.orderRefundService = orderRefundService;
         this.balanceTransactionRepository = balanceTransactionRepository;
         this.cardKeyReclaimService = cardKeyReclaimService;
+        this.afterSaleService = afterSaleService;
     }
 
     @Override
@@ -207,6 +211,19 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
     @Override
     @Transactional
+    public void rejectAfterSale(UUID id, String adminReply) {
+        afterSaleService.reject(id, adminReply);
+    }
+
+    @Override
+    @Transactional
+    public AdminOrderRefundResponse approveAfterSale(UUID id, boolean confirmed,
+                                                     boolean reclaimCardKeys) {
+        return afterSaleService.approve(id, confirmed, reclaimCardKeys);
+    }
+
+    @Override
+    @Transactional
     public Map<String, Object> completeManualItems(UUID orderId, AdminManualFulfillRequest request) {
         if (request == null || !Boolean.TRUE.equals(request.confirmed())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "必须明确确认完成发货");
@@ -305,6 +322,10 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                         .map(User::getUsername).orElse(null));
                 map.put("reclaimed_card_key_count", Math.toIntExact(
                         cardKeyReclaimService.countByOrderId(o.getId())));
+            }
+            Map<String, Object> afterSaleView = afterSaleService.buildOrderView(o.getId());
+            if (afterSaleView != null) {
+                map.putAll(afterSaleView);
             }
         }
         return map;

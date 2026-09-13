@@ -19,5 +19,10 @@ public interface AdminOrderService {
     AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed,
                                     boolean reclaimCardKeys);
 
+    void rejectAfterSale(UUID id, String adminReply);
+
+    AdminOrderRefundResponse approveAfterSale(UUID id, boolean confirmed,
+                                              boolean reclaimCardKeys);
+
     Map<String, Object> completeManualItems(UUID orderId, AdminManualFulfillRequest request);
 }

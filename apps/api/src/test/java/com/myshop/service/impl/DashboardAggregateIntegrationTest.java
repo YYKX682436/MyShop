@@ -75,6 +75,8 @@ class DashboardAggregateIntegrationTest {
     void cleanDatabase() {
         jdbcTemplate.execute("DELETE FROM card_keys");
         jdbcTemplate.execute("DELETE FROM order_items");
+        jdbcTemplate.execute("DELETE FROM after_sale_attachments");
+        jdbcTemplate.execute("DELETE FROM after_sale_requests");
         jdbcTemplate.execute("DELETE FROM orders");
         jdbcTemplate.execute("DELETE FROM products");
         jdbcTemplate.execute("DELETE FROM users");

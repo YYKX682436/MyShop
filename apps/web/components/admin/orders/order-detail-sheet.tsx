@@ -5,6 +5,7 @@ import { Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
+import { AfterSaleHistoryCard } from "@/components/shared/after-sale-history-card"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { CardContentParts } from "@/components/shared/card-content-parts"
 import { getPaymentLabel, PaymentIcon } from "@/components/shared/payment-icon"
@@ -198,6 +199,14 @@ export function OrderDetailSheet({
           </p>
         )}
       </header>
+
+      {(order.after_sale || (order.after_sale_history?.length ?? 0) > 0) && (
+        <AfterSaleHistoryCard
+          request={order.after_sale}
+          history={order.after_sale_history ?? []}
+          customerLabel={[identity.primary, identity.secondary].filter(Boolean).join(" · ")}
+        />
+      )}
 
       {order.status === "REFUNDED" && (
         <section className="rounded-surface border border-violet-300/50 bg-violet-50/70 p-5 shadow-sm dark:border-violet-500/30 dark:bg-violet-950/20 sm:p-6" aria-labelledby="order-refund-title">

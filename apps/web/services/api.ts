@@ -44,6 +44,7 @@
   AdminFulfillmentResult,
   AdminManualFulfillmentRequest,
   AdminOrderRefundResponse,
+  AfterSaleApplyResult,
 } from "@/types"
 import { buildAdminRefundPayload } from "@/lib/admin-refund-ui"
 import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
@@ -261,6 +262,10 @@ async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   if (csrf) headers["X-CSRF-Token"] = csrf
   const sessionToken = getSessionToken()
   if (sessionToken) headers["X-Session-Token"] = sessionToken
+  const deviceId = cachedDeviceId || (await ensureDeviceId())
+  if (deviceId) headers["X-Device-Id"] = deviceId
+  const turnstileToken = consumeTurnstileToken()
+  if (turnstileToken) headers["X-Turnstile-Token"] = turnstileToken
 
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -343,6 +348,12 @@ export const userApi = {
   getOrders: (params: { page?: number; page_size?: number; status?: string }) => {
     const qs = buildQuery(params)
     return request<PaginatedData<OrderBrief>>(`/user/orders?${qs}`)
+  },
+  submitAfterSale: (orderId: string, reason: string, attachments: File[] = []) => {
+    const formData = new FormData()
+    formData.append("reason", reason)
+    attachments.forEach(file => formData.append("attachments", file, file.name))
+    return uploadRequest<AfterSaleApplyResult>(`/user/orders/${encodeURIComponent(orderId)}/after-sales`, formData)
   },
 }
 
@@ -552,6 +563,16 @@ export const adminOrderApi = {
     request<AdminOrderRefundResponse>(`/admin/orders/${id}/refund`, {
       method: "POST",
       body: JSON.stringify(buildAdminRefundPayload(reason, reclaimCardKeys)),
+    }),
+  rejectAfterSale: (id: string, adminReply: string) =>
+    request<null>(`/admin/orders/${encodeURIComponent(id)}/after-sale/reject`, {
+      method: "POST",
+      body: JSON.stringify({ admin_reply: adminReply }),
+    }),
+  approveAfterSale: (id: string, reclaimCardKeys: boolean) =>
+    request<AdminOrderRefundResponse>(`/admin/orders/${encodeURIComponent(id)}/after-sale/approve`, {
+      method: "POST",
+      body: JSON.stringify({ confirmed: true, reclaim_card_keys: reclaimCardKeys }),
     }),
   fulfill: (orderId: string, data: AdminManualFulfillmentRequest) =>
     request<AdminFulfillmentResult>(`/admin/orders/${orderId}/fulfill`, {

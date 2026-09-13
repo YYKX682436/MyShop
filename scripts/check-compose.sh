@@ -17,6 +17,7 @@ PUBLIC_SITE_URL=https://store.example.test
 DB_PASSWORD=compose-validation-password
 JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
 UPLOAD_HOST_PATH=./uploads
+PRIVATE_UPLOAD_HOST_PATH=./private-uploads
 IP_GEO_HOST_PATH=./ipdb
 EOF
 
@@ -27,6 +28,7 @@ PUBLIC_SITE_URL=https://store.example.test
 DB_PASSWORD=compose-validation-password
 JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
 UPLOAD_HOST_PATH=/data/myshop/uploads
+PRIVATE_UPLOAD_HOST_PATH=/data/myshop/private-uploads
 IP_GEO_HOST_PATH=/data/myshop/ipdb
 EOF
 
@@ -105,13 +107,18 @@ for expected in \
   fi
 done
 
-if [[ "$(grep -Fc 'create_host_path: false' "$repo_dir/docker-compose.yml")" -lt 2 ]]; then
-  echo "compose validation missing create_host_path: false for the upload/IP database binds" >&2
+if [[ "$(grep -Fc 'create_host_path: false' "$repo_dir/docker-compose.yml")" -lt 3 ]]; then
+  echo "compose validation missing create_host_path: false for the public/private upload and IP database binds" >&2
   exit 1
 fi
 
 if ! grep -Fq 'target: /app/uploads' <<<"$rendered_config"; then
   echo "compose validation missing the /app/uploads container target" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'target: /app/private-uploads' <<<"$rendered_config"; then
+  echo "compose validation missing the /app/private-uploads container target" >&2
   exit 1
 fi
 
@@ -122,6 +129,11 @@ fi
 
 if ! grep -Fq 'source: /data/myshop/uploads' <<<"$production_config"; then
   echo "compose validation did not resolve the production upload path to /data/myshop/uploads" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'source: /data/myshop/private-uploads' <<<"$production_config"; then
+  echo "compose validation did not resolve the production private upload path to /data/myshop/private-uploads" >&2
   exit 1
 fi
 

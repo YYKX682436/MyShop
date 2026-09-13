@@ -87,6 +87,8 @@ class UserAvatarTransactionIntegrationTest {
     @AfterEach
     void cleanFixture() throws IOException {
         jdbcTemplate.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS " + ROLLBACK_CONSTRAINT);
+        jdbcTemplate.update("DELETE FROM after_sale_attachments WHERE request_id IN (SELECT id FROM after_sale_requests WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'avatar-transaction-%'))");
+        jdbcTemplate.update("DELETE FROM after_sale_requests WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'avatar-transaction-%')");
         jdbcTemplate.update("DELETE FROM users WHERE username LIKE 'avatar-transaction-%'");
         clearUploadDirectory();
         entityManager.clear();

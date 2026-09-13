@@ -78,6 +78,7 @@ class DashboardServiceImplTest {
         when(orderRepository.countDistinctBuyersBetween(todayStart, tomorrow)).thenReturn(2L);
         when(orderRepository.countByStatus(OrderStatus.PENDING)).thenReturn(2L);
         when(orderRepository.countByStatus(OrderStatus.PAID)).thenReturn(3L);
+        when(orderRepository.countByStatus(OrderStatus.AFTER_SALE)).thenReturn(1L);
         when(orderRepository.countDeliveredBetween(todayStart, tomorrow)).thenReturn(1L);
         when(cardKeyRepository.countAvailableForActiveCardKeyProducts()).thenReturn(5L);
 
@@ -118,6 +119,7 @@ class DashboardServiceImplTest {
         assertEquals(4L, result.totalUsers());
         assertEquals(2L, result.todayBuyers());
         assertEquals(2L, result.pendingOrders());
+        assertEquals(1L, result.afterSaleOrders());
         assertEquals(3L, result.paidWaitingDelivery());
         assertEquals(1L, result.deliveredToday());
         assertEquals(1L, result.expiredToday());

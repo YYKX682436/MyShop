@@ -14,6 +14,7 @@ const statusStyles: Record<OrderDisplayStatus, string> = {
   DELIVERED: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
   EXPIRED: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
   REFUNDED: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  AFTER_SALE: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
 }
 
 const statusKeys: Record<OrderDisplayStatus, TranslationKey> = {
@@ -24,6 +25,7 @@ const statusKeys: Record<OrderDisplayStatus, TranslationKey> = {
   DELIVERED: "status.DELIVERED",
   EXPIRED: "status.EXPIRED",
   REFUNDED: "status.REFUNDED",
+  AFTER_SALE: "status.AFTER_SALE",
 }
 
 export function OrderStatusBadge({

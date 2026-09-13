@@ -89,6 +89,8 @@ class OrderRefundConcurrencyIntegrationTest {
         jdbcTemplate.update("DELETE FROM payment_attempts");
         jdbcTemplate.update("DELETE FROM card_keys");
         jdbcTemplate.update("DELETE FROM order_items");
+        jdbcTemplate.update("DELETE FROM after_sale_attachments");
+        jdbcTemplate.update("DELETE FROM after_sale_requests");
         jdbcTemplate.update("DELETE FROM orders");
         jdbcTemplate.update("DELETE FROM users");
     }

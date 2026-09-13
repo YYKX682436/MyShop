@@ -65,6 +65,8 @@ class OrderNumberConcurrencyIntegrationTest {
 
     @BeforeEach
     void clearOrders() {
+        jdbcTemplate.update("DELETE FROM after_sale_attachments");
+        jdbcTemplate.update("DELETE FROM after_sale_requests");
         jdbcTemplate.update("DELETE FROM orders");
         // The restart value is a test constant. PostgreSQL's ALTER SEQUENCE
         // grammar does not accept a JDBC bind marker in this position.

@@ -17,6 +17,8 @@ import { applyPaymentStatus, applyPaymentStatusError, createPaymentPageActionSta
 import { PaymentActionRenderer } from "@/components/shared/payment-action-renderer"
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
+import { AfterSaleHistoryCard } from "@/components/shared/after-sale-history-card"
+import { AfterSaleRequestDialog } from "@/components/shared/after-sale-request-dialog"
 import { ContactSupport } from "@/components/shared/contact-methods"
 import { CardContentParts } from "@/components/shared/card-content-parts"
 import { MarkdownContent } from "@/components/shared/markdown-content"
@@ -40,6 +42,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [retrying, setRetrying] = useState(false)
+  const [afterSaleOpen, setAfterSaleOpen] = useState(false)
   const [checkingReturn, setCheckingReturn] = useState(paymentReturn)
   const [returnTimedOut, setReturnTimedOut] = useState(false)
   const [paymentState, setPaymentState] = useState(() => createPaymentPageActionState(initialAction))
@@ -293,6 +296,15 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
           <h2 id="order-purchase-summary-title" className="text-base font-semibold text-foreground">{t("order.purchaseSummary")}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{t("order.itemsCount").replace("{count}", String(orderItems.length))}</p>
         </div>
+        {(status === "PAID" || status === "DELIVERED") && (
+          <button
+            type="button"
+            onClick={() => setAfterSaleOpen(true)}
+            className="inline-flex min-h-10 items-center justify-center rounded-control border border-primary/30 bg-primary/5 px-3 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            {t("order.applyAfterSales")}
+          </button>
+        )}
       </div>
       <div className="divide-y divide-border-subtle">
         {orderItems.map(item => {
@@ -344,6 +356,8 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </details>
 
+    <AfterSaleHistoryCard request={view.order.after_sale} history={view.order.after_sale_history ?? view.after_sale_history} />
+
     {itemsWithCustomerInputs.length > 0 && (
       <details className="surface overflow-hidden">
         <summary aria-controls="customer-inputs-panel" className="group flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
@@ -388,7 +402,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </section>
     )}
 
-    {(status === "PAID" || status === "DELIVERED" || status === "REFUNDED") && (
+    {(status === "PAID" || status === "DELIVERED" || status === "AFTER_SALE" || status === "REFUNDED") && (
       <section className="surface-raised space-y-4 p-4 sm:p-5" aria-labelledby="order-delivery-result-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -416,17 +430,27 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
           </div>
         )}
 
-        {waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
-        {pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
+        {status === "AFTER_SALE" && <div className="rounded-control border border-orange-300/50 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200"><p className="font-medium">{t("order.afterSaleDeliveryPaused")}</p></div>}
+        {status !== "AFTER_SALE" && waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
+        {status !== "AFTER_SALE" && pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
         {hasCards && <div className="space-y-3">{deliveredGroupsWithNumbers.map(({ group, startNumber }, index) => <DeliveryGroup key={`${group.product_no}-${group.spec_name || "no-spec"}-${index}`} group={group} startNumber={startNumber} onCopy={copy} copyLabel={t("order.copyKey")} countLabel={t("order.deliveredCount").replace("{count}", String(group.delivery_items.length))} />)}</div>}
         {deliveredManualItems.length > 0 && <div className="space-y-3">{deliveredManualItems.map(item => <ManualDeliveryItem key={item.id} item={item} statusLabel={t("status.DELIVERED")} emptyLabel={t("order.manualDeliveryEmpty")} contentTitle={t("order.manualDeliveryContentTitle")} />)}</div>}
-        {status !== "REFUNDED" && !hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
+        {status !== "AFTER_SALE" && status !== "REFUNDED" && !hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
       </section>
     )}
 
     {purchasedProducts.map(product => <ProductDescription key={product.id} product={product} />)}
 
     <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} emailLabel={t("payment.contactSupport")} />
+
+    <AfterSaleRequestDialog
+      open={afterSaleOpen}
+      orderId={orderId}
+      orderNo={view.order.order_no}
+      productSummary={orderItems.map(item => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、")}
+      onOpenChange={setAfterSaleOpen}
+      onSubmitted={() => { void fetchView("manual", true) }}
+    />
   </div>
 }
 

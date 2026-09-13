@@ -248,9 +248,45 @@ export interface UserLevel {
 // Order
 // ============================================================
 
-export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED' | 'REFUNDED'
+export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED' | 'REFUNDED' | 'AFTER_SALE'
 export type OrderType = 'NORMAL' | 'ADMIN_PICKUP'
 export type OrderPaymentMethod = 'BALANCE' | 'ONLINE'
+
+export type AfterSaleStatus = "PENDING" | "REJECTED" | "REFUNDED"
+
+export interface AfterSaleAttachment {
+  id: string
+  original_filename: string
+  content_type: "image/jpeg" | "image/png" | "image/webp" | string
+  file_size: number
+  url: string
+  created_at?: string | null
+}
+
+export interface AfterSaleRequest {
+  id: string
+  order_id: string
+  user_id: string
+  status: AfterSaleStatus
+  source_order_status: "PAID" | "DELIVERED"
+  reason: string
+  admin_reply?: string | null
+  handled_by?: string | null
+  submitted_at: string
+  handled_at?: string | null
+  attachments: AfterSaleAttachment[]
+}
+
+export interface AfterSaleView {
+  after_sale: AfterSaleRequest | null
+  after_sale_history: AfterSaleRequest[]
+}
+
+export interface AfterSaleApplyResult {
+  order_id: string
+  status: "AFTER_SALE"
+  after_sale: AfterSaleRequest
+}
 
 export interface OrderItemBrief {
   id: string
@@ -299,6 +335,8 @@ export interface OrderDetail {
   delivered_at: string | null
   refunded_at: string | null
   reclaimed_card_key_count?: number | null
+  after_sale?: AfterSaleRequest | null
+  after_sale_history?: AfterSaleRequest[]
   items: OrderItemDetail[]
 }
 
@@ -342,6 +380,8 @@ export interface OrderView {
   order: OrderDetail
   payment: PaymentCreateResult
   delivery: OrderDeliveryView
+  after_sale?: AfterSaleRequest | null
+  after_sale_history?: AfterSaleRequest[]
 }
 
 export interface AdminManualFulfillmentItem {
@@ -530,6 +570,7 @@ export interface DashboardStats {
   total_users: number
   today_buyers: number
   pending_orders: number
+  after_sale_orders: number
   paid_waiting_delivery: number
   delivered_today: number
   expired_today: number
@@ -679,6 +720,8 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   refund_operator_id?: string | null
   refund_operator_username?: string | null
   reclaimed_card_key_count?: number | null
+  after_sale?: AfterSaleRequest | null
+  after_sale_history?: AfterSaleRequest[]
   customer_type: "REGISTERED" | "GUEST"
   user_id?: string | null
   user_no: number | null

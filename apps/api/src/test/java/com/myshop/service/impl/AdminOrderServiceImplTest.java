@@ -12,6 +12,7 @@ import com.myshop.entity.BalanceTransaction;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
+import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.BalanceTransactionRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -20,6 +21,7 @@ import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.CardKeyReclaimService;
+import com.myshop.service.AfterSaleService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderPaymentCompletionService;
 import com.myshop.service.OrderRefundService;
@@ -62,6 +64,7 @@ class AdminOrderServiceImplTest {
     @Mock private OrderRefundService orderRefundService;
     @Mock private BalanceTransactionRepository balanceTransactionRepository;
     @Mock private CardKeyReclaimService cardKeyReclaimService;
+    @Mock private AfterSaleService afterSaleService;
 
     @Test
     void adminOrderUsesHistoricalSnapshotsForProfitAndLevelContext() {
@@ -195,6 +198,26 @@ class AdminOrderServiceImplTest {
         verify(userRepository).findAllById(List.of(userId));
         verify(orderItemRepository, never()).findByOrderId(any());
         verify(userRepository, never()).findById(any());
+    }
+
+    @Test
+    void searchAcceptsAfterSaleStatusAndPassesItToTheRepository() {
+        UUID orderId = UUID.randomUUID();
+        Order order = order(orderId, UUID.randomUUID());
+        order.setStatus(OrderStatus.AFTER_SALE);
+        when(orderRepository.searchAdminOrders(eq("AFTER_SALE"), isNull(), isNull(), isNull(),
+                eq("desc"), any()))
+                .thenReturn(new PageImpl<>(List.of(order), PageRequest.of(0, 20), 1));
+        when(orderItemRepository.findByOrderIdIn(List.of(orderId))).thenReturn(List.of());
+        when(userRepository.findAllById(anyList())).thenReturn(List.of());
+
+        var result = fullService().searchOrders(
+                new AdminOrderSearchRequest(1, 20, null, "AFTER_SALE", null, null, null));
+
+        assertEquals(1L, result.getPagination().getTotal());
+        assertEquals(OrderStatus.AFTER_SALE.name(), ((Map<?, ?>) result.getList().get(0)).get("status"));
+        verify(orderRepository).searchAdminOrders(eq("AFTER_SALE"), isNull(), isNull(), isNull(),
+                eq("desc"), any());
     }
 
     @Test
@@ -358,11 +381,28 @@ class AdminOrderServiceImplTest {
         verifyNoInteractions(orderPaymentCompletionService, operationLogService);
     }
 
+    @Test
+    void afterSaleActionsAreDelegatedToTheDedicatedLifecycleService() {
+        UUID orderId = UUID.randomUUID();
+        AdminOrderRefundResponse response = new AdminOrderRefundResponse(
+                orderId, 1000000001L, OrderStatus.REFUNDED, new BigDecimal("60.00"),
+                java.time.LocalDateTime.now(), "BALANCE", BigDecimal.ZERO,
+                new BigDecimal("60.00"), 0);
+        when(afterSaleService.approve(orderId, true, false)).thenReturn(response);
+
+        fullService().rejectAfterSale(orderId, "请补充凭证");
+        AdminOrderRefundResponse approved = fullService().approveAfterSale(orderId, true, false);
+
+        assertEquals(response, approved);
+        verify(afterSaleService).reject(orderId, "请补充凭证");
+        verify(afterSaleService).approve(orderId, true, false);
+    }
+
     private AdminOrderServiceImpl fullService() {
         return new AdminOrderServiceImpl(orderRepository, orderItemRepository, userRepository,
                 fulfillmentService, paymentAttemptRepository, orderPaymentCompletionService,
                 operationLogService, orderRefundService, balanceTransactionRepository,
-                cardKeyReclaimService);
+                cardKeyReclaimService, afterSaleService);
     }
 
     private PaymentAttempt pendingAttempt(UUID orderId, java.time.LocalDateTime expiresAt) {

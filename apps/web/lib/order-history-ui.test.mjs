@@ -16,8 +16,9 @@ test("storefront order history is a compact overview with one detail entry for e
   assert.match(source, /<OrderStatusBadge status=\{order\.status\} items=\{order\.items\} \/>/)
   assert.match(source, /t\("order\.orderDetail"\)/)
   assert.match(source, /t\("order\.applyAfterSales"\)/)
-  assert.match(source, /t\("order\.afterSalesUnavailable"\)/)
-  assert.match(source, /disabled\s+title=\{t\("order\.afterSalesUnavailable"\)\}/)
+  assert.match(source, /AfterSaleRequestDialog/)
+  assert.match(source, /setAfterSaleOpen\(true\)/)
+  assert.doesNotMatch(source, /disabled\s+title=\{t\("order\.afterSalesUnavailable"\)\}/)
   assert.match(source, /order\.status === "PENDING"/)
   assert.match(source, /order\.status === "PAID" \|\| order\.status === "DELIVERED"/)
   assert.match(source, /buildOrderPageHref\(order\.id\)/)
@@ -56,7 +57,8 @@ test("storefront order details keep snapshots, customer information, and expired
   assert.match(source, /id="customer-inputs-panel"/)
   assert.match(source, /whitespace-pre-wrap text-sm text-foreground \[overflow-wrap:anywhere\]/)
   assert.match(source, /status === "PENDING"/)
-  assert.match(source, /status === "PAID" \|\| status === "DELIVERED" \|\| status === "REFUNDED"/)
+  assert.match(source, /status === "PAID" \|\| status === "DELIVERED" \|\| status === "AFTER_SALE" \|\| status === "REFUNDED"/)
+  assert.match(source, /AfterSaleHistoryCard/)
   assert.match(source, /ProductDescription/)
 
   const orderInfoPosition = source.indexOf('t("order.orderInformation")')
@@ -89,7 +91,7 @@ test("order history API and browser types separate brief items from detail items
 test("order history copy is localized in both storefront dictionaries", () => {
   const dictionary = readSource("./i18n.ts")
 
-  for (const key of ["order.orderDetail", "order.customerInputs", "order.applyAfterSales", "order.afterSalesUnavailable"]) {
+  for (const key of ["order.orderDetail", "order.customerInputs", "order.applyAfterSales", "order.afterSaleHistory", "order.afterSaleReason"]) {
     assert.equal((dictionary.match(new RegExp(`"${key.replace(".", "\\.")}"`, "g")) || []).length, 2, key)
   }
   assert.doesNotMatch(dictionary, /"order\.cardKeys"|"order\.viewDelivery"|"order\.amount"/)

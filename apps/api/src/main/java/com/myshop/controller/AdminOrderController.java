@@ -5,6 +5,8 @@ import com.myshop.common.ApiResponse;
 import com.myshop.model.request.AdminManualFulfillRequest;
 import com.myshop.model.request.AdminRefundRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
+import com.myshop.model.request.AdminAfterSaleRejectRequest;
+import com.myshop.model.request.AdminAfterSaleApproveRequest;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.service.AdminOrderService;
 import jakarta.validation.Valid;
@@ -40,6 +42,20 @@ public class AdminOrderController {
     public ApiResponse<AdminOrderRefundResponse> refund(@PathVariable UUID id,
                                                         @Valid @RequestBody AdminRefundRequest request) {
         return ApiResponse.success(adminOrderService.refund(id, request.reason(),
+                Boolean.TRUE.equals(request.confirmed()), request.reclaimCardKeys()));
+    }
+
+    @PostMapping("/{id}/after-sale/reject")
+    public ApiResponse<Void> rejectAfterSale(@PathVariable UUID id,
+                                             @Valid @RequestBody AdminAfterSaleRejectRequest request) {
+        adminOrderService.rejectAfterSale(id, request.adminReply());
+        return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/after-sale/approve")
+    public ApiResponse<AdminOrderRefundResponse> approveAfterSale(
+            @PathVariable UUID id, @Valid @RequestBody AdminAfterSaleApproveRequest request) {
+        return ApiResponse.success(adminOrderService.approveAfterSale(id,
                 Boolean.TRUE.equals(request.confirmed()), request.reclaimCardKeys()));
     }
 

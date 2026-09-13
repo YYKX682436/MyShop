@@ -41,10 +41,11 @@ jobs:
             target/surefire-reports/TEST-com.myshop.service.impl.OrderNumberConcurrencyIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.OrderRefundConcurrencyIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.PostgresDeliveryIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.impl.AfterSaleConcurrencyIntegrationTest.xml
           )
           rm -f "${reports[@]}"
           mvn -B \
-            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,OrderRefundConcurrencyIntegrationTest,PostgresDeliveryIntegrationTest \
+            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,OrderRefundConcurrencyIntegrationTest,PostgresDeliveryIntegrationTest,AfterSaleConcurrencyIntegrationTest \
             -Dsurefire.failIfNoSpecifiedTests=true \
             test
 

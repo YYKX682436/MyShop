@@ -10,11 +10,14 @@ import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.CardKey;
+import com.myshop.entity.AfterSaleRequest;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
+import com.myshop.constant.AfterSaleRequestStatus;
 import com.myshop.model.response.AdminOrderRefundResponse;
+import com.myshop.repository.AfterSaleRequestRepository;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
@@ -61,6 +64,7 @@ class OrderRefundServiceImplTest {
     @Mock private com.myshop.repository.CardKeyRepository cardKeyRepository;
     @Mock private PaymentAttemptRepository paymentAttemptRepository;
     @Mock private UserRepository userRepository;
+    @Mock private AfterSaleRequestRepository afterSaleRequestRepository;
     @Mock private ManualStockService manualStockService;
     @Mock private BalanceTransactionService balanceTransactionService;
     @Mock private OperationLogService operationLogService;
@@ -72,7 +76,7 @@ class OrderRefundServiceImplTest {
     void setUp() {
         service = new OrderRefundServiceImpl(
                 orderRepository, orderItemRepository, cardKeyRepository, paymentAttemptRepository,
-                userRepository, manualStockService, balanceTransactionService,
+                userRepository, afterSaleRequestRepository, manualStockService, balanceTransactionService,
                 operationLogService, cardKeyReclaimService);
         RequestContext.set(new RequestContext.UserInfo(OPERATOR_ID, "refund-admin", "ADMIN"));
     }
@@ -126,6 +130,60 @@ class OrderRefundServiceImplTest {
         locks.verify(userRepository).findByIdForUpdate(userId);
         locks.verify(paymentAttemptRepository)
                 .findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING);
+    }
+
+    @Test
+    void afterSaleApprovalUsesTheFormalRefundCoreAndCompletesThePendingRequestExactlyOnce() {
+        UUID orderId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Order order = order(orderId, userId, OrderStatus.AFTER_SALE, "12.34");
+        AfterSaleRequest request = new AfterSaleRequest();
+        request.setId(UUID.randomUUID());
+        request.setOrderId(orderId);
+        request.setUserId(userId);
+        request.setStatus(AfterSaleRequestStatus.PENDING);
+        request.setSourceOrderStatus(OrderStatus.DELIVERED);
+        request.setReason("交付内容存在问题");
+        request.setSubmittedAt(LocalDateTime.now().minusMinutes(5));
+        User user = user(userId, "5.66");
+
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(afterSaleRequestRepository.findFirstByOrderIdAndStatusForUpdate(
+                orderId, AfterSaleRequestStatus.PENDING)).thenReturn(Optional.of(request));
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
+        when(paymentAttemptRepository.findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING))
+                .thenReturn(List.of());
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of());
+
+        AdminOrderRefundResponse response = service.approveAfterSale(orderId, true, false);
+
+        assertEquals(OrderStatus.REFUNDED, order.getStatus());
+        assertEquals(AfterSaleRequestStatus.REFUNDED, request.getStatus());
+        assertEquals(OPERATOR_ID, request.getHandledBy());
+        assertNotNull(request.getHandledAt());
+        assertEquals(new BigDecimal("18.00"), user.getBalance());
+        assertEquals(new BigDecimal("12.34"), response.refundAmount());
+        verify(balanceTransactionService).recordRefund(
+                userId, new BigDecimal("12.34"), new BigDecimal("5.66"),
+                new BigDecimal("18.00"), orderId, "售后申请退款", OPERATOR_ID);
+        verify(operationLogService).logCurrentRequest(
+                eq("order.after_sale.approve"), eq("ORDER"), eq(orderId.toString()), any(String.class));
+        verify(afterSaleRequestRepository).save(request);
+    }
+
+    @Test
+    void ordinaryRefundCannotBypassAnAfterSaleRequest() {
+        UUID orderId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        when(orderRepository.findByIdForUpdate(orderId))
+                .thenReturn(Optional.of(order(orderId, userId, OrderStatus.AFTER_SALE, "1.00")));
+
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.refund(orderId, "绕过售后", true, false));
+
+        assertEquals(ErrorCode.ORDER_REFUND_NOT_ALLOWED, exception.getCode());
+        verifyNoInteractions(afterSaleRequestRepository, userRepository, balanceTransactionService,
+                operationLogService, paymentAttemptRepository, orderItemRepository);
     }
 
     @Test

@@ -249,8 +249,9 @@ export function OrderHealthCard({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
   return (
     <Panel title={t("admin.orderHealth")} icon={ClipboardList}>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
         <MetricTile label={t("admin.pendingOrders")} value={formatNumber(stats.pending_orders, locale)} />
+        <MetricTile label={t("admin.afterSaleOrders")} value={formatNumber(stats.after_sale_orders, locale)} />
         <MetricTile label={t("admin.paidWaitingDelivery")} value={formatNumber(stats.paid_waiting_delivery, locale)} />
         <MetricTile label={t("admin.deliveredToday")} value={formatNumber(stats.delivered_today, locale)} />
         <MetricTile label={t("admin.expiredToday")} value={formatNumber(stats.expired_today, locale)} />

@@ -1,13 +1,15 @@
 package com.myshop.service.impl;
 
-import com.myshop.constant.ErrorCode;
+import com.myshop.constant.AfterSaleRequestStatus;
 import com.myshop.constant.CardKeyStatus;
+import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
 import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
+import com.myshop.entity.AfterSaleRequest;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.CardKeyReclaim;
 import com.myshop.entity.Order;
@@ -17,6 +19,7 @@ import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.payment.PaymentStatus;
+import com.myshop.repository.AfterSaleRequestRepository;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
@@ -45,12 +48,14 @@ import java.util.UUID;
 /**
  * Atomic administrator refund boundary. The order row is always locked before
  * the registered user's row, and all accounting/fulfillment mutations join the
- * same transaction.
+ * same transaction. After-sale approval enters this same boundary explicitly;
+ * it cannot use the ordinary PAID/DELIVERED refund endpoint.
  */
 @Service
 public class OrderRefundServiceImpl implements OrderRefundService {
 
     private static final String REFUND_DESTINATION = "BALANCE";
+    private static final String AFTER_SALE_REFUND_REASON = "售后申请退款";
     private static final BigDecimal MAX_BALANCE = new BigDecimal("9999999999.99");
 
     private final OrderRepository orderRepository;
@@ -58,6 +63,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
     private final CardKeyRepository cardKeyRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final UserRepository userRepository;
+    private final AfterSaleRequestRepository afterSaleRequestRepository;
     private final ManualStockService manualStockService;
     private final BalanceTransactionService balanceTransactionService;
     private final OperationLogService operationLogService;
@@ -68,6 +74,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
                                   CardKeyRepository cardKeyRepository,
                                   PaymentAttemptRepository paymentAttemptRepository,
                                   UserRepository userRepository,
+                                  AfterSaleRequestRepository afterSaleRequestRepository,
                                   ManualStockService manualStockService,
                                   BalanceTransactionService balanceTransactionService,
                                   OperationLogService operationLogService,
@@ -77,6 +84,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         this.cardKeyRepository = cardKeyRepository;
         this.paymentAttemptRepository = paymentAttemptRepository;
         this.userRepository = userRepository;
+        this.afterSaleRequestRepository = afterSaleRequestRepository;
         this.manualStockService = manualStockService;
         this.balanceTransactionService = balanceTransactionService;
         this.operationLogService = operationLogService;
@@ -88,19 +96,75 @@ public class OrderRefundServiceImpl implements OrderRefundService {
     public AdminOrderRefundResponse refund(UUID orderId, String reason, boolean confirmed,
                                            boolean reclaimCardKeys) {
         String normalizedReason = validateRequest(reason, confirmed);
-        RequestContext.UserInfo operator = RequestContext.get();
-        UUID operatorId = operator == null ? null : operator.getUserId();
-        if (operatorId == null
-                || (!UserRole.ADMIN.name().equals(operator.getRole())
-                && !UserRole.SUPER_ADMIN.name().equals(operator.getRole()))) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可执行退款");
-        }
+        UUID operatorId = requireAdminOperator();
 
         // This is the first business row lock. Every refund and fulfillment
         // path must observe the state after this lock before changing anything.
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         validateRefundableOrder(order);
+
+        RefundResult result = refundLocked(order, normalizedReason, operatorId, reclaimCardKeys);
+        operationLogService.logCurrentRequest(
+                "order.refund",
+                "ORDER",
+                order.getId().toString(),
+                refundAuditDetail(order, result, normalizedReason));
+        return result.response();
+    }
+
+    @Override
+    @Transactional
+    public AdminOrderRefundResponse approveAfterSale(UUID orderId, boolean confirmed,
+                                                      boolean reclaimCardKeys) {
+        if (!confirmed) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "必须明确确认退款");
+        }
+        UUID operatorId = requireAdminOperator();
+
+        // Resolve and lock the order before locking its request. Reject and
+        // approve therefore serialize with each other and with fulfillment.
+        Order order = orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        if (order.getStatus() != OrderStatus.AFTER_SALE) {
+            throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,
+                    "只有售后中的订单可以通过售后申请退款");
+        }
+        AfterSaleRequest request = afterSaleRequestRepository
+                .findFirstByOrderIdAndStatusForUpdate(orderId, AfterSaleRequestStatus.PENDING)
+                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "订单没有待处理的售后申请"));
+        ensurePendingAfterSale(order, request);
+
+        // This is the formal refund core. It closes payment attempts,
+        // optionally records/reclaims card keys, updates the balance exactly
+        // once, and changes the order to REFUNDED in this transaction.
+        RefundResult result = refundLocked(order, AFTER_SALE_REFUND_REASON,
+                operatorId, reclaimCardKeys);
+
+        request.setStatus(AfterSaleRequestStatus.REFUNDED);
+        request.setHandledBy(operatorId);
+        request.setHandledAt(LocalDateTime.now());
+        afterSaleRequestRepository.save(request);
+        operationLogService.logCurrentRequest(
+                "order.after_sale.approve",
+                "ORDER",
+                order.getId().toString(),
+                "订单号=" + order.getOrderNo()
+                        + "，售后申请ID=" + request.getId()
+                        + "，退款金额=" + result.response().refundAmount().toPlainString()
+                        + "，退款去向=" + REFUND_DESTINATION
+                        + "，回收卡密=" + (reclaimCardKeys ? "是" : "否")
+                        + "，回收数量=" + result.response().reclaimedCardKeyCount());
+        return result.response();
+    }
+
+    /**
+     * Shared formal refund transaction. Callers must already hold the order
+     * row lock and must have validated the allowed state transition.
+     */
+    private RefundResult refundLocked(Order order, String normalizedReason,
+                                      UUID operatorId, boolean reclaimCardKeys) {
+        validateRefundTarget(order);
 
         // Keep the business lock order stable: Order -> User. Do not move this
         // read above the order lock even if a caller already knows the user id.
@@ -177,21 +241,24 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         balanceTransactionService.recordRefund(
                 user.getId(), refundAmount, balanceBefore, balanceAfter, order.getId(),
                 normalizedReason, operatorId);
-        operationLogService.logCurrentRequest(
-                "order.refund",
-                "ORDER",
-                order.getId().toString(),
-                "订单号=" + order.getOrderNo()
-                        + "，退款金额=" + refundAmount.toPlainString()
-                        + "，退款去向=" + REFUND_DESTINATION
-                        + "，回收卡密=" + (reclaimCardKeys ? "是" : "否")
-                        + "，回收数量=" + reclaimPlan.keys().size()
-                        + "，原因=" + auditReason(normalizedReason));
 
-        return new AdminOrderRefundResponse(
-                order.getId(), order.getOrderNo(), order.getStatus(), refundAmount,
-                refundedAt, REFUND_DESTINATION, balanceBefore, balanceAfter,
-                reclaimPlan.keys().size());
+        return new RefundResult(
+                new AdminOrderRefundResponse(
+                        order.getId(), order.getOrderNo(), order.getStatus(), refundAmount,
+                        refundedAt, REFUND_DESTINATION, balanceBefore, balanceAfter,
+                        reclaimPlan.keys().size()),
+                reclaimPlan);
+    }
+
+    private UUID requireAdminOperator() {
+        RequestContext.UserInfo operator = RequestContext.get();
+        UUID operatorId = operator == null ? null : operator.getUserId();
+        if (operatorId == null
+                || (!UserRole.ADMIN.name().equals(operator.getRole())
+                && !UserRole.SUPER_ADMIN.name().equals(operator.getRole()))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可执行退款");
+        }
+        return operatorId;
     }
 
     private String validateRequest(String reason, boolean confirmed) {
@@ -217,6 +284,34 @@ public class OrderRefundServiceImpl implements OrderRefundService {
             throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,
                     "仅 PAID 或 DELIVERED 状态订单支持退款");
         }
+    }
+
+    private void validateRefundTarget(Order order) {
+        if (order.getUserId() == null || order.getOrderType() != OrderType.NORMAL) {
+            throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,
+                    "仅支持注册普通用户订单退款，游客订单暂不支持退款");
+        }
+    }
+
+    private void ensurePendingAfterSale(Order order, AfterSaleRequest request) {
+        if (request.getOrderId() == null || !order.getId().equals(request.getOrderId())
+                || request.getStatus() != AfterSaleRequestStatus.PENDING
+                || request.getUserId() == null || !request.getUserId().equals(order.getUserId())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后申请与订单不一致");
+        }
+        if (request.getSourceOrderStatus() != OrderStatus.PAID
+                && request.getSourceOrderStatus() != OrderStatus.DELIVERED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后申请原始状态无效");
+        }
+    }
+
+    private String refundAuditDetail(Order order, RefundResult result, String normalizedReason) {
+        return "订单号=" + order.getOrderNo()
+                + "，退款金额=" + result.response().refundAmount().toPlainString()
+                + "，退款去向=" + REFUND_DESTINATION
+                + "，回收卡密=" + (result.reclaimPlan().keys().isEmpty() ? "否" : "是")
+                + "，回收数量=" + result.response().reclaimedCardKeyCount()
+                + "，原因=" + auditReason(normalizedReason);
     }
 
     private void cancelUnfinishedFulfillment(List<OrderItem> items, Set<UUID> reclaimedItemIds) {
@@ -336,6 +431,9 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         private static ReclaimPlan empty() {
             return new ReclaimPlan(List.of(), List.of(), Set.of());
         }
+    }
+
+    private record RefundResult(AdminOrderRefundResponse response, ReclaimPlan reclaimPlan) {
     }
 
     private BigDecimal money(BigDecimal value, String message) {
