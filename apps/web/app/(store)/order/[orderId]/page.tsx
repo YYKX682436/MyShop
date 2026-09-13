@@ -1,14 +1,17 @@
 "use client"
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ReactNode } from "react"
+import Image from "next/image"
 import Link from "next/link"
-import { Clock, Copy, Download, KeyRound, RefreshCw, XCircle } from "lucide-react"
+import { Clock, Copy, Download, KeyRound, Package, RefreshCw, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { useSearchParams } from "next/navigation"
 import { useLocale, useSiteConfig } from "@/lib/context"
-import { getApiErrorMessage, orderApi } from "@/services/api"
-import type { OrderDeliveryGroup, OrderView } from "@/types"
+import { getApiErrorMessage, orderApi, productApi } from "@/services/api"
+import type { OrderDeliveryGroup, OrderItemDetail, OrderView, ProductDetail } from "@/types"
 import { cn, detectPaymentDevice, formatDateTime, formatYuan } from "@/lib/utils"
+import { formatCardContent, formatCardContents } from "@/lib/card-display"
 import { clearPaymentAction, getPaymentActionEnvironment, readPaymentAction, resolvePaymentEntry, savePaymentAction, shouldSeedPaymentAction } from "@/lib/payment-entry"
 import { applyPaymentStatus, applyPaymentStatusError, createPaymentPageActionState, type PaymentStatusRequestKind } from "@/lib/payment-page-state"
 import { PaymentActionRenderer } from "@/components/shared/payment-action-renderer"
@@ -16,10 +19,9 @@ import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { ContactSupport } from "@/components/shared/contact-methods"
 import { MarkdownContent } from "@/components/shared/markdown-content"
+import { ProductDescription } from "@/components/shared/product-description"
 import { isManualFulfillmentItem } from "@/lib/order-status"
 import { getOrderStatusPollInterval, shouldPollOrderStatus } from "@/lib/order-polling"
-import type { TranslationKey } from "@/lib/i18n"
-import type { OrderItemDetail } from "@/types"
 
 const PAYMENT_RETURN_TIMEOUT = 20000
 const MANUAL_REFRESH_COOLDOWN = 10
@@ -32,6 +34,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const paymentReturn = searchParams.get("paymentReturn") === "1"
   const initialAction = useMemo(() => readPaymentAction(orderId), [orderId])
   const [view, setView] = useState<OrderView | null>(null)
+  const [productDetails, setProductDetails] = useState<Record<string, ProductDetail>>({})
   const [timeLeft, setTimeLeft] = useState(-1)
   const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
@@ -42,6 +45,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const [pageVisible, setPageVisible] = useState(() => typeof document === "undefined" || document.visibilityState === "visible")
   const requestInFlight = useRef(false)
   const viewRef = useRef<OrderView | null>(null)
+  const requestedProductIds = useRef(new Set<string>())
   const returnDeadline = useRef<number | null>(paymentReturn ? Date.now() + PAYMENT_RETURN_TIMEOUT : null)
 
   const fetchView = useCallback(async (requestKind: PaymentStatusRequestKind, forceRefresh = false): Promise<string | null> => {
@@ -75,6 +79,42 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   useEffect(() => {
     void fetchView("initial", paymentReturn)
   }, [fetchView, paymentReturn])
+
+  const orderItems = useMemo(() => view?.order.items ?? [], [view?.order.items])
+  const productIds = useMemo(
+    () => Array.from(new Set(orderItems.map(item => item.product_id).filter((id): id is string => Boolean(id)))),
+    [orderItems],
+  )
+  const productIdKey = productIds.join("|")
+
+  useEffect(() => {
+    if (!productIdKey) return
+    const idsToFetch = productIdKey.split("|").filter(productId => !requestedProductIds.current.has(productId))
+    if (idsToFetch.length === 0) return
+
+    idsToFetch.forEach(productId => requestedProductIds.current.add(productId))
+    let cancelled = false
+    void Promise.all(idsToFetch.map(async productId => {
+      try {
+        return { productId, product: await productApi.getDetail(productId) }
+      } catch {
+        // The order snapshot remains authoritative when a product was removed,
+        // unpublished, or its public detail request temporarily failed.
+        return null
+      }
+    })).then(results => {
+      if (cancelled) return
+      setProductDetails(current => {
+        const next = { ...current }
+        for (const result of results) {
+          if (result) next[result.productId] = result.product
+        }
+        return next
+      })
+    })
+
+    return () => { cancelled = true }
+  }, [productIdKey])
 
   useEffect(() => {
     if (!view || !pageVisible || !shouldPollOrderStatus(view.order.status, view.order.items)) return
@@ -186,7 +226,8 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const methodName = getPaymentLabel(paymentMethod, t)
   const brandColor = getPaymentBrandColor(paymentMethod)
   const deliveredGroups = view?.delivery.groups?.filter(group => group.delivery_type?.toUpperCase() === "AUTO") ?? []
-  const orderItems = view?.order.items ?? []
+  const deliveredGroupsWithNumbers = withDeliveryStartNumbers(deliveredGroups)
+  const deliveredCardCount = deliveredGroups.reduce((count, group) => count + group.delivery_items.length, 0)
   const automaticCardItems = orderItems.filter(item =>
     !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
   )
@@ -201,7 +242,14 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     && item.fulfillment_status !== "DELIVERED"
     && item.fulfillment_status !== "CANCELLED"
   )
-  const hasCards = deliveredGroups.length > 0
+  const hasCards = deliveredCardCount > 0
+  const purchasedProducts = productIds
+    .map(productId => productDetails[productId])
+    .filter((product): product is ProductDetail => Boolean(product))
+  const paymentInfoCode = view?.order.order_type === "ADMIN_PICKUP"
+    ? "ADMIN_PICKUP"
+    : view?.payment?.payment_type || view?.order.payment_method || null
+  const paymentInfoLabel = paymentInfoCode ? getPaymentLabel(paymentInfoCode, t) : null
   const retryButton = <button type="button" onClick={() => void retryPayment()} disabled={retrying} className="inline-flex h-11 items-center gap-2 rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", retrying && "animate-spin")} />{t("order.retryPayment")}</button>
   const retryStatusButton = <button type="button" onClick={() => void manualRefresh()} disabled={refreshing} className="inline-flex h-10 items-center gap-2 rounded-control border border-border-strong bg-surface px-4 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{t("payment.retryLoad")}</button>
 
@@ -213,78 +261,122 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     return <div className="surface mx-auto flex max-w-lg flex-col items-center gap-4 p-8 text-center"><XCircle className="h-12 w-12 text-muted-foreground" /><h1 className="text-xl font-semibold">{t("payment.expired")}</h1><p className="text-sm text-muted-foreground">{t("payment.expiredDesc")}</p><Link href="/" className="inline-flex h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99]">{t("order.backHome")}</Link></div>
   }
 
-  return <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 py-2">
-    <div className="flex flex-wrap items-center justify-between gap-3">
+  return <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 py-2 sm:gap-6">
+    <header className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <p className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("order.lifecycleTitle")}</h1>
       </div>
       <OrderStatusBadge status={status} items={orderItems} />
-    </div>
+    </header>
 
-    <section className="surface space-y-5 p-5 sm:p-7">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">{view.order.items[0]?.product_title || t("order.lifecycleTitle")}</p>
-          <p className="mt-1 font-mono text-sm font-medium text-foreground">{t("order.orderNo")} {view.order.order_no}</p>
-          {view.order.items.length > 1 && <p className="mt-1 text-xs text-muted-foreground">{t("order.itemsCount").replace("{count}", String(view.order.items.length))}</p>}
-          <p className="mt-3 text-3xl font-semibold tracking-tight text-foreground">{formatYuan(view.order.actual_amount ?? view.order.total_amount)}</p>
-        </div>
-        <div className="text-right text-xs text-muted-foreground">
-          <p>{t("order.createdAt")}</p>
-          <p className="mt-1">{formatDateTime(view.order.created_at, locale)}</p>
-          {view.order.paid_at && <><p className="mt-3">{t("order.paidAt")}</p><p className="mt-1">{formatDateTime(view.order.paid_at, locale)}</p></>}
+    <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-purchase-summary-title">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 id="order-purchase-summary-title" className="text-base font-semibold text-foreground">{t("order.purchaseSummary")}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{t("order.itemsCount").replace("{count}", String(orderItems.length))}</p>
         </div>
       </div>
-
-      {status === "REFUNDED" && (
-        <div className="rounded-control border border-violet-300/50 bg-violet-50/70 px-4 py-3 text-sm dark:border-violet-500/30 dark:bg-violet-950/20" role="status">
-          <p className="font-medium text-foreground">{t("order.refunded")}</p>
-          <p className="mt-1 text-muted-foreground">{t("order.refundedDescription")}</p>
-          <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-            <span>{t("order.refundAmount")}: <strong className="font-semibold text-foreground">{formatYuan(view.order.actual_amount ?? view.order.total_amount)}</strong></span>
-            <span>{t("order.refundDestination")}: <strong className="font-semibold text-foreground">{t("order.refundToBalance")}</strong></span>
-            {view.order.refunded_at && <span>{t("order.refundedAt")}: <strong className="font-semibold text-foreground">{formatDateTime(view.order.refunded_at, locale)}</strong></span>}
-          </div>
-          {(view.order.reclaimed_card_key_count ?? 0) > 0
-            ? <p className="mt-3 rounded-control border border-emerald-300/50 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.reclaimedCardKeys").replace("{count}", String(view.order.reclaimed_card_key_count))}</p>
-            : (hasCards || deliveredManualItems.length > 0) && <p className="mt-3 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("order.deliveredRefundNotice")}</p>}
-        </div>
-      )}
-
-      {status === "PENDING" && (
-        <div className="space-y-4 border-t border-border-subtle pt-5">
-          {checkingReturn && <div className="rounded-control border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary" role="status">{t("order.paymentReturn")}</div>}
-          {returnTimedOut && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200" role="status">{t("order.paymentReturnTimeout")}</div>}
-          <div className="flex items-center justify-between gap-3 text-sm"><span className="text-muted-foreground">{t("payment.remaining")}</span><span className={cn("inline-flex items-center gap-1 font-mono text-lg font-bold", timeLeft >= 0 && timeLeft < 120 && "text-destructive")}><Clock className="h-4 w-4" />{timeLeft < 0 ? "--:--" : formatTime(timeLeft)}</span></div>
-          {view.order.payment_method === "ONLINE" && (
-            <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-surface px-6 pb-8 pt-6" style={{ backgroundColor: brandColor || "#374151" }}>
-              <div className="flex items-center gap-2.5"><PaymentIcon method={paymentMethod} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div>
-              <p className="text-sm font-medium text-white/90">{getPaymentScanHint(paymentMethod, t)}</p>
-              <PaymentActionRenderer action={paymentState.nextAction} loadState={paymentState.phase} statusError={paymentState.errorMessage} retryAction={retryButton} retryStatusAction={retryStatusButton} />
+      <div className="divide-y divide-border-subtle">
+        {orderItems.map(item => {
+          const product = productDetails[item.product_id]
+          return (
+            <div key={item.id} className="flex min-w-0 items-center gap-3 py-3 first:pt-0 last:pb-0">
+              <Link href={`/product/${item.product_id}`} className="shrink-0 rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" aria-label={item.product_title}>
+                <ProductCover product={product} title={item.product_title} />
+              </Link>
+              <div className="min-w-0 flex-1">
+                <Link href={`/product/${item.product_id}`} className="block break-words text-sm font-semibold text-foreground transition-colors hover:text-primary">
+                  {item.product_title}
+                </Link>
+                {item.spec_name && <p className="mt-0.5 break-words text-xs text-muted-foreground">{item.spec_name}</p>}
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span>{t("order.quantity")}: {item.quantity}</span>
+                  <span>{t("order.unitPrice")}: {formatYuan(item.unit_price)}</span>
+                </div>
+              </div>
+              <span className="shrink-0 text-right text-sm font-semibold text-foreground">{formatYuan(item.subtotal)}</span>
             </div>
-          )}
-          {view.order.payment_method !== "ONLINE" && automaticCardItems.length > 0 && <p className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</p>}
-        </div>
-      )}
-
-      {(status === "PAID" || status === "DELIVERED" || status === "REFUNDED") && (
-        <div className="space-y-4 border-t border-border-subtle pt-5">
-          {waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
-          {pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
-          {hasCards && <div className="rounded-control border border-emerald-300/50 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.deliveryReady")}</div>}
-          {hasCards && <div className="flex flex-wrap justify-end gap-2"><button type="button" onClick={() => copy(allCardText(deliveredGroups))} className="inline-flex h-9 items-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"><Copy className="h-3.5 w-3.5" />{t("order.copyAll")}</button><button type="button" onClick={() => void exportKeys()} className="inline-flex h-9 items-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"><Download className="h-3.5 w-3.5" />{t("order.exportKeys")}</button></div>}
-          <div className="space-y-3">{deliveredGroups.map((group, index) => <DeliveryGroup key={`${group.product_no}-${index}`} group={group} index={index} onCopy={copy} copyLabel={t("order.copyKey")} countLabel={t("order.deliveredCount").replace("{count}", String(group.delivery_items.length))} />)}</div>
-          <div className="space-y-3">{deliveredManualItems.map((item, index) => <ManualDeliveryItem key={item.id} item={item} index={index} statusLabel={t("status.DELIVERED")} emptyLabel={t("order.manualDeliveryEmpty")} contentTitle={t("order.manualDeliveryContentTitle")} />)}</div>
-          {status !== "REFUNDED" && !hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
-        </div>
-      )}
+          )
+        })}
+      </div>
+      <div className="flex items-center justify-between gap-3 border-t border-border-subtle pt-3">
+        <span className="text-xs text-muted-foreground">{t("order.paidAmount")}</span>
+        <span className="text-base font-semibold tracking-tight text-foreground">{formatYuan(view.order.actual_amount ?? view.order.total_amount)}</span>
+      </div>
     </section>
 
-    <section className="surface space-y-3 p-5 sm:p-7">
-      <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><KeyRound className="h-4 w-4 text-primary" />{t("order.orderItems")}</h2>
-      <div className="divide-y divide-border-subtle">{view.order.items.map(item => <div key={item.id} className="flex flex-wrap items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"><div><p className="text-sm font-medium text-foreground">{item.product_title}{item.spec_name ? ` · ${item.spec_name}` : ""}</p><p className="mt-1 text-xs text-muted-foreground">×{item.quantity} · {isManualFulfillmentItem(item) ? t("product.deliveryManual") : t("product.deliveryAuto")}</p><p className="mt-1 text-xs text-muted-foreground">{itemFulfillmentLabel(item, t)}</p></div><span className="text-sm font-semibold text-foreground">{formatYuan(item.subtotal)}</span></div>)}</div>
+    <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-information-title">
+      <h2 id="order-information-title" className="text-base font-semibold text-foreground">{t("order.orderInformation")}</h2>
+      <dl className="grid min-w-0 gap-x-6 gap-y-4 sm:grid-cols-2">
+        <OrderInfoField label={t("order.orderNo")}><span className="break-all font-mono text-xs font-medium">{view.order.order_no}</span></OrderInfoField>
+        <OrderInfoField label={t("order.createdAt")}>{formatDateTime(view.order.created_at, locale)}</OrderInfoField>
+        {view.order.paid_at && <OrderInfoField label={t("order.paidAt")}>{formatDateTime(view.order.paid_at, locale)}</OrderInfoField>}
+        {view.order.delivered_at && <OrderInfoField label={t("order.deliveredAt")}>{formatDateTime(view.order.delivered_at, locale)}</OrderInfoField>}
+        {paymentInfoLabel && <OrderInfoField label={t("order.paymentMethod")}>
+          <span className="flex min-w-0 items-center gap-2">
+            <PaymentIcon method={paymentInfoCode!} className="h-5 w-5" />
+            <span className="min-w-0 break-words">{paymentInfoLabel}{view.order.payment_channel_code && ` (${view.order.payment_channel_code})`}</span>
+          </span>
+        </OrderInfoField>}
+      </dl>
     </section>
+
+    {status === "PENDING" && (
+      <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-payment-title">
+        <h2 id="order-payment-title" className="text-base font-semibold text-foreground">{t("payment.title")}</h2>
+        {checkingReturn && <div className="rounded-control border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary" role="status">{t("order.paymentReturn")}</div>}
+        {returnTimedOut && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200" role="status">{t("order.paymentReturnTimeout")}</div>}
+        <div className="flex items-center justify-between gap-3 text-sm"><span className="text-muted-foreground">{t("payment.remaining")}</span><span className={cn("inline-flex items-center gap-1 font-mono text-lg font-bold", timeLeft >= 0 && timeLeft < 120 && "text-destructive")}><Clock className="h-4 w-4" />{timeLeft < 0 ? "--:--" : formatTime(timeLeft)}</span></div>
+        {view.order.payment_method === "ONLINE" && (
+          <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-surface px-6 pb-8 pt-6" style={{ backgroundColor: brandColor || "#374151" }}>
+            <div className="flex items-center gap-2.5"><PaymentIcon method={paymentMethod} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div>
+            <p className="text-sm font-medium text-white/90">{getPaymentScanHint(paymentMethod, t)}</p>
+            <PaymentActionRenderer action={paymentState.nextAction} loadState={paymentState.phase} statusError={paymentState.errorMessage} retryAction={retryButton} retryStatusAction={retryStatusButton} />
+          </div>
+        )}
+        {view.order.payment_method !== "ONLINE" && automaticCardItems.length > 0 && <p className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</p>}
+      </section>
+    )}
+
+    {(status === "PAID" || status === "DELIVERED" || status === "REFUNDED") && (
+      <section className="surface-raised space-y-4 p-4 sm:p-5" aria-labelledby="order-delivery-result-title">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="order-delivery-result-title" className="flex items-center gap-2 text-base font-semibold text-foreground"><KeyRound className="h-4 w-4 text-primary" />{t("order.deliveryResult")}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{t("order.deliveredCount").replace("{count}", String(deliveredCardCount))}</p>
+          </div>
+          {hasCards && <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
+            <button type="button" onClick={() => copy(allCardText(deliveredGroups))} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted sm:flex-none"><Copy className="h-3.5 w-3.5" />{t("order.copyAll")}</button>
+            <button type="button" onClick={() => void exportKeys()} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted sm:flex-none"><Download className="h-3.5 w-3.5" />{t("order.exportKeys")}</button>
+          </div>}
+        </div>
+
+        {status === "REFUNDED" && (
+          <div className="rounded-control border border-violet-300/50 bg-violet-50/70 px-4 py-3 text-sm dark:border-violet-500/30 dark:bg-violet-950/20" role="status">
+            <p className="font-medium text-foreground">{t("order.refunded")}</p>
+            <p className="mt-1 text-muted-foreground">{t("order.refundedDescription")}</p>
+            <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+              <span>{t("order.refundAmount")}: <strong className="font-semibold text-foreground">{formatYuan(view.order.actual_amount ?? view.order.total_amount)}</strong></span>
+              <span>{t("order.refundDestination")}: <strong className="font-semibold text-foreground">{t("order.refundToBalance")}</strong></span>
+              {view.order.refunded_at && <span>{t("order.refundedAt")}: <strong className="font-semibold text-foreground">{formatDateTime(view.order.refunded_at, locale)}</strong></span>}
+            </div>
+            {(view.order.reclaimed_card_key_count ?? 0) > 0
+              ? <p className="mt-3 rounded-control border border-emerald-300/50 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.reclaimedCardKeys").replace("{count}", String(view.order.reclaimed_card_key_count))}</p>
+              : (hasCards || deliveredManualItems.length > 0) && <p className="mt-3 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("order.deliveredRefundNotice")}</p>}
+          </div>
+        )}
+
+        {waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
+        {pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
+        {hasCards && <div className="rounded-control border border-emerald-300/50 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.deliveryReady")}</div>}
+        {hasCards && <div className="space-y-3">{deliveredGroupsWithNumbers.map(({ group, startNumber }, index) => <DeliveryGroup key={`${group.product_no}-${group.spec_name || "no-spec"}-${index}`} group={group} startNumber={startNumber} onCopy={copy} copyLabel={t("order.copyKey")} countLabel={t("order.deliveredCount").replace("{count}", String(group.delivery_items.length))} />)}</div>}
+        {deliveredManualItems.length > 0 && <div className="space-y-3">{deliveredManualItems.map(item => <ManualDeliveryItem key={item.id} item={item} statusLabel={t("status.DELIVERED")} emptyLabel={t("order.manualDeliveryEmpty")} contentTitle={t("order.manualDeliveryContentTitle")} />)}</div>}
+        {status !== "REFUNDED" && !hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
+      </section>
+    )}
+
+    {purchasedProducts.map(product => <ProductDescription key={product.id} product={product} />)}
 
     <div className="flex flex-wrap items-center justify-center gap-3">
       {status !== "REFUNDED" && <button type="button" onClick={() => void manualRefresh()} disabled={refreshCooldown > 0 || refreshing} className="inline-flex h-11 items-center gap-2 rounded-control border border-border-strong bg-surface px-5 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{refreshing ? t("order.refreshing") : refreshCooldown > 0 ? `${refreshCooldown}${t("payment.refreshLimit")}` : t("order.refresh")}</button>}
@@ -293,15 +385,38 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   </div>
 }
 
+function ProductCover({ product, title }: { product?: ProductDetail; title: string }) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const coverUrl = product?.cover_url?.trim()
+
+  return (
+    <div className="relative flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted">
+      {coverUrl && !imageFailed ? (
+        <Image src={coverUrl} alt="" fill unoptimized sizes="56px" className="object-contain" onError={() => setImageFailed(true)} />
+      ) : (
+        <Package className="size-6 text-muted-foreground/35" aria-hidden="true" />
+      )}
+      <span className="sr-only">{title}</span>
+    </div>
+  )
+}
+
+function OrderInfoField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="min-w-0 space-y-1">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words text-sm text-foreground">{children}</dd>
+    </div>
+  )
+}
+
 function ManualDeliveryItem({
   item,
-  index,
   statusLabel,
   emptyLabel,
   contentTitle,
 }: {
   item: OrderItemDetail
-  index: number
   statusLabel: string
   emptyLabel: string
   contentTitle: string
@@ -310,7 +425,7 @@ function ManualDeliveryItem({
     <article className="overflow-hidden rounded-card border border-primary/20 bg-primary/5">
       <div className="border-b border-primary/10 px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-foreground">{index + 1}. {item.product_title}</p>
+          <p className="break-words text-sm font-semibold text-foreground">{item.product_title}</p>
           <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">{statusLabel}</span>
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
@@ -327,21 +442,45 @@ function ManualDeliveryItem({
   )
 }
 
-function itemFulfillmentLabel(
-  item: OrderItemDetail,
-  t: (key: TranslationKey) => string,
-) {
-  if (item.fulfillment_status === "WAITING_MANUAL") return t("status.WAITING_MANUAL")
-  if (item.fulfillment_status === "DELIVERED") return t("status.DELIVERED")
-  if (item.fulfillment_status === "CANCELLED") return t("order.itemCancelled")
-  if (item.fulfillment_status === "PENDING") return t("status.PENDING")
-  return isManualFulfillmentItem(item) ? t("status.WAITING_MANUAL") : t("status.WAITING_AUTO")
+function withDeliveryStartNumbers(groups: ReadonlyArray<OrderDeliveryGroup>) {
+  let nextNumber = 1
+  return groups.map(group => {
+    const numberedGroup = { group, startNumber: nextNumber }
+    nextNumber += group.delivery_items.length
+    return numberedGroup
+  })
 }
 
-function DeliveryGroup({ group, index, onCopy, copyLabel, countLabel }: { group: OrderDeliveryGroup; index: number; onCopy: (value: string) => void; copyLabel: string; countLabel: string }) {
-  return <article className="overflow-hidden rounded-card border border-border-subtle bg-surface"><div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-muted/70 px-4 py-3"><div><p className="text-sm font-semibold text-foreground">{index + 1}. {group.product_title}</p>{group.spec_name && <p className="mt-0.5 text-xs text-muted-foreground">{group.spec_name}</p>}</div><span className="text-xs text-muted-foreground">{countLabel}</span></div><div className="space-y-2 p-4">{group.delivery_items.map((item, itemIndex) => { const value = item.content_parts.join("\t"); return <div key={`${itemIndex}-${value}`} className="flex items-start gap-2 rounded-control border border-border-subtle bg-surface-muted/40 p-3"><code className="min-w-0 flex-1 whitespace-pre-wrap break-all text-xs leading-5 text-foreground">{value}</code><button type="button" onClick={() => onCopy(value)} className="inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"><Copy className="h-3.5 w-3.5" />{copyLabel}</button></div> })}</div></article>
+function DeliveryGroup({ group, startNumber, onCopy, copyLabel, countLabel }: { group: OrderDeliveryGroup; startNumber: number; onCopy: (value: string) => void; copyLabel: string; countLabel: string }) {
+  return (
+    <article className="overflow-hidden rounded-card border border-border-subtle bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle bg-surface-muted/70 px-4 py-3">
+        <div className="min-w-0">
+          <p className="break-words text-sm font-semibold text-foreground">{group.product_title}</p>
+          {group.spec_name && <p className="mt-0.5 break-words text-xs text-muted-foreground">{group.spec_name}</p>}
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">{countLabel}</span>
+      </div>
+      <ol className="list-none space-y-2 p-3 sm:p-4" aria-label={group.product_title}>
+        {group.delivery_items.map((item, itemIndex) => {
+          const value = formatCardContent(item.content_parts)
+          return (
+            <li key={`${startNumber + itemIndex}`} className="flex min-w-0 flex-col gap-3 rounded-control border border-border-subtle bg-surface-muted/40 p-3 sm:flex-row sm:items-start sm:gap-4">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary" aria-hidden="true">{startNumber + itemIndex}</span>
+                <div className="flex min-w-0 flex-1 flex-wrap items-start gap-2">
+                  {item.content_parts.map((part, partIndex) => <code key={`${itemIndex}-${partIndex}`} className="max-w-full min-w-0 rounded-control border border-border-subtle bg-surface px-2.5 py-1.5 text-xs leading-5 text-foreground whitespace-pre-wrap break-all [overflow-wrap:anywhere]">{part}</code>)}
+                </div>
+              </div>
+              <button type="button" onClick={() => onCopy(value)} className="inline-flex min-h-10 w-full shrink-0 items-center justify-center gap-1 rounded-control border border-border-subtle px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface hover:text-foreground sm:w-auto sm:self-start"><Copy className="h-3.5 w-3.5" />{copyLabel}</button>
+            </li>
+          )
+        })}
+      </ol>
+    </article>
+  )
 }
 
-function allCardText(groups: OrderDeliveryGroup[]): string {
-  return groups.flatMap(group => group.delivery_items.map(item => item.content_parts.join("\t"))).join("\n")
+function allCardText(groups: ReadonlyArray<OrderDeliveryGroup>): string {
+  return formatCardContents(groups.flatMap(group => group.delivery_items))
 }

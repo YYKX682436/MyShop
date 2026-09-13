@@ -290,13 +290,35 @@ test("admin order mutations publish one shared invalidation after the detail ref
 })
 
 test("storefront markdown surfaces use the shared safe renderer", () => {
-  const productSource = readSource("../app/(store)/product/[id]/product-description.tsx")
+  const productSource = readSource("../components/shared/product-description.tsx")
+  const productPageSource = readSource("../app/(store)/product/[id]/page.tsx")
   const shellSource = readSource("../app/(store)/store-shell-client.tsx")
 
   assert.match(productSource, /MarkdownContent/)
+  assert.match(productPageSource, /@\/components\/shared\/product-description/)
   assert.match(shellSource, /MarkdownContent/)
   assert.doesNotMatch(productSource, /ReactMarkdown/)
   assert.doesNotMatch(shellSource, /ReactMarkdown/)
+})
+
+test("storefront order details fetch unique product metadata and keep card content out of UI labels", () => {
+  const orderSource = readSource("../app/(store)/order/[orderId]/page.tsx")
+  const i18nSource = readSource("./i18n.ts")
+
+  assert.match(orderSource, /productApi\.getDetail/)
+  assert.match(orderSource, /new Set\(orderItems\.map\(item => item\.product_id\)/)
+  assert.match(orderSource, /formatCardContent\(item\.content_parts\)/)
+  assert.match(orderSource, /formatCardContents\(groups\.flatMap/)
+  assert.match(orderSource, /startNumber \+ itemIndex/)
+  assert.doesNotMatch(orderSource, /\{index \+ 1\}\. \{group\.product_title\}/)
+  assert.doesNotMatch(orderSource, /console\.(log|info|debug|warn|error)/)
+  assert.match(i18nSource, /"myOrders\.paid": "待发货"/)
+  assert.match(i18nSource, /"status\.PAID_FILTER": "待发货"/)
+  assert.match(i18nSource, /"status\.WAITING_AUTO": "待发货"/)
+  assert.match(i18nSource, /"myOrders\.paid": "Awaiting fulfillment"/)
+  assert.match(i18nSource, /"status\.PAID_FILTER": "Awaiting fulfillment"/)
+  assert.match(i18nSource, /"status\.WAITING_AUTO": "Awaiting fulfillment"/)
+  assert.doesNotMatch(i18nSource, /已支付（未完成发货）|待自动发货|Paid \(not fully fulfilled\)|Awaiting automatic delivery/)
 })
 
 test("operation-log surfaces mask UUIDs instead of rendering technical target identifiers", () => {
