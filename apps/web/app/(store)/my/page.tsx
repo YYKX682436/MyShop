@@ -62,7 +62,7 @@ function LoadingAccount() {
           <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07] sm:size-24" />
           <div className="min-w-0 flex-1 space-y-2 pt-1">
             <div className="h-5 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="mt-2 flex w-full min-w-0 items-center justify-between gap-3">
+            <div className="mt-2 flex min-w-0 max-w-full items-center gap-2">
               <div className="h-6 w-28 min-w-0 animate-pulse rounded-full bg-foreground/[0.07]" />
               <div className="h-3 w-20 shrink-0 animate-pulse rounded-full bg-foreground/[0.07]" />
             </div>
@@ -213,14 +213,14 @@ export default function MyPage() {
               </button>
             </h2>
             {(identityBadge || (!isAdminRole(user.role) && user.user_no !== null)) && (
-              <div className="mt-2 flex w-full min-w-0 items-center justify-between gap-3">
+              <div className="mt-2 flex min-w-0 max-w-full items-center gap-2">
                 {identityBadge}
                 {!isAdminRole(user.role) && user.user_no !== null && (
                   <button
                     type="button"
                     onClick={handleCopyUserId}
                     aria-label={t("my.copyUserId")}
-                    className="ml-auto inline-flex shrink-0 items-center rounded px-1 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    className="inline-flex shrink-0 items-center rounded px-1 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   >
                     <span className="whitespace-nowrap">{t("my.userId").replace("{id}", String(user.user_no))}</span>
                   </button>
