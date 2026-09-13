@@ -44,6 +44,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -220,6 +221,118 @@ class AdminCardKeyServiceImplTest {
         verify(cardKeyRepository).saveAll(keys.capture());
         assertEquals(List.of("A"), keys.getValue().get(0).getContentParts());
         assertEquals(CardKeyStatus.AVAILABLE, keys.getValue().get(0).getStatus());
+    }
+
+    @Test
+    void activeTwoColumnPoolAcceptsMatchingTwoColumnImport() {
+        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+        stubBatchSave();
+
+        Map<String, Object> result = service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A", "B")), UUID.randomUUID());
+
+        assertEquals(1, result.get("success_count"));
+        assertEquals(2, result.get("column_count"));
+        verify(cardKeyRepository).lockImportPool(productId, null);
+        ArgumentCaptor<CardImportBatch> batch = ArgumentCaptor.forClass(CardImportBatch.class);
+        verify(batchRepository).save(batch.capture());
+        assertEquals(2, batch.getValue().getColumnCount());
+    }
+
+    @Test
+    void activeTwoColumnPoolRejectsOneColumnImportBeforeAnyWrites() {
+        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+        stubBatchSave();
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A")), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        assertEquals("当前库存池为 2 列卡券内容，本次导入为 1 列，请保持一致或先清空当前可售库存。", exception.getMessage());
+        verify(cardKeyRepository).lockImportPool(productId, null);
+        verify(batchRepository, never()).save(any(CardImportBatch.class));
+        verify(cardKeyRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void lockedTwoColumnPoolRejectsOneColumnImport() {
+        // The repository query includes LOCKED rows; the service only needs
+        // its authoritative distinct-width result here.
+        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A")), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        verify(batchRepository, never()).save(any(CardImportBatch.class));
+        verify(cardKeyRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void soldAndInvalidHistoryDoesNotLockTheNextImportToItsOldWidth() {
+        // SOLD/INVALID rows are excluded by CardKeyRepository, represented by
+        // an empty active-width result even if their historical width was 2.
+        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of());
+        stubBatchSave();
+
+        Map<String, Object> result = service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A")), UUID.randomUUID());
+
+        assertEquals(1, result.get("success_count"));
+        assertEquals(1, result.get("column_count"));
+        verify(cardKeyRepository).lockImportPool(productId, null);
+    }
+
+    @Test
+    void dirtyActivePoolRejectsAnyNewImportWithoutChoosingAWidth() {
+        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(1, 2));
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A", "B")), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        assertEquals("当前库存池存在混合列数卡券内容（1、2列），请先处理现有可售库存后再导入。", exception.getMessage());
+        verify(batchRepository, never()).save(any(CardImportBatch.class));
+        verify(cardKeyRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void duplicateCheckOffStillLocksAndValidatesTheActivePool() {
+        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A"),
+                        "check_duplicate", false), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        verify(cardKeyRepository).lockImportPool(productId, null);
+        verify(cardKeyRepository).findActiveColumnCounts(productId, null);
+        verify(cardKeyRepository, never()).findExistingFingerprints(any(), any(), anyList());
+        verify(batchRepository, never()).save(any(CardImportBatch.class));
+        verify(cardKeyRepository, never()).saveAll(anyList());
+    }
+
+    @Test
+    void importLockCoversActiveWidthCheckAndBothWritesWhenDuplicateCheckIsOff() {
+        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of());
+        stubBatchSave();
+
+        service.importCardKeys(
+                Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("A"),
+                        "check_duplicate", false), UUID.randomUUID());
+
+        var order = inOrder(cardKeyRepository, batchRepository);
+        order.verify(cardKeyRepository).lockImportPool(productId, null);
+        order.verify(cardKeyRepository).findActiveColumnCounts(productId, null);
+        order.verify(batchRepository).save(any(CardImportBatch.class));
+        order.verify(cardKeyRepository).saveAll(anyList());
     }
 
     @Test

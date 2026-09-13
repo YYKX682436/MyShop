@@ -27,6 +27,20 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
             nativeQuery = true)
     void lockImportPool(@Param("productId") UUID productId, @Param("specId") UUID specId);
 
+    /**
+     * Returns the active content widths in one product/spec inventory pool.
+     * SOLD and INVALID history deliberately does not participate in the
+     * format contract, so a pool can adopt a new width after it is empty of
+     * deliverable keys.
+     */
+    @Query(value = "SELECT DISTINCT jsonb_array_length(content_parts) " +
+            "FROM card_keys WHERE product_id = :productId " +
+            "AND ((:specId IS NULL AND spec_id IS NULL) OR spec_id = CAST(:specId AS uuid)) " +
+            "AND status IN ('AVAILABLE', 'LOCKED') " +
+            "ORDER BY 1", nativeQuery = true)
+    List<Integer> findActiveColumnCounts(@Param("productId") UUID productId,
+                                         @Param("specId") UUID specId);
+
     @Query(value = "SELECT * FROM card_keys WHERE product_id = :productId " +
             "AND ((:specId IS NULL AND spec_id IS NULL) OR spec_id = CAST(:specId AS uuid)) " +
             "AND status = 'AVAILABLE' ORDER BY created_at ASC LIMIT :count " +

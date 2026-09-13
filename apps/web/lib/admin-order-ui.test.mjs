@@ -115,7 +115,7 @@ test("the order lifecycle page owns status, payment, delivery, copy, and export"
   assert.match(source, /orderApi\.exportKeys\(orderId\)/)
   assert.match(source, /PaymentActionRenderer/)
   assert.match(source, /deliveryWaitingManual/)
-  assert.match(source, /deliveryReady/)
+  assert.doesNotMatch(source, /t\("order\.deliveryReady"\)/)
   assert.match(source, /paymentReturn/)
 })
 
@@ -319,6 +319,39 @@ test("storefront order details fetch unique product metadata and keep card conte
   assert.match(i18nSource, /"status\.PAID_FILTER": "Awaiting fulfillment"/)
   assert.match(i18nSource, /"status\.WAITING_AUTO": "Awaiting fulfillment"/)
   assert.doesNotMatch(i18nSource, /已支付（未完成发货）|待自动发货|Paid \(not fully fulfilled\)|Awaiting automatic delivery/)
+})
+
+test("storefront order information is an accessible closed details section", () => {
+  const orderSource = readSource("../app/(store)/order/[orderId]/page.tsx")
+
+  assert.match(orderSource, /<details className="surface overflow-hidden">/)
+  assert.doesNotMatch(orderSource, /<details[^>]*\bopen\b/)
+  assert.match(orderSource, /<summary className="group flex min-h-12/)
+  assert.match(orderSource, /group-open:rotate-180/)
+  assert.match(orderSource, /view\.order\.order_no/)
+  for (const key of ["orderNo", "createdAt", "paidAt", "deliveredAt", "paymentMethod"]) {
+    assert.match(orderSource, new RegExp(`order\\.${key}`))
+  }
+  assert.match(orderSource, /id="order-information-panel"/)
+})
+
+test("all card surfaces keep one card per number and stack ordered content parts vertically", () => {
+  const sharedSource = readSource("../components/shared/card-content-parts.tsx")
+  const buyerSource = readSource("../app/(store)/order/[orderId]/page.tsx")
+  const adminOrderSource = readSource("../components/admin/orders/order-detail-sheet.tsx")
+  const adminCardSource = readSource("../app/admin/card-keys/page.tsx")
+
+  assert.doesNotMatch(sharedSource, /useState|slice\(0, 2\)|flex-wrap/)
+  assert.match(sharedSource, /resolvedParts\.map/)
+  assert.match(sharedSource, /whitespace-pre-wrap/)
+  assert.match(sharedSource, /\[overflow-wrap:anywhere\]/)
+  assert.match(buyerSource, /<CardContentParts[^>]*showPartCopy=\{false\}[^>]*showCopyAll=\{false\}/)
+  assert.doesNotMatch(buyerSource, /item\.content_parts\.map/)
+  assert.match(adminOrderSource, /<CardContentParts[^>]*showCopyAll=\{false\}/)
+  assert.doesNotMatch(adminOrderSource, /overflow-x-auto[^\n]*group\.cards/)
+  assert.doesNotMatch(adminOrderSource, /min-w-max/)
+  assert.doesNotMatch(adminCardSource, /expandedByDefault/)
+  assert.match(adminCardSource, /formatCardContents\(pickupResult\.cards\)/)
 })
 
 test("operation-log surfaces mask UUIDs instead of rendering technical target identifiers", () => {

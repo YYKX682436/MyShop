@@ -128,12 +128,14 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         boolean checkDuplicate = booleanValue(req.get("check_duplicate"), true);
         List<List<String>> rows = parsed.rows();
         List<String> fingerprints = rows.stream().map(CardContentParser::fingerprint).toList();
-        if (checkDuplicate) {
-            // The lock must cover the historical fingerprint read and the
-            // subsequent batch insert; otherwise two concurrent imports can
-            // both observe an empty history and insert the same card.
-            cardKeyRepository.lockImportPool(productId, specId);
-        }
+
+        // This transaction-scoped pool lock is required for both duplicate
+        // modes. It serializes the active format read, optional historical
+        // fingerprint read, and both writes so concurrent first imports
+        // cannot establish different content widths in the same pool.
+        cardKeyRepository.lockImportPool(productId, specId);
+        validateActiveColumnCount(productId, specId, parsed.columns().size());
+
         Set<String> historical = checkDuplicate && !fingerprints.isEmpty()
                 ? new HashSet<>(cardKeyRepository.findExistingFingerprints(productId, specId, fingerprints))
                 : Set.of();
@@ -198,6 +200,23 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         result.put("fail_detail", batch.getFailDetail());
         result.put("created_at", batch.getCreatedAt());
         return result;
+    }
+
+    private void validateActiveColumnCount(UUID productId, UUID specId, int incomingColumnCount) {
+        List<Integer> activeColumnCounts = Optional.ofNullable(
+                cardKeyRepository.findActiveColumnCounts(productId, specId)).orElseGet(List::of);
+        if (activeColumnCounts.size() > 1) {
+            String existingColumns = activeColumnCounts.stream()
+                    .map(String::valueOf)
+                    .collect(Collectors.joining("、"));
+            throw new BusinessException(ErrorCode.CARD_KEY_FORMAT_ERROR,
+                    "当前库存池存在混合列数卡券内容（" + existingColumns + "列），请先处理现有可售库存后再导入。");
+        }
+        if (activeColumnCounts.size() == 1 && activeColumnCounts.get(0) != incomingColumnCount) {
+            throw new BusinessException(ErrorCode.CARD_KEY_FORMAT_ERROR,
+                    "当前库存池为 " + activeColumnCounts.get(0) + " 列卡券内容，本次导入为 "
+                            + incomingColumnCount + " 列，请保持一致或先清空当前可售库存。");
+        }
     }
 
     @Override

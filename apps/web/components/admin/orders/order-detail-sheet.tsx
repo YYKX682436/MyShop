@@ -1,11 +1,12 @@
 "use client"
 
-import { Fragment, type ReactNode } from "react"
+import { type ReactNode } from "react"
 import { Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { MarkdownContent } from "@/components/shared/markdown-content"
+import { CardContentParts } from "@/components/shared/card-content-parts"
 import { getPaymentLabel, PaymentIcon } from "@/components/shared/payment-icon"
 import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
@@ -103,24 +104,14 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function CardRow({ card, index, cardLabel, fieldLabel, copyActionLabel, onCopy }: { card: OrderCardKey; index: number; cardLabel: string; fieldLabel: string; copyActionLabel: string; onCopy: (value: string) => void }) {
+function CardRow({ card, index, cardLabel, copyActionLabel, onCopy }: { card: OrderCardKey; index: number; cardLabel: string; copyActionLabel: string; onCopy: (value: string) => void }) {
   const parts = card.content_parts ?? []
   return (
     <div className="flex min-w-0 items-start gap-3 border-b border-border-subtle/70 py-3 last:border-b-0">
       <span className="w-14 shrink-0 pt-1 text-xs text-muted-foreground">{cardLabel} {index + 1}</span>
-      <div className="min-w-0 flex-1 overflow-x-auto">
-        <div className="flex min-w-max items-center gap-1.5 font-mono text-sm">
-          {parts.length === 0 ? <span className="text-muted-foreground">—</span> : parts.map((part, partIndex) => (
-            <Fragment key={`${card.card_key_id}-${partIndex}`}>
-              {partIndex > 0 && <span className="px-0.5 text-muted-foreground" aria-hidden="true">⇥</span>}
-              <span className="inline-flex max-w-[26rem] items-start gap-1 rounded-control bg-surface-muted px-2 py-1">
-                <span className="break-all whitespace-pre-wrap">{part}</span>
-                <CopyButton value={part} label={`${cardLabel} ${index + 1} ${fieldLabel} ${partIndex + 1}`} copyActionLabel={copyActionLabel} onCopy={onCopy} />
-              </span>
-            </Fragment>
-          ))}
-        </div>
-      </div>
+      {parts.length === 0
+        ? <span className="min-w-0 flex-1 text-sm text-muted-foreground">—</span>
+        : <CardContentParts parts={parts} onCopy={onCopy} showCopyAll={false} className="flex-1 font-mono text-sm" />}
       <CopyButton value={formatCardContent(parts)} label={`${cardLabel} ${index + 1}`} copyActionLabel={copyActionLabel} onCopy={onCopy} />
     </div>
   )
@@ -240,7 +231,7 @@ export function OrderDetailSheet({
             {detailCardKeysLoading && <div className="mt-4 flex items-center gap-2 rounded-card border border-border-subtle bg-surface-muted px-3 py-4 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" aria-hidden="true" />{t("admin.loadingCardDelivery")}</div>}
             {!detailCardKeysLoading && detailCardKeysError && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"><span>{t("admin.cardDeliveryLoadFailed")}</span>{onRetryCardKeys && <Button type="button" variant="outline" size="sm" onClick={onRetryCardKeys}>{t("common.retry")}</Button>}</div>}
             {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length === 0 && <div className="mt-4 rounded-card bg-surface-muted/70 p-4 text-sm text-muted-foreground">{order.status === "PAID" ? t("admin.paidCardDeliveryPending") : order.status === "DELIVERED" || order.status === "REFUNDED" ? t("admin.deliveredCardContentEmpty") : t("admin.cardDeliveryEmpty")}</div>}
-            {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <div className="mt-4 space-y-4">{[...cardGroups.entries()].map(([groupKey, group]) => <div key={groupKey} className="rounded-card border border-border-subtle bg-surface-muted/45 p-3 sm:p-4"><div className="mb-1 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{group.title}</h3><Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(formatCardContents(group.cards))}>{t("admin.copyGroup")}</Button></div><div className="overflow-x-auto">{group.cards.map((card, index) => <CardRow key={card.card_key_id} card={card} index={index} cardLabel={t("admin.cardNumber")} fieldLabel={t("admin.cardField")} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} />)}</div></div>)}</div>}
+            {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <div className="mt-4 space-y-4">{[...cardGroups.entries()].map(([groupKey, group]) => <div key={groupKey} className="rounded-card border border-border-subtle bg-surface-muted/45 p-3 sm:p-4"><div className="mb-1 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{group.title}</h3><Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(formatCardContents(group.cards))}>{t("admin.copyGroup")}</Button></div><div>{group.cards.map((card, index) => <CardRow key={card.card_key_id} card={card} index={index} cardLabel={t("admin.cardNumber")} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} />)}</div></div>)}</div>}
           </section>}
 
           <section className="rounded-surface border border-border-subtle bg-surface p-5 shadow-sm sm:p-6" aria-labelledby="order-product-inputs-title">

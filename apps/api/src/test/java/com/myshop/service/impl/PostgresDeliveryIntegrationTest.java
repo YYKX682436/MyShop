@@ -1,6 +1,7 @@
 package com.myshop.service.impl;
 
 import com.myshop.exception.BusinessException;
+import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.Product;
@@ -712,6 +713,146 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
+    void emptyPoolAcceptsItsFirstTwoColumnImport() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+
+        Map<String, Object> result = adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("account", "password")), UUID.randomUUID());
+
+        assertEquals(1, result.get("success_count"));
+        assertEquals(2, result.get("column_count"));
+        assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
+        assertEquals(2, scalar("select column_count from card_import_batches where id = ?",
+                Integer.class, result.get("id")));
+    }
+
+    @Test
+    void activeAvailableTwoColumnPoolAcceptsAnotherTwoColumnImport() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertCardParts(productId, List.of("existing-account", "existing-password"));
+
+        Map<String, Object> result = adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("new-account", "new-password")), UUID.randomUUID());
+
+        assertEquals(1, result.get("success_count"));
+        assertEquals(2, number("select count(*) from card_keys where product_id = ?", productId));
+        assertEquals(1, number("select count(distinct jsonb_array_length(content_parts)) from card_keys "
+                + "where product_id = ? and status in ('AVAILABLE','LOCKED')", productId));
+    }
+
+    @Test
+    void activeAvailableTwoColumnPoolRejectsOneColumnWithoutWrites() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertCardParts(productId, List.of("existing-account", "existing-password"));
+        int keysBefore = number("select count(*) from card_keys where product_id = ?", productId);
+        int batchesBefore = number("select count(*) from card_import_batches where product_id = ?", productId);
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("one-column")), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        assertEquals("当前库存池为 2 列卡券内容，本次导入为 1 列，请保持一致或先清空当前可售库存。", exception.getMessage());
+        assertEquals(keysBefore, number("select count(*) from card_keys where product_id = ?", productId));
+        assertEquals(batchesBefore, number("select count(*) from card_import_batches where product_id = ?", productId));
+    }
+
+    @Test
+    void activeLockedTwoColumnPoolRejectsOneColumn() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertCardParts(productId, List.of("locked-account", "locked-password"), CardKeyStatus.LOCKED);
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("one-column")), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
+    }
+
+    @Test
+    void soldAndInvalidHistoryDoesNotPreventAdoptingANewColumnCount() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertCardParts(productId, List.of("sold-account", "sold-password"), CardKeyStatus.SOLD);
+        insertCardParts(productId, List.of("invalid-account", "invalid-password"), CardKeyStatus.INVALID);
+
+        Map<String, Object> result = adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("new-one-column")), UUID.randomUUID());
+
+        assertEquals(1, result.get("success_count"));
+        assertEquals(1, scalar("select count(distinct jsonb_array_length(content_parts)) from card_keys "
+                + "where product_id = ? and status in ('AVAILABLE','LOCKED')", Integer.class, productId));
+        assertEquals(1, number("select count(*) from card_keys where product_id = ? and status = 'AVAILABLE'", productId));
+    }
+
+    @Test
+    void dirtyActivePoolRejectsNewImportAndPreservesAllRows() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertCardParts(productId, List.of("one-column"), CardKeyStatus.AVAILABLE);
+        insertCardParts(productId, List.of("two-account", "two-password"), CardKeyStatus.LOCKED);
+        int keysBefore = number("select count(*) from card_keys where product_id = ?", productId);
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("another", "two")), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        assertEquals("当前库存池存在混合列数卡券内容（1、2列），请先处理现有可售库存后再导入。", exception.getMessage());
+        assertEquals(keysBefore, number("select count(*) from card_keys where product_id = ?", productId));
+        assertEquals(0, number("select count(*) from card_import_batches where product_id = ?", productId));
+    }
+
+    @Test
+    void duplicateCheckOffStillAppliesTheActivePoolFormatRule() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        insertCardParts(productId, List.of("existing-account", "existing-password"));
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("one-column"),
+                "check_duplicate", false), UUID.randomUUID()));
+
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
+        assertEquals(0, number("select count(*) from card_import_batches where product_id = ?", productId));
+    }
+
+    @Test
+    void concurrentFirstImportsWithDifferentWidthsAllowOnlyOneWinner() throws Exception {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> oneColumn = executor.submit(() -> importWidthAfter(
+                    ready, start, productId, List.of("first-width-one")));
+            Future<Boolean> twoColumns = executor.submit(() -> importWidthAfter(
+                    ready, start, productId, List.of("second-width-one", "second-width-two")));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+
+            boolean oneColumnSucceeded = oneColumn.get(20, TimeUnit.SECONDS);
+            boolean twoColumnsSucceeded = twoColumns.get(20, TimeUnit.SECONDS);
+            assertNotEquals(oneColumnSucceeded, twoColumnsSucceeded);
+            assertEquals(1, number("select count(*) from card_import_batches where product_id = ?", productId));
+            assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void concurrentPaymentInitializationCreatesOneProviderPayment() throws Exception {
         UUID orderId = insertPendingOrder("payment-concurrency-channel");
         insertPaymentChannel("payment-concurrency-channel");
@@ -1020,6 +1161,23 @@ class PostgresDeliveryIntegrationTest {
                     new AdminCardKeyBatchPickupRequest(productId, null, 1), operatorId);
             return true;
         } catch (BusinessException exception) {
+            return false;
+        }
+    }
+
+    private boolean importWidthAfter(CountDownLatch ready, CountDownLatch start,
+                                     UUID productId, List<String> columns) throws Exception {
+        ready.countDown();
+        if (!start.await(20, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("card import concurrency test did not start");
+        }
+        try {
+            adminCardKeyService.importCardKeys(Map.of(
+                    "product_id", productId.toString(),
+                    "content_columns", columns), UUID.randomUUID());
+            return true;
+        } catch (BusinessException exception) {
+            assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
             return false;
         }
     }
@@ -1355,25 +1513,32 @@ class PostgresDeliveryIntegrationTest {
     }
 
     private UUID insertCard(UUID productId, String content) {
-        UUID cardId = UUID.randomUUID();
-        jdbcTemplate.update("""
-                insert into card_keys (id, created_at, updated_at, product_id, content_parts,
-                                       content_fingerprint, status)
-                values (?, current_timestamp, current_timestamp, ?, jsonb_build_array(?), ?, 'AVAILABLE')
-                """, cardId, productId, content, CardContentParser.fingerprint(List.of(content)));
-        return cardId;
+        return insertCardParts(productId, List.of(content), CardKeyStatus.AVAILABLE);
     }
 
     private UUID insertCardParts(UUID productId, List<String> parts) {
-        if (parts.size() != 2) {
-            throw new IllegalArgumentException("This test helper expects exactly two card parts");
+        return insertCardParts(productId, parts, CardKeyStatus.AVAILABLE);
+    }
+
+    private UUID insertCardParts(UUID productId, List<String> parts, CardKeyStatus status) {
+        if (parts.size() != 1 && parts.size() != 2) {
+            throw new IllegalArgumentException("This test helper expects one or two card parts");
         }
         UUID cardId = UUID.randomUUID();
-        jdbcTemplate.update("""
-                insert into card_keys (id, created_at, updated_at, product_id, content_parts,
-                                       content_fingerprint, status)
-                values (?, current_timestamp, current_timestamp, ?, jsonb_build_array(?, ?), ?, 'AVAILABLE')
-                """, cardId, productId, parts.get(0), parts.get(1), CardContentParser.fingerprint(parts));
+        if (parts.size() == 1) {
+            jdbcTemplate.update("""
+                    insert into card_keys (id, created_at, updated_at, product_id, content_parts,
+                                           content_fingerprint, status)
+                    values (?, current_timestamp, current_timestamp, ?, jsonb_build_array(?), ?, ?)
+                    """, cardId, productId, parts.get(0), CardContentParser.fingerprint(parts), status.name());
+        } else {
+            jdbcTemplate.update("""
+                    insert into card_keys (id, created_at, updated_at, product_id, content_parts,
+                                           content_fingerprint, status)
+                    values (?, current_timestamp, current_timestamp, ?, jsonb_build_array(?, ?), ?, ?)
+                    """, cardId, productId, parts.get(0), parts.get(1),
+                    CardContentParser.fingerprint(parts), status.name());
+        }
         return cardId;
     }
 

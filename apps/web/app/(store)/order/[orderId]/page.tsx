@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { Clock, Copy, Download, KeyRound, Package, RefreshCw, XCircle } from "lucide-react"
+import { ChevronDown, Clock, Copy, Download, KeyRound, Package, RefreshCw, XCircle } from "lucide-react"
 import { toast } from "sonner"
 import { useSearchParams } from "next/navigation"
 import { useLocale, useSiteConfig } from "@/lib/context"
@@ -18,6 +18,7 @@ import { PaymentActionRenderer } from "@/components/shared/payment-action-render
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { ContactSupport } from "@/components/shared/contact-methods"
+import { CardContentParts } from "@/components/shared/card-content-parts"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { ProductDescription } from "@/components/shared/product-description"
 import { isManualFulfillmentItem } from "@/lib/order-status"
@@ -306,21 +307,27 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </section>
 
-    <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-information-title">
-      <h2 id="order-information-title" className="text-base font-semibold text-foreground">{t("order.orderInformation")}</h2>
-      <dl className="grid min-w-0 gap-x-6 gap-y-4 sm:grid-cols-2">
-        <OrderInfoField label={t("order.orderNo")}><span className="break-all font-mono text-xs font-medium">{view.order.order_no}</span></OrderInfoField>
-        <OrderInfoField label={t("order.createdAt")}>{formatDateTime(view.order.created_at, locale)}</OrderInfoField>
-        {view.order.paid_at && <OrderInfoField label={t("order.paidAt")}>{formatDateTime(view.order.paid_at, locale)}</OrderInfoField>}
-        {view.order.delivered_at && <OrderInfoField label={t("order.deliveredAt")}>{formatDateTime(view.order.delivered_at, locale)}</OrderInfoField>}
-        {paymentInfoLabel && <OrderInfoField label={t("order.paymentMethod")}>
-          <span className="flex min-w-0 items-center gap-2">
-            <PaymentIcon method={paymentInfoCode!} className="h-5 w-5" />
-            <span className="min-w-0 break-words">{paymentInfoLabel}{view.order.payment_channel_code && ` (${view.order.payment_channel_code})`}</span>
-          </span>
-        </OrderInfoField>}
-      </dl>
-    </section>
+    <details className="surface overflow-hidden">
+      <summary aria-controls="order-information-panel" className="group flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t("order.orderInformation")}</span>
+        <span className="min-w-0 max-w-[55%] truncate font-mono text-xs text-muted-foreground">{view.order.order_no}</span>
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div id="order-information-panel" className="border-t border-border-subtle px-4 py-3 sm:px-5 sm:py-4">
+        <dl className="grid min-w-0 gap-x-6 gap-y-3 sm:grid-cols-2">
+          <OrderInfoField label={t("order.orderNo")}><span className="break-all font-mono text-xs font-medium">{view.order.order_no}</span></OrderInfoField>
+          <OrderInfoField label={t("order.createdAt")}>{formatDateTime(view.order.created_at, locale)}</OrderInfoField>
+          {view.order.paid_at && <OrderInfoField label={t("order.paidAt")}>{formatDateTime(view.order.paid_at, locale)}</OrderInfoField>}
+          {view.order.delivered_at && <OrderInfoField label={t("order.deliveredAt")}>{formatDateTime(view.order.delivered_at, locale)}</OrderInfoField>}
+          {paymentInfoLabel && <OrderInfoField label={t("order.paymentMethod")}>
+            <span className="flex min-w-0 items-center gap-2">
+              <PaymentIcon method={paymentInfoCode!} className="h-5 w-5" />
+              <span className="min-w-0 break-words">{paymentInfoLabel}{view.order.payment_channel_code && ` (${view.order.payment_channel_code})`}</span>
+            </span>
+          </OrderInfoField>}
+        </dl>
+      </div>
+    </details>
 
     {status === "PENDING" && (
       <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-payment-title">
@@ -369,7 +376,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
 
         {waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
         {pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
-        {hasCards && <div className="rounded-control border border-emerald-300/50 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.deliveryReady")}</div>}
         {hasCards && <div className="space-y-3">{deliveredGroupsWithNumbers.map(({ group, startNumber }, index) => <DeliveryGroup key={`${group.product_no}-${group.spec_name || "no-spec"}-${index}`} group={group} startNumber={startNumber} onCopy={copy} copyLabel={t("order.copyKey")} countLabel={t("order.deliveredCount").replace("{count}", String(group.delivery_items.length))} />)}</div>}
         {deliveredManualItems.length > 0 && <div className="space-y-3">{deliveredManualItems.map(item => <ManualDeliveryItem key={item.id} item={item} statusLabel={t("status.DELIVERED")} emptyLabel={t("order.manualDeliveryEmpty")} contentTitle={t("order.manualDeliveryContentTitle")} />)}</div>}
         {status !== "REFUNDED" && !hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
@@ -468,9 +474,7 @@ function DeliveryGroup({ group, startNumber, onCopy, copyLabel, countLabel }: { 
             <li key={`${startNumber + itemIndex}`} className="flex min-w-0 flex-col gap-3 rounded-control border border-border-subtle bg-surface-muted/40 p-3 sm:flex-row sm:items-start sm:gap-4">
               <div className="flex min-w-0 flex-1 items-start gap-3">
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary" aria-hidden="true">{startNumber + itemIndex}</span>
-                <div className="flex min-w-0 flex-1 flex-wrap items-start gap-2">
-                  {item.content_parts.map((part, partIndex) => <code key={`${itemIndex}-${partIndex}`} className="max-w-full min-w-0 rounded-control border border-border-subtle bg-surface px-2.5 py-1.5 text-xs leading-5 text-foreground whitespace-pre-wrap break-all [overflow-wrap:anywhere]">{part}</code>)}
-                </div>
+                <CardContentParts parts={item.content_parts} onCopy={onCopy} showPartCopy={false} showCopyAll={false} className="flex-1" />
               </div>
               <button type="button" onClick={() => onCopy(value)} className="inline-flex min-h-10 w-full shrink-0 items-center justify-center gap-1 rounded-control border border-border-subtle px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface hover:text-foreground sm:w-auto sm:self-start"><Copy className="h-3.5 w-3.5" />{copyLabel}</button>
             </li>

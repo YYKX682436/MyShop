@@ -30,6 +30,7 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
+import { formatCardContents } from "@/lib/card-display"
 import { formatDateTime, stripInvisible } from "@/lib/utils"
 import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminCardKeyPickupResult, AdminProductDetail, CardImportBatch, CardKeyListItem, CardKeyStockSummary } from "@/types"
@@ -448,7 +449,7 @@ export default function AdminCardKeysPage() {
 
   const copyAllPickedUpCards = () => {
     if (!pickupResult) return
-    copyToClipboard(pickupResult.cards.map((card) => card.content_parts.join("\t")).join("\n"))
+    copyToClipboard(formatCardContents(pickupResult.cards))
   }
 
   const handleSingleInvalidate = async () => {
@@ -741,7 +742,7 @@ export default function AdminCardKeysPage() {
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-semibold text-foreground">#{index + 1}</span>
                   </div>
-                  <CardContentParts parts={card.content_parts} onCopy={copyToClipboard} expandedByDefault />
+                  <CardContentParts parts={card.content_parts} onCopy={copyToClipboard} />
                 </div>
               ))}
             </div>
