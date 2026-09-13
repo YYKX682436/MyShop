@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { ChevronDown, Clock, Copy, Download, KeyRound, Package, RefreshCw, XCircle } from "lucide-react"
+import { ChevronDown, Clock, Copy, Download, KeyRound, Package, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { useSearchParams } from "next/navigation"
 import { useLocale, useSiteConfig } from "@/lib/context"
@@ -243,6 +243,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     && item.fulfillment_status !== "DELIVERED"
     && item.fulfillment_status !== "CANCELLED"
   )
+  const itemsWithCustomerInputs = orderItems.filter(item => item.customer_inputs.length > 0)
   const hasCards = deliveredCardCount > 0
   const purchasedProducts = productIds
     .map(productId => productDetails[productId])
@@ -263,10 +264,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     return <div className="surface mx-auto flex max-w-lg flex-col items-center gap-3 p-8 text-center" role="status"><RefreshCw className="h-8 w-8 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{paymentState.errorMessage || t("common.loading")}</p>{paymentState.errorMessage && retryStatusButton}</div>
   }
 
-  if (status === "EXPIRED") {
-    return <div className="surface mx-auto flex max-w-lg flex-col items-center gap-4 p-8 text-center"><XCircle className="h-12 w-12 text-muted-foreground" /><h1 className="text-xl font-semibold">{t("payment.expired")}</h1><p className="text-sm text-muted-foreground">{t("payment.expiredDesc")}</p><Link href="/" className="inline-flex h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99]">{t("order.backHome")}</Link></div>
-  }
-
   return <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 py-2 sm:gap-6">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0">
@@ -275,7 +272,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <OrderStatusBadge status={status} items={orderItems} />
-        {status !== "REFUNDED" && (
+        {status !== "REFUNDED" && status !== "EXPIRED" && (
           <button
             type="button"
             onClick={() => void manualRefresh()}
@@ -299,11 +296,10 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
       <div className="divide-y divide-border-subtle">
         {orderItems.map(item => {
-          const product = productDetails[item.product_id]
           return (
             <div key={item.id} className="flex min-w-0 items-center gap-3 py-3 first:pt-0 last:pb-0">
               <Link href={`/product/${item.product_id}`} className="shrink-0 rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" aria-label={item.product_title}>
-                <ProductCover product={product} title={item.product_title} />
+                <ProductCover coverUrl={item.product_cover_url} title={item.product_title} />
               </Link>
               <div className="min-w-0 flex-1">
                 <Link href={`/product/${item.product_id}`} className="block break-words text-sm font-semibold text-foreground transition-colors hover:text-primary">
@@ -347,6 +343,33 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
         </dl>
       </div>
     </details>
+
+    {itemsWithCustomerInputs.length > 0 && (
+      <details className="surface overflow-hidden">
+        <summary aria-controls="customer-inputs-panel" className="group flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t("order.customerInputs")}</span>
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
+        </summary>
+        <div id="customer-inputs-panel" className="min-w-0 space-y-4 border-t border-border-subtle px-4 py-3 sm:px-5 sm:py-4">
+          {itemsWithCustomerInputs.map(item => (
+            <article key={item.id} className="min-w-0 overflow-hidden rounded-card border border-border-subtle bg-surface-muted/40 p-3 sm:p-4">
+              <div className="min-w-0">
+                <p className="break-words text-sm font-semibold text-foreground">{item.product_title}</p>
+                {item.spec_name && <p className="mt-0.5 break-words text-xs text-muted-foreground">{item.spec_name}</p>}
+              </div>
+              <dl className="mt-3 min-w-0 space-y-3">
+                {item.customer_inputs.map(input => (
+                  <div key={`${item.id}-${input.id}`} className="grid min-w-0 gap-1 sm:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] sm:gap-3">
+                    <dt className="min-w-0 break-words text-xs text-muted-foreground">{input.label}</dt>
+                    <dd className="min-w-0 break-words whitespace-pre-wrap text-sm text-foreground [overflow-wrap:anywhere]">{input.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </article>
+          ))}
+        </div>
+      </details>
+    )}
 
     {status === "PENDING" && (
       <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-payment-title">
@@ -407,14 +430,14 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   </div>
 }
 
-function ProductCover({ product, title }: { product?: ProductDetail; title: string }) {
+function ProductCover({ coverUrl, title }: { coverUrl: string | null; title: string }) {
   const [imageFailed, setImageFailed] = useState(false)
-  const coverUrl = product?.cover_url?.trim()
+  const normalizedCoverUrl = coverUrl?.trim()
 
   return (
     <div className="relative flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted">
-      {coverUrl && !imageFailed ? (
-        <Image src={coverUrl} alt="" fill unoptimized sizes="56px" className="object-contain" onError={() => setImageFailed(true)} />
+      {normalizedCoverUrl && !imageFailed ? (
+        <Image src={normalizedCoverUrl} alt="" fill unoptimized sizes="56px" className="object-contain" onError={() => setImageFailed(true)} />
       ) : (
         <Package className="size-6 text-muted-foreground/35" aria-hidden="true" />
       )}

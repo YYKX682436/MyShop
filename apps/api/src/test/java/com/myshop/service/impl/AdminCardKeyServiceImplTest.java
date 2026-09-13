@@ -75,6 +75,7 @@ class AdminCardKeyServiceImplTest {
         product.setStockMode(StockMode.CARD_KEY);
         product.setProductNo(1L);
         product.setTitle("测试商品");
+        product.setCoverUrl("https://cdn.example/admin-pickup-cover.png");
         product.setRetailPrice(new java.math.BigDecimal("12.00"));
         product.setCostPrice(new java.math.BigDecimal("5.00"));
         product.setSpecEnabled(false);
@@ -424,6 +425,7 @@ class AdminCardKeyServiceImplTest {
         assertEquals(1, itemCaptor.getValue().getQuantity());
         assertEquals(BigDecimal.ZERO.setScale(2), itemCaptor.getValue().getUnitPrice());
         assertEquals(BigDecimal.ZERO.setScale(2), itemCaptor.getValue().getSubtotal());
+        assertEquals("https://cdn.example/admin-pickup-cover.png", itemCaptor.getValue().getProductCoverUrl());
     }
 
     @Test

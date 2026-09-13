@@ -65,6 +65,7 @@ class OrderAccessServiceImplTest {
         Order order = guestOrder(orderId, "session-a");
         order.setStatus(OrderStatus.PENDING);
         OrderItem item = item(itemId);
+        item.setProductCoverUrl("https://cdn.example/order-detail-cover.png");
         CardKey key = cardKey(orderId, itemId);
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
@@ -76,6 +77,9 @@ class OrderAccessServiceImplTest {
         Map<String, Object> view = service.getOrder(orderId, null, "session-a");
         assertEquals(orderId, ((Map<?, ?>) view.get("order")).get("id"));
         assertEquals(1000000001L, ((Map<?, ?>) view.get("order")).get("order_no"));
+        Map<?, ?> orderView = (Map<?, ?>) view.get("order");
+        Map<?, ?> itemView = (Map<?, ?>) ((List<?>) orderView.get("items")).get(0);
+        assertEquals("https://cdn.example/order-detail-cover.png", itemView.get("product_cover_url"));
         Map<?, ?> delivery = (Map<?, ?>) view.get("delivery");
         List<?> groups = (List<?>) delivery.get("groups");
         Map<?, ?> group = (Map<?, ?>) groups.get(0);

@@ -176,7 +176,8 @@ test("refund detail and storefront lifecycle expose the refund facts without pay
   assert.match(orderPage, /order\.deliveredRefundNotice/)
   assert.match(orderPage, /status !== "REFUNDED"/)
   assert.match(ordersPage, /"REFUNDED"/)
-  assert.match(ordersPage, /order\.refundAmount/)
+  assert.match(ordersPage, /order\.orderDetail/)
+  assert.doesNotMatch(ordersPage, /order\.refundAmount|order\.reclaimedCardKeys/)
 })
 
 test("refund reclaim payload and surfaces keep the safe default and never require a reason", () => {
@@ -195,7 +196,7 @@ test("refund reclaim payload and surfaces keep the safe default and never requir
   assert.match(sheetSource, /refundNotReclaimed/)
   assert.match(sheetSource, /refundReclaimed/)
   assert.match(orderPage, /reclaimedCardKeys/)
-  assert.match(ordersPage, /reclaimed_card_key_count/)
+  assert.doesNotMatch(ordersPage, /reclaimed_card_key_count/)
 })
 
 test("refund card-key availability keeps the checkbox visible while gating reclaim safely", () => {

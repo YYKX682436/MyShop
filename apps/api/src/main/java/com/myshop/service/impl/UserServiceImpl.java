@@ -2,7 +2,6 @@ package com.myshop.service.impl;
 
 import com.myshop.common.PageResult;
 import com.myshop.constant.ErrorCode;
-import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
@@ -13,7 +12,6 @@ import com.myshop.model.request.ChangePasswordRequest;
 import com.myshop.model.response.UserProfileResponse;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.OrderItemRepository;
-import com.myshop.service.CardKeyReclaimService;
 import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.UserService;
@@ -41,7 +39,6 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final ManualStockService manualStockService;
     private final UserLevelRepository userLevelRepository;
-    private final CardKeyReclaimService cardKeyReclaimService;
 
     @Override
     public UserProfileResponse getProfile(UUID userId) {
@@ -86,9 +83,16 @@ public class UserServiceImpl implements UserService {
             orderPage = orderRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
         }
 
+        List<Order> orders = orderPage.getContent();
+        List<UUID> orderIds = orders.stream().map(Order::getId).toList();
+        Map<UUID, List<OrderItem>> itemsByOrderId = orderIds.isEmpty()
+                ? Map.of()
+                : orderItemRepository.findByOrderIdIn(orderIds).stream()
+                .collect(java.util.stream.Collectors.groupingBy(OrderItem::getOrderId));
+
         // 主动过期检查：PENDING 且已超时的订单标记为 EXPIRED。
         LocalDateTime now = LocalDateTime.now();
-        for (Order o : orderPage.getContent()) {
+        for (Order o : orders) {
             if (o.getStatus() == OrderStatus.PENDING && o.getExpiresAt() != null && o.getExpiresAt().isBefore(now)) {
                 // The order list may race the payment/expiry worker. Lock the
                 // order before touching its item reservation so recovery is
@@ -98,7 +102,7 @@ public class UserServiceImpl implements UserService {
                         || !locked.getExpiresAt().isBefore(LocalDateTime.now())) {
                     continue;
                 }
-                orderItemRepository.findByOrderId(locked.getId()).forEach(item -> {
+                itemsByOrderId.getOrDefault(locked.getId(), List.of()).forEach(item -> {
                     if (item.getManualStockReserved() > 0) {
                         manualStockService.release(item.getProductId(), item.getSpecId(), item.getManualStockReserved());
                         item.setManualStockReserved(0);
@@ -108,52 +112,38 @@ public class UserServiceImpl implements UserService {
                 });
                 locked.setStatus(OrderStatus.EXPIRED);
                 orderRepository.save(locked);
+                o.setStatus(OrderStatus.EXPIRED);
             }
         }
 
-        var list = orderPage.getContent().stream().map(this::toOrderBrief).toList();
+        var list = orders.stream()
+                .map(order -> toOrderBrief(order, itemsByOrderId.getOrDefault(order.getId(), List.of())))
+                .toList();
         return PageResult.of(orderPage, list);
     }
 
-    private Map<String, Object> toOrderBrief(Order o) {
+    private Map<String, Object> toOrderBrief(Order o, List<OrderItem> items) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", o.getId());
         map.put("order_no", o.getOrderNo());
-        map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
-        map.put("order_type", o.getOrderType());
-        map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
-        map.put("payment_channel_code", o.getPaymentChannelCode());
         map.put("created_at", o.getCreatedAt());
-        map.put("paid_at", o.getPaidAt());
-        map.put("delivered_at", o.getDeliveredAt());
-        map.put("refunded_at", o.getRefundedAt());
-        if (o.getStatus() == OrderStatus.REFUNDED) {
-            map.put("reclaimed_card_key_count", cardKeyReclaimService.countByOrderId(o.getId()));
-        }
-        map.put("items", orderItemRepository.findByOrderId(o.getId()).stream().map(this::toOrderItemBrief).toList());
+        map.put("items", items.stream().map(this::toOrderItemBrief).toList());
         return map;
     }
 
     private Map<String, Object> toOrderItemBrief(OrderItem item) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", item.getId());
-        map.put("product_id", item.getProductId());
-        map.put("product_no", item.getProductNo());
         map.put("product_title", item.getProductTitle());
+        map.put("product_cover_url", item.getProductCoverUrl());
         map.put("spec_name", item.getSpecName());
         map.put("quantity", item.getQuantity());
         map.put("unit_price", item.getUnitPrice());
-        map.put("subtotal", item.getSubtotal());
         map.put("delivery_type", item.getDeliveryType());
-        map.put("customer_inputs", item.getCustomerInputs() == null ? List.of() : item.getCustomerInputs());
         map.put("stock_mode", item.getStockMode());
         map.put("fulfillment_status", item.getFulfillmentStatus());
-        map.put("delivered_at", item.getDeliveredAt());
-        if (item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED) {
-            map.put("customer_delivery_content", item.getCustomerDeliveryContent());
-        }
         return map;
     }
 }

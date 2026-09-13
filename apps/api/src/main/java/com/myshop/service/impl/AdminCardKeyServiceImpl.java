@@ -387,6 +387,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         item.setProductId(product.getId());
         item.setProductNo(product.getProductNo());
         item.setProductTitle(product.getTitle());
+        item.setProductCoverUrl(product.getCoverUrl());
         item.setSpecId(spec == null ? null : spec.getId());
         item.setSpecName(spec == null ? null : spec.getName());
         item.setQuantity(keys.size());

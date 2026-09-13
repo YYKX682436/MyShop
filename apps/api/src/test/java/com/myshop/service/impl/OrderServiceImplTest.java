@@ -154,6 +154,16 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void orderItemProductCoverUrlIsAnImmutableSnapshot() {
+        OrderItem item = new OrderItem();
+        item.setProductCoverUrl("https://cdn.example/original.png");
+
+        assertEquals("https://cdn.example/original.png", item.getProductCoverUrl());
+        assertThrows(IllegalStateException.class,
+                () -> item.setProductCoverUrl("https://cdn.example/changed.png"));
+    }
+
+    @Test
     void generatedOrderNoCannotBeChangedAfterItIsAssigned() {
         Order order = new Order();
         order.setOrderNo(1000000001L);
@@ -220,6 +230,7 @@ class OrderServiceImplTest {
     void usesRetailPriceAndStoresRetailSnapshotsUntilLevelPricingIsImplemented() {
         UUID productId = UUID.randomUUID();
         Product product = product(productId, "10.00");
+        product.setCoverUrl("https://cdn.example/order-cover.png");
         stubProduct(product, 5);
 
         service.createDirectOrder(request(productId, null, 5, "10.00"), null, "203.0.113.12", "guest-session");
@@ -235,6 +246,7 @@ class OrderServiceImplTest {
         assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getCostPriceSnapshot());
         assertEquals(new BigDecimal("10.00"), itemCaptor.getValue().getRetailPriceSnapshot());
         assertEquals(com.myshop.constant.PricingSource.RETAIL, itemCaptor.getValue().getPricingSource());
+        assertEquals("https://cdn.example/order-cover.png", itemCaptor.getValue().getProductCoverUrl());
     }
 
     @Test

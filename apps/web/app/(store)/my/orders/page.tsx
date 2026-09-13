@@ -1,23 +1,22 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
+import Image from "next/image"
 import Link from "next/link"
-import { Package, ExternalLink } from "lucide-react"
-import { PaymentIcon, getPaymentLabel } from "@/components/shared/payment-icon"
+import { Package } from "lucide-react"
 import { useLocale } from "@/lib/context"
 import { useRequireAuth } from "@/lib/hooks"
 import { userApi, requestOrThrow } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import type { OrderBrief, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
-import { cn, formatYuan } from "@/lib/utils"
+import { cn, formatDateTime, formatYuan } from "@/lib/utils"
 import { buildOrderPageHref } from "@/lib/payment-entry"
-import { isManualFulfillmentItem } from "@/lib/order-status"
 
 const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELIVERED", "REFUNDED", "EXPIRED"]
 
 export default function MyOrdersPage() {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const user = useRequireAuth()
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "ALL">("ALL")
   const [orders, setOrders] = useState<OrderBrief[]>([])
@@ -74,7 +73,6 @@ export default function MyOrdersPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
       </div>
 
-      {/* Status Filter */}
       <div className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((s) => (
           <button
@@ -92,7 +90,6 @@ export default function MyOrdersPage() {
         ))}
       </div>
 
-      {/* Orders List */}
       {loading ? (
         <div className="flex items-center justify-center py-24">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
@@ -100,93 +97,72 @@ export default function MyOrdersPage() {
       ) : orders.length > 0 ? (
         <div className="flex flex-col gap-3">
           {orders.map((order) => (
-            <div
+            <article
               key={order.id}
-              className="surface p-4 transition-[transform,border-color,box-shadow] duration-180 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-sm"
+              className="surface p-3 transition-[transform,border-color,box-shadow] duration-180 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-sm sm:p-4"
             >
-              {/* Order Header */}
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
+              <header className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2">
+                <span className="min-w-0 flex-1 break-all font-mono text-xs font-medium text-foreground">
+                  {t("order.orderNo")} {order.order_no}
+                </span>
+                <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                  <span className="text-xs text-muted-foreground">{formatDateTime(order.created_at, locale)}</span>
                   <OrderStatusBadge status={order.status} items={order.items} />
-                  <span className="font-mono text-xs font-medium text-foreground">{t("order.orderNo")} {order.order_no}</span>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {new Date(order.created_at).toLocaleString()}
-                </span>
-              </div>
+              </header>
 
-              {/* Order Summary */}
-              <div className="mb-3 flex items-center gap-3 text-sm text-muted-foreground">
-                <span className="inline-flex items-center gap-1">
-                  <PaymentIcon method={order.order_type === "ADMIN_PICKUP" ? "ADMIN_PICKUP" : order.payment_method || ""} className="h-4 w-4" />
-                  {order.order_type === "ADMIN_PICKUP" ? getPaymentLabel("ADMIN_PICKUP", t) : order.payment_method ? <>{getPaymentLabel(order.payment_method, t)}{order.payment_method === "ONLINE" && order.payment_channel_code ? `（${order.payment_channel_code}）` : null}</> : ""}
-                </span>
-              </div>
-
-              {order.items?.some(item => item.customer_inputs.length > 0) && (
-                <div className="mb-3 rounded-card border border-border-subtle bg-surface-muted p-3 text-xs">
-                  <p className="mb-2 font-medium text-muted-foreground">{t("order.customerInputs")}</p>
-                  <div className="space-y-2">
-                    {order.items.filter(item => item.customer_inputs.length > 0).map(item => (
-                      <div key={item.id}>
-                        <p className="font-medium text-foreground">{item.product_title}</p>
-                        <div className="mt-1 grid gap-1 sm:grid-cols-2">
-                          {item.customer_inputs.map(input => <span key={input.id} className="text-muted-foreground">{input.label}：<span className="text-foreground">{input.value}</span></span>)}
-                        </div>
+              <div className="mt-3 min-w-0 space-y-3">
+                {order.items.map((item) => (
+                  <div key={item.id} className="flex min-w-0 items-center gap-3">
+                    <OrderCover coverUrl={item.product_cover_url} title={item.product_title} />
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-sm font-semibold text-foreground">{item.product_title}</p>
+                      {item.spec_name && <p className="mt-0.5 break-words text-xs text-muted-foreground">{item.spec_name}</p>}
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span>{t("order.quantity")}: {item.quantity}</span>
+                        <span>{t("order.unitPrice")}: {formatYuan(item.unit_price)}</span>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                ))}
+              </div>
 
-              {order.status === "REFUNDED" && (
-                <div className="mb-3 rounded-card border border-violet-300/50 bg-violet-50/70 p-3 text-sm dark:border-violet-500/30 dark:bg-violet-950/20">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="font-medium text-foreground">{t("order.refunded")}</p>
-                    {order.refunded_at && <span className="text-xs text-muted-foreground">{new Date(order.refunded_at).toLocaleString()}</span>}
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{t("order.refundToBalance")}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{t("order.refundAmount")}: <span className="font-medium text-foreground">{formatYuan(order.actual_amount)}</span></p>
-                  {(order.reclaimed_card_key_count ?? 0) > 0 && <p className="mt-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">{t("order.reclaimedCardKeys").replace("{count}", String(order.reclaimed_card_key_count))}</p>}
-                </div>
-              )}
-
-              {/* Footer */}
-              <div className="flex items-center justify-between border-t border-border-subtle pt-3">
-                <span className="text-sm text-muted-foreground">
-                  {t("order.amount")}:{" "}
-                  <span className="font-semibold text-foreground">
-                    {formatYuan(order.actual_amount)}
-                  </span>
+              <footer className="mt-3 flex min-w-0 flex-col gap-3 border-t border-border-subtle pt-3 sm:flex-row sm:items-center sm:justify-between">
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  {t("order.paidAmount")}: <span className="font-semibold text-foreground">{formatYuan(order.actual_amount)}</span>
                 </span>
-                <div className="flex gap-2">
-                  {order.status === "PENDING" && order.order_type === "NORMAL" && order.payment_method === "ONLINE" && order.payment_channel_code && (
+                <div className="flex w-full min-w-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
+                  {(order.status === "PAID" || order.status === "DELIVERED") && (
+                    <button
+                      type="button"
+                      disabled
+                      title={t("order.afterSalesUnavailable")}
+                      aria-label={`${t("order.applyAfterSales")}: ${t("order.afterSalesUnavailable")}`}
+                      className="inline-flex min-h-9 min-w-0 flex-1 flex-col items-center justify-center rounded-control border border-border-subtle bg-surface-muted px-3 py-1.5 text-center text-xs font-medium leading-4 text-muted-foreground opacity-70 sm:flex-none"
+                    >
+                      <span>{t("order.applyAfterSales")}</span>
+                      <span className="text-[10px] font-normal">{t("order.afterSalesUnavailable")}</span>
+                    </button>
+                  )}
+                  <Link
+                    href={buildOrderPageHref(order.id)}
+                    className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center rounded-control border border-border-strong bg-surface px-3 py-2 text-center text-xs font-medium text-foreground transition-colors hover:bg-surface-muted sm:flex-none"
+                  >
+                    {t("order.orderDetail")}
+                  </Link>
+                  {order.status === "PENDING" && (
                     <Link
                       href={buildOrderPageHref(order.id)}
-                      className="inline-flex h-9 items-center gap-1 rounded-control bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98]"
+                      className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center rounded-control bg-primary px-3 py-2 text-center text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] sm:flex-none"
                     >
                       {t("payment.continuePay")}
                     </Link>
                   )}
-                  {(order.status === "PAID" || order.status === "DELIVERED" || order.status === "REFUNDED") && (
-                    <Link
-                      href={buildOrderPageHref(order.id)}
-                      className="inline-flex h-9 items-center gap-1 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      {order.status === "REFUNDED"
-                        ? t("order.refunded")
-                        : order.items?.some(item => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")
-                        ? t("order.cardKeys")
-                        : t("order.viewDelivery")}
-                    </Link>
-                  )}
                 </div>
-              </div>
-            </div>
+              </footer>
+            </article>
           ))}
 
-          {/* Pagination */}
           {total > pageSize && (
             <div className="flex justify-center gap-2 pt-4">
               <button
@@ -214,6 +190,29 @@ export default function MyOrdersPage() {
           <Package className="mb-3 h-10 w-10 text-muted-foreground/30" />
           <p className="text-sm text-muted-foreground">{t("common.noData")}</p>
         </div>
+      )}
+    </div>
+  )
+}
+
+function OrderCover({ coverUrl, title }: { coverUrl: string | null; title: string }) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const normalizedCoverUrl = coverUrl?.trim()
+
+  return (
+    <div className="relative flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted" aria-label={title}>
+      {normalizedCoverUrl && !imageFailed ? (
+        <Image
+          src={normalizedCoverUrl}
+          alt=""
+          fill
+          unoptimized
+          sizes="56px"
+          className="object-contain"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <Package className="size-6 text-muted-foreground/35" aria-hidden="true" />
       )}
     </div>
   )

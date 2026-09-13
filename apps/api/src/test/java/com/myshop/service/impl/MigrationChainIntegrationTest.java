@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("26", flyway.info().current().getVersion().getVersion());
-        assertEquals(26, flyway.info().all().length);
+        assertEquals("27", flyway.info().current().getVersion().getVersion());
+        assertEquals(27, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -291,6 +291,14 @@ class MigrationChainIntegrationTest {
         assertTrue(columnExists("order_items", "delivery_notified_at"));
         assertTrue(columnExists("order_items", "customer_delivery_content"));
         assertEquals("YES", nullableValue("order_items", "customer_delivery_content"));
+        assertTrue(columnExists("order_items", "product_cover_url"));
+        assertEquals("text", dataType("order_items", "product_cover_url"));
+        assertEquals("YES", nullableValue("order_items", "product_cover_url"));
+        assertTrue(functionExists("prevent_order_item_product_cover_update"));
+        assertEquals(1, jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM pg_trigger
+                WHERE tgname = ?
+                """, Integer.class, "trg_order_items_product_cover_url_immutable"));
         assertTrue(columnExists("card_keys", "content_parts"));
         assertTrue(columnExists("card_keys", "content_fingerprint"));
 
@@ -336,6 +344,60 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
+    void v27BackfillsAvailableProductCoversAndKeepsMissingLegacyCoversNullable() {
+        flyway("26").migrate();
+        UUID categoryId = UUID.randomUUID();
+        UUID coveredProductId = UUID.randomUUID();
+        UUID blankProductId = UUID.randomUUID();
+        UUID missingProductId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                INSERT INTO product_categories(id, name)
+                VALUES (?, 'v27-category')
+                """, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, cover_url, retail_price, cost_price, category_id)
+                VALUES (?, 'v27-covered', 'https://cdn.example/v27-cover.png', 10.00, 5.00, ?)
+                """, coveredProductId, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, cover_url, retail_price, cost_price, category_id)
+                VALUES (?, 'v27-blank', '   ', 10.00, 5.00, ?)
+                """, blankProductId, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, total_amount, actual_amount, status, order_type)
+                VALUES (?, 30.00, 30.00, 'PAID', 'NORMAL')
+                """, orderId);
+        jdbcTemplate.update("""
+                INSERT INTO order_items(id, order_id, product_id, product_no, product_title, quantity,
+                                        unit_price, cost_price_snapshot, retail_price_snapshot, pricing_source, subtotal)
+                VALUES (?, ?, ?, (SELECT product_no FROM products WHERE id = ?), 'v27-covered', 1,
+                        10.00, 5.00, 10.00, 'RETAIL', 10.00),
+                       (?, ?, ?, (SELECT product_no FROM products WHERE id = ?), 'v27-blank', 1,
+                        10.00, 5.00, 10.00, 'RETAIL', 10.00),
+                       (?, ?, ?, 999999, 'v27-missing', 1,
+                        10.00, 5.00, 10.00, 'RETAIL', 10.00)
+                """, UUID.randomUUID(), orderId, coveredProductId, coveredProductId,
+                UUID.randomUUID(), orderId, blankProductId, blankProductId,
+                UUID.randomUUID(), orderId, missingProductId);
+
+        flyway().migrate();
+
+        assertEquals("27", flyway().info().current().getVersion().getVersion());
+        assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
+                "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
+        assertNull(jdbcTemplate.queryForObject(
+                "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, blankProductId));
+        assertNull(jdbcTemplate.queryForObject(
+                "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, missingProductId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                UPDATE order_items
+                SET product_cover_url = 'https://cdn.example/changed.png'
+                WHERE product_id = ?
+                """, coveredProductId));
+    }
+
+    @Test
     void v23AddsCategoryHierarchyAndPreservesExistingProductRelations() {
         flyway("22").migrate();
         UUID rootId = UUID.randomUUID();
@@ -351,7 +413,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("26", flyway().info().current().getVersion().getVersion());
+        assertEquals("27", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -445,7 +507,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-         assertEquals("26", flyway().info().current().getVersion().getVersion());
+         assertEquals("27", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -646,7 +708,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("26", flyway().info().current().getVersion().getVersion());
+        assertEquals("27", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -716,7 +778,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("26", flyway().info().current().getVersion().getVersion());
+        assertEquals("27", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -765,7 +827,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("26", flyway().info().current().getVersion().getVersion());
+        assertEquals("27", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -965,7 +1027,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("26", flyway().info().current().getVersion().getVersion());
+        assertEquals("27", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1011,7 +1073,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("26", flyway().info().current().getVersion().getVersion());
+        assertEquals("27", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

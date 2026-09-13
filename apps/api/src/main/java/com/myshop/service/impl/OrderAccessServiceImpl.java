@@ -186,6 +186,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("product_id", item.getProductId());
         result.put("product_no", item.getProductNo());
         result.put("product_title", item.getProductTitle());
+        result.put("product_cover_url", item.getProductCoverUrl());
         result.put("spec_name", item.getSpecName());
         result.put("quantity", item.getQuantity());
         result.put("unit_price", item.getUnitPrice());

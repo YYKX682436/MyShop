@@ -38,6 +38,10 @@ public class OrderItem extends BaseEntity {
     @Column(nullable = false)
     private String productTitle;
 
+    /** Product presentation captured at checkout; this is not a live product relation. */
+    @Column(name = "product_cover_url", columnDefinition = "TEXT", updatable = false)
+    private String productCoverUrl;
+
     private UUID specId;
 
     private String specName;
@@ -107,5 +111,13 @@ public class OrderItem extends BaseEntity {
             throw new IllegalStateException("order item productNo is immutable");
         }
         productNo = value;
+    }
+
+    /** The order cover snapshot may be initialized once but cannot be changed later. */
+    public void setProductCoverUrl(String value) {
+        if (productCoverUrl != null && !Objects.equals(productCoverUrl, value)) {
+            throw new IllegalStateException("order item productCoverUrl is immutable");
+        }
+        productCoverUrl = value;
     }
 }

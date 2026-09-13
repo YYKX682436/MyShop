@@ -252,7 +252,39 @@ export type OrderStatus = 'PENDING' | 'PAID' | 'DELIVERED' | 'EXPIRED' | 'REFUND
 export type OrderType = 'NORMAL' | 'ADMIN_PICKUP'
 export type OrderPaymentMethod = 'BALANCE' | 'ONLINE'
 
+export interface OrderItemBrief {
+  id: string
+  product_cover_url: string | null
+  product_title: string
+  spec_name: string | null
+  quantity: number
+  unit_price: number
+  delivery_type: string
+  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
+}
+
 export interface OrderBrief {
+  id: string
+  order_no: number
+  actual_amount: number
+  status: OrderStatus
+  created_at: string
+  items: OrderItemBrief[]
+}
+
+export interface OrderItemDetail extends OrderItemBrief {
+  product_id: string
+  product_no: number
+  spec_id?: string | null
+  subtotal: number
+  customer_inputs: CustomerInputValue[]
+  delivered_at?: string | null
+  customer_delivery_content?: string | null
+  manual_stock_reserved?: number
+}
+
+export interface OrderDetail {
   id: string
   order_no: number
   total_amount: number
@@ -262,37 +294,11 @@ export interface OrderBrief {
   payment_method: OrderPaymentMethod | null
   payment_channel_code: string | null
   created_at: string
-  paid_at?: string | null
-  delivered_at?: string | null
-  refunded_at?: string | null
-  reclaimed_card_key_count?: number | null
-  items?: OrderItemDetail[]
-}
-
-export interface OrderItemDetail {
-  id: string
-  product_id: string
-  product_no: number
-  product_title: string
-  spec_id?: string | null
-  spec_name: string | null
-  quantity: number
-  unit_price: number
-  subtotal: number
-  delivery_type?: string
-  customer_inputs: CustomerInputValue[]
-  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
-  fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
-  delivered_at?: string | null
-  customer_delivery_content?: string | null
-  manual_stock_reserved?: number
-}
-
-export interface OrderDetail extends OrderBrief {
   expires_at: string | null
   paid_at: string | null
   delivered_at: string | null
   refunded_at: string | null
+  reclaimed_card_key_count?: number | null
   items: OrderItemDetail[]
 }
 

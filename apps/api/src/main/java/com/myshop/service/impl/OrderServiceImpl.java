@@ -295,6 +295,7 @@ public class OrderServiceImpl implements OrderService {
             im.put("product_id", i.getProductId());
             im.put("product_no", i.getProductNo());
             im.put("product_title", i.getProductTitle());
+            im.put("product_cover_url", i.getProductCoverUrl());
             im.put("spec_name", i.getSpecName());
             im.put("quantity", i.getQuantity());
             im.put("unit_price", i.getUnitPrice());
@@ -490,6 +491,7 @@ public class OrderServiceImpl implements OrderService {
                                  List<com.myshop.model.CustomerInputValue> customerInputs,
                                  int quantity, StockMode stockMode) {
         item.setDeliveryType(product.getDeliveryType());
+        item.setProductCoverUrl(product.getCoverUrl());
         item.setCustomerInputs(customerInputs == null ? List.of() : List.copyOf(customerInputs));
         item.setStockMode(stockMode);
         item.setFulfillmentStatus(FulfillmentStatus.PENDING);
