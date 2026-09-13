@@ -132,6 +132,33 @@ test("the order lifecycle page polls paid fulfillment and refreshes after visibi
   assert.doesNotMatch(source, /window\.location\.reload/)
 })
 
+test("storefront order header owns the compact manual refresh action", () => {
+  const source = readSource("../app/(store)/order/[orderId]/page.tsx")
+  const headerStart = source.indexOf("<header")
+  const headerEnd = source.indexOf("</header>", headerStart)
+  const header = source.slice(headerStart, headerEnd)
+
+  assert.match(header, /<OrderStatusBadge status=\{status\} items=\{orderItems\} \/>/)
+  assert.match(header, /status !== "REFUNDED"/)
+  assert.match(header, /onClick=\{\(\) => void manualRefresh\(\)\}/)
+  assert.match(header, /disabled=\{refreshCooldown > 0 \|\| refreshing\}/)
+  assert.match(header, /aria-label=\{refreshButtonLabel\}/)
+  assert.match(header, /title=\{refreshButtonLabel\}/)
+  assert.match(header, /h-9 w-9/)
+  assert.match(header, /refreshing && "animate-spin"/)
+  assert.doesNotMatch(header, /t\("order\.refresh"\)/)
+
+  assert.match(source, /const refreshButtonLabel = refreshing[\s\S]*t\("order\.refreshing"\)[\s\S]*t\("order\.refresh"\)/)
+  assert.equal((source.match(/disabled=\{refreshCooldown > 0 \|\| refreshing\}/g) ?? []).length, 1)
+  assert.equal((source.match(/t\("order\.refresh"\)/g) ?? []).length, 1)
+
+  const productDetailsEnd = source.indexOf("{purchasedProducts.map")
+  const contactStart = source.indexOf("<ContactSupport", productDetailsEnd)
+  const bottom = source.slice(productDetailsEnd, contactStart)
+  assert.doesNotMatch(bottom, /manualRefresh|刷新订单状态|order\.refresh/)
+  assert.match(source.slice(productDetailsEnd), /ProductDescription[\s\S]*\/>\)\}\s*<ContactSupport/)
+})
+
 test("refund detail and storefront lifecycle expose the refund facts without payment actions", () => {
   const adminRoute = readSource("../components/admin/orders/order-detail-route.tsx")
   const adminSheet = readSource("../components/admin/orders/order-detail-sheet.tsx")

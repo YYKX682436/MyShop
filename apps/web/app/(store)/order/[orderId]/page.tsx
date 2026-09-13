@@ -251,6 +251,11 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     ? "ADMIN_PICKUP"
     : view?.payment?.payment_type || view?.order.payment_method || null
   const paymentInfoLabel = paymentInfoCode ? getPaymentLabel(paymentInfoCode, t) : null
+  const refreshButtonLabel = refreshing
+    ? t("order.refreshing")
+    : refreshCooldown > 0
+      ? `${refreshCooldown}${t("payment.refreshLimit")}`
+      : t("order.refresh")
   const retryButton = <button type="button" onClick={() => void retryPayment()} disabled={retrying} className="inline-flex h-11 items-center gap-2 rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", retrying && "animate-spin")} />{t("order.retryPayment")}</button>
   const retryStatusButton = <button type="button" onClick={() => void manualRefresh()} disabled={refreshing} className="inline-flex h-10 items-center gap-2 rounded-control border border-border-strong bg-surface px-4 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{t("payment.retryLoad")}</button>
 
@@ -264,11 +269,25 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
 
   return <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 py-2 sm:gap-6">
     <header className="flex flex-wrap items-center justify-between gap-3">
-      <div>
+      <div className="min-w-0">
         <p className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("order.lifecycleTitle")}</h1>
       </div>
-      <OrderStatusBadge status={status} items={orderItems} />
+      <div className="flex shrink-0 items-center gap-2">
+        <OrderStatusBadge status={status} items={orderItems} />
+        {status !== "REFUNDED" && (
+          <button
+            type="button"
+            onClick={() => void manualRefresh()}
+            disabled={refreshCooldown > 0 || refreshing}
+            aria-label={refreshButtonLabel}
+            title={refreshButtonLabel}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-border-strong bg-surface text-foreground transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} aria-hidden="true" />
+          </button>
+        )}
+      </div>
     </header>
 
     <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-purchase-summary-title">
@@ -384,10 +403,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
 
     {purchasedProducts.map(product => <ProductDescription key={product.id} product={product} />)}
 
-    <div className="flex flex-wrap items-center justify-center gap-3">
-      {status !== "REFUNDED" && <button type="button" onClick={() => void manualRefresh()} disabled={refreshCooldown > 0 || refreshing} className="inline-flex h-11 items-center gap-2 rounded-control border border-border-strong bg-surface px-5 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{refreshing ? t("order.refreshing") : refreshCooldown > 0 ? `${refreshCooldown}${t("payment.refreshLimit")}` : t("order.refresh")}</button>}
-      <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} emailLabel={t("payment.contactSupport")} />
-    </div>
+    <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} emailLabel={t("payment.contactSupport")} />
   </div>
 }
 
