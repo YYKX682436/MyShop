@@ -243,7 +243,6 @@ class AdminCardKeyServiceImplTest {
     @Test
     void activeTwoColumnPoolRejectsOneColumnImportBeforeAnyWrites() {
         when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
-        stubBatchSave();
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
                 Map.of("product_id", productId.toString(),

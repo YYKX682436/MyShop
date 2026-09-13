@@ -326,7 +326,7 @@ test("storefront order information is an accessible closed details section", () 
 
   assert.match(orderSource, /<details className="surface overflow-hidden">/)
   assert.doesNotMatch(orderSource, /<details[^>]*\bopen\b/)
-  assert.match(orderSource, /<summary className="group flex min-h-12/)
+  assert.match(orderSource, /<summary[^>]*className="group flex min-h-12/)
   assert.match(orderSource, /group-open:rotate-180/)
   assert.match(orderSource, /view\.order\.order_no/)
   for (const key of ["orderNo", "createdAt", "paidAt", "deliveredAt", "paymentMethod"]) {
