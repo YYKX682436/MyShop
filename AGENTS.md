@@ -8,6 +8,8 @@
 
 ## 修改与验收
 - 修改完成后必须依次完成：本地验证、push `main`、精确 SHA 的 CI 全绿、部署该精确 SHA，以及生产 smoke/schema/health 验收。
-- 可用管理员账号 `codex-admin`，可用普通用户账号 `ceshi`；密码通过安全渠道提供，不得写入仓库、日志或文档。
+- 管理员验收凭据从本地环境变量 `MYSHOP_ADMIN_USERNAME` 和 `MYSHOP_ADMIN_PASSWORD` 读取。
+- 普通用户验收凭据从本地环境变量 `MYSHOP_TEST_USERNAME` 和 `MYSHOP_TEST_PASSWORD` 读取。
+- 凭据不得写入仓库、日志或文档。
 - 修改完成后进行安全消融实验
 - 代码处理干净利落不留后患
