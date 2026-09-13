@@ -114,8 +114,8 @@ class AfterSaleConcurrencyIntegrationTest {
             start.countDown();
             List<Outcome> outcomes = waitFor(futures);
 
-            assertEquals(1, outcomes.stream().filter(Outcome::success).count());
-            assertEquals(1, outcomes.stream().filter(outcome -> !outcome.success()).count());
+            assertEquals(1, outcomes.stream().filter(Outcome::success).count(), outcomes::toString);
+            assertEquals(1, outcomes.stream().filter(outcome -> !outcome.success()).count(), outcomes::toString);
         } finally {
             executor.shutdownNow();
         }
@@ -148,8 +148,8 @@ class AfterSaleConcurrencyIntegrationTest {
             start.countDown();
             Outcome applyOutcome = apply.get(30, TimeUnit.SECONDS);
             Outcome fulfillOutcome = fulfill.get(30, TimeUnit.SECONDS);
-            assertTrue(applyOutcome.success());
-            assertTrue(fulfillOutcome.success());
+            assertTrue(applyOutcome.success(), () -> "apply=" + applyOutcome + ", fulfill=" + fulfillOutcome);
+            assertTrue(fulfillOutcome.success(), () -> "apply=" + applyOutcome + ", fulfill=" + fulfillOutcome);
         } finally {
             executor.shutdownNow();
         }
@@ -187,7 +187,8 @@ class AfterSaleConcurrencyIntegrationTest {
             start.countDown();
             Outcome applyOutcome = apply.get(30, TimeUnit.SECONDS);
             Outcome fulfillOutcome = fulfill.get(30, TimeUnit.SECONDS);
-            assertTrue(applyOutcome.success() || fulfillOutcome.success());
+            assertTrue(applyOutcome.success() || fulfillOutcome.success(),
+                    () -> "apply=" + applyOutcome + ", fulfill=" + fulfillOutcome);
         } finally {
             executor.shutdownNow();
         }
@@ -281,7 +282,9 @@ class AfterSaleConcurrencyIntegrationTest {
             } catch (RuntimeException exception) {
                 Integer code = exception instanceof com.myshop.exception.BusinessException business
                         ? business.getCode() : null;
-                return new Outcome(false, null, code == null ? exception.getClass().getSimpleName() : code.toString());
+                return new Outcome(false, null, code == null
+                        ? exception.getClass().getSimpleName() + ":" + exception.getMessage()
+                        : code + ":" + exception.getMessage());
             } finally {
                 RequestContext.clear();
             }
@@ -300,7 +303,9 @@ class AfterSaleConcurrencyIntegrationTest {
             } catch (RuntimeException exception) {
                 Integer code = exception instanceof com.myshop.exception.BusinessException business
                         ? business.getCode() : null;
-                return new Outcome(false, null, code == null ? exception.getClass().getSimpleName() : code.toString());
+                return new Outcome(false, null, code == null
+                        ? exception.getClass().getSimpleName() + ":" + exception.getMessage()
+                        : code + ":" + exception.getMessage());
             } finally {
                 RequestContext.clear();
             }
