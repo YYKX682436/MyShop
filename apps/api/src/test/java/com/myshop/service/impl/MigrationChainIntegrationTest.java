@@ -55,15 +55,15 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("28", flyway.info().current().getVersion().getVersion());
-        assertEquals(28, flyway.info().all().length);
+        assertEquals("29", flyway.info().current().getVersion().getVersion());
+        assertEquals(29, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
                 "card_import_batches", "orders", "order_items", "card_keys",
                 "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks", "payment_attempts",
-                "card_key_reclaims", "after_sale_requests", "after_sale_attachments")) {
+                "card_key_reclaims", "after_sale_requests", "after_sale_attachments", "after_sale_messages")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
         assertFalse(tableExists("cart_items"));
@@ -111,7 +111,8 @@ class MigrationChainIntegrationTest {
 
         for (String column : List.of(
                 "order_id", "user_id", "status", "source_order_status", "reason",
-                "admin_reply", "handled_by", "submitted_at", "handled_at", "created_at", "updated_at")) {
+                "rejection_reason", "waiting_for", "last_activity_at", "handled_by", "submitted_at",
+                "handled_at", "created_at", "updated_at")) {
             assertTrue(columnExists("after_sale_requests", column),
                     "missing after-sale request column: " + column);
         }
@@ -121,12 +122,14 @@ class MigrationChainIntegrationTest {
         assertTrue(checkConstraintExists("after_sale_requests_status_check"));
         assertTrue(checkConstraintExists("after_sale_requests_source_status_check"));
         assertTrue(checkConstraintExists("after_sale_requests_reason_check"));
-        assertTrue(checkConstraintExists("after_sale_requests_admin_reply_check"));
+        assertTrue(checkConstraintExists("after_sale_requests_rejection_reason_check"));
+        assertTrue(checkConstraintExists("after_sale_requests_waiting_for_check"));
         assertTrue(checkConstraintExists("after_sale_requests_handled_check"));
         assertTrue(indexExists("idx_after_sale_requests_user_submitted"));
         assertTrue(indexExists("idx_after_sale_requests_order_submitted"));
         assertTrue(indexExists("idx_after_sale_requests_status_submitted"));
         assertTrue(indexExists("uq_after_sale_requests_pending_order"));
+        assertTrue(indexExists("idx_after_sale_requests_pending_attention"));
         String pendingIndexDefinition = jdbcTemplate.queryForObject(
                 "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = ?",
                 String.class, "uq_after_sale_requests_pending_order");
@@ -136,13 +139,25 @@ class MigrationChainIntegrationTest {
 
         for (String column : List.of(
                 "request_id", "storage_key", "original_filename", "content_type",
-                "file_size", "created_at", "updated_at")) {
+                "file_size", "created_at", "updated_at", "message_id")) {
             assertTrue(columnExists("after_sale_attachments", column),
                     "missing after-sale attachment column: " + column);
         }
         assertTrue(foreignKeyExists("after_sale_attachments_request_id_fkey"));
+        assertTrue(foreignKeyExists("after_sale_attachments_message_request_fkey"));
         assertTrue(checkConstraintExists("after_sale_attachments_file_size_check"));
         assertTrue(indexExists("idx_after_sale_attachments_request_created"));
+        assertTrue(indexExists("idx_after_sale_attachments_message_created"));
+        for (String column : List.of(
+                "id", "request_id", "sender_type", "sender_user_id", "content", "created_at")) {
+            assertTrue(columnExists("after_sale_messages", column),
+                    "missing after-sale message column: " + column);
+        }
+        assertTrue(foreignKeyExists("after_sale_messages_request_id_fkey"));
+        assertTrue(foreignKeyExists("after_sale_messages_sender_user_id_fkey"));
+        assertTrue(checkConstraintExists("after_sale_messages_sender_type_check"));
+        assertTrue(checkConstraintExists("after_sale_messages_content_check"));
+        assertTrue(indexExists("idx_after_sale_messages_request_created"));
         assertTrue(columnExists("products", "product_no"));
         assertEquals("bigint", dataType("products", "product_no"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -379,6 +394,71 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
+    void v29RenamesHistoricalRepliesBackfillsWaitingStateAndAddsConversationSchema() {
+        flyway("28").migrate();
+        UUID levelId = defaultUserLevelId();
+        UUID userId = UUID.randomUUID();
+        UUID pendingOrderId = UUID.randomUUID();
+        UUID rejectedOrderId = UUID.randomUUID();
+        UUID pendingRequestId = UUID.randomUUID();
+        UUID rejectedRequestId = UUID.randomUUID();
+        LocalDateTime submittedAt = LocalDateTime.of(2026, 9, 1, 10, 0);
+        LocalDateTime handledAt = submittedAt.plusHours(3);
+
+        jdbcTemplate.update("""
+                INSERT INTO users(id, username, email, password_hash, role, user_no, user_level_id)
+                VALUES (?, 'v29-migration-user', 'v29-migration@example.com', 'test-hash', 'USER', 19001, ?)
+                """, userId, levelId);
+        jdbcTemplate.update("""
+                INSERT INTO orders(id, user_id, total_amount, actual_amount, status, order_type)
+                VALUES (?, ?, 10.00, 10.00, 'AFTER_SALE', 'NORMAL'),
+                       (?, ?, 10.00, 10.00, 'PAID', 'NORMAL')
+                """, pendingOrderId, userId, rejectedOrderId, userId);
+        jdbcTemplate.update("""
+                INSERT INTO after_sale_requests(
+                    id, order_id, user_id, status, source_order_status, reason,
+                    admin_reply, handled_by, submitted_at, handled_at)
+                VALUES (?, ?, ?, 'PENDING', 'PAID', '历史申请说明', NULL, NULL, ?, NULL),
+                       (?, ?, ?, 'REJECTED', 'DELIVERED', '历史驳回说明', '历史管理员说明', ?, ?, ?)
+                """, pendingRequestId, pendingOrderId, userId, submittedAt,
+                rejectedRequestId, rejectedOrderId, userId, userId, submittedAt, handledAt);
+
+        flyway().migrate();
+
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertFalse(columnExists("after_sale_requests", "admin_reply"));
+        assertEquals("历史管理员说明", jdbcTemplate.queryForObject(
+                "SELECT rejection_reason FROM after_sale_requests WHERE id = ?", String.class,
+                rejectedRequestId));
+        assertEquals("ADMIN", jdbcTemplate.queryForObject(
+                "SELECT waiting_for FROM after_sale_requests WHERE id = ?", String.class,
+                pendingRequestId));
+        assertEquals(submittedAt, jdbcTemplate.queryForObject(
+                "SELECT last_activity_at FROM after_sale_requests WHERE id = ?", LocalDateTime.class,
+                pendingRequestId));
+        assertNull(jdbcTemplate.queryForObject(
+                "SELECT waiting_for FROM after_sale_requests WHERE id = ?", String.class,
+                rejectedRequestId));
+        assertEquals(handledAt, jdbcTemplate.queryForObject(
+                "SELECT last_activity_at FROM after_sale_requests WHERE id = ?", LocalDateTime.class,
+                rejectedRequestId));
+
+        UUID messageId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO after_sale_messages(id, request_id, sender_type, sender_user_id, content)
+                VALUES (?, ?, 'CUSTOMER', ?, '补充说明')
+                """, messageId, pendingRequestId, userId);
+        UUID attachmentId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO after_sale_attachments(
+                    id, request_id, message_id, storage_key, original_filename, content_type, file_size)
+                VALUES (?, ?, ?, 'after-sales/v29/proof.png', 'proof.png', 'image/png', 12)
+                """, attachmentId, pendingRequestId, messageId);
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM after_sale_attachments WHERE message_id = ?", Integer.class, messageId));
+    }
+
+    @Test
     void v27BackfillsAvailableProductCoversAndKeepsMissingLegacyCoversNullable() {
         flyway("26").migrate();
         UUID categoryId = UUID.randomUUID();
@@ -418,7 +498,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("28", flyway().info().current().getVersion().getVersion());
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
         assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
                 "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
         assertNull(jdbcTemplate.queryForObject(
@@ -448,7 +528,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("28", flyway().info().current().getVersion().getVersion());
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -542,7 +622,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-         assertEquals("28", flyway().info().current().getVersion().getVersion());
+         assertEquals("29", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -743,7 +823,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("28", flyway().info().current().getVersion().getVersion());
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -813,7 +893,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("28", flyway().info().current().getVersion().getVersion());
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -862,7 +942,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("28", flyway().info().current().getVersion().getVersion());
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -1062,7 +1142,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("28", flyway().info().current().getVersion().getVersion());
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1108,7 +1188,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("28", flyway().info().current().getVersion().getVersion());
+        assertEquals("29", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

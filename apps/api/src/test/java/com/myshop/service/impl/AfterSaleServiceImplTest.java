@@ -1,23 +1,28 @@
 package com.myshop.service.impl;
 
 import com.myshop.constant.AfterSaleRequestStatus;
+import com.myshop.constant.AfterSaleMessageSenderType;
+import com.myshop.constant.AfterSaleWaitingFor;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.AfterSaleAttachment;
+import com.myshop.entity.AfterSaleMessage;
 import com.myshop.entity.AfterSaleRequest;
 import com.myshop.entity.Order;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.repository.AfterSaleAttachmentRepository;
+import com.myshop.repository.AfterSaleMessageRepository;
 import com.myshop.repository.AfterSaleRequestRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderRefundService;
+import com.myshop.service.AfterSaleAttachmentService;
 import com.myshop.service.PrivateUploadStorage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,12 +47,15 @@ import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -67,6 +75,8 @@ class AfterSaleServiceImplTest {
     @Mock private AfterSaleRequestRepository requestRepository;
     @Mock private AfterSaleAttachmentRepository attachmentRepository;
     @Mock private PrivateUploadStorage privateUploadStorage;
+    @Mock private AfterSaleMessageRepository messageRepository;
+    private AfterSaleAttachmentService attachmentService;
     @Mock private OperationLogService operationLogService;
     @Mock private OrderRefundService orderRefundService;
 
@@ -74,9 +84,10 @@ class AfterSaleServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        attachmentService = new AfterSaleAttachmentServiceImpl(attachmentRepository, privateUploadStorage);
         service = new AfterSaleServiceImpl(
                 orderRepository, userRepository, requestRepository, attachmentRepository,
-                privateUploadStorage, operationLogService, orderRefundService,
+                messageRepository, attachmentService, operationLogService, orderRefundService,
                 Clock.fixed(NOW.toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
         RequestContext.set(new RequestContext.UserInfo(USER_ID, "buyer", "USER"));
         lenient().when(userRepository.findById(USER_ID))
@@ -278,7 +289,7 @@ class AfterSaleServiceImplTest {
             service.reject(orderId, "  请补充完整凭证  ");
 
             assertEquals(AfterSaleRequestStatus.REJECTED, request.getStatus());
-            assertEquals("请补充完整凭证", request.getAdminReply());
+            assertEquals("请补充完整凭证", request.getRejectionReason());
             assertEquals(ADMIN_ID, request.getHandledBy());
             assertEquals(NOW, request.getHandledAt());
             assertEquals(source, order.getStatus());
@@ -308,7 +319,7 @@ class AfterSaleServiceImplTest {
     void orderViewContainsHistoricalStatusAndPrivateAttachmentUrlsOnly() {
         UUID orderId = UUID.randomUUID();
         AfterSaleRequest rejected = request(orderId, OrderStatus.PAID, AfterSaleRequestStatus.REJECTED);
-        rejected.setAdminReply("不符合售后条件");
+        rejected.setRejectionReason("不符合售后条件");
         rejected.setHandledBy(ADMIN_ID);
         rejected.setHandledAt(NOW.plusHours(1));
         AfterSaleRequest pending = request(orderId, OrderStatus.DELIVERED, AfterSaleRequestStatus.PENDING);
@@ -331,7 +342,108 @@ class AfterSaleServiceImplTest {
         assertFalse(currentAttachment.containsKey("storage_key"));
         assertTrue(String.valueOf(currentAttachment.get("url")).contains(attachment.getId().toString()));
         Map<?, ?> old = (Map<?, ?>) ((List<?>) view.get("after_sale_history")).get(1);
-        assertEquals("不符合售后条件", old.get("admin_reply"));
+        assertEquals("不符合售后条件", old.get("rejection_reason"));
+    }
+
+    @Test
+    void customerAndAdministratorRepliesAppendImmutableTimelineEntriesAndFlipWaitingSide() {
+        UUID orderId = UUID.randomUUID();
+        Order order = order(orderId, OrderStatus.AFTER_SALE);
+        AfterSaleRequest request = request(orderId, OrderStatus.PAID, AfterSaleRequestStatus.PENDING);
+        request.setWaitingFor(AfterSaleWaitingFor.ADMIN);
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(requestRepository.findFirstByOrderIdAndStatusForUpdate(
+                orderId, AfterSaleRequestStatus.PENDING)).thenReturn(Optional.of(request));
+        when(requestRepository.findByOrderIdOrderBySubmittedAtDesc(orderId)).thenReturn(List.of(request));
+        when(attachmentRepository.findByRequestIdInOrderByCreatedAtAsc(List.of(request.getId())))
+                .thenReturn(List.of());
+        when(messageRepository.findByRequestIdInOrderByCreatedAtAscIdAsc(List.of(request.getId())))
+                .thenReturn(List.of());
+
+        Map<String, Object> customerResult = service.replyFromCustomer(
+                orderId, USER_ID, "  补充了新的证据  ", List.of());
+
+        assertNotNull(customerResult);
+        assertEquals(AfterSaleWaitingFor.ADMIN, request.getWaitingFor());
+        assertEquals(NOW, request.getLastActivityAt());
+        ArgumentCaptor<AfterSaleMessage> messageCaptor = ArgumentCaptor.forClass(AfterSaleMessage.class);
+        verify(messageRepository).saveAndFlush(messageCaptor.capture());
+        AfterSaleMessage customerMessage = messageCaptor.getValue();
+        assertEquals(request.getId(), customerMessage.getRequestId());
+        assertEquals(AfterSaleMessageSenderType.CUSTOMER, customerMessage.getSenderType());
+        assertEquals(USER_ID, customerMessage.getSenderUserId());
+        assertEquals("补充了新的证据", customerMessage.getContent());
+        assertEquals(NOW, customerMessage.getCreatedAt());
+
+        RequestContext.set(new RequestContext.UserInfo(ADMIN_ID, "admin", "ADMIN"));
+        request.setWaitingFor(AfterSaleWaitingFor.CUSTOMER);
+        service.replyFromAdmin(orderId, "  商家已收到  ", List.of());
+
+        assertEquals(AfterSaleWaitingFor.CUSTOMER, request.getWaitingFor());
+        verify(messageRepository, times(2)).saveAndFlush(any(AfterSaleMessage.class));
+        ArgumentCaptor<String> audit = ArgumentCaptor.forClass(String.class);
+        verify(operationLogService, times(2)).logCurrentRequest(
+                eq("order.after_sale.message"), eq("ORDER"), eq(orderId.toString()), audit.capture());
+        assertTrue(audit.getAllValues().stream().allMatch(detail ->
+                detail.contains("售后申请ID=" + request.getId()) && detail.contains("消息ID=")));
+        assertTrue(audit.getAllValues().stream().noneMatch(detail ->
+                detail.contains("新的证据") || detail.contains("商家已收到")
+                        || detail.contains("after-sales/")));
+
+        var locks = inOrder(orderRepository, requestRepository);
+        locks.verify(orderRepository).findByIdForUpdate(orderId);
+        locks.verify(requestRepository).findFirstByOrderIdAndStatusForUpdate(
+                orderId, AfterSaleRequestStatus.PENDING);
+        locks.verify(orderRepository).findByIdForUpdate(orderId);
+        locks.verify(requestRepository).findFirstByOrderIdAndStatusForUpdate(
+                orderId, AfterSaleRequestStatus.PENDING);
+    }
+
+    @Test
+    void messageAttachmentsBindToTheKnownMessageIdAndTerminalRequestsRejectReplies() {
+        UUID orderId = UUID.randomUUID();
+        Order order = order(orderId, OrderStatus.AFTER_SALE);
+        AfterSaleRequest request = request(orderId, OrderStatus.DELIVERED, AfterSaleRequestStatus.PENDING);
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(requestRepository.findFirstByOrderIdAndStatusForUpdate(
+                orderId, AfterSaleRequestStatus.PENDING)).thenReturn(Optional.of(request));
+        when(requestRepository.findByOrderIdOrderBySubmittedAtDesc(orderId)).thenReturn(List.of(request));
+        when(attachmentRepository.findByRequestIdInOrderByCreatedAtAsc(List.of(request.getId())))
+                .thenReturn(List.of());
+        when(messageRepository.findByRequestIdInOrderByCreatedAtAscIdAsc(List.of(request.getId())))
+                .thenReturn(List.of());
+
+        service.replyFromCustomer(orderId, USER_ID, "补充凭证", List.of(
+                image("reply.png", "image/png", pngBytes())));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<AfterSaleAttachment>> attachments = ArgumentCaptor.forClass(List.class);
+        verify(attachmentRepository).saveAllAndFlush(attachments.capture());
+        assertEquals(1, attachments.getValue().size());
+        AfterSaleAttachment attachment = attachments.getValue().get(0);
+        assertEquals(request.getId(), attachment.getRequestId());
+        assertNotNull(attachment.getMessageId());
+        assertFalse(attachment.getStorageKey().contains("secret"));
+        verify(privateUploadStorage).write(eq(attachment.getStorageKey()), any(MultipartFile.class));
+
+        request.setStatus(AfterSaleRequestStatus.REJECTED);
+        request.setWaitingFor(null);
+        order.setStatus(OrderStatus.PAID);
+        BusinessException exception = assertThrows(BusinessException.class,
+                () -> service.replyFromCustomer(orderId, USER_ID, "不应写入", List.of()));
+        assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
+        verify(messageRepository, times(1)).saveAndFlush(any(AfterSaleMessage.class));
+        assertNull(request.getWaitingFor());
+    }
+
+    @Test
+    void attentionCountUsesOnlyPendingRequestsWaitingForAdministrator() {
+        when(requestRepository.countByStatusAndWaitingFor(
+                AfterSaleRequestStatus.PENDING, AfterSaleWaitingFor.ADMIN)).thenReturn(3L);
+
+        assertEquals(3L, service.countNeedsAdminAttention());
+        verify(requestRepository).countByStatusAndWaitingFor(
+                AfterSaleRequestStatus.PENDING, AfterSaleWaitingFor.ADMIN);
     }
 
     private Order order(UUID id, OrderStatus status) {
@@ -363,6 +475,9 @@ class AfterSaleServiceImplTest {
         request.setStatus(status);
         request.setReason("有效售后说明");
         request.setSubmittedAt(NOW.minusMinutes(5));
+        request.setLastActivityAt(NOW.minusMinutes(5));
+        request.setWaitingFor(status == AfterSaleRequestStatus.PENDING
+                ? com.myshop.constant.AfterSaleWaitingFor.ADMIN : null);
         return request;
     }
 

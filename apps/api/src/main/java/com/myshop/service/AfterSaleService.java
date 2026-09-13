@@ -15,7 +15,17 @@ public interface AfterSaleService {
 
     Map<String, Object> buildOrderView(UUID orderId);
 
-    void reject(UUID orderId, String adminReply);
+    Map<String, Object> buildOrderSummary(UUID orderId);
+
+    long countNeedsAdminAttention();
+
+    void reject(UUID orderId, String rejectionReason);
+
+    Map<String, Object> replyFromCustomer(UUID orderId, UUID userId, String content,
+                                           List<MultipartFile> attachments);
+
+    Map<String, Object> replyFromAdmin(UUID orderId, String content,
+                                        List<MultipartFile> attachments);
 
     AdminOrderRefundResponse approve(UUID orderId, boolean confirmed,
                                      boolean reclaimCardKeys);

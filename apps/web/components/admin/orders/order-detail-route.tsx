@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { invalidateAdminOrders } from "@/lib/admin-order-invalidation"
+import { invalidateAdminAttention } from "@/lib/admin-attention"
 import { getRefundCardKeyAvailability, normalizeRefundCardKeySelection } from "@/lib/admin-refund-ui"
 import { adminCardKeyApi, adminOrderApi, adminProductApi, requestOrThrow } from "@/services/api"
 import { isManualFulfillmentItem } from "@/lib/order-status"
@@ -41,10 +42,11 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [refundLoading, setRefundLoading] = useState(false)
   const [reclaimCardKeys, setReclaimCardKeys] = useState(false)
   const [afterSaleRejectOpen, setAfterSaleRejectOpen] = useState(false)
-  const [afterSaleReply, setAfterSaleReply] = useState("")
+  const [rejectionReason, setRejectionReason] = useState("")
   const [afterSaleRejectLoading, setAfterSaleRejectLoading] = useState(false)
   const [afterSaleApproveOpen, setAfterSaleApproveOpen] = useState(false)
   const [afterSaleApproveLoading, setAfterSaleApproveLoading] = useState(false)
+  const [afterSaleMessageLoading, setAfterSaleMessageLoading] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -151,19 +153,20 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
 
   const handleRejectAfterSale = async () => {
     if (!order || afterSaleRejectLoading) return
-    const reply = afterSaleReply.trim()
-    if ([...reply].length < 1 || [...reply].length > 500) {
+    const normalizedReason = rejectionReason.trim()
+    if ([...normalizedReason].length < 1 || [...normalizedReason].length > 500) {
       toast.error(t("admin.afterSaleRejectReplyInvalid"))
       return
     }
     setAfterSaleRejectLoading(true)
     try {
-      await requestOrThrow(() => adminOrderApi.rejectAfterSale(order.id, reply))
+      await requestOrThrow(() => adminOrderApi.rejectAfterSale(order.id, normalizedReason))
       toast.success(t("admin.afterSaleRejectSuccess"))
       setAfterSaleRejectOpen(false)
-      setAfterSaleReply("")
+      setRejectionReason("")
       await load()
       invalidateAdminOrders()
+      invalidateAdminAttention()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -191,10 +194,29 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       setReclaimCardKeys(false)
       await load()
       invalidateAdminOrders()
+      invalidateAdminAttention()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
       setAfterSaleApproveLoading(false)
+    }
+  }
+
+  const sendAfterSaleMessage = async (content: string, attachments: File[]) => {
+    if (!order || afterSaleMessageLoading) return
+    setAfterSaleMessageLoading(true)
+    try {
+      const afterSaleView = await requestOrThrow(() => adminOrderApi.sendAfterSaleMessage(order.id, content, attachments))
+      // The endpoint returns the transactionally locked conversation view. Keep
+      // it as the immediate source of truth so a post-commit detail reload
+      // failure cannot turn a successful reply into a duplicate retry prompt.
+      setOrder(current => current
+        ? { ...current, after_sale: afterSaleView.after_sale, after_sale_history: afterSaleView.after_sale_history }
+        : current)
+      invalidateAdminOrders()
+      invalidateAdminAttention()
+    } finally {
+      setAfterSaleMessageLoading(false)
     }
   }
 
@@ -224,6 +246,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           detailCardKeysLoading={cardKeysLoading}
           detailCardKeysError={cardKeysError}
           onRetryCardKeys={retryCardKeys}
+          onReplyAfterSale={sendAfterSaleMessage}
+          afterSaleReplyLoading={afterSaleMessageLoading}
         />
       )}
     </>
@@ -276,7 +300,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     && order.status === "AFTER_SALE"
     && order.after_sale?.status === "PENDING"
   const afterSaleRejectButton = canReviewAfterSale ? (
-    <Button type="button" variant="outline" onClick={() => { setAfterSaleRejectOpen(true); setAfterSaleReply("") }} disabled={afterSaleRejectLoading || afterSaleApproveLoading}>
+    <Button type="button" variant="outline" onClick={() => { setAfterSaleRejectOpen(true); setRejectionReason("") }} disabled={afterSaleRejectLoading || afterSaleApproveLoading}>
       <XCircle className="size-4" aria-hidden="true" />
       {t("admin.afterSaleReject")}
     </Button>
@@ -361,20 +385,20 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const afterSaleRejectDialog = (
     <ConfirmAlert
       open={afterSaleRejectOpen}
-      onOpenChange={(open) => { if (!open && !afterSaleRejectLoading) { setAfterSaleRejectOpen(false); setAfterSaleReply("") } }}
+      onOpenChange={(open) => { if (!open && !afterSaleRejectLoading) { setAfterSaleRejectOpen(false); setRejectionReason("") } }}
       title={t("admin.afterSaleRejectConfirm")}
       description={t("admin.afterSaleRejectDescription")}
       confirmLabel={t("admin.afterSaleReject")}
       cancelLabel={t("admin.cancel")}
       destructive
       loading={afterSaleRejectLoading}
-      confirmDisabled={(() => { const length = [...afterSaleReply.trim()].length; return length < 1 || length > 500 })()}
+      confirmDisabled={(() => { const length = [...rejectionReason.trim()].length; return length < 1 || length > 500 })()}
       onConfirm={() => void handleRejectAfterSale()}
     >
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-foreground" htmlFor="admin-after-sale-reply">{t("admin.afterSaleRejectReply")}</label>
-        <Textarea id="admin-after-sale-reply" value={afterSaleReply} onChange={(event) => setAfterSaleReply(event.target.value)} placeholder={t("admin.afterSaleRejectReplyPlaceholder")} rows={4} aria-label={t("admin.afterSaleRejectReply")} />
-        <p className="text-right text-xs tabular-nums text-muted-foreground">{[...afterSaleReply].length}/500</p>
+        <label className="block text-sm font-medium text-foreground" htmlFor="admin-after-sale-rejection-reason">{t("admin.afterSaleRejectReply")}</label>
+        <Textarea id="admin-after-sale-rejection-reason" value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} placeholder={t("admin.afterSaleRejectReplyPlaceholder")} rows={4} aria-label={t("admin.afterSaleRejectReply")} />
+        <p className="text-right text-xs tabular-nums text-muted-foreground">{[...rejectionReason].length}/500</p>
       </div>
     </ConfirmAlert>
   )

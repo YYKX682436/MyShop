@@ -15,6 +15,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.UserService;
+import com.myshop.service.AfterSaleService;
 import com.myshop.service.ManualStockService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -39,6 +40,7 @@ public class UserServiceImpl implements UserService {
     private final PasswordEncoder passwordEncoder;
     private final ManualStockService manualStockService;
     private final UserLevelRepository userLevelRepository;
+    private final AfterSaleService afterSaleService;
 
     @Override
     public UserProfileResponse getProfile(UUID userId) {
@@ -130,6 +132,9 @@ public class UserServiceImpl implements UserService {
         map.put("status", o.getStatus().name());
         map.put("created_at", o.getCreatedAt());
         map.put("items", items.stream().map(this::toOrderItemBrief).toList());
+        if (o.getStatus() == OrderStatus.AFTER_SALE) {
+            map.put("after_sale", afterSaleService.buildOrderSummary(o.getId()));
+        }
         return map;
     }
 

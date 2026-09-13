@@ -15,6 +15,7 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.ManualStockService;
+import com.myshop.service.AfterSaleService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -51,6 +52,8 @@ class UserServiceImplTest {
     private ManualStockService manualStockService;
     @Mock
     private UserLevelRepository userLevelRepository;
+    @Mock
+    private AfterSaleService afterSaleService;
     @Test
     void changingPasswordIncrementsAuthVersionSoTheOriginalJwtCannotBeReused() {
         UUID userId = UUID.randomUUID();
@@ -68,7 +71,7 @@ class UserServiceImplTest {
         request.setNewPassword("new-password");
 
         new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
-                passwordEncoder, manualStockService, userLevelRepository)
+                passwordEncoder, manualStockService, userLevelRepository, afterSaleService)
                 .changePassword(userId, request);
 
         assertEquals("new-hash", user.getPasswordHash());
@@ -109,7 +112,7 @@ class UserServiceImplTest {
         when(orderItemRepository.findByOrderIdIn(List.of(orderId))).thenReturn(List.of(item));
 
         PageResult<?> result = new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
-                passwordEncoder, manualStockService, userLevelRepository)
+                passwordEncoder, manualStockService, userLevelRepository, afterSaleService)
                 .getOrders(userId, null, 1, 20);
 
         Map<?, ?> orderView = (Map<?, ?>) result.getList().get(0);

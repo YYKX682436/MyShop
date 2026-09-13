@@ -20,6 +20,9 @@ public class AfterSaleAttachment extends AssignedUuidEntity {
     @Column(name = "request_id", nullable = false)
     private UUID requestId;
 
+    @Column(name = "message_id")
+    private UUID messageId;
+
     @Column(name = "storage_key", nullable = false, length = 500)
     private String storageKey;
 

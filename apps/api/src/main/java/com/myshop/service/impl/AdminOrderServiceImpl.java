@@ -42,6 +42,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class AdminOrderServiceImpl implements AdminOrderService {
@@ -211,8 +212,15 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
     @Override
     @Transactional
-    public void rejectAfterSale(UUID id, String adminReply) {
-        afterSaleService.reject(id, adminReply);
+    public void rejectAfterSale(UUID id, String rejectionReason) {
+        afterSaleService.reject(id, rejectionReason);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> replyAfterSale(UUID id, String content,
+                                               List<MultipartFile> attachments) {
+        return afterSaleService.replyFromAdmin(id, content, attachments);
     }
 
     @Override
@@ -254,6 +262,9 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
+        if (o.getStatus() == OrderStatus.AFTER_SALE) {
+            map.put("after_sale", afterSaleService.buildOrderSummary(o.getId()));
+        }
         map.put("order_type", o.getOrderType());
         map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());
         map.put("payment_channel_code", o.getPaymentChannelCode());

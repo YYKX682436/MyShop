@@ -31,4 +31,13 @@ public class AfterSaleController {
         return ApiResponse.success(afterSaleService.apply(
                 orderId, RequestContext.getUserId(), reason, files));
     }
+
+    @PostMapping("/{orderId}/after-sale/messages")
+    public ApiResponse<?> reply(@PathVariable UUID orderId,
+                                @RequestParam(value = "content", required = false) String content,
+                                @RequestParam(value = "attachments", required = false) MultipartFile[] attachments) {
+        List<MultipartFile> files = attachments == null ? List.of() : Arrays.asList(attachments);
+        return ApiResponse.success(afterSaleService.replyFromCustomer(
+                orderId, RequestContext.getUserId(), content, files));
+    }
 }

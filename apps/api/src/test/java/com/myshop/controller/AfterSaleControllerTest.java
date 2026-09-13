@@ -84,4 +84,24 @@ class AfterSaleControllerTest {
 
         verify(afterSaleService).apply(orderId, userId, "没有附件的说明", List.of());
     }
+
+    @Test
+    void customerMessageEndpointForwardsContentAndOptionalAttachments() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        UUID userId = RequestContext.getUserId();
+        MockMultipartFile attachment = new MockMultipartFile(
+                "attachments", "reply.webp", "image/webp", new byte[]{1, 2, 3});
+        when(afterSaleService.replyFromCustomer(eq(orderId), eq(userId), eq("补充信息"), anyList()))
+                .thenReturn(Map.of("status", "PENDING"));
+
+        mockMvc.perform(multipart("/user/orders/{orderId}/after-sale/messages", orderId)
+                        .file(attachment)
+                        .param("content", "补充信息"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PENDING"));
+
+        ArgumentCaptor<List<MultipartFile>> files = ArgumentCaptor.forClass(List.class);
+        verify(afterSaleService).replyFromCustomer(eq(orderId), eq(userId), eq("补充信息"), files.capture());
+        assertEquals("reply.webp", files.getValue().get(0).getOriginalFilename());
+    }
 }

@@ -1,40 +1,40 @@
 package com.myshop.service.impl;
 
+import com.myshop.constant.AfterSaleMessageSenderType;
 import com.myshop.constant.AfterSaleRequestStatus;
+import com.myshop.constant.AfterSaleWaitingFor;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
 import com.myshop.constant.UserRole;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.AfterSaleAttachment;
+import com.myshop.entity.AfterSaleMessage;
 import com.myshop.entity.AfterSaleRequest;
 import com.myshop.entity.Order;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.repository.AfterSaleAttachmentRepository;
+import com.myshop.repository.AfterSaleMessageRepository;
 import com.myshop.repository.AfterSaleRequestRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserRepository;
+import com.myshop.service.AfterSaleAttachmentService;
 import com.myshop.service.AfterSaleService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderRefundService;
-import com.myshop.service.PrivateUploadStorage;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -42,14 +42,12 @@ import java.util.stream.Collectors;
 @Service
 public class AfterSaleServiceImpl implements AfterSaleService {
 
-    public static final int MAX_ATTACHMENTS = 5;
-    public static final long MAX_ATTACHMENT_SIZE = 5L * 1024 * 1024;
-
     private final OrderRepository orderRepository;
     private final UserRepository userRepository;
     private final AfterSaleRequestRepository requestRepository;
     private final AfterSaleAttachmentRepository attachmentRepository;
-    private final PrivateUploadStorage privateUploadStorage;
+    private final AfterSaleMessageRepository messageRepository;
+    private final AfterSaleAttachmentService attachmentService;
     private final OperationLogService operationLogService;
     private final OrderRefundService orderRefundService;
     private final Clock clock;
@@ -58,7 +56,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                 UserRepository userRepository,
                                 AfterSaleRequestRepository requestRepository,
                                 AfterSaleAttachmentRepository attachmentRepository,
-                                PrivateUploadStorage privateUploadStorage,
+                                AfterSaleMessageRepository messageRepository,
+                                AfterSaleAttachmentService attachmentService,
                                 OperationLogService operationLogService,
                                 OrderRefundService orderRefundService,
                                 Clock clock) {
@@ -66,7 +65,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         this.userRepository = userRepository;
         this.requestRepository = requestRepository;
         this.attachmentRepository = attachmentRepository;
-        this.privateUploadStorage = privateUploadStorage;
+        this.messageRepository = messageRepository;
+        this.attachmentService = attachmentService;
         this.operationLogService = operationLogService;
         this.orderRefundService = orderRefundService;
         this.clock = clock;
@@ -78,7 +78,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                      List<MultipartFile> attachments) {
         requireCustomerContext(userId);
         String normalizedReason = normalizeReason(reason);
-        List<MultipartFile> files = normalizeAttachments(attachments);
+        List<AfterSaleAttachmentService.ValidatedAttachment> files =
+                attachmentService.validate(attachments);
 
         // The order row is the first lock for every after-sale transition.
         Order order = orderRepository.findByIdForUpdate(orderId)
@@ -112,7 +113,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         }
 
         UUID requestId = UUID.randomUUID();
-        LocalDateTime submittedAt = LocalDateTime.now(clock);
+        LocalDateTime submittedAt = now();
         AfterSaleRequest request = new AfterSaleRequest();
         request.setId(requestId);
         request.setOrderId(orderId);
@@ -120,43 +121,28 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         request.setStatus(AfterSaleRequestStatus.PENDING);
         request.setSourceOrderStatus(sourceStatus);
         request.setReason(normalizedReason);
+        request.setWaitingFor(AfterSaleWaitingFor.ADMIN);
+        request.setLastActivityAt(submittedAt);
         request.setSubmittedAt(submittedAt);
 
         List<String> storedKeys = new ArrayList<>();
         try {
-            // Flush the parent first because attachments deliberately use a
-            // scalar request_id rather than a hidden ORM cascade.
+            // Flush the parent first because attachments deliberately use
+            // scalar foreign keys rather than an ORM cascade.
             requestRepository.saveAndFlush(request);
             registerRollbackCleanup(storedKeys);
-
-            List<AfterSaleAttachment> savedAttachments = new ArrayList<>(files.size());
-            for (MultipartFile file : files) {
-                String extension = extensionOf(file.getOriginalFilename());
-                String storageKey = "after-sales/" + requestId + "/" + UUID.randomUUID() + "." + extension;
-                privateUploadStorage.write(storageKey, file);
-                storedKeys.add(storageKey);
-
-                AfterSaleAttachment attachment = new AfterSaleAttachment();
-                attachment.setId(UUID.randomUUID());
-                attachment.setRequestId(requestId);
-                attachment.setStorageKey(storageKey);
-                attachment.setOriginalFilename(safeOriginalFilename(file.getOriginalFilename(), extension));
-                attachment.setContentType(normalizedContentType(file));
-                attachment.setFileSize(file.getSize());
-                savedAttachments.add(attachment);
-            }
-            if (!savedAttachments.isEmpty()) {
-                attachmentRepository.saveAllAndFlush(savedAttachments);
-            }
+            AfterSaleAttachmentService.StoredAttachments stored = attachmentService.store(
+                    requestId, null, files);
+            storedKeys.addAll(stored.storageKeys());
 
             order.setStatus(OrderStatus.AFTER_SALE);
             orderRepository.save(order);
             operationLogService.logCurrentRequest(
                     "order.after_sale.apply", "ORDER", orderId.toString(),
-                    auditDetail(order, request, "申请售后", sourceStatus, null));
-            return applyResult(order, request, savedAttachments);
+                    auditDetail(order, request, "申请售后", sourceStatus));
+            return applyResult(order, request, stored.attachments());
         } catch (RuntimeException exception) {
-            cleanup(storedKeys);
+            attachmentService.cleanup(storedKeys);
             throw exception;
         }
     }
@@ -175,13 +161,19 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         List<UUID> requestIds = requests.stream().map(AfterSaleRequest::getId).toList();
         List<AfterSaleAttachment> attachments = attachmentRepository
                 .findByRequestIdInOrderByCreatedAtAsc(requestIds);
-        Map<UUID, List<AfterSaleAttachment>> attachmentsByRequest = attachments == null
+        List<AfterSaleMessage> messages = messageRepository
+                .findByRequestIdInOrderByCreatedAtAscIdAsc(requestIds);
+        Map<UUID, List<AfterSaleAttachment>> attachmentsByRequest = groupAttachmentsByRequest(attachments);
+        Map<UUID, List<AfterSaleAttachment>> attachmentsByMessage = groupAttachmentsByMessage(attachments);
+        Map<UUID, List<AfterSaleMessage>> messagesByRequest = messages == null
                 ? Map.of()
-                : attachments.stream().collect(Collectors.groupingBy(
-                AfterSaleAttachment::getRequestId, LinkedHashMap::new, Collectors.toList()));
+                : messages.stream().collect(Collectors.groupingBy(
+                AfterSaleMessage::getRequestId, LinkedHashMap::new, Collectors.toList()));
         List<Map<String, Object>> history = requests.stream()
                 .map(request -> requestView(request,
-                        attachmentsByRequest.getOrDefault(request.getId(), List.of())))
+                        attachmentsByRequest.getOrDefault(request.getId(), List.of()),
+                        messagesByRequest.getOrDefault(request.getId(), List.of()),
+                        attachmentsByMessage))
                 .toList();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("after_sale", history.get(0));
@@ -190,25 +182,77 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Map<String, Object> buildOrderSummary(UUID orderId) {
+        AfterSaleRequest request = requestRepository
+                .findFirstByOrderIdAndStatusOrderBySubmittedAtDesc(orderId, AfterSaleRequestStatus.PENDING)
+                .orElseGet(() -> requestRepository.findFirstByOrderIdOrderBySubmittedAtDesc(orderId).orElse(null));
+        if (request == null) {
+            return null;
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("id", request.getId());
+        summary.put("order_id", request.getOrderId());
+        summary.put("user_id", request.getUserId());
+        summary.put("status", request.getStatus() == null ? null : request.getStatus().name());
+        summary.put("source_order_status", request.getSourceOrderStatus() == null
+                ? null : request.getSourceOrderStatus().name());
+        summary.put("waiting_for", request.getWaitingFor() == null ? null : request.getWaitingFor().name());
+        summary.put("last_activity_at", request.getLastActivityAt());
+        summary.put("submitted_at", request.getSubmittedAt());
+        summary.put("handled_at", request.getHandledAt());
+        return summary;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long countNeedsAdminAttention() {
+        return requestRepository.countByStatusAndWaitingFor(
+                AfterSaleRequestStatus.PENDING, AfterSaleWaitingFor.ADMIN);
+    }
+
+    @Override
     @Transactional
-    public void reject(UUID orderId, String adminReply) {
+    public void reject(UUID orderId, String rejectionReason) {
         RequestContext.UserInfo operator = requireAdminContext();
-        String normalizedReply = normalizeAdminReply(adminReply);
+        String normalizedReason = normalizeRejectionReason(rejectionReason);
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         AfterSaleRequest request = pendingRequestForUpdate(orderId);
         ensurePendingOrder(order, request);
 
+        LocalDateTime handledAt = now();
         request.setStatus(AfterSaleRequestStatus.REJECTED);
-        request.setAdminReply(normalizedReply);
+        request.setRejectionReason(normalizedReason);
+        request.setWaitingFor(null);
+        request.setLastActivityAt(handledAt);
         request.setHandledBy(operator.getUserId());
-        request.setHandledAt(LocalDateTime.now(clock));
+        request.setHandledAt(handledAt);
         requestRepository.save(request);
         order.setStatus(request.getSourceOrderStatus());
         orderRepository.save(order);
         operationLogService.logCurrentRequest(
                 "order.after_sale.reject", "ORDER", orderId.toString(),
-                auditDetail(order, request, "驳回售后", request.getSourceOrderStatus(), normalizedReply.length()));
+                auditDetail(order, request, "驳回售后", request.getSourceOrderStatus())
+                        + "，处理说明字符数=" + normalizedReason.codePointCount(0, normalizedReason.length()));
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> replyFromCustomer(UUID orderId, UUID userId, String content,
+                                                  List<MultipartFile> attachments) {
+        requireCustomerContext(userId);
+        return appendMessage(orderId, userId, AfterSaleMessageSenderType.CUSTOMER,
+                content, attachments);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> replyFromAdmin(UUID orderId, String content,
+                                               List<MultipartFile> attachments) {
+        RequestContext.UserInfo operator = requireAdminContext();
+        return appendMessage(orderId, operator.getUserId(), AfterSaleMessageSenderType.ADMIN,
+                content, attachments);
     }
 
     @Override
@@ -216,6 +260,68 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     public AdminOrderRefundResponse approve(UUID orderId, boolean confirmed,
                                             boolean reclaimCardKeys) {
         return orderRefundService.approveAfterSale(orderId, confirmed, reclaimCardKeys);
+    }
+
+    private Map<String, Object> appendMessage(UUID orderId, UUID senderId,
+                                              AfterSaleMessageSenderType senderType,
+                                              String content,
+                                              List<MultipartFile> attachments) {
+        String normalizedContent = normalizeMessage(content);
+        List<AfterSaleAttachmentService.ValidatedAttachment> files =
+                attachmentService.validate(attachments);
+
+        // Customer replies, admin replies, reject, approve and fulfillment all
+        // start with the same order-row lock. The pending request is locked
+        // only after the order has established the transition boundary.
+        Order order = orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        if (senderType == AfterSaleMessageSenderType.CUSTOMER
+                && (order.getUserId() == null || !order.getUserId().equals(senderId)
+                || order.getOrderType() != OrderType.NORMAL
+                || userRepository.findById(senderId).map(User::getRole).orElse(null) != UserRole.USER)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只能回复自己的注册用户订单售后");
+        }
+        AfterSaleRequest request = pendingRequestForUpdate(orderId);
+        ensurePendingOrder(order, request);
+        if (senderType == AfterSaleMessageSenderType.CUSTOMER
+                && !request.getUserId().equals(senderId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "无权回复此售后申请");
+        }
+
+        UUID messageId = UUID.randomUUID();
+        LocalDateTime messageAt = now();
+        AfterSaleMessage message = new AfterSaleMessage();
+        message.setId(messageId);
+        message.setRequestId(request.getId());
+        message.setSenderType(senderType);
+        message.setSenderUserId(senderId);
+        message.setContent(normalizedContent);
+        message.setCreatedAt(messageAt);
+
+        List<String> storedKeys = new ArrayList<>();
+        try {
+            messageRepository.saveAndFlush(message);
+            registerRollbackCleanup(storedKeys);
+            AfterSaleAttachmentService.StoredAttachments stored = attachmentService.store(
+                    request.getId(), messageId, files);
+            storedKeys.addAll(stored.storageKeys());
+
+            request.setWaitingFor(senderType == AfterSaleMessageSenderType.CUSTOMER
+                    ? AfterSaleWaitingFor.ADMIN : AfterSaleWaitingFor.CUSTOMER);
+            request.setLastActivityAt(messageAt);
+            requestRepository.save(request);
+            operationLogService.logCurrentRequest(
+                    "order.after_sale.message", "ORDER", orderId.toString(),
+                    "订单号=" + order.getOrderNo()
+                            + "，售后申请ID=" + request.getId()
+                            + "，消息ID=" + message.getId()
+                            + "，发送方=" + senderType.name()
+                            + "，发送方用户ID=" + senderId);
+            return buildOrderView(orderId);
+        } catch (RuntimeException exception) {
+            attachmentService.cleanup(storedKeys);
+            throw exception;
+        }
     }
 
     private AfterSaleRequest pendingRequestForUpdate(UUID orderId) {
@@ -226,8 +332,9 @@ public class AfterSaleServiceImpl implements AfterSaleService {
 
     private void ensurePendingOrder(Order order, AfterSaleRequest request) {
         if (request.getOrderId() == null || !request.getOrderId().equals(order.getId())
-                || request.getStatus() != AfterSaleRequestStatus.PENDING) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后申请已被其他操作处理");
+                || request.getStatus() != AfterSaleRequestStatus.PENDING
+                || request.getUserId() == null || !request.getUserId().equals(order.getUserId())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后申请与订单不一致");
         }
         if (order.getStatus() != OrderStatus.AFTER_SALE) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单当前状态与售后申请不一致");
@@ -242,7 +349,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         RequestContext.UserInfo current = RequestContext.get();
         if (userId == null || current == null || !userId.equals(current.getUserId())
                 || !UserRole.USER.name().equals(current.getRole())) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "仅登录普通用户可以申请售后");
+            throw new BusinessException(ErrorCode.FORBIDDEN, "仅登录普通用户可以申请或回复售后");
         }
     }
 
@@ -256,72 +363,6 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         return operator;
     }
 
-    private List<MultipartFile> normalizeAttachments(List<MultipartFile> attachments) {
-        if (attachments == null) return List.of();
-        List<MultipartFile> files = attachments.stream().filter(file -> file != null).toList();
-        if (files.size() > MAX_ATTACHMENTS) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "最多上传 5 张售后凭证");
-        }
-        files.forEach(this::validateAttachment);
-        return files;
-    }
-
-    private void validateAttachment(MultipartFile file) {
-        if (file.isEmpty() || file.getSize() <= 0) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后凭证不能为空");
-        }
-        if (file.getSize() > MAX_ATTACHMENT_SIZE) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "每张售后凭证不能超过 5MB");
-        }
-        String extension = extensionOf(file.getOriginalFilename());
-        String contentType = normalizedContentType(file);
-        String expectedType = switch (extension) {
-            case "jpg", "jpeg" -> "image/jpeg";
-            case "png" -> "image/png";
-            case "webp" -> "image/webp";
-            default -> null;
-        };
-        if (expectedType == null || !expectedType.equals(contentType)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后凭证仅支持 JPG、PNG、WebP，且扩展名与 MIME 必须匹配");
-        }
-        try (InputStream input = file.getInputStream()) {
-            byte[] header = input.readNBytes(12);
-            if (!magicMatches(extension, header)) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "售后凭证文件内容与声明格式不一致");
-            }
-        } catch (IOException exception) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后凭证读取失败");
-        }
-    }
-
-    private boolean magicMatches(String extension, byte[] header) {
-        return switch (extension) {
-            case "jpg", "jpeg" -> header.length >= 3
-                    && (header[0] & 0xff) == 0xff
-                    && (header[1] & 0xff) == 0xd8
-                    && (header[2] & 0xff) == 0xff;
-            case "png" -> header.length >= 8
-                    && startsWith(header, new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47,
-                    0x0d, 0x0a, 0x1a, 0x0a});
-            case "webp" -> header.length >= 12
-                    && startsWith(header, 0, "RIFF".getBytes(StandardCharsets.US_ASCII))
-                    && startsWith(header, 8, "WEBP".getBytes(StandardCharsets.US_ASCII));
-            default -> false;
-        };
-    }
-
-    private boolean startsWith(byte[] value, byte[] prefix) {
-        return startsWith(value, 0, prefix);
-    }
-
-    private boolean startsWith(byte[] value, int offset, byte[] prefix) {
-        if (value.length < offset + prefix.length) return false;
-        for (int i = 0; i < prefix.length; i++) {
-            if (value[offset + i] != prefix[i]) return false;
-        }
-        return true;
-    }
-
     private String normalizeReason(String value) {
         String normalized = value == null ? "" : value.strip();
         int length = normalized.codePointCount(0, normalized.length());
@@ -331,7 +372,16 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         return normalized;
     }
 
-    private String normalizeAdminReply(String value) {
+    private String normalizeMessage(String value) {
+        String normalized = value == null ? "" : value.strip();
+        int length = normalized.codePointCount(0, normalized.length());
+        if (length < 1 || length > 1000) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后回复必须为 1 至 1000 个字符");
+        }
+        return normalized;
+    }
+
+    private String normalizeRejectionReason(String value) {
         String normalized = value == null ? "" : value.strip();
         int length = normalized.codePointCount(0, normalized.length());
         if (length < 1 || length > 500) {
@@ -340,28 +390,28 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         return normalized;
     }
 
-    private String normalizedContentType(MultipartFile file) {
-        return file.getContentType() == null ? "" : file.getContentType().trim().toLowerCase(Locale.ROOT);
+    private LocalDateTime now() {
+        return LocalDateTime.now(clock);
     }
 
-    private String extensionOf(String originalFilename) {
-        String name = originalFilename == null ? "" : originalFilename.replace('\\', '/');
-        int slash = name.lastIndexOf('/');
-        name = slash >= 0 ? name.substring(slash + 1) : name;
-        int dot = name.lastIndexOf('.');
-        if (dot < 1 || dot == name.length() - 1) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "售后凭证必须带有 JPG、PNG 或 WebP 扩展名");
+    private Map<UUID, List<AfterSaleAttachment>> groupAttachmentsByRequest(
+            List<AfterSaleAttachment> attachments) {
+        if (attachments == null) {
+            return Map.of();
         }
-        return name.substring(dot + 1).toLowerCase(Locale.ROOT);
+        return attachments.stream().collect(Collectors.groupingBy(
+                AfterSaleAttachment::getRequestId, LinkedHashMap::new, Collectors.toList()));
     }
 
-    private String safeOriginalFilename(String originalFilename, String extension) {
-        String name = originalFilename == null ? "凭证." + extension : originalFilename.replace('\\', '/');
-        int slash = name.lastIndexOf('/');
-        if (slash >= 0) name = name.substring(slash + 1);
-        name = name.strip().replaceAll("[\\p{Cntrl}]", "_");
-        if (name.isBlank()) name = "凭证." + extension;
-        return name.length() > 255 ? name.substring(0, 255) : name;
+    private Map<UUID, List<AfterSaleAttachment>> groupAttachmentsByMessage(
+            List<AfterSaleAttachment> attachments) {
+        if (attachments == null) {
+            return Map.of();
+        }
+        return attachments.stream()
+                .filter(attachment -> attachment.getMessageId() != null)
+                .collect(Collectors.groupingBy(
+                        AfterSaleAttachment::getMessageId, LinkedHashMap::new, Collectors.toList()));
     }
 
     private Map<String, Object> applyResult(Order order, AfterSaleRequest request,
@@ -369,12 +419,14 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("order_id", order.getId());
         result.put("status", order.getStatus().name());
-        result.put("after_sale", requestView(request, attachments));
+        result.put("after_sale", requestView(request, attachments, List.of(), Map.of()));
         return result;
     }
 
     private Map<String, Object> requestView(AfterSaleRequest request,
-                                            List<AfterSaleAttachment> attachments) {
+                                            List<AfterSaleAttachment> attachments,
+                                            List<AfterSaleMessage> messages,
+                                            Map<UUID, List<AfterSaleAttachment>> attachmentsByMessage) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", request.getId());
         view.put("order_id", request.getOrderId());
@@ -383,10 +435,31 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         view.put("source_order_status", request.getSourceOrderStatus() == null
                 ? null : request.getSourceOrderStatus().name());
         view.put("reason", request.getReason());
-        view.put("admin_reply", request.getAdminReply());
+        view.put("rejection_reason", request.getRejectionReason());
+        view.put("waiting_for", request.getWaitingFor() == null ? null : request.getWaitingFor().name());
+        view.put("last_activity_at", request.getLastActivityAt());
         view.put("handled_by", request.getHandledBy());
         view.put("submitted_at", request.getSubmittedAt());
         view.put("handled_at", request.getHandledAt());
+        view.put("attachments", (attachments == null ? List.<AfterSaleAttachment>of() : attachments)
+                .stream()
+                .filter(attachment -> attachment.getMessageId() == null)
+                .map(this::attachmentView).toList());
+        view.put("messages", (messages == null ? List.<AfterSaleMessage>of() : messages)
+                .stream().map(message -> messageView(message,
+                        attachmentsByMessage.getOrDefault(message.getId(), List.of()))).toList());
+        return view;
+    }
+
+    private Map<String, Object> messageView(AfterSaleMessage message,
+                                            List<AfterSaleAttachment> attachments) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("id", message.getId());
+        view.put("request_id", message.getRequestId());
+        view.put("sender_type", message.getSenderType() == null ? null : message.getSenderType().name());
+        view.put("sender_user_id", message.getSenderUserId());
+        view.put("content", message.getContent());
+        view.put("created_at", message.getCreatedAt());
         view.put("attachments", (attachments == null ? List.<AfterSaleAttachment>of() : attachments)
                 .stream().map(this::attachmentView).toList());
         return view;
@@ -395,6 +468,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     private Map<String, Object> attachmentView(AfterSaleAttachment attachment) {
         Map<String, Object> view = new LinkedHashMap<>();
         view.put("id", attachment.getId());
+        view.put("message_id", attachment.getMessageId());
         view.put("original_filename", attachment.getOriginalFilename());
         view.put("content_type", attachment.getContentType());
         view.put("file_size", attachment.getFileSize());
@@ -404,30 +478,24 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     }
 
     private String auditDetail(Order order, AfterSaleRequest request, String action,
-                               OrderStatus sourceStatus, Integer replyLength) {
-        String detail = "订单号=" + order.getOrderNo()
+                               OrderStatus sourceStatus) {
+        return "订单号=" + order.getOrderNo()
                 + "，售后申请ID=" + request.getId()
                 + "，操作=" + action
                 + "，申请前状态=" + sourceStatus.name();
-        return replyLength == null ? detail : detail + "，处理说明字符数=" + replyLength;
     }
 
     private void registerRollbackCleanup(List<String> storedKeys) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) return;
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
                 if (status != TransactionSynchronization.STATUS_COMMITTED) {
-                    cleanup(storedKeys);
+                    attachmentService.cleanup(storedKeys);
                 }
             }
         });
-    }
-
-    private void cleanup(List<String> storedKeys) {
-        if (storedKeys == null) return;
-        for (String storedKey : storedKeys) {
-            privateUploadStorage.deleteManagedFile(storedKey);
-        }
     }
 }

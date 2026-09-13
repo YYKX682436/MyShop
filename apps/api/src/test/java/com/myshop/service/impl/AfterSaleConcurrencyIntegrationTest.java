@@ -357,8 +357,8 @@ class AfterSaleConcurrencyIntegrationTest {
         UUID requestId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO after_sale_requests(id, order_id, user_id, status, source_order_status,
-                                                reason, submitted_at)
-                VALUES (?, ?, ?, 'PENDING', ?, '用户提交的有效售后说明', CURRENT_TIMESTAMP)
+                                                reason, waiting_for, last_activity_at, submitted_at)
+                VALUES (?, ?, ?, 'PENDING', ?, '用户提交的有效售后说明', 'ADMIN', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """, requestId, orderId, userId, sourceStatus.name());
         jdbcTemplate.update("UPDATE orders SET status = 'AFTER_SALE' WHERE id = ?", orderId);
         return requestId;

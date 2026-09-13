@@ -302,7 +302,7 @@ test("admin manual fulfillment confirms in a form dialog before sending one batc
   assert.doesNotMatch(dialogSource, /window\.confirm/)
 })
 
-test("admin order mutations publish one shared invalidation after the detail refresh", () => {
+test("admin order mutations publish one shared invalidation after each detail mutation", () => {
   const listSource = readSource("../app/admin/orders/page.tsx")
   const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
   const invalidationSource = readSource("./admin-order-invalidation.ts")
@@ -314,7 +314,27 @@ test("admin order mutations publish one shared invalidation after the detail ref
   assert.doesNotMatch(listSource, /invalidateAdminOrders\(\)/)
   assert.doesNotMatch(listSource, /await loadOrders\(\)/)
   assert.match(routeSource, /await load\(\)[\s\S]*invalidateAdminOrders\(\)/)
-  assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 5)
+  assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 6)
+  assert.match(routeSource, /adminOrderApi\.sendAfterSaleMessage/)
+  assert.match(routeSource, /invalidateAdminAttention\(\)/)
+})
+
+test("admin after-sale review exposes the conversation, attention state, and safe terminal actions", () => {
+  const listSource = readSource("../app/admin/orders/page.tsx")
+  const detailSource = readSource("../components/admin/orders/order-detail-sheet.tsx")
+  const routeSource = readSource("../components/admin/orders/order-detail-route.tsx")
+  const attentionSource = readSource("./admin-attention.tsx")
+
+  assert.match(listSource, /value: "AFTER_SALE"/)
+  assert.match(listSource, /afterSaleNeedsAttention/)
+  assert.match(listSource, /待回复|afterSaleNeedsAttention/)
+  assert.match(detailSource, /AfterSaleHistoryCard/)
+  assert.match(detailSource, /onReplyAfterSale/)
+  assert.match(routeSource, /adminOrderApi\.rejectAfterSale/)
+  assert.match(routeSource, /adminOrderApi\.approveAfterSale/)
+  assert.match(routeSource, /rejectionReason/)
+  assert.match(attentionSource, /30_000/)
+  assert.match(attentionSource, /visibilitychange/)
 })
 
 test("storefront markdown surfaces use the shared safe renderer", () => {

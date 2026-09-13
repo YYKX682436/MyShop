@@ -3,6 +3,7 @@ package com.myshop.controller;
 import com.myshop.service.AfterSaleAttachmentAccessService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ContentDisposition;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -36,6 +37,7 @@ public class AfterSaleAttachmentController {
         return ResponseEntity.ok()
                 .contentType(mediaType)
                 .contentLength(download.size())
+                .cacheControl(CacheControl.noStore().cachePrivate())
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.inline().filename(filename, StandardCharsets.UTF_8).build().toString())
                 .body(download.resource());

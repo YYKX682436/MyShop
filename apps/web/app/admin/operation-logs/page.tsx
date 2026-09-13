@@ -22,6 +22,7 @@ const ACTIONS: Record<string, { key: TranslationKey; tone: "success" | "info" | 
   "order.after_sale.apply": { key: "admin.actionOrderAfterSaleApply", tone: "info" },
   "order.after_sale.reject": { key: "admin.actionOrderAfterSaleReject", tone: "danger" },
   "order.after_sale.approve": { key: "admin.actionOrderAfterSaleApprove", tone: "success" },
+  "order.after_sale.message": { key: "admin.actionOrderAfterSaleMessage", tone: "info" },
   "user.disable": { key: "admin.actionUserDisable", tone: "danger" },
   "user.enable": { key: "admin.actionUserEnable", tone: "success" },
   "config.update": { key: "admin.actionConfigUpdate", tone: "info" },

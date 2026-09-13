@@ -253,14 +253,27 @@ export type OrderType = 'NORMAL' | 'ADMIN_PICKUP'
 export type OrderPaymentMethod = 'BALANCE' | 'ONLINE'
 
 export type AfterSaleStatus = "PENDING" | "REJECTED" | "REFUNDED"
+export type AfterSaleWaitingFor = "ADMIN" | "CUSTOMER"
+export type AfterSaleMessageSenderType = "CUSTOMER" | "ADMIN"
 
 export interface AfterSaleAttachment {
   id: string
+  message_id?: string | null
   original_filename: string
   content_type: "image/jpeg" | "image/png" | "image/webp" | string
   file_size: number
   url: string
   created_at?: string | null
+}
+
+export interface AfterSaleMessage {
+  id: string
+  request_id: string
+  sender_type: AfterSaleMessageSenderType
+  sender_user_id: string
+  content: string
+  created_at: string
+  attachments: AfterSaleAttachment[]
 }
 
 export interface AfterSaleRequest {
@@ -270,11 +283,22 @@ export interface AfterSaleRequest {
   status: AfterSaleStatus
   source_order_status: "PAID" | "DELIVERED"
   reason: string
-  admin_reply?: string | null
+  rejection_reason?: string | null
+  waiting_for: AfterSaleWaitingFor | null
+  last_activity_at: string
   handled_by?: string | null
   submitted_at: string
   handled_at?: string | null
   attachments: AfterSaleAttachment[]
+  messages: AfterSaleMessage[]
+}
+
+export type AfterSaleSummary = Pick<AfterSaleRequest,
+  "id" | "order_id" | "user_id" | "status" | "source_order_status"
+  | "waiting_for" | "last_activity_at" | "submitted_at" | "handled_at">
+
+export interface AdminAttentionSummary {
+  after_sale_needs_attention: number
 }
 
 export interface AfterSaleView {
@@ -307,6 +331,7 @@ export interface OrderBrief {
   status: OrderStatus
   created_at: string
   items: OrderItemBrief[]
+  after_sale?: AfterSaleSummary | null
 }
 
 export interface OrderItemDetail extends OrderItemBrief {
@@ -706,7 +731,7 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
   gross_margin: number | null
 }
 
-export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at" | "refunded_at"> {
+export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at" | "refunded_at" | "after_sale"> {
   items: AdminOrderItemDetail[]
   payment_method?: OrderPaymentMethod | null
   payment_channel_code: string | null
@@ -720,7 +745,7 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   refund_operator_id?: string | null
   refund_operator_username?: string | null
   reclaimed_card_key_count?: number | null
-  after_sale?: AfterSaleRequest | null
+  after_sale?: AfterSaleRequest | AfterSaleSummary | null
   after_sale_history?: AfterSaleRequest[]
   customer_type: "REGISTERED" | "GUEST"
   user_id?: string | null

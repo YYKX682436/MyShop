@@ -1,17 +1,15 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import Image from "next/image"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
+import { AfterSaleAttachmentPicker } from "@/components/shared/after-sale-attachment-picker"
 import { useLocale } from "@/lib/context"
 import { getApiErrorMessage, requestOrThrow, userApi } from "@/services/api"
 import type { AfterSaleApplyResult } from "@/types"
-import { AFTER_SALE_MAX_FILES, validateAfterSaleFile } from "@/lib/after-sale-upload"
-
 interface AfterSaleRequestDialogProps {
   open: boolean
   orderId: string
@@ -19,11 +17,6 @@ interface AfterSaleRequestDialogProps {
   productSummary: string
   onOpenChange: (open: boolean) => void
   onSubmitted?: (result: AfterSaleApplyResult) => void
-}
-
-interface FilePreview {
-  file: File
-  url: string
 }
 
 export function AfterSaleRequestDialog({
@@ -41,13 +34,6 @@ export function AfterSaleRequestDialog({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const previews = useMemo<FilePreview[]>(
-    () => files.map(file => ({ file, url: URL.createObjectURL(file) })),
-    [files],
-  )
-
-  useEffect(() => () => previews.forEach(preview => URL.revokeObjectURL(preview.url)), [previews])
-
   useEffect(() => {
     if (!open) return
     setReason("")
@@ -60,32 +46,6 @@ export function AfterSaleRequestDialog({
   const normalizedReason = reason.trim()
   const reasonLength = [...normalizedReason].length
   const reasonValid = reasonLength >= 5 && reasonLength <= 1000
-
-  const handleFiles = async (selected: FileList | null) => {
-    if (!selected || selected.length === 0) return
-    setFileError(null)
-    const next = [...files]
-    for (const file of Array.from(selected)) {
-      if (next.length >= AFTER_SALE_MAX_FILES) {
-        setFileError(t("order.afterSaleTooManyFiles"))
-        break
-      }
-      const validationError = await validateAfterSaleFile(file)
-      if (validationError) {
-        setFileError(validationError === "SIZE"
-          ? t("order.afterSaleFileTooLarge")
-          : t("order.afterSaleFileInvalid"))
-        continue
-      }
-      if (!next.some(existing => fileKey(existing) === fileKey(file))) next.push(file)
-    }
-    setFiles(next)
-  }
-
-  const removeFile = (file: File) => {
-    setFiles(current => current.filter(candidate => fileKey(candidate) !== fileKey(file)))
-    setFileError(null)
-  }
 
   const submit = async () => {
     if (submitting) return
@@ -147,40 +107,14 @@ export function AfterSaleRequestDialog({
             {!reasonValid && reason.length > 0 && <p className="text-xs text-destructive">{t("order.afterSaleReasonInvalid")}</p>}
           </div>
 
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <label htmlFor="after-sale-attachments" className="text-sm font-medium text-foreground">{t("order.afterSaleUpload")}</label>
-              <span className="text-xs text-muted-foreground">{files.length}/{AFTER_SALE_MAX_FILES}</span>
-            </div>
-            <input
-              id="after-sale-attachments"
-              type="file"
-              multiple
-              accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
-              disabled={submitting || files.length >= AFTER_SALE_MAX_FILES}
-              onChange={event => { void handleFiles(event.target.files); event.currentTarget.value = "" }}
-              className="block w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-control file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-primary-foreground"
-            />
-            <p className="text-xs text-muted-foreground">{t("order.afterSaleUploadHint")}</p>
-            {fileError && <p className="text-xs text-destructive" role="alert">{fileError}</p>}
-            {previews.length > 0 && (
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5" aria-label={t("order.afterSaleUpload")}>
-                {previews.map(preview => (
-                  <div key={fileKey(preview.file)} className="group relative aspect-square overflow-hidden rounded-control border border-border-subtle bg-surface-muted">
-                    <Image src={preview.url} alt={preview.file.name} fill unoptimized sizes="120px" className="object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => removeFile(preview.file)}
-                      disabled={submitting}
-                      className="absolute inset-x-1 bottom-1 rounded bg-black/70 px-1 py-1 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed"
-                    >
-                      {t("common.remove")}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <AfterSaleAttachmentPicker
+            files={files}
+            onChange={setFiles}
+            inputId="after-sale-attachments"
+            resetKey={`${orderId}:${open}`}
+            disabled={submitting}
+            onError={setFileError}
+          />
 
           <p className="rounded-control border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary">{t("order.afterSaleProcessingNotice")}</p>
           {submitError && <p className="text-sm text-destructive" role="alert">{submitError}</p>}
@@ -195,8 +129,4 @@ export function AfterSaleRequestDialog({
       </DialogContent>
     </Dialog>
   )
-}
-
-function fileKey(file: File) {
-  return `${file.name}:${file.size}:${file.lastModified}`
 }

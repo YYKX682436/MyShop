@@ -24,4 +24,9 @@ public interface AfterSaleRequestRepository extends JpaRepository<AfterSaleReque
             @Param("orderId") UUID orderId, @Param("status") AfterSaleRequestStatus status);
 
     List<AfterSaleRequest> findByOrderIdOrderBySubmittedAtDesc(UUID orderId);
+
+    Optional<AfterSaleRequest> findFirstByOrderIdOrderBySubmittedAtDesc(UUID orderId);
+
+    long countByStatusAndWaitingFor(AfterSaleRequestStatus status,
+                                    com.myshop.constant.AfterSaleWaitingFor waitingFor);
 }

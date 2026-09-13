@@ -141,9 +141,12 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         RefundResult result = refundLocked(order, AFTER_SALE_REFUND_REASON,
                 operatorId, reclaimCardKeys);
 
+        LocalDateTime handledAt = LocalDateTime.now();
         request.setStatus(AfterSaleRequestStatus.REFUNDED);
+        request.setWaitingFor(null);
+        request.setLastActivityAt(handledAt);
         request.setHandledBy(operatorId);
-        request.setHandledAt(LocalDateTime.now());
+        request.setHandledAt(handledAt);
         afterSaleRequestRepository.save(request);
         operationLogService.logCurrentRequest(
                 "order.after_sale.approve",

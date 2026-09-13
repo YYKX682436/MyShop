@@ -8,7 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 @JsonIgnoreProperties(ignoreUnknown = false)
 public record AdminAfterSaleRejectRequest(
         @NotBlank(message = "驳回说明不能为空")
-        @JsonProperty("admin_reply")
-        String adminReply
+        @JsonProperty("rejection_reason")
+        String rejectionReason
 ) {
 }

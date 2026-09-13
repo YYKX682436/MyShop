@@ -290,19 +290,22 @@ curl --fail --silent --show-error --output /dev/null "$public_url/"
 curl --fail --silent --show-error --output /dev/null "$public_url/api/site/config"
 ```
 
-Verify Flyway V28 and its database contracts without printing credentials or
-card contents. The query must report one successful V28 migration, the
+Verify Flyway V28 and V29 and their database contracts without printing
+credentials or card contents. The query must report one successful V28 and
+one successful V29 migration, the
 `users.avatar_url` column, the `orders.refunded_at` column, an
 `orders_status_check` constraint containing `AFTER_SALE`, the
 `order_items.product_cover_url` column, the
 `balance_transactions_refund_contract_check` constraint, the partial unique
 refund index, both after-sale tables, their core constraints, and the partial
-unique pending-request index:
+unique pending-request index, the conversation-message table and its
+attachment binding:
 
 ```bash
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
-    SELECT version, success FROM flyway_schema_history WHERE version = '\''28'\'' AND success;
+    SELECT version, success FROM flyway_schema_history
+      WHERE version IN ('\''28'\'', '\''29'\'') AND success ORDER BY version;
     SELECT to_regclass('\''public.users'\'') IS NOT NULL
       AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name = '\''users'\'' AND column_name = '\''avatar_url'\''
@@ -328,24 +331,52 @@ bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db
                   WHERE indexname = '\''idx_card_key_reclaims_order'\'')
       AND to_regclass('\''public.after_sale_requests'\'') IS NOT NULL
       AND to_regclass('\''public.after_sale_attachments'\'') IS NOT NULL
-      AND EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_name = '\''after_sale_requests'\''
-                    AND column_name = '\''source_order_status'\'')
-      AND EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_name = '\''after_sale_requests'\''
-                    AND column_name = '\''admin_reply'\'')
-      AND EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_name = '\''after_sale_attachments'\''
-                    AND column_name = '\''storage_key'\'')
-      AND EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = '\''after_sale_requests_status_check'\'')
-      AND EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = '\''after_sale_requests_source_status_check'\'')
-      AND EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = '\''after_sale_attachments_file_size_check'\'')
-      AND EXISTS (SELECT 1 FROM pg_indexes
-                  WHERE indexname = '\''uq_after_sale_requests_pending_order'\''
-                    AND indexdef LIKE '\''%WHERE%PENDING%'\'');
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''after_sale_requests'\''
+                     AND column_name = '\''source_order_status'\'')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''after_sale_requests'\''
+                     AND column_name = '\''rejection_reason'\'')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''after_sale_requests'\''
+                     AND column_name = '\''waiting_for'\'')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''after_sale_requests'\''
+                     AND column_name = '\''last_activity_at'\'')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_name = '\''after_sale_requests'\''
+                        AND column_name = '\''admin_reply'\'')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''after_sale_attachments'\''
+                     AND column_name = '\''storage_key'\'')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''after_sale_attachments'\''
+                     AND column_name = '\''message_id'\'')
+       AND to_regclass('\''public.after_sale_messages'\'') IS NOT NULL
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''after_sale_messages'\''
+                     AND column_name IN ('\''request_id'\'', '\''sender_type'\'',
+                                         '\''sender_user_id'\'', '\''content'\'', '\''created_at'\''))
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''after_sale_requests_status_check'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''after_sale_requests_rejection_reason_check'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''after_sale_requests_waiting_for_check'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''after_sale_requests_source_status_check'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''after_sale_attachments_file_size_check'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''after_sale_attachments_message_request_fkey'\'')
+       AND EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE indexname = '\''idx_after_sale_messages_request_created'\'')
+       AND EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE indexname = '\''uq_after_sale_requests_pending_order'\''
+                     AND indexdef LIKE '\''%WHERE%PENDING%'\'')
+       AND EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE indexname = '\''idx_after_sale_requests_pending_attention'\''
+                     AND indexdef LIKE '\''%WHERE%PENDING%'\'');
   "'
 ```
 

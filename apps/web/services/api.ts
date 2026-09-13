@@ -45,6 +45,8 @@
   AdminManualFulfillmentRequest,
   AdminOrderRefundResponse,
   AfterSaleApplyResult,
+  AfterSaleView,
+  AdminAttentionSummary,
 } from "@/types"
 import { buildAdminRefundPayload } from "@/lib/admin-refund-ui"
 import type { AdminProductPricesUpdatePayload } from "@/lib/product-quick-edit"
@@ -355,6 +357,12 @@ export const userApi = {
     attachments.forEach(file => formData.append("attachments", file, file.name))
     return uploadRequest<AfterSaleApplyResult>(`/user/orders/${encodeURIComponent(orderId)}/after-sales`, formData)
   },
+  sendAfterSaleMessage: (orderId: string, content: string, attachments: File[] = []) => {
+    const formData = new FormData()
+    formData.append("content", content)
+    attachments.forEach(file => formData.append("attachments", file, file.name))
+    return uploadRequest<AfterSaleView>(`/user/orders/${encodeURIComponent(orderId)}/after-sale/messages`, formData)
+  },
 }
 
 // ============================================================
@@ -564,11 +572,17 @@ export const adminOrderApi = {
       method: "POST",
       body: JSON.stringify(buildAdminRefundPayload(reason, reclaimCardKeys)),
     }),
-  rejectAfterSale: (id: string, adminReply: string) =>
+  rejectAfterSale: (id: string, rejectionReason: string) =>
     request<null>(`/admin/orders/${encodeURIComponent(id)}/after-sale/reject`, {
       method: "POST",
-      body: JSON.stringify({ admin_reply: adminReply }),
+      body: JSON.stringify({ rejection_reason: rejectionReason }),
     }),
+  sendAfterSaleMessage: (id: string, content: string, attachments: File[] = []) => {
+    const formData = new FormData()
+    formData.append("content", content)
+    attachments.forEach(file => formData.append("attachments", file, file.name))
+    return uploadRequest<AfterSaleView>(`/admin/orders/${encodeURIComponent(id)}/after-sale/messages`, formData)
+  },
   approveAfterSale: (id: string, reclaimCardKeys: boolean) =>
     request<AdminOrderRefundResponse>(`/admin/orders/${encodeURIComponent(id)}/after-sale/approve`, {
       method: "POST",
@@ -579,6 +593,11 @@ export const adminOrderApi = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+}
+
+export const adminAttentionApi = {
+  getSummary: (options?: RequestInit) =>
+    request<AdminAttentionSummary>("/admin/attention-summary", options),
 }
 
 export interface AdminProductUpsertPayload {

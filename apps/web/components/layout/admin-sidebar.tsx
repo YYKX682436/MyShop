@@ -33,6 +33,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useAuth, useLocale, useSiteConfig } from "@/lib/context"
+import { useAdminAttention } from "@/lib/admin-attention"
 import type { TranslationKey } from "@/lib/i18n"
 
 interface AdminNavItem {
@@ -40,6 +41,7 @@ interface AdminNavItem {
   href: string
   icon: LucideIcon
   superAdminOnly?: boolean
+  attention?: boolean
 }
 
 interface AdminNavGroup {
@@ -63,7 +65,7 @@ const navGroups: AdminNavGroup[] = [
   {
     labelKey: "admin.navTransactions",
     items: [
-      { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList },
+      { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: true },
       { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
     ],
   },
@@ -94,7 +96,10 @@ function AdminNavLink({ item }: { item: AdminNavItem }) {
   const pathname = usePathname()
   const { isMobile, setOpenMobile } = useSidebar()
   const { t } = useLocale()
+  const { afterSaleNeedsAttention } = useAdminAttention()
   const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`)
+  const attentionCount = item.attention ? afterSaleNeedsAttention : 0
+  const attentionLabel = attentionCount > 99 ? "99+" : String(attentionCount)
 
   return (
     <SidebarMenuButton asChild isActive={isActive} tooltip={t(item.labelKey)}>
@@ -106,6 +111,18 @@ function AdminNavLink({ item }: { item: AdminNavItem }) {
       >
         <item.icon aria-hidden="true" />
         <span>{t(item.labelKey)}</span>
+        {attentionCount > 0 && (
+          <span
+            role="status"
+            data-testid="admin-orders-attention-badge"
+            title={`${t("admin.afterSaleNeedsAttention")}: ${attentionLabel}`}
+            aria-label={`${t("admin.afterSaleNeedsAttention")}: ${attentionLabel}`}
+            className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold leading-none text-destructive-foreground group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:right-0 group-data-[collapsible=icon]:top-0 group-data-[collapsible=icon]:min-w-3 group-data-[collapsible=icon]:px-0.5 group-data-[collapsible=icon]:py-0.5"
+          >
+            <span className="group-data-[collapsible=icon]:hidden">{attentionLabel}</span>
+            <span className="hidden size-1.5 rounded-full bg-destructive-foreground group-data-[collapsible=icon]:block" aria-hidden="true" />
+          </span>
+        )}
       </Link>
     </SidebarMenuButton>
   )

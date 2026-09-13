@@ -167,6 +167,14 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = """
             SELECT o.*
             FROM orders o
+            LEFT JOIN LATERAL (
+                SELECT r.waiting_for, r.last_activity_at, r.id
+                FROM after_sale_requests r
+                WHERE r.order_id = o.id
+                  AND r.status = 'PENDING'
+                ORDER BY r.last_activity_at DESC, r.id DESC
+                LIMIT 1
+            ) latest_after_sale ON TRUE
             WHERE o.order_type = 'NORMAL'
               AND CAST(:sortDirection AS text) IN ('asc', 'desc')
               AND (CAST(:status AS text) IS NULL OR o.status = CAST(:status AS text))
@@ -218,6 +226,16 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                     )
               )
             ORDER BY
+                CASE
+                    WHEN CAST(:status AS text) = 'AFTER_SALE'
+                         AND latest_after_sale.waiting_for = 'ADMIN' THEN 0
+                    WHEN CAST(:status AS text) = 'AFTER_SALE'
+                         AND latest_after_sale.waiting_for = 'CUSTOMER' THEN 1
+                    WHEN CAST(:status AS text) = 'AFTER_SALE' THEN 2
+                    ELSE 3
+                END ASC,
+                CASE WHEN CAST(:status AS text) = 'AFTER_SALE' THEN latest_after_sale.last_activity_at END DESC NULLS LAST,
+                CASE WHEN CAST(:status AS text) = 'AFTER_SALE' THEN o.id END ASC,
                 CASE WHEN CAST(:sortDirection AS text) = 'asc' THEN o.created_at END ASC,
                 CASE WHEN CAST(:sortDirection AS text) = 'desc' THEN o.created_at END DESC,
                 CASE WHEN CAST(:sortDirection AS text) = 'asc' THEN o.id END ASC,

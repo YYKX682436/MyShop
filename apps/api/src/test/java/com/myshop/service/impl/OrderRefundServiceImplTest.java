@@ -16,6 +16,7 @@ import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.constant.AfterSaleRequestStatus;
+import com.myshop.constant.AfterSaleWaitingFor;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import com.myshop.repository.AfterSaleRequestRepository;
 import com.myshop.payment.PaymentStatus;
@@ -145,6 +146,8 @@ class OrderRefundServiceImplTest {
         request.setSourceOrderStatus(OrderStatus.DELIVERED);
         request.setReason("交付内容存在问题");
         request.setSubmittedAt(LocalDateTime.now().minusMinutes(5));
+        request.setWaitingFor(AfterSaleWaitingFor.ADMIN);
+        request.setLastActivityAt(request.getSubmittedAt());
         User user = user(userId, "5.66");
 
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
@@ -159,6 +162,7 @@ class OrderRefundServiceImplTest {
 
         assertEquals(OrderStatus.REFUNDED, order.getStatus());
         assertEquals(AfterSaleRequestStatus.REFUNDED, request.getStatus());
+        assertEquals(null, request.getWaitingFor());
         assertEquals(OPERATOR_ID, request.getHandledBy());
         assertNotNull(request.getHandledAt());
         assertEquals(new BigDecimal("18.00"), user.getBalance());

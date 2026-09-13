@@ -7,13 +7,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -67,14 +72,14 @@ class AdminOrderControllerTest {
 
         mockMvc().perform(post("/admin/orders/{id}/after-sale/reject", orderId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"admin_reply\":\"请补充凭证\"}"))
+                        .content("{\"rejection_reason\":\"请补充凭证\"}"))
                 .andExpect(status().isOk());
 
         verify(adminOrderService).rejectAfterSale(orderId, "请补充凭证");
 
         mockMvc().perform(post("/admin/orders/{id}/after-sale/reject", orderId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"admin_reply\":\"\"}"))
+                        .content("{\"rejection_reason\":\"\"}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -96,6 +101,28 @@ class AdminOrderControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"confirmed\":false}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void afterSaleMessageApiForwardsContentAndAllPrivateAttachments() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        MockMultipartFile first = new MockMultipartFile(
+                "attachments", "reply.png", "image/png", new byte[]{1, 2, 3});
+        when(adminOrderService.replyAfterSale(eq(orderId), eq("补充说明"), anyList()))
+                .thenReturn(java.util.Map.of("status", "PENDING"));
+
+        mockMvc().perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .multipart("/admin/orders/{id}/after-sale/messages", orderId)
+                        .file(first)
+                        .param("content", "补充说明"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PENDING"));
+
+        org.mockito.ArgumentCaptor<List<MultipartFile>> files =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(adminOrderService).replyAfterSale(eq(orderId), eq("补充说明"), files.capture());
+        org.junit.jupiter.api.Assertions.assertEquals("reply.png",
+                files.getValue().get(0).getOriginalFilename());
     }
 
     private MockMvc mockMvc() {

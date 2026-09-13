@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input"
 import { useLocale } from "@/lib/context"
 import { formatAdminOrderCustomer, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
 import { useAdminOrderInvalidation } from "@/lib/admin-order-invalidation"
+import { useAdminAttention } from "@/lib/admin-attention"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItem, OrderStatus } from "@/types"
@@ -92,6 +93,7 @@ function ProductSummary({ order, emptyLabel }: { order: AdminOrderItem; emptyLab
 export default function AdminOrdersPage() {
   const { t, locale } = useLocale()
   const orderInvalidationRevision = useAdminOrderInvalidation()
+  const { afterSaleNeedsAttention } = useAdminAttention()
   const [orders, setOrders] = useState<AdminOrderItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -174,6 +176,15 @@ export default function AdminOrdersPage() {
                 : "border-transparent text-muted-foreground hover:border-border-strong hover:text-foreground"}`}
             >
               {t(tab.label)}
+              {tab.value === "AFTER_SALE" && afterSaleNeedsAttention > 0 && (
+                <span
+                  className="ml-1.5 inline-flex min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 py-0.5 text-[10px] font-bold leading-none text-destructive-foreground"
+                  data-testid="admin-after-sale-tab-badge"
+                  aria-label={`${t("admin.afterSaleNeedsAttention")}: ${afterSaleNeedsAttention > 99 ? "99+" : afterSaleNeedsAttention}`}
+                >
+                  {afterSaleNeedsAttention > 99 ? "99+" : afterSaleNeedsAttention}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -225,7 +236,16 @@ export default function AdminOrdersPage() {
                 <td className="px-4 py-3"><CustomerCell order={order} guestLabel={t("admin.guest")} /></td>
                 <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
                 <td className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>
-                <td className="px-4 py-3"><OrderStatusBadge status={order.status} items={order.items} /></td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-col items-start gap-1">
+                    <OrderStatusBadge status={order.status} items={order.items} />
+                    {order.status === "AFTER_SALE" && order.after_sale?.status === "PENDING" && (
+                      <span className={`text-xs font-medium ${order.after_sale.waiting_for === "ADMIN" ? "text-destructive" : "text-muted-foreground"}`}>
+                        {order.after_sale.waiting_for === "ADMIN" ? t("admin.afterSaleNeedsAttention") : t("admin.afterSaleWaitingForCustomer")}
+                      </span>
+                    )}
+                  </div>
+                </td>
                 <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
                 <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button></div></td>
               </tr>

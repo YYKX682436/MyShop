@@ -148,9 +148,14 @@ export default function MyOrdersPage() {
                     </button>
                   )}
                   {order.status === "AFTER_SALE" && (
-                    <span className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center rounded-control border border-orange-300/50 bg-orange-50 px-3 py-2 text-center text-xs font-medium text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200 sm:flex-none">
+                    <Link
+                      href={`${buildOrderPageHref(order.id)}#after-sale`}
+                      className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control border border-orange-300/50 bg-orange-50 px-3 py-2 text-center text-xs font-medium text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200 sm:flex-none"
+                      aria-label={t("status.AFTER_SALE")}
+                    >
+                      {order.after_sale?.waiting_for === "CUSTOMER" && <span className="size-1.5 rounded-full bg-destructive" aria-label={t("order.afterSaleWaitingForCustomer")} />}
                       {t("status.AFTER_SALE")}
-                    </span>
+                    </Link>
                   )}
                   <Link
                     href={buildOrderPageHref(order.id)}

@@ -8,7 +8,7 @@ import { ChevronDown, Clock, Copy, Download, KeyRound, Package, RefreshCw } from
 import { toast } from "sonner"
 import { useSearchParams } from "next/navigation"
 import { useLocale, useSiteConfig } from "@/lib/context"
-import { getApiErrorMessage, orderApi, productApi } from "@/services/api"
+import { getApiErrorMessage, orderApi, productApi, userApi } from "@/services/api"
 import type { OrderDeliveryGroup, OrderItemDetail, OrderView, ProductDetail } from "@/types"
 import { cn, detectPaymentDevice, formatDateTime, formatYuan } from "@/lib/utils"
 import { formatCardContent, formatCardContents } from "@/lib/card-display"
@@ -43,6 +43,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const [refreshing, setRefreshing] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [afterSaleOpen, setAfterSaleOpen] = useState(false)
+  const [afterSaleReplyLoading, setAfterSaleReplyLoading] = useState(false)
   const [checkingReturn, setCheckingReturn] = useState(paymentReturn)
   const [returnTimedOut, setReturnTimedOut] = useState(false)
   const [paymentState, setPaymentState] = useState(() => createPaymentPageActionState(initialAction))
@@ -224,6 +225,30 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     }
   }
 
+  const sendAfterSaleMessage = async (content: string, attachments: File[]) => {
+    if (afterSaleReplyLoading) return
+    setAfterSaleReplyLoading(true)
+    try {
+      const afterSaleView = await userApi.sendAfterSaleMessage(orderId, content, attachments)
+      // The reply endpoint returns the authoritative locked conversation view.
+      // Apply it immediately so a later refresh failure cannot make a committed
+      // reply look like a failed submission and invite a duplicate retry.
+      const currentView = viewRef.current
+      if (currentView) {
+        const nextView: OrderView = {
+          ...currentView,
+          order: { ...currentView.order, status: "AFTER_SALE", after_sale: afterSaleView.after_sale, after_sale_history: afterSaleView.after_sale_history },
+          after_sale: afterSaleView.after_sale,
+          after_sale_history: afterSaleView.after_sale_history,
+        }
+        viewRef.current = nextView
+        setView(nextView)
+      }
+    } finally {
+      setAfterSaleReplyLoading(false)
+    }
+  }
+
   const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
   const status = view?.order.status ?? "PENDING"
   const paymentMethod = view?.payment?.payment_type || view?.payment?.payment_method || "online"
@@ -356,7 +381,13 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </details>
 
-    <AfterSaleHistoryCard request={view.order.after_sale} history={view.order.after_sale_history ?? view.after_sale_history} />
+    <AfterSaleHistoryCard
+      request={view.order.after_sale}
+      history={view.order.after_sale_history ?? view.after_sale_history}
+      mode="customer"
+      onReply={status === "AFTER_SALE" ? sendAfterSaleMessage : undefined}
+      replyLoading={afterSaleReplyLoading}
+    />
 
     {itemsWithCustomerInputs.length > 0 && (
       <details className="surface overflow-hidden">
@@ -449,7 +480,35 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       orderNo={view.order.order_no}
       productSummary={orderItems.map(item => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、")}
       onOpenChange={setAfterSaleOpen}
-      onSubmitted={() => { void fetchView("manual", true) }}
+      onSubmitted={(result) => {
+        const currentView = viewRef.current
+        if (currentView) {
+          const currentHistory = currentView.order.after_sale_history
+            ?? currentView.after_sale_history
+            ?? []
+          const nextHistory = [
+            result.after_sale,
+            ...currentHistory.filter(item => item.id !== result.after_sale.id),
+          ]
+          const nextView: OrderView = {
+            ...currentView,
+            order: {
+              ...currentView.order,
+              status: "AFTER_SALE",
+              after_sale: result.after_sale,
+              after_sale_history: nextHistory,
+            },
+            after_sale: result.after_sale,
+            after_sale_history: nextHistory,
+          }
+          viewRef.current = nextView
+          setView(nextView)
+          setPaymentState(current => applyPaymentStatus(current, "AFTER_SALE", undefined))
+          clearPaymentAction(orderId)
+          setCheckingReturn(false)
+        }
+        void fetchView("manual", true)
+      }}
     />
   </div>
 }

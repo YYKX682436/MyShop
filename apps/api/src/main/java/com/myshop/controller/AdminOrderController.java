@@ -12,6 +12,10 @@ import com.myshop.service.AdminOrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.Arrays;
+import java.util.List;
 
 import java.util.UUID;
 
@@ -48,8 +52,16 @@ public class AdminOrderController {
     @PostMapping("/{id}/after-sale/reject")
     public ApiResponse<Void> rejectAfterSale(@PathVariable UUID id,
                                              @Valid @RequestBody AdminAfterSaleRejectRequest request) {
-        adminOrderService.rejectAfterSale(id, request.adminReply());
+        adminOrderService.rejectAfterSale(id, request.rejectionReason());
         return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/after-sale/messages")
+    public ApiResponse<?> replyAfterSale(@PathVariable UUID id,
+                                         @RequestParam(value = "content", required = false) String content,
+                                         @RequestParam(value = "attachments", required = false) MultipartFile[] attachments) {
+        List<MultipartFile> files = attachments == null ? List.of() : Arrays.asList(attachments);
+        return ApiResponse.success(adminOrderService.replyAfterSale(id, content, files));
     }
 
     @PostMapping("/{id}/after-sale/approve")

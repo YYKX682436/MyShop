@@ -1,6 +1,7 @@
 package com.myshop.entity;
 
 import com.myshop.constant.AfterSaleRequestStatus;
+import com.myshop.constant.AfterSaleWaitingFor;
 import com.myshop.constant.OrderStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -39,8 +40,15 @@ public class AfterSaleRequest extends AssignedUuidEntity {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String reason;
 
-    @Column(name = "admin_reply", length = 500)
-    private String adminReply;
+    @Column(name = "rejection_reason", length = 500)
+    private String rejectionReason;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "waiting_for", length = 16)
+    private AfterSaleWaitingFor waitingFor;
+
+    @Column(name = "last_activity_at", nullable = false)
+    private LocalDateTime lastActivityAt;
 
     @Column(name = "handled_by")
     private UUID handledBy;

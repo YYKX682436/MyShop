@@ -27,6 +27,8 @@ interface OrderDetailSheetProps {
   detailCardKeysLoading?: boolean
   detailCardKeysError?: boolean
   onRetryCardKeys?: () => void
+  onReplyAfterSale?: (content: string, attachments: File[]) => Promise<void>
+  afterSaleReplyLoading?: boolean
 }
 
 type Translator = (key: TranslationKey) => string
@@ -127,6 +129,8 @@ export function OrderDetailSheet({
   detailCardKeysLoading = false,
   detailCardKeysError = false,
   onRetryCardKeys,
+  onReplyAfterSale,
+  afterSaleReplyLoading = false,
 }: OrderDetailSheetProps) {
   const { t, locale } = useLocale()
   const empty = t("admin.systemNoData")
@@ -152,6 +156,9 @@ export function OrderDetailSheet({
   if (!order) return null
 
   const identity = formatAdminOrderCustomer(order, t("admin.guest"))
+  const afterSaleRequest = order.after_sale && "reason" in order.after_sale
+    ? order.after_sale
+    : null
   const mainItem = order.items[0]
   const hasAutomaticCardItems = order.items.some((item) =>
     !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
@@ -200,11 +207,14 @@ export function OrderDetailSheet({
         )}
       </header>
 
-      {(order.after_sale || (order.after_sale_history?.length ?? 0) > 0) && (
+      {(afterSaleRequest || (order.after_sale_history?.length ?? 0) > 0) && (
         <AfterSaleHistoryCard
-          request={order.after_sale}
+          request={afterSaleRequest}
           history={order.after_sale_history ?? []}
           customerLabel={[identity.primary, identity.secondary].filter(Boolean).join(" · ")}
+          mode="admin"
+          onReply={onReplyAfterSale}
+          replyLoading={afterSaleReplyLoading}
         />
       )}
 
