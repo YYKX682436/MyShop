@@ -15,7 +15,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @Entity
 @Table(name = "after_sale_attachments")
-public class AfterSaleAttachment extends BaseEntity {
+public class AfterSaleAttachment extends AssignedUuidEntity {
 
     @Column(name = "request_id", nullable = false)
     private UUID requestId;

@@ -20,7 +20,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @Entity
 @Table(name = "after_sale_requests")
-public class AfterSaleRequest extends BaseEntity {
+public class AfterSaleRequest extends AssignedUuidEntity {
 
     @Column(name = "order_id", nullable = false)
     private UUID orderId;
