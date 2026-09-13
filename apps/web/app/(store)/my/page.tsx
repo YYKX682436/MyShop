@@ -53,20 +53,34 @@ function Divider() {
 function LoadingAccount() {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
-      <div>
+      <header className="space-y-2" aria-hidden="true">
         <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
-      </div>
-      <div className="store-glass space-y-5 rounded-card p-5 sm:p-6" aria-hidden="true">
+        <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
+      </header>
+      <section className="store-glass rounded-card p-5 sm:p-6" aria-hidden="true">
         <div className="flex items-start gap-4">
           <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07] sm:size-24" />
           <div className="min-w-0 flex-1 space-y-2 pt-1">
             <div className="h-5 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="h-3 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="h-6 w-28 animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="mt-2 flex w-full min-w-0 items-center justify-between gap-3">
+              <div className="h-6 w-28 min-w-0 animate-pulse rounded-full bg-foreground/[0.07]" />
+              <div className="h-3 w-20 shrink-0 animate-pulse rounded-full bg-foreground/[0.07]" />
+            </div>
           </div>
         </div>
-        <div className="h-28 w-full animate-pulse rounded-card bg-foreground/[0.07]" />
-      </div>
+      </section>
+      <section
+        className="relative overflow-hidden rounded-card border border-amber-300/40 bg-gradient-to-br from-amber-50/70 via-yellow-50/70 to-orange-50/70 p-5 dark:border-amber-400/20 dark:from-amber-950/30 dark:via-yellow-950/20 dark:to-orange-950/30"
+        aria-hidden="true"
+      >
+        <div className="flex items-center gap-4">
+          <div className="size-11 shrink-0 animate-pulse rounded-full bg-foreground/[0.07]" />
+          <div className="space-y-2">
+            <div className="h-4 w-14 animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }
@@ -141,13 +155,36 @@ export default function MyPage() {
     }
   }
 
-  const handleCopyUserId = async () => {
+  const copyAccountValue = async (value: string, successMessage: string) => {
+    const copied = await copyText(value)
+    toast[copied ? "success" : "error"](copied ? successMessage : t("my.copyFailed"))
+  }
+
+  const handleCopyUsername = () => copyAccountValue(user.username, t("my.usernameCopied"))
+
+  const handleCopyUserId = () => {
     if (user.user_no === null) return
-    const copied = await copyText(String(user.user_no))
-    toast[copied ? "success" : "error"](copied ? t("my.userIdCopied") : t("my.copyFailed"))
+    return copyAccountValue(String(user.user_no), t("my.userIdCopied"))
   }
 
   const roleLabel = user.role === "SUPER_ADMIN" ? t("my.superAdminRole") : t("my.adminRole")
+  const identityBadge = isAdminRole(user.role) ? (
+    <Badge
+      variant="secondary"
+      className="min-w-0 max-w-full gap-1.5 overflow-hidden border-primary/20 bg-gradient-to-r from-primary/[0.08] via-primary/[0.12] to-primary/[0.06] text-primary dark:border-primary/30"
+    >
+      <ShieldCheck className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 truncate">{roleLabel}</span>
+    </Badge>
+  ) : user.user_level_name ? (
+    <Badge
+      variant="secondary"
+      className="min-w-0 max-w-full gap-1.5 overflow-hidden border-amber-300/80 bg-gradient-to-r from-amber-50 via-amber-100/80 to-yellow-50 text-amber-800 dark:border-amber-400/35 dark:from-amber-950/70 dark:via-amber-900/55 dark:to-yellow-950/55 dark:text-amber-200"
+    >
+      <Crown className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="min-w-0 truncate">{user.user_level_name}</span>
+    </Badge>
+  ) : null
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -164,35 +201,32 @@ export default function MyPage() {
             isBusy={isAvatarBusy}
             onUpload={handleAvatarUpload}
           />
-          <div className="flex min-w-0 flex-1 flex-col items-start gap-2 pt-1">
-            <h2 className="max-w-full truncate text-xl font-semibold tracking-tight text-foreground">{user.username}</h2>
-            {!isAdminRole(user.role) && user.user_no !== null && (
+          <div className="min-w-0 flex-1 pt-1">
+            <h2 className="max-w-full text-xl font-semibold tracking-tight text-foreground">
               <button
                 type="button"
-                onClick={handleCopyUserId}
-                aria-label={t("my.copyUserId")}
-                className="-mx-1 inline-flex max-w-full items-center rounded px-1 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                onClick={handleCopyUsername}
+                aria-label={t("my.copyUsername")}
+                className="-mx-1 inline-flex max-w-full items-center rounded px-1 py-0.5 text-left text-xl font-semibold tracking-tight text-foreground transition-[color,transform] hover:text-foreground/80 active:scale-[.995] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
-                <span className="truncate">{t("my.userId").replace("{id}", String(user.user_no))}</span>
+                <span className="truncate">{user.username}</span>
               </button>
+            </h2>
+            {(identityBadge || (!isAdminRole(user.role) && user.user_no !== null)) && (
+              <div className="mt-2 flex w-full min-w-0 items-center justify-between gap-3">
+                {identityBadge}
+                {!isAdminRole(user.role) && user.user_no !== null && (
+                  <button
+                    type="button"
+                    onClick={handleCopyUserId}
+                    aria-label={t("my.copyUserId")}
+                    className="ml-auto inline-flex shrink-0 items-center rounded px-1 py-0.5 text-left text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  >
+                    <span className="whitespace-nowrap">{t("my.userId").replace("{id}", String(user.user_no))}</span>
+                  </button>
+                )}
+              </div>
             )}
-            {isAdminRole(user.role) ? (
-              <Badge
-                variant="secondary"
-                className="gap-1.5 border-primary/20 bg-gradient-to-r from-primary/[0.08] via-primary/[0.12] to-primary/[0.06] text-primary dark:border-primary/30"
-              >
-                <ShieldCheck className="size-3.5" aria-hidden="true" />
-                {roleLabel}
-              </Badge>
-            ) : user.user_level_name ? (
-              <Badge
-                variant="secondary"
-                className="gap-1.5 border-amber-300/80 bg-gradient-to-r from-amber-50 via-amber-100/80 to-yellow-50 text-amber-800 dark:border-amber-400/35 dark:from-amber-950/70 dark:via-amber-900/55 dark:to-yellow-950/55 dark:text-amber-200"
-              >
-                <Crown className="size-3.5" aria-hidden="true" />
-                {user.user_level_name}
-              </Badge>
-            ) : null}
           </div>
         </div>
       </section>
