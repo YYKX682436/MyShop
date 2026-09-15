@@ -210,12 +210,18 @@ class AdminOrderServiceImplTest {
                 .thenReturn(new PageImpl<>(List.of(order), PageRequest.of(0, 20), 1));
         when(orderItemRepository.findByOrderIdIn(List.of(orderId))).thenReturn(List.of());
         when(userRepository.findAllById(anyList())).thenReturn(List.of());
+        Map<String, Object> summary = Map.of("id", UUID.randomUUID(),
+                "order_id", orderId, "status", "PENDING", "waiting_for", "ADMIN");
+        when(afterSaleService.buildOrderSummaries(List.of(orderId)))
+                .thenReturn(Map.of(orderId, summary));
 
         var result = fullService().searchOrders(
                 new AdminOrderSearchRequest(1, 20, null, "AFTER_SALE", null, null, null));
 
         assertEquals(1L, result.getPagination().getTotal());
         assertEquals(OrderStatus.AFTER_SALE.name(), ((Map<?, ?>) result.getList().get(0)).get("status"));
+        assertEquals(summary, ((Map<?, ?>) result.getList().get(0)).get("after_sale"));
+        verify(afterSaleService).buildOrderSummaries(List.of(orderId));
         verify(orderRepository).searchAdminOrders(eq("AFTER_SALE"), isNull(), isNull(), isNull(),
                 eq("desc"), any());
     }

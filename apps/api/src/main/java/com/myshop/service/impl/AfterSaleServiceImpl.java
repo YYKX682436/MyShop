@@ -33,9 +33,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -183,25 +185,31 @@ public class AfterSaleServiceImpl implements AfterSaleService {
 
     @Override
     @Transactional(readOnly = true)
-    public Map<String, Object> buildOrderSummary(UUID orderId) {
-        AfterSaleRequest request = requestRepository
-                .findFirstByOrderIdAndStatusOrderBySubmittedAtDesc(orderId, AfterSaleRequestStatus.PENDING)
-                .orElseGet(() -> requestRepository.findFirstByOrderIdOrderBySubmittedAtDesc(orderId).orElse(null));
-        if (request == null) {
-            return null;
+    public Map<UUID, Map<String, Object>> buildOrderSummaries(Collection<UUID> orderIds) {
+        if (orderIds == null || orderIds.isEmpty()) {
+            return Map.of();
         }
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("id", request.getId());
-        summary.put("order_id", request.getOrderId());
-        summary.put("user_id", request.getUserId());
-        summary.put("status", request.getStatus() == null ? null : request.getStatus().name());
-        summary.put("source_order_status", request.getSourceOrderStatus() == null
-                ? null : request.getSourceOrderStatus().name());
-        summary.put("waiting_for", request.getWaitingFor() == null ? null : request.getWaitingFor().name());
-        summary.put("last_activity_at", request.getLastActivityAt());
-        summary.put("submitted_at", request.getSubmittedAt());
-        summary.put("handled_at", request.getHandledAt());
-        return summary;
+        List<UUID> uniqueOrderIds = orderIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (uniqueOrderIds.isEmpty()) {
+            return Map.of();
+        }
+        // Current AFTER_SALE orders have one pending request by database
+        // contract. One query is enough for every list-page order; the full
+        // historical conversation remains the buildOrderView path.
+        List<AfterSaleRequest> requests = requestRepository
+                .findByOrderIdInAndStatusOrderByLastActivityAtDescIdDesc(
+                        uniqueOrderIds, AfterSaleRequestStatus.PENDING);
+        if (requests == null || requests.isEmpty()) {
+            return Map.of();
+        }
+        return requests.stream().collect(Collectors.toMap(
+                AfterSaleRequest::getOrderId,
+                this::summaryView,
+                (first, ignored) -> first,
+                LinkedHashMap::new));
     }
 
     @Override
@@ -221,7 +229,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         AfterSaleRequest request = pendingRequestForUpdate(orderId);
         ensurePendingOrder(order, request);
 
-        LocalDateTime handledAt = now();
+        LocalDateTime handledAt = terminalTimeAfter(request.getLastActivityAt());
         request.setStatus(AfterSaleRequestStatus.REJECTED);
         request.setRejectionReason(normalizedReason);
         request.setWaitingFor(null);
@@ -394,6 +402,15 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         return LocalDateTime.now(clock);
     }
 
+    private LocalDateTime terminalTimeAfter(LocalDateTime previousActivityAt) {
+        LocalDateTime candidate = now();
+        if (previousActivityAt == null) {
+            return candidate;
+        }
+        LocalDateTime minimum = previousActivityAt.plusNanos(1_000_000);
+        return candidate.isAfter(minimum) ? candidate : minimum;
+    }
+
     private Map<UUID, List<AfterSaleAttachment>> groupAttachmentsByRequest(
             List<AfterSaleAttachment> attachments) {
         if (attachments == null) {
@@ -421,6 +438,21 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         result.put("status", order.getStatus().name());
         result.put("after_sale", requestView(request, attachments, List.of(), Map.of()));
         return result;
+    }
+
+    private Map<String, Object> summaryView(AfterSaleRequest request) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("id", request.getId());
+        summary.put("order_id", request.getOrderId());
+        summary.put("user_id", request.getUserId());
+        summary.put("status", request.getStatus() == null ? null : request.getStatus().name());
+        summary.put("source_order_status", request.getSourceOrderStatus() == null
+                ? null : request.getSourceOrderStatus().name());
+        summary.put("waiting_for", request.getWaitingFor() == null ? null : request.getWaitingFor().name());
+        summary.put("last_activity_at", request.getLastActivityAt());
+        summary.put("submitted_at", request.getSubmittedAt());
+        summary.put("handled_at", request.getHandledAt());
+        return summary;
     }
 
     private Map<String, Object> requestView(AfterSaleRequest request,

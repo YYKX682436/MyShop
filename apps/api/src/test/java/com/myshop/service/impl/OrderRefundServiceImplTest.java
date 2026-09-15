@@ -36,6 +36,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -78,7 +79,7 @@ class OrderRefundServiceImplTest {
         service = new OrderRefundServiceImpl(
                 orderRepository, orderItemRepository, cardKeyRepository, paymentAttemptRepository,
                 userRepository, afterSaleRequestRepository, manualStockService, balanceTransactionService,
-                operationLogService, cardKeyReclaimService);
+                operationLogService, cardKeyReclaimService, Clock.systemDefaultZone());
         RequestContext.set(new RequestContext.UserInfo(OPERATOR_ID, "refund-admin", "ADMIN"));
     }
 

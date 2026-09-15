@@ -35,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -68,6 +69,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
     private final BalanceTransactionService balanceTransactionService;
     private final OperationLogService operationLogService;
     private final CardKeyReclaimService cardKeyReclaimService;
+    private final Clock clock;
 
     public OrderRefundServiceImpl(OrderRepository orderRepository,
                                   OrderItemRepository orderItemRepository,
@@ -78,7 +80,8 @@ public class OrderRefundServiceImpl implements OrderRefundService {
                                   ManualStockService manualStockService,
                                   BalanceTransactionService balanceTransactionService,
                                   OperationLogService operationLogService,
-                                  CardKeyReclaimService cardKeyReclaimService) {
+                                  CardKeyReclaimService cardKeyReclaimService,
+                                  Clock clock) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.cardKeyRepository = cardKeyRepository;
@@ -89,6 +92,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         this.balanceTransactionService = balanceTransactionService;
         this.operationLogService = operationLogService;
         this.cardKeyReclaimService = cardKeyReclaimService;
+        this.clock = clock;
     }
 
     @Override
@@ -141,7 +145,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         RefundResult result = refundLocked(order, AFTER_SALE_REFUND_REASON,
                 operatorId, reclaimCardKeys);
 
-        LocalDateTime handledAt = LocalDateTime.now();
+        LocalDateTime handledAt = terminalTimeAfter(request.getLastActivityAt());
         request.setStatus(AfterSaleRequestStatus.REFUNDED);
         request.setWaitingFor(null);
         request.setLastActivityAt(handledAt);
@@ -206,7 +210,7 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         }
 
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        LocalDateTime refundedAt = LocalDateTime.now();
+        LocalDateTime refundedAt = LocalDateTime.now(clock);
         ReclaimPlan reclaimPlan = reclaimCardKeys
                 ? prepareReclaimPlan(order, items, operatorId, refundedAt)
                 : ReclaimPlan.empty();
@@ -262,6 +266,15 @@ public class OrderRefundServiceImpl implements OrderRefundService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "仅管理员可执行退款");
         }
         return operatorId;
+    }
+
+    private LocalDateTime terminalTimeAfter(LocalDateTime previousActivityAt) {
+        LocalDateTime candidate = LocalDateTime.now(clock);
+        if (previousActivityAt == null) {
+            return candidate;
+        }
+        LocalDateTime minimum = previousActivityAt.plusNanos(1_000_000);
+        return candidate.isAfter(minimum) ? candidate : minimum;
     }
 
     private String validateRequest(String reason, boolean confirmed) {

@@ -11,6 +11,7 @@ import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { AfterSaleRequestDialog } from "@/components/shared/after-sale-request-dialog"
 import type { OrderBrief, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
+import { getAfterSaleWaitingLabelKey } from "@/lib/after-sale-waiting"
 import { cn, formatDateTime, formatYuan } from "@/lib/utils"
 import { buildOrderPageHref } from "@/lib/payment-entry"
 
@@ -153,7 +154,7 @@ export default function MyOrdersPage() {
                       className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control border border-orange-300/50 bg-orange-50 px-3 py-2 text-center text-xs font-medium text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200 sm:flex-none"
                       aria-label={t("status.AFTER_SALE")}
                     >
-                      {order.after_sale?.waiting_for === "CUSTOMER" && <span className="size-1.5 rounded-full bg-destructive" aria-label={t("order.afterSaleWaitingForCustomer")} />}
+                      {order.after_sale?.waiting_for === "CUSTOMER" && <span className="size-1.5 rounded-full bg-destructive" aria-label={t(getAfterSaleWaitingLabelKey("customer", order.after_sale.waiting_for))} />}
                       {t("status.AFTER_SALE")}
                     </Link>
                   )}

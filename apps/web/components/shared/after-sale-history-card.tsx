@@ -5,6 +5,7 @@ import Image from "next/image"
 import { AfterSaleMessageComposer } from "@/components/shared/after-sale-message-composer"
 import { useLocale } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
+import { getAfterSaleWaitingLabelKey, type AfterSaleViewMode } from "@/lib/after-sale-waiting"
 import { formatDateTime } from "@/lib/utils"
 import type { AfterSaleRequest } from "@/types"
 
@@ -19,7 +20,7 @@ export function AfterSaleHistoryCard({
   request?: AfterSaleRequest | null
   history?: AfterSaleRequest[]
   customerLabel?: string | null
-  mode?: "customer" | "admin"
+  mode?: AfterSaleViewMode
   onReply?: (content: string, attachments: File[]) => Promise<void>
   replyLoading?: boolean
 }) {
@@ -28,10 +29,10 @@ export function AfterSaleHistoryCard({
   if (records.length === 0) return null
 
   return (
-    <section id="after-sale" className="surface space-y-4 p-4 sm:p-5" aria-labelledby="after-sale-history-title">
+    <section id="after-sale" className="surface scroll-mt-24 space-y-4 p-4 sm:p-5" aria-labelledby="after-sale-history-title">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="after-sale-history-title" className="text-base font-semibold text-foreground">{t("order.afterSaleHistory")}</h2>
-        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{statusLabel(records[0], t)}</span>
+        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{statusLabel(records[0], mode, t)}</span>
       </div>
       <div className="space-y-4">
         {records.map((item, index) => (
@@ -65,18 +66,19 @@ function AfterSaleRequestTimeline({
   item: AfterSaleRequest
   locale: "zh" | "en"
   customerLabel?: string | null
-  mode: "customer" | "admin"
+  mode: AfterSaleViewMode
   onReply?: (content: string, attachments: File[]) => Promise<void>
   replyLoading: boolean
   t: (key: TranslationKey) => string
   isLast: boolean
 }) {
   const messages = item.messages ?? []
+  const waitingLabelKey = getAfterSaleWaitingLabelKey(mode, item.waiting_for)
   return (
     <article className="rounded-card border border-border-subtle bg-surface-muted/40 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-sm font-medium text-foreground">{statusLabel(item, t)}</p>
+          <p className="text-sm font-medium text-foreground">{statusLabel(item, mode, t)}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("order.afterSaleAppliedAt")}: {formatDateTime(item.submitted_at, locale)}
           </p>
@@ -129,9 +131,7 @@ function AfterSaleRequestTimeline({
             {mode === "customer" && item.waiting_for === "CUSTOMER" && (
               <span className="mr-2 size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
             )}
-            {item.waiting_for === "CUSTOMER"
-              ? t("order.afterSaleWaitingForCustomer")
-              : t("order.afterSaleWaitingForAdmin")}
+            {t(waitingLabelKey)}
           </p>
           {onReply && (
             <AfterSaleMessageComposer
@@ -209,11 +209,10 @@ function AttachmentGrid({ attachments, t }: { attachments: AfterSaleRequest["att
   )
 }
 
-function statusLabel(item: AfterSaleRequest, t: (key: TranslationKey) => string) {
+function statusLabel(item: AfterSaleRequest, mode: AfterSaleViewMode,
+                     t: (key: TranslationKey) => string) {
   if (item.status === "PENDING") {
-    return item.waiting_for === "CUSTOMER"
-      ? t("order.afterSaleWaitingForCustomer")
-      : t("order.afterSalePendingAdmin")
+    return t(getAfterSaleWaitingLabelKey(mode, item.waiting_for))
   }
   if (item.status === "REJECTED") return t("afterSaleStatus.REJECTED")
   return t("afterSaleStatus.REFUNDED")

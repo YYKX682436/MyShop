@@ -3,6 +3,7 @@ package com.myshop.service;
 import com.myshop.model.response.AdminOrderRefundResponse;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -15,7 +16,7 @@ public interface AfterSaleService {
 
     Map<String, Object> buildOrderView(UUID orderId);
 
-    Map<String, Object> buildOrderSummary(UUID orderId);
+    Map<UUID, Map<String, Object>> buildOrderSummaries(Collection<UUID> orderIds);
 
     long countNeedsAdminAttention();
 

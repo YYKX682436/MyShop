@@ -24,6 +24,7 @@ import { CardContentParts } from "@/components/shared/card-content-parts"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { ProductDescription } from "@/components/shared/product-description"
 import { isManualFulfillmentItem } from "@/lib/order-status"
+import { getAfterSaleAnchorAction } from "@/lib/order-after-sale-anchor"
 import { getOrderStatusPollInterval, shouldPollOrderStatus } from "@/lib/order-polling"
 
 const PAYMENT_RETURN_TIMEOUT = 20000
@@ -52,6 +53,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const viewRef = useRef<OrderView | null>(null)
   const requestedProductIds = useRef(new Set<string>())
   const returnDeadline = useRef<number | null>(paymentReturn ? Date.now() + PAYMENT_RETURN_TIMEOUT : null)
+  const afterSaleAnchorHandledRef = useRef<string | null>(null)
 
   const fetchView = useCallback(async (requestKind: PaymentStatusRequestKind, forceRefresh = false): Promise<string | null> => {
     if (requestInFlight.current) return null
@@ -84,6 +86,31 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   useEffect(() => {
     void fetchView("initial", paymentReturn)
   }, [fetchView, paymentReturn])
+
+  useEffect(() => {
+    afterSaleAnchorHandledRef.current = null
+  }, [orderId])
+
+  useEffect(() => {
+    const hash = window.location.hash
+    if (hash !== "#after-sale") return
+    const afterSaleHistory = view?.order.after_sale_history ?? view?.after_sale_history
+    const hasAfterSaleData = Boolean(view?.order.after_sale || afterSaleHistory?.length)
+    const action = getAfterSaleAnchorAction(
+      hash,
+      hasAfterSaleData,
+      afterSaleAnchorHandledRef.current,
+    )
+    if (action !== "scroll") return
+
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById("after-sale")
+      if (!target) return
+      target.scrollIntoView({ behavior: "smooth", block: "start" })
+      afterSaleAnchorHandledRef.current = hash
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [view])
 
   const orderItems = useMemo(() => view?.order.items ?? [], [view?.order.items])
   const productIds = useMemo(

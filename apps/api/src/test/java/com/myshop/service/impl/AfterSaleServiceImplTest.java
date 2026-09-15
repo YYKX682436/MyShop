@@ -437,6 +437,30 @@ class AfterSaleServiceImplTest {
     }
 
     @Test
+    void buildsAllPendingOrderSummariesThroughOneRepositoryQuery() {
+        UUID firstOrderId = UUID.randomUUID();
+        UUID secondOrderId = UUID.randomUUID();
+        AfterSaleRequest first = request(firstOrderId, OrderStatus.PAID,
+                AfterSaleRequestStatus.PENDING);
+        AfterSaleRequest second = request(secondOrderId, OrderStatus.DELIVERED,
+                AfterSaleRequestStatus.PENDING);
+        when(requestRepository.findByOrderIdInAndStatusOrderByLastActivityAtDescIdDesc(
+                List.of(firstOrderId, secondOrderId), AfterSaleRequestStatus.PENDING))
+                .thenReturn(List.of(second, first));
+
+        Map<UUID, Map<String, Object>> summaries = service.buildOrderSummaries(
+                List.of(firstOrderId, secondOrderId, firstOrderId));
+
+        assertEquals(List.of(secondOrderId, firstOrderId), List.copyOf(summaries.keySet()));
+        assertEquals(second.getId(), summaries.get(secondOrderId).get("id"));
+        assertEquals(AfterSaleRequestStatus.PENDING.name(), summaries.get(firstOrderId).get("status"));
+        verify(requestRepository).findByOrderIdInAndStatusOrderByLastActivityAtDescIdDesc(
+                List.of(firstOrderId, secondOrderId), AfterSaleRequestStatus.PENDING);
+        verify(requestRepository, never()).findFirstByOrderIdAndStatusOrderBySubmittedAtDesc(
+                any(UUID.class), eq(AfterSaleRequestStatus.PENDING));
+    }
+
+    @Test
     void attentionCountUsesOnlyPendingRequestsWaitingForAdministrator() {
         when(requestRepository.countByStatusAndWaitingFor(
                 AfterSaleRequestStatus.PENDING, AfterSaleWaitingFor.ADMIN)).thenReturn(3L);

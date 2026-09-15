@@ -129,4 +129,44 @@ class UserServiceImplTest {
         org.mockito.Mockito.verify(orderItemRepository).findByOrderIdIn(List.of(orderId));
         org.mockito.Mockito.verify(orderItemRepository, never()).findByOrderId(any(UUID.class));
     }
+
+    @Test
+    void orderHistoryLoadsAllAfterSaleSummariesForThePageInOneBatch() {
+        UUID userId = UUID.randomUUID();
+        UUID firstOrderId = UUID.randomUUID();
+        UUID secondOrderId = UUID.randomUUID();
+        Order first = order(firstOrderId, userId);
+        Order second = order(secondOrderId, userId);
+        first.setStatus(OrderStatus.AFTER_SALE);
+        second.setStatus(OrderStatus.AFTER_SALE);
+        when(orderRepository.findByUserIdOrderByCreatedAtDesc(eq(userId), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(first, second), PageRequest.of(0, 20), 2));
+        when(orderItemRepository.findByOrderIdIn(List.of(firstOrderId, secondOrderId)))
+                .thenReturn(List.of());
+        Map<String, Object> firstSummary = Map.of("id", UUID.randomUUID(),
+                "order_id", firstOrderId, "status", "PENDING", "waiting_for", "ADMIN");
+        Map<String, Object> secondSummary = Map.of("id", UUID.randomUUID(),
+                "order_id", secondOrderId, "status", "PENDING", "waiting_for", "CUSTOMER");
+        when(afterSaleService.buildOrderSummaries(List.of(firstOrderId, secondOrderId)))
+                .thenReturn(Map.of(firstOrderId, firstSummary, secondOrderId, secondSummary));
+
+        PageResult<?> result = new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
+                passwordEncoder, manualStockService, userLevelRepository, afterSaleService)
+                .getOrders(userId, null, 1, 20);
+
+        assertEquals(firstSummary, ((Map<?, ?>) result.getList().get(0)).get("after_sale"));
+        assertEquals(secondSummary, ((Map<?, ?>) result.getList().get(1)).get("after_sale"));
+        verify(afterSaleService).buildOrderSummaries(List.of(firstOrderId, secondOrderId));
+    }
+
+    private Order order(UUID orderId, UUID userId) {
+        Order order = new Order();
+        order.setId(orderId);
+        order.setUserId(userId);
+        order.setOrderNo(1000000001L);
+        order.setActualAmount(new java.math.BigDecimal("10.00"));
+        order.setTotalAmount(new java.math.BigDecimal("10.00"));
+        order.setStatus(OrderStatus.DELIVERED);
+        return order;
+    }
 }

@@ -1,5 +1,6 @@
 package com.myshop.service.impl;
 
+import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.context.RequestContext;
 import com.myshop.service.AfterSaleService;
@@ -25,8 +26,10 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -35,6 +38,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** PostgreSQL proof for the order-first after-sale lock protocol. */
@@ -201,6 +205,25 @@ class AfterSaleConcurrencyIntegrationTest {
     }
 
     @Test
+    void batchSummaryQueryReadsEveryPendingAfterSaleOrderInThePage() {
+        UUID firstUserId = insertUser("batch-summary-first-user");
+        UUID secondUserId = insertUser("batch-summary-second-user");
+        UUID firstOrderId = insertAfterSaleOrder(firstUserId, "2.00", OrderStatus.PAID);
+        UUID secondOrderId = insertAfterSaleOrder(secondUserId, "3.00", OrderStatus.DELIVERED);
+        UUID firstRequestId = insertPendingRequest(firstOrderId, firstUserId, OrderStatus.PAID);
+        UUID secondRequestId = insertPendingRequest(secondOrderId, secondUserId, OrderStatus.DELIVERED);
+
+        Map<UUID, Map<String, Object>> summaries = afterSaleService.buildOrderSummaries(
+                List.of(firstOrderId, secondOrderId, firstOrderId));
+
+        assertEquals(2, summaries.size());
+        assertEquals(firstRequestId, summaries.get(firstOrderId).get("id"));
+        assertEquals(secondRequestId, summaries.get(secondOrderId).get("id"));
+        assertEquals("PENDING", summaries.get(firstOrderId).get("status"));
+        assertEquals("ADMIN", summaries.get(secondOrderId).get("waiting_for"));
+    }
+
+    @Test
     void concurrentApproveAndRejectLeaveExactlyOneConsistentTerminalPair() throws Exception {
         UUID userId = insertUser("approve-reject-race-user");
         UUID adminId = insertAdmin("approve-reject-race-admin");
@@ -270,6 +293,83 @@ class AfterSaleConcurrencyIntegrationTest {
                 orderId.toString()));
     }
 
+    @Test
+    void concurrentAdminReplyAndRejectHonorWhicheverOrderLockIsWon() throws Exception {
+        UUID userId = insertUser("admin-reply-reject-race-user", "0.00");
+        UUID adminId = insertAdmin("admin-reply-reject-race-admin");
+        UUID orderId = insertAfterSaleOrder(userId, "4.00", OrderStatus.PAID);
+        UUID requestId = insertPendingRequest(orderId, userId, OrderStatus.PAID);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        Outcome replyOutcome;
+        Outcome rejectOutcome;
+        try {
+            Future<Outcome> reply = submitAdminReply(executor, ready, start, adminId, orderId);
+            Future<Outcome> reject = submitReject(executor, ready, start, adminId, orderId);
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            replyOutcome = reply.get(30, TimeUnit.SECONDS);
+            rejectOutcome = reject.get(30, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertTrue(rejectOutcome.success(), () -> "reply=" + replyOutcome + ", reject=" + rejectOutcome);
+        assertReplyOutcomeIsEitherCommittedBeforeTerminalOrRejectedAfterIt(replyOutcome);
+
+        assertEquals("REJECTED", scalar(
+                "SELECT status FROM after_sale_requests WHERE id = ?", String.class, requestId));
+        assertEquals("PAID", scalar("SELECT status FROM orders WHERE id = ?", String.class, orderId));
+        assertNull(scalar("SELECT waiting_for FROM after_sale_requests WHERE id = ?",
+                String.class, requestId));
+        assertTerminalMessageInvariant(requestId, replyOutcome.success(), "REJECTED");
+    }
+
+    @Test
+    void concurrentCustomerReplyAndApproveHonorLockOutcomeAndRefundExactlyOnce() throws Exception {
+        UUID userId = insertUser("customer-reply-approve-race-user", "1.25");
+        UUID adminId = insertAdmin("customer-reply-approve-race-admin");
+        UUID orderId = insertAfterSaleOrder(userId, "4.00", OrderStatus.PAID);
+        UUID requestId = insertPendingRequest(orderId, userId, OrderStatus.PAID);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        Outcome replyOutcome;
+        Outcome approveOutcome;
+        try {
+            Future<Outcome> reply = submitCustomerReply(executor, ready, start, userId, orderId);
+            Future<Outcome> approve = submitApprove(executor, ready, start, adminId, orderId);
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            replyOutcome = reply.get(30, TimeUnit.SECONDS);
+            approveOutcome = approve.get(30, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertTrue(approveOutcome.success(), () -> "reply=" + replyOutcome + ", approve=" + approveOutcome);
+        assertReplyOutcomeIsEitherCommittedBeforeTerminalOrRejectedAfterIt(replyOutcome);
+
+        assertEquals("REFUNDED", scalar(
+                "SELECT status FROM orders WHERE id = ?", String.class, orderId));
+        assertEquals("REFUNDED", scalar(
+                "SELECT status FROM after_sale_requests WHERE id = ?", String.class, requestId));
+        assertNull(scalar("SELECT waiting_for FROM after_sale_requests WHERE id = ?",
+                String.class, requestId));
+        assertMoney("5.25", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, userId));
+        assertEquals(1, count("SELECT count(*) FROM balance_transactions "
+                + "WHERE order_id = ? AND type = 'REFUND'", orderId));
+        assertEquals(1, count("SELECT count(*) FROM balance_transactions "
+                + "WHERE user_id = ? AND type = 'REFUND'", userId));
+        assertMoney("4.00", scalar(
+                "SELECT amount FROM balance_transactions WHERE order_id = ? AND type = 'REFUND'",
+                BigDecimal.class, orderId));
+        assertTerminalMessageInvariant(requestId, replyOutcome.success(), "REFUNDED");
+    }
+
     private Future<Outcome> submitApply(ExecutorService executor, CountDownLatch ready,
                                          CountDownLatch start, UUID userId, UUID orderId, String reason) {
         return executor.submit(() -> {
@@ -312,6 +412,98 @@ class AfterSaleConcurrencyIntegrationTest {
         });
     }
 
+    private Future<Outcome> submitAdminReply(ExecutorService executor, CountDownLatch ready,
+                                              CountDownLatch start, UUID adminId, UUID orderId) {
+        return executor.submit(() -> {
+            ready.countDown();
+            assertTrue(start.await(10, TimeUnit.SECONDS));
+            RequestContext.set(new RequestContext.UserInfo(adminId, "admin", "ADMIN"));
+            try {
+                afterSaleService.replyFromAdmin(orderId, "商家回复了售后申请", List.of());
+                return new Outcome(true, "REPLIED", null);
+            } catch (RuntimeException exception) {
+                return failure(exception);
+            } finally {
+                RequestContext.clear();
+            }
+        });
+    }
+
+    private Future<Outcome> submitCustomerReply(ExecutorService executor, CountDownLatch ready,
+                                                 CountDownLatch start, UUID userId, UUID orderId) {
+        return executor.submit(() -> {
+            ready.countDown();
+            assertTrue(start.await(10, TimeUnit.SECONDS));
+            RequestContext.set(new RequestContext.UserInfo(userId, "buyer", "USER"));
+            try {
+                afterSaleService.replyFromCustomer(orderId, userId, "买家补充了售后信息", List.of());
+                return new Outcome(true, "REPLIED", null);
+            } catch (RuntimeException exception) {
+                return failure(exception);
+            } finally {
+                RequestContext.clear();
+            }
+        });
+    }
+
+    private Future<Outcome> submitReject(ExecutorService executor, CountDownLatch ready,
+                                          CountDownLatch start, UUID adminId, UUID orderId) {
+        return executor.submit(() -> {
+            ready.countDown();
+            assertTrue(start.await(10, TimeUnit.SECONDS));
+            RequestContext.set(new RequestContext.UserInfo(adminId, "admin", "ADMIN"));
+            try {
+                afterSaleService.reject(orderId, "凭证不足，请补充后重新申请");
+                return new Outcome(true, "REJECTED", null);
+            } catch (RuntimeException exception) {
+                return failure(exception);
+            } finally {
+                RequestContext.clear();
+            }
+        });
+    }
+
+    private Outcome failure(RuntimeException exception) {
+        Integer code = exception instanceof com.myshop.exception.BusinessException business
+                ? business.getCode() : null;
+        return new Outcome(false, null, code == null
+                ? exception.getClass().getSimpleName() + ":" + exception.getMessage()
+                : code + ":" + exception.getMessage());
+    }
+
+    private void assertReplyOutcomeIsEitherCommittedBeforeTerminalOrRejectedAfterIt(Outcome reply) {
+        assertTrue(reply.success()
+                        || (reply.error() != null
+                        && reply.error().startsWith(String.valueOf(ErrorCode.BAD_REQUEST))),
+                () -> "unexpected reply outcome: " + reply);
+    }
+
+    private void assertTerminalMessageInvariant(UUID requestId, boolean replySucceeded,
+                                                String terminalStatus) {
+        int messageCount = count("SELECT count(*) FROM after_sale_messages WHERE request_id = ?", requestId);
+        assertEquals(replySucceeded ? 1 : 0, messageCount);
+
+        LocalDateTime handledAt = scalar(
+                "SELECT handled_at FROM after_sale_requests WHERE id = ?", LocalDateTime.class, requestId);
+        assertTrue(handledAt != null);
+        int messagesAtOrAfterTerminal = count("""
+                SELECT count(*)
+                FROM after_sale_messages m
+                JOIN after_sale_requests r ON r.id = m.request_id
+                WHERE r.id = ? AND r.status = ? AND r.handled_at IS NOT NULL
+                  AND m.created_at >= r.handled_at
+                """, requestId, terminalStatus);
+        assertEquals(0, messagesAtOrAfterTerminal);
+
+        if (replySucceeded) {
+            LocalDateTime messageCreatedAt = scalar(
+                    "SELECT created_at FROM after_sale_messages WHERE request_id = ?",
+                    LocalDateTime.class, requestId);
+            assertTrue(messageCreatedAt.isBefore(handledAt),
+                    () -> "message=" + messageCreatedAt + ", handled=" + handledAt);
+        }
+    }
+
     private List<Outcome> waitFor(List<Future<Outcome>> futures) throws Exception {
         List<Outcome> outcomes = new ArrayList<>();
         for (Future<Outcome> future : futures) {
@@ -321,12 +513,17 @@ class AfterSaleConcurrencyIntegrationTest {
     }
 
     private UUID insertUser(String suffix) {
+        return insertUser(suffix, "0.00");
+    }
+
+    private UUID insertUser(String suffix, String balance) {
         UUID id = UUID.randomUUID();
         UUID levelId = scalar("SELECT id FROM user_levels WHERE is_default = true", UUID.class);
         jdbcTemplate.update("""
                 INSERT INTO users(id, username, email, password_hash, role, user_no, user_level_id, balance, is_deleted)
-                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?, 0.00, 0)
-                """, id, suffix + "-" + id, id + "@example.com", Math.abs(id.hashCode()) + 10000L, levelId);
+                VALUES (?, ?, ?, 'test-hash', 'USER', ?, ?, ?, 0)
+                """, id, suffix + "-" + id, id + "@example.com", Math.abs(id.hashCode()) + 10000L,
+                levelId, new BigDecimal(balance));
         return id;
     }
 
@@ -405,6 +602,11 @@ class AfterSaleConcurrencyIntegrationTest {
 
     private <T> T scalar(String sql, Class<T> type, Object... args) {
         return jdbcTemplate.queryForObject(sql, type, args);
+    }
+
+    private void assertMoney(String expected, BigDecimal actual) {
+        assertTrue(actual != null);
+        assertEquals(0, new BigDecimal(expected).compareTo(actual));
     }
 
     private static Path temporaryDirectory() {

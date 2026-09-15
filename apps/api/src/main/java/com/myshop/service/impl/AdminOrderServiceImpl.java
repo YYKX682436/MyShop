@@ -122,11 +122,20 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                 ? Map.of()
                 : userRepository.findAllById(userIds).stream()
                 .collect(java.util.stream.Collectors.toMap(User::getId, user -> user));
+        List<UUID> afterSaleOrderIds = orders.stream()
+                .filter(order -> order.getStatus() == OrderStatus.AFTER_SALE)
+                .map(Order::getId)
+                .toList();
+        Map<UUID, Map<String, Object>> afterSaleSummaries = afterSaleOrderIds.isEmpty()
+                ? Map.of()
+                : Optional.ofNullable(afterSaleService.buildOrderSummaries(afterSaleOrderIds))
+                .orElseGet(Map::of);
 
         List<Map<String, Object>> list = orders.stream()
                 .map(order -> toAdminOrder(order,
                         itemsByOrderId.getOrDefault(order.getId(), List.of()),
-                        order.getUserId() == null ? null : usersById.get(order.getUserId()), false))
+                        order.getUserId() == null ? null : usersById.get(order.getUserId()),
+                        afterSaleSummaries.get(order.getId()), false))
                 .toList();
         return PageResult.of(orderPage, list);
     }
@@ -138,7 +147,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         User user = order.getUserId() == null
                 ? null
                 : userRepository.findById(order.getUserId()).orElse(null);
-        return toAdminOrder(order, orderItemRepository.findByOrderId(order.getId()), user, true);
+        return toAdminOrder(order, orderItemRepository.findByOrderId(order.getId()), user, null, true);
     }
 
     @Override
@@ -255,15 +264,16 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         return fulfillmentService.completeManualItems(orderId, items);
     }
 
-    private Map<String, Object> toAdminOrder(Order o, List<OrderItem> items, User user, boolean detail) {
+    private Map<String, Object> toAdminOrder(Order o, List<OrderItem> items, User user,
+                                             Map<String, Object> afterSaleSummary, boolean detail) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", o.getId());
         map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
         map.put("status", o.getStatus().name());
-        if (o.getStatus() == OrderStatus.AFTER_SALE) {
-            map.put("after_sale", afterSaleService.buildOrderSummary(o.getId()));
+        if (!detail && o.getStatus() == OrderStatus.AFTER_SALE) {
+            map.put("after_sale", afterSaleSummary);
         }
         map.put("order_type", o.getOrderType());
         map.put("payment_method", o.getPaymentMethod() == null ? null : o.getPaymentMethod().name());

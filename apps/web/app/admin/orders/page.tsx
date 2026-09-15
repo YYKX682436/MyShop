@@ -23,6 +23,7 @@ import { useLocale } from "@/lib/context"
 import { formatAdminOrderCustomer, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
 import { useAdminOrderInvalidation } from "@/lib/admin-order-invalidation"
 import { useAdminAttention } from "@/lib/admin-attention"
+import { getAfterSaleWaitingLabelKey } from "@/lib/after-sale-waiting"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItem, OrderStatus } from "@/types"
@@ -241,7 +242,7 @@ export default function AdminOrdersPage() {
                     <OrderStatusBadge status={order.status} items={order.items} />
                     {order.status === "AFTER_SALE" && order.after_sale?.status === "PENDING" && (
                       <span className={`text-xs font-medium ${order.after_sale.waiting_for === "ADMIN" ? "text-destructive" : "text-muted-foreground"}`}>
-                        {order.after_sale.waiting_for === "ADMIN" ? t("admin.afterSaleNeedsAttention") : t("admin.afterSaleWaitingForCustomer")}
+                        {t(getAfterSaleWaitingLabelKey("admin", order.after_sale.waiting_for))}
                       </span>
                     )}
                   </div>

@@ -118,13 +118,25 @@ public class UserServiceImpl implements UserService {
             }
         }
 
+        List<UUID> afterSaleOrderIds = orders.stream()
+                .filter(order -> order.getStatus() == OrderStatus.AFTER_SALE)
+                .map(Order::getId)
+                .toList();
+        Map<UUID, Map<String, Object>> afterSaleSummaries = afterSaleOrderIds.isEmpty()
+                ? Map.of()
+                : java.util.Optional.ofNullable(afterSaleService.buildOrderSummaries(afterSaleOrderIds))
+                .orElseGet(Map::of);
+
         var list = orders.stream()
-                .map(order -> toOrderBrief(order, itemsByOrderId.getOrDefault(order.getId(), List.of())))
+                .map(order -> toOrderBrief(order,
+                        itemsByOrderId.getOrDefault(order.getId(), List.of()),
+                        afterSaleSummaries.get(order.getId())))
                 .toList();
         return PageResult.of(orderPage, list);
     }
 
-    private Map<String, Object> toOrderBrief(Order o, List<OrderItem> items) {
+    private Map<String, Object> toOrderBrief(Order o, List<OrderItem> items,
+                                             Map<String, Object> afterSaleSummary) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", o.getId());
         map.put("order_no", o.getOrderNo());
@@ -133,7 +145,7 @@ public class UserServiceImpl implements UserService {
         map.put("created_at", o.getCreatedAt());
         map.put("items", items.stream().map(this::toOrderItemBrief).toList());
         if (o.getStatus() == OrderStatus.AFTER_SALE) {
-            map.put("after_sale", afterSaleService.buildOrderSummary(o.getId()));
+            map.put("after_sale", afterSaleSummary);
         }
         return map;
     }
