@@ -401,25 +401,29 @@
       overflow: visible;
     }
 
-    .admin-table-scroll > table {
+    .admin-table-scroll > div {
+      overflow: visible;
+    }
+
+    .admin-table-scroll > div > table {
       display: block;
       width: 100% !important;
       min-width: 0 !important;
       table-layout: auto;
     }
 
-    .admin-table-scroll > table > colgroup,
-    .admin-table-scroll > table > thead {
+    .admin-table-scroll > div > table > colgroup,
+    .admin-table-scroll > div > table > thead {
       display: none;
     }
 
-    .admin-table-scroll > table > tbody {
+    .admin-table-scroll > div > table > tbody {
       display: grid;
       gap: 0.75rem;
       padding: 0.75rem;
     }
 
-    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) {
+    .admin-table-scroll > div > table > tbody > tr:not(.admin-table-state-row) {
       display: grid;
       min-width: 0;
       overflow: hidden;
@@ -429,7 +433,7 @@
       box-shadow: var(--shadow-xs);
     }
 
-    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td {
+    .admin-table-scroll > div > table > tbody > tr:not(.admin-table-state-row) > td {
       display: flex;
       min-width: 0;
       width: 100%;
@@ -443,12 +447,12 @@
       overflow-wrap: anywhere;
     }
 
-    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td:last-child {
+    .admin-table-scroll > div > table > tbody > tr:not(.admin-table-state-row) > td:last-child {
       border-bottom: 0;
       align-items: center;
     }
 
-    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td::before {
+    .admin-table-scroll > div > table > tbody > tr:not(.admin-table-state-row) > td::before {
       flex: 0 0 auto;
       color: hsl(var(--text-tertiary));
       content: attr(data-label);
@@ -458,20 +462,20 @@
       text-align: left;
     }
 
-    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td > * {
+    .admin-table-scroll > div > table > tbody > tr:not(.admin-table-state-row) > td > * {
       min-width: 0;
       max-width: 100%;
     }
 
-    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td:first-child {
+    .admin-table-scroll > div > table > tbody > tr:not(.admin-table-state-row) > td:first-child {
       background-color: hsl(var(--surface-muted) / 0.42);
     }
 
-    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td:last-child > * {
+    .admin-table-scroll > div > table > tbody > tr:not(.admin-table-state-row) > td:last-child > * {
       margin-left: auto;
     }
 
-    .admin-table-scroll > table > tbody > tr.admin-table-state-row {
+    .admin-table-scroll > div > table > tbody > tr.admin-table-state-row {
       display: block;
       min-width: 0;
       border: 0;
@@ -479,7 +483,7 @@
       box-shadow: none;
     }
 
-    .admin-table-scroll > table > tbody > tr.admin-table-state-row > td.admin-table-state-cell {
+    .admin-table-scroll > div > table > tbody > tr.admin-table-state-row > td.admin-table-state-cell {
       display: block;
       width: 100%;
       border: 0;
