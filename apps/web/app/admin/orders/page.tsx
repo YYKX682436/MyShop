@@ -232,12 +232,12 @@ export default function AdminOrdersPage() {
             {!loading && !error && orders.length === 0 && <TableEmptyState colSpan={8}>{t("admin.noOrderData")}</TableEmptyState>}
             {!loading && !error && orders.map((order) => (
               <tr key={order.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                <td className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={`${t("admin.orderNo")} ${order.order_no}`} onClick={() => copyOrderNo(order.order_no)}>{order.order_no}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
-                <td className="px-4 py-3"><ProductSummary order={order} emptyLabel={t("admin.systemNoData")} /></td>
-                <td className="px-4 py-3"><CustomerCell order={order} guestLabel={t("admin.guest")} /></td>
-                <td className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
-                <td className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>
-                <td className="px-4 py-3">
+                <td data-label={t("admin.orderNo")} className="px-4 py-3"><div className="flex items-center gap-1"><button type="button" className="font-mono text-xs text-foreground hover:text-primary hover:underline" title={`${t("admin.orderNo")} ${order.order_no}`} onClick={() => copyOrderNo(order.order_no)}>{order.order_no}</button><Copy className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />{order.is_risk_flagged && <StatusBadge label={t("admin.riskFlagged")} tone="danger" />}</div></td>
+                <td data-label={t("admin.product")} className="px-4 py-3"><ProductSummary order={order} emptyLabel={t("admin.systemNoData")} /></td>
+                <td data-label={t("admin.customer")} className="px-4 py-3"><CustomerCell order={order} guestLabel={t("admin.guest")} /></td>
+                <td data-label={t("admin.amount")} className="whitespace-nowrap px-4 py-3 font-medium">{formatYuan(order.actual_amount)}</td>
+                <td data-label={t("admin.profit")} className="whitespace-nowrap px-4 py-3"><span className="font-medium">{formatYuan(order.gross_profit_total)}</span><span className="ml-1 text-xs text-muted-foreground">{order.gross_margin_total === null ? "—" : `${order.gross_margin_total.toFixed(2)}%`}</span></td>
+                <td data-label={t("admin.statusLabel")} className="px-4 py-3">
                   <div className="flex flex-col items-start gap-1">
                     <OrderStatusBadge status={order.status} items={order.items} />
                     {order.status === "AFTER_SALE" && order.after_sale?.status === "PENDING" && (
@@ -247,8 +247,8 @@ export default function AdminOrdersPage() {
                     )}
                   </div>
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
-                <td className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button></div></td>
+                <td data-label={t("admin.time")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(order.created_at, locale)}</td>
+                <td data-label={t("admin.actions")} className="px-4 py-3"><div className="flex justify-end gap-1"><Button asChild type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")}><Link href={`/admin/orders/${order.id}`}><Eye className="h-4 w-4" aria-hidden="true" /></Link></Button></div></td>
               </tr>
             ))}
           </tbody>

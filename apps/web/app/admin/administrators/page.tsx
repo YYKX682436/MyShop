@@ -277,18 +277,18 @@ export default function AdministratorsPage() {
               const enabled = administrator.is_deleted === 0
               return (
                 <tr key={administrator.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                  <td className="px-4 py-3 font-medium">{administrator.username}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{administrator.email || "—"}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{administrator.phone || "—"}</td>
-                  <td className="px-4 py-3">
+                  <td data-label={t("admin.administratorUsername")} className="px-4 py-3 font-medium">{administrator.username}</td>
+                  <td data-label={t("admin.administratorEmail")} className="px-4 py-3 text-muted-foreground">{administrator.email || "—"}</td>
+                  <td data-label={t("admin.administratorPhone")} className="px-4 py-3 text-muted-foreground">{administrator.phone || "—"}</td>
+                  <td data-label={t("admin.administratorRole")} className="px-4 py-3">
                     <StatusBadge
                       label={isSuperAdmin ? t("admin.administratorSuperAdmin") : t("admin.administratorOrdinary")}
                       tone={isSuperAdmin ? "purple" : "info"}
                     />
                   </td>
-                  <td className="px-4 py-3"><StatusBadge label={enabled ? t("admin.normal") : t("admin.banned")} tone={enabled ? "success" : "danger"} /></td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(administrator.created_at, locale)}</td>
-                  <td className="px-4 py-3">
+                  <td data-label={t("admin.administratorStatus")} className="px-4 py-3"><StatusBadge label={enabled ? t("admin.normal") : t("admin.banned")} tone={enabled ? "success" : "danger"} /></td>
+                  <td data-label={t("admin.registeredAt")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(administrator.created_at, locale)}</td>
+                  <td data-label={t("admin.actions")} className="px-4 py-3">
                     <div className="flex justify-end gap-1">
                       <Button type="button" variant="ghost" size="sm" onClick={() => openLogs(administrator)}>
                         <Eye className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.administratorLogs")}
@@ -408,7 +408,7 @@ export default function AdministratorsPage() {
                 {logsLoading && <TableLoadingState colSpan={4} />}
                 {!logsLoading && logsError && <TableErrorState colSpan={4} onRetry={() => logsTarget && void loadLogs(logsTarget, logsPage)} />}
                 {!logsLoading && !logsError && logs.length === 0 && <TableEmptyState colSpan={4}>{t("admin.administratorNoLogs")}</TableEmptyState>}
-                {!logsLoading && !logsError && logs.map((log) => { const detail = maskTechnicalIdsInText(log.detail); return <tr key={log.id} className="border-b border-border-subtle last:border-0"><td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td className="px-3 py-2">{log.action}</td><td className="max-w-[28rem] truncate px-3 py-2" title={detail}>{detail || "—"}</td><td className="px-3 py-2 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr> })}
+                {!logsLoading && !logsError && logs.map((log) => { const detail = maskTechnicalIdsInText(log.detail); return <tr key={log.id} className="border-b border-border-subtle last:border-0"><td data-label={t("admin.time")} className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{formatDateTime(log.created_at, locale)}</td><td data-label={t("admin.actionType")} className="px-3 py-2">{log.action}</td><td data-label={t("admin.detailLabel")} className="max-w-[28rem] truncate px-3 py-2" title={detail}>{detail || "—"}</td><td data-label={t("admin.ipLabel")} className="px-3 py-2 font-mono text-xs text-muted-foreground">{log.ip_address}</td></tr> })}
               </tbody>
             </table>
           </div>

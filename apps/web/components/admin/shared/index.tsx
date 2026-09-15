@@ -71,8 +71,8 @@ export function TableLoadingState({ colSpan, rows = 3 }: { colSpan: number; rows
   return (
     <>
       {Array.from({ length: rows }, (_, row) => (
-        <tr key={row} className="border-b border-border-subtle last:border-0">
-          <td colSpan={colSpan} className="px-4 py-3">
+        <tr key={row} className="admin-table-state-row border-b border-border-subtle last:border-0">
+          <td colSpan={colSpan} className="admin-table-state-cell px-4 py-3">
             <Skeleton className="h-8 w-full" />
           </td>
         </tr>
@@ -83,8 +83,8 @@ export function TableLoadingState({ colSpan, rows = 3 }: { colSpan: number; rows
 
 export function TableEmptyState({ colSpan, children }: { colSpan: number; children: ReactNode }) {
   return (
-    <tr>
-      <td colSpan={colSpan} className="px-4 py-12 text-center text-sm text-muted-foreground">
+    <tr className="admin-table-state-row">
+      <td colSpan={colSpan} className="admin-table-state-cell px-4 py-12 text-center text-sm text-muted-foreground">
         {children}
       </td>
     </tr>
@@ -94,8 +94,8 @@ export function TableEmptyState({ colSpan, children }: { colSpan: number; childr
 export function TableErrorState({ colSpan, onRetry, children }: { colSpan: number; onRetry: () => void; children?: ReactNode }) {
   const { t } = useLocale()
   return (
-    <tr>
-      <td colSpan={colSpan} className="px-4 py-12 text-center">
+    <tr className="admin-table-state-row">
+      <td colSpan={colSpan} className="admin-table-state-cell px-4 py-12 text-center">
         <div className="flex flex-col items-center gap-3 text-sm text-destructive">
           <span>{children || t("admin.loadError")}</span>
           <Button type="button" variant="outline" size="sm" onClick={onRetry}>

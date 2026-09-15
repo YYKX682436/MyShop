@@ -249,20 +249,20 @@ export default function AdminUserLevelsPage() {
             {!loading && !error && levels.length === 0 && <TableEmptyState colSpan={8}>{t("common.noData")}</TableEmptyState>}
             {!loading && !error && levels.map((level) => (
               <tr key={level.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                <td className="px-4 py-3">
+                <td data-label={t("admin.levelName")} className="px-4 py-3">
                   <div className="flex items-center gap-2 font-medium">
                     {level.is_default && <Star className="h-4 w-4 fill-amber-400 text-amber-500" aria-label={t("admin.defaultLabel")} />}
                     <span>{level.name}</span>
                     {level.is_default && <StatusBadge label={t("admin.defaultLabel")} tone="warning" />}
                   </div>
                 </td>
-                <td className="px-4 py-3">{level.pricing_type === "COST_MARKUP" ? t("admin.costMarkup") : t("admin.retailPricing")}</td>
-                <td className="px-4 py-3">{level.markup_rate == null ? "—" : `${level.markup_rate}%`}</td>
-                <td className="px-4 py-3">{level.user_count}</td>
-                <td className="px-4 py-3"><StatusBadge label={level.enabled ? t("admin.levelEnabled") : t("admin.levelDisabled")} tone={level.enabled ? "success" : "neutral"} /></td>
-                <td className="px-4 py-3">{level.sort_order}</td>
-                <td className="max-w-56 truncate px-4 py-3 text-muted-foreground" title={level.remark || undefined}>{level.remark || "—"}</td>
-                <td className="px-4 py-3">
+                <td data-label={t("admin.pricingType")} className="px-4 py-3">{level.pricing_type === "COST_MARKUP" ? t("admin.costMarkup") : t("admin.retailPricing")}</td>
+                <td data-label={t("admin.markupRate")} className="px-4 py-3">{level.markup_rate == null ? "—" : `${level.markup_rate}%`}</td>
+                <td data-label={t("admin.levelUserCount")} className="px-4 py-3">{level.user_count}</td>
+                <td data-label={t("admin.levelStatus")} className="px-4 py-3"><StatusBadge label={level.enabled ? t("admin.levelEnabled") : t("admin.levelDisabled")} tone={level.enabled ? "success" : "neutral"} /></td>
+                <td data-label={t("admin.sortOrderLabel")} className="px-4 py-3">{level.sort_order}</td>
+                <td data-label={t("admin.levelRemark")} className="max-w-56 truncate px-4 py-3 text-muted-foreground" title={level.remark || undefined}>{level.remark || "—"}</td>
+                <td data-label={t("admin.actions")} className="px-4 py-3">
                   <div className="flex justify-end gap-1">
                     <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(level)} disabled={actionId === level.id}><Edit3 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />{t("admin.edit")}</Button>
                     <Button type="button" variant="ghost" size="sm" onClick={() => void toggleStatus(level)} disabled={actionId === level.id || level.is_default}><span className={level.enabled ? "text-destructive" : "text-emerald-600"}>{level.enabled ? t("admin.disableLevel") : t("admin.enableLevel")}</span></Button>

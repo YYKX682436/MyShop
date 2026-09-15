@@ -246,13 +246,13 @@ export default function AdminUsersPage() {
             {!loading && !error && users.length === 0 && <TableEmptyState colSpan={9}>{t("admin.noUserData")}</TableEmptyState>}
             {!loading && !error && users.map((user) => (
               <tr key={user.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                <td className="whitespace-nowrap px-4 py-3">
+                <td data-label={t("admin.userNumber")} className="whitespace-nowrap px-4 py-3">
                   <CopyableValue value={String(user.user_no)} label={t("admin.userNumber")} mono />
                 </td>
-                <td className="px-4 py-3 font-medium">
+                <td data-label={t("admin.usernameLabel")} className="px-4 py-3 font-medium">
                   <CopyableValue value={user.username} label={t("admin.usernameLabel")} />
                 </td>
-                <td className="px-4 py-3">
+                <td data-label={t("admin.userLevel")} className="px-4 py-3">
                   <UserLevelQuickEdit
                     username={user.username}
                     value={user.user_level_id}
@@ -262,14 +262,14 @@ export default function AdminUsersPage() {
                     onSave={(levelId) => changeLevel(user, levelId)}
                   />
                 </td>
-                <td className="whitespace-nowrap px-4 py-3">
+                <td data-label={t("admin.balanceLabel")} className="whitespace-nowrap px-4 py-3">
                   <button type="button" className="rounded-control px-2 py-1 text-left font-medium transition-colors hover:bg-surface-muted hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35" onClick={() => openBalance(user)} aria-label={`${t("admin.adjustBalance")}: ${user.username}`}>
                     {formatYuanValue(user.balance)}
                   </button>
                 </td>
-                <td className="px-4 py-3">{user.order_count}</td>
-                <td className="whitespace-nowrap px-4 py-3">{formatYuanValue(user.total_spent)}</td>
-                <td className="px-4 py-3">
+                <td data-label={t("admin.orderCount")} className="px-4 py-3">{user.order_count}</td>
+                <td data-label={t("admin.totalSpent")} className="whitespace-nowrap px-4 py-3">{formatYuanValue(user.total_spent)}</td>
+                <td data-label={t("admin.statusLabel")} className="px-4 py-3">
                   <UserStatusQuickEdit
                     username={user.username}
                     isDeleted={user.is_deleted}
@@ -277,8 +277,8 @@ export default function AdminUsersPage() {
                     onSave={(next) => toggleStatus(user, next)}
                   />
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(user.created_at, locale)}</td>
-                <td className="px-4 py-3 text-right">
+                <td data-label={t("admin.registeredAt")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(user.created_at, locale)}</td>
+                <td data-label={t("admin.actions")} className="px-4 py-3 text-right">
                   <Button asChild type="button" variant="ghost" size="sm">
                     <Link href={`/admin/users/${user.id}`}><Eye className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.viewUser")}</Link>
                   </Button>

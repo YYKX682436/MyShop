@@ -149,7 +149,7 @@ export default function AdminCategoriesPage() {
     const isRoot = depth === 0
     return (
       <TableRow key={category.id}>
-        <TableCell>
+        <TableCell data-label={t("admin.category")}>
           <div className={isRoot ? "flex items-center gap-3" : "flex items-center gap-3 pl-10"}>
             <span className={isRoot
               ? "flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10"
@@ -166,8 +166,8 @@ export default function AdminCategoriesPage() {
             </span>
           </div>
         </TableCell>
-        <TableCell>{category.sort_order}</TableCell>
-        <TableCell>
+        <TableCell data-label={t("admin.sortOrderLabel")}>{category.sort_order}</TableCell>
+        <TableCell data-label={t("admin.actions")}>
           <div className="flex justify-end gap-1">
             {isRoot && (
               <Button type="button" variant="outline" size="sm" title={t("admin.addSubcategory")} onClick={() => openCreate(category.id)}>

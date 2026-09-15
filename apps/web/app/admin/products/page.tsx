@@ -279,7 +279,7 @@ export default function AdminProductsPage() {
               const stockClass = cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-600" : "text-foreground")
               return (
                 <TableRow key={product.id}>
-                  <TableCell className="min-w-0">
+                  <TableCell data-label={t("admin.product")} className="min-w-0">
                     <div className="flex min-w-0 items-center gap-3">
                       <ProductImagePreviewDialog product={product} />
                       <div className="min-w-0 flex-1">
@@ -298,7 +298,7 @@ export default function AdminProductsPage() {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell className="min-w-0">
+                  <TableCell data-label={t("admin.category")} className="min-w-0">
                     <ProductCategoryQuickEdit
                       product={product}
                       categories={categories}
@@ -307,7 +307,7 @@ export default function AdminProductsPage() {
                       onSave={(categoryId) => runQuickSave(product, "category", () => requestOrThrow(() => adminProductApi.updateCategory(product.id, { category_id: categoryId })))}
                     />
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-right">
+                  <TableCell data-label={t("admin.costPriceShort")} className="whitespace-nowrap text-right">
                     <ProductPriceQuickEdit
                       product={product}
                       target="cost"
@@ -315,7 +315,7 @@ export default function AdminProductsPage() {
                       onSave={(payload) => runQuickSave(product, "prices", () => requestOrThrow(() => adminProductApi.updatePrices(product.id, payload)))}
                     />
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-right">
+                  <TableCell data-label={t("admin.retailPriceShort")} className="whitespace-nowrap text-right">
                     <ProductPriceQuickEdit
                       product={product}
                       target="retail"
@@ -323,7 +323,7 @@ export default function AdminProductsPage() {
                       onSave={(payload) => runQuickSave(product, "prices", () => requestOrThrow(() => adminProductApi.updatePrices(product.id, payload)))}
                     />
                   </TableCell>
-                  <TableCell className="text-center">
+                  <TableCell data-label={t("admin.sortWeight")} className="text-center">
                     <div className="flex justify-center">
                       <ProductWeightQuickEdit
                         product={product}
@@ -332,14 +332,14 @@ export default function AdminProductsPage() {
                       />
                     </div>
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-center">
+                  <TableCell data-label={t("admin.stockLabel")} className="whitespace-nowrap text-center">
                     <div className="flex justify-center">
                       <ProductStockQuickAction product={product} className={stockClass} onImported={loadProducts}>
                         {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}
                       </ProductStockQuickAction>
                     </div>
                   </TableCell>
-                  <TableCell className="text-center">
+                  <TableCell data-label={t("admin.statusLabel")} className="text-center">
                     <div className="flex justify-center">
                       <ProductStatusQuickEdit
                         product={product}
@@ -348,7 +348,7 @@ export default function AdminProductsPage() {
                       />
                     </div>
                   </TableCell>
-                  <TableCell className="px-2 text-right">
+                  <TableCell data-label={t("admin.actions")} className="px-2 text-right">
                     <div className="flex justify-end gap-1">
                       <Button asChild variant="ghost" size="icon" title={t("admin.editProduct")} aria-label={t("admin.editProduct")}>
                         <Link href={`/admin/products/${product.id}/edit`}><Edit className="h-4 w-4" aria-hidden="true" /></Link>

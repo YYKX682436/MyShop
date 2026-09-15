@@ -391,6 +391,103 @@
     scrollbar-color: hsl(var(--separator-strong)) transparent;
   }
 
+  /*
+   * Admin tables stay dense on larger canvases and become readable records on
+   * narrow screens. The transformation is shared here so every list page
+   * keeps the same mobile interaction model without duplicating markup.
+   */
+  @media (max-width: 767px) {
+    .admin-table-scroll {
+      overflow: visible;
+    }
+
+    .admin-table-scroll > table {
+      display: block;
+      width: 100% !important;
+      min-width: 0 !important;
+      table-layout: auto;
+    }
+
+    .admin-table-scroll > table > colgroup,
+    .admin-table-scroll > table > thead {
+      display: none;
+    }
+
+    .admin-table-scroll > table > tbody {
+      display: grid;
+      gap: 0.75rem;
+      padding: 0.75rem;
+    }
+
+    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) {
+      display: grid;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid hsl(var(--border-subtle));
+      border-radius: var(--radius-control);
+      background-color: hsl(var(--surface));
+      box-shadow: var(--shadow-xs);
+    }
+
+    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td {
+      display: flex;
+      min-width: 0;
+      width: 100%;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      border: 0;
+      border-bottom: 1px solid hsl(var(--separator));
+      padding: 0.75rem 1rem;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+
+    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td:last-child {
+      border-bottom: 0;
+      align-items: center;
+    }
+
+    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td::before {
+      flex: 0 0 auto;
+      color: hsl(var(--text-tertiary));
+      content: attr(data-label);
+      font-size: var(--type-caption);
+      font-weight: 600;
+      line-height: 1.35;
+      text-align: left;
+    }
+
+    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td > * {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td:first-child {
+      background-color: hsl(var(--surface-muted) / 0.42);
+    }
+
+    .admin-table-scroll > table > tbody > tr:not(.admin-table-state-row) > td:last-child > * {
+      margin-left: auto;
+    }
+
+    .admin-table-scroll > table > tbody > tr.admin-table-state-row {
+      display: block;
+      min-width: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .admin-table-scroll > table > tbody > tr.admin-table-state-row > td.admin-table-state-cell {
+      display: block;
+      width: 100%;
+      border: 0;
+      padding: 2.5rem 1rem;
+      text-align: center;
+    }
+  }
+
   .admin-workspace {
     background:
       radial-gradient(circle at 88% -12%, hsl(var(--tint) / 0.07), transparent 32rem),

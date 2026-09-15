@@ -562,14 +562,14 @@ export default function AdminCardKeysPage() {
                   const isCardKey = item.stock_mode === "CARD_KEY" || !item.stock_mode
                   return (
                     <tr key={`${item.product_id}-${item.spec_id || "default"}-${index}`} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                      <td className="px-4 py-3 font-medium text-foreground">{item.product_title}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-600">· {t("admin.disabled")}</span>}</td>
-                      <td className="px-4 py-3"><StatusBadge label={stockModeLabel(item)} tone={item.stock_mode === "MANUAL" ? "warning" : item.stock_mode === "UNLIMITED" || item.unlimited ? "success" : "info"} /></td>
-                      <td className="px-4 py-3">{item.unlimited ? t("admin.unlimited") : item.total ?? 0}</td>
-                      <td className="px-4 py-3">{item.sold}</td>
-                      <td className="px-4 py-3 font-medium">{item.unlimited ? t("admin.unlimited") : item.available ?? 0}</td>
-                      <td className={item.invalid > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{item.invalid}</td>
-                      <td className="px-4 py-3"><div className="flex justify-end gap-1">
+                      <td data-label={t("admin.productName2")} className="px-4 py-3 font-medium text-foreground">{item.product_title}</td>
+                      <td data-label={t("admin.specLabel")} className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-600">· {t("admin.disabled")}</span>}</td>
+                      <td data-label={t("admin.inventoryMode")} className="px-4 py-3"><StatusBadge label={stockModeLabel(item)} tone={item.stock_mode === "MANUAL" ? "warning" : item.stock_mode === "UNLIMITED" || item.unlimited ? "success" : "info"} /></td>
+                      <td data-label={t("admin.totalKeys")} className="px-4 py-3">{item.unlimited ? t("admin.unlimited") : item.total ?? 0}</td>
+                      <td data-label={t("admin.soldKeys")} className="px-4 py-3">{item.sold}</td>
+                      <td data-label={t("admin.availableKeys")} className="px-4 py-3 font-medium">{item.unlimited ? t("admin.unlimited") : item.available ?? 0}</td>
+                      <td data-label={t("admin.invalidKeys")} className={item.invalid > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{item.invalid}</td>
+                      <td data-label={t("admin.actions")} className="px-4 py-3"><div className="flex justify-end gap-1">
                         {isCardKey && <>
                           <Button type="button" variant="ghost" size="icon" title={t("admin.import")} aria-label={t("admin.import")} disabled={importProductLoading} onClick={() => void openImportForStockRow(item)}><Upload className="h-4 w-4" aria-hidden="true" /></Button>
                           <Button type="button" variant="ghost" size="icon" title={t("admin.viewDetail")} aria-label={t("admin.viewDetail")} onClick={() => openDetail(item)}><Eye className="h-4 w-4" aria-hidden="true" /></Button>
@@ -602,13 +602,13 @@ export default function AdminCardKeysPage() {
                 {!importLoading && !importError && importBatches.length === 0 && <TableEmptyState colSpan={7}>{t("admin.noImportData")}</TableEmptyState>}
                 {!importLoading && !importError && importBatches.map((batch) => (
                   <tr key={batch.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
-                    <td className="px-4 py-3">{products.find((product) => product.id === batch.product_id)?.title || t("admin.systemNoData")}</td>
-                    <td className="px-4 py-3">{batch.column_count ?? 1}</td>
-                    <td className="px-4 py-3">{batch.total_count}</td>
-                    <td className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
-                    <td className="px-4 py-3 text-amber-600">{batch.duplicate_count}</td>
-                    <td className={batch.fail_count > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{batch.fail_count}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(batch.created_at, locale)}</td>
+                    <td data-label={t("admin.product")} className="px-4 py-3">{products.find((product) => product.id === batch.product_id)?.title || t("admin.systemNoData")}</td>
+                    <td data-label={t("admin.columnCount")} className="px-4 py-3">{batch.column_count ?? 1}</td>
+                    <td data-label={t("admin.importCount")} className="px-4 py-3">{batch.total_count}</td>
+                    <td data-label={t("admin.successCount")} className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
+                    <td data-label={t("admin.duplicateCount")} className="px-4 py-3 text-amber-600">{batch.duplicate_count}</td>
+                    <td data-label={t("admin.failCount")} className={batch.fail_count > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{batch.fail_count}</td>
+                    <td data-label={t("admin.time")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(batch.created_at, locale)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -779,12 +779,12 @@ export default function AdminCardKeysPage() {
                   {!detailLoading && !detailError && detailKeys.length === 0 && <TableEmptyState colSpan={6}>{t("admin.noCardData")}</TableEmptyState>}
                   {!detailLoading && !detailError && detailKeys.map((key) => (
                     <tr key={key.id} className="border-b border-border-subtle last:border-0">
-                      <td className="px-4 py-3 align-top"><CardContentParts parts={key.content_parts} onCopy={copyToClipboard} /></td>
-                      <td className="px-4 py-3 align-top"><StatusBadge label={cardStatusLabel(key.status)} tone={cardStatusTone[key.status]} /></td>
-                      <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{formatDateTime(key.created_at, locale)}</td>
-                      <td className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_no ?? t("admin.systemNoData")}</td>
-                      <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{key.sold_at ? formatDateTime(key.sold_at, locale) : t("admin.systemNoData")}</td>
-                      <td className="px-4 py-3 text-right align-top"><div className="flex justify-end gap-1">
+                      <td data-label={t("admin.cardContentColumnLabel")} className="px-4 py-3 align-top"><CardContentParts parts={key.content_parts} onCopy={copyToClipboard} /></td>
+                      <td data-label={t("admin.cardStatus")} className="px-4 py-3 align-top"><StatusBadge label={cardStatusLabel(key.status)} tone={cardStatusTone[key.status]} /></td>
+                      <td data-label={t("admin.cardCreatedAt")} className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{formatDateTime(key.created_at, locale)}</td>
+                      <td data-label={t("admin.orderNo")} className="px-4 py-3 align-top font-mono text-xs text-muted-foreground">{key.order_no ?? t("admin.systemNoData")}</td>
+                      <td data-label={t("admin.cardSoldAt")} className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted-foreground">{key.sold_at ? formatDateTime(key.sold_at, locale) : t("admin.systemNoData")}</td>
+                      <td data-label={t("admin.actions")} className="px-4 py-3 text-right align-top"><div className="flex justify-end gap-1">
                         {key.status === "AVAILABLE" && <Button type="button" variant="ghost" size="icon" title={t("admin.pickupCard")} aria-label={t("admin.pickupCard")} disabled={singlePickingUp} onClick={() => setSinglePickupTarget(key)}><Download className="h-4 w-4" aria-hidden="true" /></Button>}
                         {(key.status === "AVAILABLE" || key.status === "LOCKED") && <Button type="button" variant="ghost" size="icon" title={t("admin.invalidateCard")} aria-label={t("admin.invalidateCard")} onClick={() => setSingleInvalidateTarget(key)}><Ban className="h-4 w-4 text-destructive" aria-hidden="true" /></Button>}
                       </div></td>
