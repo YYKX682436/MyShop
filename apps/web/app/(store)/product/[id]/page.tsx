@@ -95,7 +95,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       <div className="grid gap-8 lg:grid-cols-5 lg:items-start lg:gap-12">
         {/* Left: Image — server rendered */}
         <div className="lg:col-span-3">
-          <div className="surface relative aspect-square overflow-hidden bg-surface-muted p-3 sm:p-6">
+          <div className="content-surface-muted relative aspect-square overflow-hidden p-3 sm:p-6">
             {product.cover_url ? (
               <Image
                 src={product.cover_url}

@@ -142,7 +142,7 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
       <AnnouncementBar />
       {header}
       <main className={cn(
-        "storefront-main mx-auto w-full max-w-[1440px] flex-1 px-4 py-8 sm:px-6 lg:px-8",
+        "storefront-main mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10",
         hasDock && "storefront-main--with-dock",
       )}>{children}</main>
       <StoreFooter reserveForDock={hasDock} />

@@ -312,7 +312,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
         }
       />}
 
-      <section className="surface p-5 sm:p-6">
+      <section className="content-surface p-5 sm:p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 items-start gap-4">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><ShieldCheck className="size-7" aria-hidden="true" /></div>
@@ -332,15 +332,15 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
         </div>
       </section>
 
-      <section className="surface p-5 sm:p-6">
+      <section className="content-surface p-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="font-semibold">{t("admin.userLevel")}</h2><p className="mt-1 text-sm text-muted-foreground">{t("admin.userLevelImmediateHint")}</p></div>
           <UserLevelQuickEdit username={user.username} value={user.user_level_id} label={user.user_level_name || t("admin.systemNoData")} levels={levels} saving={levelLoading} onSave={handleChangeLevel} />
         </div>
       </section>
 
-      <div className="flex max-w-full gap-1 overflow-x-auto rounded-card border border-border-subtle bg-surface-muted p-1.5" role="tablist" aria-label={t("admin.userDetailTabs")}>
-        {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} onClick={() => { setActiveTab(tab.key); setRecordPage(1) }} className={`whitespace-nowrap rounded-control px-3 py-2 text-sm font-medium transition-colors ${activeTab === tab.key ? "bg-surface text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{tab.label}</button>)}
+      <div className="segmented-control w-full" role="tablist" aria-label={t("admin.userDetailTabs")}>
+        {tabs.map((tab) => <button key={tab.key} type="button" role="tab" aria-selected={activeTab === tab.key} data-active={activeTab === tab.key} onClick={() => { setActiveTab(tab.key); setRecordPage(1) }} className="segmented-control-item">{tab.label}</button>)}
       </div>
 
       {activeTab === "overview" && <Overview user={user} t={t} locale={locale} />}

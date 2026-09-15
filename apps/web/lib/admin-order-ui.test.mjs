@@ -372,7 +372,7 @@ test("storefront order details fetch unique product metadata and keep card conte
 test("storefront order information is an accessible closed details section", () => {
   const orderSource = readSource("../app/(store)/order/[orderId]/page.tsx")
 
-  assert.match(orderSource, /<details className="surface overflow-hidden">/)
+  assert.match(orderSource, /<details className="content-surface overflow-hidden">/)
   assert.doesNotMatch(orderSource, /<details[^>]*\bopen\b/)
   assert.match(orderSource, /<summary[^>]*className="group flex min-h-12/)
   assert.match(orderSource, /group-open:rotate-180/)

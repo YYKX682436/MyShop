@@ -298,7 +298,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
       shouldScaleBackground={false}
     >
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-4">
-        <div className="pointer-events-auto mx-auto flex w-full max-w-2xl items-center gap-3 rounded-[20px] border border-border-subtle bg-surface/85 p-2 shadow-lg backdrop-blur-xl supports-[backdrop-filter]:bg-surface/70">
+        <div className="control-material action-bar-material pointer-events-auto mx-auto flex w-full max-w-2xl items-center gap-3 p-2">
           <div className="min-w-0 flex-1 px-2">
             <p className="truncate text-[11px] text-muted-foreground">
               {t("product.unitPrice")}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
@@ -331,7 +331,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
         </div>
       </div>
 
-      <DrawerContent className="origin-bottom border-border-subtle bg-surface-raised/95 shadow-2xl outline-none sm:mx-auto sm:max-w-2xl">
+      <DrawerContent className="control-material action-bar-material origin-bottom outline-none sm:mx-auto sm:max-w-2xl">
         <div className="flex max-h-[min(75dvh,760px)] flex-col pb-[env(safe-area-inset-bottom)]">
           <DrawerHeader className="shrink-0 border-b border-border-subtle px-4 pb-3 pt-2 text-left sm:px-6 sm:pt-3">
             <DrawerTitle className="text-base">{t("product.buyNow")}</DrawerTitle>

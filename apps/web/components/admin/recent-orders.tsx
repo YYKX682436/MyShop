@@ -32,7 +32,7 @@ export function RecentOrders({ orders }: { orders: AdminOrderItem[] }) {
   }
 
   return (
-    <section className="min-w-0 rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5">
+    <section className="content-surface min-w-0 rounded-surface p-4 sm:p-5">
       <h2 className="mb-4 font-semibold text-foreground">{t("admin.recentOrders")}</h2>
       {orders.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">{t("admin.noOrderData")}</p>

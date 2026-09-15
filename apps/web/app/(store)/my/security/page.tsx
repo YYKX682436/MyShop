@@ -23,7 +23,7 @@ export default function MySecurityPage() {
         <p className="mt-2 text-sm text-muted-foreground">{t("security.description")}</p>
       </header>
 
-      <section className="store-glass rounded-card p-5 sm:p-6" aria-labelledby="account-email-title">
+      <section className="content-surface rounded-card p-5 sm:p-6" aria-labelledby="account-email-title">
         <div className="flex items-start gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
             <Mail className="size-5" aria-hidden="true" />

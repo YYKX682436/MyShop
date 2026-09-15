@@ -66,7 +66,7 @@ function Panel({
   action?: ReactNode
 }) {
   return (
-    <section className={cn("min-w-0 rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5", className)}>
+    <section className={cn("content-surface min-w-0 rounded-surface p-4 sm:p-5", className)}>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           {Icon && <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
@@ -137,7 +137,7 @@ function KpiCard({ label, value, icon: Icon, change, helper }: KpiCardProps) {
   const { t } = useLocale()
   const hasChange = change !== undefined
   return (
-    <article className="min-w-0 rounded-card border border-border-subtle bg-surface p-4 shadow-sm transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5">
+    <article className="min-w-0 p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm text-muted-foreground">{label}</p>
@@ -179,7 +179,7 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
   const money = formatYuan
   return (
-    <Stagger className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2 xl:grid-cols-4">
+    <Stagger className="content-surface grid grid-cols-1 divide-y divide-border-subtle overflow-hidden min-[420px]:grid-cols-2 min-[420px]:divide-y-0 min-[420px]:divide-x xl:grid-cols-4">
       <StaggerItem>
         <KpiCard
         label={t("admin.todaySales")}

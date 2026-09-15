@@ -84,7 +84,7 @@ export default function RegisterPage() {
   return (
     <div className="flex min-h-[calc(100vh-13rem)] items-center justify-center py-8">
       <div className="w-full max-w-sm">
-        <div className="surface p-6 sm:p-8">
+        <div className="content-surface p-6 sm:p-8">
           <div className="mb-7 text-center">
             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">

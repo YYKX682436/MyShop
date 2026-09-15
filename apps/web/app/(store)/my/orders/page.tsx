@@ -79,13 +79,16 @@ export default function MyOrdersPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="segmented-control w-full" role="group" aria-label={t("myOrders.title")}>
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
+            type="button"
             onClick={() => { setStatusFilter(s); setPage(1) }}
+            aria-pressed={statusFilter === s}
+            data-active={statusFilter === s}
             className={cn(
-              "rounded-control px-3 py-2 text-sm font-medium transition-colors duration-180",
+              "segmented-control-item",
               statusFilter === s
                 ? "bg-primary text-primary-foreground"
                 : "bg-surface-muted text-muted-foreground hover:bg-surface hover:text-foreground"
@@ -105,7 +108,7 @@ export default function MyOrdersPage() {
           {orders.map((order) => (
             <article
               key={order.id}
-              className="surface p-3 transition-[transform,border-color,box-shadow] duration-180 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-sm sm:p-4"
+              className="content-surface p-3 transition-[transform,border-color,box-shadow] duration-180 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-sm sm:p-4"
             >
               <header className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2">
                 <span className="min-w-0 flex-1 break-all font-mono text-xs font-medium text-foreground">

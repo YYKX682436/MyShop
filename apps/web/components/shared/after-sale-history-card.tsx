@@ -29,7 +29,7 @@ export function AfterSaleHistoryCard({
   if (records.length === 0) return null
 
   return (
-    <section id="after-sale" className="surface scroll-mt-24 space-y-4 p-4 sm:p-5" aria-labelledby="after-sale-history-title">
+    <section id="after-sale" className="content-surface scroll-mt-24 space-y-4 p-4 sm:p-5" aria-labelledby="after-sale-history-title">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="after-sale-history-title" className="text-base font-semibold text-foreground">{t("order.afterSaleHistory")}</h2>
         <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{statusLabel(records[0], mode, t)}</span>

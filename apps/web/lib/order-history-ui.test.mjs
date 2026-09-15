@@ -46,7 +46,7 @@ test("storefront order history is a compact overview with one detail entry for e
 
 test("storefront order details keep snapshots, customer information, and expired orders visible", () => {
   const source = readSource("../app/(store)/order/[orderId]/page.tsx")
-  const details = source.match(/<details className="surface overflow-hidden">/g) ?? []
+  const details = source.match(/<details className="content-surface overflow-hidden">/g) ?? []
 
   assert.equal(details.length, 2)
   assert.doesNotMatch(source, /if \(status === "EXPIRED"\)\s*\{/)

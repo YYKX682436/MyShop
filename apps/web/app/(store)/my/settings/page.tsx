@@ -65,7 +65,7 @@ interface SettingsChoiceGroupProps<T extends string> {
 
 function SettingsChoiceGroup<T extends string>({ icon: Icon, title, description, options, value, onChange }: SettingsChoiceGroupProps<T>) {
   return (
-    <section className="store-glass rounded-card p-5 sm:p-6" aria-labelledby={`${title}-heading`}>
+    <section className="content-surface rounded-card p-5 sm:p-6" aria-labelledby={`${title}-heading`}>
       <div className="flex items-start gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <Icon className="size-5" aria-hidden="true" />

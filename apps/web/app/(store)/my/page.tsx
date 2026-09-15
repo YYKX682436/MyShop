@@ -57,7 +57,7 @@ function LoadingAccount() {
         <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
         <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
       </header>
-      <section className="store-glass rounded-card p-5 sm:p-6" aria-hidden="true">
+      <section className="content-surface rounded-card p-5 sm:p-6" aria-hidden="true">
         <div className="flex items-start gap-4">
           <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07] sm:size-24" />
           <div className="min-w-0 flex-1 space-y-2 pt-1">
@@ -99,7 +99,7 @@ export default function MyPage() {
           <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         </header>
 
-        <section className="store-glass rounded-card p-5 sm:p-6" aria-label={t("my.title")}>
+        <section className="content-surface rounded-card p-5 sm:p-6" aria-label={t("my.title")}>
           <div className="flex items-center gap-4">
             <AccountAvatar avatarUrl={null} username="" editable={false} />
             <div className="min-w-0">
@@ -125,7 +125,7 @@ export default function MyPage() {
           </div>
         </section>
 
-        <section className="store-glass overflow-hidden rounded-card" aria-label={t("settings.title")}>
+        <section className="content-surface overflow-hidden rounded-card" aria-label={t("settings.title")}>
           <AccountLink href="/my/settings" icon={Settings} label={t("my.settings")} />
         </section>
       </div>
@@ -193,7 +193,7 @@ export default function MyPage() {
         <p className="mt-2 text-sm text-muted-foreground">{t("my.accountSummary")}</p>
       </header>
 
-      <section className="store-glass rounded-card p-5 sm:p-6" aria-label={t("my.accountSummary")}>
+      <section className="content-surface rounded-card p-5 sm:p-6" aria-label={t("my.accountSummary")}>
         <div className="flex items-start gap-4 sm:gap-5">
           <AccountAvatar
             avatarUrl={user.avatar_url}
@@ -249,7 +249,7 @@ export default function MyPage() {
         </div>
       </section>
 
-      <section className="store-glass overflow-hidden rounded-card" aria-label={t("my.title")}>
+      <section className="settings-group overflow-hidden rounded-card" aria-label={t("my.title")}>
         <AccountLink href="/my/orders" icon={ReceiptText} label={t("my.orders")} />
         <Divider />
         <AccountLink href="/my/security" icon={ShieldCheck} label={t("my.security")} />
@@ -263,7 +263,7 @@ export default function MyPage() {
         )}
       </section>
 
-      <section className="store-glass overflow-hidden rounded-card">
+      <section className="settings-group overflow-hidden rounded-card">
         <button
           type="button"
           onClick={logout}

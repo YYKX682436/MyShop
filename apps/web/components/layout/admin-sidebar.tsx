@@ -135,7 +135,7 @@ export function AdminSidebar() {
   const superAdmin = user?.role === "SUPER_ADMIN"
 
   return (
-    <Sidebar collapsible="icon" variant="sidebar">
+    <Sidebar collapsible="icon" variant="floating">
       <SidebarHeader className="border-b border-sidebar-border/70 px-2 py-3">
         <SidebarMenu>
           <SidebarMenuItem>

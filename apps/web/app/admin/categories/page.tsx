@@ -10,6 +10,7 @@ import {
   DataTableShell,
   FormSection,
   PageHeader,
+  PageToolbar,
   TableEmptyState,
   TableErrorState,
   TableLoadingState,
@@ -193,8 +194,12 @@ export default function AdminCategoriesPage() {
       <PageHeader
         title={t("admin.categories")}
         description={t("admin.manageCategories")}
-        actions={<Button type="button" onClick={() => openCreate()}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addRootCategory")}</Button>}
       />
+
+      <PageToolbar>
+        <span className="text-sm text-muted-foreground">{t("admin.categoryRootLevel")}</span>
+        <Button type="button" onClick={() => openCreate()}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addRootCategory")}</Button>
+      </PageToolbar>
 
       <DataTableShell>
         <Table>

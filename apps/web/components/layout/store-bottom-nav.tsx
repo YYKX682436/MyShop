@@ -542,7 +542,7 @@ export function StoreBottomNav() {
 
   return (
     <div className="store-dock-viewport">
-      <nav className="store-dock store-glass" aria-label={t("nav.main")}>
+      <nav className="store-dock control-material" aria-label={t("nav.main")}>
         <div ref={dockRef} className="store-dock-track">
           {navItems.map((item, index) => {
             const Icon = item.icon

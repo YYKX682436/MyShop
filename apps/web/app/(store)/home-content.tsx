@@ -90,7 +90,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
       {/* Hero */}
       {(siteSlogan.trim() || siteDescription.trim()) && (
         <FadeIn>
-          <section className="surface relative overflow-hidden px-5 py-6 sm:px-8 sm:py-8 lg:px-10">
+          <section className="editorial-hero relative overflow-hidden px-1 py-6 sm:px-2 sm:py-10 lg:px-4 lg:py-14">
             <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-1/3 bg-primary/[0.035] sm:block" />
             <div className="relative max-w-2xl">
               {siteSlogan.trim() && (
@@ -114,17 +114,18 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
       {/* Category controls */}
       {categories.length > 0 && (
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2" aria-label={t("admin.categoryRootLevel")}>
+          <div className="segmented-control w-full sm:w-auto" role="group" aria-label={t("admin.categoryRootLevel")}>
             <button
               type="button"
               onClick={() => selectRootCategory(null)}
               aria-pressed={selectedRootCategory === null}
+              data-active={selectedRootCategory === null}
               className={cn(
-                "relative rounded-control px-3.5 py-2 text-sm font-semibold transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                "segmented-control-item relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                 selectedRootCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
               )}
             >
-              {selectedRootCategory === null && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+              {selectedRootCategory === null && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
               <span className="relative z-10">{t("home.allCategories")}</span>
             </button>
             {rootCategories.map((category) => (
@@ -133,28 +134,30 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
                 key={category.id}
                 onClick={() => selectRootCategory(category.id)}
                 aria-pressed={selectedRootCategory === category.id}
+                data-active={selectedRootCategory === category.id}
                 className={cn(
-                  "relative rounded-control px-3.5 py-2 text-sm font-semibold transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  "segmented-control-item relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                   selectedRootCategory === category.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                 )}
               >
-                {selectedRootCategory === category.id && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                {selectedRootCategory === category.id && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
                 <span className="relative z-10">{category.name}</span>
               </button>
             ))}
           </div>
           {selectedRoot && selectedChildren.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-l-2 border-primary/20 pl-3" aria-label={t("home.allSubcategories")}>
+            <div className="flex max-w-full items-center gap-1 overflow-x-auto pb-0.5 pl-1" role="group" aria-label={t("home.allSubcategories")}>
               <button
                 type="button"
                 onClick={() => selectChildCategory(null)}
                 aria-pressed={selectedChildCategory === null}
+                data-active={selectedChildCategory === null}
                 className={cn(
-                  "relative rounded-control px-3 py-1.5 text-sm font-medium transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                  "segmented-control-item relative min-h-9 px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                   selectedChildCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                 )}
               >
-                {selectedChildCategory === null && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                {selectedChildCategory === null && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
                 <span className="relative z-10">{t("home.allSubcategories")}</span>
               </button>
               {selectedChildren.map((child) => (
@@ -163,12 +166,13 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
                   key={child.id}
                   onClick={() => selectChildCategory(child.id)}
                   aria-pressed={selectedChildCategory === child.id}
+                  data-active={selectedChildCategory === child.id}
                   className={cn(
-                    "relative rounded-control px-3 py-1.5 text-sm font-medium transition-colors duration-180 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                    "segmented-control-item relative min-h-9 px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                     selectedChildCategory === child.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                   )}
                 >
-                  {selectedChildCategory === child.id && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-control bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                  {selectedChildCategory === child.id && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
                   <span className="relative z-10">{child.name}</span>
                 </button>
               ))}
@@ -179,7 +183,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
 
       {/* Product Grid */}
       {productsError ? (
-        <div id="products" className="flex flex-col items-center justify-center gap-4 rounded-card border border-dashed border-border-strong bg-surface-muted/50 py-24 text-muted-foreground">
+        <div id="products" className="flex flex-col items-center justify-center gap-4 rounded-group bg-surface-muted/55 py-24 text-muted-foreground">
           <Search className="h-10 w-10 opacity-20" />
           <p className="text-sm">{t("home.loadFailed")}</p>
           <button
@@ -200,7 +204,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
           ))}
         </div>
       ) : (
-        <div id="products" className="flex flex-col items-center justify-center rounded-card border border-dashed border-border-subtle bg-surface-muted/40 py-24 text-muted-foreground">
+        <div id="products" className="flex flex-col items-center justify-center rounded-group bg-surface-muted/45 py-24 text-muted-foreground">
           <Search className="mb-3 h-10 w-10 opacity-20" />
           <p className="text-sm">{t("home.noProducts")}</p>
         </div>

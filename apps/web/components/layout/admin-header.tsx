@@ -113,7 +113,7 @@ export function AdminHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-30 flex min-h-16 items-center border-b border-border-subtle bg-surface px-4 sm:px-6">
+    <header className="control-header control-material sticky top-0 z-30 flex min-h-16 items-center px-4 sm:px-6">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <SidebarTrigger className="shrink-0 rounded-control" aria-label={t("admin.toggleSidebar")} />
         <Breadcrumb className="min-w-0" aria-label={t("admin.breadcrumb")}>
@@ -151,29 +151,6 @@ export function AdminHeader() {
           </Link>
         </Button>
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={toggleLocale}
-          title={locale === "zh" ? t("admin.switchToEnglish") : t("admin.switchToChinese")}
-          aria-label={locale === "zh" ? t("admin.switchToEnglish") : t("admin.switchToChinese")}
-        >
-          <Globe2 className="h-4 w-4" aria-hidden="true" />
-          <span className="sr-only">{locale === "zh" ? t("admin.switchToEnglish") : t("admin.switchToChinese")}</span>
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={toggleTheme}
-          title={resolvedTheme === "dark" ? t("admin.switchToLight") : t("admin.switchToDark")}
-          aria-label={resolvedTheme === "dark" ? t("admin.switchToLight") : t("admin.switchToDark")}
-        >
-          {resolvedTheme === "dark" ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
-        </Button>
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button type="button" variant="ghost" className="max-w-36 gap-2 px-2 sm:max-w-48 sm:px-3" title={t("admin.administrator")}>
@@ -189,6 +166,15 @@ export function AdminHeader() {
               <p className="text-sm font-medium text-foreground">{user?.username || t("admin.administrator")}</p>
               <p className="mt-1 truncate text-xs text-muted-foreground">{user?.email || ""}</p>
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={toggleLocale}>
+              <Globe2 className="h-4 w-4" aria-hidden="true" />
+              {locale === "zh" ? t("admin.switchToEnglish") : t("admin.switchToChinese")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={toggleTheme}>
+              {resolvedTheme === "dark" ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
+              {resolvedTheme === "dark" ? t("admin.switchToLight") : t("admin.switchToDark")}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
               <LogOut className="h-4 w-4" aria-hidden="true" />

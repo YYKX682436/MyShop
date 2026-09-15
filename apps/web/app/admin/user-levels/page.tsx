@@ -9,6 +9,7 @@ import {
   ConfirmAlert,
   DataTableShell,
   PageHeader,
+  PageToolbar,
   StatusBadge,
   TableEmptyState,
   TableErrorState,
@@ -217,12 +218,16 @@ export default function AdminUserLevelsPage() {
       <PageHeader
         title={t("admin.userLevels")}
         description={t("admin.userLevelsDesc")}
-        actions={<Button type="button" onClick={openCreate}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addUserLevel")}</Button>}
       />
 
       <p className="rounded-card border border-amber-500/20 bg-amber-500/[0.07] px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
         {t("admin.levelLifecycleHint")}
       </p>
+
+      <PageToolbar>
+        <span className="text-sm text-muted-foreground">{t("admin.levelStatus")}</span>
+        <Button type="button" onClick={openCreate}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addUserLevel")}</Button>
+      </PageToolbar>
 
       <DataTableShell>
         <table className="w-full min-w-[1100px] text-sm">

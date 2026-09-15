@@ -44,7 +44,7 @@ export function ChangePasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="surface space-y-5 p-5 sm:p-6">
+    <form onSubmit={handleSubmit} className="content-surface space-y-5 p-5 sm:p-6">
       <div className="flex items-start gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <KeyRound className="size-5" aria-hidden="true" />

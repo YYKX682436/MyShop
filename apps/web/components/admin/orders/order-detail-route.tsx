@@ -458,7 +458,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     return (
       <AdminPage>
         <PageHeader title={t("admin.orderWorkspace")} description={order ? `${t("admin.orderNo")} ${order.order_no}` : t("common.loading")} actions={actionArea} />
-        <div className="surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
+        <div className="content-surface min-h-[32rem] overflow-hidden p-0">{detailContent}</div>
         {confirmDialog}
         {refundDialog}
         {afterSaleRejectDialog}

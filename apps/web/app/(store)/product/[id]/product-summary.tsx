@@ -23,8 +23,8 @@ export function ProductSummary({ product }: { product: ProductDetail }) {
     : t("product.deliveryAuto")
 
   return (
-    <div className="space-y-4 lg:pt-3">
-      <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">
+    <div className="space-y-5 lg:pt-3">
+      <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl sm:leading-[1.08]">
         {product.title}
       </h1>
       <div className="flex items-baseline gap-1.5">
@@ -34,7 +34,7 @@ export function ProductSummary({ product }: { product: ProductDetail }) {
         {product.has_specs && <span className="text-sm text-muted-foreground">{t("home.startFrom")}</span>}
       </div>
       <p className={cn(
-        "text-sm text-muted-foreground",
+        "text-footnote text-muted-foreground",
         !inStock && "font-medium text-destructive/80",
       )}>
         {inStock

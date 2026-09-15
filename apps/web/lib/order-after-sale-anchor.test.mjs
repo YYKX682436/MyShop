@@ -31,5 +31,5 @@ test("order detail handles the fragment after dynamic after-sale data renders", 
   assert.match(source, /document\.getElementById\("after-sale"\)/)
   assert.match(source, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/)
   assert.match(source, /afterSaleAnchorHandledRef/)
-  assert.match(cardSource, /id="after-sale" className="surface scroll-mt-24/)
+  assert.match(cardSource, /id="after-sale" className="content-surface scroll-mt-24/)
 })

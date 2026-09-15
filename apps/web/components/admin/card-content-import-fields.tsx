@@ -35,7 +35,7 @@ export function CardContentImportFields({ columns, onChange, disabled = false }:
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {columns.map((column, index) => (
-          <div key={index} className="flex min-w-0 flex-col gap-1.5 rounded-card border border-border-subtle bg-surface-muted/45 p-3">
+          <div key={index} className="content-surface-muted flex min-w-0 flex-col gap-1.5 rounded-card p-3">
             <div className="flex items-center justify-between gap-2">
               <label htmlFor={`card-content-column-${index}`} className="text-sm font-medium text-foreground">
                 {t("admin.cardContentColumn").replace("{index}", String(index + 1))} <span className="text-destructive">*</span>

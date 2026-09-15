@@ -100,7 +100,7 @@ function CopyDefinitionRow({ label, value, copyActionLabel, onCopy, empty, mono 
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5">
+    <section className="content-surface rounded-surface p-4 sm:p-5">
       <h2 className="mb-3 text-sm font-semibold text-foreground">{title}</h2>
       <dl className="divide-y divide-border-subtle/70">{children}</dl>
     </section>
@@ -180,7 +180,7 @@ export function OrderDetailSheet({
       {detailLoading && <div className="flex items-center gap-2 rounded-control border border-border-subtle bg-surface-muted px-3 py-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div>}
       {detailError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive"><span>{t("admin.loadError")}</span>{onRetryDetail && <Button type="button" variant="outline" size="sm" onClick={onRetryDetail}>{t("common.retry")}</Button>}</div>}
 
-      <header className="rounded-surface border border-border-subtle bg-surface p-5 shadow-sm sm:p-6">
+      <header className="content-surface rounded-surface p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -239,7 +239,7 @@ export function OrderDetailSheet({
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(15rem,1fr)]">
         <main className="min-w-0 space-y-6">
-          {hasAutomaticCardItems && <section className="rounded-surface border border-primary/20 bg-surface p-5 shadow-sm sm:p-6" aria-labelledby="order-card-delivery-title">
+          {hasAutomaticCardItems && <section className="content-surface rounded-surface border-primary/20 p-5 sm:p-6" aria-labelledby="order-card-delivery-title">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 id="order-card-delivery-title" className="text-base font-semibold text-foreground">{t("admin.cardDelivery")}</h2>
@@ -253,7 +253,7 @@ export function OrderDetailSheet({
             {!detailCardKeysLoading && !detailCardKeysError && detailCardKeys.length > 0 && <div className="mt-4 space-y-4">{[...cardGroups.entries()].map(([groupKey, group]) => <div key={groupKey} className="rounded-card border border-border-subtle bg-surface-muted/45 p-3 sm:p-4"><div className="mb-1 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium text-foreground">{group.title}</h3><Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(formatCardContents(group.cards))}>{t("admin.copyGroup")}</Button></div><div>{group.cards.map((card, index) => <CardRow key={card.card_key_id} card={card} index={index} cardLabel={t("admin.cardNumber")} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} />)}</div></div>)}</div>}
           </section>}
 
-          <section className="rounded-surface border border-border-subtle bg-surface p-5 shadow-sm sm:p-6" aria-labelledby="order-product-inputs-title">
+          <section className="content-surface rounded-surface p-5 sm:p-6" aria-labelledby="order-product-inputs-title">
             <div className="mb-4">
               <h2 id="order-product-inputs-title" className="text-base font-semibold text-foreground">{t("admin.productAndCustomerInputs")}</h2>
               <p className="mt-1 text-xs text-muted-foreground">{t("admin.productSnapshotDescription")}</p>

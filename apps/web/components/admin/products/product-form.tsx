@@ -701,7 +701,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                 <span className="text-sm font-medium">{t("admin.enableMultiSpec")}</span>
                 <Switch ref={registerField("spec-mode")} checked={draft.spec_enabled} onCheckedChange={toggleSpecMode} aria-label={t("admin.enableMultiSpec")} />
               </div>
-              <div className={cn("mt-4 overflow-x-auto rounded-card border border-border-subtle bg-surface", !draft.spec_enabled && "opacity-70")}>
+              <div className={cn("content-surface mt-4 overflow-x-auto", !draft.spec_enabled && "opacity-70")}>
                 <table className="w-full min-w-[640px] text-sm">
                   <thead className="bg-surface-muted">
                     <tr>
@@ -737,7 +737,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
 
         <TabsContent value="pricing" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.productTabPricing")} description={t("admin.pricingHint")}>
-              <div className="overflow-x-auto rounded-card border border-border-subtle bg-surface">
+              <div className="content-surface overflow-x-auto">
                 <table className="w-full min-w-[720px] text-sm">
                   <thead className="bg-surface-muted">
                     <tr>
@@ -776,7 +776,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                 <h3 className="text-sm font-semibold text-foreground">{t("admin.pricingSection")}</h3>
                 <p className="mt-1 text-sm text-muted-foreground">{t("admin.pricingHint")}</p>
                 {levelsLoading ? <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div> : levels.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">{t("admin.noUserLevels")}</p> : (
-                  <div className="mt-4 overflow-x-auto rounded-card border border-border-subtle bg-surface">
+                  <div className="content-surface mt-4 overflow-x-auto">
                     <table className="w-full min-w-[1050px] text-sm">
                       <thead className="bg-surface-muted">
                         <tr>

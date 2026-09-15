@@ -72,7 +72,7 @@ export function ManualFulfillmentDialog({
           </div>
 
           {items.map((item) => (
-            <section key={item.id} className="space-y-3 rounded-surface border border-border-subtle bg-surface-muted/35 p-4">
+            <section key={item.id} className="content-surface-muted space-y-3 rounded-surface p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">{item.product_title}</h3>

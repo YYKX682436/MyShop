@@ -197,7 +197,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
         />
       </div>
 
-      <div className="min-w-0 overflow-hidden rounded-card border border-border-subtle bg-surface">
+      <div className="content-surface min-w-0 overflow-hidden">
         <div className="border-b border-border-subtle px-3 py-2 text-sm font-medium text-foreground">{t("admin.markdownPreview")}</div>
         <div className="min-w-0 p-3">
           <MarkdownPreview value={value} emptyMessage={t("admin.markdownEmpty")} />

@@ -316,7 +316,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const retryStatusButton = <button type="button" onClick={() => void manualRefresh()} disabled={refreshing} className="inline-flex h-10 items-center gap-2 rounded-control border border-border-strong bg-surface px-4 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted disabled:opacity-50"><RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />{t("payment.retryLoad")}</button>
 
   if (!view) {
-    return <div className="surface mx-auto flex max-w-lg flex-col items-center gap-3 p-8 text-center" role="status"><RefreshCw className="h-8 w-8 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{paymentState.errorMessage || t("common.loading")}</p>{paymentState.errorMessage && retryStatusButton}</div>
+    return <div className="content-surface mx-auto flex max-w-lg flex-col items-center gap-3 p-8 text-center" role="status"><RefreshCw className="h-8 w-8 animate-spin text-primary" /><p className="text-sm text-muted-foreground">{paymentState.errorMessage || t("common.loading")}</p>{paymentState.errorMessage && retryStatusButton}</div>
   }
 
   return <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 py-2 sm:gap-6">
@@ -342,7 +342,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </header>
 
-    <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-purchase-summary-title">
+    <section className="content-surface space-y-4 p-4 sm:p-5" aria-labelledby="order-purchase-summary-title">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h2 id="order-purchase-summary-title" className="text-base font-semibold text-foreground">{t("order.purchaseSummary")}</h2>
@@ -386,7 +386,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </section>
 
-    <details className="surface overflow-hidden">
+    <details className="content-surface overflow-hidden">
       <summary aria-controls="order-information-panel" className="group flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t("order.orderInformation")}</span>
         <span className="min-w-0 max-w-[55%] truncate font-mono text-xs text-muted-foreground">{view.order.order_no}</span>
@@ -417,7 +417,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     />
 
     {itemsWithCustomerInputs.length > 0 && (
-      <details className="surface overflow-hidden">
+      <details className="content-surface overflow-hidden">
         <summary aria-controls="customer-inputs-panel" className="group flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t("order.customerInputs")}</span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
@@ -444,7 +444,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     )}
 
     {status === "PENDING" && (
-      <section className="surface space-y-4 p-4 sm:p-5" aria-labelledby="order-payment-title">
+      <section className="content-surface space-y-4 p-4 sm:p-5" aria-labelledby="order-payment-title">
         <h2 id="order-payment-title" className="text-base font-semibold text-foreground">{t("payment.title")}</h2>
         {checkingReturn && <div className="rounded-control border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary" role="status">{t("order.paymentReturn")}</div>}
         {returnTimedOut && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200" role="status">{t("order.paymentReturnTimeout")}</div>}
@@ -461,7 +461,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     )}
 
     {(status === "PAID" || status === "DELIVERED" || status === "AFTER_SALE" || status === "REFUNDED") && (
-      <section className="surface-raised space-y-4 p-4 sm:p-5" aria-labelledby="order-delivery-result-title">
+      <section className="content-surface-strong space-y-4 p-4 sm:p-5" aria-labelledby="order-delivery-result-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 id="order-delivery-result-title" className="flex items-center gap-2 text-base font-semibold text-foreground"><KeyRound className="h-4 w-4 text-primary" />{t("order.deliveryResult")}</h2>

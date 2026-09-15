@@ -180,8 +180,6 @@ export default function AdminDashboardPage() {
         }
       />
 
-      <AttentionStrip items={attention} loading={loadingStrip} unavailable={unavailableStrip} />
-
       {stats.data ? (
         <>
           {stats.error && <DashboardInlineError onRetry={() => void loadBusiness()} />}
@@ -214,6 +212,8 @@ export default function AdminDashboardPage() {
           onRetry={() => void loadSystem()}
         />
       </div>
+
+      <AttentionStrip items={attention} loading={loadingStrip} unavailable={unavailableStrip} />
 
       {stats.data && (
         <div className="grid min-w-0 gap-5 lg:grid-cols-2">
@@ -254,7 +254,7 @@ export default function AdminDashboardPage() {
 
 function DashboardRegion({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="min-w-0 rounded-surface border border-border-subtle bg-surface p-4 shadow-sm sm:p-5">
+    <section className="content-surface min-w-0 rounded-surface p-4 sm:p-5">
       <h2 className="mb-4 font-semibold text-foreground">{title}</h2>
       {children}
     </section>

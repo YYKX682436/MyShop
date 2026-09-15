@@ -8,6 +8,7 @@ import {
   AdminPage,
   ConfirmAlert,
   PageHeader,
+  PageToolbar,
   SettingsSection,
   StatusBadge,
   TableEmptyState,
@@ -236,7 +237,11 @@ export default function AdminPaymentChannelsPage() {
 
   return (
     <AdminPage>
-      <PageHeader title={t("admin.payment")} description={t("admin.paymentDesc")} actions={<Button type="button" onClick={openCreate} disabled={loading || providers.length === 0}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addChannel")}</Button>} />
+      <PageHeader title={t("admin.payment")} description={t("admin.paymentDesc")} />
+      <PageToolbar>
+        <span className="text-sm text-muted-foreground">{t("admin.paymentDesc")}</span>
+        <Button type="button" onClick={openCreate} disabled={loading || providers.length === 0}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addChannel")}</Button>
+      </PageToolbar>
       {loading && <div className="h-24 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} />}
       {!loading && error && <div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadPaymentFailed")}</span><Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button></div>}
       {!loading && !error && <div className="grid gap-4 lg:grid-cols-2">
@@ -246,7 +251,7 @@ export default function AdminPaymentChannelsPage() {
           <div className="mt-4 flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2 text-xs text-muted-foreground"><span>{t("admin.channelOrder").replace("{order}", String(channel.sort_order))}</span><span>{t("admin.channelCodeAuto")}</span></div>
           <div className="mt-4 flex justify-end gap-2"><Button type="button" variant="outline" size="sm" onClick={() => openEdit(channel)}><Edit className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.edit")}</Button><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setDeleteTarget(channel)}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.delete")}</Button></div>
         </SettingsSection>)}
-        {channels.length === 0 && <div className="col-span-full rounded-card border border-border-subtle bg-surface"><table className="w-full"><tbody><TableEmptyState colSpan={1}>{t("admin.noChannelData")}</TableEmptyState></tbody></table></div>}
+        {channels.length === 0 && <div className="content-surface col-span-full"><table className="w-full"><tbody><TableEmptyState colSpan={1}>{t("admin.noChannelData")}</TableEmptyState></tbody></table></div>}
       </div>}
 
       <Dialog open={dialogOpen} onOpenChange={(open) => open ? setDialogOpen(true) : closeDialog()}>
