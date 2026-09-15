@@ -44,8 +44,8 @@ export function ChangePasswordForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="content-surface space-y-5 p-5 sm:p-6">
-      <div className="flex items-start gap-3">
+    <form onSubmit={handleSubmit} className="settings-section">
+      <header className="settings-section-header flex items-start gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <KeyRound className="size-5" aria-hidden="true" />
         </span>
@@ -53,9 +53,9 @@ export function ChangePasswordForm() {
           <h2 className="text-base font-semibold text-foreground">{t("security.changePassword")}</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{t("security.changePasswordDescription")}</p>
         </div>
-      </div>
+      </header>
 
-      <div className="space-y-4">
+      <div className="settings-section-content space-y-4">
         <PasswordField
           id="current-password"
           label={t("security.currentPassword")}
@@ -86,12 +86,11 @@ export function ChangePasswordForm() {
           autoComplete="new-password"
           onChange={(value) => setForm((previous) => ({ ...previous, confirmNewPassword: value }))}
         />
+        <Button type="submit" className="mt-5 w-full sm:w-auto" disabled={isLoading}>
+          {isLoading ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <KeyRound aria-hidden="true" />}
+          {t("security.savePassword")}
+        </Button>
       </div>
-
-      <Button type="submit" className="w-full sm:w-auto" disabled={isLoading}>
-        {isLoading ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <KeyRound aria-hidden="true" />}
-        {t("security.savePassword")}
-      </Button>
     </form>
   )
 }

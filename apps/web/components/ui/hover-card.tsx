@@ -18,7 +18,7 @@ const HoverCardContent = React.forwardRef<
     align={align}
     sideOffset={sideOffset}
     className={cn(
-      'myshop-popup control-material z-50 w-64 rounded-card p-4 text-popover-foreground outline-none',
+      'myshop-popup transient-glass z-50 w-64 rounded-card p-4 text-popover-foreground outline-none',
       className,
     )}
     {...props}

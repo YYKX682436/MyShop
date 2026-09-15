@@ -11,16 +11,18 @@ interface StoreHeaderProps {
  */
 export function StoreHeader({ siteName = "" }: StoreHeaderProps) {
   return (
-    <header className="control-header control-material sticky top-0 z-30">
-      <div className="relative mx-auto flex h-14 max-w-[1440px] items-center justify-center px-4 sm:px-6 lg:px-8">
-        <Link
-          href="/"
-          className="absolute left-1/2 inline-flex min-h-11 max-w-[calc(100%-7rem)] -translate-x-1/2 items-center justify-center truncate rounded-control px-3 text-[15px] font-semibold tracking-tight text-foreground transition-colors duration-180 hover:text-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        >
-          {siteName}
-        </Link>
-        <StoreHeaderSearch />
-      </div>
-    </header>
+    <div className="store-header-layer">
+      <header className="store-header-frame bar-glass">
+        <div className="relative mx-auto flex h-14 max-w-[1440px] items-center justify-center px-4 sm:px-6 lg:px-8">
+          <Link
+            href="/"
+            className="absolute left-1/2 inline-flex min-h-11 max-w-[calc(100%-7rem)] -translate-x-1/2 items-center justify-center truncate rounded-control px-3 text-[15px] font-semibold tracking-tight text-foreground transition-colors duration-180 hover:text-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            {siteName}
+          </Link>
+          <StoreHeaderSearch />
+        </div>
+      </header>
+    </div>
   )
 }

@@ -23,14 +23,6 @@ import {
   Settings,
 } from "lucide-react"
 
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -113,29 +105,21 @@ export function AdminHeader() {
   }
 
   return (
-    <header className="control-header control-material sticky top-0 z-30 flex min-h-16 items-center px-4 sm:px-6">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <SidebarTrigger className="shrink-0 rounded-control" aria-label={t("admin.toggleSidebar")} />
-        <Breadcrumb className="min-w-0" aria-label={t("admin.breadcrumb")}>
-          <BreadcrumbList className="flex-nowrap overflow-hidden">
-            <BreadcrumbItem className="hidden sm:inline-flex">
-              <BreadcrumbLink asChild>
-                <Link href="/admin/dashboard">{t("admin.adminHome")}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator className="hidden sm:inline-flex" />
-            <BreadcrumbItem className="min-w-0">
-              <BreadcrumbPage className="truncate">{pageLabel}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-      </div>
+    <div className="admin-header-layer">
+      <header className="admin-floating-toolbar bar-glass">
+        <div className="admin-toolbar-leading">
+          <SidebarTrigger className="shrink-0 rounded-control" aria-label={t("admin.toggleSidebar")} />
+          <div className="admin-toolbar-context">
+            <span className="admin-toolbar-kicker">{t("admin.adminHome")}</span>
+            <span className="admin-toolbar-title">{pageLabel}</span>
+          </div>
+        </div>
 
-      <div className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+        <div className="admin-toolbar-actions">
         <Button
           type="button"
           variant="outline"
-          className="hidden h-9 w-48 justify-between gap-3 border-border-subtle bg-surface-muted/65 px-3 text-muted-foreground shadow-none hover:bg-surface md:inline-flex lg:w-60"
+          className="admin-command-trigger hidden h-9 justify-between gap-3 border-border-subtle bg-surface-muted/65 px-3 text-muted-foreground shadow-none hover:bg-surface md:inline-flex"
           onClick={() => setCommandOpen(true)}
           aria-label={t("admin.commandBar")}
         >
@@ -182,33 +166,34 @@ export function AdminHeader() {
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
+        </div>
 
-      <CommandDialog open={commandOpen} onOpenChange={setCommandOpen}>
-        <CommandInput placeholder={t("admin.commandBar")} />
-        <CommandList>
-          <CommandEmpty>{t("admin.noCommandResults")}</CommandEmpty>
-          <CommandGroup heading={t("admin.quickNavigation")}>
-            {commandItems
-              .filter((item) => !item.superAdminOnly || user?.role === "SUPER_ADMIN")
-              .map((item) => (
-                <CommandItem
-                  key={item.href}
-                  value={t(item.labelKey)}
-                  onSelect={() => {
-                    setCommandOpen(false)
-                    router.push(item.href)
-                  }}
-                >
-                  <item.icon className="text-muted-foreground" aria-hidden="true" />
-                  <span>{t(item.labelKey)}</span>
-                  <ArrowUpRight className="ml-auto size-3.5 text-muted-foreground" aria-hidden="true" />
-                  <CommandShortcut>↵</CommandShortcut>
-                </CommandItem>
-              ))}
-          </CommandGroup>
-        </CommandList>
-      </CommandDialog>
-    </header>
+        <CommandDialog open={commandOpen} onOpenChange={setCommandOpen}>
+          <CommandInput placeholder={t("admin.commandBar")} />
+          <CommandList>
+            <CommandEmpty>{t("admin.noCommandResults")}</CommandEmpty>
+            <CommandGroup heading={t("admin.quickNavigation")}>
+              {commandItems
+                .filter((item) => !item.superAdminOnly || user?.role === "SUPER_ADMIN")
+                .map((item) => (
+                  <CommandItem
+                    key={item.href}
+                    value={t(item.labelKey)}
+                    onSelect={() => {
+                      setCommandOpen(false)
+                      router.push(item.href)
+                    }}
+                  >
+                    <item.icon className="text-muted-foreground" aria-hidden="true" />
+                    <span>{t(item.labelKey)}</span>
+                    <ArrowUpRight className="ml-auto size-3.5 text-muted-foreground" aria-hidden="true" />
+                    <CommandShortcut>↵</CommandShortcut>
+                  </CommandItem>
+                ))}
+            </CommandGroup>
+          </CommandList>
+        </CommandDialog>
+      </header>
+    </div>
   )
 }

@@ -19,10 +19,10 @@ export function ProductCard({ product }: ProductCardProps) {
   return (
     <Link
       href={productUrl}
-      className="group/card flex min-w-0 flex-col overflow-hidden rounded-card transition-transform duration-180 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="product-card group/card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       aria-label={product.title}
     >
-      <div className={`relative aspect-square overflow-hidden rounded-card border border-border-subtle bg-surface-muted ${!inStock ? "opacity-75" : ""}`}>
+      <div className={`product-card-media aspect-square ${!inStock ? "opacity-75" : ""}`}>
         {product.cover_url ? (
           <Image
             src={product.cover_url}
@@ -30,7 +30,7 @@ export function ProductCard({ product }: ProductCardProps) {
             fill
             unoptimized
             sizes="(min-width: 1536px) 16vw, (min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
-            className="object-contain transition-opacity duration-300 ease-out group-hover/card:opacity-95"
+            className="object-contain"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">
@@ -38,19 +38,19 @@ export function ProductCard({ product }: ProductCardProps) {
           </div>
         )}
         {!inStock && (
-          <span className="content-surface pointer-events-none absolute right-2 top-2 rounded-full border-0 bg-surface/90 px-2 py-1 text-[10px] font-medium text-muted-foreground shadow-xs">
+          <span className="transient-glass pointer-events-none absolute right-2 top-2 rounded-full border-0 px-2 py-1 text-[10px] font-medium text-muted-foreground shadow-xs">
             {t("product.soldOut")}
           </span>
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-1.5 px-0.5 pt-3">
-        <h3 className="line-clamp-2 min-h-[2.5rem] text-sm font-semibold leading-5 tracking-tight text-foreground transition-colors group-hover/card:text-primary">
-            {product.title}
+      <div className="product-card-copy">
+        <h3 className="product-card-title line-clamp-2 transition-colors group-hover/card:text-primary">
+          {product.title}
         </h3>
 
         <div className="flex min-w-0 items-baseline gap-1">
-          <span className={`min-w-0 truncate text-lg font-semibold tracking-tight sm:text-xl ${inStock ? "text-foreground" : "text-muted-foreground"}`}>
+          <span className={`product-card-price min-w-0 truncate ${inStock ? "text-foreground" : "text-muted-foreground"}`}>
             {formatYuan(product.price)}
           </span>
           {product.has_specs && <span className="shrink-0 text-xs text-muted-foreground">{t("home.startFrom")}</span>}

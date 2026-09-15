@@ -16,9 +16,11 @@ export default function AdminLayout({ children, modal }: { children: React.React
     <AdminAttentionProvider>
       <SidebarProvider className="admin-workspace min-h-screen overflow-x-hidden">
         <AdminSidebar />
-        <SidebarInset className="min-w-0 overflow-x-hidden bg-transparent">
+        <SidebarInset className="admin-workspace-main min-w-0 overflow-x-hidden bg-transparent">
           <AdminHeader />
-          <main className="min-w-0 px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">{children}</main>
+          <div className="admin-scroll-region">
+            <main className="admin-page-main min-w-0 px-4 pb-8 pt-5 sm:px-6 sm:pb-10 sm:pt-7 lg:px-10 lg:pb-12 lg:pt-9">{children}</main>
+          </div>
         </SidebarInset>
         {modal}
       </SidebarProvider>

@@ -629,11 +629,11 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   const cardKeyImportAvailability = getCardKeyImportAvailability(product, draft.stock_mode, dirty)
 
   return (
-    <form className="flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); void handleSave() }}>
+    <form className="admin-editor-form flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); void handleSave() }}>
       <Tabs value={activeTab} onValueChange={(value) => {
           if (PRODUCT_EDITOR_TABS.includes(value as ProductEditorTab)) setActiveTab(value as ProductEditorTab)
         }}>
-        <div className="-mx-1 border-b border-border-subtle px-1 py-2">
+        <div className="admin-editor-tabs -mx-1 border-b border-border-subtle px-1 py-2">
           <TabsList className="flex h-auto w-full max-w-full justify-start overflow-x-auto p-1" aria-label={t("admin.productEditorHint")}>
             {tabItems.map((tab) => (
               <TabsTrigger key={tab.value} value={tab.value} className="min-w-max gap-2 px-4 py-2">
@@ -701,7 +701,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                 <span className="text-sm font-medium">{t("admin.enableMultiSpec")}</span>
                 <Switch ref={registerField("spec-mode")} checked={draft.spec_enabled} onCheckedChange={toggleSpecMode} aria-label={t("admin.enableMultiSpec")} />
               </div>
-              <div className={cn("content-surface mt-4 overflow-x-auto", !draft.spec_enabled && "opacity-70")}>
+              <div className={cn("admin-table-region mt-4", !draft.spec_enabled && "opacity-70")}>
                 <table className="w-full min-w-[640px] text-sm">
                   <thead className="bg-surface-muted">
                     <tr>
@@ -737,7 +737,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
 
         <TabsContent value="pricing" forceMount className="data-[state=inactive]:hidden">
             <FormSection title={t("admin.productTabPricing")} description={t("admin.pricingHint")}>
-              <div className="content-surface overflow-x-auto">
+              <div className="admin-table-region overflow-x-auto">
                 <table className="w-full min-w-[720px] text-sm">
                   <thead className="bg-surface-muted">
                     <tr>
@@ -776,7 +776,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                 <h3 className="text-sm font-semibold text-foreground">{t("admin.pricingSection")}</h3>
                 <p className="mt-1 text-sm text-muted-foreground">{t("admin.pricingHint")}</p>
                 {levelsLoading ? <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div> : levels.length === 0 ? <p className="mt-4 text-sm text-muted-foreground">{t("admin.noUserLevels")}</p> : (
-                  <div className="content-surface mt-4 overflow-x-auto">
+                  <div className="admin-table-region mt-4">
                     <table className="w-full min-w-[1050px] text-sm">
                       <thead className="bg-surface-muted">
                         <tr>
@@ -903,7 +903,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
         </TabsContent>
       </Tabs>
 
-      <div className="flex flex-col-reverse gap-3 border-t border-border-subtle pt-4 sm:flex-row sm:justify-end">
+      <div className="transient-glass action-bar-material sticky bottom-3 z-20 flex flex-col-reverse gap-3 p-3 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
         <Button type="submit" disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button>
       </div>

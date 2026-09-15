@@ -13,7 +13,7 @@ export default function MySecurityPage() {
   if (!user) return null
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-6">
+    <div className="account-page max-w-2xl space-y-6">
       <header>
         <Link href="/my" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
           <ArrowLeft className="size-4" aria-hidden="true" />
@@ -23,8 +23,8 @@ export default function MySecurityPage() {
         <p className="mt-2 text-sm text-muted-foreground">{t("security.description")}</p>
       </header>
 
-      <section className="content-surface rounded-card p-5 sm:p-6" aria-labelledby="account-email-title">
-        <div className="flex items-start gap-3">
+      <section className="settings-section" aria-labelledby="account-email-title">
+        <header className="settings-section-header flex items-start gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
             <Mail className="size-5" aria-hidden="true" />
           </span>
@@ -32,7 +32,7 @@ export default function MySecurityPage() {
             <h2 id="account-email-title" className="text-base font-semibold text-foreground">{t("security.email")}</h2>
             <p className="mt-2 break-all text-sm font-medium text-foreground">{user.email || t("security.emailNotBound")}</p>
           </div>
-        </div>
+        </header>
       </section>
 
       <ChangePasswordForm />

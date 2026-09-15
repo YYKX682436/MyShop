@@ -513,19 +513,19 @@ export default function AdminCardKeysPage() {
         }
       />
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <section className="admin-metric-strip grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4" aria-label={t("admin.stockOverview")}>
         {[
           { label: t("admin.totalKeys"), value: totalKeys, icon: KeyRound, tone: "text-blue-500" },
           { label: t("admin.availableStock"), value: totalAvailable, icon: Package, tone: "text-emerald-500" },
           { label: t("admin.soldOut"), value: totalSold, icon: FileText, tone: "text-muted-foreground" },
           { label: t("admin.invalidKeys"), value: totalInvalid, icon: Ban, tone: "text-destructive" },
         ].map((stat) => (
-          <div key={stat.label} className="content-surface p-4">
+          <div key={stat.label} className="admin-metric">
             <div className="flex items-center gap-2"><stat.icon className={`h-4 w-4 ${stat.tone}`} aria-hidden="true" /><span className="text-sm text-muted-foreground">{stat.label}</span></div>
             <p className="mt-1 text-2xl font-semibold text-foreground">{stat.value}</p>
           </div>
         ))}
-      </div>
+      </section>
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as "stock" | "import")}>
         <TabsList>

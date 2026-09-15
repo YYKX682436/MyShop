@@ -66,8 +66,8 @@ function Panel({
   action?: ReactNode
 }) {
   return (
-    <section className={cn("content-surface min-w-0 rounded-surface p-4 sm:p-5", className)}>
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <section className={cn("dashboard-panel min-w-0", className)}>
+      <div className="dashboard-panel-heading">
         <div className="flex min-w-0 items-center gap-2">
           {Icon && <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
           <h2 className="truncate font-semibold text-foreground">{title}</h2>
@@ -137,7 +137,7 @@ function KpiCard({ label, value, icon: Icon, change, helper }: KpiCardProps) {
   const { t } = useLocale()
   const hasChange = change !== undefined
   return (
-    <article className="min-w-0 p-4 sm:p-5">
+    <article className="dashboard-metric min-w-0 p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm text-muted-foreground">{label}</p>
@@ -179,7 +179,7 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
   const money = formatYuan
   return (
-    <Stagger className="content-surface grid grid-cols-1 divide-y divide-border-subtle overflow-hidden min-[420px]:grid-cols-2 min-[420px]:divide-y-0 min-[420px]:divide-x xl:grid-cols-4">
+    <Stagger className="dashboard-kpi-strip grid grid-cols-1 divide-y divide-border-subtle overflow-hidden min-[420px]:grid-cols-2 min-[420px]:divide-y-0 min-[420px]:divide-x xl:grid-cols-4">
       <StaggerItem>
         <KpiCard
         label={t("admin.todaySales")}
@@ -218,7 +218,7 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
 
 function MetricTile({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
-    <div className="min-w-0 rounded-control border border-border-subtle bg-surface-muted px-3 py-3">
+    <div className="dashboard-fact min-w-0 px-3 py-3">
       <p className="truncate text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 truncate text-lg font-semibold text-foreground">{value}</p>
       {note && <p className="mt-0.5 truncate text-xs text-muted-foreground">{note}</p>}
@@ -288,7 +288,7 @@ export function LowStockPanel({ products }: { products: LowStockProduct[] }) {
       ) : (
         <div className="space-y-2">
           {products.map((product) => (
-            <div key={product.product_id} className="flex min-w-0 items-center justify-between gap-3 rounded-control border border-amber-500/15 bg-amber-500/[0.06] px-3 py-2.5">
+            <div key={product.product_id} className="dashboard-list-item flex min-w-0 items-center justify-between gap-3 border-amber-500/15 bg-amber-500/[0.06] px-3 py-2.5">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-foreground" title={product.title}>{product.title}</p>
                 <p className="text-xs text-muted-foreground">
@@ -316,7 +316,7 @@ export function TopProductsPanel({ products }: { products: DashboardTopProduct[]
       ) : (
         <div className="space-y-2">
           {products.map((product, index) => (
-            <div key={product.product_id} className="flex min-w-0 items-center gap-3 rounded-control border border-border-subtle px-3 py-2.5">
+            <div key={product.product_id} className="dashboard-list-item flex min-w-0 items-center gap-3 px-3 py-2.5">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
                 {index + 1}
               </span>
@@ -342,7 +342,7 @@ export function RecentUsersPanel({ users }: { users: DashboardRecentUser[] }) {
       ) : (
         <div className="space-y-2">
           {users.map((user) => (
-            <div key={user.id} className="flex min-w-0 items-center gap-3 rounded-control border border-border-subtle px-3 py-2.5">
+            <div key={user.id} className="dashboard-list-item flex min-w-0 items-center gap-3 px-3 py-2.5">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <Users className="h-4 w-4" aria-hidden="true" />
               </span>
@@ -365,7 +365,7 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
   const { t } = useLocale()
   if (loading) {
     return (
-      <div className="flex min-w-0 items-center gap-3 rounded-card border border-border-subtle bg-surface-muted px-4 py-3 text-sm text-muted-foreground" role="status">
+      <div className="dashboard-attention-strip flex min-w-0 items-center gap-3 bg-surface-muted px-4 py-3 text-sm text-muted-foreground" role="status">
         <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
         <span>{t("admin.dashboardLoading")}</span>
       </div>
@@ -373,14 +373,14 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
   }
   if (unavailable) {
     return (
-      <div className="flex min-w-0 items-center justify-between gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-foreground" role="alert">
+      <div className="dashboard-attention-strip flex min-w-0 items-center justify-between gap-3 bg-destructive/5 px-4 py-3 text-sm text-foreground" role="alert">
         <span className="flex min-w-0 items-center gap-3"><AlertTriangle className="h-5 w-5 shrink-0 text-destructive" aria-hidden="true" /><span>{t("admin.loadFailedRetry")}</span></span>
       </div>
     )
   }
   if (items.length === 0) {
     return (
-      <div className="flex min-w-0 items-center gap-3 rounded-card border border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-3 text-sm text-foreground" role="status">
+      <div className="dashboard-attention-strip flex min-w-0 items-center gap-3 bg-emerald-500/[0.06] px-4 py-3 text-sm text-foreground" role="status">
         <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
         <span>{t("admin.systemHealthy")} · {t("admin.noPendingIssues")}</span>
       </div>
@@ -388,7 +388,7 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
   }
   const visible = items.slice(0, 5)
   return (
-    <div className="min-w-0 rounded-card border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3" role="status">
+    <div className="dashboard-attention-strip min-w-0 bg-amber-500/[0.06] px-4 py-3" role="status">
       <div className="flex items-center gap-2">
         <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
         <h2 className="font-semibold text-foreground">{t("admin.needAttention")}</h2>
@@ -449,7 +449,7 @@ export function SystemStatusCard({
             <ResourceMetric label={t("admin.systemDataDisk")} icon={HardDrive} metric={system.data_disk} />
           </div>
 
-          <div className="grid min-w-0 grid-cols-1 gap-3 rounded-card border border-border-subtle bg-surface-muted px-3 py-3 text-sm min-[520px]:grid-cols-2">
+          <div className="dashboard-system-facts grid min-w-0 grid-cols-1 gap-3 bg-surface-muted px-3 py-3 text-sm min-[520px]:grid-cols-2">
             <InfoValue label={t("admin.systemUptime")} value={formatUptime(system.uptime_seconds, t)} icon={Clock3} />
             <InfoValue label={t("admin.systemLoad")} value={system.load_1m === null || system.load_1m === undefined ? t("admin.systemNoData") : system.load_1m.toFixed(2)} icon={Gauge} />
             <div className="col-span-1 min-w-0 min-[520px]:col-span-2">
@@ -490,7 +490,7 @@ function ResourceMetric({
       ? "bg-amber-500"
       : "bg-primary"
   return (
-    <div className="min-w-0 rounded-control border border-border-subtle px-3 py-3">
+    <div className="dashboard-resource min-w-0 px-3 py-3">
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <span className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-foreground">
           <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />

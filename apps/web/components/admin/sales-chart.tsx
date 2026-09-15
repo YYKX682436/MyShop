@@ -17,8 +17,8 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
   const { t } = useLocale()
   const salesLabel = `${t("admin.salesAmount")} (¥)`
   return (
-    <div className="content-surface flex min-w-0 flex-col overflow-hidden rounded-surface p-4 sm:p-5 xl:h-full">
-      <div className="mb-4 flex items-center justify-between gap-3 sm:mb-6">
+    <section className="dashboard-panel dashboard-chart-panel flex min-w-0 flex-col xl:h-full">
+      <div className="dashboard-panel-heading sm:mb-6">
         <h3 className="font-semibold text-foreground">{t("admin.salesTrend")}</h3>
         <div className="hidden gap-4 text-xs text-muted-foreground sm:flex">
           <span className="flex items-center gap-1.5">
@@ -96,6 +96,6 @@ export function SalesChart({ trends }: { trends: SalesTrend[] }) {
           </ResponsiveContainer>
         </div>
       )}
-    </div>
+    </section>
   )
 }

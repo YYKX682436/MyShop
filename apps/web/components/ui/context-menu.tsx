@@ -46,7 +46,7 @@ const ContextMenuSubContent = React.forwardRef<
   <ContextMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      'myshop-popup control-material z-50 min-w-[8rem] overflow-hidden rounded-card p-1 text-popover-foreground',
+      'myshop-popup transient-glass z-50 min-w-[8rem] overflow-hidden rounded-card p-1 text-popover-foreground',
       className,
     )}
     {...props}
@@ -62,7 +62,7 @@ const ContextMenuContent = React.forwardRef<
     <ContextMenuPrimitive.Content
       ref={ref}
       className={cn(
-        'myshop-popup control-material z-50 min-w-[8rem] overflow-hidden rounded-card p-1 text-popover-foreground',
+      'myshop-popup transient-glass z-50 min-w-[8rem] overflow-hidden rounded-card p-1 text-popover-foreground',
         className,
       )}
       {...props}

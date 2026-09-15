@@ -51,15 +51,16 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-13rem)] items-center justify-center py-8">
-      <div className="w-full max-w-sm">
-        <div className="content-surface p-6 sm:p-8">
-          <div className="mb-7 text-center">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            {t("auth.login")}
-            </h1>
-          </div>
+    <div className="auth-page mx-auto min-h-[calc(100vh-13rem)] w-full max-w-3xl py-8 sm:grid-cols-[minmax(0,0.8fr)_minmax(18rem,1fr)] sm:gap-10 lg:gap-16">
+      <header className="auth-intro">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
+        <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">
+          {t("auth.login")}
+        </h1>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">{t("auth.noAccount")}</p>
+      </header>
+
+      <section className="auth-form-panel">
 
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
             {/* Username or Email */}
@@ -153,8 +154,7 @@ export default function LoginPage() {
               {t("auth.goRegister")}
             </Link>
           </p>
-        </div>
-      </div>
+      </section>
     </div>
   )
 }

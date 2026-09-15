@@ -25,7 +25,7 @@ interface AdminPageProps {
 
 export function AdminPage({ children, className }: AdminPageProps) {
   return (
-    <div className={cn("mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-8", className)}>
+    <div className={cn("admin-page mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-8", className)}>
       {children}
     </div>
   )
@@ -40,7 +40,7 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, actions, className }: PageHeaderProps) {
   return (
-    <header className={cn("flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between", className)}>
+    <header className={cn("admin-page-header flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between", className)}>
       <div className="min-w-0">
         <h1 className="text-title1 font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
         {description && <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>}
@@ -52,7 +52,7 @@ export function PageHeader({ title, description, actions, className }: PageHeade
 
 export function PageToolbar({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("control-material toolbar-material flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", className)}>
+    <div className={cn("admin-page-toolbar bar-glass toolbar-material flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", className)}>
       {children}
     </div>
   )
@@ -60,10 +60,10 @@ export function PageToolbar({ children, className }: { children: ReactNode; clas
 
 export function DataTableShell({ children, footer, className }: { children: ReactNode; footer?: ReactNode; className?: string }) {
   return (
-    <div className={cn("content-surface min-w-0 overflow-hidden", className)}>
-      <div className="min-w-0 overflow-x-auto">{children}</div>
+    <section className={cn("admin-table-region min-w-0", className)}>
+      <div className="admin-table-scroll min-w-0 overflow-x-auto">{children}</div>
       {footer}
-    </div>
+    </section>
   )
 }
 
@@ -216,12 +216,12 @@ export function StatusBadge({ label, tone = "neutral" }: { label: ReactNode; ton
 
 export function FormSection({ title, description, children, className }: { title: ReactNode; description?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn("content-surface rounded-surface p-5 sm:p-6", className)}>
-      <div className="mb-5">
+    <section className={cn("settings-section", className)}>
+      <header className="settings-section-header">
         <h2 className="text-base font-semibold text-foreground">{title}</h2>
-        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
-      </div>
-      {children}
+        {description && <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>}
+      </header>
+      <div className="settings-section-content">{children}</div>
     </section>
   )
 }

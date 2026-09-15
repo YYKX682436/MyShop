@@ -23,7 +23,7 @@ export function ProductSummary({ product }: { product: ProductDetail }) {
     : t("product.deliveryAuto")
 
   return (
-    <div className="space-y-5 lg:pt-3">
+    <div className="product-summary">
       <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl sm:leading-[1.08]">
         {product.title}
       </h1>

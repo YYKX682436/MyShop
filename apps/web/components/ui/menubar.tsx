@@ -74,7 +74,7 @@ const MenubarSubContent = React.forwardRef<
   <MenubarPrimitive.SubContent
     ref={ref}
     className={cn(
-      'myshop-popup control-material z-50 min-w-[8rem] overflow-hidden rounded-card p-1 text-popover-foreground',
+      'myshop-popup transient-glass z-50 min-w-[8rem] overflow-hidden rounded-card p-1 text-popover-foreground',
       className,
     )}
     {...props}
@@ -97,7 +97,7 @@ const MenubarContent = React.forwardRef<
         alignOffset={alignOffset}
         sideOffset={sideOffset}
         className={cn(
-          'myshop-popup control-material z-50 min-w-[12rem] overflow-hidden rounded-card p-1 text-popover-foreground',
+          'myshop-popup transient-glass z-50 min-w-[12rem] overflow-hidden rounded-card p-1 text-popover-foreground',
           className,
         )}
         {...props}

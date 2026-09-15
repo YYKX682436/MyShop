@@ -251,7 +251,7 @@ export default function AdminPaymentChannelsPage() {
           <div className="mt-4 flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2 text-xs text-muted-foreground"><span>{t("admin.channelOrder").replace("{order}", String(channel.sort_order))}</span><span>{t("admin.channelCodeAuto")}</span></div>
           <div className="mt-4 flex justify-end gap-2"><Button type="button" variant="outline" size="sm" onClick={() => openEdit(channel)}><Edit className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.edit")}</Button><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setDeleteTarget(channel)}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" />{t("admin.delete")}</Button></div>
         </SettingsSection>)}
-        {channels.length === 0 && <div className="content-surface col-span-full"><table className="w-full"><tbody><TableEmptyState colSpan={1}>{t("admin.noChannelData")}</TableEmptyState></tbody></table></div>}
+        {channels.length === 0 && <div className="admin-table-region col-span-full"><table className="w-full"><tbody><TableEmptyState colSpan={1}>{t("admin.noChannelData")}</TableEmptyState></tbody></table></div>}
       </div>}
 
       <Dialog open={dialogOpen} onOpenChange={(open) => open ? setDialogOpen(true) : closeDialog()}>

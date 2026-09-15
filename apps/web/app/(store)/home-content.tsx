@@ -86,35 +86,36 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-8">
+    <div className="store-home">
       {/* Hero */}
       {(siteSlogan.trim() || siteDescription.trim()) && (
         <FadeIn>
-          <section className="editorial-hero relative overflow-hidden px-1 py-6 sm:px-2 sm:py-10 lg:px-4 lg:py-14">
-            <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-1/3 bg-primary/[0.035] sm:block" />
-            <div className="relative max-w-2xl">
+          <section className="store-home-intro">
+            <div className="store-home-hero editorial-hero">
+              <div className="store-home-hero-copy">
               {siteSlogan.trim() && (
-                <h1 className="text-balance text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl lg:text-5xl">
+                <h1 className="store-home-hero-title text-balance">
                   {siteSlogan}
                 </h1>
               )}
               {siteDescription.trim() && (
-                <p className={cn(
-                  "max-w-xl text-sm leading-6 text-muted-foreground sm:text-base",
-                  siteSlogan.trim() && "mt-4",
-                )}>
+                <p className={cn("store-home-hero-description", siteSlogan.trim() && "mt-4")}>
                   {siteDescription}
                 </p>
               )}
+              </div>
             </div>
           </section>
         </FadeIn>
       )}
 
+      <section className="store-catalog" aria-label={t("home.allCategories")}>
       {/* Category controls */}
       {categories.length > 0 && (
-        <div className="space-y-2">
-          <div className="segmented-control w-full sm:w-auto" role="group" aria-label={t("admin.categoryRootLevel")}>
+        <div className="store-catalog-controls space-y-2">
+          <div className="store-catalog-header">
+            <span className="store-catalog-kicker">{t("home.allCategories")}</span>
+            <div className="segmented-control w-full sm:w-auto" role="group" aria-label={t("admin.categoryRootLevel")}>
             <button
               type="button"
               onClick={() => selectRootCategory(null)}
@@ -144,6 +145,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
                 <span className="relative z-10">{category.name}</span>
               </button>
             ))}
+            </div>
           </div>
           {selectedRoot && selectedChildren.length > 0 && (
             <div className="flex max-w-full items-center gap-1 overflow-x-auto pb-0.5 pl-1" role="group" aria-label={t("home.allSubcategories")}>
@@ -183,7 +185,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
 
       {/* Product Grid */}
       {productsError ? (
-        <div id="products" className="flex flex-col items-center justify-center gap-4 rounded-group bg-surface-muted/55 py-24 text-muted-foreground">
+        <div id="products" className="store-catalog-empty flex flex-col items-center justify-center gap-4 py-24 text-muted-foreground">
           <Search className="h-10 w-10 opacity-20" />
           <p className="text-sm">{t("home.loadFailed")}</p>
           <button
@@ -196,7 +198,7 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
           </button>
         </div>
       ) : filteredProducts.length > 0 ? (
-        <div id="products" className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 lg:gap-5 xl:grid-cols-5 2xl:grid-cols-6">
+        <div id="products" className="store-product-grid">
           {filteredProducts.map((product) => (
             <div key={product.id} className="min-w-0">
               <ProductCard product={product} />
@@ -204,11 +206,12 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
           ))}
         </div>
       ) : (
-        <div id="products" className="flex flex-col items-center justify-center rounded-group bg-surface-muted/45 py-24 text-muted-foreground">
+        <div id="products" className="store-catalog-empty flex flex-col items-center justify-center py-24 text-muted-foreground">
           <Search className="mb-3 h-10 w-10 opacity-20" />
           <p className="text-sm">{t("home.noProducts")}</p>
         </div>
       )}
+      </section>
     </div>
   )
 }

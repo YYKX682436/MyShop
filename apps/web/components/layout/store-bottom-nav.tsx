@@ -102,6 +102,45 @@ export function StoreBottomNav() {
   const indicatorX = useMotionValue(0)
   const [metrics, setMetrics] = useState<DockMetrics | null>(null)
   const [dragPreviewKey, setDragPreviewKey] = useState<DockKey | null>(null)
+  const [dockCompact, setDockCompact] = useState(false)
+  const lastScrollYRef = useRef(0)
+  const scrollFrameRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!isVisible) {
+      setDockCompact(false)
+      return
+    }
+
+    lastScrollYRef.current = window.scrollY
+
+    const handleScroll = () => {
+      if (scrollFrameRef.current !== null) return
+
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null
+        const currentY = window.scrollY
+        const delta = currentY - lastScrollYRef.current
+        lastScrollYRef.current = currentY
+
+        if (currentY <= 24 || Math.abs(delta) < 4) return
+
+        setDockCompact((current) => {
+          const next = delta > 0
+          return current === next ? current : next
+        })
+      })
+    }
+
+    window.addEventListener("scroll", handleScroll, { passive: true })
+    return () => {
+      window.removeEventListener("scroll", handleScroll)
+      if (scrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameRef.current)
+        scrollFrameRef.current = null
+      }
+    }
+  }, [isVisible, pathname])
 
   useEffect(() => {
     pathnameRef.current = pathname
@@ -541,8 +580,8 @@ export function StoreBottomNav() {
   if (!isVisible || !activeKey) return null
 
   return (
-    <div className="store-dock-viewport">
-      <nav className="store-dock control-material" aria-label={t("nav.main")}>
+    <div className="store-dock-viewport" data-compact={dockCompact ? "true" : "false"}>
+      <nav className="store-dock transient-glass" aria-label={t("nav.main")}>
         <div ref={dockRef} className="store-dock-track">
           {navItems.map((item, index) => {
             const Icon = item.icon

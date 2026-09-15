@@ -52,12 +52,12 @@ function Divider() {
 
 function LoadingAccount() {
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6">
+    <div className="account-page space-y-6">
       <header className="space-y-2" aria-hidden="true">
         <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
         <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
       </header>
-      <section className="content-surface rounded-card p-5 sm:p-6" aria-hidden="true">
+      <section className="content-surface rounded-card p-5 sm:p-6" data-layout="account-identity" aria-hidden="true">
         <div className="flex items-start gap-4">
           <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07] sm:size-24" />
           <div className="min-w-0 flex-1 space-y-2 pt-1">
@@ -71,6 +71,7 @@ function LoadingAccount() {
       </section>
       <section
         className="relative overflow-hidden rounded-card border border-amber-300/40 bg-gradient-to-br from-amber-50/70 via-yellow-50/70 to-orange-50/70 p-5 dark:border-amber-400/20 dark:from-amber-950/30 dark:via-yellow-950/20 dark:to-orange-950/30"
+        data-layout="account-balance"
         aria-hidden="true"
       >
         <div className="flex items-center gap-4">
@@ -94,13 +95,13 @@ export default function MyPage() {
 
   if (!isLoggedIn || !user) {
     return (
-      <div className="mx-auto w-full max-w-2xl space-y-6">
+      <div className="account-page max-w-2xl space-y-6">
         <header>
           <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         </header>
 
-        <section className="content-surface rounded-card p-5 sm:p-6" aria-label={t("my.title")}>
-          <div className="flex items-center gap-4">
+        <section className="account-identity-section" aria-label={t("my.title")}>
+          <div className="account-identity">
             <AccountAvatar avatarUrl={null} username="" editable={false} />
             <div className="min-w-0">
               <p className="text-lg font-semibold text-foreground">{t("my.visitor")}</p>
@@ -125,7 +126,7 @@ export default function MyPage() {
           </div>
         </section>
 
-        <section className="content-surface overflow-hidden rounded-card" aria-label={t("settings.title")}>
+        <section className="settings-group" aria-label={t("settings.title")}>
           <AccountLink href="/my/settings" icon={Settings} label={t("my.settings")} />
         </section>
       </div>
@@ -187,14 +188,14 @@ export default function MyPage() {
   ) : null
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6">
+    <div className="account-page space-y-6">
       <header>
         <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{t("my.accountSummary")}</p>
       </header>
 
-      <section className="content-surface rounded-card p-5 sm:p-6" aria-label={t("my.accountSummary")}>
-        <div className="flex items-start gap-4 sm:gap-5">
+      <section className="account-identity-section" aria-label={t("my.accountSummary")}>
+        <div className="account-identity items-start">
           <AccountAvatar
             avatarUrl={user.avatar_url}
             username={user.username}
@@ -232,11 +233,11 @@ export default function MyPage() {
       </section>
 
       <section
-        className="relative overflow-hidden rounded-card border border-amber-300/70 bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:border-amber-400/35 dark:from-amber-950/50 dark:via-yellow-950/35 dark:to-orange-950/45"
+        className="account-balance relative overflow-hidden bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/50 dark:via-yellow-950/35 dark:to-orange-950/45"
         aria-label={t("my.balance")}
       >
         <div className="pointer-events-none absolute -right-16 -top-24 size-48 rounded-full bg-amber-300/20 blur-3xl dark:bg-amber-400/10" aria-hidden="true" />
-        <div className="relative flex items-center gap-4 p-5 sm:p-6">
+        <div className="account-balance-row relative">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 ring-1 ring-inset ring-amber-500/20 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/25">
             <WalletCards className="size-5" strokeWidth={1.8} aria-hidden="true" />
           </span>

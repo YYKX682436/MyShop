@@ -100,7 +100,7 @@ export function StoreSearchPanel() {
                 ? { duration: 0 }
                 : { type: "spring", stiffness: 500, damping: 36, mass: 0.42 }
             }
-            className="store-search-popover control-material"
+            className="store-search-popover transient-glass"
             aria-label={t("nav.search")}
           >
             <div className="store-search-field">

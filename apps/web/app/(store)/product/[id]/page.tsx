@@ -92,10 +92,10 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       {/* Breadcrumb */}
       <ProductBreadcrumb title={product.title} />
 
-      <div className="grid gap-8 lg:grid-cols-5 lg:items-start lg:gap-12">
+      <div className="product-detail-layout lg:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] lg:items-start">
         {/* Left: Image — server rendered */}
-        <div className="lg:col-span-3">
-          <div className="content-surface-muted relative aspect-square overflow-hidden p-3 sm:p-6">
+        <div className="product-visual-column min-w-0">
+          <div className="product-visual-stage p-3 sm:p-6">
             {product.cover_url ? (
               <Image
                 src={product.cover_url}
@@ -114,13 +114,17 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         </div>
 
         {/* Right: Product-first summary; purchase controls live in the Dock. */}
-        <div className="min-w-0 lg:col-span-2">
+        <div className="product-info-column">
           <ProductSummary product={product} />
         </div>
       </div>
 
       {/* Product Description */}
-      <ProductDescription product={product} />
+      {(product.detail_md?.trim() || product.description?.trim()) && (
+        <div className="product-description-region">
+          <ProductDescription product={product} />
+        </div>
+      )}
 
       <ProductPurchaseDock product={product} channels={channels} />
 

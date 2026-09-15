@@ -401,7 +401,7 @@ export default function AdministratorsPage() {
             <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />{t("admin.administratorOperationLogs")}</DialogTitle>
             <DialogDescription>{logsTarget?.username || ""} · {logsTarget?.role === "SUPER_ADMIN" ? t("admin.administratorSuperAdminReadonly") : t("admin.administratorOrdinary")}</DialogDescription>
           </DialogHeader>
-          <div className="content-surface max-h-[55vh] overflow-auto">
+          <div className="admin-table-region max-h-[55vh] overflow-auto">
             <table className="w-full min-w-[720px] text-sm">
               <thead><tr className="border-b border-border-subtle bg-surface-muted"><th className="px-3 py-2 text-left">{t("admin.time")}</th><th className="px-3 py-2 text-left">{t("admin.actionType")}</th><th className="px-3 py-2 text-left">{t("admin.detailLabel")}</th><th className="px-3 py-2 text-left">{t("admin.ipLabel")}</th></tr></thead>
               <tbody>

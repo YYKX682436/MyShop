@@ -31,7 +31,7 @@ const SheetOverlay = React.forwardRef<
 SheetOverlay.displayName = SheetPrimitive.Overlay.displayName
 
 const sheetVariants = cva(
-  'control-material fixed z-50 gap-4 outline-none',
+  'sheet-glass fixed z-50 gap-4 outline-none',
   {
     variants: {
       side: {

@@ -180,20 +180,22 @@ export default function AdminDashboardPage() {
         }
       />
 
-      {stats.data ? (
-        <>
-          {stats.error && <DashboardInlineError onRetry={() => void loadBusiness()} />}
-          <DashboardKpiCards stats={stats.data} />
-          <BusinessOverview stats={stats.data} />
-        </>
-      ) : (
-        <DashboardRegion title={t("admin.businessOverview")}>
-          <DashboardPanelState loading={stats.loading} onRetry={() => void loadBusiness()} />
-        </DashboardRegion>
-      )}
+      <section className="dashboard-kpi-block" aria-label={t("admin.businessOverview")}>
+        {stats.data ? (
+          <>
+            {stats.error && <DashboardInlineError onRetry={() => void loadBusiness()} />}
+            <DashboardKpiCards stats={stats.data} />
+            <BusinessOverview stats={stats.data} />
+          </>
+        ) : (
+          <DashboardRegion title={t("admin.businessOverview")}>
+            <DashboardPanelState loading={stats.loading} onRetry={() => void loadBusiness()} />
+          </DashboardRegion>
+        )}
+      </section>
 
-      <div className="grid min-w-0 gap-5 xl:grid-cols-3">
-        <div className="min-w-0 xl:col-span-2 xl:h-full">
+      <section className="dashboard-primary-grid" aria-label={t("admin.salesTrend")}>
+        <div className="dashboard-primary-chart">
           {trends.data ? (
             <>
               {trends.error && <DashboardInlineError onRetry={() => void loadBusiness()} />}
@@ -205,33 +207,31 @@ export default function AdminDashboardPage() {
             </DashboardRegion>
           )}
         </div>
-        <SystemStatusCard
-          system={system.data}
-          loading={system.loading}
-          error={system.error}
-          onRetry={() => void loadSystem()}
-        />
-      </div>
-
-      <AttentionStrip items={attention} loading={loadingStrip} unavailable={unavailableStrip} />
-
-      {stats.data && (
-        <div className="grid min-w-0 gap-5 lg:grid-cols-2">
-          <OrderHealthCard stats={stats.data} />
-          <InventoryHealthCard stats={stats.data} />
+        <div className="dashboard-system-status">
+          <SystemStatusCard
+            system={system.data}
+            loading={system.loading}
+            error={system.error}
+            onRetry={() => void loadSystem()}
+          />
         </div>
-      )}
+      </section>
 
-      {stats.data && (
-        <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-          <TopProductsPanel products={stats.data.top_products} />
-          <LowStockPanel products={stats.data.low_stock_products} />
-        </div>
-      )}
+      <section className="dashboard-attention-block" aria-label={t("admin.needAttention")}>
+        <AttentionStrip items={attention} loading={loadingStrip} unavailable={unavailableStrip} />
+        {stats.data && (
+          <div className="dashboard-attention-grid">
+            <OrderHealthCard stats={stats.data} />
+            <InventoryHealthCard stats={stats.data} />
+            <LowStockPanel products={stats.data.low_stock_products} />
+          </div>
+        )}
+      </section>
 
-      <div className="grid min-w-0 gap-5 xl:grid-cols-2">
+      <section className="dashboard-detail-grid" aria-label={t("admin.recentOrders")}>
+        {stats.data && <TopProductsPanel products={stats.data.top_products} />}
         {recentOrders.data ? (
-          <div className="min-w-0">
+          <div className="dashboard-detail-orders min-w-0">
             {recentOrders.error && <DashboardInlineError onRetry={() => void loadBusiness()} />}
             <RecentOrders orders={recentOrders.data} />
           </div>
@@ -247,15 +247,15 @@ export default function AdminDashboardPage() {
             <DashboardPanelState loading={stats.loading} onRetry={() => void loadBusiness()} />
           </DashboardRegion>
         )}
-      </div>
+      </section>
     </AdminPage>
   )
 }
 
 function DashboardRegion({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="content-surface min-w-0 rounded-surface p-4 sm:p-5">
-      <h2 className="mb-4 font-semibold text-foreground">{title}</h2>
+    <section className="dashboard-panel min-w-0">
+      <h2 className="dashboard-panel-heading font-semibold text-foreground">{title}</h2>
       {children}
     </section>
   )

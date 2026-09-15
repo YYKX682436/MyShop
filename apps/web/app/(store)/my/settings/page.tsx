@@ -22,7 +22,7 @@ export default function MySettingsPage() {
   ]
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-6">
+    <div className="account-page max-w-2xl space-y-6">
       <header>
         <Link href="/my" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
           <ArrowLeft className="size-4" aria-hidden="true" />
@@ -65,8 +65,8 @@ interface SettingsChoiceGroupProps<T extends string> {
 
 function SettingsChoiceGroup<T extends string>({ icon: Icon, title, description, options, value, onChange }: SettingsChoiceGroupProps<T>) {
   return (
-    <section className="content-surface rounded-card p-5 sm:p-6" aria-labelledby={`${title}-heading`}>
-      <div className="flex items-start gap-3">
+    <section className="settings-section" aria-labelledby={`${title}-heading`}>
+      <header className="settings-section-header flex items-start gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           <Icon className="size-5" aria-hidden="true" />
         </span>
@@ -74,8 +74,8 @@ function SettingsChoiceGroup<T extends string>({ icon: Icon, title, description,
           <h2 id={`${title}-heading`} className="text-base font-semibold text-foreground">{title}</h2>
           <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>
         </div>
-      </div>
-      <div className="mt-5 grid gap-2 sm:grid-cols-3">
+      </header>
+      <div className="settings-section-content grid gap-2 sm:grid-cols-3">
         {options.map((option) => {
           const OptionIcon = option.icon
           const selected = option.value === value

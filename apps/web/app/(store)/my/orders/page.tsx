@@ -73,13 +73,13 @@ export default function MyOrdersPage() {
   if (!user) return null
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6">
+    <div className="order-history-page space-y-6">
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
       </div>
 
-      <div className="segmented-control w-full" role="group" aria-label={t("myOrders.title")}>
+      <nav className="order-filter-bar segmented-control w-full" role="group" aria-label={t("myOrders.title")}>
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
@@ -97,18 +97,18 @@ export default function MyOrdersPage() {
             {getFilterLabel(s)}
           </button>
         ))}
-      </div>
+      </nav>
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
         </div>
       ) : orders.length > 0 ? (
-        <div className="flex flex-col gap-3">
+        <div className="order-list">
           {orders.map((order) => (
             <article
               key={order.id}
-              className="content-surface p-3 transition-[transform,border-color,box-shadow] duration-180 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-sm sm:p-4"
+              className="order-list-item"
             >
               <header className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-2">
                 <span className="min-w-0 flex-1 break-all font-mono text-xs font-medium text-foreground">
