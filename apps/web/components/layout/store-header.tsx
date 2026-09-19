@@ -12,7 +12,7 @@ interface StoreHeaderProps {
 export function StoreHeader({ siteName = "" }: StoreHeaderProps) {
   return (
     <div className="store-header-layer">
-      <header className="store-header-frame bar-glass">
+      <header className="store-header-frame static-material">
         <div className="relative mx-auto flex h-14 max-w-[1440px] items-center justify-center px-4 sm:px-6 lg:px-8">
           <Link
             href="/"

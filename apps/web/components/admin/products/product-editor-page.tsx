@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { ArrowLeft } from "lucide-react"
 import { useRouter } from "next/navigation"
 
@@ -10,6 +10,25 @@ import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
+
+function ProductEditorSkeleton({ loadingLabel }: { loadingLabel: string }) {
+  return (
+    <div className="space-y-5" role="status" aria-label={loadingLabel}>
+      <div className="h-11 rounded-control border border-border-subtle bg-surface-muted" />
+      <div className="content-surface p-5 sm:p-6">
+        <div className="mb-5 h-5 w-40 rounded-control bg-surface-muted" />
+        <div className="grid gap-5 lg:grid-cols-2">
+          <div className="h-11 rounded-control bg-surface-muted lg:col-span-2" />
+          <div className="h-11 rounded-control bg-surface-muted lg:col-span-2" />
+          <div className="h-11 rounded-control bg-surface-muted" />
+          <div className="h-11 rounded-control bg-surface-muted" />
+          <div className="h-11 rounded-control bg-surface-muted" />
+          <div className="h-11 rounded-control bg-surface-muted" />
+        </div>
+      </div>
+    </div>
+  )
+}
 
 interface ProductEditorPageProps {
   productId?: string
@@ -24,34 +43,60 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
   const router = useRouter()
   const isWorkspace = presentation === "workspace"
   const [categories, setCategories] = useState<Category[]>([])
+  const [categoryStatus, setCategoryStatus] = useState<"loading" | "ready" | "error">("loading")
   const [product, setProduct] = useState<AdminProductDetail | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
+  const [productLoading, setProductLoading] = useState(Boolean(productId))
+  const [productError, setProductError] = useState(false)
+  const categoriesRequestIdRef = useRef(0)
+  const productRequestIdRef = useRef(0)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(false)
+  const loadCategories = useCallback(async () => {
+    const requestId = ++categoriesRequestIdRef.current
+    setCategoryStatus("loading")
     try {
-      const categoriesRequest = requestOrThrow(() => adminCategoryApi.getList())
-      if (productId) {
-        const [categoryData, productData] = await Promise.all([
-          categoriesRequest,
-          requestOrThrow(() => adminProductApi.getDetail(productId)),
-        ])
-        setCategories(categoryData)
-        setProduct(productData)
-      } else {
-        setCategories(await categoriesRequest)
-        setProduct(null)
-      }
+      const data = await requestOrThrow(() => adminCategoryApi.getList())
+      if (categoriesRequestIdRef.current !== requestId) return
+      setCategories(data)
+      setCategoryStatus("ready")
     } catch {
-      setError(true)
+      if (categoriesRequestIdRef.current !== requestId) return
+      setCategories([])
+      setCategoryStatus("error")
+    }
+  }, [])
+
+  const loadProduct = useCallback(async () => {
+    const requestId = ++productRequestIdRef.current
+    if (!productId) {
+      setProduct(null)
+      setProductLoading(false)
+      setProductError(false)
+      return
+    }
+
+    setProductLoading(true)
+    setProductError(false)
+    try {
+      const data = await requestOrThrow(() => adminProductApi.getDetail(productId))
+      if (productRequestIdRef.current !== requestId) return
+      setProduct(data)
+    } catch {
+      if (productRequestIdRef.current !== requestId) return
+      setProduct(null)
+      setProductError(true)
     } finally {
-      setLoading(false)
+      if (productRequestIdRef.current === requestId) setProductLoading(false)
     }
   }, [productId])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void loadCategories()
+    void loadProduct()
+    return () => {
+      categoriesRequestIdRef.current += 1
+      productRequestIdRef.current += 1
+    }
+  }, [loadCategories, loadProduct])
 
   const refreshProduct = useCallback(async () => {
     if (!productId) return
@@ -62,35 +107,38 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
   const handleSaved = onSaved || (() => router.push("/admin/products"))
   const handleCancel = onCancel || (() => router.push("/admin/products"))
 
-  if (isWorkspace && loading) {
-    return <div className="h-full min-h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} />
+  const currentProduct = productId && product?.id === productId ? product : null
+  const loadingProduct = Boolean(productId) && (productLoading || !currentProduct)
+
+  if (isWorkspace && loadingProduct && !productError) {
+    return <ProductEditorSkeleton loadingLabel={t("common.loading")} />
   }
 
-  if (isWorkspace && (error || (productId && !product))) {
+  if (isWorkspace && productError) {
     return (
       <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center" role="alert">
-        <p className="text-sm text-destructive">{productId ? t("admin.loadProductFailed") : t("admin.loadCategoriesFailed")}</p>
-        <Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button>
+        <p className="text-sm text-destructive">{t("admin.loadProductFailed")}</p>
+        <Button type="button" variant="outline" onClick={() => void loadProduct()}>{t("common.retry")}</Button>
       </div>
     )
   }
 
-  if (loading) {
+  if (loadingProduct && !productError) {
     return (
       <AdminPage>
         <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} />
-        <div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} />
+        <ProductEditorSkeleton loadingLabel={t("common.loading")} />
       </AdminPage>
     )
   }
 
-  if (error || (productId && !product)) {
+  if (productError) {
     return (
       <AdminPage>
         <PageHeader title={productId ? t("admin.editProduct") : t("admin.addProduct")} />
         <div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center" role="alert">
-          <p className="text-sm text-destructive">{productId ? t("admin.loadProductFailed") : t("admin.loadCategoriesFailed")}</p>
-          <Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button>
+          <p className="text-sm text-destructive">{t("admin.loadProductFailed")}</p>
+          <Button type="button" variant="outline" onClick={() => void loadProduct()}>{t("common.retry")}</Button>
         </div>
       </AdminPage>
     )
@@ -99,8 +147,10 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
   if (isWorkspace) {
     return (
       <ProductForm
-        product={product}
+        product={currentProduct}
         categories={categories}
+        categoryStatus={categoryStatus}
+        onRetryCategories={() => { void loadCategories() }}
         onSaved={handleSaved}
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}
@@ -121,8 +171,10 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
         }
       />
       <ProductForm
-        product={product}
+        product={currentProduct}
         categories={categories}
+        categoryStatus={categoryStatus}
+        onRetryCategories={() => { void loadCategories() }}
         onSaved={handleSaved}
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}

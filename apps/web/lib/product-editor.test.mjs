@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import "./product-performance.test.mjs"
 
 import {
   buildPricingPreviewDraft,

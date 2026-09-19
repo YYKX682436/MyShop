@@ -188,7 +188,7 @@ export default function AdminProductsPage() {
         description={t("admin.manageProducts")}
         actions={
           <Button asChild>
-            <Link href="/admin/products/new"><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addProduct")}</Link>
+            <Link href="/admin/products/new" data-testid="admin-add-product"><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addProduct")}</Link>
           </Button>
         }
       />

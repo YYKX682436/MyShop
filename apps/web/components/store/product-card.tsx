@@ -38,7 +38,7 @@ export function ProductCard({ product }: ProductCardProps) {
           </div>
         )}
         {!inStock && (
-          <span className="transient-glass pointer-events-none absolute right-2 top-2 rounded-full border-0 px-2 py-1 text-[10px] font-medium text-muted-foreground shadow-xs">
+          <span className="pointer-events-none absolute right-2 top-2 rounded-full border border-border-subtle bg-surface/95 px-2 py-1 text-[10px] font-medium text-muted-foreground shadow-xs">
             {t("product.soldOut")}
           </span>
         )}

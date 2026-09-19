@@ -241,13 +241,27 @@
   }
 
   /*
-   * Materials are intentionally split by persistence and surface area.
-   * Do not collapse these back into one generic glass class: a sidebar is a
-   * permanent navigation plane, while a popover is a short-lived control.
+   * Keep static material for surfaces that stay on screen or cover a large
+   * area. Only short-lived, small controls may sample the content behind them.
    */
+  .static-material {
+    border: 1px solid hsl(var(--material-border) / 0.22);
+    background-color: hsl(var(--material-regular) / 0.96);
+    background-image: linear-gradient(
+      145deg,
+      hsl(0 0% 100% / 0.18),
+      hsl(0 0% 100% / 0) 44%,
+      hsl(var(--foreground) / 0.035)
+    );
+    box-shadow:
+      inset 0 1px 0 hsl(0 0% 100% / 0.34),
+      inset 0 -1px 0 hsl(var(--foreground) / 0.05),
+      var(--shadow-sm);
+  }
+
   .transient-glass {
     border: 1px solid hsl(var(--material-border) / 0.26);
-    background-color: hsl(var(--material-regular) / 0.82);
+    background-color: hsl(var(--material-regular) / 0.88);
     background-image: linear-gradient(
       180deg,
       hsl(0 0% 100% / 0.2),
@@ -258,38 +272,8 @@
       inset 0 1px 0 hsl(0 0% 100% / 0.42),
       inset 0 -1px 0 hsl(var(--foreground) / 0.06),
       var(--shadow-material);
-    -webkit-backdrop-filter: blur(10px) saturate(135%);
-    backdrop-filter: blur(10px) saturate(135%);
-  }
-
-  .sheet-glass {
-    border: 1px solid hsl(var(--material-border) / 0.26);
-    background-color: hsl(var(--material-regular) / 0.92);
-    background-image: linear-gradient(
-      180deg,
-      hsl(0 0% 100% / 0.18),
-      hsl(0 0% 100% / 0) 44%,
-      hsl(var(--foreground) / 0.04)
-    );
-    box-shadow: var(--shadow-lg);
-    -webkit-backdrop-filter: blur(14px) saturate(135%);
-    backdrop-filter: blur(14px) saturate(135%);
-  }
-
-  .bar-glass {
-    border: 1px solid hsl(var(--material-border) / 0.24);
-    background-color: hsl(var(--material-regular) / 0.9);
-    background-image: linear-gradient(
-      180deg,
-      hsl(0 0% 100% / 0.18),
-      hsl(0 0% 100% / 0) 70%
-    );
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.38),
-      inset 0 -1px 0 hsl(var(--foreground) / 0.05),
-      var(--shadow-sm);
-    -webkit-backdrop-filter: blur(8px) saturate(125%);
-    backdrop-filter: blur(8px) saturate(125%);
+    -webkit-backdrop-filter: blur(4px) saturate(120%);
+    backdrop-filter: blur(4px) saturate(120%);
   }
 
   /* Large persistent material: depth comes from tint, highlight and shadow. */
@@ -304,7 +288,7 @@
     );
     box-shadow:
       inset 0 1px 0 hsl(0 0% 100% / 0.3),
-      var(--shadow-md);
+      var(--shadow-sm);
   }
 
   .toolbar-material {
@@ -586,7 +570,7 @@
     position: sticky;
     top: 0;
     z-index: 30;
-    padding: max(0.625rem, env(safe-area-inset-top)) clamp(0.625rem, 2vw, 1.5rem) 0;
+    padding: calc(env(safe-area-inset-top, 0px) + 0.25rem) clamp(0.625rem, 2vw, 1.5rem) 0;
     pointer-events: none;
   }
 
@@ -1048,8 +1032,7 @@
 
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .transient-glass,
-  .sheet-glass,
-  .bar-glass,
+  .static-material,
   .large-material {
     background-image: none;
     background-color: hsl(var(--surface-raised));
@@ -1066,8 +1049,7 @@
   }
 
   .transient-glass,
-  .sheet-glass,
-  .bar-glass,
+  .static-material,
   .large-material,
   .content-surface,
   .content-surface-strong,
@@ -1086,18 +1068,6 @@
   display: flex;
   justify-content: center;
   pointer-events: none;
-  transition: transform var(--motion-standard) ease, opacity var(--motion-standard) ease;
-}
-
-.store-dock-viewport[data-compact="true"] {
-  opacity: 0.92;
-  transform: translateY(calc(100% - 1.75rem));
-}
-
-.store-dock-viewport[data-compact="true"]:hover,
-.store-dock-viewport[data-compact="true"]:focus-within {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .store-dock {
@@ -1256,24 +1226,22 @@
 
 @media (max-width: 639px) {
   .transient-glass {
-    -webkit-backdrop-filter: blur(6px) saturate(125%);
-    backdrop-filter: blur(6px) saturate(125%);
-  }
-
-  .sheet-glass {
-    -webkit-backdrop-filter: blur(10px) saturate(125%);
-    backdrop-filter: blur(10px) saturate(125%);
-  }
-
-  .bar-glass {
-    -webkit-backdrop-filter: blur(5px) saturate(120%);
-    backdrop-filter: blur(5px) saturate(120%);
+    -webkit-backdrop-filter: blur(3px) saturate(115%);
+    backdrop-filter: blur(3px) saturate(115%);
   }
 
   .store-search-popover-viewport {
     right: 0.75rem;
     left: 0.75rem;
     width: auto;
+  }
+}
+
+@media (pointer: coarse), (any-pointer: coarse) {
+  .transient-glass {
+    background-color: hsl(var(--material-regular) / 0.96);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }
 
@@ -1449,17 +1417,12 @@ select:-webkit-autofill {
     animation: none !important;
   }
 
-  .store-dock-viewport[data-compact="true"] {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 /* Keep this last so responsive material tuning cannot re-enable transparency. */
 @media (prefers-reduced-transparency: reduce) {
   .transient-glass,
-  .sheet-glass,
-  .bar-glass,
+  .static-material,
   .large-material {
     background-image: none;
     background-color: hsl(var(--surface-raised));

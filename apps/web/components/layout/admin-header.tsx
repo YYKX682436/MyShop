@@ -106,7 +106,7 @@ export function AdminHeader() {
 
   return (
     <div className="admin-header-layer">
-      <header className="admin-floating-toolbar bar-glass">
+      <header className="admin-floating-toolbar static-material">
         <div className="admin-toolbar-leading">
           <SidebarTrigger className="shrink-0 rounded-control" aria-label={t("admin.toggleSidebar")} />
           <div className="admin-toolbar-context">

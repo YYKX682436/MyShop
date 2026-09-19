@@ -21,8 +21,9 @@ test("the purchase panel keeps the existing customer, Turnstile, and order flow"
   assert.match(source, /setTurnstileHeaders\(turnstileToken\)/)
 })
 
-test("the dock leaves the glass control layer while the purchase sheet is open", () => {
+test("the persistent purchase dock uses static material while the purchase sheet is open", () => {
   assert.match(source, /aria-hidden=\{open\}\s+inert=\{open\}/)
   assert.match(source, /open \? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"/)
-  assert.match(source, /!open && "transient-glass action-bar-material"/)
+  assert.match(source, /!open && "static-material action-bar-material"/)
+  assert.match(source, /<DrawerContent className="static-material action-bar-material/)
 })

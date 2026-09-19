@@ -52,7 +52,7 @@ export function PageHeader({ title, description, actions, className }: PageHeade
 
 export function PageToolbar({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("admin-page-toolbar bar-glass toolbar-material flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", className)}>
+    <div className={cn("admin-page-toolbar static-material toolbar-material flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between", className)}>
       {children}
     </div>
   )

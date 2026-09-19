@@ -307,7 +307,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
       >
         <div className={cn(
           "pointer-events-auto mx-auto flex w-full max-w-2xl items-center gap-3 p-2",
-          !open && "transient-glass action-bar-material",
+          !open && "static-material action-bar-material",
           open && "pointer-events-none",
         )}>
           <div className="min-w-0 flex-1 px-2">
@@ -342,7 +342,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
         </div>
       </div>
 
-      <DrawerContent className="sheet-glass action-bar-material origin-bottom outline-none sm:mx-auto sm:max-w-2xl">
+      <DrawerContent className="static-material action-bar-material origin-bottom outline-none sm:mx-auto sm:max-w-2xl">
         <div className="flex max-h-[min(75dvh,760px)] flex-col pb-[env(safe-area-inset-bottom)]">
           <DrawerHeader className="shrink-0 border-b border-border-subtle px-4 pb-3 pt-2 text-left sm:px-6 sm:pt-3">
             <DrawerTitle className="text-base">{t("product.buyNow")}</DrawerTitle>

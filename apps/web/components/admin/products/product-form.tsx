@@ -1,12 +1,10 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { AlertTriangle, ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
-import { MarkdownEditor } from "@/components/admin/markdown-editor"
-import { CardKeyImportDialog } from "@/components/admin/products/card-key-import-dialog"
 import { FormSection, StatusBadge } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,6 +35,10 @@ import type {
 
 type DeliveryType = "AUTO" | "MANUAL"
 type StockMode = "CARD_KEY" | "MANUAL" | "UNLIMITED"
+type CategoryLoadStatus = "loading" | "ready" | "error"
+
+const MarkdownEditor = lazy(() => import("@/components/admin/markdown-editor").then((module) => ({ default: module.MarkdownEditor })))
+const CardKeyImportDialog = lazy(() => import("@/components/admin/products/card-key-import-dialog").then((module) => ({ default: module.CardKeyImportDialog })))
 
 export type ProductSpecDraft = {
   id: string
@@ -200,19 +202,22 @@ function formatMarginRate(costValue: string, retailValue: string) {
 interface ProductFormProps {
   product: AdminProductDetail | null
   categories: Category[]
+  categoryStatus: CategoryLoadStatus
+  onRetryCategories: () => void
   onSaved: () => void | Promise<void>
   onCancel: () => void
   onDirtyChange?: (dirty: boolean) => void
   onProductRefresh?: () => void | Promise<void>
 }
 
-export function ProductForm({ product, categories, onSaved, onCancel, onDirtyChange, onProductRefresh }: ProductFormProps) {
+export function ProductForm({ product, categories, categoryStatus, onRetryCategories, onSaved, onCancel, onDirtyChange, onProductRefresh }: ProductFormProps) {
   const { t } = useLocale()
   const [draft, setDraft] = useState<ProductFormData>(() => getProductDraft(product))
   const [activeTab, setActiveTab] = useState<ProductEditorTab>("basic")
   const [tabErrors, setTabErrors] = useState<Partial<Record<ProductEditorTab, boolean>>>({})
   const [levels, setLevels] = useState<UserLevel[]>([])
-  const [levelsLoading, setLevelsLoading] = useState(true)
+  const [levelsLoading, setLevelsLoading] = useState(false)
+  const [levelsLoaded, setLevelsLoaded] = useState(false)
   const [preview, setPreview] = useState<AdminPricingPreview | null>(() => getInitialPreview(product))
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState(false)
@@ -252,18 +257,24 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
     setCardKeyImportOpen(false)
   }, [product, setDirty])
 
+  const levelsRequestRef = useRef<Promise<UserLevel[]> | null>(null)
+
   useEffect(() => {
-    let active = true
+    if (activeTab !== "pricing" || levelsLoaded || levelsRequestRef.current) return
+
     setLevelsLoading(true)
-    void adminUserLevelApi.getList().then((data) => {
-      if (active) setLevels(data)
+    const request = adminUserLevelApi.getList()
+    levelsRequestRef.current = request
+    void request.then((data) => {
+      setLevels(data)
+      setLevelsLoaded(true)
     }).catch(() => {
-      if (active) setLevels([])
+      setLevels([])
+      setLevelsLoaded(true)
     }).finally(() => {
-      if (active) setLevelsLoading(false)
+      setLevelsLoading(false)
     })
-    return () => { active = false }
-  }, [])
+  }, [activeTab, levelsLoaded])
 
   const uploadImage = useCallback(async (file: File) => (await adminProductApi.uploadImage(file)).url, [])
 
@@ -322,7 +333,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   }, [previewDraft])
 
   useEffect(() => {
-    if (levelsLoading) {
+    if (activeTab !== "pricing" || levelsLoading || !levelsLoaded) {
       setPreviewLoading(false)
       return
     }
@@ -342,7 +353,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [levelsLoading, pricingDraftSignature])
+  }, [activeTab, levelsLoaded, levelsLoading, pricingDraftSignature])
 
   const payload = useMemo<AdminProductUpsertPayload>(() => {
     const visibleRetails = draft.specs
@@ -629,14 +640,14 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
   const cardKeyImportAvailability = getCardKeyImportAvailability(product, draft.stock_mode, dirty)
 
   return (
-    <form className="admin-editor-form flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); void handleSave() }}>
+    <form data-testid="product-form" className="admin-editor-form flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); void handleSave() }}>
       <Tabs value={activeTab} onValueChange={(value) => {
           if (PRODUCT_EDITOR_TABS.includes(value as ProductEditorTab)) setActiveTab(value as ProductEditorTab)
         }}>
         <div className="admin-editor-tabs -mx-1 border-b border-border-subtle px-1 py-2">
           <TabsList className="flex h-auto w-full max-w-full justify-start overflow-x-auto p-1" aria-label={t("admin.productEditorHint")}>
             {tabItems.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value} className="min-w-max gap-2 px-4 py-2">
+              <TabsTrigger key={tab.value} value={tab.value} data-testid={`product-tab-${tab.value}`} className="min-w-max gap-2 px-4 py-2">
                 {tab.label}
                 {tabErrors[tab.value] && <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] leading-none text-destructive-foreground" aria-label={t("admin.tabError")}>!</span>}
               </TabsTrigger>
@@ -644,7 +655,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
           </TabsList>
         </div>
 
-        <TabsContent value="basic" forceMount className="data-[state=inactive]:hidden">
+        <TabsContent value="basic" data-testid="product-tab-panel-basic">
             <FormSection title={t("admin.productBasics")} description={t("admin.productBasicsHint")}>
               <div className="mb-5">
                 <div className="mb-2 text-sm font-medium">{t("admin.coverUrl")}</div>
@@ -653,7 +664,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
               <div className="grid gap-5 lg:grid-cols-2">
                 <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
                   {t("admin.productNameReq")}
-                  <Input ref={registerField("title")} value={draft.title} onChange={(event) => setField("title", event.target.value)} placeholder={t("admin.productNamePlaceholder")} />
+                  <Input ref={registerField("title")} data-testid="product-title-input" value={draft.title} onChange={(event) => setField("title", event.target.value)} placeholder={t("admin.productNamePlaceholder")} />
                 </label>
                 <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium lg:col-span-2">
                   {t("admin.productBrief")}
@@ -662,14 +673,16 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
                 <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:col-span-2">
                   <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
                     {t("admin.categoryRootLevel")} *
-                    <select ref={registerField("category_id")} className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal" value={categorySelection.primaryId} onChange={(event) => setField("category_id", event.target.value)}>
-                      <option value="">{t("admin.categoryPlaceholder")}</option>
+                    <select ref={registerField("category_id")} data-testid="product-category-select" className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.primaryId} onChange={(event) => setField("category_id", event.target.value)} disabled={categoryStatus !== "ready" || rootCategories.length === 0}>
+                      <option value="">{categoryStatus === "loading" ? t("common.loading") : t("admin.categoryPlaceholder")}</option>
                       {rootCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                     </select>
+                    {categoryStatus === "loading" && <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground"><Loader2 className="size-3.5 animate-spin" aria-hidden="true" />{t("common.loading")}</span>}
+                    {categoryStatus === "error" && <span className="flex items-center justify-between gap-2 text-xs font-normal text-destructive" role="alert"><span>{t("admin.loadCategoriesFailed")}</span><Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onRetryCategories}>{t("common.retry")}</Button></span>}
                   </label>
                   <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
                     {t("admin.categoryChildLevel")}
-                    <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.secondaryId} onChange={(event) => setField("category_id", event.target.value || categorySelection.primaryId)} disabled={!categorySelection.primaryId || secondaryCategories.length === 0} aria-label={t("admin.categoryChildLevel")}>
+                  <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.secondaryId} onChange={(event) => setField("category_id", event.target.value || categorySelection.primaryId)} disabled={categoryStatus !== "ready" || !categorySelection.primaryId || secondaryCategories.length === 0} aria-label={t("admin.categoryChildLevel")}>
                       <option value="">{secondaryCategories.length === 0 ? t("admin.categoryNoChildren") : t("admin.categoryRootOption")}</option>
                       {secondaryCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                     </select>
@@ -695,7 +708,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="specs" forceMount className="data-[state=inactive]:hidden">
+        <TabsContent value="specs" data-testid="product-tab-panel-specs">
             <FormSection title={t("admin.productSpecs")} description={t("admin.specsHint")}>
               <div className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5">
                 <span className="text-sm font-medium">{t("admin.enableMultiSpec")}</span>
@@ -735,7 +748,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="pricing" forceMount className="data-[state=inactive]:hidden">
+        <TabsContent value="pricing" data-testid="product-tab-panel-pricing">
             <FormSection title={t("admin.productTabPricing")} description={t("admin.pricingHint")}>
               <div className="admin-table-region overflow-x-auto">
                 <table className="w-full min-w-[720px] text-sm">
@@ -818,7 +831,7 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="inventory" forceMount className="data-[state=inactive]:hidden">
+        <TabsContent value="inventory" data-testid="product-tab-panel-inventory">
             <FormSection title={t("admin.inventorySettings")} description={t("admin.inventorySettingsHint")}>
               <div className="grid gap-5 lg:grid-cols-2">
                 <div className="flex flex-col gap-1.5 text-sm font-medium">
@@ -896,30 +909,36 @@ export function ProductForm({ product, categories, onSaved, onCancel, onDirtyCha
             </FormSection>
         </TabsContent>
 
-        <TabsContent value="details" forceMount className="data-[state=inactive]:hidden">
+        <TabsContent value="details" data-testid="product-tab-panel-details">
             <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
-              <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage} />
+              <Suspense fallback={<div className="content-surface min-h-52 p-4 text-sm text-muted-foreground" role="status">{t("common.loading")}</div>}>
+                <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage} />
+              </Suspense>
             </FormSection>
         </TabsContent>
       </Tabs>
 
-      <div className="transient-glass action-bar-material sticky bottom-3 z-20 flex flex-col-reverse gap-3 p-3 sm:flex-row sm:justify-end">
+      <div className="static-material action-bar-material sticky bottom-3 z-20 flex flex-col-reverse gap-3 p-3 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
         <Button type="submit" disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button>
       </div>
-      <CardKeyImportDialog
-        product={product}
-        open={cardKeyImportOpen && cardKeyImportAvailability === "ready"}
-        onOpenChange={setCardKeyImportOpen}
-        onImported={async () => {
-          setCardKeyImportOpen(false)
-          try {
-            await onProductRefresh?.()
-          } catch {
-            toast.error(t("admin.loadProductFailed"))
-          }
-        }}
-      />
+      {cardKeyImportOpen && cardKeyImportAvailability === "ready" && (
+        <Suspense fallback={<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" role="status"><div className="static-material rounded-surface px-5 py-4 text-sm text-foreground">{t("common.loading")}</div></div>}>
+          <CardKeyImportDialog
+            product={product}
+            open
+            onOpenChange={setCardKeyImportOpen}
+            onImported={async () => {
+              setCardKeyImportOpen(false)
+              try {
+                await onProductRefresh?.()
+              } catch {
+                toast.error(t("admin.loadProductFailed"))
+              }
+            }}
+          />
+        </Suspense>
+      )}
     </form>
   )
 }

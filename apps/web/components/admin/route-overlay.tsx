@@ -109,6 +109,7 @@ export function WorkspaceSheet({ children, title, description, headerActions, di
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose() }}>
       <SheetContent
         side="right"
+        data-testid="product-workspace-sheet"
         className={cn("flex h-full w-full max-w-none flex-col gap-0 p-0 sm:w-[88vw] lg:w-[64vw] lg:max-w-[1100px] xl:w-[60vw]", className)}
         onInteractOutside={(event) => {
           if (dirty) {
