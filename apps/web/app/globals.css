@@ -714,7 +714,31 @@
   .store-product-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: clamp(1.25rem, 3vw, 2.5rem) clamp(0.75rem, 2.4vw, 1.75rem);
+    gap: clamp(1rem, 1.5vw, 1.5rem) clamp(0.75rem, 1.2vw, 1.25rem);
+  }
+
+  @media (min-width: 640px) {
+    .store-product-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .store-product-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .store-product-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 1536px) {
+    .store-product-grid {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
   }
 
   .product-card {
@@ -1023,18 +1047,6 @@
 }
 
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .transient-glass,
-  .sheet-glass,
-  .bar-glass,
-  .large-material {
-    background-image: none;
-    background-color: hsl(var(--surface-raised));
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
   .transient-glass,
   .sheet-glass,
   .bar-glass,
@@ -1440,5 +1452,18 @@ select:-webkit-autofill {
   .store-dock-viewport[data-compact="true"] {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* Keep this last so responsive material tuning cannot re-enable transparency. */
+@media (prefers-reduced-transparency: reduce) {
+  .transient-glass,
+  .sheet-glass,
+  .bar-glass,
+  .large-material {
+    background-image: none;
+    background-color: hsl(var(--surface-raised));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
 }

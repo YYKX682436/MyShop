@@ -297,8 +297,19 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
       repositionInputs
       shouldScaleBackground={false}
     >
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-4">
-        <div className="transient-glass action-bar-material pointer-events-auto mx-auto flex w-full max-w-2xl items-center gap-3 p-2">
+      <div
+        aria-hidden={open}
+        inert={open}
+        className={cn(
+          "pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] transition-[opacity,transform] duration-180 motion-reduce:transition-none sm:px-4",
+          open ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100",
+        )}
+      >
+        <div className={cn(
+          "pointer-events-auto mx-auto flex w-full max-w-2xl items-center gap-3 p-2",
+          !open && "transient-glass action-bar-material",
+          open && "pointer-events-none",
+        )}>
           <div className="min-w-0 flex-1 px-2">
             <p className="truncate text-[11px] text-muted-foreground">
               {t("product.unitPrice")}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
