@@ -13,7 +13,7 @@ import { ContactSupport } from "@/components/shared/contact-methods"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { isAdminRole } from "@/lib/hooks"
 import { cn } from "@/lib/utils"
-import { isStorefrontDockVisible } from "@/lib/storefront-routes"
+import { isStorefrontDockVisible, isStorefrontHeaderVisible } from "@/lib/storefront-routes"
 
 function AnnouncementBar() {
   const { config } = useSiteConfig()
@@ -120,6 +120,7 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
   const { config, isLoading } = useSiteConfig()
   const { user, isLoggedIn, authLoaded } = useAuth()
   const pathname = usePathname()
+  const hasHeader = isStorefrontHeaderVisible(pathname)
   const hasDock = isStorefrontDockVisible(pathname)
 
   // 维护模式判断需要 config + auth 都就绪才能准确决策
@@ -140,10 +141,11 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
       <VisitTracker />
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
       <AnnouncementBar />
-      {header}
+      {hasHeader && header}
       <main className={cn(
-        "storefront-main mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10",
+        "storefront-main mx-auto w-full max-w-[var(--storefront-max-width)] flex-1 px-[var(--storefront-gutter)]",
         hasDock && "storefront-main--with-dock",
+        !hasHeader && "storefront-main--without-header",
       )}>{children}</main>
       <StoreFooter reserveForDock={hasDock} />
       <StoreSearchPanel />

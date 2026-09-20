@@ -233,7 +233,7 @@ export default function MyPage() {
       </section>
 
       <section
-        className="account-balance relative overflow-hidden bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/50 dark:via-yellow-950/35 dark:to-orange-950/45"
+        className="account-balance relative bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/50 dark:via-yellow-950/35 dark:to-orange-950/45"
         aria-label={t("my.balance")}
       >
         <div className="pointer-events-none absolute -right-16 -top-24 size-48 rounded-full bg-amber-300/20 blur-3xl dark:bg-amber-400/10" aria-hidden="true" />

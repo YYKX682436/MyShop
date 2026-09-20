@@ -25,5 +25,5 @@ test("the persistent purchase dock uses static material while the purchase sheet
   assert.match(source, /aria-hidden=\{open\}\s+inert=\{open\}/)
   assert.match(source, /open \? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"/)
   assert.match(source, /!open && "static-material action-bar-material"/)
-  assert.match(source, /<DrawerContent className="static-material action-bar-material/)
+  assert.match(source, /<DrawerContent className="storefront-content-width static-material action-bar-material/)
 })

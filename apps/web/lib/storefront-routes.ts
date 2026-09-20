@@ -22,6 +22,14 @@ export function normalizeStorefrontPath(pathname: string): string {
 }
 
 /**
+ * Product detail pages use their own breadcrumb and purchase Dock instead of
+ * the shared floating storefront header. Other storefront routes keep it.
+ */
+export function isStorefrontHeaderVisible(pathname: string): boolean {
+  return !normalizeStorefrontPath(pathname).startsWith("/product/")
+}
+
+/**
  * Returns the exact first-level Dock destination for a pathname.
  *
  * Child/detail routes intentionally do not match here. For example,

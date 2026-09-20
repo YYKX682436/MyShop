@@ -113,7 +113,7 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
         aria-disabled={busy}
         aria-busy={uploading}
         className={cn(
-          "relative aspect-square w-full max-w-44 cursor-pointer overflow-hidden rounded-card border-2 border-dashed bg-surface-muted/45 p-3 text-center transition-colors",
+          "product-image-stage product-image-stage--upload w-full max-w-44 cursor-pointer border-2 border-dashed text-center transition-colors",
           isDragActive
             ? "border-primary bg-primary/10 ring-4 ring-primary/10"
             : "border-border-subtle hover:border-primary/60 hover:bg-primary/5",
@@ -133,18 +133,18 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
             width={512}
             height={512}
             unoptimized
-            className="h-full w-full rounded-card object-cover"
+            className="product-image-stage-image h-full w-full"
             onLoad={() => setFailedUrl(null)}
             onError={() => setFailedUrl(normalizedValue)}
           />
         ) : normalizedValue ? (
-          <div className="flex h-full flex-col items-center justify-center gap-1.5 text-sm text-muted-foreground">
+          <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-sm text-muted-foreground">
             <AlertCircle className="h-7 w-7 text-amber-500" />
             <span className="font-medium text-foreground">{t("admin.previewFailed")}</span>
             <span className="max-w-full break-words text-xs">{t("admin.previewFailedHint")}</span>
           </div>
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-1.5 text-muted-foreground">
+          <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-muted-foreground">
             <ImagePlus className="h-8 w-8 text-primary/70" />
             <span className="text-sm font-medium text-foreground">{t("admin.dropImage")}</span>
             <span className="text-xs">{t("admin.imageFormats")}</span>

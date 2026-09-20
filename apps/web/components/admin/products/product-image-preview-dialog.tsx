@@ -21,7 +21,7 @@ export function ProductImagePreviewDialog({ product }: { product: AdminProductDe
         onClick={() => setOpen(true)}
       >
         {product.cover_url ? (
-          <Image src={product.cover_url} alt={product.title} fill unoptimized sizes="40px" className="object-cover" />
+          <Image src={product.cover_url} alt={product.title} fill unoptimized sizes="40px" className="product-image-stage-image" />
         ) : (
           <span className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
             {t("admin.systemNoData")}

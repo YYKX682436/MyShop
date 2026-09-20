@@ -4,6 +4,7 @@ import {
   getStorefrontActiveTab,
   getStorefrontDockDestination,
   getStorefrontRouteSection,
+  isStorefrontHeaderVisible,
   isStorefrontDockVisible,
 } from "./storefront-routes.ts"
 
@@ -72,4 +73,23 @@ test("keeps the orders route out of the Me tab", () => {
   assert.equal(getStorefrontActiveTab("/my/orders"), "orders")
   assert.equal(getStorefrontRouteSection("/my/orders/receipt"), "orders")
   assert.equal(getStorefrontRouteSection("/my/security"), "me")
+})
+
+test("hides the shared storefront header only on product detail routes", () => {
+  for (const pathname of ["/product/abc", "/product/abc/", "/product/abc///"]) {
+    assert.equal(isStorefrontHeaderVisible(pathname), false, pathname)
+  }
+
+  for (const pathname of ["/", "/my", "/my/orders", "/my/settings", "/order/abc", "/login"]) {
+    assert.equal(isStorefrontHeaderVisible(pathname), true, pathname)
+  }
+})
+
+test("StoreShellClient applies the centralized header policy and keeps Dock policy separate", async () => {
+  const { readFileSync } = await import("node:fs")
+  const source = readFileSync(new URL("../app/(store)/store-shell-client.tsx", import.meta.url), "utf8")
+
+  assert.match(source, /isStorefrontHeaderVisible\(pathname\)/)
+  assert.match(source, /\{hasHeader && header\}/)
+  assert.match(source, /isStorefrontDockVisible\(pathname\)/)
 })

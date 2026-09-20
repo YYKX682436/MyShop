@@ -75,7 +75,6 @@ export default function MyOrdersPage() {
   return (
     <div className="order-history-page space-y-6">
       <div>
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
       </div>
 
@@ -146,7 +145,7 @@ export default function MyOrdersPage() {
                       type="button"
                       onClick={() => { setAfterSaleOrder(order); setAfterSaleOpen(true) }}
                       aria-label={t("order.applyAfterSales")}
-                      className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center rounded-control border border-primary/30 bg-primary/5 px-3 py-2 text-center text-xs font-medium text-primary transition-colors hover:bg-primary/10 sm:flex-none"
+                      className="inline-flex min-h-10 min-w-0 flex-1 items-center justify-center rounded-control border border-border-strong bg-surface px-3 py-2 text-center text-xs font-medium text-foreground transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:flex-none"
                     >
                       {t("order.applyAfterSales")}
                     </button>

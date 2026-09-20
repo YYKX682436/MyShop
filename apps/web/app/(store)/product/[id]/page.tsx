@@ -79,7 +79,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   }
 
   return (
-    <div className="product-detail-page flex flex-col gap-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
+    <div className="product-detail-page storefront-content-width flex flex-col gap-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
@@ -95,7 +95,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       <div className="product-detail-layout lg:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] lg:items-start">
         {/* Left: Image — server rendered */}
         <div className="product-visual-column min-w-0">
-          <div className="product-visual-stage p-3 sm:p-6">
+          <div className="product-image-stage product-image-stage--detail">
             {product.cover_url ? (
               <Image
                 src={product.cover_url}
@@ -103,7 +103,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
                 fill
                 unoptimized
                 sizes="(min-width: 1024px) 60vw, 100vw"
-                className="object-contain"
+                className="product-image-stage-image"
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center">

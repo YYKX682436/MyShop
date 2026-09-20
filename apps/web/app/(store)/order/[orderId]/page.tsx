@@ -322,7 +322,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   return <div className="order-detail-page mx-auto flex w-full max-w-4xl flex-col gap-5 py-2 sm:gap-6">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0">
-        <p className="mb-1 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("order.lifecycleTitle")}</h1>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -352,7 +351,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
           <button
             type="button"
             onClick={() => setAfterSaleOpen(true)}
-            className="inline-flex min-h-10 items-center justify-center rounded-control border border-primary/30 bg-primary/5 px-3 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="inline-flex min-h-10 items-center justify-center rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             {t("order.applyAfterSales")}
           </button>

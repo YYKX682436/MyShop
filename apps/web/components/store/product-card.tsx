@@ -22,7 +22,7 @@ export function ProductCard({ product }: ProductCardProps) {
       className="product-card group/card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       aria-label={product.title}
     >
-      <div className={`product-card-media aspect-square ${!inStock ? "opacity-75" : ""}`}>
+      <div className={`product-image-stage product-image-stage--card ${!inStock ? "opacity-75" : ""}`}>
         {product.cover_url ? (
           <Image
             src={product.cover_url}
@@ -30,7 +30,7 @@ export function ProductCard({ product }: ProductCardProps) {
             fill
             unoptimized
             sizes="(min-width: 1536px) 16vw, (min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
-            className="object-contain"
+            className="product-image-stage-image"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">

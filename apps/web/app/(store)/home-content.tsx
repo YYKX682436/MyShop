@@ -91,18 +91,18 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
       {(siteSlogan.trim() || siteDescription.trim()) && (
         <FadeIn>
           <section className="store-home-intro">
-            <div className="store-home-hero editorial-hero">
+            <div className="store-home-hero">
               <div className="store-home-hero-copy">
-              {siteSlogan.trim() && (
-                <h1 className="store-home-hero-title text-balance">
-                  {siteSlogan}
-                </h1>
-              )}
-              {siteDescription.trim() && (
-                <p className={cn("store-home-hero-description", siteSlogan.trim() && "mt-4")}>
-                  {siteDescription}
-                </p>
-              )}
+                {siteSlogan.trim() && (
+                  <h1 className="store-home-hero-title text-balance">
+                    {siteSlogan}
+                  </h1>
+                )}
+                {siteDescription.trim() && (
+                  <p className="store-home-hero-description">
+                    {siteDescription}
+                  </p>
+                )}
               </div>
             </div>
           </section>
@@ -114,7 +114,6 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
       {categories.length > 0 && (
         <div className="store-catalog-controls space-y-2">
           <div className="store-catalog-header">
-            <span className="store-catalog-kicker">{t("home.allCategories")}</span>
             <div className="segmented-control w-full sm:w-auto" role="group" aria-label={t("admin.categoryRootLevel")}>
             <button
               type="button"

@@ -3,6 +3,13 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 
 const readSource = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8")
+const readButtonForLabel = (source, label) => {
+  const labelIndex = source.indexOf(label)
+  if (labelIndex < 0) return null
+  const start = source.lastIndexOf("<button", labelIndex)
+  const end = source.indexOf("</button>", labelIndex)
+  return start < 0 || end < 0 ? null : source.slice(start, end + "</button>".length)
+}
 
 test("storefront order history is a compact overview with one detail entry for every status", () => {
   const source = readSource("../app/(store)/my/orders/page.tsx")
@@ -16,6 +23,7 @@ test("storefront order history is a compact overview with one detail entry for e
   assert.match(source, /<OrderStatusBadge status=\{order\.status\} items=\{order\.items\} \/>/)
   assert.match(source, /t\("order\.orderDetail"\)/)
   assert.match(source, /t\("order\.applyAfterSales"\)/)
+  assert.doesNotMatch(source, /tracking-\[0\.16em\] text-primary">MyShop/)
   assert.match(source, /AfterSaleRequestDialog/)
   assert.match(source, /setAfterSaleOpen\(true\)/)
   assert.doesNotMatch(source, /disabled\s+title=\{t\("order\.afterSalesUnavailable"\)\}/)
@@ -24,6 +32,13 @@ test("storefront order history is a compact overview with one detail entry for e
   assert.match(source, /#after-sale/)
   assert.match(source, /order\.status === "PENDING"/)
   assert.match(source, /order\.status === "PAID" \|\| order\.status === "DELIVERED"/)
+  const applyAfterSaleButton = readButtonForLabel(source, 't("order.applyAfterSales")')
+  assert.ok(applyAfterSaleButton)
+  assert.match(applyAfterSaleButton, /border-border-strong bg-surface/)
+  assert.match(applyAfterSaleButton, /text-foreground transition-colors hover:bg-surface-muted/)
+  assert.doesNotMatch(applyAfterSaleButton, /border-primary|bg-primary|text-primary/)
+  assert.match(source, /border-orange-300\/50/)
+  assert.match(source, /t\("status\.AFTER_SALE"\)/)
   assert.match(source, /buildOrderPageHref\(order\.id\)/)
   assert.match(source, /flex min-w-0 flex-col gap-3 border-t/)
   assert.match(source, /min-w-0 flex-1/)
@@ -63,6 +78,12 @@ test("storefront order details keep snapshots, customer information, and expired
   assert.match(source, /status === "PAID" \|\| status === "DELIVERED" \|\| status === "AFTER_SALE" \|\| status === "REFUNDED"/)
   assert.match(source, /AfterSaleHistoryCard/)
   assert.match(source, /ProductDescription/)
+  assert.doesNotMatch(source, /tracking-\[0\.16em\] text-primary">MyShop/)
+  const applyAfterSaleButton = readButtonForLabel(source, 't("order.applyAfterSales")')
+  assert.ok(applyAfterSaleButton)
+  assert.match(applyAfterSaleButton, /border-border-strong bg-surface/)
+  assert.match(applyAfterSaleButton, /text-foreground transition-colors hover:bg-surface-muted/)
+  assert.doesNotMatch(applyAfterSaleButton, /border-primary|bg-primary|text-primary/)
 
   const orderInfoPosition = source.indexOf('t("order.orderInformation")')
   const customerInfoPosition = source.indexOf('t("order.customerInputs")')

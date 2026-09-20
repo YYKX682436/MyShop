@@ -301,12 +301,12 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
         aria-hidden={open}
         inert={open}
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] transition-[opacity,transform] duration-180 motion-reduce:transition-none sm:px-4",
+          "product-purchase-dock-viewport pointer-events-none fixed inset-x-0 bottom-0 z-40 transition-[opacity,transform] duration-180 motion-reduce:transition-none",
           open ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100",
         )}
       >
         <div className={cn(
-          "pointer-events-auto mx-auto flex w-full max-w-2xl items-center gap-3 p-2",
+          "storefront-content-width pointer-events-auto flex items-center gap-3 p-2",
           !open && "static-material action-bar-material",
           open && "pointer-events-none",
         )}>
@@ -342,7 +342,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
         </div>
       </div>
 
-      <DrawerContent className="static-material action-bar-material origin-bottom outline-none sm:mx-auto sm:max-w-2xl">
+      <DrawerContent className="storefront-content-width static-material action-bar-material origin-bottom outline-none">
         <div className="flex max-h-[min(75dvh,760px)] flex-col pb-[env(safe-area-inset-bottom)]">
           <DrawerHeader className="shrink-0 border-b border-border-subtle px-4 pb-3 pt-2 text-left sm:px-6 sm:pt-3">
             <DrawerTitle className="text-base">{t("product.buyNow")}</DrawerTitle>
