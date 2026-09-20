@@ -286,9 +286,9 @@ export function LowStockPanel({ products }: { products: LowStockProduct[] }) {
       {products.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">{t("admin.noLowStock")}</p>
       ) : (
-        <div className="space-y-2">
+        <div className="dashboard-list-group dashboard-list-group--warning">
           {products.map((product) => (
-            <div key={product.product_id} className="dashboard-list-item flex min-w-0 items-center justify-between gap-3 border-amber-500/15 bg-amber-500/[0.06] px-3 py-2.5">
+            <div key={product.product_id} className="dashboard-list-item flex min-w-0 items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
                 <p className="truncate text-sm font-medium text-foreground" title={product.title}>{product.title}</p>
                 <p className="text-xs text-muted-foreground">
@@ -314,7 +314,7 @@ export function TopProductsPanel({ products }: { products: DashboardTopProduct[]
       {products.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">{t("admin.noTopProducts")}</p>
       ) : (
-        <div className="space-y-2">
+        <div className="dashboard-list-group">
           {products.map((product, index) => (
             <div key={product.product_id} className="dashboard-list-item flex min-w-0 items-center gap-3 px-3 py-2.5">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
@@ -340,7 +340,7 @@ export function RecentUsersPanel({ users }: { users: DashboardRecentUser[] }) {
       {users.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">{t("admin.noRecentCustomers")}</p>
       ) : (
-        <div className="space-y-2">
+        <div className="dashboard-list-group">
           {users.map((user) => (
             <div key={user.id} className="dashboard-list-item flex min-w-0 items-center gap-3 px-3 py-2.5">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">

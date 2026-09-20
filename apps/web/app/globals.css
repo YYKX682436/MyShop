@@ -951,7 +951,24 @@
     border-radius: var(--radius-control);
   }
 
-  .dashboard-list-item + .dashboard-list-item {
+  .dashboard-list-group {
+    overflow: hidden;
+    border: 1px solid hsl(var(--border-subtle));
+    border-radius: var(--radius-control);
+    background-color: hsl(var(--surface-muted));
+  }
+
+  .dashboard-list-group--warning {
+    background-color: hsl(var(--warning) / 0.08);
+  }
+
+  .dashboard-list-group > .dashboard-list-item {
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
+  }
+
+  .dashboard-list-group > .dashboard-list-item + .dashboard-list-item {
     border-top: 1px solid hsl(var(--separator));
   }
 

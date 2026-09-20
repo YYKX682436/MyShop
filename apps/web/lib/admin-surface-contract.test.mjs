@@ -76,6 +76,37 @@ test("dashboard content groups use tokenized surfaces and one responsive KPI sep
   assert.doesNotMatch(dashboardPanels, /dashboard-kpi-strip[^\n]*divide-[xy]/)
 })
 
+test("dashboard list panels use one clipped grouped surface with item separators", () => {
+  const group = cssRule(".dashboard-list-group")
+  const warningGroup = cssRule(".dashboard-list-group--warning")
+  const item = cssRule(".dashboard-list-group > .dashboard-list-item")
+  const separator = cssRule(".dashboard-list-group > .dashboard-list-item + .dashboard-list-item")
+  const panelSource = (name) => dashboardPanels.match(new RegExp(`export function ${name}[\\s\\S]*?(?=\\nexport function|$)`))?.[0]
+
+  for (const property of [
+    /border:\s*1px solid hsl\(var\(--border-subtle\)\)/,
+    /border-radius:\s*var\(--radius-control\)/,
+    /overflow:\s*hidden/,
+  ]) {
+    assert.match(group, property)
+  }
+  assert.match(group, /background-color:\s*hsl\(var\(--surface-muted\)\)/)
+  assert.match(warningGroup, /background-color:\s*hsl\(var\(--warning\)\s*\/\s*0\.08\)/)
+  assert.match(item, /border:\s*0/)
+  assert.match(item, /border-radius:\s*0/)
+  assert.match(item, /background-color:\s*transparent/)
+  assert.match(separator, /border-top:\s*1px solid hsl\(var\(--separator\)\)/)
+
+  for (const name of ["LowStockPanel", "TopProductsPanel", "RecentUsersPanel"]) {
+    const source = panelSource(name)
+    assert.ok(source, `${name} source exists`)
+    assert.match(source, /className="dashboard-list-group(?: dashboard-list-group--warning)?"/)
+    assert.match(source, /className="dashboard-list-item /)
+    assert.doesNotMatch(source, /space-y-2|dashboard-list-item[^\n]*\bbg-/)
+  }
+  assert.match(panelSource("LowStockPanel"), /dashboard-list-group dashboard-list-group--warning/)
+})
+
 test("order status filters use the shared segmented control without changing selection state", () => {
   const statusControls = orders.match(/<div className="segmented-control[^\"]*"[\s\S]*?<\/div>/)?.[0]
   assert.ok(statusControls, "order status filters use the shared segmented container")
