@@ -55,17 +55,85 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("29", flyway.info().current().getVersion().getVersion());
-        assertEquals(29, flyway.info().all().length);
+        assertEquals("30", flyway.info().current().getVersion().getVersion());
+        assertEquals(30, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
                 "card_import_batches", "orders", "order_items", "card_keys",
                 "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks", "payment_attempts",
-                "card_key_reclaims", "after_sale_requests", "after_sale_attachments", "after_sale_messages")) {
+                "card_key_reclaims", "after_sale_requests", "after_sale_attachments", "after_sale_messages",
+                "sales_channel_accounts", "sales_channel_listings", "sales_channel_listing_specs",
+                "sales_channel_operations")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
+        for (String column : List.of("id", "provider", "provider_account_id", "display_name", "status",
+                "is_enabled", "capabilities", "last_verified_at", "created_at", "updated_at")) {
+            assertTrue(columnExists("sales_channel_accounts", column), "missing account column: " + column);
+        }
+        for (String column : List.of("id", "sales_channel_account_id", "product_id", "external_item_id",
+                "desired_state", "status", "desired_revision", "applied_revision", "provider_config",
+                "applied_fingerprint", "last_synced_at", "last_error_code", "last_error_message",
+                "created_at", "updated_at")) {
+            assertTrue(columnExists("sales_channel_listings", column), "missing listing column: " + column);
+        }
+        for (String column : List.of("id", "sales_channel_listing_id", "product_spec_id", "external_sku_id",
+                "provider_mapping", "created_at", "updated_at")) {
+            assertTrue(columnExists("sales_channel_listing_specs", column), "missing listing spec column: " + column);
+        }
+        for (String column : List.of("id", "sales_channel_listing_id", "operation_type", "status",
+                "desired_revision", "idempotency_key", "payload", "result", "attempt_count",
+                "next_attempt_at", "started_at", "finished_at", "last_error_code", "last_error_message",
+                "created_at", "updated_at")) {
+            assertTrue(columnExists("sales_channel_operations", column), "missing operation column: " + column);
+        }
+        assertEquals("jsonb", dataType("sales_channel_accounts", "capabilities"));
+        assertEquals("jsonb", dataType("sales_channel_listings", "provider_config"));
+        assertEquals("jsonb", dataType("sales_channel_listing_specs", "provider_mapping"));
+        assertEquals("jsonb", dataType("sales_channel_operations", "payload"));
+        assertEquals("jsonb", dataType("sales_channel_operations", "result"));
+        assertEquals("NO", nullableValue("sales_channel_accounts", "capabilities"));
+        assertEquals("NO", nullableValue("sales_channel_listings", "provider_config"));
+        assertEquals("NO", nullableValue("sales_channel_listing_specs", "provider_mapping"));
+        assertEquals("NO", nullableValue("sales_channel_operations", "payload"));
+        assertTrue(defaultValue("sales_channel_accounts", "capabilities").contains("{}"));
+        assertTrue(defaultValue("sales_channel_listings", "provider_config").contains("{}"));
+        assertTrue(defaultValue("sales_channel_listing_specs", "provider_mapping").contains("{}"));
+        assertTrue(defaultValue("sales_channel_operations", "payload").contains("{}"));
+        for (String constraint : List.of("uq_sales_channel_accounts_provider_account",
+                "uq_sales_channel_listings_account_product", "uq_sales_channel_listing_specs_listing_spec",
+                "uq_sales_channel_operations_idempotency_key")) {
+            assertTrue(indexExists(constraint), "missing unique index: " + constraint);
+        }
+        for (String foreignKey : List.of("fk_sales_channel_listings_account", "fk_sales_channel_listings_product",
+                "fk_sales_channel_listing_specs_listing", "fk_sales_channel_listing_specs_product_spec",
+                "fk_sales_channel_operations_listing")) {
+            assertTrue(foreignKeyExists(foreignKey), "missing foreign key: " + foreignKey);
+            assertTrue(foreignKeyUsesNoAction(foreignKey), "sales channel history must not cascade-delete: " + foreignKey);
+        }
+        for (String index : List.of("idx_sales_channel_listings_product", "idx_sales_channel_listings_account_status",
+                "idx_sales_channel_listings_external_item", "idx_sales_channel_listing_specs_product_spec",
+                "idx_sales_channel_operations_worker", "idx_sales_channel_operations_listing_revision",
+                "uq_sales_channel_operations_running_listing")) {
+            assertTrue(indexExists(index), "missing sales channel index: " + index);
+        }
+        assertTrue(checkConstraintExists("sales_channel_accounts_provider_check"));
+        assertTrue(checkConstraintExists("sales_channel_accounts_status_check"));
+        assertTrue(checkConstraintExists("sales_channel_listings_desired_state_check"));
+        assertTrue(checkConstraintExists("sales_channel_listings_status_check"));
+        assertTrue(checkConstraintExists("sales_channel_listings_revisions_check"));
+        assertTrue(checkConstraintExists("sales_channel_operations_type_check"));
+        assertTrue(checkConstraintExists("sales_channel_operations_status_check"));
+        assertEquals(0, jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM information_schema.columns
+                WHERE table_schema = 'public' AND column_name LIKE 'xianyu_%'
+                """, Integer.class));
+        assertEquals(0, jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name LIKE 'sales_channel_%'
+                  AND column_name ~* '(cookie|token|password)'
+                """, Integer.class));
         assertFalse(tableExists("cart_items"));
         assertFalse(tableExists("wholesale_rules"));
         assertFalse(columnExists("orders", "email"));
@@ -91,6 +159,11 @@ class MigrationChainIntegrationTest {
         assertTrue(indexExists("orders_order_no_key"));
         assertTrue(sequenceExists("order_no_sequence"));
         assertTrue(functionExists("prevent_order_no_update"));
+        assertTrue(functionExists("prevent_sales_channel_listing_revision_regression"));
+        assertEquals(1, jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM pg_trigger
+                WHERE tgname = ?
+                """, Integer.class, "trg_sales_channel_listings_revision_monotonic"));
         assertEquals(1, jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM pg_trigger
                 WHERE tgname = ?
@@ -425,7 +498,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("after_sale_requests", "admin_reply"));
         assertEquals("历史管理员说明", jdbcTemplate.queryForObject(
                 "SELECT rejection_reason FROM after_sale_requests WHERE id = ?", String.class,
@@ -498,7 +571,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
                 "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
         assertNull(jdbcTemplate.queryForObject(
@@ -528,7 +601,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -622,7 +695,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-         assertEquals("29", flyway().info().current().getVersion().getVersion());
+         assertEquals("30", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -823,7 +896,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -893,7 +966,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -942,7 +1015,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -1142,7 +1215,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1188,7 +1261,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("29", flyway().info().current().getVersion().getVersion());
+        assertEquals("30", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));
@@ -1506,6 +1579,14 @@ class MigrationChainIntegrationTest {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM pg_constraint c
                 WHERE c.conname = ? AND c.contype = 'f'
+                """, Integer.class, constraint);
+        return count != null && count == 1;
+    }
+
+    private boolean foreignKeyUsesNoAction(String constraint) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM pg_constraint c
+                WHERE c.conname = ? AND c.contype = 'f' AND c.confdeltype = 'a'
                 """, Integer.class, constraint);
         return count != null && count == 1;
     }

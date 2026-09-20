@@ -290,9 +290,9 @@ curl --fail --silent --show-error --output /dev/null "$public_url/"
 curl --fail --silent --show-error --output /dev/null "$public_url/api/site/config"
 ```
 
-Verify Flyway V28 and V29 and their database contracts without printing
-credentials or card contents. The query must report one successful V28 and
-one successful V29 migration, the
+Verify Flyway V28, V29, and V30 and their database contracts without printing
+credentials or card contents. The query must report one successful V28,
+one successful V29, and one successful V30 migration, the
 `users.avatar_url` column, the `orders.refunded_at` column, an
 `orders_status_check` constraint containing `AFTER_SALE`, the
 `order_items.product_cover_url` column, the
@@ -305,7 +305,7 @@ attachment binding:
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
     SELECT version, success FROM flyway_schema_history
-      WHERE version IN ('\''28'\'', '\''29'\'') AND success ORDER BY version;
+      WHERE version IN ('\''28'\'', '\''29'\'', '\''30'\'') AND success ORDER BY version;
     SELECT to_regclass('\''public.users'\'') IS NOT NULL
       AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name = '\''users'\'' AND column_name = '\''avatar_url'\''
@@ -376,7 +376,51 @@ bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db
                      AND indexdef LIKE '\''%WHERE%PENDING%'\'')
        AND EXISTS (SELECT 1 FROM pg_indexes
                    WHERE indexname = '\''idx_after_sale_requests_pending_attention'\''
-                     AND indexdef LIKE '\''%WHERE%PENDING%'\'');
+                     AND indexdef LIKE '\''%WHERE%PENDING%'\'')
+       AND to_regclass('\''public.sales_channel_accounts'\'') IS NOT NULL
+       AND to_regclass('\''public.sales_channel_listings'\'') IS NOT NULL
+       AND to_regclass('\''public.sales_channel_listing_specs'\'') IS NOT NULL
+       AND to_regclass('\''public.sales_channel_operations'\'') IS NOT NULL
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''sales_channel_accounts'\''
+                     AND column_name = '\''provider_account_id'\''
+                     AND character_maximum_length = 128)
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''sales_channel_accounts'\''
+                     AND column_name = '\''capabilities'\'' AND data_type = '\''jsonb'\'')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''sales_channel_listings'\''
+                     AND column_name IN ('\''desired_revision'\'', '\''applied_revision'\'',
+                                         '\''provider_config'\''))
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''sales_channel_listing_specs'\''
+                     AND column_name = '\''product_spec_id'\'')
+       AND EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name = '\''sales_channel_operations'\''
+                     AND column_name IN ('\''operation_type'\'', '\''idempotency_key'\'',
+                                         '\''next_attempt_at'\''))
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''uq_sales_channel_accounts_provider_account'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''uq_sales_channel_listings_account_product'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''uq_sales_channel_listing_specs_listing_spec'\'')
+       AND EXISTS (SELECT 1 FROM pg_constraint
+                   WHERE conname = '\''uq_sales_channel_operations_idempotency_key'\'')
+       AND EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE indexname = '\''idx_sales_channel_operations_worker'\'')
+       AND EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE indexname = '\''idx_sales_channel_operations_listing_revision'\'')
+       AND EXISTS (SELECT 1 FROM pg_indexes
+                   WHERE indexname = '\''uq_sales_channel_operations_running_listing'\''
+                     AND indexdef LIKE '\''%WHERE%RUNNING%'\'')
+       AND EXISTS (SELECT 1 FROM pg_trigger
+                   WHERE tgname = '\''trg_sales_channel_listings_revision_monotonic'\''
+                     AND NOT tgisinternal)
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = '\''public'\''
+                         AND table_name IN ('\''products'\'', '\''product_specs'\'', '\''orders'\'')
+                         AND column_name LIKE '\''xianyu_%'\'');
   "'
 ```
 
