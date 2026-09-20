@@ -14,6 +14,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationError;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
+import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
@@ -53,7 +54,8 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
 
     private static final String API_ROOT = "/api/integration/v1";
     private static final int MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
-    private static final int MAX_MEDIA_BYTES = 30 * 1024 * 1024;
+    private static final int MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    private static final int MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 
     private final ObjectMapper objectMapper;
     private final String configuredBaseUrl;
@@ -243,6 +245,21 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             if (mayHaveSideEffects) return unknown(actualCorrelationId, "AGENT_RESPONSE_INVALID");
             throw safeFailure("AGENT_RESPONSE_INVALID", "Xianyu Agent returned an invalid response envelope");
         }
+        if (mayHaveSideEffects && response.statusCode() >= 500) {
+            return unknown(actualCorrelationId, "AGENT_HTTP_OUTCOME_UNKNOWN");
+        }
+        if (response.statusCode() >= 400 && response.statusCode() < 500
+                && envelope.outcome() == Outcome.FAILED) {
+            // Agent authentication/validation failures happen before an operation log is reserved,
+            // so their null request_id is still a definite safe failure for this local request.
+            IntegrationError error = envelope.error() == null
+                    ? new IntegrationError("AGENT_REQUEST_REJECTED", "Xianyu Agent rejected the request")
+                    : envelope.error();
+            IntegrationEnvelope<T> correlatedFailure = new IntegrationEnvelope<>(
+                    expectedRequestId == null ? envelope.requestId() : expectedRequestId,
+                    Outcome.FAILED, null, error);
+            return redactSensitiveResponse(correlatedFailure, signature);
+        }
         if (expectedRequestId != null && !expectedRequestId.equals(envelope.requestId())) {
             return unknown(actualCorrelationId, "AGENT_REQUEST_ID_MISMATCH");
         }
@@ -366,7 +383,8 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
                 || blank(command.filename()) || hasHeaderControls(command.filename()) || blank(command.contentType())
                 || !command.contentType().matches("[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+")
                 || command.content() == null || command.content().length == 0
-                || command.content().length > MAX_MEDIA_BYTES) {
+                || command.content().length > (command.mediaType() == MediaType.VIDEO
+                        ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES)) {
             throw safeFailure("INVALID_MEDIA", "Media upload fields or file size are invalid");
         }
     }

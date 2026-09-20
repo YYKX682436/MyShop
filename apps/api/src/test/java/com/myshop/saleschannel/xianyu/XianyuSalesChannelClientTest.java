@@ -172,6 +172,18 @@ class XianyuSalesChannelClientTest {
     }
 
     @Test
+    void explicitPreReservationHttpFailureWithoutRequestIdIsCorrelatedAndFailed() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.PRE_RESERVATION_REJECTION)) {
+            IntegrationEnvelope<?> result = client(fixture.baseUrl()).publish(
+                    new PublishCommand("op-auth-rejected", "acct-1", 8, listing()));
+            assertEquals(Outcome.FAILED, result.outcome());
+            assertEquals("op-auth-rejected", result.requestId());
+            assertEquals("INVALID_SIGNATURE", result.error().code());
+            assertEquals(1, fixture.requests().size());
+        }
+    }
+
+    @Test
     void requestConstructionAndConfigurationErrorsAreSafeFailuresBeforeNetwork() {
         XianyuSalesChannelClient unconfigured = new XianyuSalesChannelClient(objectMapper,
                 "", "", "", 1000, CLOCK, () -> "fixed-nonce");
@@ -246,6 +258,7 @@ class XianyuSalesChannelClientTest {
         SENSITIVE_RESPONSE,
         FAILED_RESPONSE,
         FAILED_OPERATION,
+        PRE_RESERVATION_REJECTION,
         TIMEOUT_AFTER_READ,
         RESET_AFTER_READ
     }
@@ -321,6 +334,13 @@ class XianyuSalesChannelClientTest {
                 send(exchange, 409, ("{\"request_id\":\"" + request.path("request_id").asText()
                         + "\",\"outcome\":\"FAILED\",\"data\":null,\"error\":{"
                         + "\"code\":\"PLATFORM_REJECTED\",\"message\":\"platform rejected\"}}")
+                        .getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            if (mode == FixtureMode.PRE_RESERVATION_REJECTION) {
+                send(exchange, 401, ("{\"request_id\":null,\"outcome\":\"FAILED\","
+                        + "\"data\":null,\"error\":{\"code\":\"INVALID_SIGNATURE\","
+                        + "\"message\":\"Integration authentication failed\"}}")
                         .getBytes(StandardCharsets.UTF_8));
                 return;
             }
