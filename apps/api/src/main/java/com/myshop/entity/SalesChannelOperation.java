@@ -16,6 +16,7 @@ import org.hibernate.type.SqlTypes;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -111,6 +112,18 @@ public class SalesChannelOperation extends BaseEntity {
         lastErrorCode = errorCode;
         lastErrorMessage = errorMessage;
         finishedAt = now;
+        return true;
+    }
+
+    public boolean reschedule(String errorCode, String errorMessage, LocalDateTime nextAttemptAt) {
+        Objects.requireNonNull(nextAttemptAt, "nextAttemptAt is required");
+        if (status != SalesChannelOperationStatus.RUNNING) return false;
+        status = SalesChannelOperationStatus.PENDING;
+        this.nextAttemptAt = nextAttemptAt;
+        startedAt = null;
+        finishedAt = null;
+        lastErrorCode = errorCode;
+        lastErrorMessage = errorMessage;
         return true;
     }
 

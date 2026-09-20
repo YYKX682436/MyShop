@@ -59,6 +59,7 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation operation = lockOperation(operationId);
         LocalDateTime now = LocalDateTime.now();
         if (operation.getStatus() != SalesChannelOperationStatus.PENDING) return false;
+        if (operation.getNextAttemptAt() != null && operation.getNextAttemptAt().isAfter(now)) return false;
         if (operation.getDesiredRevision() != listing.getDesiredRevision()) {
             operation.supersede(now);
             return false;
@@ -104,6 +105,16 @@ public class SalesChannelOperationServiceImpl {
         listing.setLastErrorCode(null);
         listing.setLastErrorMessage(null);
         return true;
+    }
+
+    @Transactional
+    public boolean reschedule(UUID operationId, String errorCode, String errorMessage,
+                              LocalDateTime nextAttemptAt) {
+        Objects.requireNonNull(nextAttemptAt, "nextAttemptAt is required");
+        SalesChannelOperation snapshot = findOperation(operationId);
+        lockListing(snapshot.getSalesChannelListingId());
+        SalesChannelOperation operation = lockOperation(operationId);
+        return operation.reschedule(errorCode, errorMessage, nextAttemptAt);
     }
 
     @Transactional

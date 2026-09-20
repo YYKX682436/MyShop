@@ -112,6 +112,15 @@ fulfillment:
   retry-interval-ms: ${FULFILLMENT_RETRY_INTERVAL_MS:60000}
   retry-initial-delay-ms: ${FULFILLMENT_RETRY_INITIAL_DELAY_MS:60000}
 
+# Optional internal Xianyu Agent client. Values are intentionally empty until
+# an operator injects deployment-specific configuration through the environment.
+xianyu:
+  agent:
+    base-url: ${XIANYU_AGENT_BASE_URL:}
+    key-id: ${XIANYU_AGENT_KEY_ID:}
+    secret: ${XIANYU_AGENT_SECRET:}
+    timeout-ms: ${XIANYU_AGENT_TIMEOUT_MS:10000}
+
 # Dashboard host metrics are read from the internal node-exporter sidecar.
 # The endpoint is admin-protected and has no public metrics route.
 dashboard:

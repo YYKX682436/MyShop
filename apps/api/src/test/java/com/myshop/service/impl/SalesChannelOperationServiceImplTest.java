@@ -11,16 +11,21 @@ import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -84,6 +89,82 @@ class SalesChannelOperationServiceImplTest {
         assertEquals(SalesChannelOperationStatus.FAILED, operation.getStatus());
         assertFalse(operation.start(java.time.LocalDateTime.now()));
         verify(operationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void rescheduleReturnsRunningOperationToPendingWithoutChangingAttemptIdentityOrRevision() {
+        UUID listingId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.incrementDesiredRevision();
+        listing.incrementDesiredRevision();
+        listing.advanceAppliedRevision(1);
+
+        String idempotencyKey = "XIANYU:" + listingId + ":SYNC:2";
+        SalesChannelOperation operation = new SalesChannelOperation(listingId, SalesChannelOperationType.SYNC, 2,
+                idempotencyKey, Map.of("snapshot", "same revision"));
+        operation.setId(operationId);
+        LocalDateTime startedAt = LocalDateTime.now().minusMinutes(1);
+        assertTrue(operation.start(startedAt));
+        int attemptCount = operation.getAttemptCount();
+        LocalDateTime nextAttemptAt = LocalDateTime.now().plusHours(1);
+
+        when(operationRepository.findById(operationId)).thenReturn(Optional.of(operation));
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(operationRepository.findByIdForUpdate(operationId)).thenReturn(Optional.of(operation));
+
+        assertTrue(service.reschedule(operationId, "TEMPORARY_PROVIDER_ERROR", "retry later", nextAttemptAt));
+
+        assertEquals(SalesChannelOperationStatus.PENDING, operation.getStatus());
+        assertEquals(attemptCount, operation.getAttemptCount());
+        assertEquals(nextAttemptAt, operation.getNextAttemptAt());
+        assertNull(operation.getStartedAt());
+        assertNull(operation.getFinishedAt());
+        assertEquals("TEMPORARY_PROVIDER_ERROR", operation.getLastErrorCode());
+        assertEquals("retry later", operation.getLastErrorMessage());
+        assertEquals(2, operation.getDesiredRevision());
+        assertEquals(idempotencyKey, operation.getIdempotencyKey());
+        assertEquals(1, listing.getAppliedRevision());
+
+        // A queued retry cannot be claimed before its scheduled time, even through the service method.
+        assertFalse(service.markRunning(operationId));
+        assertEquals(SalesChannelOperationStatus.PENDING, operation.getStatus());
+        assertEquals(attemptCount, operation.getAttemptCount());
+    }
+
+    @Test
+    void rescheduleRequiresANonNullNextAttemptAt() {
+        assertThrows(NullPointerException.class,
+                () -> service.reschedule(UUID.randomUUID(), "TEMPORARY", "retry later", null));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = SalesChannelOperationStatus.class,
+            mode = EnumSource.Mode.EXCLUDE, names = "RUNNING")
+    void onlyRunningOperationsCanBeRescheduled(SalesChannelOperationStatus status) {
+        SalesChannelOperation operation = operation("XIANYU:listing:SYNC:0");
+        LocalDateTime now = LocalDateTime.now();
+        switch (status) {
+            case PENDING -> { }
+            case SUCCEEDED -> {
+                assertTrue(operation.start(now));
+                assertTrue(operation.succeed(Map.of("ok", true), now));
+            }
+            case FAILED -> {
+                assertTrue(operation.start(now));
+                assertTrue(operation.fail("PERMANENT", "failed", now));
+            }
+            case UNKNOWN -> {
+                assertTrue(operation.start(now));
+                assertTrue(operation.markUnknown("OUTCOME_UNKNOWN", "unknown", now));
+            }
+            case SUPERSEDED -> assertTrue(operation.supersede(now));
+            case RUNNING -> throw new AssertionError("RUNNING is excluded from this test");
+        }
+
+        assertFalse(operation.reschedule("TEMPORARY", "retry later", now.plusMinutes(5)));
+        assertEquals(status, operation.getStatus());
     }
 
     private SalesChannelOperation operation(String idempotencyKey) {
