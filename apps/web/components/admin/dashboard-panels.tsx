@@ -179,7 +179,7 @@ export function DashboardKpiCards({ stats }: { stats: DashboardStats }) {
   const { locale, t } = useLocale()
   const money = formatYuan
   return (
-    <Stagger className="dashboard-kpi-strip grid grid-cols-1 divide-y divide-border-subtle overflow-hidden min-[420px]:grid-cols-2 min-[420px]:divide-y-0 min-[420px]:divide-x xl:grid-cols-4">
+    <Stagger className="dashboard-kpi-strip grid grid-cols-1 min-[420px]:grid-cols-2 xl:grid-cols-4">
       <StaggerItem>
         <KpiCard
         label={t("admin.todaySales")}

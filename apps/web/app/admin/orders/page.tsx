@@ -164,17 +164,16 @@ export default function AdminOrdersPage() {
     <AdminPage>
       <PageHeader title={t("admin.orders")} description={t("admin.ordersDesc")} />
 
-      <div className="-mx-1 overflow-x-auto px-1" aria-label={t("admin.statusLabel")}>
-        <div className="flex min-w-max gap-1 border-b border-border-subtle">
+      <div className="-mx-1 max-w-full px-1">
+        <div className="segmented-control w-max gap-1" role="group" aria-label={t("admin.statusLabel")}>
           {ORDER_STATUS_TABS.map((tab) => (
             <button
               key={tab.value}
               type="button"
               aria-pressed={statusFilter === tab.value}
+              data-active={statusFilter === tab.value}
               onClick={() => { setStatusFilter(tab.value); setPage(1) }}
-              className={`whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors ${statusFilter === tab.value
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:border-border-strong hover:text-foreground"}`}
+              className="segmented-control-item inline-flex items-center whitespace-nowrap"
             >
               {t(tab.label)}
               {tab.value === "AFTER_SALE" && afterSaleNeedsAttention > 0 && (

@@ -95,14 +95,18 @@ test("order details use the wide workspace route and keep the workbench structur
   assert.doesNotMatch(detailSource, /\b[A-G]\.\s/)
 })
 
-test("admin order navigation uses fixed horizontal status tabs including refunds", () => {
+test("admin order filters use the horizontal segmented control and include refunds", () => {
   const source = readSource("../app/admin/orders/page.tsx")
+  const styles = readSource("../app/globals.css")
 
   assert.match(source, /const ORDER_STATUS_TABS/)
   for (const status of ["ALL", "PENDING", "PAID", "DELIVERED", "AFTER_SALE", "REFUNDED", "EXPIRED"]) {
     assert.match(source, new RegExp(`value: "${status}"`))
   }
-  assert.match(source, /overflow-x-auto/)
+  assert.match(source, /segmented-control w-max/)
+  assert.match(source, /segmented-control-item/)
+  assert.match(source, /data-active=\{statusFilter === tab\.value\}/)
+  assert.match(styles, /\.segmented-control\s*\{[^}]*overflow-x:\s*auto/s)
   assert.match(source, /status: statusFilter === "ALL" \? undefined : statusFilter/)
   assert.doesNotMatch(source, /value=\{statusFilter\}[\s\S]*option/)
 })

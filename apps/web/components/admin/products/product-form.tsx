@@ -644,7 +644,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
       <Tabs value={activeTab} onValueChange={(value) => {
           if (PRODUCT_EDITOR_TABS.includes(value as ProductEditorTab)) setActiveTab(value as ProductEditorTab)
         }}>
-        <div className="admin-editor-tabs -mx-1 border-b border-border-subtle px-1 py-2">
+        <div className="admin-editor-tabs -mx-1 px-1 py-2">
           <TabsList className="flex h-auto w-full max-w-full justify-start overflow-x-auto p-1" aria-label={t("admin.productEditorHint")}>
             {tabItems.map((tab) => (
               <TabsTrigger key={tab.value} value={tab.value} data-testid={`product-tab-${tab.value}`} className="min-w-max gap-2 px-4 py-2">

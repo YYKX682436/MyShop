@@ -216,7 +216,7 @@ export function StatusBadge({ label, tone = "neutral" }: { label: ReactNode; ton
 
 export function FormSection({ title, description, children, className }: { title: ReactNode; description?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn("settings-section", className)}>
+    <section className={cn("settings-section admin-settings-section", className)}>
       <header className="settings-section-header">
         <h2 className="text-base font-semibold text-foreground">{title}</h2>
         {description && <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>}
