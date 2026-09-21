@@ -10,8 +10,6 @@ app:
   public-site-url: ${PUBLIC_SITE_URL:http://localhost:3000}
 
 spring:
-  autoconfigure:
-    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/db}
     username: ${DB_USERNAME:postgres}

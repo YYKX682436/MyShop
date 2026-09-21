@@ -321,7 +321,7 @@ public class SalesChannelDesiredStatePlanner {
             for (ProductSpec spec : specs) {
                 ProductInventoryBatchService.StockSnapshot stock = inventory.get(
                         new PriceTarget(product.getId(), spec.getId()));
-                int available = stockQuantity(product, stock, config.unlimitedStockQuantity());
+                int available = stockQuantity(product, stock, config.unlimitedStockQuantity(), config.stockCapPerSku());
                 total += available;
                 values.add(new SpecificationValue(spec.getName(), null));
                 skuValues.add(new SkuRow(Map.of("规格", spec.getName()),
@@ -333,8 +333,7 @@ public class SalesChannelDesiredStatePlanner {
         } else {
             ProductInventoryBatchService.StockSnapshot stock = inventory.get(
                     new PriceTarget(product.getId(), null));
-            quantity = "PERSONAL".equals(accountType(account)) ? 1
-                    : stockQuantity(product, stock, config.unlimitedStockQuantity());
+            quantity = stockQuantity(product, stock, config.unlimitedStockQuantity(), config.stockCapPerSku());
         }
 
         List<PlatformAttribute> attributes = config.platformAttributes().stream().map(attribute ->
@@ -351,11 +350,13 @@ public class SalesChannelDesiredStatePlanner {
                 config.deliveryMethod(), config.shippingMethod(), config.supportPickup(), config.postage());
     }
 
-    private int stockQuantity(Product product, ProductInventoryBatchService.StockSnapshot stock, int unlimited) {
+    private int stockQuantity(Product product, ProductInventoryBatchService.StockSnapshot stock, int unlimited,
+                              Integer stockCapPerSku) {
         if (product.getStockMode() == StockMode.UNLIMITED || (stock != null && stock.unlimited())) {
             return clamp(Math.max(0, unlimited));
         }
-        return clamp(stock == null || stock.available() == null ? 0 : stock.available());
+        int realAvailable = clamp(stock == null || stock.available() == null ? 0 : stock.available());
+        return stockCapPerSku == null ? realAvailable : Math.min(realAvailable, stockCapPerSku);
     }
 
     private int clamp(long quantity) {

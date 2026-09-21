@@ -54,6 +54,14 @@ test("sales channel unlimited stock accepts zero in the UI and save validation",
   assert.match(salesChannelEditor, /isValidUnlimitedStockQuantity\(unlimitedStockQuantity\)/)
 })
 
+test("Xianyu per-SKU stock cap is optional, bounded, and explicitly channel-only", () => {
+  assert.match(salesChannelEditor, /闲鱼单规格库存上限<Input type="number" min="0" max="999999" step="1"/)
+  assert.match(salesChannelEditor, /isValidStockCapPerSku\(stockCapPerSku\)/)
+  assert.match(salesChannelEditor, /仅限制同步到闲鱼的单个规格库存，不影响商城真实库存；留空表示完全跟随商城库存，设为 0 表示闲鱼库存同步为 0。/)
+  assert.match(salesChannelEditor, /stockCapPerSku: null/)
+  assert.match(salesChannelEditor, /stockCapPerSku,/)
+})
+
 test("Xianyu address and category configuration use MyShop metadata pickers", () => {
   assert.match(salesChannelEditor, /宝贝所在地/)
   assert.match(salesChannelEditor, /智能推荐分类/)

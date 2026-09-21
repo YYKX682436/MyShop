@@ -8,7 +8,7 @@ import { FormSection } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { isValidUnlimitedStockQuantity } from "@/lib/sales-channel-stock"
+import { isValidStockCapPerSku, isValidUnlimitedStockQuantity } from "@/lib/sales-channel-stock"
 import {
   adminSalesChannelApi,
   type SalesChannelAccountSummary,
@@ -48,6 +48,7 @@ const EMPTY_CONFIG: XianyuProviderConfig = {
   supportPickup: false,
   postage: null,
   unlimitedStockQuantity: 999,
+  stockCapPerSku: null,
 }
 
 type BusyAction = "load" | "sync" | "verify" | "save" | "enable" | "disable" | "retry" | null
@@ -183,6 +184,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
     const markupPercent = optionalNumber(String(config.markupPercent ?? ""))
     const postage = optionalNumber(String(config.postage ?? ""))
     const unlimitedStockQuantity = optionalNumber(String(config.unlimitedStockQuantity ?? ""))
+    const stockCapPerSku = optionalNumber(String(config.stockCapPerSku ?? ""))
     if (priceMode === "FIXED" && (fixedPrice === null || fixedPrice <= 0)) {
       throw new Error("固定售价必须大于 0")
     }
@@ -193,6 +195,9 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
     if (!isValidUnlimitedStockQuantity(unlimitedStockQuantity)) {
       throw new Error("无限库存同步数量必须是大于或等于 0 的整数")
     }
+    if (!isValidStockCapPerSku(stockCapPerSku)) {
+      throw new Error("闲鱼单规格库存上限必须是 0 到 999999 之间的整数")
+    }
 
     const normalized: XianyuProviderConfig = {
       ...config,
@@ -201,6 +206,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
       markupPercent,
       postage,
       unlimitedStockQuantity: unlimitedStockQuantity ?? 999,
+      stockCapPerSku,
       imageUrls: (config.imageUrls || []).map((url) => url.trim()).filter(Boolean),
       platformAttributes: config.platformAttributes || [],
     }
@@ -637,6 +643,10 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
         <label className={labelClass}>交付方式<Input value={config.deliveryMethod || ""} onChange={(event) => setText("deliveryMethod", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
         <label className={labelClass}>邮费<Input type="number" min="0" step="0.01" value={config.postage ?? ""} onChange={(event) => patchConfig("postage", optionalNumber(event.target.value))} disabled={noSelection || Boolean(busy)} /></label>
         <label className={labelClass}>无限库存同步数量<Input type="number" min="0" step="1" value={config.unlimitedStockQuantity ?? 999} onChange={(event) => patchConfig("unlimitedStockQuantity", optionalNumber(event.target.value))} disabled={noSelection || Boolean(busy)} /></label>
+        <div className="grid gap-1">
+          <label className={labelClass}>闲鱼单规格库存上限<Input type="number" min="0" max="999999" step="1" value={config.stockCapPerSku ?? ""} onChange={(event) => patchConfig("stockCapPerSku", optionalNumber(event.target.value))} disabled={noSelection || Boolean(busy)} /></label>
+          <p className="text-xs text-muted-foreground">仅限制同步到闲鱼的单个规格库存，不影响商城真实库存；留空表示完全跟随商城库存，设为 0 表示闲鱼库存同步为 0。</p>
+        </div>
         <label className="flex items-center gap-2 text-sm font-medium lg:col-span-2"><input type="checkbox" checked={Boolean(config.supportPickup)} onChange={(event) => patchConfig("supportPickup", event.target.checked)} disabled={noSelection || Boolean(busy)} className="size-4 accent-primary" />支持自提</label>
       </div>
 

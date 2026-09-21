@@ -37,7 +37,8 @@ public record XianyuProviderConfig(
         @JsonProperty("shippingMethod") @Pattern(regexp = "free|distance|fixed|template|none") String shippingMethod,
         @JsonProperty("supportPickup") Boolean supportPickup,
         @JsonProperty("postage") @DecimalMin("0.00") @DecimalMax("1000.00") BigDecimal postage,
-        @JsonProperty("unlimitedStockQuantity") @Min(0) @Max(999999) Integer unlimitedStockQuantity) {
+        @JsonProperty("unlimitedStockQuantity") @Min(0) @Max(999999) Integer unlimitedStockQuantity,
+        @JsonProperty("stockCapPerSku") @Min(0) @Max(999999) Integer stockCapPerSku) {
 
     public enum PriceMode {
         PRODUCT_RETAIL,
@@ -65,6 +66,9 @@ public record XianyuProviderConfig(
     }
 
     public void validateForSave() {
+        if (stockCapPerSku != null && (stockCapPerSku < 0 || stockCapPerSku > 999999)) {
+            throw new IllegalArgumentException("stockCapPerSku must be between 0 and 999999");
+        }
         if (priceMode == PriceMode.FIXED && fixedPrice == null) {
             throw new IllegalArgumentException("fixedPrice is required for FIXED price mode");
         }

@@ -531,6 +531,7 @@ export interface XianyuProviderConfig {
   supportPickup?: boolean
   postage?: number | null
   unlimitedStockQuantity?: number | null
+  stockCapPerSku?: number | null
 }
 
 export interface SalesChannelAccountSummary {

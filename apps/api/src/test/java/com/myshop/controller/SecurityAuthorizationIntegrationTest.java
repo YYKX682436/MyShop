@@ -7,8 +7,16 @@ import com.myshop.service.OperationLogService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.security.autoconfigure.SecurityAutoConfiguration;
+import org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.FilterChainProxy;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,7 +30,10 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 class SecurityAuthorizationIntegrationTest {
@@ -50,6 +61,42 @@ class SecurityAuthorizationIntegrationTest {
                 .thenReturn(PageResult.of(java.util.List.<AdministratorResponse>of(), 1, 20, 0));
         when(operationLogService.listLogs(any(), anyString(), anyString(), anyString(), anyString(), anyInt(), anyInt()))
                 .thenReturn(PageResult.of(java.util.List.of(), 1, 20, 0));
+    }
+
+    @Test
+    void applicationHasNoBootDefaultUserServiceAndRetainsItsJwtSecurityFilterChain() {
+        assertTrue(webApplicationContext.getBeansOfType(InMemoryUserDetailsManager.class).isEmpty());
+        assertTrue(webApplicationContext.getBeansOfType(UserDetailsService.class).isEmpty());
+        assertFalse(webApplicationContext.getBeansOfType(SecurityFilterChain.class).isEmpty());
+    }
+
+    @Test
+    void ablationShowsBootWouldCreateAnInMemoryUserIfTheExplicitExcludeWereAbsent() {
+        new WebApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(
+                        SecurityAutoConfiguration.class,
+                        UserDetailsServiceAutoConfiguration.class))
+                .withBean(SecurityFilterChain.class,
+                        () -> org.mockito.Mockito.mock(SecurityFilterChain.class))
+                .withPropertyValues(
+                        "spring.security.user.name=ablation-only-user",
+                        "spring.security.user.password=ablation-only-password")
+                .run(context -> {
+                    assertTrue(context.getBeansOfType(InMemoryUserDetailsManager.class).size() == 1);
+                    assertTrue(context.getBeansOfType(UserDetailsService.class).size() == 1);
+                });
+    }
+
+    @Test
+    void unauthenticatedAdminRouteRemainsUnauthorizedAndLoginRemainsPublic() throws Exception {
+        mockMvc.perform(get("/api/admin/operation-logs").contextPath("/api"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contextPath("/api")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

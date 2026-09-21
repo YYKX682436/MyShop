@@ -7,7 +7,9 @@ import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.StockMode;
+import com.myshop.entity.CardKey;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductCategory;
 import com.myshop.entity.ProductSpec;
@@ -17,6 +19,7 @@ import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.ProductCategoryRepository;
+import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
@@ -75,6 +78,7 @@ class SalesChannelDomainIntegrationTest {
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private EntityManager entityManager;
     @Autowired private PlatformTransactionManager transactionManager;
+    @Autowired private CardKeyRepository cardKeyRepository;
     @Autowired private ProductCategoryRepository categoryRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private ProductSpecRepository productSpecRepository;
@@ -113,6 +117,10 @@ class SalesChannelDomainIntegrationTest {
         jdbcTemplate.update("DELETE FROM sales_channel_listing_specs");
         jdbcTemplate.update("DELETE FROM sales_channel_listings");
         jdbcTemplate.update("DELETE FROM sales_channel_accounts");
+        jdbcTemplate.update("DELETE FROM card_keys WHERE product_id IN "
+                + "(SELECT id FROM products WHERE title LIKE 'sales-channel-test-%')");
+        jdbcTemplate.update("DELETE FROM manual_stocks WHERE product_id IN "
+                + "(SELECT id FROM products WHERE title LIKE 'sales-channel-test-%')");
         jdbcTemplate.update("DELETE FROM product_specs WHERE product_id IN "
                 + "(SELECT id FROM products WHERE title LIKE 'sales-channel-test-%')");
         jdbcTemplate.update("DELETE FROM products WHERE title LIKE 'sales-channel-test-%'");
@@ -393,6 +401,163 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(3, listingRepository.findById(fixture.listing().getId()).orElseThrow().getDesiredRevision());
         assertEquals(1, operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(fixture.listing().getId(), 3).size());
+    }
+
+    @Test
+    void cardKeySkuStockCapChangesOnlyChannelSnapshotAndProviderFingerprint() {
+        Fixture fixture = fixture(true);
+        List<UUID> specIds = addStockCapSpecs(fixture);
+        Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
+        product.setStockMode(StockMode.CARD_KEY);
+        productRepository.saveAndFlush(product);
+        addAvailableCardKeys(product.getId(), specIds.get(0), 5);
+        addAvailableCardKeys(product.getId(), specIds.get(1), 4);
+        addAvailableCardKeys(product.getId(), specIds.get(2), 4);
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+
+        verifiedAccount(fixture, "FISH_SHOP");
+        desiredStatePlanner.saveConfig(fixture.listing().getId(), publishConfigWithStockCap(fixture, null));
+        desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+
+        SalesChannelOperation publish = operationAtRevision(fixture, 1, SalesChannelOperationType.PUBLISH);
+        assertSkuSnapshot(publish, List.of(5, 4, 4), 13);
+        SalesChannelListing nullCapListing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        String nullCapFingerprint = nullCapListing.getDesiredFingerprint();
+
+        salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(),
+                publishConfigWithStockCap(fixture, null));
+        SalesChannelListing repeatedNullCap = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(1, repeatedNullCap.getDesiredRevision());
+        assertEquals(nullCapFingerprint, repeatedNullCap.getDesiredFingerprint());
+        assertEquals(1, operationRepository
+                .findBySalesChannelListingIdOrderByCreatedAtAsc(fixture.listing().getId()).size());
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+
+        assertTrue(operationService.markRunning(publish.getId()));
+        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "stock-cap-test-item"),
+                String.valueOf(publish.getPayload().get("desired_fingerprint"))));
+
+        salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(),
+                publishConfigWithStockCap(fixture, 1));
+        SalesChannelListing capOneListing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(2, capOneListing.getDesiredRevision());
+        assertEquals(1, ((Number) capOneListing.getProviderConfig().get("stockCapPerSku")).intValue());
+        assertNotEquals(nullCapFingerprint, capOneListing.getDesiredFingerprint());
+        assertSkuSnapshot(operationAtRevision(fixture, 2, SalesChannelOperationType.SYNC),
+                List.of(1, 1, 1), 3);
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+
+        String capOneFingerprint = capOneListing.getDesiredFingerprint();
+        salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(),
+                publishConfigWithStockCap(fixture, 1));
+        SalesChannelListing repeatedCapOne = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(2, repeatedCapOne.getDesiredRevision());
+        assertEquals(capOneFingerprint, repeatedCapOne.getDesiredFingerprint());
+        assertEquals(1, operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(fixture.listing().getId(), 2)
+                .size());
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+
+        salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(),
+                publishConfigWithStockCap(fixture, 0));
+        SalesChannelListing capZeroListing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(3, capZeroListing.getDesiredRevision());
+        assertNotEquals(capOneFingerprint, capZeroListing.getDesiredFingerprint());
+        assertSkuSnapshot(operationAtRevision(fixture, 3, SalesChannelOperationType.SYNC),
+                List.of(0, 0, 0), 0);
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+
+        String capZeroFingerprint = capZeroListing.getDesiredFingerprint();
+        salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(),
+                publishConfigWithStockCap(fixture, 10));
+        SalesChannelListing capTenListing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(4, capTenListing.getDesiredRevision());
+        assertNotEquals(capZeroFingerprint, capTenListing.getDesiredFingerprint());
+        assertSkuSnapshot(operationAtRevision(fixture, 4, SalesChannelOperationType.SYNC),
+                List.of(5, 4, 4), 13);
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+    }
+
+    @Test
+    void cardKeyInventoryDriftAtFixedCapCreatesSyncAndRestoringInventoryCreatesAnotherSync() {
+        Fixture fixture = fixture(true);
+        List<UUID> specIds = addStockCapSpecs(fixture);
+        Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
+        product.setStockMode(StockMode.CARD_KEY);
+        productRepository.saveAndFlush(product);
+        addAvailableCardKeys(product.getId(), specIds.get(0), 5);
+        addAvailableCardKeys(product.getId(), specIds.get(1), 4);
+        addAvailableCardKeys(product.getId(), specIds.get(2), 4);
+        verifiedAccount(fixture, "FISH_SHOP");
+        desiredStatePlanner.saveConfig(fixture.listing().getId(), publishConfigWithStockCap(fixture, 1));
+        desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+
+        SalesChannelOperation publish = operationAtRevision(fixture, 1, SalesChannelOperationType.PUBLISH);
+        assertSkuSnapshot(publish, List.of(1, 1, 1), 3);
+        assertTrue(operationService.markRunning(publish.getId()));
+        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "stock-drift-test-item"),
+                String.valueOf(publish.getPayload().get("desired_fingerprint"))));
+        String fullStockFingerprint = listingRepository.findById(fixture.listing().getId()).orElseThrow()
+                .getDesiredFingerprint();
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+
+        jdbcTemplate.update("UPDATE card_keys SET status = 'INVALID' "
+                        + "WHERE product_id = ? AND spec_id = ? AND status = 'AVAILABLE'",
+                product.getId(), specIds.get(0));
+        assertAvailableCardKeys(product.getId(), specIds, List.of(0, 4, 4));
+        SalesChannelListing noAStock = desiredStatePlanner.refresh(fixture.listing().getId());
+        assertEquals(2, noAStock.getDesiredRevision());
+        assertNotEquals(fullStockFingerprint, noAStock.getDesiredFingerprint());
+        assertSkuSnapshot(operationAtRevision(fixture, 2, SalesChannelOperationType.SYNC),
+                List.of(0, 1, 1), 2);
+
+        jdbcTemplate.update("UPDATE card_keys SET status = 'AVAILABLE' "
+                        + "WHERE product_id = ? AND spec_id = ? AND status = 'INVALID'",
+                product.getId(), specIds.get(0));
+        assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
+        SalesChannelListing restoredAStock = desiredStatePlanner.refresh(fixture.listing().getId());
+        assertEquals(3, restoredAStock.getDesiredRevision());
+        assertEquals(fullStockFingerprint, restoredAStock.getDesiredFingerprint());
+        assertSkuSnapshot(operationAtRevision(fixture, 3, SalesChannelOperationType.SYNC),
+                List.of(1, 1, 1), 3);
+    }
+
+    @Test
+    void manualSkuStockUsesTheSameChannelCapWithoutChangingManualAvailability() {
+        Fixture fixture = fixture(true);
+        List<UUID> specIds = addStockCapSpecs(fixture);
+        Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
+        product.setStockMode(StockMode.MANUAL);
+        productRepository.saveAndFlush(product);
+        manualStockService.setAvailable(product.getId(), specIds.get(0), 5);
+        manualStockService.setAvailable(product.getId(), specIds.get(1), 4);
+        manualStockService.setAvailable(product.getId(), specIds.get(2), 4);
+        verifiedAccount(fixture, "FISH_SHOP");
+        desiredStatePlanner.saveConfig(fixture.listing().getId(), publishConfigWithStockCap(fixture, 1));
+        desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+
+        assertSkuSnapshot(operationAtRevision(fixture, 1, SalesChannelOperationType.PUBLISH),
+                List.of(1, 1, 1), 3);
+        assertEquals(5, manualStockService.getAvailable(product.getId(), specIds.get(0)));
+        assertEquals(4, manualStockService.getAvailable(product.getId(), specIds.get(1)));
+        assertEquals(4, manualStockService.getAvailable(product.getId(), specIds.get(2)));
+    }
+
+    @Test
+    void unlimitedSkuStockContinuesUsingUnlimitedStockQuantityInsteadOfPerSkuCap() {
+        Fixture fixture = fixture(true);
+        List<UUID> specIds = addStockCapSpecs(fixture);
+        Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
+        product.setStockMode(StockMode.UNLIMITED);
+        productRepository.saveAndFlush(product);
+        verifiedAccount(fixture, "FISH_SHOP");
+        desiredStatePlanner.saveConfig(fixture.listing().getId(), publishConfigWithStockCap(fixture, 0));
+        desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+
+        assertSkuSnapshot(operationAtRevision(fixture, 1, SalesChannelOperationType.PUBLISH),
+                List.of(999, 999, 999), 2997);
+        assertTrue(specIds.stream().allMatch(specId -> cardKeyRepository
+                .countByProductIdAndSpecIdAndStatus(product.getId(), specId, CardKeyStatus.AVAILABLE) == 0));
     }
 
     @Test
@@ -1012,6 +1177,80 @@ class SalesChannelDomainIntegrationTest {
 
         assertThrows(BusinessException.class,
                 () -> listingService.ensureDraft(fixture.account().getId(), deleted.getId()));
+    }
+
+    private List<UUID> addStockCapSpecs(Fixture fixture) {
+        List<UUID> specIds = List.of(
+                addSpec(fixture.product().getId(), "A", true, 0),
+                addSpec(fixture.product().getId(), "B", true, 1),
+                addSpec(fixture.product().getId(), "C", true, 2));
+        listingService.ensureDraft(fixture.account().getId(), fixture.product().getId());
+        return specIds;
+    }
+
+    private void addAvailableCardKeys(UUID productId, UUID specId, int count) {
+        List<CardKey> cardKeys = new java.util.ArrayList<>();
+        for (int index = 0; index < count; index++) {
+            CardKey cardKey = new CardKey();
+            cardKey.setProductId(productId);
+            cardKey.setSpecId(specId);
+            cardKey.setContentParts(List.of("integration-only-card-" + UUID.randomUUID()));
+            cardKey.setContentFingerprint(UUID.randomUUID().toString().replace("-", "")
+                    + UUID.randomUUID().toString().replace("-", ""));
+            cardKey.setStatus(CardKeyStatus.AVAILABLE);
+            cardKeys.add(cardKey);
+        }
+        cardKeyRepository.saveAllAndFlush(cardKeys);
+    }
+
+    private void assertAvailableCardKeys(UUID productId, List<UUID> specIds, List<Integer> expected) {
+        List<Long> actual = specIds.stream()
+                .map(specId -> cardKeyRepository.countByProductIdAndSpecIdAndStatus(
+                        productId, specId, CardKeyStatus.AVAILABLE))
+                .toList();
+        assertEquals(expected.stream().map(Integer::longValue).toList(), actual);
+    }
+
+    private SalesChannelOperation operationAtRevision(Fixture fixture, long revision,
+                                                       SalesChannelOperationType operationType) {
+        return operationRepository.findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(
+                        fixture.listing().getId(), revision).stream()
+                .filter(operation -> operation.getOperationType() == operationType)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Expected " + operationType + " at revision " + revision));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void assertSkuSnapshot(SalesChannelOperation operation, List<Integer> expectedStocks, int expectedTotal) {
+        Map<String, Object> snapshot = (Map<String, Object>) operation.getPayload().get("desired_snapshot");
+        assertNotNull(snapshot);
+        assertEquals(expectedTotal, ((Number) snapshot.get("quantity")).intValue());
+        Object rawRows = snapshot.containsKey("skuRows") ? snapshot.get("skuRows") : snapshot.get("sku_rows");
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) rawRows;
+        assertNotNull(rows);
+        assertEquals(expectedStocks.size(), rows.size());
+        assertEquals(expectedStocks, rows.stream()
+                .map(row -> ((Number) row.get("stock")).intValue())
+                .toList());
+    }
+
+    private com.myshop.saleschannel.xianyu.model.XianyuProviderConfig publishConfigWithStockCap(
+            Fixture fixture, Integer stockCapPerSku) {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("descriptionOverride", "Test listing description");
+        config.put("titleOverride", fixture.product().getTitle());
+        config.put("imageUrls", List.of("https://images.example.invalid/source.jpg"));
+        config.put("priceMode", "PRODUCT_RETAIL");
+        config.put("address", "East Lake");
+        config.put("platformCategoryId", "category-test-id");
+        config.put("platformCategoryName", "Software service");
+        config.put("platformChannelCategoryId", "channel-category-test-id");
+        config.put("platformChannelCategoryName", "Virtual goods");
+        config.put("platformTbCategoryId", "tb-category-test-id");
+        config.put("unlimitedStockQuantity", 999);
+        if (stockCapPerSku != null) config.put("stockCapPerSku", stockCapPerSku);
+        return objectMapper.convertValue(config,
+                com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
     }
 
     private void bindExistingItem(Fixture fixture) {

@@ -13,6 +13,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SalesChannelAdminDtosJsonTest {
@@ -62,6 +64,7 @@ class SalesChannelAdminDtosJsonTest {
                   "addressExpectedText":"Test address check",
                   "platformChannelCategoryId":"channel-1",
                   "unlimitedStockQuantity":0,
+                  "stockCapPerSku":0,
                   "platformAttributes":[{"propertyId":"prop-1","propertyName":"Size",
                     "valueId":"value-1","valueName":"Small","text":"Small","properties":{"unit":"one"}}]
                 }}
@@ -73,6 +76,7 @@ class SalesChannelAdminDtosJsonTest {
         assertEquals("Test address check", request.config().addressExpectedText());
         assertEquals("channel-1", request.config().platformChannelCategoryId());
         assertEquals(0, request.config().unlimitedStockQuantity());
+        assertEquals(0, request.config().stockCapPerSku());
         assertEquals("prop-1", request.config().platformAttributes().getFirst().propertyId());
 
         JsonNode json = objectMapper.valueToTree(request);
@@ -80,6 +84,33 @@ class SalesChannelAdminDtosJsonTest {
         assertTrue(json.path("config").has("addressExpectedText"));
         assertTrue(json.path("config").has("platformChannelCategoryId"));
         assertTrue(json.path("config").has("unlimitedStockQuantity"));
+        assertTrue(json.path("config").has("stockCapPerSku"));
         assertFalse(json.path("config").has("address_expected_text"));
+    }
+
+    @Test
+    void stockCapPerSkuAllowsNullAndZeroButRejectsValuesOutsideTheSupportedRange() {
+        var noCap = objectMapper.convertValue(Map.of(),
+                com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
+        assertNull(noCap.stockCapPerSku());
+        noCap.validateForSave();
+
+        var zeroCap = objectMapper.convertValue(Map.of("stockCapPerSku", 0),
+                com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
+        assertEquals(0, zeroCap.stockCapPerSku());
+        zeroCap.validateForSave();
+
+        var maxCap = objectMapper.convertValue(Map.of("stockCapPerSku", 999999),
+                com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
+        assertEquals(999999, maxCap.stockCapPerSku());
+        maxCap.validateForSave();
+
+        var negativeCap = objectMapper.convertValue(Map.of("stockCapPerSku", -1),
+                com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
+        assertThrows(IllegalArgumentException.class, negativeCap::validateForSave);
+
+        var excessiveCap = objectMapper.convertValue(Map.of("stockCapPerSku", 1000000),
+                com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
+        assertThrows(IllegalArgumentException.class, excessiveCap::validateForSave);
     }
 }
