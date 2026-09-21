@@ -1041,7 +1041,6 @@ class SalesChannelDomainIntegrationTest {
     private com.myshop.saleschannel.xianyu.model.XianyuProviderConfig publishConfig(
             Fixture fixture, boolean includeAddress, boolean includeCategory) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("titleOverride", fixture.product().getTitle());
         config.put("descriptionOverride", "Test listing description");
         config.put("imageUrls", List.of("https://images.example.invalid/source.jpg"));
         config.put("priceMode", "PRODUCT_RETAIL");
