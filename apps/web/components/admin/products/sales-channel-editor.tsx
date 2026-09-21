@@ -8,6 +8,7 @@ import { FormSection } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { isValidUnlimitedStockQuantity } from "@/lib/sales-channel-stock"
 import {
   adminSalesChannelApi,
   type SalesChannelAccountSummary,
@@ -159,8 +160,8 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
       throw new Error("加价比例必须是大于或等于 0 的数字")
     }
     if (postage !== null && postage < 0) throw new Error("邮费不能小于 0")
-    if (unlimitedStockQuantity !== null && (!Number.isInteger(unlimitedStockQuantity) || unlimitedStockQuantity < 1)) {
-      throw new Error("无限库存同步数量必须是正整数")
+    if (!isValidUnlimitedStockQuantity(unlimitedStockQuantity)) {
+      throw new Error("无限库存同步数量必须是大于或等于 0 的整数")
     }
 
     const normalized: XianyuProviderConfig = {
@@ -328,7 +329,7 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
         <label className={labelClass}>运输方式<Input value={config.shippingMethod || ""} onChange={(event) => setText("shippingMethod", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
         <label className={labelClass}>交付方式<Input value={config.deliveryMethod || ""} onChange={(event) => setText("deliveryMethod", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
         <label className={labelClass}>邮费<Input type="number" min="0" step="0.01" value={config.postage ?? ""} onChange={(event) => patchConfig("postage", optionalNumber(event.target.value))} disabled={noSelection || Boolean(busy)} /></label>
-        <label className={labelClass}>无限库存同步数量<Input type="number" min="1" step="1" value={config.unlimitedStockQuantity ?? 999} onChange={(event) => patchConfig("unlimitedStockQuantity", optionalNumber(event.target.value))} disabled={noSelection || Boolean(busy)} /></label>
+        <label className={labelClass}>无限库存同步数量<Input type="number" min="0" step="1" value={config.unlimitedStockQuantity ?? 999} onChange={(event) => patchConfig("unlimitedStockQuantity", optionalNumber(event.target.value))} disabled={noSelection || Boolean(busy)} /></label>
         <label className="flex items-center gap-2 text-sm font-medium lg:col-span-2"><input type="checkbox" checked={Boolean(config.supportPickup)} onChange={(event) => patchConfig("supportPickup", event.target.checked)} disabled={noSelection || Boolean(busy)} className="size-4 accent-primary" />支持自提</label>
       </div>
 

@@ -8,6 +8,7 @@ const shared = readSource("../components/admin/shared/index.tsx")
 const dashboardPanels = readSource("../components/admin/dashboard-panels.tsx")
 const orders = readSource("../app/admin/orders/page.tsx")
 const productForm = readSource("../components/admin/products/product-form.tsx")
+const salesChannelEditor = readSource("../components/admin/products/sales-channel-editor.tsx")
 const productTabs = readSource("../components/ui/tabs.tsx")
 const categoryPage = readSource("../app/admin/categories/page.tsx")
 
@@ -45,6 +46,11 @@ test("admin FormSection restores its shared card while retaining utility overrid
   assert.match(section, /padding:\s*1\.25rem/)
   assert.match(section, /box-shadow:\s*var\(--shadow-xs\)/)
   assert.match(categoryPage, /FormSection[^>]*className="border-0 bg-transparent p-0 shadow-none"/)
+})
+
+test("sales channel unlimited stock accepts zero in the UI and save validation", () => {
+  assert.match(salesChannelEditor, /无限库存同步数量<Input type="number" min="0" step="1"/)
+  assert.match(salesChannelEditor, /isValidUnlimitedStockQuantity\(unlimitedStockQuantity\)/)
 })
 
 test("dashboard content groups use tokenized surfaces and one responsive KPI separator system", () => {
