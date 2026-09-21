@@ -15,30 +15,32 @@ public final class SalesChannelAdminDtos {
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record AccountSummary(
-            String id,
-            String providerAccountId,
-            String displayName,
-            String accountType,
-            String status,
-            Boolean enabled,
-            Map<String, Object> capabilities,
-            LocalDateTime lastVerifiedAt) { }
+            @JsonProperty("id") String id,
+            @JsonProperty("providerAccountId") String providerAccountId,
+            @JsonProperty("displayName") String displayName,
+            @JsonProperty("accountType") String accountType,
+            @JsonProperty("status") String status,
+            @JsonProperty("enabled") Boolean enabled,
+            @JsonProperty("capabilities") Map<String, Object> capabilities,
+            @JsonProperty("lastVerifiedAt") LocalDateTime lastVerifiedAt) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record ListingSummary(
-            String id,
-            String providerAccountId,
-            String displayName,
-            String accountType,
+            @JsonProperty("id") String id,
+            @JsonProperty("providerAccountId") String providerAccountId,
+            @JsonProperty("displayName") String displayName,
+            @JsonProperty("accountType") String accountType,
             @JsonProperty("isEnabled") Boolean isEnabled,
-            String status,
-            String externalItemId,
-            Long desiredRevision,
-            LocalDateTime lastSyncedAt,
-            String lastErrorCode,
-            String lastErrorMessage,
-            XianyuProviderConfig providerConfig) { }
+            @JsonProperty("status") String status,
+            @JsonProperty("externalItemId") String externalItemId,
+            @JsonProperty("desiredRevision") Long desiredRevision,
+            @JsonProperty("lastSyncedAt") LocalDateTime lastSyncedAt,
+            @JsonProperty("lastErrorCode") String lastErrorCode,
+            @JsonProperty("lastErrorMessage") String lastErrorMessage,
+            @JsonProperty("providerConfig") XianyuProviderConfig providerConfig) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
-    public record UpdateXianyuListingRequest(UUID accountId, @Valid XianyuProviderConfig config) { }
+    public record UpdateXianyuListingRequest(
+            @JsonProperty("accountId") UUID accountId,
+            @JsonProperty("config") @Valid XianyuProviderConfig config) { }
 }

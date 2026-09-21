@@ -282,7 +282,7 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
           闲鱼账号
           <select className={selectClass} value={selectedAccountId} onChange={(event) => setSelectedAccountId(event.target.value)} disabled={Boolean(busy) || accounts.length === 0}>
             <option value="">{accounts.length ? "选择已同步账号" : "暂无已同步账号"}</option>
-            {accounts.map((account) => <option key={account.id} value={account.id}>{account.displayName || account.providerAccountId} · {account.accountType || "UNKNOWN"}</option>)}
+            {accounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ? `${account.displayName} (${account.providerAccountId})` : account.providerAccountId} · {account.accountType || "UNKNOWN"}</option>)}
           </select>
         </label>
         <Button type="button" variant="outline" onClick={() => void handleSyncAccounts()} disabled={Boolean(busy)}><RefreshCw className={busy === "sync" ? "animate-spin" : ""} />同步账号</Button>
