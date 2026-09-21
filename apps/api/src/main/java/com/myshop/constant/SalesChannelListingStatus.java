@@ -8,5 +8,6 @@ public enum SalesChannelListingStatus {
     OFFLINING,
     OFFLINE,
     ERROR,
-    UNKNOWN
+    UNKNOWN,
+    RELIST_REQUIRED
 }

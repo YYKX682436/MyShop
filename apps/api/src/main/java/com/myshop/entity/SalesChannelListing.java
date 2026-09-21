@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -34,8 +35,10 @@ public class SalesChannelListing extends BaseEntity {
     private UUID productId;
 
     @Column(name = "external_item_id", length = 128)
-    @Setter
     private String externalItemId;
+
+    @Column(name = "is_enabled", nullable = false)
+    private boolean enabled;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "desired_state", nullable = false, length = 16)
@@ -61,6 +64,9 @@ public class SalesChannelListing extends BaseEntity {
     @Setter
     private String appliedFingerprint;
 
+    @Column(name = "desired_fingerprint", length = 64)
+    private String desiredFingerprint;
+
     @Column(name = "last_synced_at")
     @Setter
     private LocalDateTime lastSyncedAt;
@@ -75,6 +81,22 @@ public class SalesChannelListing extends BaseEntity {
 
     public Map<String, Object> getProviderConfig() {
         return Collections.unmodifiableMap(new LinkedHashMap<>(providerConfig));
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    public String getDesiredFingerprint() {
+        return desiredFingerprint;
+    }
+
+    public void setDesiredFingerprint(String desiredFingerprint) {
+        this.desiredFingerprint = desiredFingerprint;
     }
 
     public void setProviderConfig(Map<String, Object> providerConfig) {
@@ -94,5 +116,27 @@ public class SalesChannelListing extends BaseEntity {
         if (revision > appliedRevision) {
             appliedRevision = revision;
         }
+    }
+
+    /** Binds the first provider identity and prevents silent replacement by another remote item. */
+    public ExternalItemBindingResult bindExternalItemId(String itemId) {
+        Objects.requireNonNull(itemId, "External item id is required");
+        if (itemId.isBlank()) throw new IllegalArgumentException("External item id must not be blank");
+        if (externalItemId == null) {
+            externalItemId = itemId;
+            return ExternalItemBindingResult.BOUND;
+        }
+        if (externalItemId.equals(itemId)) return ExternalItemBindingResult.ALREADY_BOUND;
+
+        status = SalesChannelListingStatus.UNKNOWN;
+        lastErrorCode = "EXTERNAL_ITEM_ID_CONFLICT";
+        lastErrorMessage = "Provider returned a different item id than the listing's bound external item";
+        return ExternalItemBindingResult.CONFLICT;
+    }
+
+    public enum ExternalItemBindingResult {
+        BOUND,
+        ALREADY_BOUND,
+        CONFLICT
     }
 }

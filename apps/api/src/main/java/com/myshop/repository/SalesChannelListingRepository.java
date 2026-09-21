@@ -8,11 +8,16 @@ import org.springframework.data.repository.query.Param;
 
 import jakarta.persistence.LockModeType;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface SalesChannelListingRepository extends JpaRepository<SalesChannelListing, UUID> {
 
     Optional<SalesChannelListing> findBySalesChannelAccountIdAndProductId(UUID accountId, UUID productId);
+
+    List<SalesChannelListing> findByEnabledTrueOrderByUpdatedAtAsc();
+
+    List<SalesChannelListing> findByProductIdOrderByCreatedAtAsc(UUID productId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT listing FROM SalesChannelListing listing WHERE listing.id = :id")

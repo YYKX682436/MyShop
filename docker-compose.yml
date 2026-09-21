@@ -40,6 +40,16 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       BOOTSTRAP_SUPER_ADMIN_USERNAME: ${BOOTSTRAP_SUPER_ADMIN_USERNAME:-}
       BOOTSTRAP_SUPER_ADMIN_PASSWORD: ${BOOTSTRAP_SUPER_ADMIN_PASSWORD:-}
+      XIANYU_AGENT_BASE_URL: ${XIANYU_AGENT_BASE_URL:-}
+      XIANYU_AGENT_KEY_ID: ${XIANYU_AGENT_KEY_ID:-}
+      XIANYU_AGENT_SECRET: ${XIANYU_AGENT_SECRET:-}
+      XIANYU_AGENT_TIMEOUT_MS: ${XIANYU_AGENT_TIMEOUT_MS:-10000}
+      SALES_CHANNEL_WORKER_ENABLED: ${SALES_CHANNEL_WORKER_ENABLED:-false}
+      SALES_CHANNEL_WORKER_INTERVAL_MS: ${SALES_CHANNEL_WORKER_INTERVAL_MS:-1000}
+      SALES_CHANNEL_WORKER_BATCH_SIZE: ${SALES_CHANNEL_WORKER_BATCH_SIZE:-10}
+      SALES_CHANNEL_WORKER_MAX_ATTEMPTS: ${SALES_CHANNEL_WORKER_MAX_ATTEMPTS:-8}
+      SALES_CHANNEL_WORKER_STALE_RUNNING_MS: ${SALES_CHANNEL_WORKER_STALE_RUNNING_MS:-300000}
+      SALES_CHANNEL_SYNC_SCAN_INTERVAL_MS: ${SALES_CHANNEL_SYNC_SCAN_INTERVAL_MS:-15000}
       UPLOAD_PATH: ${UPLOAD_PATH:-/app/uploads}
       UPLOAD_URL_PREFIX: ${UPLOAD_URL_PREFIX:-/api/uploads}
       PRIVATE_UPLOAD_PATH: ${PRIVATE_UPLOAD_PATH:-/app/private-uploads}
@@ -86,6 +96,9 @@ services:
     networks:
       internal:
         ipv4_address: 172.30.0.20
+      myshop-xianyu-internal:
+        aliases:
+          - myshop-api
 
   node-exporter:
     # Optional sidecar: it must not appear in any application depends_on chain.
@@ -169,3 +182,6 @@ networks:
     ipam:
       config:
         - subnet: 172.30.0.0/24
+  myshop-xianyu-internal:
+    name: myshop-xianyu-internal
+    external: true

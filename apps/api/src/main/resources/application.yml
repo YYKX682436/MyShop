@@ -121,6 +121,16 @@ xianyu:
     secret: ${XIANYU_AGENT_SECRET:}
     timeout-ms: ${XIANYU_AGENT_TIMEOUT_MS:10000}
 
+sales-channel:
+  worker:
+    enabled: ${SALES_CHANNEL_WORKER_ENABLED:false}
+    interval-ms: ${SALES_CHANNEL_WORKER_INTERVAL_MS:1000}
+    batch-size: ${SALES_CHANNEL_WORKER_BATCH_SIZE:10}
+    max-attempts: ${SALES_CHANNEL_WORKER_MAX_ATTEMPTS:8}
+    stale-running-ms: ${SALES_CHANNEL_WORKER_STALE_RUNNING_MS:300000}
+  sync:
+    scan-interval-ms: ${SALES_CHANNEL_SYNC_SCAN_INTERVAL_MS:15000}
+
 # Dashboard host metrics are read from the internal node-exporter sidecar.
 # The endpoint is admin-protected and has no public metrics route.
 dashboard:

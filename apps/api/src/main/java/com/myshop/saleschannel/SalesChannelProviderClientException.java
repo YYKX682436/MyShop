@@ -4,7 +4,8 @@ package com.myshop.saleschannel;
 public final class SalesChannelProviderClientException extends RuntimeException {
 
     public enum Disposition {
-        SAFE_FAILURE,
+        SAFE_RETRYABLE,
+        SAFE_PERMANENT,
         UNKNOWN
     }
 
@@ -22,6 +23,11 @@ public final class SalesChannelProviderClientException extends RuntimeException 
         super(message, cause);
         this.disposition = disposition;
         this.errorCode = errorCode;
+    }
+
+    /** Compatibility constructor; new call sites should state retryability explicitly. */
+    public SalesChannelProviderClientException(String errorCode, String message) {
+        this(Disposition.SAFE_PERMANENT, errorCode, message);
     }
 
     public Disposition getDisposition() {

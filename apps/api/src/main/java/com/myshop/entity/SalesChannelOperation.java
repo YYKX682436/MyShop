@@ -14,9 +14,14 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -79,11 +84,51 @@ public class SalesChannelOperation extends BaseEntity {
     }
 
     public void setPayload(Map<String, Object> payload) {
-        this.payload = payload == null ? new LinkedHashMap<>() : new LinkedHashMap<>(payload);
+        this.payload = deepCopyMap(payload);
+    }
+
+    public Map<String, Object> getPayload() {
+        return deepCopyMap(payload);
     }
 
     public void setResult(Map<String, Object> result) {
-        this.result = result == null ? null : new LinkedHashMap<>(result);
+        this.result = result == null ? null : deepCopyMap(result);
+    }
+
+    public Map<String, Object> getResult() {
+        return result == null ? null : deepCopyMap(result);
+    }
+
+    private static Map<String, Object> deepCopyMap(Map<String, Object> source) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        if (source != null) {
+            source.forEach((key, value) -> copy.put(key, deepCopyValue(value)));
+        }
+        return copy;
+    }
+
+    private static Object deepCopyValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<Object, Object> copy = new LinkedHashMap<>();
+            map.forEach((key, nestedValue) -> copy.put(key, deepCopyValue(nestedValue)));
+            return copy;
+        }
+        if (value instanceof List<?> list) {
+            List<Object> copy = new ArrayList<>(list.size());
+            list.forEach(nestedValue -> copy.add(deepCopyValue(nestedValue)));
+            return copy;
+        }
+        if (value instanceof Set<?> set) {
+            Set<Object> copy = new LinkedHashSet<>();
+            set.forEach(nestedValue -> copy.add(deepCopyValue(nestedValue)));
+            return copy;
+        }
+        if (value instanceof Collection<?> collection) {
+            List<Object> copy = new ArrayList<>(collection.size());
+            collection.forEach(nestedValue -> copy.add(deepCopyValue(nestedValue)));
+            return copy;
+        }
+        return value;
     }
 
     public boolean start(LocalDateTime now) {
@@ -133,6 +178,41 @@ public class SalesChannelOperation extends BaseEntity {
         lastErrorCode = errorCode;
         lastErrorMessage = errorMessage;
         finishedAt = now;
+        return true;
+    }
+
+    public boolean resolveUnknownAsSucceeded(Map<String, Object> result, LocalDateTime now) {
+        if (status != SalesChannelOperationStatus.UNKNOWN) return false;
+        setResult(result);
+        status = SalesChannelOperationStatus.SUCCEEDED;
+        finishedAt = now;
+        lastErrorCode = null;
+        lastErrorMessage = null;
+        return true;
+    }
+
+    public boolean resolveUnknownAsFailed(Map<String, Object> result, String errorCode,
+                                          String errorMessage, LocalDateTime now) {
+        if (status != SalesChannelOperationStatus.UNKNOWN) return false;
+        setResult(result);
+        status = SalesChannelOperationStatus.FAILED;
+        lastErrorCode = errorCode;
+        lastErrorMessage = errorMessage;
+        finishedAt = now;
+        return true;
+    }
+
+    /** The only permitted UNKNOWN -> PENDING transition; used after reconciliation proves no side effect occurred. */
+    public boolean resolveUnknownAsRetryable(String errorCode, String errorMessage,
+                                             LocalDateTime nextAttemptAt) {
+        Objects.requireNonNull(nextAttemptAt, "nextAttemptAt is required");
+        if (status != SalesChannelOperationStatus.UNKNOWN) return false;
+        status = SalesChannelOperationStatus.PENDING;
+        this.nextAttemptAt = nextAttemptAt;
+        startedAt = null;
+        finishedAt = null;
+        lastErrorCode = errorCode;
+        lastErrorMessage = errorMessage;
         return true;
     }
 

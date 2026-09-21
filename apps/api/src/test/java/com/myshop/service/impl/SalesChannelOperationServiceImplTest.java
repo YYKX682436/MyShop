@@ -134,6 +134,30 @@ class SalesChannelOperationServiceImplTest {
     }
 
     @Test
+    void staleSideEffectRunIsConservativelyMovedToUnknown() {
+        UUID listingId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.incrementDesiredRevision();
+        SalesChannelOperation operation = new SalesChannelOperation(listingId, SalesChannelOperationType.PUBLISH, 1,
+                "XIANYU:" + listingId + ":PUBLISH:1", Map.of());
+        operation.setId(operationId);
+        assertTrue(operation.start(LocalDateTime.now().minusMinutes(10)));
+
+        when(operationRepository.findById(operationId)).thenReturn(Optional.of(operation));
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(operationRepository.findByIdForUpdate(operationId)).thenReturn(Optional.of(operation));
+
+        assertTrue(service.recoverStaleRunningAsUnknown(operationId, LocalDateTime.now().minusMinutes(5)));
+
+        assertEquals(SalesChannelOperationStatus.UNKNOWN, operation.getStatus());
+        assertEquals("WORKER_ATTEMPT_STALE", operation.getLastErrorCode());
+        assertEquals(com.myshop.constant.SalesChannelListingStatus.UNKNOWN, listing.getStatus());
+        assertEquals("WORKER_ATTEMPT_STALE", listing.getLastErrorCode());
+    }
+
+    @Test
     void rescheduleRequiresANonNullNextAttemptAt() {
         assertThrows(NullPointerException.class,
                 () -> service.reschedule(UUID.randomUUID(), "TEMPORARY", "retry later", null));

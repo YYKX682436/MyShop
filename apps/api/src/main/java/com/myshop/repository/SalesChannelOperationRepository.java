@@ -21,7 +21,13 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
     List<SalesChannelOperation> findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(
             UUID listingId, long desiredRevision);
 
+    List<SalesChannelOperation> findBySalesChannelListingIdOrderByCreatedAtAsc(UUID listingId);
+
     boolean existsBySalesChannelListingIdAndStatus(UUID listingId, SalesChannelOperationStatus status);
+
+    boolean existsBySalesChannelListingIdAndOperationTypeAndStatus(
+            UUID listingId, com.myshop.constant.SalesChannelOperationType operationType,
+            SalesChannelOperationStatus status);
 
     @Query(value = "SELECT operation.* FROM sales_channel_operations operation "
             + "WHERE operation.status = 'PENDING' "
@@ -83,8 +89,22 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
             + "SET operation.status = :superseded, operation.finishedAt = :now, operation.updatedAt = :now "
             + "WHERE operation.salesChannelListingId = :listingId "
             + "AND operation.desiredRevision < :revision "
-            + "AND operation.status = :pending")
+            + "AND operation.status = :pending "
+            + "AND operation.operationType <> com.myshop.constant.SalesChannelOperationType.RECONCILE")
     int supersedePendingBeforeRevision(@Param("listingId") UUID listingId,
+                                       @Param("revision") long revision,
+                                       @Param("pending") SalesChannelOperationStatus pending,
+                                       @Param("superseded") SalesChannelOperationStatus superseded,
+                                       @Param("now") LocalDateTime now);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE SalesChannelOperation operation "
+            + "SET operation.status = :superseded, operation.finishedAt = :now, operation.updatedAt = :now "
+            + "WHERE operation.salesChannelListingId = :listingId "
+            + "AND operation.desiredRevision = :revision "
+            + "AND operation.operationType = com.myshop.constant.SalesChannelOperationType.SYNC "
+            + "AND operation.status = :pending")
+    int supersedePendingSyncAtRevision(@Param("listingId") UUID listingId,
                                        @Param("revision") long revision,
                                        @Param("pending") SalesChannelOperationStatus pending,
                                        @Param("superseded") SalesChannelOperationStatus superseded,
@@ -116,5 +136,12 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
             + "LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
     List<SalesChannelOperation> findReadyPendingForUpdate(@Param("now") LocalDateTime now,
                                                            @Param("limit") int limit);
+
+    @Query(value = "SELECT operation.* FROM sales_channel_operations operation "
+            + "WHERE operation.status = 'RUNNING' AND operation.started_at IS NOT NULL "
+            + "AND operation.started_at < :cutoff "
+            + "ORDER BY operation.started_at, operation.id LIMIT :limit", nativeQuery = true)
+    List<SalesChannelOperation> findStaleRunningBefore(@Param("cutoff") LocalDateTime cutoff,
+                                                        @Param("limit") int limit);
 
 }

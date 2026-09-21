@@ -9,6 +9,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSnapshot;
+import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
@@ -64,6 +65,28 @@ class XianyuSalesChannelClientTest {
     }
 
     @Test
+    void deterministicMediaRequestIdsStayWithinDatabaseLimitForLongAccountIds() {
+        String accountId = "acct-" + "x".repeat(500);
+        byte[] bytes = {1, 2, 3};
+
+        for (MediaType mediaType : MediaType.values()) {
+            MediaUploadCommand command = new MediaUploadCommand(accountId, mediaType,
+                    "same-name.jpg", "image/jpeg", bytes);
+            MediaUploadCommand replay = new MediaUploadCommand(accountId, mediaType,
+                    "renamed.jpg", "image/jpeg", bytes);
+
+            assertTrue(command.requestId().length() <= 255);
+            assertEquals(command.requestId(), replay.requestId());
+        }
+
+        assertNotEquals(new MediaUploadCommand(accountId, MediaType.IMAGE, "x", "image/jpeg", bytes).requestId(),
+                new MediaUploadCommand(accountId + "-different", MediaType.IMAGE,
+                        "x", "image/jpeg", bytes).requestId());
+        assertNotEquals(new MediaUploadCommand(accountId, MediaType.IMAGE, "x", "image/jpeg", bytes).requestId(),
+                new MediaUploadCommand(accountId, MediaType.VIDEO, "x", "image/jpeg", bytes).requestId());
+    }
+
+    @Test
     void signsRequestsAndUsesTypedSnakeCaseContractForEveryEndpoint() throws Exception {
         try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SUCCESS)) {
             XianyuSalesChannelClient client = client(fixture.baseUrl());
@@ -74,8 +97,14 @@ class XianyuSalesChannelClientTest {
 
             IntegrationEnvelope<CapabilityData> verified = client.verifyAccount("acct-1");
             assertEquals("FISH_SHOP", verified.data().capabilities().accountType());
-            client.uploadMedia(new MediaUploadCommand("acct-1", MediaType.IMAGE, "front.jpg",
-                    "image/jpeg", new byte[]{1, 2, 3}));
+            MediaUploadCommand mediaCommand = new MediaUploadCommand("acct-1", MediaType.IMAGE, "front.jpg",
+                    "image/jpeg", new byte[]{1, 2, 3});
+            IntegrationEnvelope<MediaUploadData> uploaded = client.uploadMedia(mediaCommand);
+            assertEquals("media-1", uploaded.data().mediaId());
+            assertTrue(mediaCommand.requestId().startsWith("XIANYU_MEDIA:acct-1:image:"));
+            assertEquals(mediaCommand.requestId(), new MediaUploadCommand("acct-1", MediaType.IMAGE,
+                    "renamed.jpg", "image/jpeg", new byte[]{1, 2, 3}).requestId());
+            assertTrue(mediaCommand.requestId().length() <= 255);
 
             ListingSnapshot listing = listing();
             IntegrationEnvelope<ListingOperationData> published = client.publish(
@@ -132,6 +161,8 @@ class XianyuSalesChannelClientTest {
             String multipart = new String(requests.get(2).body(), StandardCharsets.ISO_8859_1);
             assertTrue(multipart.contains("name=\"account_id\""));
             assertTrue(multipart.contains("name=\"media_type\""));
+            assertTrue(multipart.contains("name=\"request_id\""));
+            assertTrue(multipart.contains("XIANYU_MEDIA:acct-1:image:"));
             assertTrue(multipart.contains("name=\"file\"; filename=\"front.jpg\""));
             assertTrue(multipart.contains("image/jpeg"));
         }
@@ -189,7 +220,7 @@ class XianyuSalesChannelClientTest {
                 "", "", "", 1000, CLOCK, () -> "fixed-nonce");
         SalesChannelProviderClientException error = assertThrows(SalesChannelProviderClientException.class,
                 () -> unconfigured.publish(new PublishCommand("operation-1", "account-1", 1, listing())));
-        assertEquals(SalesChannelProviderClientException.Disposition.SAFE_FAILURE, error.getDisposition());
+        assertEquals(SalesChannelProviderClientException.Disposition.SAFE_PERMANENT, error.getDisposition());
         assertEquals("AGENT_CONFIGURATION_MISSING", error.getErrorCode());
         assertFalse(error.getMessage().contains(SECRET));
 
@@ -199,8 +230,39 @@ class XianyuSalesChannelClientTest {
                                 new ListingSnapshot("", "", null, null, List.of(), List.of(), null, null,
                                         null, null, null, null, List.of(), 1, List.of(), List.of(), "", null,
                                         null, null, false, null))));
-        assertEquals(SalesChannelProviderClientException.Disposition.SAFE_FAILURE, invalid.getDisposition());
+        assertEquals(SalesChannelProviderClientException.Disposition.SAFE_PERMANENT, invalid.getDisposition());
         assertEquals("INVALID_LISTING", invalid.getErrorCode());
+    }
+
+    @Test
+    void connectionFailureIsExplicitlySafeToRetry() {
+        SalesChannelProviderClientException error = assertThrows(SalesChannelProviderClientException.class,
+                () -> client("http://127.0.0.1:1").listAccounts());
+        assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE, error.getDisposition());
+        assertEquals("AGENT_UNREACHABLE", error.getErrorCode());
+    }
+
+    @Test
+    void mediaUploadTransportFailureIsSafeToRetryWithItsStableRequestId() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.RESET_AFTER_READ)) {
+            MediaUploadCommand command = new MediaUploadCommand("acct-1", MediaType.IMAGE, "front.jpg",
+                    "image/jpeg", new byte[]{1, 2, 3});
+            SalesChannelProviderClientException error = assertThrows(SalesChannelProviderClientException.class,
+                    () -> client(fixture.baseUrl()).uploadMedia(command));
+            assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE, error.getDisposition());
+            String multipart = new String(fixture.requests().getFirst().body(), StandardCharsets.ISO_8859_1);
+            assertTrue(multipart.contains(command.requestId()));
+        }
+    }
+
+    @Test
+    void reconcileTimeoutIsExplicitlySafeToRetry() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.RESET_AFTER_READ)) {
+            SalesChannelProviderClientException error = assertThrows(SalesChannelProviderClientException.class,
+                    () -> client(fixture.baseUrl()).reconcile(
+                            new ReconcileCommand("reconcile-1", "acct-1", "target-1", null, 1)));
+            assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE, error.getDisposition());
+        }
     }
 
     @Test
@@ -354,6 +416,11 @@ class XianyuSalesChannelClientTest {
                     && exchange.getRequestHeaders().getFirst("Content-Type").startsWith("application/json")) {
                 JsonNode request = mapper.readTree(requestBody);
                 if (request.hasNonNull("request_id")) requestId = request.path("request_id").asText();
+            } else if (exchange.getRequestURI().getRawPath().equals("/api/integration/v1/media")) {
+                java.util.regex.Matcher matcher = java.util.regex.Pattern
+                        .compile("name=\"request_id\"\\r\\n\\r\\n([^\\r\\n]+)")
+                        .matcher(new String(requestBody, StandardCharsets.ISO_8859_1));
+                if (matcher.find()) requestId = matcher.group(1);
             }
             Object data = switch (exchange.getRequestURI().getRawPath()) {
                 case "/api/integration/v1/accounts" -> Map.of("accounts", List.of(Map.of(

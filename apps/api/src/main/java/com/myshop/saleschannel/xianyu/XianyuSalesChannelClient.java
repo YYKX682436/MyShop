@@ -98,14 +98,14 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
     @Override
     public IntegrationEnvelope<AccountsData> listAccounts() {
         return exchange("GET", "/accounts", new byte[0], "application/json",
-                responseType(AccountsData.class), false, null, null);
+                responseType(AccountsData.class), RequestSemantics.READ_ONLY, null, null);
     }
 
     @Override
     public IntegrationEnvelope<CapabilityData> verifyAccount(String accountId) {
         String path = "/accounts/" + pathSegment(accountId) + "/verify";
         return exchange("POST", path, new byte[0], "application/json",
-                responseType(CapabilityData.class), false, UUID.randomUUID().toString(), null);
+                responseType(CapabilityData.class), RequestSemantics.READ_ONLY, UUID.randomUUID().toString(), null);
     }
 
     @Override
@@ -114,7 +114,8 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         String boundary = "----MyShopXianyu" + nonceSupplier.get();
         byte[] body = multipartBody(boundary, command);
         return exchange("POST", "/media", body, "multipart/form-data; boundary=" + boundary,
-                responseType(MediaUploadData.class), true, UUID.randomUUID().toString(), null);
+                responseType(MediaUploadData.class), RequestSemantics.SAFE_REPEATABLE,
+                command.requestId(), command.requestId());
     }
 
     @Override
@@ -126,7 +127,8 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         byte[] body = serialize(new XianyuPublishRequest(command.requestId(), command.accountId(),
                 command.desiredRevision(), command.listing()));
         return exchange("POST", "/listings/publish", body, "application/json",
-                responseType(ListingOperationData.class), true, command.requestId(), command.requestId());
+                responseType(ListingOperationData.class), RequestSemantics.SIDE_EFFECTING,
+                command.requestId(), command.requestId());
     }
 
     @Override
@@ -138,7 +140,8 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         byte[] body = serialize(new XianyuPublishRequest(command.requestId(), command.accountId(),
                 command.desiredRevision(), command.listing()));
         return exchange("PUT", "/listings/" + pathSegment(itemId), body, "application/json",
-                responseType(ListingOperationData.class), true, command.requestId(), command.requestId());
+                responseType(ListingOperationData.class), RequestSemantics.SIDE_EFFECTING,
+                command.requestId(), command.requestId());
     }
 
     @Override
@@ -149,7 +152,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         byte[] body = serialize(new OperationRequest(command.requestId(), command.accountId(),
                 command.desiredRevision()));
         return exchange("POST", "/listings/" + pathSegment(itemId) + "/offline", body,
-                "application/json", responseType(ListingOperationData.class), true,
+                "application/json", responseType(ListingOperationData.class), RequestSemantics.SIDE_EFFECTING,
                 command.requestId(), command.requestId());
     }
 
@@ -161,7 +164,8 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         byte[] body = serialize(new OperationRequest(command.requestId(), command.accountId(),
                 command.desiredRevision()));
         return exchange("DELETE", "/listings/" + pathSegment(itemId), body, "application/json",
-                responseType(ListingOperationData.class), true, command.requestId(), command.requestId());
+                responseType(ListingOperationData.class), RequestSemantics.SIDE_EFFECTING,
+                command.requestId(), command.requestId());
     }
 
     @Override
@@ -175,12 +179,13 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         byte[] body = serialize(new ReconcileRequest(command.requestId(), command.accountId(),
                 command.targetRequestId(), blankToNull(command.expectedItemId()), command.desiredRevision()));
         return exchange("POST", "/listings/reconcile", body, "application/json",
-                responseType(ReconcileData.class), false, command.requestId(), command.requestId());
+                responseType(ReconcileData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
     }
 
     private <T> IntegrationEnvelope<T> exchange(String method, String endpoint, byte[] rawBody,
                                                  String contentType, JavaType responseType,
-                                                 boolean mayHaveSideEffects, String correlationId,
+                                                 RequestSemantics semantics, String correlationId,
                                                  String expectedRequestId) {
         URI uri = configuredUri(endpoint);
         String actualCorrelationId = correlationId == null ? UUID.randomUUID().toString() : correlationId;
@@ -208,9 +213,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
                     .method(method, publisher)
                     .build();
         } catch (RuntimeException e) {
-            throw new SalesChannelProviderClientException(
-                    SalesChannelProviderClientException.Disposition.SAFE_FAILURE,
-                    "REQUEST_BUILD_FAILED", "Unable to construct Xianyu Agent request");
+            throw permanentFailure("REQUEST_BUILD_FAILED", "Unable to construct Xianyu Agent request");
         }
 
         final HttpResponse<byte[]> response;
@@ -218,34 +221,44 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            if (mayHaveSideEffects) return unknown(actualCorrelationId, "AGENT_OUTCOME_UNKNOWN");
-            throw safeFailure("AGENT_REQUEST_INTERRUPTED", "Xianyu Agent request was interrupted");
+            if (semantics == RequestSemantics.SIDE_EFFECTING) {
+                return unknown(actualCorrelationId, "AGENT_OUTCOME_UNKNOWN");
+            }
+            throw retryableFailure("AGENT_REQUEST_INTERRUPTED", "Xianyu Agent request was interrupted");
         } catch (IOException | RuntimeException e) {
             if (definitelyBeforeConnection(e)) {
-                throw safeFailure("AGENT_UNREACHABLE", "Xianyu Agent connection could not be established");
+                throw retryableFailure("AGENT_UNREACHABLE", "Xianyu Agent connection could not be established");
             }
-            if (mayHaveSideEffects) return unknown(actualCorrelationId, "AGENT_OUTCOME_UNKNOWN");
-            throw safeFailure("AGENT_UNAVAILABLE", "Xianyu Agent request failed before a usable response");
+            if (semantics == RequestSemantics.SIDE_EFFECTING) {
+                return unknown(actualCorrelationId, "AGENT_OUTCOME_UNKNOWN");
+            }
+            throw retryableFailure("AGENT_UNAVAILABLE", "Xianyu Agent request failed before a usable response");
         }
 
         byte[] responseBody = response.body() == null ? new byte[0] : response.body();
         if (responseBody.length > MAX_JSON_RESPONSE_BYTES) {
-            if (mayHaveSideEffects) return unknown(actualCorrelationId, "AGENT_RESPONSE_TOO_LARGE");
-            throw safeFailure("AGENT_RESPONSE_TOO_LARGE", "Xianyu Agent response exceeded the size limit");
+            if (semantics == RequestSemantics.SIDE_EFFECTING) {
+                return unknown(actualCorrelationId, "AGENT_RESPONSE_TOO_LARGE");
+            }
+            throw retryableFailure("AGENT_RESPONSE_TOO_LARGE", "Xianyu Agent response exceeded the size limit");
         }
 
         final IntegrationEnvelope<T> envelope;
         try {
             envelope = objectMapper.readValue(responseBody, responseType);
         } catch (IOException | RuntimeException e) {
-            if (mayHaveSideEffects) return unknown(actualCorrelationId, "AGENT_RESPONSE_UNREADABLE");
-            throw safeFailure("AGENT_RESPONSE_UNREADABLE", "Xianyu Agent returned an unreadable response");
+            if (semantics == RequestSemantics.SIDE_EFFECTING) {
+                return unknown(actualCorrelationId, "AGENT_RESPONSE_UNREADABLE");
+            }
+            throw retryableFailure("AGENT_RESPONSE_UNREADABLE", "Xianyu Agent returned an unreadable response");
         }
         if (envelope == null || envelope.outcome() == null) {
-            if (mayHaveSideEffects) return unknown(actualCorrelationId, "AGENT_RESPONSE_INVALID");
-            throw safeFailure("AGENT_RESPONSE_INVALID", "Xianyu Agent returned an invalid response envelope");
+            if (semantics == RequestSemantics.SIDE_EFFECTING) {
+                return unknown(actualCorrelationId, "AGENT_RESPONSE_INVALID");
+            }
+            throw retryableFailure("AGENT_RESPONSE_INVALID", "Xianyu Agent returned an invalid response envelope");
         }
-        if (mayHaveSideEffects && response.statusCode() >= 500) {
+        if (semantics == RequestSemantics.SIDE_EFFECTING && response.statusCode() >= 500) {
             return unknown(actualCorrelationId, "AGENT_HTTP_OUTCOME_UNKNOWN");
         }
         if (response.statusCode() >= 400 && response.statusCode() < 500
@@ -261,11 +274,16 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             return redactSensitiveResponse(correlatedFailure, signature);
         }
         if (expectedRequestId != null && !expectedRequestId.equals(envelope.requestId())) {
-            return unknown(actualCorrelationId, "AGENT_REQUEST_ID_MISMATCH");
+            if (semantics == RequestSemantics.SIDE_EFFECTING) {
+                return unknown(actualCorrelationId, "AGENT_REQUEST_ID_MISMATCH");
+            }
+            throw permanentFailure("AGENT_REQUEST_ID_MISMATCH", "Xianyu Agent response request_id did not match");
         }
         if (envelope.outcome() == Outcome.SUCCEEDED && (response.statusCode() < 200 || response.statusCode() >= 300)) {
-            if (mayHaveSideEffects) return unknown(actualCorrelationId, "AGENT_HTTP_OUTCOME_MISMATCH");
-            throw safeFailure("AGENT_HTTP_OUTCOME_MISMATCH", "Xianyu Agent HTTP status conflicts with its outcome");
+            if (semantics == RequestSemantics.SIDE_EFFECTING) {
+                return unknown(actualCorrelationId, "AGENT_HTTP_OUTCOME_MISMATCH");
+            }
+            throw retryableFailure("AGENT_HTTP_OUTCOME_MISMATCH", "Xianyu Agent HTTP status conflicts with its outcome");
         }
         return redactSensitiveResponse(envelope, signature);
     }
@@ -287,7 +305,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             String prefix = base.getRawPath() == null ? "" : base.getRawPath().replaceAll("/+$", "");
             return URI.create(base.getScheme() + "://" + base.getRawAuthority() + prefix + API_ROOT + endpoint);
         } catch (RuntimeException e) {
-            throw safeFailure("AGENT_CONFIGURATION_INVALID", "Xianyu Agent base URL is invalid");
+            throw permanentFailure("AGENT_CONFIGURATION_INVALID", "Xianyu Agent base URL is invalid");
         }
     }
 
@@ -300,7 +318,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             return envelope;
         }
         return new IntegrationEnvelope<>(envelope.requestId(), envelope.outcome(), envelope.data(),
-                new IntegrationError(code, message));
+                new IntegrationError(code, message, error.retryable()));
     }
 
     private String redact(String value, String signature) {
@@ -313,14 +331,14 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
 
     private static <T> IntegrationEnvelope<T> unknown(String requestId, String code) {
         return new IntegrationEnvelope<>(requestId, Outcome.UNKNOWN, null,
-                new IntegrationError(code, "The Agent may have processed the request; reconcile before retrying"));
+                new IntegrationError(code, "The Agent may have processed the request; reconcile before retrying", false));
     }
 
     private byte[] serialize(Object value) {
         try {
             return objectMapper.writeValueAsBytes(value);
         } catch (IOException | RuntimeException e) {
-            throw safeFailure("REQUEST_SERIALIZATION_FAILED", "Unable to serialize Xianyu Agent request");
+            throw permanentFailure("REQUEST_SERIALIZATION_FAILED", "Unable to serialize Xianyu Agent request");
         }
     }
 
@@ -356,7 +374,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         if (listing.originalPrice() != null && listing.originalPrice().signum() <= 0) {
             throw safeFailure("INVALID_LISTING", "original_price must be greater than zero");
         }
-        if (listing.quantity() != null && (listing.quantity() < 1 || listing.quantity() > 999_999)) {
+        if (listing.quantity() != null && (listing.quantity() < 0 || listing.quantity() > 999_999)) {
             throw safeFailure("INVALID_LISTING", "quantity is out of range");
         }
         if (listing.platformAttributes() != null && listing.platformAttributes().size() > 30) {
@@ -378,7 +396,8 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
     }
 
     private static void validateMediaCommand(MediaUploadCommand command) {
-        if (command == null || blank(command.accountId()) || command.mediaType() == null
+        if (command == null || blank(command.requestId()) || command.requestId().length() > 255
+                || blank(command.accountId()) || command.mediaType() == null
                 || command.accountId().length() > 128 || hasHeaderControls(command.accountId())
                 || blank(command.filename()) || hasHeaderControls(command.filename()) || blank(command.contentType())
                 || !command.contentType().matches("[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+")
@@ -399,6 +418,9 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
                 + "Content-Disposition: form-data; name=\"media_type\"\r\n\r\n"
                 + command.mediaType().wireValue() + "\r\n"
                 + "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"request_id\"\r\n\r\n"
+                + command.requestId() + "\r\n"
+                + "--" + boundary + "\r\n"
                 + "Content-Disposition: form-data; name=\"file\"; filename=\"" + filename + "\"\r\n"
                 + "Content-Type: " + command.contentType() + "\r\n\r\n";
         byte[] prefix = start.getBytes(StandardCharsets.UTF_8);
@@ -412,7 +434,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
 
     private static String pathSegment(String value) {
         if (value == null || value.isBlank() || value.length() > 255) {
-            throw safeFailure("INVALID_REQUEST", "Path identifier is required");
+            throw permanentFailure("INVALID_REQUEST", "Path identifier is required");
         }
         return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
@@ -440,9 +462,20 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
     }
 
     private static SalesChannelProviderClientException safeFailure(String code, String message) {
-        return new SalesChannelProviderClientException(
-                SalesChannelProviderClientException.Disposition.SAFE_FAILURE, code, message);
+        return permanentFailure(code, message);
     }
+
+    private static SalesChannelProviderClientException retryableFailure(String code, String message) {
+        return new SalesChannelProviderClientException(
+                SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE, code, message);
+    }
+
+    private static SalesChannelProviderClientException permanentFailure(String code, String message) {
+        return new SalesChannelProviderClientException(
+                SalesChannelProviderClientException.Disposition.SAFE_PERMANENT, code, message);
+    }
+
+    private enum RequestSemantics { READ_ONLY, SAFE_REPEATABLE, SIDE_EFFECTING }
 
     private static Supplier<String> secureNonceSupplier() {
         SecureRandom random = new SecureRandom();

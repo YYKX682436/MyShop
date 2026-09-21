@@ -39,7 +39,9 @@ public class SalesChannelAccountServiceImpl {
         account.setDisplayName(displayName);
         account.setStatus(status);
         account.setCapabilities(capabilities);
-        account.setLastVerifiedAt(lastVerifiedAt);
+        if (lastVerifiedAt != null || account.getLastVerifiedAt() == null) {
+            account.setLastVerifiedAt(lastVerifiedAt);
+        }
         return accountRepository.save(account);
     }
 

@@ -441,6 +441,72 @@ export const adminDashboardApi = {
 // Admin Product
 // ============================================================
 
+export type XianyuPriceMode = "PRODUCT_RETAIL" | "FIXED" | "MARKUP_PERCENT"
+
+export interface XianyuPlatformAttribute {
+  propertyId?: string
+  propertyName?: string
+  valueId?: string
+  valueName?: string
+  text?: string
+  properties?: Record<string, unknown>
+}
+
+export interface XianyuProviderConfig {
+  titleOverride?: string | null
+  descriptionOverride?: string | null
+  imageUrls?: string[]
+  priceMode?: XianyuPriceMode
+  fixedPrice?: number | null
+  markupPercent?: number | null
+  address?: string | null
+  addressExpectedText?: string | null
+  platformCategoryId?: string | null
+  platformCategoryName?: string | null
+  platformChannelCategoryId?: string | null
+  platformChannelCategoryName?: string | null
+  platformLeafId?: string | null
+  platformTbCategoryId?: string | null
+  platformAttributes?: XianyuPlatformAttribute[]
+  deliveryMethod?: string | null
+  shippingMethod?: string | null
+  supportPickup?: boolean
+  postage?: number | null
+  unlimitedStockQuantity?: number | null
+}
+
+export interface SalesChannelAccountSummary {
+  id: string
+  providerAccountId: string
+  displayName?: string | null
+  accountType?: "FISH_SHOP" | "PERSONAL" | "UNKNOWN" | string | null
+  status: string
+  enabled?: boolean
+  isEnabled?: boolean
+  capabilities?: Record<string, boolean | string | null> | null
+  lastVerifiedAt?: string | null
+}
+
+export interface SalesChannelListingSummary {
+  id: string
+  providerAccountId: string
+  displayName?: string | null
+  accountType?: "FISH_SHOP" | "PERSONAL" | "UNKNOWN" | string | null
+  isEnabled: boolean
+  status: string
+  externalItemId?: string | null
+  desiredRevision?: number | null
+  lastSyncedAt?: string | null
+  lastErrorCode?: string | null
+  lastErrorMessage?: string | null
+  providerConfig?: XianyuProviderConfig | null
+}
+
+export interface UpdateXianyuListingRequest {
+  accountId: string
+  config: XianyuProviderConfig
+}
+
 export const adminProductApi = {
   getList: (params: {
     page?: number; page_size?: number; category_id?: string; is_enabled?: number; keyword?: string;
@@ -498,6 +564,32 @@ export const adminProductApi = {
     formData.append("file", file)
     return uploadRequest<{ url: string }>("/upload/image", formData)
   },
+}
+
+// ============================================================
+// Admin Sales Channels
+// ============================================================
+
+export const adminSalesChannelApi = {
+  getAccounts: () =>
+    request<SalesChannelAccountSummary[]>("/admin/sales-channels/accounts"),
+  syncXianyuAccounts: () =>
+    request<unknown>("/admin/sales-channels/xianyu/accounts/sync", { method: "POST" }),
+  verifyAccount: (accountId: string) =>
+    request<SalesChannelAccountSummary>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/verify`, { method: "POST" }),
+  getProductListings: (productId: string) =>
+    request<SalesChannelListingSummary[]>(`/admin/products/${encodeURIComponent(productId)}/sales-channels`),
+  updateXianyuListing: (productId: string, data: UpdateXianyuListingRequest) =>
+    request<SalesChannelListingSummary>(`/admin/products/${encodeURIComponent(productId)}/sales-channels/xianyu`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  enableListing: (listingId: string) =>
+    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/enable`, { method: "POST" }),
+  disableListing: (listingId: string) =>
+    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/disable`, { method: "POST" }),
+  retryListing: (listingId: string) =>
+    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/retry`, { method: "POST" }),
 }
 
 // ============================================================

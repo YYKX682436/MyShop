@@ -4,6 +4,10 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -36,7 +40,12 @@ public final class SalesChannelDtos {
 
     public record IntegrationError(
             @JsonProperty("code") String code,
-            @JsonProperty("message") String message) { }
+            @JsonProperty("message") String message,
+            @JsonProperty("retryable") Boolean retryable) {
+        public IntegrationError(String code, String message) {
+            this(code, message, false);
+        }
+    }
 
     public record IntegrationEnvelope<T>(
             @JsonProperty("request_id") String requestId,
@@ -70,6 +79,7 @@ public final class SalesChannelDtos {
             @JsonProperty("capabilities") AccountCapabilities capabilities) { }
 
     public record MediaUploadCommand(
+            String requestId,
             String accountId,
             MediaType mediaType,
             String filename,
@@ -77,6 +87,34 @@ public final class SalesChannelDtos {
             byte[] content) {
         public MediaUploadCommand {
             content = content == null ? null : content.clone();
+            if (requestId == null || requestId.isBlank()) {
+                requestId = deterministicRequestId(accountId, mediaType, content);
+            }
+            if (requestId != null && requestId.length() > 255) {
+                throw new IllegalArgumentException("media request id must not exceed 255 characters");
+            }
+        }
+
+        public MediaUploadCommand(String accountId, MediaType mediaType, String filename,
+                                  String contentType, byte[] content) {
+            this(deterministicRequestId(accountId, mediaType, content), accountId, mediaType,
+                    filename, contentType, content);
+        }
+
+        private static String deterministicRequestId(String accountId, MediaType mediaType, byte[] content) {
+            if (accountId == null || accountId.isBlank() || mediaType == null || content == null) {
+                return null;
+            }
+            try {
+                String digest = HexFormat.of().formatHex(
+                        MessageDigest.getInstance("SHA-256").digest(content));
+                String accountToken = accountId.length() <= 166 ? accountId
+                        : HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                                .digest(accountId.getBytes(StandardCharsets.UTF_8)));
+                return "XIANYU_MEDIA:" + accountToken + ":" + mediaType.wireValue() + ":" + digest;
+            } catch (NoSuchAlgorithmException exception) {
+                throw new IllegalStateException("SHA-256 is unavailable", exception);
+            }
         }
 
         @Override
@@ -141,7 +179,10 @@ public final class SalesChannelDtos {
 
     public record ReconcileData(
             @JsonProperty("target_request_id") String targetRequestId,
+            @JsonProperty("target_outcome") Outcome targetOutcome,
             @JsonProperty("operation_type") String operationType,
             @JsonProperty("item_id") String itemId,
-            @JsonProperty("desired_revision") Long desiredRevision) { }
+            @JsonProperty("desired_revision") Long desiredRevision,
+            @JsonProperty("result") Map<String, Object> result,
+            @JsonProperty("target_retryable") Boolean targetRetryable) { }
 }

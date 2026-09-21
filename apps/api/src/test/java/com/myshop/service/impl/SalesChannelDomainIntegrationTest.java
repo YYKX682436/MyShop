@@ -6,6 +6,7 @@ import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductCategory;
 import com.myshop.entity.ProductSpec;
@@ -21,6 +22,8 @@ import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.service.ManualStockService;
+import com.myshop.service.SalesChannelDesiredStatePlanner;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +55,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -78,6 +82,8 @@ class SalesChannelDomainIntegrationTest {
     @Autowired private SalesChannelAccountServiceImpl accountService;
     @Autowired private SalesChannelListingServiceImpl listingService;
     @Autowired private SalesChannelOperationServiceImpl operationService;
+    @Autowired private SalesChannelDesiredStatePlanner desiredStatePlanner;
+    @Autowired private ManualStockService manualStockService;
 
     @DynamicPropertySource
     static void postgresProperties(DynamicPropertyRegistry registry) {
@@ -112,6 +118,8 @@ class SalesChannelDomainIntegrationTest {
     @Test
     void accountAndListingUpsertsAreStableAndDatabaseKeysRejectDuplicates() {
         Fixture fixture = fixture(false);
+        assertFalse(fixture.listing().isEnabled());
+        assertNull(fixture.listing().getDesiredFingerprint());
         SalesChannelAccount repeated = accountService.upsert(SalesChannelProvider.XIANYU,
                 fixture.account().getProviderAccountId(), "renamed", SalesChannelAccountStatus.AUTH_REQUIRED,
                 Map.of("supports_sync", true), LocalDateTime.now());
@@ -128,6 +136,11 @@ class SalesChannelDomainIntegrationTest {
                 INSERT INTO sales_channel_listings(id, sales_channel_account_id, product_id)
                 VALUES (?, ?, ?)
                 """, UUID.randomUUID(), fixture.account().getId(), fixture.product().getId()));
+
+        fixture.listing().setStatus(SalesChannelListingStatus.RELIST_REQUIRED);
+        listingRepository.saveAndFlush(fixture.listing());
+        assertEquals(SalesChannelListingStatus.RELIST_REQUIRED,
+                listingRepository.findById(fixture.listing().getId()).orElseThrow().getStatus());
 
         SalesChannelListing secondCall = listingService.ensureDraft(fixture.account().getId(), fixture.product().getId());
         assertEquals(fixture.listing().getId(), secondCall.getId());
@@ -252,6 +265,66 @@ class SalesChannelDomainIntegrationTest {
     }
 
     @Test
+    void desiredFingerprintDeduplicatesDriftAndFishShopStockZeroUsesSyncWithoutRepublish() {
+        Fixture fixture = fixture(false);
+        accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
+                fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
+                Map.of("account_type", "FISH_SHOP"), LocalDateTime.now());
+        Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
+        product.setStockMode(StockMode.MANUAL);
+        productRepository.saveAndFlush(product);
+        manualStockService.setAvailable(product.getId(), null, 10);
+
+        SalesChannelListing firstPlan = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+        assertEquals(1, firstPlan.getDesiredRevision());
+        desiredStatePlanner.refresh(fixture.listing().getId());
+        desiredStatePlanner.refresh(fixture.listing().getId());
+        assertEquals(1, listingRepository.findById(fixture.listing().getId()).orElseThrow().getDesiredRevision());
+        List<SalesChannelOperation> firstRevision = operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(fixture.listing().getId(), 1);
+        assertEquals(1, firstRevision.size());
+        SalesChannelOperation publish = firstRevision.get(0);
+        assertEquals(SalesChannelOperationType.PUBLISH, publish.getOperationType());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> initialSnapshot = (Map<String, Object>) publish.getPayload().get("desired_snapshot");
+        assertEquals(10, ((Number) initialSnapshot.get("quantity")).intValue());
+
+        assertTrue(operationService.markRunning(publish.getId()));
+        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "fish-shop-item-1"),
+                String.valueOf(publish.getPayload().get("desired_fingerprint"))));
+
+        manualStockService.setAvailable(product.getId(), null, 0);
+        SalesChannelListing zeroPlan = desiredStatePlanner.refresh(fixture.listing().getId());
+        assertEquals(2, zeroPlan.getDesiredRevision());
+        SalesChannelOperation zeroSync = operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(fixture.listing().getId(), 2)
+                .stream().filter(operation -> operation.getOperationType() == SalesChannelOperationType.SYNC)
+                .findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> zeroSnapshot = (Map<String, Object>) zeroSync.getPayload().get("desired_snapshot");
+        assertEquals(0, ((Number) zeroSnapshot.get("quantity")).intValue());
+
+        manualStockService.setAvailable(product.getId(), null, 5);
+        SalesChannelListing fivePlan = desiredStatePlanner.refresh(fixture.listing().getId());
+        assertEquals(3, fivePlan.getDesiredRevision());
+        assertEquals(SalesChannelOperationStatus.SUPERSEDED,
+                operationRepository.findById(zeroSync.getId()).orElseThrow().getStatus());
+        List<SalesChannelOperation> currentOperations = operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(fixture.listing().getId(), 3);
+        assertEquals(1, currentOperations.size());
+        assertEquals(SalesChannelOperationType.SYNC, currentOperations.get(0).getOperationType());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fiveSnapshot = (Map<String, Object>) currentOperations.get(0)
+                .getPayload().get("desired_snapshot");
+        assertEquals(5, ((Number) fiveSnapshot.get("quantity")).intValue());
+
+        desiredStatePlanner.refresh(fixture.listing().getId());
+        assertEquals(3, listingRepository.findById(fixture.listing().getId()).orElseThrow().getDesiredRevision());
+        assertEquals(1, operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(fixture.listing().getId(), 3).size());
+    }
+
+    @Test
     void runningUnknownSucceededAndFailedOperationsAreNotSupersededByNewRevision() {
         Fixture runningFixture = fixture(false);
         listingService.setDesiredState(runningFixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
@@ -311,7 +384,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(SalesChannelOperationStatus.PENDING,
                 operationRepository.findById(sync.getId()).orElseThrow().getStatus());
         assertTrue(operationService.findReadyPending(LocalDateTime.now(), 10).isEmpty());
-        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("published", true), null));
+        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "publish-123"), null));
         assertEquals(List.of(sync.getId()), operationService.findReadyPending(LocalDateTime.now(), 10)
                 .stream().map(SalesChannelOperation::getId).toList());
         assertTrue(operationService.markRunning(sync.getId()));
@@ -319,7 +392,7 @@ class SalesChannelDomainIntegrationTest {
     }
 
     @Test
-    void failedReconciliationKeepsUnknownUntilALaterSuccessfulReconciliation() {
+    void failedReconciliationKeepsUnknownUntilLaterResolutionOfItsTarget() {
         Fixture fixture = fixture(false);
         SalesChannelOperation ambiguous = operationService.request(fixture.listing().getId(),
                 SalesChannelOperationType.SYNC, Map.of());
@@ -333,8 +406,10 @@ class SalesChannelDomainIntegrationTest {
         SalesChannelListing stillUnknown = listingRepository.findById(fixture.listing().getId()).orElseThrow();
         assertEquals(SalesChannelListingStatus.UNKNOWN, stillUnknown.getStatus());
         assertEquals("TIMEOUT", stillUnknown.getLastErrorCode());
-        assertThrows(IllegalStateException.class, () -> operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.OFFLINE, Map.of()));
+        SalesChannelOperation latestIntent = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.OFFLINE, Map.of("intent", "preserved while unknown"));
+        assertEquals(SalesChannelOperationStatus.PENDING, latestIntent.getStatus());
+        assertFalse(operationService.markRunning(latestIntent.getId()));
 
         listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "recheck"));
         SalesChannelOperation successfulReconciliation = operationService.request(fixture.listing().getId(),
@@ -342,10 +417,16 @@ class SalesChannelDomainIntegrationTest {
         assertTrue(operationService.markRunning(successfulReconciliation.getId()));
         assertTrue(operationRepository.findById(successfulReconciliation.getId()).orElseThrow().getStartedAt()
                 .isAfter(operationRepository.findById(ambiguous.getId()).orElseThrow().getFinishedAt()));
-        assertTrue(operationService.markSucceeded(successfulReconciliation.getId(), Map.of("checked", true), null));
+        assertThrows(IllegalStateException.class, () -> operationService.markSucceeded(
+                successfulReconciliation.getId(), Map.of("checked", true), null));
+        assertTrue(operationService.resolveUnknownAsSucceeded(successfulReconciliation.getId(), ambiguous.getId(),
+                Map.of("checked", true), Map.of("target_outcome", "SUCCEEDED", "target_result", Map.of("checked", true)),
+                null));
         SalesChannelListing reconciled = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertEquals(SalesChannelListingStatus.OFFLINE, reconciled.getStatus());
-        assertNull(reconciled.getLastErrorCode());
+        assertEquals(SalesChannelListingStatus.UNKNOWN, reconciled.getStatus());
+        assertEquals("TIMEOUT", reconciled.getLastErrorCode());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(ambiguous.getId()).orElseThrow().getStatus());
     }
 
     @Test
@@ -393,20 +474,434 @@ class SalesChannelDomainIntegrationTest {
                 listingRepository.findById(fixture.listing().getId()).orElseThrow().getStatus());
         assertTrue(operationService.findReadyPending(LocalDateTime.now(), 20).isEmpty());
         assertFalse(operationService.markRunning(waiting.getId()));
-        assertThrows(IllegalStateException.class, () -> operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.OFFLINE, Map.of("another", "not allowed")));
+        assertEquals(SalesChannelOperationStatus.PENDING,
+                operationRepository.findById(waiting.getId()).orElseThrow().getStatus());
 
         SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
                 SalesChannelOperationType.RECONCILE, Map.of());
         assertEquals(List.of(reconciliation.getId()), operationService.findReadyPending(LocalDateTime.now(), 20)
                 .stream().map(SalesChannelOperation::getId).toList());
         assertTrue(operationService.markRunning(reconciliation.getId()));
-        assertTrue(operationService.markSucceeded(reconciliation.getId(), Map.of("checked", true), null));
-        assertEquals(SalesChannelOperationStatus.UNKNOWN,
+        assertTrue(operationService.resolveUnknownAsSucceeded(reconciliation.getId(), ambiguous.getId(),
+                Map.of("checked", true), Map.of("target_outcome", "SUCCEEDED"), null));
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
                 operationRepository.findById(ambiguous.getId()).orElseThrow().getStatus());
         assertEquals(List.of(waiting.getId()), operationService.findReadyPending(LocalDateTime.now(), 20)
                 .stream().map(SalesChannelOperation::getId).toList());
         assertTrue(operationService.markRunning(waiting.getId()));
+    }
+
+    @Test
+    void stalePublishBindsExternalIdentityWithoutChangingNewerDesiredState() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation stalePublish = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("revision", 1));
+        assertTrue(operationService.markRunning(stalePublish.getId()));
+
+        listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision two"));
+        SalesChannelListing beforeCompletion = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(2, beforeCompletion.getDesiredRevision());
+        assertEquals(SalesChannelListingStatus.PUBLISHING, beforeCompletion.getStatus());
+
+        assertTrue(operationService.markSucceeded(stalePublish.getId(), Map.of("item_id", "remote-123"),
+                "revision-one-fingerprint"));
+        SalesChannelListing afterCompletion = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals("remote-123", afterCompletion.getExternalItemId());
+        assertEquals(0, afterCompletion.getAppliedRevision());
+        assertNull(afterCompletion.getAppliedFingerprint());
+        assertEquals(SalesChannelListingStatus.PUBLISHING, afterCompletion.getStatus());
+    }
+
+    @Test
+    void stalePersonalPublishDoesNotCreateOrRunAutomaticSync() {
+        Fixture fixture = fixture(false);
+        accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
+                fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
+                Map.of("account_type", "PERSONAL"), LocalDateTime.now());
+        SalesChannelListing enabled = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+        SalesChannelOperation publish = operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst();
+        assertEquals(SalesChannelOperationType.PUBLISH, publish.getOperationType());
+        assertTrue(operationService.markRunning(publish.getId()));
+
+        Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
+        product.setTitle(product.getTitle() + " updated");
+        productRepository.saveAndFlush(product);
+        assertEquals(2, desiredStatePlanner.refresh(enabled.getId()).getDesiredRevision());
+        assertTrue(operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 2).isEmpty());
+
+        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "personal-item-1"),
+                "revision-one-fingerprint"));
+        SalesChannelListing afterPublish = desiredStatePlanner.refresh(enabled.getId());
+        assertEquals("personal-item-1", afterPublish.getExternalItemId());
+        assertEquals(SalesChannelListingStatus.ERROR, afterPublish.getStatus());
+        assertEquals("UNSUPPORTED_ACCOUNT_CAPABILITY", afterPublish.getLastErrorCode());
+        assertTrue(operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 2).isEmpty());
+    }
+
+    @Test
+    void exhaustedUnknownReconciliationCanBeRestartedAsReadOnlyWork() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation target = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("snapshot", "fixed"));
+        assertTrue(operationService.markRunning(target.getId()));
+        assertTrue(operationService.markUnknown(target.getId(), "TIMEOUT", "provider result is unknown"));
+
+        SalesChannelOperation first = operationService.requestReconciliation(target.getId());
+        assertEquals(first.getId(), operationService.requestReconciliation(target.getId()).getId());
+        assertTrue(operationService.markRunning(first.getId()));
+        assertTrue(operationService.markFailed(first.getId(), "RECONCILE_MAX_ATTEMPTS",
+                "target outcome remains unknown"));
+
+        SalesChannelOperation second = operationService.requestReconciliation(target.getId());
+        assertNotEquals(first.getId(), second.getId());
+        assertEquals(SalesChannelOperationType.RECONCILE, second.getOperationType());
+        assertEquals(target.getId().toString(), second.getPayload().get("target_operation_id"));
+        assertEquals(target.getIdempotencyKey(), second.getPayload().get("target_request_id"));
+        assertFalse(operationService.markRunning(target.getId()));
+        assertTrue(operationService.markRunning(second.getId()));
+    }
+
+    @Test
+    void unknownPublishBlocksNewPublishUntilReconciliationBindsTheSingleExternalItem() {
+        Fixture fixture = fixture(false);
+        accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
+                fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
+                Map.of("account_type", "FISH_SHOP"), LocalDateTime.now());
+        SalesChannelListing enabled = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+        SalesChannelOperation firstPublish = operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst();
+        assertEquals(SalesChannelOperationType.PUBLISH, firstPublish.getOperationType());
+        assertTrue(operationService.markRunning(firstPublish.getId()));
+        assertTrue(operationService.markUnknown(firstPublish.getId(), "TIMEOUT", "publish result is unknown"));
+
+        Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
+        product.setTitle(product.getTitle() + " newer");
+        productRepository.saveAndFlush(product);
+        SalesChannelListing revisionTwo = desiredStatePlanner.refresh(enabled.getId());
+        assertEquals(2, revisionTwo.getDesiredRevision());
+        assertTrue(operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 2).isEmpty());
+
+        SalesChannelOperation reconciliation = operationService.requestReconciliation(firstPublish.getId());
+        assertTrue(operationService.markRunning(reconciliation.getId()));
+        assertTrue(operationService.resolveUnknownAsSucceeded(reconciliation.getId(), firstPublish.getId(),
+                Map.of("item_id", "one-confirmed-item"), Map.of("target_outcome", "SUCCEEDED"),
+                "revision-one-fingerprint"));
+        SalesChannelListing reconciled = desiredStatePlanner.refresh(enabled.getId());
+        assertEquals("one-confirmed-item", reconciled.getExternalItemId());
+
+        List<SalesChannelOperation> revisionTwoOperations = operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 2);
+        assertEquals(1, revisionTwoOperations.size());
+        assertEquals(SalesChannelOperationType.SYNC, revisionTwoOperations.getFirst().getOperationType());
+        SalesChannelOperation erroneousPublish = operationService.request(enabled.getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("unexpected", true));
+        assertFalse(operationService.markRunning(erroneousPublish.getId()));
+        assertEquals(SalesChannelOperationStatus.SUPERSEDED,
+                operationRepository.findById(erroneousPublish.getId()).orElseThrow().getStatus());
+        assertEquals("one-confirmed-item",
+                listingRepository.findById(enabled.getId()).orElseThrow().getExternalItemId());
+    }
+
+    @Test
+    void conflictingPublishIdentityIsPreservedAsUnknownAndCannotReplaceExistingItem() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation firstPublish = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("revision", 1));
+        assertTrue(operationService.markRunning(firstPublish.getId()));
+        assertTrue(operationService.markSucceeded(firstPublish.getId(), Map.of("item_id", "remote-123"),
+                "first-fingerprint"));
+
+        listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision two"));
+        SalesChannelOperation queuedSync = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("revision", 2));
+        SalesChannelOperation secondPublish = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("revision", 2));
+        assertTrue(operationService.markRunning(secondPublish.getId()));
+        assertTrue(operationService.markSucceeded(secondPublish.getId(), Map.of("item_id", "remote-456"),
+                "second-fingerprint"));
+
+        SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals("remote-123", conflicted.getExternalItemId());
+        assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
+        assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
+        assertEquals(1, conflicted.getAppliedRevision());
+        assertEquals("first-fingerprint", conflicted.getAppliedFingerprint());
+        assertFalse(operationService.markRunning(queuedSync.getId()));
+        SalesChannelOperation conflictReconciliation = operationService.requestReconciliation(secondPublish.getId());
+        assertTrue(operationService.markRunning(conflictReconciliation.getId()));
+        assertTrue(operationService.resolveUnknownAsSucceeded(conflictReconciliation.getId(), secondPublish.getId(),
+                Map.of("item_id", "remote-456"), Map.of("target_outcome", "SUCCEEDED"), null));
+        SalesChannelListing stillConflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(SalesChannelListingStatus.UNKNOWN, stillConflicted.getStatus());
+        assertEquals("EXTERNAL_ITEM_ID_CONFLICT", stillConflicted.getLastErrorCode());
+        desiredStatePlanner.retry(fixture.listing().getId());
+        SalesChannelOperation repeatedConflictReconciliation = operationRepository
+                .findBySalesChannelListingIdOrderByCreatedAtAsc(fixture.listing().getId()).stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.RECONCILE)
+                .reduce((earlier, later) -> later)
+                .orElseThrow();
+        assertEquals(secondPublish.getIdempotencyKey(),
+                repeatedConflictReconciliation.getPayload().get("target_request_id"));
+        listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision three"));
+        assertThrows(IllegalStateException.class, () -> operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("revision", "must not be queued")));
+    }
+
+    @Test
+    void syncResultCannotSilentlyRebindAnExistingExternalItem() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation publish = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("revision", 1));
+        assertTrue(operationService.markRunning(publish.getId()));
+        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "remote-123"),
+                "publish-fingerprint"));
+
+        listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision two"));
+        SalesChannelOperation sync = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("revision", 2));
+        assertTrue(operationService.markRunning(sync.getId()));
+        assertTrue(operationService.markSucceeded(sync.getId(), Map.of("external_item_id", "remote-456"),
+                "sync-fingerprint"));
+
+        SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals("remote-123", conflicted.getExternalItemId());
+        assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
+        assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
+        assertEquals(1, conflicted.getAppliedRevision());
+        assertEquals("publish-fingerprint", conflicted.getAppliedFingerprint());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(sync.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void accountExternalItemIdIsUniqueWhileUnboundListingsCanShareNull() {
+        Fixture fixture = fixture(false);
+        Product secondProduct = new Product();
+        secondProduct.setProductNo(productRepository.nextProductNoValue());
+        secondProduct.setTitle("sales-channel-test-" + UUID.randomUUID());
+        secondProduct.setRetailPrice(new BigDecimal("10.00"));
+        secondProduct.setCostPrice(new BigDecimal("5.00"));
+        secondProduct.setCategoryId(fixture.product().getCategoryId());
+        secondProduct.setEnabled(true);
+        secondProduct = productRepository.saveAndFlush(secondProduct);
+        SalesChannelListing secondListing = listingService.ensureDraft(fixture.account().getId(), secondProduct.getId());
+
+        assertNull(listingRepository.findById(fixture.listing().getId()).orElseThrow().getExternalItemId());
+        assertNull(listingRepository.findById(secondListing.getId()).orElseThrow().getExternalItemId());
+        jdbcTemplate.update("UPDATE sales_channel_listings SET external_item_id = 'remote-shared' WHERE id = ?",
+                fixture.listing().getId());
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "UPDATE sales_channel_listings SET external_item_id = 'remote-shared' WHERE id = ?",
+                secondListing.getId()));
+
+        Fixture anotherAccount = fixture(false);
+        jdbcTemplate.update("UPDATE sales_channel_listings SET external_item_id = 'remote-shared' WHERE id = ?",
+                anotherAccount.listing().getId());
+        assertEquals("remote-shared", listingRepository.findById(anotherAccount.listing().getId())
+                .orElseThrow().getExternalItemId());
+    }
+
+    @Test
+    void reconcileCanResolveUnknownPublishSuccessWithoutApplyingStaleRevision() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation target = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("immutable", "revision-one"));
+        assertTrue(operationService.markRunning(target.getId()));
+        listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision two"));
+        SalesChannelOperation newerDesired = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("immutable", "revision-two"));
+        assertTrue(operationService.markUnknown(target.getId(), "HTTP_TIMEOUT", "publish result uncertain"));
+
+        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.RECONCILE, Map.of("target_operation_id", target.getId().toString()));
+        assertTrue(operationService.markRunning(reconciliation.getId()));
+        assertTrue(operationService.resolveUnknownAsSucceeded(reconciliation.getId(), target.getId(),
+                Map.of("item_id", "remote-published"),
+                Map.of("target_outcome", "SUCCEEDED", "item_id", "remote-published"),
+                "revision-one-fingerprint"));
+
+        SalesChannelOperation resolvedTarget = operationRepository.findById(target.getId()).orElseThrow();
+        SalesChannelOperation resolvedReconciliation = operationRepository.findById(reconciliation.getId()).orElseThrow();
+        SalesChannelListing listing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED, resolvedTarget.getStatus());
+        assertEquals(Map.of("item_id", "remote-published"), resolvedTarget.getResult());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED, resolvedReconciliation.getStatus());
+        assertEquals("SUCCEEDED", resolvedReconciliation.getResult().get("target_outcome"));
+        assertEquals("remote-published", listing.getExternalItemId());
+        assertEquals(0, listing.getAppliedRevision());
+        assertNull(listing.getAppliedFingerprint());
+        assertEquals(SalesChannelListingStatus.PUBLISHING, listing.getStatus());
+        assertEquals(SalesChannelOperationStatus.PENDING,
+                operationRepository.findById(newerDesired.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void reconcileAppliesResolvedSuccessWhenTargetRevisionIsStillCurrent() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation target = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("snapshot", "current-revision"));
+        assertTrue(operationService.markRunning(target.getId()));
+        assertTrue(operationService.markUnknown(target.getId(), "RESET", "sync result uncertain"));
+        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.RECONCILE, Map.of());
+        assertTrue(operationService.markRunning(reconciliation.getId()));
+
+        assertTrue(operationService.resolveUnknownAsSucceeded(reconciliation.getId(), target.getId(),
+                Map.of("confirmed", true), Map.of("target_outcome", "SUCCEEDED"), "resolved-fingerprint"));
+        SalesChannelListing listing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(1, listing.getAppliedRevision());
+        assertEquals("resolved-fingerprint", listing.getAppliedFingerprint());
+        assertEquals(SalesChannelListingStatus.ONLINE, listing.getStatus());
+        assertNotNull(listing.getLastSyncedAt());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(target.getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(reconciliation.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void queuedReconciliationStillRunsAfterDesiredRevisionAdvances() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation target = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("snapshot", "revision-one"));
+        assertTrue(operationService.markRunning(target.getId()));
+        assertTrue(operationService.markUnknown(target.getId(), "RESET", "sync result uncertain"));
+        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.RECONCILE, Map.of());
+        assertEquals(1, reconciliation.getDesiredRevision());
+
+        listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision-two"));
+        assertEquals(SalesChannelOperationStatus.PENDING,
+                operationRepository.findById(reconciliation.getId()).orElseThrow().getStatus());
+        assertTrue(operationService.markRunning(reconciliation.getId()));
+        assertTrue(operationService.resolveUnknownAsSucceeded(reconciliation.getId(), target.getId(),
+                Map.of("confirmed", true), Map.of("target_outcome", "SUCCEEDED"), null));
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(reconciliation.getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(target.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void reconcileCanReopenUnknownOnlyAfterExplicitRetryableFailedOutcome() {
+        Fixture fixture = fixture(false);
+        listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        SalesChannelOperation target = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("snapshot", "same-payload"));
+        assertTrue(operationService.markRunning(target.getId()));
+        assertTrue(operationService.markUnknown(target.getId(), "HTTP_RESET", "publish result uncertain"));
+        SalesChannelOperation unknownTarget = operationRepository.findById(target.getId()).orElseThrow();
+        String originalKey = unknownTarget.getIdempotencyKey();
+        Map<String, Object> originalPayload = unknownTarget.getPayload();
+        int originalAttempts = unknownTarget.getAttemptCount();
+        long originalRevision = unknownTarget.getDesiredRevision();
+        LocalDateTime nextAttempt = LocalDateTime.now().plusMinutes(1);
+
+        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.RECONCILE, Map.of());
+        assertTrue(operationService.markRunning(reconciliation.getId()));
+        assertFalse(operationService.reschedule(target.getId(), "BAD_RETRY", "must not retry UNKNOWN", nextAttempt));
+        assertThrows(IllegalArgumentException.class, () -> operationService.resolveUnknownAsRetryable(
+                reconciliation.getId(), target.getId(), Map.of("target_outcome", "UNKNOWN", "target_retryable", true),
+                "PROVEN_NOT_PUBLISHED", "not published", nextAttempt));
+
+        assertTrue(operationService.resolveUnknownAsRetryable(reconciliation.getId(), target.getId(),
+                Map.of("target_outcome", "FAILED", "target_retryable", true),
+                "PROVEN_NOT_PUBLISHED", "Agent proved no item was created", nextAttempt));
+        SalesChannelOperation reopened = operationRepository.findById(target.getId()).orElseThrow();
+        SalesChannelOperation completedReconciliation = operationRepository.findById(reconciliation.getId()).orElseThrow();
+        assertEquals(SalesChannelOperationStatus.PENDING, reopened.getStatus());
+        assertEquals(target.getId(), reopened.getId());
+        assertEquals(originalKey, reopened.getIdempotencyKey());
+        assertEquals(originalPayload, reopened.getPayload());
+        assertEquals(originalRevision, reopened.getDesiredRevision());
+        assertEquals(originalAttempts, reopened.getAttemptCount());
+        assertEquals(nextAttempt, reopened.getNextAttemptAt());
+        assertNull(reopened.getStartedAt());
+        assertNull(reopened.getFinishedAt());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED, completedReconciliation.getStatus());
+        assertEquals("FAILED", completedReconciliation.getResult().get("target_outcome"));
+        assertFalse(operationService.markRunning(target.getId()));
+
+        reopened.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
+        operationRepository.saveAndFlush(reopened);
+        assertTrue(operationService.markRunning(target.getId()));
+        assertEquals(originalAttempts + 1,
+                operationRepository.findById(target.getId()).orElseThrow().getAttemptCount());
+    }
+
+    @Test
+    void reconcilePermanentlyFailsUnknownTargetWhenAgentConfirmsNonRetryableFailure() {
+        Fixture fixture = fixture(false);
+        SalesChannelOperation target = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("snapshot", "immutable"));
+        assertTrue(operationService.markRunning(target.getId()));
+        assertTrue(operationService.markUnknown(target.getId(), "RESET", "result uncertain"));
+        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.RECONCILE, Map.of());
+        assertTrue(operationService.markRunning(reconciliation.getId()));
+
+        assertTrue(operationService.resolveUnknownAsFailed(reconciliation.getId(), target.getId(),
+                Map.of("error", "provider rejected"),
+                Map.of("target_outcome", "FAILED", "target_retryable", false),
+                "PROVIDER_REJECTED", "Agent confirmed the operation did not occur and is permanent"));
+        SalesChannelOperation failedTarget = operationRepository.findById(target.getId()).orElseThrow();
+        SalesChannelListing listing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(SalesChannelOperationStatus.FAILED, failedTarget.getStatus());
+        assertEquals(Map.of("error", "provider rejected"), failedTarget.getResult());
+        assertEquals("PROVIDER_REJECTED", failedTarget.getLastErrorCode());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(reconciliation.getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelListingStatus.ERROR, listing.getStatus());
+        assertEquals("PROVIDER_REJECTED", listing.getLastErrorCode());
+    }
+
+    @Test
+    void operationPayloadAndResultAreDeepCopiedAcrossQueueAndReadBoundaries() {
+        Fixture fixture = fixture(false);
+        Map<String, Object> nestedInput = new LinkedHashMap<>();
+        nestedInput.put("title", "original");
+        List<Object> nestedList = new java.util.ArrayList<>();
+        nestedList.add(nestedInput);
+        Map<String, Object> inputPayload = new LinkedHashMap<>();
+        inputPayload.put("snapshot", nestedList);
+
+        SalesChannelOperation operation = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, inputPayload);
+        nestedInput.put("title", "mutated after enqueue");
+        nestedList.add("mutated after enqueue");
+        assertEquals(List.of(Map.of("title", "original")), operation.getPayload().get("snapshot"));
+
+        Map<String, Object> exposedPayload = operation.getPayload();
+        @SuppressWarnings("unchecked")
+        List<Object> exposedNestedList = (List<Object>) exposedPayload.get("snapshot");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> exposedNestedMap = (Map<String, Object>) exposedNestedList.get(0);
+        exposedNestedMap.put("title", "mutated through getter");
+        assertEquals(List.of(Map.of("title", "original")), operation.getPayload().get("snapshot"));
+
+        assertTrue(operationService.markRunning(operation.getId()));
+        Map<String, Object> nestedResult = new LinkedHashMap<>();
+        nestedResult.put("confirmed", true);
+        List<Object> resultList = new java.util.ArrayList<>(List.of(nestedResult));
+        Map<String, Object> inputResult = new LinkedHashMap<>();
+        inputResult.put("details", resultList);
+        assertTrue(operationService.markSucceeded(operation.getId(), inputResult, null));
+        nestedResult.put("confirmed", false);
+        resultList.add("late mutation");
+        assertEquals(List.of(Map.of("confirmed", true)),
+                operationRepository.findById(operation.getId()).orElseThrow().getResult().get("details"));
     }
 
     @Test
