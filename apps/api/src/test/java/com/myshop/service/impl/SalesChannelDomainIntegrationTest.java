@@ -43,6 +43,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -402,8 +403,7 @@ class SalesChannelDomainIntegrationTest {
         assertTrue(operationService.markRunning(ambiguous.getId()));
         assertTrue(operationService.markUnknown(ambiguous.getId(), "TIMEOUT", "provider result is unknown"));
 
-        SalesChannelOperation failedReconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of());
+        SalesChannelOperation failedReconciliation = operationService.requestReconciliation(ambiguous.getId());
         assertTrue(operationService.markRunning(failedReconciliation.getId()));
         assertTrue(operationService.markFailed(failedReconciliation.getId(), "RECONCILE_FAILED", "not confirmed"));
         SalesChannelListing stillUnknown = listingRepository.findById(fixture.listing().getId()).orElseThrow();
@@ -415,8 +415,7 @@ class SalesChannelDomainIntegrationTest {
         assertFalse(operationService.markRunning(latestIntent.getId()));
 
         listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "recheck"));
-        SalesChannelOperation successfulReconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of());
+        SalesChannelOperation successfulReconciliation = operationService.requestReconciliation(ambiguous.getId());
         assertTrue(operationService.markRunning(successfulReconciliation.getId()));
         assertTrue(operationRepository.findById(successfulReconciliation.getId()).orElseThrow().getStartedAt()
                 .isAfter(operationRepository.findById(ambiguous.getId()).orElseThrow().getFinishedAt()));
@@ -481,8 +480,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(SalesChannelOperationStatus.PENDING,
                 operationRepository.findById(waiting.getId()).orElseThrow().getStatus());
 
-        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of());
+        SalesChannelOperation reconciliation = operationService.requestReconciliation(ambiguous.getId());
         assertEquals(List.of(reconciliation.getId()), operationService.findReadyPending(LocalDateTime.now(), 20)
                 .stream().map(SalesChannelOperation::getId).toList());
         assertTrue(operationService.markRunning(reconciliation.getId()));
@@ -725,8 +723,7 @@ class SalesChannelDomainIntegrationTest {
                 SalesChannelOperationType.SYNC, Map.of("immutable", "revision-two"));
         assertTrue(operationService.markUnknown(target.getId(), "HTTP_TIMEOUT", "publish result uncertain"));
 
-        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of("target_operation_id", target.getId().toString()));
+        SalesChannelOperation reconciliation = operationService.requestReconciliation(target.getId());
         assertEquals(target.getDesiredRevision(), reconciliation.getDesiredRevision());
         assertTrue(operationService.markRunning(reconciliation.getId()));
         assertTrue(operationService.resolveUnknownAsSucceeded(reconciliation.getId(), target.getId(),
@@ -758,8 +755,7 @@ class SalesChannelDomainIntegrationTest {
                 SalesChannelOperationType.SYNC, Map.of("snapshot", "current-revision"));
         assertTrue(operationService.markRunning(target.getId()));
         assertTrue(operationService.markUnknown(target.getId(), "RESET", "sync result uncertain"));
-        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of());
+        SalesChannelOperation reconciliation = operationService.requestReconciliation(target.getId());
         assertEquals(target.getDesiredRevision(), reconciliation.getDesiredRevision());
         assertTrue(operationService.markRunning(reconciliation.getId()));
 
@@ -785,8 +781,7 @@ class SalesChannelDomainIntegrationTest {
                 SalesChannelOperationType.SYNC, Map.of("snapshot", "revision-one"));
         assertTrue(operationService.markRunning(target.getId()));
         assertTrue(operationService.markUnknown(target.getId(), "RESET", "sync result uncertain"));
-        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of());
+        SalesChannelOperation reconciliation = operationService.requestReconciliation(target.getId());
         assertEquals(1, reconciliation.getDesiredRevision());
 
         listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision-two"));
@@ -814,10 +809,9 @@ class SalesChannelDomainIntegrationTest {
         Map<String, Object> originalPayload = unknownTarget.getPayload();
         int originalAttempts = unknownTarget.getAttemptCount();
         long originalRevision = unknownTarget.getDesiredRevision();
-        LocalDateTime nextAttempt = LocalDateTime.now().plusMinutes(1);
+        LocalDateTime nextAttempt = LocalDateTime.now().plusMinutes(1).truncatedTo(ChronoUnit.MICROS);
 
-        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of());
+        SalesChannelOperation reconciliation = operationService.requestReconciliation(target.getId());
         assertTrue(operationService.markRunning(reconciliation.getId()));
         assertFalse(operationService.reschedule(target.getId(), "BAD_RETRY", "must not retry UNKNOWN", nextAttempt));
         assertThrows(IllegalArgumentException.class, () -> operationService.resolveUnknownAsRetryable(
@@ -835,7 +829,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(originalPayload, reopened.getPayload());
         assertEquals(originalRevision, reopened.getDesiredRevision());
         assertEquals(originalAttempts, reopened.getAttemptCount());
-        assertEquals(nextAttempt.truncatedTo(java.time.temporal.ChronoUnit.MICROS), reopened.getNextAttemptAt());
+        assertEquals(nextAttempt, reopened.getNextAttemptAt());
         assertNull(reopened.getStartedAt());
         assertNull(reopened.getFinishedAt());
         assertEquals(SalesChannelOperationStatus.SUCCEEDED, completedReconciliation.getStatus());
@@ -857,8 +851,7 @@ class SalesChannelDomainIntegrationTest {
                 SalesChannelOperationType.SYNC, Map.of("snapshot", "immutable"));
         assertTrue(operationService.markRunning(target.getId()));
         assertTrue(operationService.markUnknown(target.getId(), "RESET", "result uncertain"));
-        SalesChannelOperation reconciliation = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.RECONCILE, Map.of());
+        SalesChannelOperation reconciliation = operationService.requestReconciliation(target.getId());
         assertTrue(operationService.markRunning(reconciliation.getId()));
 
         assertTrue(operationService.resolveUnknownAsFailed(reconciliation.getId(), target.getId(),
