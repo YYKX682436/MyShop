@@ -86,7 +86,7 @@ public class SalesChannelOperationServiceImpl {
                 "target_operation_id", targetOperationId.toString(),
                 "target_request_id", target.getIdempotencyKey());
         return operationRepository.saveAndFlush(new SalesChannelOperation(listing.getId(),
-                SalesChannelOperationType.RECONCILE, listing.getDesiredRevision(), idempotencyKey, payload));
+                SalesChannelOperationType.RECONCILE, target.getDesiredRevision(), idempotencyKey, payload));
     }
 
     /** Returns false when the operation is terminal, already claimed, or stale. */
@@ -98,8 +98,6 @@ public class SalesChannelOperationServiceImpl {
         LocalDateTime now = LocalDateTime.now();
         if (operation.getStatus() != SalesChannelOperationStatus.PENDING) return false;
         if (operation.getNextAttemptAt() != null && operation.getNextAttemptAt().isAfter(now)) return false;
-        if (operation.getOperationType() != SalesChannelOperationType.RECONCILE
-                && "EXTERNAL_ITEM_ID_CONFLICT".equals(listing.getLastErrorCode())) return false;
         if (operation.getOperationType() != SalesChannelOperationType.RECONCILE
                 && "EXTERNAL_ITEM_ID_CONFLICT".equals(listing.getLastErrorCode())) return false;
         if (operation.getOperationType() != SalesChannelOperationType.RECONCILE
@@ -146,7 +144,9 @@ public class SalesChannelOperationServiceImpl {
             }
         }
         if (!operation.start(now)) return false;
-        listing.setStatus(runningStatus(operation.getOperationType()));
+        if (operation.getOperationType() != SalesChannelOperationType.RECONCILE) {
+            listing.setStatus(runningStatus(operation.getOperationType()));
+        }
         return true;
     }
 
