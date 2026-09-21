@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
@@ -165,6 +166,63 @@ class XianyuSalesChannelClientTest {
             assertTrue(multipart.contains("XIANYU_MEDIA:acct-1:image:"));
             assertTrue(multipart.contains("name=\"file\"; filename=\"front.jpg\""));
             assertTrue(multipart.contains("image/jpeg"));
+        }
+    }
+
+    @Test
+    void metadataEndpointsReuseHmacSignerAndMapAddressAndCategoryData() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SUCCESS)) {
+            XianyuSalesChannelClient client = client(fixture.baseUrl());
+            var address = client.searchAddress("上海市徐汇区", "全国");
+            assertEquals("上海市徐汇区", address.keywords());
+            assertEquals("徐家汇", address.tips().getFirst().name());
+            assertEquals("上海市徐汇区虹桥路1号", address.tips().getFirst().expectedText());
+            var category = client.recommendCategory(new CategoryRecommendCommand("category-request", "acct-1",
+                    "软件服务", "正版授权", List.of(), null));
+            assertEquals("category-request", category.requestId());
+            assertEquals("cat-real-1", category.candidates().getFirst().get("cat_id"));
+            assertEquals("property-1", category.properties().getFirst().get("property_id"));
+            String metadataJson = objectMapper.writeValueAsString(category);
+            assertFalse(metadataJson.toLowerCase().contains("cookie"));
+            assertFalse(metadataJson.toLowerCase().contains("token"));
+            assertFalse(metadataJson.toLowerCase().contains("password"));
+            assertFalse(metadataJson.toLowerCase().contains("proxy"));
+            client.recommendCategory(new CategoryRecommendCommand("category-select", "acct-1",
+                    "软件服务", "正版授权", List.of(Map.of("seed", "service-card")),
+                    Map.of("cat_id", "cat-real-1", "cat_name", "软件服务")));
+
+            List<CapturedRequest> requests = fixture.requests();
+            assertEquals(List.of("POST /api/integration/v1/metadata/address/search",
+                            "POST /api/integration/v1/metadata/category/recommend",
+                            "POST /api/integration/v1/metadata/category/recommend"),
+                    requests.stream().map(r -> r.method() + " " + r.path()).toList());
+            for (CapturedRequest request : requests) {
+                String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
+                        request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
+                assertEquals(independentHmac(SECRET, canonical), request.header("X-MyShop-Signature"));
+            }
+            JsonNode addressRequest = objectMapper.readTree(requests.get(0).body());
+            assertEquals("上海市徐汇区", addressRequest.path("keywords").asText());
+            assertEquals("全国", addressRequest.path("city").asText());
+            JsonNode categoryRequest = objectMapper.readTree(requests.get(1).body());
+            assertEquals("acct-1", categoryRequest.path("account_id").asText());
+            assertTrue(categoryRequest.path("card_list").isArray());
+            assertTrue(categoryRequest.path("selected_category").isNull());
+            JsonNode selectedRequest = objectMapper.readTree(requests.get(2).body());
+            assertEquals("service-card", selectedRequest.path("card_list").get(0).path("seed").asText());
+            assertEquals("cat-real-1", selectedRequest.path("selected_category").path("cat_id").asText());
+        }
+    }
+
+    @Test
+    void metadataTimeoutIsSafeRetryableAndNeverUnknown() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.TIMEOUT_AFTER_READ)) {
+            XianyuSalesChannelClient client = client(fixture.baseUrl(), 250);
+            SalesChannelProviderClientException failure = assertThrows(SalesChannelProviderClientException.class,
+                    () -> client.searchAddress("Hangzhou", "全国"));
+            assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE,
+                    failure.getDisposition());
+            assertNotEquals(Outcome.UNKNOWN.name(), failure.getDisposition().name());
         }
     }
 
@@ -431,6 +489,19 @@ class XianyuSalesChannelClientTest {
                 case "/api/integration/v1/accounts/acct-1/verify" -> Map.of("capabilities", Map.of(
                         "account_type", "FISH_SHOP", "publish", true, "edit", true,
                         "stock_sync", true, "sku", true, "video", true));
+                case "/api/integration/v1/metadata/address/search" -> Map.of("keywords", "上海市徐汇区",
+                        "tips", List.of(Map.of("id", "poi-1", "name", "徐家汇", "district", "徐汇区",
+                                "adcode", "310104", "location", "121.4365,31.1885", "address", "虹桥路1号",
+                                "city", "上海市", "search_keyword", "上海市徐汇区徐家汇",
+                                "expected_text", "上海市徐汇区虹桥路1号")));
+                case "/api/integration/v1/metadata/category/recommend" -> Map.of(
+                        "candidates", List.of(Map.of("cat_id", "cat-real-1", "cat_name", "软件服务",
+                                "channel_cat_id", "channel-1", "channel_cat_name", "虚拟商品",
+                                "tb_cat_id", "tb-real-1", "is_selected", true,
+                                "cookie", "do-not-leak", "token", "do-not-leak")),
+                        "properties", List.of(Map.of("property_id", "property-1", "property_name", "授权类型",
+                                "options", List.of(Map.of("value_id", "personal", "value_name", "个人版")),
+                                "is_multiple", false)), "card_list", List.of(Map.of("id", "card-1")));
                 case "/api/integration/v1/media" -> Map.of("media_id", "media-1", "media_type", "image");
                 case "/api/integration/v1/listings/reconcile" -> Map.of(
                         "target_request_id", "target-operation", "operation_type", "PUBLISH",

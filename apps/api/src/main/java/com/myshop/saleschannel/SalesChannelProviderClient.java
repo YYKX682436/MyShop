@@ -2,6 +2,9 @@ package com.myshop.saleschannel;
 
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
@@ -29,4 +32,8 @@ public interface SalesChannelProviderClient {
     IntegrationEnvelope<ListingOperationData> delete(String itemId, UpdateCommand command);
 
     IntegrationEnvelope<ReconcileData> reconcile(ReconcileCommand command);
+
+    AddressMetadataResult searchAddress(String keywords, String city);
+
+    CategoryRecommendResult recommendCategory(CategoryRecommendCommand command);
 }

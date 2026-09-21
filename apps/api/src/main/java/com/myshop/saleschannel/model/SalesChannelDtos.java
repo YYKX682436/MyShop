@@ -78,6 +78,47 @@ public final class SalesChannelDtos {
     public record CapabilityData(
             @JsonProperty("capabilities") AccountCapabilities capabilities) { }
 
+    public record AddressSearchCommand(String requestId, String keywords, String city) { }
+
+    public record AddressTip(
+            @JsonProperty("id") String id,
+            @JsonProperty("name") String name,
+            @JsonProperty("district") String district,
+            @JsonProperty("adcode") String adcode,
+            @JsonProperty("location") String location,
+            @JsonProperty("address") String address,
+            @JsonProperty("city") String city,
+            @JsonProperty("search_keyword") String searchKeyword,
+            @JsonProperty("expected_text") String expectedText) { }
+
+    public record AddressSearchData(
+            @JsonProperty("keywords") String keywords,
+            @JsonProperty("tips") List<AddressTip> tips) { }
+
+    public record AddressMetadataResult(
+            String requestId,
+            String keywords,
+            List<AddressTip> tips) { }
+
+    public record CategoryRecommendCommand(
+            String requestId,
+            String accountId,
+            String title,
+            String description,
+            List<Map<String, Object>> cardList,
+            Map<String, Object> selectedCategory) { }
+
+    public record CategoryRecommendData(
+            @JsonProperty("candidates") List<Map<String, Object>> candidates,
+            @JsonProperty("properties") List<Map<String, Object>> properties,
+            @JsonProperty("card_list") List<Map<String, Object>> cardList) { }
+
+    public record CategoryRecommendResult(
+            String requestId,
+            List<Map<String, Object>> candidates,
+            List<Map<String, Object>> properties,
+            List<Map<String, Object>> cardList) { }
+
     public record MediaUploadCommand(
             String requestId,
             String accountId,

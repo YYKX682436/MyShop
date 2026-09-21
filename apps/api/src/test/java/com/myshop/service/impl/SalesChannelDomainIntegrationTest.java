@@ -1,5 +1,6 @@
 package com.myshop.service.impl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
@@ -23,6 +24,7 @@ import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.service.ManualStockService;
+import com.myshop.service.SalesChannelAdminService;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -85,6 +87,8 @@ class SalesChannelDomainIntegrationTest {
     @Autowired private SalesChannelOperationServiceImpl operationService;
     @Autowired private SalesChannelDesiredStatePlanner desiredStatePlanner;
     @Autowired private ManualStockService manualStockService;
+    @Autowired private SalesChannelAdminService salesChannelAdminService;
+    @Autowired private ObjectMapper objectMapper;
 
     @DynamicPropertySource
     static void postgresProperties(DynamicPropertyRegistry registry) {
@@ -151,6 +155,71 @@ class SalesChannelDomainIntegrationTest {
                 () -> jdbcTemplate.update("DELETE FROM products WHERE id = ?", fixture.product().getId()));
         assertEquals(1, listingRepository.count());
         assertNotNull(productRepository.findById(fixture.product().getId()).orElse(null));
+    }
+
+    @Test
+    void incompleteDraftConfigCanBeSavedWithoutCreatingAnOperation() {
+        Fixture fixture = fixture(false);
+        Map<String, Object> partial = Map.of("titleOverride", "Draft title");
+        var config = objectMapper.convertValue(partial, com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
+
+        var saved = salesChannelAdminService.updateXianyuListing(
+                fixture.product().getId(), fixture.account().getId(), config);
+
+        assertFalse(saved.isEnabled());
+        assertEquals("Draft title", saved.providerConfig().titleOverride());
+        assertTrue(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                UUID.fromString(saved.id())).isEmpty());
+    }
+
+    @Test
+    void enablingWithoutAddressRollsBackAndCreatesNoOperation() {
+        Fixture fixture = fixture(false);
+        verifiedAccount(fixture, "FISH_SHOP");
+        savePublishConfig(fixture, false, true);
+
+        BusinessException failure = assertThrows(BusinessException.class,
+                () -> desiredStatePlanner.setEnabled(fixture.listing().getId(), true));
+
+        assertTrue(failure.getMessage().contains("address"));
+        assertFalse(listingRepository.findById(fixture.listing().getId()).orElseThrow().isEnabled());
+        assertTrue(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                fixture.listing().getId()).isEmpty());
+    }
+
+    @Test
+    void enablingWithoutCategoryRollsBackAndCreatesNoOperation() {
+        Fixture fixture = fixture(false);
+        verifiedAccount(fixture, "FISH_SHOP");
+        savePublishConfig(fixture, true, false);
+
+        BusinessException failure = assertThrows(BusinessException.class,
+                () -> desiredStatePlanner.setEnabled(fixture.listing().getId(), true));
+
+        assertTrue(failure.getMessage().contains("platformCategoryId"));
+        assertTrue(failure.getMessage().contains("platformTbCategoryId"));
+        assertFalse(listingRepository.findById(fixture.listing().getId()).orElseThrow().isEnabled());
+        assertTrue(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                fixture.listing().getId()).isEmpty());
+    }
+
+    @Test
+    void completePreflightAllowsPublishAndAddressExpectedTextFallsBackToAddress() {
+        Fixture fixture = fixture(false);
+        verifiedAccount(fixture, "FISH_SHOP");
+        savePublishConfig(fixture, true, true);
+
+        SalesChannelListing enabled = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
+        List<SalesChannelOperation> operations = operationRepository
+                .findBySalesChannelListingIdOrderByCreatedAtAsc(enabled.getId());
+
+        assertTrue(enabled.isEnabled());
+        assertEquals(1, operations.size());
+        assertEquals(SalesChannelOperationType.PUBLISH, operations.getFirst().getOperationType());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> snapshot = (Map<String, Object>) operations.getFirst().getPayload().get("desired_snapshot");
+        assertEquals("East Lake", snapshot.get("address"));
+        assertEquals("East Lake", snapshot.get("addressExpectedText"));
     }
 
     @Test
@@ -271,6 +340,7 @@ class SalesChannelDomainIntegrationTest {
         accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
                 fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
                 Map.of("account_type", "FISH_SHOP"), LocalDateTime.now());
+        savePublishConfig(fixture, true, true);
         Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
         product.setStockMode(StockMode.MANUAL);
         productRepository.saveAndFlush(product);
@@ -521,6 +591,7 @@ class SalesChannelDomainIntegrationTest {
         accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
                 fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
                 Map.of("account_type", "PERSONAL"), LocalDateTime.now());
+        savePublishConfig(fixture, true, true);
         SalesChannelListing enabled = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
         SalesChannelOperation publish = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst();
@@ -574,6 +645,7 @@ class SalesChannelDomainIntegrationTest {
         accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
                 fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
                 Map.of("account_type", "FISH_SHOP"), LocalDateTime.now());
+        savePublishConfig(fixture, true, true);
         SalesChannelListing enabled = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
         SalesChannelOperation firstPublish = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst();
@@ -946,6 +1018,31 @@ class SalesChannelDomainIntegrationTest {
         SalesChannelListing listing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
         listing.bindExternalItemId("existing-item-" + UUID.randomUUID());
         listingRepository.saveAndFlush(listing);
+    }
+
+    private void verifiedAccount(Fixture fixture, String accountType) {
+        accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
+                fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
+                Map.of("account_type", accountType), LocalDateTime.now());
+    }
+
+    private void savePublishConfig(Fixture fixture, boolean includeAddress, boolean includeCategory) {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("titleOverride", fixture.product().getTitle());
+        config.put("descriptionOverride", "Test listing description");
+        config.put("imageUrls", List.of("https://images.example.invalid/source.jpg"));
+        config.put("priceMode", "PRODUCT_RETAIL");
+        if (includeAddress) config.put("address", "East Lake");
+        if (includeCategory) {
+            config.put("platformCategoryId", "category-test-id");
+            config.put("platformCategoryName", "Software service");
+            config.put("platformChannelCategoryId", "channel-category-test-id");
+            config.put("platformChannelCategoryName", "Virtual goods");
+            config.put("platformTbCategoryId", "tb-category-test-id");
+        }
+        var typed = objectMapper.convertValue(config,
+                com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
+        salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(), typed);
     }
 
     private Fixture fixture(boolean withSpecs) {

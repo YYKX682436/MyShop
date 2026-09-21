@@ -3,6 +3,8 @@ package com.myshop.controller;
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.AddressSearchRequest;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.CategoryRecommendRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.UpdateXianyuListingRequest;
 import com.myshop.service.SalesChannelAdminService;
@@ -28,6 +30,18 @@ public class AdminSalesChannelController {
     @GetMapping("/admin/sales-channels/accounts")
     public ApiResponse<List<AccountSummary>> accounts() {
         return ApiResponse.success(salesChannelAdminService.accounts());
+    }
+
+    @PostMapping("/admin/sales-channels/xianyu/metadata/address/search")
+    public ApiResponse<com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult> searchAddress(
+            @Valid @RequestBody AddressSearchRequest request) {
+        return ApiResponse.success(salesChannelAdminService.searchAddress(request.keywords(), request.city()));
+    }
+
+    @PostMapping("/admin/sales-channels/xianyu/metadata/category/recommend")
+    public ApiResponse<com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult> recommendCategory(
+            @Valid @RequestBody CategoryRecommendRequest request) {
+        return ApiResponse.success(salesChannelAdminService.recommendCategory(request));
     }
 
     @LogOperation(action = "sales_channel.account_sync", targetType = "SALES_CHANNEL", detail = "'同步闲鱼账号'")

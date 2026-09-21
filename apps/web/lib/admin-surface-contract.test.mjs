@@ -9,6 +9,7 @@ const dashboardPanels = readSource("../components/admin/dashboard-panels.tsx")
 const orders = readSource("../app/admin/orders/page.tsx")
 const productForm = readSource("../components/admin/products/product-form.tsx")
 const salesChannelEditor = readSource("../components/admin/products/sales-channel-editor.tsx")
+const salesChannelApi = readSource("../services/api.ts")
 const productTabs = readSource("../components/ui/tabs.tsx")
 const categoryPage = readSource("../app/admin/categories/page.tsx")
 
@@ -51,6 +52,20 @@ test("admin FormSection restores its shared card while retaining utility overrid
 test("sales channel unlimited stock accepts zero in the UI and save validation", () => {
   assert.match(salesChannelEditor, /无限库存同步数量<Input type="number" min="0" step="1"/)
   assert.match(salesChannelEditor, /isValidUnlimitedStockQuantity\(unlimitedStockQuantity\)/)
+})
+
+test("Xianyu address and category configuration use MyShop metadata pickers", () => {
+  assert.match(salesChannelEditor, /宝贝所在地/)
+  assert.match(salesChannelEditor, /智能推荐分类/)
+  assert.match(salesChannelEditor, /tip\.searchKeyword/)
+  assert.match(salesChannelEditor, /tip\.expectedText/)
+  assert.match(salesChannelEditor, /selectedCategory:\s*rawCandidate/)
+  assert.match(salesChannelEditor, /分类动态属性/)
+  assert.doesNotMatch(salesChannelEditor, /地址校验文字<Input/)
+  assert.doesNotMatch(salesChannelEditor, /平台属性 JSON/)
+  assert.doesNotMatch(salesChannelEditor, /平台分类 ID<Input/)
+  assert.match(salesChannelApi, /\/admin\/sales-channels\/xianyu\/metadata\/address\/search/)
+  assert.match(salesChannelApi, /\/admin\/sales-channels\/xianyu\/metadata\/category\/recommend/)
 })
 
 test("dashboard content groups use tokenized surfaces and one responsive KPI separator system", () => {

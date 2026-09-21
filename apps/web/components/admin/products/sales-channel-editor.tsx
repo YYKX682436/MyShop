@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, ShieldCheck } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Loader2, MapPin, RefreshCw, ShieldCheck, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
 import { FormSection } from "@/components/admin/shared"
@@ -13,10 +13,19 @@ import {
   adminSalesChannelApi,
   type SalesChannelAccountSummary,
   type SalesChannelListingSummary,
+  type XianyuAddressTip,
+  type XianyuCategoryCandidate,
+  type XianyuCategoryProperty,
+  type XianyuCategoryPropertyOption,
   type XianyuPlatformAttribute,
   type XianyuPriceMode,
   type XianyuProviderConfig,
 } from "@/services/api"
+import {
+  normalizeXianyuAddressTip,
+  normalizeXianyuCategoryCandidate,
+  normalizeXianyuCategoryProperty,
+} from "@/lib/sales-channel-metadata"
 
 const EMPTY_CONFIG: XianyuProviderConfig = {
   titleOverride: "",
@@ -78,12 +87,35 @@ function updateById<T extends { id: string }>(items: T[], updated: T) {
   return items.map((item) => item.id === updated.id ? updated : item)
 }
 
-export function SalesChannelEditor({ productId, disabled = false }: { productId: string; disabled?: boolean }) {
+function ReadOnlyCategoryValue({ label, value }: { label: string; value?: string | null }) {
+  return <div className="min-w-0 rounded-control bg-surface-muted/45 px-3 py-2 text-sm">
+    <span className="text-xs text-muted-foreground">{label}</span>
+    <div className="mt-1 break-all font-mono text-xs">{value || "—"}</div>
+  </div>
+}
+
+export function SalesChannelEditor({ productId, productTitle, productDescription, disabled = false }: {
+  productId: string
+  productTitle: string
+  productDescription: string
+  disabled?: boolean
+}) {
   const [accounts, setAccounts] = useState<SalesChannelAccountSummary[]>([])
   const [listings, setListings] = useState<SalesChannelListingSummary[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState("")
   const [config, setConfig] = useState<XianyuProviderConfig>(EMPTY_CONFIG)
-  const [attributesDraft, setAttributesDraft] = useState("[]")
+  const [addressKeyword, setAddressKeyword] = useState("")
+  const [addressTips, setAddressTips] = useState<XianyuAddressTip[]>([])
+  const [selectedAddressTip, setSelectedAddressTip] = useState<XianyuAddressTip | null>(null)
+  const [addressBusy, setAddressBusy] = useState(false)
+  const [addressError, setAddressError] = useState("")
+  const [categoryCandidates, setCategoryCandidates] = useState<XianyuCategoryCandidate[]>([])
+  const [categoryCardList, setCategoryCardList] = useState<unknown[]>([])
+  const [categoryProperties, setCategoryProperties] = useState<XianyuCategoryProperty[]>([])
+  const [selectedCategoryKey, setSelectedCategoryKey] = useState("")
+  const [highlightedCategoryKey, setHighlightedCategoryKey] = useState("")
+  const [categoryBusy, setCategoryBusy] = useState(false)
+  const [categoryError, setCategoryError] = useState("")
   const [loadError, setLoadError] = useState("")
   const [busy, setBusy] = useState<BusyAction>("load")
 
@@ -98,6 +130,8 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
   const type = accountType(selectedAccount)
   const needsVerification = Boolean(selectedAccount && type === "UNKNOWN")
   const canOperate = !disabled && !busy && accountEnabled(selectedAccount) && !needsVerification
+  const finalTitle = config.titleOverride?.trim() || productTitle.trim()
+  const finalDescription = config.descriptionOverride?.trim() || productDescription.trim()
 
   const refresh = useCallback(async () => {
     setLoadError("")
@@ -127,7 +161,15 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
   useEffect(() => {
     const nextConfig = configFromListing(selectedListing)
     setConfig(nextConfig)
-    setAttributesDraft(JSON.stringify(nextConfig.platformAttributes || [], null, 2))
+    setSelectedAddressTip(null)
+    setAddressTips([])
+    setAddressError("")
+    setCategoryCandidates([])
+    setCategoryCardList([])
+    setCategoryProperties([])
+    setSelectedCategoryKey("")
+    setHighlightedCategoryKey("")
+    setCategoryError("")
   }, [selectedAccountId, selectedListing])
 
   const patchConfig = <K extends keyof XianyuProviderConfig>(key: K, value: XianyuProviderConfig[K]) => {
@@ -136,18 +178,6 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
 
   const persistConfig = async () => {
     if (!selectedAccount) throw new Error("请先选择闲鱼账号")
-    let platformAttributes: XianyuPlatformAttribute[]
-    try {
-      const parsed: unknown = JSON.parse(attributesDraft || "[]")
-      if (!Array.isArray(parsed) || parsed.some((entry) => !entry || typeof entry !== "object" || Array.isArray(entry))) {
-        throw new Error("平台属性必须是 JSON 对象数组")
-      }
-      platformAttributes = parsed as XianyuPlatformAttribute[]
-    } catch (error) {
-      if (error instanceof SyntaxError) throw new Error("平台属性 JSON 格式无效")
-      throw error
-    }
-
     const priceMode = config.priceMode || "PRODUCT_RETAIL"
     const fixedPrice = optionalNumber(String(config.fixedPrice ?? ""))
     const markupPercent = optionalNumber(String(config.markupPercent ?? ""))
@@ -172,16 +202,146 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
       postage,
       unlimitedStockQuantity: unlimitedStockQuantity ?? 999,
       imageUrls: (config.imageUrls || []).map((url) => url.trim()).filter(Boolean),
-      platformAttributes,
+      platformAttributes: config.platformAttributes || [],
     }
     const listing = await adminSalesChannelApi.updateXianyuListing(productId, {
       accountId: selectedAccount.id,
       config: normalized,
     })
     setConfig(configFromListing(listing))
-    setAttributesDraft(JSON.stringify(listing.providerConfig?.platformAttributes || platformAttributes, null, 2))
     setListings((current) => updateById(current, listing))
     return listing
+  }
+
+  const handleAddressSearch = async () => {
+    const keywords = addressKeyword.trim()
+    if (!keywords) {
+      setAddressError("请输入城市、区或 POI 名称")
+      setAddressTips([])
+      return
+    }
+    setAddressBusy(true)
+    setAddressError("")
+    try {
+      const result = await adminSalesChannelApi.searchXianyuAddress({ keywords, city: "全国" })
+      const tips = Array.isArray(result.tips) ? result.tips.map(normalizeXianyuAddressTip) : []
+      setAddressTips(tips)
+      if (!tips.length) setAddressError("没有找到匹配的所在地，请换个关键词搜索")
+    } catch (error) {
+      setAddressTips([])
+      setAddressError(error instanceof Error ? error.message : "搜索所在地失败")
+    } finally {
+      setAddressBusy(false)
+    }
+  }
+
+  const handleRecommendCategory = async () => {
+    if (!selectedAccount) return
+    if (!finalTitle) {
+      setCategoryError("请先填写商品标题或闲鱼标题覆盖")
+      return
+    }
+    setCategoryBusy(true)
+    setCategoryError("")
+    setCategoryCandidates([])
+    setCategoryProperties([])
+    setCategoryCardList([])
+    setSelectedCategoryKey("")
+    setHighlightedCategoryKey("")
+    try {
+      const result = await adminSalesChannelApi.recommendXianyuCategory({
+        accountId: selectedAccount.providerAccountId,
+        title: finalTitle,
+        description: finalDescription,
+        cardList: [],
+        selectedCategory: null,
+      })
+      const candidates = Array.isArray(result.candidates) ? result.candidates : []
+      const cardList = Array.isArray(result.cardList) ? result.cardList
+        : Array.isArray(result.card_list) ? result.card_list : []
+      const normalized = candidates.map((candidate, index) => normalizeXianyuCategoryCandidate(candidate, index))
+      setCategoryCandidates(candidates)
+      setCategoryCardList(cardList)
+      setHighlightedCategoryKey(normalized.find((candidate) => candidate.isSelected)?.key || "")
+      if (!candidates.length) setCategoryError("平台没有返回分类候选，请调整标题或描述后重试")
+    } catch (error) {
+      setCategoryError(error instanceof Error ? error.message : "智能推荐分类失败")
+    } finally {
+      setCategoryBusy(false)
+    }
+  }
+
+  const handleSelectCategory = async (rawCandidate: XianyuCategoryCandidate, index: number) => {
+    if (!selectedAccount) return
+    const selected = normalizeXianyuCategoryCandidate(rawCandidate, index)
+    if (!selected.canPublish) return
+    const sameCategory = config.platformCategoryId === selected.catId
+      && config.platformChannelCategoryId === selected.channelCatId
+      && config.platformTbCategoryId === selected.tbCatId
+    setCategoryBusy(true)
+    setCategoryError("")
+    try {
+      const result = await adminSalesChannelApi.recommendXianyuCategory({
+        accountId: selectedAccount.providerAccountId,
+        title: finalTitle,
+        description: finalDescription,
+        cardList: categoryCardList,
+        selectedCategory: rawCandidate,
+      })
+      const properties = Array.isArray(result.properties) ? result.properties.map(normalizeXianyuCategoryProperty) : []
+      setCategoryProperties(properties)
+      setSelectedCategoryKey(selected.key)
+      setHighlightedCategoryKey(selected.key)
+      patchConfig("platformCategoryId", selected.catId)
+      patchConfig("platformCategoryName", selected.catName)
+      patchConfig("platformChannelCategoryId", selected.channelCatId)
+      patchConfig("platformChannelCategoryName", selected.channelCatName)
+      patchConfig("platformLeafId", selected.leafId)
+      patchConfig("platformTbCategoryId", selected.tbCatId)
+      patchConfig("platformAttributes", sameCategory ? config.platformAttributes || [] : [])
+      toast.success("分类已选择，请检查动态属性并保存配置")
+    } catch (error) {
+      setCategoryError(error instanceof Error ? error.message : "获取分类属性失败")
+    } finally {
+      setCategoryBusy(false)
+    }
+  }
+
+  const chooseAddress = (tip: XianyuAddressTip) => {
+    setSelectedAddressTip(tip)
+    patchConfig("address", tip.searchKeyword || "")
+    patchConfig("addressExpectedText", tip.expectedText || null)
+    setAddressTips([])
+    setAddressError("")
+  }
+
+  const updatePropertyAttributes = (
+    property: XianyuCategoryProperty,
+    nextOptions: XianyuCategoryPropertyOption[],
+    textValue?: string,
+  ) => {
+    const propertyId = property.propertyId || ""
+    const propertyName = property.propertyName || propertyId
+    const currentAttributes = config.platformAttributes || []
+    const retained = currentAttributes.filter((attribute) => {
+      const record = attribute as XianyuPlatformAttribute & { property_id?: string | null }
+      return (record.propertyId || record.property_id) !== propertyId
+    })
+    const nextAttributes = textValue !== undefined
+      ? (textValue.trim() ? [{ propertyId, propertyName, valueId: null, valueName: textValue.trim(), text: textValue.trim(), properties: null }] : [])
+      : nextOptions.map((option) => {
+        const valueName = option.valueName || ""
+        const valueId = option.valueId || null
+        return {
+          propertyId,
+          propertyName,
+          valueId,
+          valueName,
+          text: valueName,
+          properties: null,
+        }
+      })
+    patchConfig("platformAttributes", [...retained, ...nextAttributes])
   }
 
   const handleSyncAccounts = async () => {
@@ -324,8 +484,155 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
           图片 URL（每行一个；留空时使用商品封面）
           <Textarea className="min-h-20" value={(config.imageUrls || []).join("\n")} onChange={(event) => patchConfig("imageUrls", event.target.value.split(/\r?\n/).map((url) => url.trim()).filter(Boolean))} disabled={noSelection || Boolean(busy)} placeholder="https://…" />
         </label>
-        <label className={labelClass}>发布地址<Input value={config.address || ""} onChange={(event) => setText("address", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
-        <label className={labelClass}>地址校验文字<Input value={config.addressExpectedText || ""} onChange={(event) => setText("addressExpectedText", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
+        <div className={`${labelClass} lg:col-span-2`}>
+          <span>宝贝所在地</span>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              value={addressKeyword}
+              onChange={(event) => {
+                setAddressKeyword(event.target.value)
+                setAddressTips([])
+                setAddressError("")
+              }}
+              onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void handleAddressSearch() } }}
+              disabled={noSelection || disabled || Boolean(busy) || addressBusy}
+              placeholder="搜索城市、区或 POI 名称"
+              aria-label="搜索宝贝所在地"
+            />
+            <Button type="button" variant="outline" onClick={() => void handleAddressSearch()} disabled={noSelection || disabled || Boolean(busy) || addressBusy} className="shrink-0">
+              {addressBusy ? <Loader2 className="animate-spin" /> : <MapPin />}
+              {selectedAddressTip || config.address ? "重新搜索" : "搜索所在地"}
+            </Button>
+          </div>
+          <div className="rounded-control border border-border-subtle bg-surface-muted/45 px-3 py-2 text-sm" aria-live="polite">
+            <span className="text-muted-foreground">当前选择：</span>
+            <span className="font-medium">{selectedAddressTip
+              ? [selectedAddressTip.name, [selectedAddressTip.district, selectedAddressTip.address].filter(Boolean).join("/")].filter(Boolean).join(" · ")
+              : config.address || "尚未选择所在地"}</span>
+            {config.address && !selectedAddressTip && <span className="ml-2 text-xs font-normal text-muted-foreground">历史地址关键词</span>}
+          </div>
+          {addressError && <p className="text-xs font-normal text-destructive" role="alert">{addressError}</p>}
+          {addressTips.length > 0 && <div className="max-h-64 overflow-y-auto rounded-card border border-border-subtle" role="list" aria-label="所在地搜索结果">
+            {addressTips.map((tip, index) => <button
+              key={tip.id || `${tip.searchKeyword || addressKeyword}-${index}`}
+              type="button"
+              role="listitem"
+              onClick={() => chooseAddress(tip)}
+              disabled={!tip.searchKeyword || Boolean(busy) || disabled}
+              className="flex w-full flex-col gap-0.5 border-b border-border-subtle px-3 py-2.5 text-left last:border-b-0 hover:bg-surface-muted/60 disabled:opacity-60"
+            >
+              <span className="text-sm font-semibold">{tip.name || tip.searchKeyword || "未命名地点"}{tip.district ? <span className="ml-2 font-normal text-muted-foreground">{tip.district}</span> : null}</span>
+              <span className="text-xs font-normal text-muted-foreground">{tip.address || "暂无详细地址"}</span>
+            </button>)}
+          </div>}
+        </div>
+        <section className="flex min-w-0 flex-col gap-3 lg:col-span-2" aria-labelledby="xianyu-category-heading">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 id="xianyu-category-heading" className="text-sm font-semibold">闲鱼分类</h3>
+              <p className="mt-1 text-xs font-normal text-muted-foreground">根据最终发布标题和描述获取真实分类，再由 Agent 加载该分类的动态属性。</p>
+            </div>
+            <Button type="button" variant="outline" onClick={() => void handleRecommendCategory()} disabled={noSelection || disabled || Boolean(busy) || categoryBusy || !finalTitle}>
+              {categoryBusy ? <Loader2 className="animate-spin" /> : <Sparkles />}
+              智能推荐分类
+            </Button>
+          </div>
+          <div className="rounded-control border border-border-subtle bg-surface-muted/45 px-3 py-2 text-sm" aria-live="polite">
+            <span className="text-muted-foreground">当前分类：</span>
+            <span className="font-medium">{config.platformCategoryName || config.platformChannelCategoryName || "尚未选择分类"}</span>
+            {categoryCandidates.length > 0 && <span className="ml-2 text-xs font-normal text-muted-foreground">选择分类候选以加载属性</span>}
+          </div>
+          <p className="text-xs font-normal text-muted-foreground">用于推荐的标题：{finalTitle || "未填写"}</p>
+          {categoryError && <p className="text-xs font-normal text-destructive" role="alert">{categoryError}</p>}
+          {categoryCandidates.length > 0 && <div className="grid gap-2 sm:grid-cols-2" aria-label="闲鱼分类候选">
+            {categoryCandidates.map((candidate, index) => {
+              const view = normalizeXianyuCategoryCandidate(candidate, index)
+              const selected = selectedCategoryKey === view.key
+              const highlighted = !selected && highlightedCategoryKey === view.key
+              return <button
+                key={view.key}
+                type="button"
+                disabled={!view.canPublish || noSelection || disabled || Boolean(busy) || categoryBusy}
+                onClick={() => void handleSelectCategory(candidate, index)}
+                className={`flex min-w-0 flex-col gap-1 rounded-card border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55 ${selected ? "border-primary bg-primary/5" : highlighted ? "border-primary/60 bg-surface-muted/45" : "border-border-subtle hover:bg-surface-muted/45"}`}
+                aria-pressed={selected}
+              >
+                <span className="font-medium">{view.pathLabel}{view.isSelected ? <span className="ml-2 text-xs text-primary">平台推荐</span> : null}</span>
+                <span className="text-xs text-muted-foreground">{view.canPublish ? "可用于发布" : `不可发布：缺少 ${view.incompleteFields.join("、")}`}</span>
+              </button>
+            })}
+          </div>}
+          {categoryProperties.length > 0 && <div className="grid gap-4 rounded-card border border-border-subtle p-4 sm:grid-cols-2" aria-label="分类动态属性">
+            {categoryProperties.filter((property) => property.propertyId && property.propertyName).map((property) => {
+              const propertyId = property.propertyId || ""
+              const options = (property.options || []).filter((option) => {
+                const channelMatches = !option.channelCatId || !config.platformChannelCategoryId || option.channelCatId === config.platformChannelCategoryId
+                const tbMatches = !option.tbCatId || !config.platformTbCategoryId || option.tbCatId === config.platformTbCategoryId
+                return channelMatches && tbMatches
+              })
+              const current = (config.platformAttributes || []).filter((attribute) => {
+                const record = attribute as XianyuPlatformAttribute & { property_id?: string | null }
+                return (record.propertyId || record.property_id) === propertyId
+              })
+              const selectedValues = current.map((attribute) => attribute.valueId || attribute.valueName || attribute.text || "")
+              const placeholder = property.inputWord || `请输入${property.propertyName}`
+              if (!options.length) {
+                return <label key={propertyId} className={labelClass}>
+                  {property.propertyName}
+                  <Input
+                    maxLength={200}
+                    value={current[0]?.text || current[0]?.valueName || ""}
+                    onChange={(event) => updatePropertyAttributes(property, [], event.target.value)}
+                    disabled={noSelection || disabled || Boolean(busy) || categoryBusy}
+                    placeholder={placeholder}
+                  />
+                </label>
+              }
+              if (property.isMultiple) {
+                return <fieldset key={propertyId} className="flex min-w-0 flex-col gap-2 text-sm sm:col-span-2">
+                  <legend className="mb-1 font-medium">{property.propertyName}</legend>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {options.map((option, optionIndex) => {
+                      const optionKey = option.valueId || option.valueName || `${propertyId}-${optionIndex}`
+                      const checked = selectedValues.includes(option.valueId || option.valueName || "")
+                      return <label key={optionKey} className="flex items-center gap-2 text-sm font-normal">
+                        <input
+                          type="checkbox"
+                          className="size-4 accent-primary"
+                          checked={checked}
+                          disabled={noSelection || disabled || Boolean(busy) || categoryBusy}
+                          onChange={() => {
+                            const next = checked
+                              ? current.filter((attribute) => (attribute.valueId || attribute.valueName || attribute.text || "") !== (option.valueId || option.valueName || ""))
+                              : [...current, { propertyId, propertyName: property.propertyName || propertyId, valueId: option.valueId || null, valueName: option.valueName || "", text: option.valueName || "", properties: null }]
+                            updatePropertyAttributes(property, next.map((attribute) => ({ valueId: attribute.valueId, valueName: attribute.valueName })))
+                          }}
+                        />
+                        {option.valueName}
+                      </label>
+                    })}
+                  </div>
+                </fieldset>
+              }
+              return <label key={propertyId} className={labelClass}>
+                {property.propertyName}
+                <select
+                  className={selectClass}
+                  value={selectedValues[0] || ""}
+                  onChange={(event) => {
+                    const option = options.find((entry) => (entry.valueId || entry.valueName || "") === event.target.value)
+                    updatePropertyAttributes(property, option ? [option] : [])
+                  }}
+                  disabled={noSelection || disabled || Boolean(busy) || categoryBusy}
+                >
+                  <option value="">请选择{property.propertyName}</option>
+                  {options.map((option, optionIndex) => <option key={option.valueId || `${propertyId}-${optionIndex}`} value={option.valueId || option.valueName || ""}>{option.valueName}</option>)}
+                </select>
+              </label>
+            })}
+          </div>}
+          {selectedCategoryKey && categoryProperties.length === 0 && <p className="text-xs text-muted-foreground">此分类没有返回动态属性。</p>}
+        </section>
         <label className={labelClass}>运输方式<Input value={config.shippingMethod || ""} onChange={(event) => setText("shippingMethod", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
         <label className={labelClass}>交付方式<Input value={config.deliveryMethod || ""} onChange={(event) => setText("deliveryMethod", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
         <label className={labelClass}>邮费<Input type="number" min="0" step="0.01" value={config.postage ?? ""} onChange={(event) => patchConfig("postage", optionalNumber(event.target.value))} disabled={noSelection || Boolean(busy)} /></label>
@@ -334,15 +641,12 @@ export function SalesChannelEditor({ productId, disabled = false }: { productId:
       </div>
 
       <details className="mt-5 rounded-card border border-border-subtle p-4">
-        <summary className="cursor-pointer text-sm font-semibold">分类和平台属性（高级）</summary>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <label className={labelClass}>平台分类 ID<Input value={config.platformCategoryId || ""} onChange={(event) => setText("platformCategoryId", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
-          <label className={labelClass}>平台分类名称<Input value={config.platformCategoryName || ""} onChange={(event) => setText("platformCategoryName", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
-          <label className={labelClass}>渠道分类 ID<Input value={config.platformChannelCategoryId || ""} onChange={(event) => setText("platformChannelCategoryId", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
-          <label className={labelClass}>渠道分类名称<Input value={config.platformChannelCategoryName || ""} onChange={(event) => setText("platformChannelCategoryName", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
-          <label className={labelClass}>叶子分类 ID<Input value={config.platformLeafId || ""} onChange={(event) => setText("platformLeafId", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
-          <label className={labelClass}>淘宝分类 ID<Input value={config.platformTbCategoryId || ""} onChange={(event) => setText("platformTbCategoryId", event.target.value)} disabled={noSelection || Boolean(busy)} /></label>
-          <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium sm:col-span-2">平台属性 JSON<textarea className="min-h-28 w-full rounded-control border border-input bg-surface px-3 py-2 font-mono text-xs" value={attributesDraft} onChange={(event) => setAttributesDraft(event.target.value)} disabled={noSelection || Boolean(busy)} spellCheck={false} /><span className="text-xs font-normal text-muted-foreground">JSON 数组，每项包含 propertyId、propertyName、valueId、valueName、text 或 properties。</span></label>
+        <summary className="cursor-pointer text-sm font-semibold">分类标识（只读）</summary>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <ReadOnlyCategoryValue label="catId" value={config.platformCategoryId} />
+          <ReadOnlyCategoryValue label="channelCatId" value={config.platformChannelCategoryId} />
+          <ReadOnlyCategoryValue label="tbCatId" value={config.platformTbCategoryId} />
+          <ReadOnlyCategoryValue label="leafId" value={config.platformLeafId} />
         </div>
       </details>
 

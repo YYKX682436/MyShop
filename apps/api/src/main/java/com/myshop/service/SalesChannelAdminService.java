@@ -10,10 +10,14 @@ import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.CategoryRecommendRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
@@ -43,6 +47,22 @@ public class SalesChannelAdminService {
     public List<AccountSummary> accounts() {
         return accountRepository.findAll().stream().filter(account -> account.getProvider() == SalesChannelProvider.XIANYU)
                 .map(this::accountSummary).toList();
+    }
+
+    public AddressMetadataResult searchAddress(String keywords, String city) {
+        return providerClient.searchAddress(keywords, city);
+    }
+
+    public CategoryRecommendResult recommendCategory(CategoryRecommendRequest request) {
+        if (request == null || blank(request.accountId()) || blank(request.title())) {
+            throw new IllegalArgumentException("Account and listing title are required for category recommendation");
+        }
+        SalesChannelAccount account = accountRepository
+                .findByProviderAndProviderAccountId(SalesChannelProvider.XIANYU, request.accountId())
+                .orElseThrow(() -> new IllegalArgumentException("The selected Xianyu account does not exist"));
+        return providerClient.recommendCategory(new CategoryRecommendCommand(UUID.randomUUID().toString(),
+                account.getProviderAccountId(), request.title(), request.description(), request.cardList(),
+                request.selectedCategory()));
     }
 
     public List<AccountSummary> syncXianyuAccounts() {

@@ -444,12 +444,70 @@ export const adminDashboardApi = {
 export type XianyuPriceMode = "PRODUCT_RETAIL" | "FIXED" | "MARKUP_PERCENT"
 
 export interface XianyuPlatformAttribute {
-  propertyId?: string
-  propertyName?: string
-  valueId?: string
-  valueName?: string
-  text?: string
-  properties?: Record<string, unknown>
+  propertyId?: string | null
+  propertyName?: string | null
+  valueId?: string | null
+  valueName?: string | null
+  text?: string | null
+  properties?: Record<string, unknown> | null
+}
+
+export interface XianyuAddressTip {
+  id?: string | null
+  name?: string | null
+  district?: string | null
+  adcode?: string | null
+  location?: string | null
+  address?: string | null
+  city?: string | null
+  searchKeyword?: string | null
+  expectedText?: string | null
+}
+
+export interface XianyuAddressSearchData {
+  requestId?: string
+  keywords: string
+  tips: XianyuAddressTip[]
+}
+
+export interface XianyuCategoryCandidate {
+  catId?: string | null
+  catName?: string | null
+  channelCatId?: string | null
+  channelCatName?: string | null
+  leafId?: string | null
+  tbCatId?: string | null
+  path?: Array<{ id?: string | null; name?: string | null }>
+  score?: number | null
+  isSelected?: boolean
+  [key: string]: unknown
+}
+
+export interface XianyuCategoryPropertyOption {
+  propertyId?: string | null
+  propertyName?: string | null
+  valueId?: string | null
+  valueName?: string | null
+  channelCatId?: string | null
+  tbCatId?: string | null
+  [key: string]: unknown
+}
+
+export interface XianyuCategoryProperty {
+  propertyId?: string | null
+  propertyName?: string | null
+  inputWord?: string | null
+  isMultiple?: boolean
+  options?: XianyuCategoryPropertyOption[]
+  [key: string]: unknown
+}
+
+export interface XianyuCategoryRecommendData {
+  requestId?: string
+  candidates: XianyuCategoryCandidate[]
+  properties: XianyuCategoryProperty[]
+  cardList?: unknown[]
+  card_list?: unknown[]
 }
 
 export interface XianyuProviderConfig {
@@ -590,6 +648,22 @@ export const adminSalesChannelApi = {
     request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/disable`, { method: "POST" }),
   retryListing: (listingId: string) =>
     request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/retry`, { method: "POST" }),
+  searchXianyuAddress: (data: { keywords: string; city: string }) =>
+    request<XianyuAddressSearchData>("/admin/sales-channels/xianyu/metadata/address/search", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  recommendXianyuCategory: (data: {
+    accountId: string
+    title: string
+    description: string
+    cardList: unknown[]
+    selectedCategory: XianyuCategoryCandidate | null
+  }) =>
+    request<XianyuCategoryRecommendData>("/admin/sales-channels/xianyu/metadata/category/recommend", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 }
 
 // ============================================================

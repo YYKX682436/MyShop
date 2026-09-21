@@ -8,7 +8,13 @@ import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult;
+import com.myshop.saleschannel.model.SalesChannelDtos.AddressSearchCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.AddressSearchData;
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendData;
+import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationError;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
@@ -44,7 +50,13 @@ import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -56,6 +68,9 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
     private static final int MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
     private static final int MAX_IMAGE_BYTES = 5 * 1024 * 1024;
     private static final int MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+    private static final Set<String> SENSITIVE_METADATA_KEY_PARTS = Set.of(
+            "cookie", "token", "password", "proxy", "credential", "secret",
+            "auth");
 
     private final ObjectMapper objectMapper;
     private final String configuredBaseUrl;
@@ -181,6 +196,90 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         return exchange("POST", "/listings/reconcile", body, "application/json",
                 responseType(ReconcileData.class), RequestSemantics.READ_ONLY,
                 command.requestId(), command.requestId());
+    }
+
+    @Override
+    public AddressMetadataResult searchAddress(String keywords, String city) {
+        if (blank(keywords) || keywords.length() > 100 || (city != null && city.length() > 100)) {
+            throw safeFailure("INVALID_METADATA_REQUEST", "Address search keywords or city are invalid");
+        }
+        AddressSearchCommand command = new AddressSearchCommand(UUID.randomUUID().toString(),
+                keywords.trim(), blank(city) ? "全国" : city.trim());
+        byte[] body = serialize(new XianyuAddressSearchRequest(command.requestId(),
+                command.keywords(), command.city()));
+        IntegrationEnvelope<AddressSearchData> response = exchange("POST", "/metadata/address/search", body,
+                "application/json", responseType(AddressSearchData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+        if (response.outcome() != Outcome.SUCCEEDED || response.data() == null) {
+            throw metadataFailure(response.error());
+        }
+        return new AddressMetadataResult(response.requestId(), response.data().keywords(),
+                response.data().tips() == null ? List.of() : response.data().tips());
+    }
+
+    @Override
+    public CategoryRecommendResult recommendCategory(CategoryRecommendCommand command) {
+        if (command == null || blank(command.accountId()) || blank(command.title())
+                || command.title().length() > 200 || (command.description() != null
+                && command.description().length() > 1500) || command.cardList() == null
+                || command.cardList().size() > 100 || command.accountId().length() > 128) {
+            throw safeFailure("INVALID_METADATA_REQUEST", "Category recommendation fields are invalid");
+        }
+        String requestId = blank(command.requestId()) ? UUID.randomUUID().toString() : command.requestId();
+        if (requestId.length() > 255) {
+            throw safeFailure("INVALID_METADATA_REQUEST", "Category recommendation request id is too long");
+        }
+        byte[] body = serialize(new XianyuCategoryRecommendRequest(requestId, command.accountId(),
+                command.title(), command.description(), command.cardList(), command.selectedCategory()));
+        IntegrationEnvelope<CategoryRecommendData> response = exchange("POST", "/metadata/category/recommend", body,
+                "application/json", responseType(CategoryRecommendData.class), RequestSemantics.READ_ONLY,
+                requestId, requestId);
+        if (response.outcome() != Outcome.SUCCEEDED || response.data() == null) {
+            throw metadataFailure(response.error());
+        }
+        CategoryRecommendData data = response.data();
+        return new CategoryRecommendResult(response.requestId(), sanitizeMetadata(data.candidates()),
+                sanitizeMetadata(data.properties()), sanitizeMetadata(data.cardList()));
+    }
+
+    private SalesChannelProviderClientException metadataFailure(IntegrationError error) {
+        if (error != null && Boolean.TRUE.equals(error.retryable())) {
+            return retryableFailure(error.code() == null ? "AGENT_METADATA_FAILED" : error.code(),
+                    "Xianyu metadata request failed and can be retried safely");
+        }
+        return permanentFailure(error == null || error.code() == null ? "AGENT_METADATA_FAILED" : error.code(),
+                "Xianyu metadata request failed");
+    }
+
+    private static List<Map<String, Object>> sanitizeMetadata(List<Map<String, Object>> values) {
+        if (values == null) return List.of();
+        List<Map<String, Object>> sanitized = new ArrayList<>(values.size());
+        for (Map<String, Object> value : values) {
+            Object result = sanitizeMetadataValue(value);
+            if (result instanceof Map<?, ?> map) {
+                Map<String, Object> typed = new LinkedHashMap<>();
+                map.forEach((key, item) -> typed.put(String.valueOf(key), item));
+                sanitized.add(Collections.unmodifiableMap(typed));
+            }
+        }
+        return List.copyOf(sanitized);
+    }
+
+    private static Object sanitizeMetadataValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> sanitized = new LinkedHashMap<>();
+            map.forEach((key, item) -> {
+                String normalizedKey = String.valueOf(key).toLowerCase(Locale.ROOT);
+                boolean sensitive = normalizedKey.equals("auth")
+                        || SENSITIVE_METADATA_KEY_PARTS.stream().anyMatch(normalizedKey::contains);
+                if (!sensitive) sanitized.put(String.valueOf(key), sanitizeMetadataValue(item));
+            });
+            return sanitized;
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(XianyuSalesChannelClient::sanitizeMetadataValue).toList();
+        }
+        return value;
     }
 
     private <T> IntegrationEnvelope<T> exchange(String method, String endpoint, byte[] rawBody,
@@ -572,6 +671,19 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             @JsonProperty("request_id") String requestId,
             @JsonProperty("account_id") String accountId,
             @JsonProperty("desired_revision") long desiredRevision) { }
+
+    private record XianyuAddressSearchRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("keywords") String keywords,
+            @JsonProperty("city") String city) { }
+
+    private record XianyuCategoryRecommendRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("title") String title,
+            @JsonProperty("description") String description,
+            @JsonProperty("card_list") List<java.util.Map<String, Object>> cardList,
+            @JsonProperty("selected_category") java.util.Map<String, Object> selectedCategory) { }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record ReconcileRequest(

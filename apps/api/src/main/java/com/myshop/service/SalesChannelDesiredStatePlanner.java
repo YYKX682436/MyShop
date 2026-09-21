@@ -8,6 +8,7 @@ import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.constant.StockMode;
+import com.myshop.constant.ErrorCode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
@@ -40,6 +41,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -73,8 +75,39 @@ public class SalesChannelDesiredStatePlanner {
     @Transactional
     public SalesChannelListing setEnabled(UUID listingId, boolean enabled) {
         SalesChannelListing listing = lockListing(listingId);
+        if (enabled) preflightForEnable(listing);
         listing.setEnabled(enabled);
         return planLocked(listing);
+    }
+
+    private void preflightForEnable(SalesChannelListing listing) {
+        SalesChannelAccount account = loadAccount(listing);
+        Product product = loadProduct(listing);
+        DesiredListingSnapshot snapshot = buildSnapshot(listing, account, product,
+                SalesChannelListingDesiredState.ONLINE);
+        List<String> missing = new ArrayList<>();
+        if (blank(snapshot.title())) missing.add("title");
+        if (blank(snapshot.description())) missing.add("description");
+        if (snapshot.price() == null || snapshot.price().signum() <= 0) missing.add("price");
+        if (snapshot.sourceImageUrls() == null || snapshot.sourceImageUrls().stream().allMatch(this::blank)) {
+            missing.add("sourceImages");
+        }
+        if (blank(snapshot.address())) missing.add("address");
+        if (blank(snapshot.platformCategoryId())) missing.add("platformCategoryId");
+        if (blank(snapshot.platformChannelCategoryId())) missing.add("platformChannelCategoryId");
+        if (blank(snapshot.platformChannelCategoryName())) missing.add("platformChannelCategoryName");
+        if (blank(snapshot.platformTbCategoryId())) missing.add("platformTbCategoryId");
+        if (!account.isEnabled()) missing.add("accountEnabled");
+        if (account.getStatus() != com.myshop.constant.SalesChannelAccountStatus.CONNECTED
+                || account.getLastVerifiedAt() == null) missing.add("accountVerification");
+        if (!Arrays.asList("FISH_SHOP", "PERSONAL").contains(accountType(account))) {
+            missing.add("accountType");
+        }
+        if (!missing.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "Cannot enable listing; missing required fields: " + String.join(", ", missing),
+                    Map.of("missingFields", List.copyOf(missing)));
+        }
     }
 
     @Transactional
@@ -313,7 +346,8 @@ public class SalesChannelDesiredStatePlanner {
                 imageUrls, config.platformCategoryId(), config.platformCategoryName(),
                 config.platformChannelCategoryId(), config.platformChannelCategoryName(),
                 config.platformLeafId(), config.platformTbCategoryId(), attributes, quantity,
-                specifications, skuRows, config.address(), config.addressExpectedText(),
+                specifications, skuRows, config.address(), blank(config.addressExpectedText())
+                        && !blank(config.address()) ? config.address() : config.addressExpectedText(),
                 config.deliveryMethod(), config.shippingMethod(), config.supportPickup(), config.postage());
     }
 
