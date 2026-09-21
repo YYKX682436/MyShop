@@ -340,7 +340,7 @@ class SalesChannelDomainIntegrationTest {
         accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
                 fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
                 Map.of("account_type", "FISH_SHOP"), LocalDateTime.now());
-        savePublishConfig(fixture, true, true);
+        savePublishConfigWithoutPlanning(fixture, true, true);
         Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
         product.setStockMode(StockMode.MANUAL);
         productRepository.saveAndFlush(product);
@@ -591,7 +591,7 @@ class SalesChannelDomainIntegrationTest {
         accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
                 fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
                 Map.of("account_type", "PERSONAL"), LocalDateTime.now());
-        savePublishConfig(fixture, true, true);
+        savePublishConfigWithoutPlanning(fixture, true, true);
         SalesChannelListing enabled = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
         SalesChannelOperation publish = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst();
@@ -645,7 +645,7 @@ class SalesChannelDomainIntegrationTest {
         accountService.upsert(SalesChannelProvider.XIANYU, fixture.account().getProviderAccountId(),
                 fixture.account().getDisplayName(), SalesChannelAccountStatus.CONNECTED,
                 Map.of("account_type", "FISH_SHOP"), LocalDateTime.now());
-        savePublishConfig(fixture, true, true);
+        savePublishConfigWithoutPlanning(fixture, true, true);
         SalesChannelListing enabled = desiredStatePlanner.setEnabled(fixture.listing().getId(), true);
         SalesChannelOperation firstPublish = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst();
@@ -1027,6 +1027,19 @@ class SalesChannelDomainIntegrationTest {
     }
 
     private void savePublishConfig(Fixture fixture, boolean includeAddress, boolean includeCategory) {
+        salesChannelAdminService.updateXianyuListing(
+                fixture.product().getId(),
+                fixture.account().getId(),
+                publishConfig(fixture, includeAddress, includeCategory));
+    }
+
+    private void savePublishConfigWithoutPlanning(Fixture fixture, boolean includeAddress, boolean includeCategory) {
+        desiredStatePlanner.saveConfig(fixture.listing().getId(),
+                publishConfig(fixture, includeAddress, includeCategory));
+    }
+
+    private com.myshop.saleschannel.xianyu.model.XianyuProviderConfig publishConfig(
+            Fixture fixture, boolean includeAddress, boolean includeCategory) {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("titleOverride", fixture.product().getTitle());
         config.put("descriptionOverride", "Test listing description");
@@ -1040,9 +1053,8 @@ class SalesChannelDomainIntegrationTest {
             config.put("platformChannelCategoryName", "Virtual goods");
             config.put("platformTbCategoryId", "tb-category-test-id");
         }
-        var typed = objectMapper.convertValue(config,
+        return objectMapper.convertValue(config,
                 com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
-        salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(), typed);
     }
 
     private Fixture fixture(boolean withSpecs) {
