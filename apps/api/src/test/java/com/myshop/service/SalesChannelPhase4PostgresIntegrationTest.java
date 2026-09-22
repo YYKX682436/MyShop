@@ -735,7 +735,7 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 new LinkedHashMap<>());
         SalesChannelDeliveryOperation reconcile = persistOperation(row,
                 SalesChannelDeliveryOperationType.RECONCILE_MESSAGE,
-                SalesChannelDeliveryOperationStatus.RUNNING, 0, null,
+                SalesChannelDeliveryOperationStatus.PENDING, 0, null,
                 "XIANYU_RECONCILE_MESSAGE:" + row.getId() + ":0",
                 new LinkedHashMap<>(Map.of("target_request_id", sendRequestId)));
         row = channelOrderRepository.findById(row.getId()).orElseThrow();
