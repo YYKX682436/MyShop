@@ -48,6 +48,7 @@ public class SalesChannelDeliveryWorker {
     private final SalesChannelDeliveryPlanner planner;
     private final SalesChannelDeliveryOperationRepository operationRepository;
     private final SalesChannelDeliveryClaimService claimService;
+    private final SalesChannelDeliveryRecoveryService recoveryService;
     private final SalesChannelDeliveryOperationStateService stateService;
     private final com.myshop.repository.SalesChannelOrderRepository channelOrderRepository;
     private final OrderRepository orderRepository;
@@ -59,8 +60,14 @@ public class SalesChannelDeliveryWorker {
     @Value("${sales-channel.worker.batch-size:10}")
     private int batchSize;
 
+    @Value("${sales-channel.delivery.stale-running-ms:300000}")
+    private long staleRunningMs;
+
     @Scheduled(fixedDelayString = "${sales-channel.delivery.interval-ms:1000}")
     public void poll() {
+        recoveryService.recoverStaleRunning(
+                java.time.LocalDateTime.now().minus(java.time.Duration.ofMillis(Math.max(0L, staleRunningMs))),
+                Math.max(1, batchSize));
         planner.planPending();
         operationRepository.findDue(
                         List.of(SalesChannelDeliveryOperationStatus.PENDING,
@@ -69,7 +76,7 @@ public class SalesChannelDeliveryWorker {
                 .forEach(operation -> claimService.claim(operation.getId()).ifPresent(this::process));
     }
 
-    private void process(SalesChannelDeliveryOperation operation) {
+    void process(SalesChannelDeliveryOperation operation) {
         try {
             switch (operation.getOperationType()) {
                 case SEND_MESSAGE -> processSend(operation);
@@ -79,13 +86,20 @@ public class SalesChannelDeliveryWorker {
             }
         } catch (SalesChannelProviderClientException exception) {
             if (exception.getDisposition() == SalesChannelProviderClientException.Disposition.UNKNOWN) {
-                stateService.unknown(operation.getId(), exception.getErrorCode(), "Provider outcome is unknown");
                 if (operation.getOperationType() == SalesChannelDeliveryOperationType.SEND_MESSAGE) {
+                    stateService.unknown(operation.getId(), exception.getErrorCode(), "Provider outcome is unknown");
                     stateService.createReconcile(operation.getSalesChannelOrderId(), SalesChannelDeliveryOperationType.RECONCILE_MESSAGE,
                             operation.getUnitIndex(), operation.getRequestId());
                 } else if (operation.getOperationType() == SalesChannelDeliveryOperationType.CONFIRM_DELIVERY) {
+                    stateService.unknown(operation.getId(), exception.getErrorCode(), "Provider outcome is unknown");
                     stateService.createReconcile(operation.getSalesChannelOrderId(), SalesChannelDeliveryOperationType.RECONCILE_CONFIRM,
                             null, operation.getRequestId());
+                } else {
+                    // Reconciliation is read-only: an unknown HTTP result is
+                    // safe to retry and must not strand the reconcile row in
+                    // UNKNOWN, where the due query cannot pick it up.
+                    stateService.failed(operation.getId(), exception.getErrorCode(),
+                            "Read-only reconciliation outcome is unknown", true);
                 }
             } else {
                 stateService.failed(operation.getId(), exception.getErrorCode(), "Provider request was rejected before an uncertain side effect",
@@ -174,9 +188,8 @@ public class SalesChannelDeliveryWorker {
             stateService.succeeded(operation.getId(), Map.of("target_outcome", "FAILED"));
             stateService.failed(targetOperation.getId(), "DELIVERY_FAILED", "Agent reconciliation proved delivery failed", Boolean.TRUE.equals(data.targetRetryable()));
         } else {
-            stateService.succeeded(operation.getId(), Map.of("target_outcome", "UNKNOWN"));
-            stateService.setChannelStatus(channelOrder.getId(), SalesChannelOrderDeliveryStatus.MESSAGE_UNKNOWN,
-                    "MESSAGE_UNKNOWN", "Reconciliation could not prove whether the message was sent");
+            stateService.failed(operation.getId(), "MESSAGE_UNKNOWN",
+                    "Reconciliation could not prove whether the message was sent", true);
         }
     }
 
@@ -243,9 +256,8 @@ public class SalesChannelDeliveryWorker {
             stateService.succeeded(operation.getId(), Map.of("target_outcome", "FAILED"));
             stateService.failed(targetOperation.getId(), "CONFIRM_FAILED", "Reconciliation proved confirm delivery failed", Boolean.TRUE.equals(data.targetRetryable()));
         } else {
-            stateService.succeeded(operation.getId(), Map.of("target_outcome", "UNKNOWN"));
-            stateService.setChannelStatus(channelOrder.getId(), SalesChannelOrderDeliveryStatus.CONFIRM_UNKNOWN,
-                    "CONFIRM_UNKNOWN", "Reconciliation could not prove whether confirm delivery applied");
+            stateService.failed(operation.getId(), "CONFIRM_UNKNOWN",
+                    "Reconciliation could not prove whether confirm delivery applied", true);
         }
     }
 

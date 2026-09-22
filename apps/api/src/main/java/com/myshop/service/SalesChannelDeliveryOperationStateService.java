@@ -11,6 +11,7 @@ import com.myshop.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -27,6 +28,9 @@ public class SalesChannelDeliveryOperationStateService {
     private final OrderRepository orderRepository;
     private final SalesChannelOrderRepository channelOrderRepository;
 
+    @Value("${sales-channel.delivery.max-attempts:8}")
+    private int maxAttempts;
+
     @Transactional
     public void succeeded(UUID operationId, Map<String, Object> result) {
         SalesChannelDeliveryOperation operation = operationRepository.findByIdForUpdate(operationId).orElseThrow();
@@ -42,12 +46,25 @@ public class SalesChannelDeliveryOperationStateService {
     @Transactional
     public void failed(UUID operationId, String code, String message, boolean retryable) {
         SalesChannelDeliveryOperation operation = operationRepository.findByIdForUpdate(operationId).orElseThrow();
+        boolean exhausted = retryable && operation.getAttemptCount() >= configuredMaxAttempts();
         operation.setStatus(SalesChannelDeliveryOperationStatus.FAILED);
-        operation.setLastErrorCode(code);
-        operation.setLastErrorMessage(message == null ? null : message.substring(0, Math.min(1000, message.length())));
-        operation.setFinishedAt(LocalDateTime.now());
-        operation.setNextAttemptAt(retryable ? LocalDateTime.now().plusSeconds(backoff(operation.getAttemptCount())) : null);
+        operation.setLastErrorCode(exhausted ? "DELIVERY_MAX_ATTEMPTS_EXCEEDED" : code);
+        operation.setLastErrorMessage(limit(exhausted
+                ? "Delivery operation reached its maximum attempt count"
+                : message));
+        LocalDateTime now = LocalDateTime.now();
+        operation.setFinishedAt(now);
+        operation.setNextAttemptAt(retryable && !exhausted ? now.plusSeconds(backoff(operation.getAttemptCount())) : null);
         operationRepository.save(operation);
+        if (exhausted) {
+            setChannelStatus(operation.getSalesChannelOrderId(),
+                    isReconcile(operation) ? SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED
+                            : SalesChannelOrderDeliveryStatus.FAILED,
+                    "DELIVERY_MAX_ATTEMPTS_EXCEEDED",
+                    isReconcile(operation)
+                            ? "Read-only reconciliation reached its maximum attempt count"
+                            : "Delivery operation reached its maximum attempt count");
+        }
     }
 
     @Transactional
@@ -112,11 +129,22 @@ public class SalesChannelDeliveryOperationStateService {
     @Transactional
     public void setChannelStatus(UUID channelOrderId, SalesChannelOrderDeliveryStatus status,
                                  String code, String message) {
-        SalesChannelOrder order = channelOrderRepository.findById(channelOrderId).orElseThrow();
+        SalesChannelOrder order = channelOrderRepository.findByIdForUpdate(channelOrderId).orElseThrow();
         order.setDeliveryStatus(status);
         order.setLastErrorCode(code);
         order.setLastErrorMessage(message);
         channelOrderRepository.save(order);
+    }
+
+    private boolean isReconcile(SalesChannelDeliveryOperation operation) {
+        return operation.getOperationType() == SalesChannelDeliveryOperationType.RECONCILE_MESSAGE
+                || operation.getOperationType() == SalesChannelDeliveryOperationType.RECONCILE_CONFIRM;
+    }
+
+    private int configuredMaxAttempts() { return Math.max(1, maxAttempts); }
+
+    private String limit(String message) {
+        return message == null ? null : message.substring(0, Math.min(1000, message.length()));
     }
 
     private long backoff(int attempts) { return Math.min(300, Math.max(1, 1L << Math.min(8, attempts))); }

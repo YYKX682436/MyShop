@@ -1,8 +1,6 @@
 package com.myshop.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.myshop.constant.CardKeyStatus;
-import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
@@ -10,7 +8,6 @@ import com.myshop.constant.PricingSource;
 import com.myshop.constant.SalesChannelOrderDeliveryStatus;
 import com.myshop.constant.SalesChannelOrderIngestStatus;
 import com.myshop.constant.SalesChannelProvider;
-import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.Product;
@@ -19,8 +16,6 @@ import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.entity.SalesChannelOrder;
-import com.myshop.exception.BusinessException;
-import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.ProductRepository;
@@ -43,8 +38,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -66,7 +59,7 @@ public class SalesChannelOrderImportService {
     private final SalesChannelOrderRepository channelOrderRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
-    private final CardKeyRepository cardKeyRepository;
+    private final SalesChannelOrderTerminalStatusService terminalStatusService;
     private final AutoFulfillmentService autoFulfillmentService;
 
     @Transactional
@@ -152,7 +145,7 @@ public class SalesChannelOrderImportService {
         }
         row.setExternalStatus(normalizeStatus(external.status()));
         row.setSourceUpdatedAt(sourceTime(external.updatedAt()));
-        handleExternalTerminalStatus(row);
+        terminalStatusService.handle(row.getId(), row.getOrderId(), row.getExternalStatus());
         return channelOrderRepository.save(row);
     }
 
@@ -278,27 +271,6 @@ public class SalesChannelOrderImportService {
         row.setLastErrorCode(code);
         row.setLastErrorMessage(message);
         return channelOrderRepository.save(row);
-    }
-
-    private void handleExternalTerminalStatus(SalesChannelOrder row) {
-        if (!Set.of("cancelled", "refunded", "refunding").contains(row.getExternalStatus()) || row.getOrderId() == null) return;
-        List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(row.getOrderId());
-        boolean allocated = keys.stream().anyMatch(key -> key.getStatus() == CardKeyStatus.SOLD);
-        if (allocated) {
-            row.setDeliveryStatus(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED);
-            row.setLastErrorCode("EXTERNAL_REFUND_AFTER_FULFILLMENT");
-            row.setLastErrorMessage("Provider order was refunded/cancelled after a CardKey was sold; no automatic reclaim");
-            return;
-        }
-        orderRepository.findById(row.getOrderId()).ifPresent(order -> {
-            order.setStatus(OrderStatus.REFUNDED);
-            order.setRefundedAt(LocalDateTime.now());
-            orderRepository.save(order);
-            orderItemRepository.findByOrderId(order.getId()).forEach(item -> {
-                item.setFulfillmentStatus(FulfillmentStatus.CANCELLED);
-                orderItemRepository.save(item);
-            });
-        });
     }
 
     private void triggerAfterCommit(SalesChannelOrder row, UUID orderId) {

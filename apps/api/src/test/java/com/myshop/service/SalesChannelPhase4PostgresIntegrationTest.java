@@ -1,9 +1,13 @@
 package com.myshop.service;
 
 import com.myshop.constant.CardKeyStatus;
+import com.myshop.constant.OrderStatus;
 import com.myshop.constant.SalesChannelAccountStatus;
+import com.myshop.constant.SalesChannelDeliveryOperationStatus;
+import com.myshop.constant.SalesChannelDeliveryOperationType;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
+import com.myshop.constant.SalesChannelOrderDeliveryStatus;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelDeliveryOperation;
@@ -15,11 +19,16 @@ import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
+import com.myshop.repository.OrderRepository;
+import com.myshop.service.impl.AutoFulfillmentServiceImpl;
 import com.myshop.service.impl.FulfillmentTransactionService;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import com.myshop.utils.CardContentParser;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -30,8 +39,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,6 +50,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -51,6 +63,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest
 class SalesChannelPhase4PostgresIntegrationTest {
+
+    private int nextTestUnitIndex;
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -81,6 +95,24 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelDeliveryPlanner deliveryPlanner;
+
+    @Autowired
+    private OrderRepository orderRepository;
+
+    @Autowired
+    private AutoFulfillmentServiceImpl autoFulfillmentService;
+
+    @Autowired
+    private SalesChannelDeliveryClaimService deliveryClaimService;
+
+    @Autowired
+    private SalesChannelDeliveryRecoveryService deliveryRecoveryService;
+
+    @Autowired
+    private SalesChannelDeliveryOperationStateService deliveryStateService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @MockitoBean
     private com.myshop.service.EmailService emailService;
@@ -237,6 +269,297 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 "XIANYU_ORDER:" + wrongAccount.getProviderAccountId() + ":xy-cross-account-1"));
     }
 
+    @Test
+    void channelAutoFulfillmentSnapshotControlsGlobalRetryScheduler() {
+        UUID disabledProductId = insertProduct(false);
+        SalesChannelAccount disabledAccount = account("retry-disabled");
+        listing(disabledAccount, disabledProductId, "item-retry-disabled", false);
+        UUID disabledCardId = insertCard(disabledProductId, null, "retry-disabled-card");
+        SalesChannelOrder disabled = importService.importOrder(disabledAccount,
+                order(disabledAccount, "xy-retry-disabled", "item-retry-disabled", null, null, 1, "10.00"));
+
+        UUID enabledProductId = insertProduct(false);
+        SalesChannelAccount enabledAccount = account("retry-enabled");
+        listing(enabledAccount, enabledProductId, "item-retry-enabled", true);
+        SalesChannelOrder enabled = importService.importOrder(enabledAccount,
+                order(enabledAccount, "xy-retry-enabled", "item-retry-enabled", null, null, 1, "10.00"));
+        assertEquals(OrderStatus.PAID.name(), scalar("select status from orders where id = ?", String.class,
+                enabled.getOrderId()));
+        UUID enabledCardId = insertCard(enabledProductId, null, "retry-enabled-card");
+        UUID normalProductId = insertProduct(false);
+        UUID normalOrderId = insertNormalRetryOrder(normalProductId);
+        UUID normalCardId = insertCard(normalProductId, null, "retry-normal-card");
+
+        List<com.myshop.entity.Order> due = orderRepository.findPaidOrdersWithPendingAutoItems(
+                PageRequest.of(0, 100));
+        assertFalse(due.stream().anyMatch(candidate -> disabled.getOrderId().equals(candidate.getId())));
+        assertTrue(due.stream().anyMatch(candidate -> enabled.getOrderId().equals(candidate.getId())));
+        assertTrue(due.stream().anyMatch(candidate -> normalOrderId.equals(candidate.getId())));
+
+        autoFulfillmentService.retryPendingPaidOrders();
+
+        assertEquals(OrderStatus.PAID.name(), scalar("select status from orders where id = ?", String.class,
+                disabled.getOrderId()));
+        assertEquals(0, count("select count(*) from card_keys where id = ? and status = 'SOLD'", disabledCardId));
+        assertEquals(OrderStatus.DELIVERED.name(), scalar("select status from orders where id = ?", String.class,
+                enabled.getOrderId()));
+        assertEquals(1, count("select count(*) from card_keys where id = ? and status = 'SOLD'", enabledCardId));
+        assertEquals(OrderStatus.DELIVERED.name(), scalar("select status from orders where id = ?", String.class,
+                normalOrderId));
+        assertEquals(1, count("select count(*) from card_keys where id = ? and status = 'SOLD'", normalCardId));
+    }
+
+    @Test
+    void deliveryDueQueryAndClaimRejectPermanentAndFutureFailures() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("due-query");
+        listing(account, productId, "item-due-query", false);
+        SalesChannelOrder row = importService.importOrder(account,
+                order(account, "xy-due-query", "item-due-query", null, null, 1, "10.00"));
+
+        SalesChannelDeliveryOperation permanent = deliveryOperation(row, SalesChannelDeliveryOperationType.SEND_MESSAGE,
+                SalesChannelDeliveryOperationStatus.FAILED, null);
+        SalesChannelDeliveryOperation future = deliveryOperation(row, SalesChannelDeliveryOperationType.SEND_MESSAGE,
+                SalesChannelDeliveryOperationStatus.FAILED, LocalDateTime.now().plusMinutes(5));
+        SalesChannelDeliveryOperation past = deliveryOperation(row, SalesChannelDeliveryOperationType.SEND_MESSAGE,
+                SalesChannelDeliveryOperationStatus.FAILED, LocalDateTime.now().minusMinutes(5));
+        List<SalesChannelDeliveryOperation> due = deliveryOperationRepository.findDue(
+                List.of(SalesChannelDeliveryOperationStatus.PENDING, SalesChannelDeliveryOperationStatus.FAILED),
+                LocalDateTime.now(), PageRequest.of(0, 100));
+
+        assertFalse(due.stream().anyMatch(operation -> permanent.getId().equals(operation.getId())));
+        assertFalse(due.stream().anyMatch(operation -> future.getId().equals(operation.getId())));
+        assertTrue(due.stream().anyMatch(operation -> past.getId().equals(operation.getId())));
+        assertTrue(deliveryClaimService.claim(permanent.getId()).isEmpty());
+        assertTrue(deliveryClaimService.claim(future.getId()).isEmpty());
+        assertTrue(deliveryClaimService.claim(past.getId()).isPresent());
+    }
+
+    @Test
+    void maxAttemptsStopsRetryAndReconcileExhaustionRequiresReview() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("max-attempts");
+        listing(account, productId, "item-max-attempts", false);
+        SalesChannelOrder row = importService.importOrder(account,
+                order(account, "xy-max-attempts", "item-max-attempts", null, null, 1, "10.00"));
+
+        SalesChannelDeliveryOperation send = deliveryOperation(row, SalesChannelDeliveryOperationType.SEND_MESSAGE,
+                SalesChannelDeliveryOperationStatus.RUNNING, null);
+        send.setAttemptCount(8);
+        deliveryOperationRepository.saveAndFlush(send);
+        deliveryStateService.failed(send.getId(), "TEMPORARY_PROVIDER_ERROR", "retryable", true);
+        SalesChannelDeliveryOperation storedSend = deliveryOperationRepository.findById(send.getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, storedSend.getStatus());
+        assertNull(storedSend.getNextAttemptAt());
+        assertEquals("DELIVERY_MAX_ATTEMPTS_EXCEEDED", storedSend.getLastErrorCode());
+        assertEquals(SalesChannelOrderDeliveryStatus.FAILED,
+                channelOrderRepository.findByIdForUpdate(row.getId()).orElseThrow().getDeliveryStatus());
+        assertTrue(deliveryClaimService.claim(send.getId()).isEmpty());
+
+        SalesChannelDeliveryOperation reconcile = deliveryOperation(row,
+                SalesChannelDeliveryOperationType.RECONCILE_MESSAGE,
+                SalesChannelDeliveryOperationStatus.RUNNING, null);
+        reconcile.setAttemptCount(8);
+        deliveryOperationRepository.saveAndFlush(reconcile);
+        deliveryStateService.failed(reconcile.getId(), "MESSAGE_UNKNOWN", "still unknown", true);
+        assertEquals(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED,
+                channelOrderRepository.findByIdForUpdate(row.getId()).orElseThrow().getDeliveryStatus());
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED,
+                deliveryOperationRepository.findById(reconcile.getId()).orElseThrow().getStatus());
+        assertNull(deliveryOperationRepository.findById(reconcile.getId()).orElseThrow().getNextAttemptAt());
+    }
+
+    @Test
+    void staleSendConfirmAndReconcileRecoverWithoutReplayingSideEffects() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("stale-recovery");
+        listing(account, productId, "item-stale-recovery", false);
+        SalesChannelOrder row = importService.importOrder(account,
+                order(account, "xy-stale-recovery", "item-stale-recovery", null, null, 1, "10.00"));
+        LocalDateTime old = LocalDateTime.now().minusMinutes(10);
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(5);
+
+        SalesChannelDeliveryOperation send = deliveryOperation(row, SalesChannelDeliveryOperationType.SEND_MESSAGE,
+                SalesChannelDeliveryOperationStatus.RUNNING, null);
+        send.setStartedAt(old);
+        send.setAttemptCount(1);
+        deliveryOperationRepository.saveAndFlush(send);
+
+        SalesChannelDeliveryOperation confirm = deliveryOperation(row, SalesChannelDeliveryOperationType.CONFIRM_DELIVERY,
+                SalesChannelDeliveryOperationStatus.RUNNING, null);
+        confirm.setStartedAt(old);
+        confirm.setAttemptCount(1);
+        deliveryOperationRepository.saveAndFlush(confirm);
+
+        SalesChannelDeliveryOperation reconcile = deliveryOperation(row,
+                SalesChannelDeliveryOperationType.RECONCILE_MESSAGE,
+                SalesChannelDeliveryOperationStatus.RUNNING, null);
+        reconcile.setStartedAt(old);
+        reconcile.setAttemptCount(1);
+        reconcile.setResultJson(new LinkedHashMap<>(Map.of("target_request_id", send.getRequestId())));
+        deliveryOperationRepository.saveAndFlush(reconcile);
+
+        assertEquals(3, deliveryRecoveryService.recoverStaleRunning(cutoff, 100));
+
+        SalesChannelDeliveryOperation storedSend = deliveryOperationRepository.findById(send.getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.UNKNOWN, storedSend.getStatus());
+        SalesChannelDeliveryOperation sendReconcile = deliveryOperationRepository
+                .findBySalesChannelOrderIdAndOperationTypeOrderByUnitIndexAsc(row.getId(),
+                        SalesChannelDeliveryOperationType.RECONCILE_MESSAGE).stream()
+                .filter(operation -> send.getRequestId().equals(
+                        String.valueOf(operation.getResultJson().get("target_request_id"))))
+                .findFirst().orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.PENDING, sendReconcile.getStatus());
+
+        SalesChannelDeliveryOperation storedConfirm = deliveryOperationRepository.findById(confirm.getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.UNKNOWN, storedConfirm.getStatus());
+        SalesChannelDeliveryOperation confirmReconcile = deliveryOperationRepository
+                .findBySalesChannelOrderIdAndOperationTypeOrderByUnitIndexAsc(row.getId(),
+                        SalesChannelDeliveryOperationType.RECONCILE_CONFIRM).stream()
+                .findFirst().orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.PENDING, confirmReconcile.getStatus());
+
+        SalesChannelDeliveryOperation storedReconcile = deliveryOperationRepository.findById(reconcile.getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.PENDING, storedReconcile.getStatus());
+        assertEquals(reconcile.getRequestId(), storedReconcile.getRequestId());
+        assertNotNull(storedReconcile.getNextAttemptAt());
+    }
+
+    @Test
+    void stableCardKeyUnitMappingSurvivesRepeatedPlanningAndReload() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("stable-units");
+        listing(account, productId, "item-stable-units", true);
+        insertCard(productId, null, "stable-card-1");
+        insertCard(productId, null, "stable-card-2");
+        insertCard(productId, null, "stable-card-3");
+        SalesChannelOrder row = importService.importOrder(account,
+                order(account, "xy-stable-units", "item-stable-units", null, null, 3, "30.00"));
+
+        deliveryPlanner.plan(row.getId());
+        Map<UUID, Integer> first = deliveryOperationRepository
+                .findBySalesChannelOrderIdAndOperationTypeOrderByUnitIndexAsc(row.getId(),
+                        SalesChannelDeliveryOperationType.SEND_MESSAGE).stream()
+                .collect(java.util.stream.Collectors.toMap(SalesChannelDeliveryOperation::getCardKeyId,
+                        SalesChannelDeliveryOperation::getUnitIndex));
+        entityManager.clear();
+        deliveryPlanner.plan(row.getId());
+        deliveryPlanner.plan(row.getId());
+        Map<UUID, Integer> second = deliveryOperationRepository
+                .findBySalesChannelOrderIdAndOperationTypeOrderByUnitIndexAsc(row.getId(),
+                        SalesChannelDeliveryOperationType.SEND_MESSAGE).stream()
+                .collect(java.util.stream.Collectors.toMap(SalesChannelDeliveryOperation::getCardKeyId,
+                        SalesChannelDeliveryOperation::getUnitIndex));
+
+        assertEquals(3, first.size());
+        assertEquals(first, second);
+        assertEquals(3, second.size());
+    }
+
+    @Test
+    void terminalStatusWithSameImmutableFingerprintIsHandledAndNotConflicted() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("terminal-fingerprint");
+        listing(account, productId, "item-terminal-fingerprint", false);
+        AgentOrder pending = order(account, "xy-terminal-fingerprint", "item-terminal-fingerprint",
+                null, null, 1, "10.00");
+        SalesChannelOrder row = importService.importOrder(account, pending);
+        AgentOrder refunded = new AgentOrder(account.getProviderAccountId(), pending.externalOrderNo(), "refunded",
+                pending.itemId(), pending.externalSkuId(), pending.specName(), pending.specValue(), pending.quantity(),
+                pending.amount(), pending.currency(), pending.placedAt(), "2026-09-22T00:00:02Z");
+
+        SalesChannelOrder updated = importService.importOrder(account, refunded);
+
+        assertEquals(row.getId(), updated.getId());
+        assertEquals("IMPORTED", updated.getIngestStatus().name());
+        assertEquals("refunded", updated.getExternalStatus());
+        assertEquals(OrderStatus.REFUNDED.name(), scalar("select status from orders where id = ?", String.class,
+                row.getOrderId()));
+        assertEquals("CANCELLED", scalar("select fulfillment_status from order_items where order_id = ?",
+                String.class, row.getOrderId()));
+        assertEquals(0, count("select count(*) from sales_channel_orders where ingest_status = 'SOURCE_CONFLICT' and id = ?",
+                row.getId()));
+    }
+
+    @Test
+    void terminalRefundAndFulfillmentConcurrencyNeverProducesRefundedSold() throws Exception {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("refund-race");
+        listing(account, productId, "item-refund-race", false);
+        insertCard(productId, null, "refund-race-card-1");
+        insertCard(productId, null, "refund-race-card-2");
+        insertCard(productId, null, "refund-race-card-3");
+        AgentOrder pending = order(account, "xy-refund-race", "item-refund-race", null, null, 3, "30.00");
+        SalesChannelOrder row = importService.importOrder(account, pending);
+        AgentOrder refunded = new AgentOrder(account.getProviderAccountId(), pending.externalOrderNo(), "refunded",
+                pending.itemId(), pending.externalSkuId(), pending.specName(), pending.specValue(), pending.quantity(),
+                pending.amount(), pending.currency(), pending.placedAt(), "2026-09-22T00:00:02Z");
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> refund = executor.submit(() -> {
+                ready.countDown();
+                await(start);
+                importService.importOrder(account, refunded);
+            });
+            Future<?> fulfill = executor.submit(() -> {
+                ready.countDown();
+                await(start);
+                fulfillmentService.fulfillOrder(row.getOrderId());
+            });
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            refund.get(30, TimeUnit.SECONDS);
+            fulfill.get(30, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        String status = scalar("select status from orders where id = ?", String.class, row.getOrderId());
+        int sold = count("select count(*) from card_keys where order_id = ? and status = 'SOLD'", row.getOrderId());
+        assertFalse(OrderStatus.REFUNDED.name().equals(status) && sold > 0,
+                "a refunded order must never retain SOLD CardKeys");
+        if (OrderStatus.REFUNDED.name().equals(status)) {
+            assertEquals(0, sold);
+        } else {
+            assertEquals(OrderStatus.DELIVERED.name(), status);
+            assertEquals(3, sold);
+            assertEquals(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED,
+                    channelOrderRepository.findByIdForUpdate(row.getId()).orElseThrow().getDeliveryStatus());
+        }
+    }
+
+    private SalesChannelDeliveryOperation deliveryOperation(
+            SalesChannelOrder row,
+            SalesChannelDeliveryOperationType type,
+            SalesChannelDeliveryOperationStatus status,
+            LocalDateTime nextAttemptAt) {
+        SalesChannelDeliveryOperation operation = new SalesChannelDeliveryOperation();
+        operation.setSalesChannelOrderId(row.getId());
+        operation.setOperationType(type);
+        operation.setUnitIndex(type == SalesChannelDeliveryOperationType.SEND_MESSAGE
+                || type == SalesChannelDeliveryOperationType.RECONCILE_MESSAGE ? nextTestUnitIndex++ : null);
+        operation.setRequestId("TEST_DELIVERY:" + UUID.randomUUID());
+        operation.setPayloadFingerprint("a".repeat(64));
+        operation.setStatus(status);
+        operation.setNextAttemptAt(nextAttemptAt);
+        operation.setResultJson(new LinkedHashMap<>());
+        return deliveryOperationRepository.saveAndFlush(operation);
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(20, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("concurrency test did not start");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("concurrency test interrupted", exception);
+        }
+    }
+
     private SalesChannelOrder importAfter(CountDownLatch start, CountDownLatch ready,
                                           SalesChannelAccount account, AgentOrder external) throws Exception {
         ready.countDown();
@@ -313,6 +636,26 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 """, cardId, productId, specId, content, CardContentParser.fingerprint(List.of(content)),
                 CardKeyStatus.AVAILABLE.name());
         return cardId;
+    }
+
+    private UUID insertNormalRetryOrder(UUID productId) {
+        UUID orderId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into orders (id, created_at, updated_at, actual_amount, total_amount, status,
+                    order_type, payment_method, payment_channel_code)
+                values (?, current_timestamp, current_timestamp, 10.00, 10.00, 'PAID',
+                    'NORMAL', 'ONLINE', 'phase4-normal-channel')
+                """, orderId);
+        jdbcTemplate.update("""
+                insert into order_items (id, created_at, updated_at, order_id, product_id, product_no,
+                    product_title, quantity, unit_price, cost_price_snapshot, retail_price_snapshot,
+                    pricing_source, subtotal, delivery_type, stock_mode, fulfillment_status)
+                values (?, current_timestamp, current_timestamp, ?, ?,
+                    (select product_no from products where id = ?), 'Phase 4 normal product', 1,
+                    10.00, 4.00, 10.00, 'RETAIL', 10.00, 'AUTO', 'CARD_KEY', 'PENDING')
+                """, itemId, orderId, productId, productId);
+        return orderId;
     }
 
     private int count(String sql, Object... args) {

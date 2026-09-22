@@ -32,6 +32,10 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = "SELECT DISTINCT o.* FROM orders o JOIN order_items oi ON oi.order_id = o.id "
             + "WHERE o.status = 'PAID' AND oi.fulfillment_status NOT IN ('DELIVERED', 'CANCELLED') "
             + "AND oi.delivery_type = 'AUTO' AND oi.stock_mode = 'CARD_KEY' "
+            + "AND (o.order_type IN ('NORMAL', 'ADMIN_PICKUP') "
+            + "OR (o.order_type = 'SALES_CHANNEL' AND EXISTS ("
+            + "SELECT 1 FROM sales_channel_orders sco "
+            + "WHERE sco.order_id = o.id AND sco.auto_fulfillment_requested = true))) "
             + "ORDER BY o.created_at ASC", nativeQuery = true)
     List<Order> findPaidOrdersWithPendingAutoItems(Pageable pageable);
 

@@ -22,6 +22,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HashSet;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -48,20 +51,45 @@ public class SalesChannelDeliveryPlanner {
 
     @Transactional
     public void plan(UUID channelOrderId) {
-        SalesChannelOrder row = channelOrderRepository.findByIdForUpdate(channelOrderId).orElse(null);
-        if (row == null || row.getOrderId() == null) return;
-        Order order = orderRepository.findByIdForUpdate(row.getOrderId()).orElse(null);
+        // Read the relation without a lock, then acquire the business Order
+        // lock before the channel row. Terminal refund handling uses the same
+        // Order -> CardKey -> channel-row order and must not deadlock with the
+        // planner.
+        SalesChannelOrder relation = channelOrderRepository.findById(channelOrderId).orElse(null);
+        if (relation == null || relation.getOrderId() == null) return;
+        Order order = orderRepository.findByIdForUpdate(relation.getOrderId()).orElse(null);
         if (order == null || order.getOrderType() != OrderType.SALES_CHANNEL || order.getStatus() != OrderStatus.DELIVERED) return;
+        SalesChannelOrder row = channelOrderRepository.findByIdForUpdate(channelOrderId).orElse(null);
+        if (row == null) return;
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         Set<UUID> itemIds = new HashSet<>(items.stream().map(OrderItem::getId).toList());
-        List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(order.getId());
-        int unit = 0;
+        List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(order.getId()).stream()
+                .sorted(Comparator.comparing(CardKey::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(CardKey::getId))
+                .toList();
+        List<SalesChannelDeliveryOperation> existingOperations = operationRepository
+                .findBySalesChannelOrderIdAndOperationTypeOrderByUnitIndexAsc(
+                        row.getId(), SalesChannelDeliveryOperationType.SEND_MESSAGE);
+        Map<UUID, Integer> unitByCardKey = new LinkedHashMap<>();
+        Set<Integer> usedUnits = new HashSet<>();
+        for (SalesChannelDeliveryOperation operation : existingOperations) {
+            if (operation.getCardKeyId() != null && operation.getUnitIndex() != null) {
+                unitByCardKey.put(operation.getCardKeyId(), operation.getUnitIndex());
+                usedUnits.add(operation.getUnitIndex());
+            }
+        }
+        int nextUnit = usedUnits.stream().mapToInt(Integer::intValue).max().orElse(-1) + 1;
+        int validUnits = 0;
         for (CardKey key : keys) {
             if (key.getStatus() != CardKeyStatus.SOLD || key.getOrderId() == null
                     || !order.getId().equals(key.getOrderId()) || key.getOrderItemId() == null
                     || !itemIds.contains(key.getOrderItemId())) continue;
-            if (!operationRepository.existsBySalesChannelOrderIdAndOperationTypeAndUnitIndex(
-                    row.getId(), SalesChannelDeliveryOperationType.SEND_MESSAGE, unit)) {
+            Integer unit = unitByCardKey.get(key.getId());
+            if (unit == null) {
+                while (usedUnits.contains(nextUnit)) nextUnit++;
+                unit = nextUnit++;
+                unitByCardKey.put(key.getId(), unit);
+                usedUnits.add(unit);
                 SalesChannelDeliveryOperation operation = new SalesChannelDeliveryOperation();
                 operation.setSalesChannelOrderId(row.getId());
                 operation.setOperationType(SalesChannelDeliveryOperationType.SEND_MESSAGE);
@@ -72,9 +100,9 @@ public class SalesChannelDeliveryPlanner {
                 operation.setStatus(com.myshop.constant.SalesChannelDeliveryOperationStatus.PENDING);
                 operationRepository.save(operation);
             }
-            unit++;
+            validUnits++;
         }
-        if (unit == 0) {
+        if (validUnits == 0) {
             row.setDeliveryStatus(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED);
             row.setLastErrorCode("DATA_INTEGRITY_ERROR");
             row.setLastErrorMessage("Delivered sales-channel order has no valid SOLD CardKey binding");

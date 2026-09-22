@@ -19,8 +19,15 @@ import java.util.UUID;
 public interface SalesChannelDeliveryOperationRepository extends JpaRepository<SalesChannelDeliveryOperation, UUID> {
     Optional<SalesChannelDeliveryOperation> findByRequestId(String requestId);
 
+    @Query("SELECT operation FROM SalesChannelDeliveryOperation operation "
+            + "WHERE operation.salesChannelOrderId = :orderId "
+            + "AND operation.operationType = :type "
+            + "AND ((:unitIndex IS NULL AND operation.unitIndex IS NULL) "
+            + "OR operation.unitIndex = :unitIndex)")
     Optional<SalesChannelDeliveryOperation> findBySalesChannelOrderIdAndOperationTypeAndUnitIndex(
-            UUID orderId, SalesChannelDeliveryOperationType type, Integer unitIndex);
+            @Param("orderId") UUID orderId,
+            @Param("type") SalesChannelDeliveryOperationType type,
+            @Param("unitIndex") Integer unitIndex);
 
     boolean existsBySalesChannelOrderIdAndOperationTypeAndUnitIndex(
             UUID orderId, SalesChannelDeliveryOperationType type, Integer unitIndex);
@@ -32,11 +39,20 @@ public interface SalesChannelDeliveryOperationRepository extends JpaRepository<S
 
     @Query("SELECT operation FROM SalesChannelDeliveryOperation operation "
             + "WHERE operation.status IN :statuses "
-            + "AND (operation.nextAttemptAt IS NULL OR operation.nextAttemptAt <= :now) "
+            + "AND (operation.status = com.myshop.constant.SalesChannelDeliveryOperationStatus.PENDING "
+            + "OR (operation.status = com.myshop.constant.SalesChannelDeliveryOperationStatus.FAILED "
+            + "AND operation.nextAttemptAt IS NOT NULL AND operation.nextAttemptAt <= :now)) "
             + "ORDER BY operation.createdAt ASC")
     List<SalesChannelDeliveryOperation> findDue(@Param("statuses") Collection<SalesChannelDeliveryOperationStatus> statuses,
                                                 @Param("now") LocalDateTime now,
                                                 Pageable pageable);
+
+    @Query("SELECT operation FROM SalesChannelDeliveryOperation operation "
+            + "WHERE operation.status = com.myshop.constant.SalesChannelDeliveryOperationStatus.RUNNING "
+            + "AND operation.startedAt IS NOT NULL AND operation.startedAt < :cutoff "
+            + "ORDER BY operation.startedAt ASC")
+    List<SalesChannelDeliveryOperation> findStaleRunning(@Param("cutoff") LocalDateTime cutoff,
+                                                         Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT operation FROM SalesChannelDeliveryOperation operation WHERE operation.id = :id")

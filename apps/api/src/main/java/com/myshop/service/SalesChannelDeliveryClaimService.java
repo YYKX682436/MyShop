@@ -4,6 +4,7 @@ import com.myshop.constant.SalesChannelDeliveryOperationStatus;
 import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +17,9 @@ import java.util.UUID;
 public class SalesChannelDeliveryClaimService {
     private final SalesChannelDeliveryOperationRepository repository;
 
+    @Value("${sales-channel.delivery.max-attempts:8}")
+    private int maxAttempts;
+
     @Transactional
     public Optional<SalesChannelDeliveryOperation> claim(UUID operationId) {
         SalesChannelDeliveryOperation operation = repository.findByIdForUpdate(operationId).orElse(null);
@@ -24,13 +28,31 @@ public class SalesChannelDeliveryClaimService {
                 && operation.getStatus() != SalesChannelDeliveryOperationStatus.FAILED) {
             return Optional.empty();
         }
-        if (operation.getNextAttemptAt() != null && operation.getNextAttemptAt().isAfter(LocalDateTime.now())) {
+        LocalDateTime now = LocalDateTime.now();
+        if (operation.getStatus() == SalesChannelDeliveryOperationStatus.FAILED
+                && (operation.getNextAttemptAt() == null || operation.getNextAttemptAt().isAfter(now))) {
+            return Optional.empty();
+        }
+        if (operation.getNextAttemptAt() != null && operation.getNextAttemptAt().isAfter(now)) {
+            return Optional.empty();
+        }
+        if (operation.getAttemptCount() >= configuredMaxAttempts()) {
+            operation.setStatus(SalesChannelDeliveryOperationStatus.FAILED);
+            operation.setLastErrorCode("DELIVERY_MAX_ATTEMPTS_EXCEEDED");
+            operation.setLastErrorMessage("Delivery operation reached its maximum attempt count");
+            operation.setFinishedAt(now);
+            operation.setNextAttemptAt(null);
+            repository.save(operation);
             return Optional.empty();
         }
         operation.setStatus(SalesChannelDeliveryOperationStatus.RUNNING);
         operation.setAttemptCount(operation.getAttemptCount() + 1);
-        operation.setStartedAt(LocalDateTime.now());
+        operation.setStartedAt(now);
         operation.setFinishedAt(null);
         return Optional.of(repository.save(operation));
+    }
+
+    private int configuredMaxAttempts() {
+        return Math.max(1, maxAttempts);
     }
 }

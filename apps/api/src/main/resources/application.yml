@@ -135,6 +135,8 @@ sales-channel:
   delivery:
     worker-enabled: ${SALES_CHANNEL_DELIVERY_WORKER_ENABLED:false}
     interval-ms: ${SALES_CHANNEL_DELIVERY_INTERVAL_MS:1000}
+    stale-running-ms: ${SALES_CHANNEL_DELIVERY_STALE_RUNNING_MS:300000}
+    max-attempts: ${SALES_CHANNEL_DELIVERY_MAX_ATTEMPTS:8}
 
 # Dashboard host metrics are read from the internal node-exporter sidecar.
 # The endpoint is admin-protected and has no public metrics route.
