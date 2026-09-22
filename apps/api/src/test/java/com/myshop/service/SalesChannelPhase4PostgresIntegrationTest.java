@@ -365,7 +365,7 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 listing.getId()));
         assertEquals(operationCount, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
                 listing.getId()));
-        verify(providerClient, org.mockito.Mockito.times(2)).getListingSpecMappings(any());
+        verify(providerClient, org.mockito.Mockito.times(3)).getListingSpecMappings(any());
     }
 
     @Test
