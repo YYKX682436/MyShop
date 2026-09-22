@@ -7,6 +7,8 @@ import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.Product;
+import com.myshop.entity.ProductSpec;
+import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.entity.SalesChannelOrderCursor;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.entity.Order;
@@ -14,6 +16,7 @@ import com.myshop.entity.OrderItem;
 import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.constant.StockMode;
 import com.myshop.repository.ProductRepository;
+import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
@@ -21,10 +24,13 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
+import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.CategoryRecommendRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSpecMappingSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult;
@@ -63,6 +69,10 @@ public class SalesChannelAdminService {
     private final SalesChannelListingRepository listingRepository;
     private final ObjectMapper objectMapper;
     private final ProductRepository productRepository;
+    private final ProductSpecRepository productSpecRepository;
+    private final SalesChannelListingSpecRepository listingSpecRepository;
+    private final SalesChannelSpecMappingValidator specMappingValidator;
+    private final SalesChannelSpecMappingSyncService specMappingSyncService;
     private final SalesChannelOrderCursorRepository cursorRepository;
     private final SalesChannelOrderRepository channelOrderRepository;
     private final SalesChannelDeliveryOperationRepository deliveryOperationRepository;
@@ -151,6 +161,10 @@ public class SalesChannelAdminService {
         return listingSummary(listing);
     }
 
+    public SpecMappingSyncResult syncSpecMappings(UUID listingId) {
+        return specMappingSyncService.sync(listingId);
+    }
+
     public List<SalesChannelOrderSummary> salesChannelOrders(String provider, UUID accountId,
                                                               String externalStatus, String ingestStatus,
                                                               String deliveryStatus, String keyword,
@@ -217,7 +231,26 @@ public class SalesChannelAdminService {
         return new ListingSummary(listing.getId().toString(), account.getProviderAccountId(),
                 account.getDisplayName(), accountType(account), listing.isEnabled(), listing.isAutoFulfillmentEnabled(), listing.getStatus().name(),
                 listing.getExternalItemId(), listing.getDesiredRevision(), listing.getLastSyncedAt(),
-                listing.getLastErrorCode(), listing.getLastErrorMessage(), config);
+                listing.getLastErrorCode(), listing.getLastErrorMessage(), config, specMappingSummaries(listing));
+    }
+
+    private List<ListingSpecMappingSummary> specMappingSummaries(SalesChannelListing listing) {
+        Map<UUID, SalesChannelListingSpec> mappings = listingSpecRepository
+                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
+                .collect(java.util.stream.Collectors.toMap(SalesChannelListingSpec::getProductSpecId,
+                        value -> value, (left, right) -> left));
+        return productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(listing.getProductId(), 0).stream()
+                .map(spec -> {
+                    SalesChannelListingSpec mapping = mappings.get(spec.getId());
+                    Map<String, Object> provider = mapping == null ? Map.of() : mapping.getProviderMapping();
+                    Object providerName = provider.get("provider_spec_name");
+                    Object providerValue = provider.get("provider_spec_value");
+                    return new ListingSpecMappingSummary(spec.getId().toString(), spec.getName(),
+                            providerName == null ? null : String.valueOf(providerName),
+                            providerValue == null ? null : String.valueOf(providerValue),
+                            mapping == null ? null : mapping.getExternalSkuId());
+                })
+                .toList();
     }
 
     @org.springframework.transaction.annotation.Transactional
@@ -271,6 +304,15 @@ public class SalesChannelAdminService {
             if (!product.isSpecEnabled() && product.getCostPrice() == null) {
                 throw new IllegalStateException(
                         "Phase 4 auto fulfillment requires a non-null product cost price for spec-disabled products");
+            }
+            if (product.isSpecEnabled()) {
+                List<ProductSpec> activeSpecs = productSpecRepository
+                        .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
+                List<SalesChannelListingSpec> mappingRows = listingSpecRepository
+                        .findBySalesChannelListingIdForUpdate(listing.getId());
+                specMappingValidator.assertCompleteForAutoFulfillment(
+                        activeSpecs.stream().map(SalesChannelSpecMappingValidator::snapshot).toList(),
+                        mappingRows.stream().map(SalesChannelSpecMappingValidator::snapshot).toList());
             }
         }
         listing.setAutoFulfillmentEnabled(enabled);

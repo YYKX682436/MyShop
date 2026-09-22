@@ -547,6 +547,14 @@ export interface SalesChannelAccountSummary {
   orderSyncEnabled?: boolean
 }
 
+export interface SalesChannelSpecMappingSummary {
+  productSpecId: string
+  productSpecName: string
+  providerSpecName?: string | null
+  providerSpecValue?: string | null
+  externalSkuId?: string | null
+}
+
 export interface SalesChannelListingSummary {
   id: string
   providerAccountId: string
@@ -561,6 +569,14 @@ export interface SalesChannelListingSummary {
   lastErrorCode?: string | null
   lastErrorMessage?: string | null
   providerConfig?: XianyuProviderConfig | null
+  specMappings?: SalesChannelSpecMappingSummary[]
+}
+
+export interface SalesChannelSpecMappingSyncResult {
+  listingId: string
+  itemId: string
+  matched: number
+  mappings: SalesChannelSpecMappingSummary[]
 }
 
 export interface UpdateXianyuListingRequest {
@@ -690,6 +706,8 @@ export const adminSalesChannelApi = {
     request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/disable`, { method: "POST" }),
   retryListing: (listingId: string) =>
     request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/retry`, { method: "POST" }),
+  syncSpecMappings: (listingId: string) =>
+    request<SalesChannelSpecMappingSyncResult>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/spec-mappings/sync`, { method: "POST" }),
   initializeOrderCursor: (accountId: string) =>
     request<null>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/order-sync/initialize`, { method: "POST" }),
   enableOrderSync: (accountId: string) =>

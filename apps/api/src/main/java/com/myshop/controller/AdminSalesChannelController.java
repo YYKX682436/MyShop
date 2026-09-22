@@ -6,6 +6,7 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AddressSearchRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.CategoryRecommendRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.UpdateXianyuListingRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderDetail;
@@ -107,6 +108,11 @@ public class AdminSalesChannelController {
     @PostMapping("/admin/sales-channel-listings/{listingId}/retry")
     public ApiResponse<ListingSummary> retryListing(@PathVariable UUID listingId) {
         return ApiResponse.success(salesChannelAdminService.retryListing(listingId));
+    }
+
+    @PostMapping("/admin/sales-channel-listings/{listingId}/spec-mappings/sync")
+    public ApiResponse<SpecMappingSyncResult> syncSpecMappings(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelAdminService.syncSpecMappings(listingId));
     }
 
     @LogOperation(action = "sales_channel.auto_fulfillment_enable", targetType = "SALES_CHANNEL_LISTING", targetId = "#listingId", detail = "'开启渠道自动发卡'")

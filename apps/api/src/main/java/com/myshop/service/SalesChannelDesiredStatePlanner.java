@@ -14,7 +14,6 @@ import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelOperation;
-import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.pricing.PriceTarget;
 import com.myshop.repository.ProductRepository;
@@ -22,7 +21,6 @@ import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.saleschannel.model.DesiredListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.PlatformAttribute;
 import com.myshop.saleschannel.model.SalesChannelDtos.SkuRow;
@@ -64,7 +62,6 @@ public class SalesChannelDesiredStatePlanner {
     private final SalesChannelOperationRepository operationRepository;
     private final ProductInventoryBatchService inventoryBatchService;
     private final SalesChannelOperationServiceImpl operationService;
-    private final SalesChannelListingSpecRepository listingSpecRepository;
 
     @Transactional
     public SalesChannelListing saveConfig(UUID listingId, XianyuProviderConfig config) {
@@ -302,10 +299,6 @@ public class SalesChannelDesiredStatePlanner {
 
         List<ProductSpec> specs = productSpecRepository
                 .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
-        Map<UUID, SalesChannelListingSpec> specMappings = listingSpecRepository
-                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
-                .collect(java.util.stream.Collectors.toMap(SalesChannelListingSpec::getProductSpecId,
-                        mapping -> mapping, (left, right) -> left));
         boolean useSpecs = product.isSpecEnabled() && !specs.isEmpty() && "FISH_SHOP".equals(accountType(account));
         Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> inventory = inventoryBatchService.load(
                 List.of(product), Map.of(product.getId(), specs));
@@ -326,13 +319,6 @@ public class SalesChannelDesiredStatePlanner {
             List<SkuRow> skuValues = new ArrayList<>();
             long total = 0;
             for (ProductSpec spec : specs) {
-                SalesChannelListingSpec mapping = specMappings.get(spec.getId());
-                if (mapping != null) {
-                    mapping.setProviderMapping(Map.of(
-                            "provider_spec_name", "规格",
-                            "provider_spec_value", spec.getName()));
-                    listingSpecRepository.save(mapping);
-                }
                 ProductInventoryBatchService.StockSnapshot stock = inventory.get(
                         new PriceTarget(product.getId(), spec.getId()));
                 int available = stockQuantity(product, stock, config.unlimitedStockQuantity(), config.stockCapPerSku());

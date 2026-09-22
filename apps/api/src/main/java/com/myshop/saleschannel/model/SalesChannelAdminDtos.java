@@ -53,7 +53,8 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("lastSyncedAt") LocalDateTime lastSyncedAt,
             @JsonProperty("lastErrorCode") String lastErrorCode,
             @JsonProperty("lastErrorMessage") String lastErrorMessage,
-            @JsonProperty("providerConfig") XianyuProviderConfig providerConfig) {
+            @JsonProperty("providerConfig") XianyuProviderConfig providerConfig,
+            @JsonProperty("specMappings") List<ListingSpecMappingSummary> specMappings) {
         /** Backward-compatible constructor for callers predating Phase 4. */
         public ListingSummary(String id, String providerAccountId, String displayName,
                               String accountType, boolean isEnabled, String status,
@@ -62,9 +63,24 @@ public final class SalesChannelAdminDtos {
                               XianyuProviderConfig providerConfig) {
             this(id, providerAccountId, displayName, accountType, isEnabled, false, status,
                     externalItemId, desiredRevision, lastSyncedAt, lastErrorCode,
-                    lastErrorMessage, providerConfig);
+                    lastErrorMessage, providerConfig, List.of());
         }
     }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record ListingSpecMappingSummary(
+            @JsonProperty("productSpecId") String productSpecId,
+            @JsonProperty("productSpecName") String productSpecName,
+            @JsonProperty("providerSpecName") String providerSpecName,
+            @JsonProperty("providerSpecValue") String providerSpecValue,
+            @JsonProperty("externalSkuId") String externalSkuId) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record SpecMappingSyncResult(
+            @JsonProperty("listingId") String listingId,
+            @JsonProperty("itemId") String itemId,
+            @JsonProperty("matched") int matched,
+            @JsonProperty("mappings") List<ListingSpecMappingSummary> mappings) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record UpdateXianyuListingRequest(

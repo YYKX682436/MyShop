@@ -14,6 +14,7 @@ import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.entity.SalesChannelOrder;
+import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
@@ -29,6 +30,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
+import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSpecification;
+import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSpecificationValue;
+import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSkuRow;
 import com.myshop.utils.CardContentParser;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +64,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -99,6 +105,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelOrderImportService importService;
+
+    @Autowired
+    private SalesChannelSpecMappingSyncService specMappingSyncService;
 
     @Autowired
     private FulfillmentTransactionService fulfillmentService;
@@ -269,6 +278,138 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(1, operations.stream().filter(operation -> specId != null && operation.getCardKeyId() != null).count());
         assertEquals(0, operations.stream().filter(operation -> operation.getResultJson() != null
                 && operation.getResultJson().containsKey("content")).count());
+    }
+
+    @Test
+    void specMappingBackfillIsExactAtomicIdempotentAndDoesNotCreateListingOperations() {
+        UUID productId = insertProduct(true);
+        UUID monthId = insertProductSpec(productId, "月卡");
+        UUID yearId = insertProductSpec(productId, "年卡");
+        UUID lifetimeId = insertProductSpec(productId, "永久卡");
+        SalesChannelAccount account = account("spec-backfill");
+        SalesChannelListing listing = listing(account, productId, "item-spec-backfill", false);
+        insertListingSpec(listing, monthId);
+        insertListingSpec(listing, yearId);
+        insertListingSpec(listing, lifetimeId);
+
+        long desiredRevision = listing.getDesiredRevision();
+        long appliedRevision = listing.getAppliedRevision();
+        int operationCount = count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
+                listing.getId());
+
+        when(providerClient.getListingSpecMappings(any())).thenReturn(new IntegrationEnvelope<>(
+                "provider-read",
+                Outcome.SUCCEEDED,
+                new ListingSpecMappingsData("item-spec-backfill",
+                        List.of(new SpecMappingSpecification("规格", List.of(
+                                new SpecMappingSpecificationValue("月卡"),
+                                new SpecMappingSpecificationValue("年卡"),
+                                new SpecMappingSpecificationValue("永久卡"),
+                                new SpecMappingSpecificationValue("测试卡")))),
+                        List.of(
+                                new SpecMappingSkuRow(null, Map.of("规格", "永久卡")),
+                                new SpecMappingSkuRow(null, Map.of("规格", "月卡")),
+                                new SpecMappingSkuRow(null, Map.of("规格", "年卡")),
+                                new SpecMappingSkuRow(null, Map.of("规格", "测试卡")))),
+                null));
+
+        SalesChannelSpecMappingException failure = assertThrows(SalesChannelSpecMappingException.class,
+                () -> specMappingSyncService.sync(listing.getId()));
+        assertEquals("SPEC_MAPPING_INCOMPLETE", failure.getCode());
+        assertEquals(3, count("select count(*) from sales_channel_listing_specs "
+                + "where sales_channel_listing_id = ? and provider_mapping = '{}'::jsonb and external_sku_id is null",
+                listing.getId()));
+        assertEquals(desiredRevision, listingRepository.findById(listing.getId()).orElseThrow().getDesiredRevision());
+        assertEquals(appliedRevision, listingRepository.findById(listing.getId()).orElseThrow().getAppliedRevision());
+        assertEquals(operationCount, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
+                listing.getId()));
+
+        when(providerClient.getListingSpecMappings(any())).thenReturn(new IntegrationEnvelope<>(
+                "provider-read",
+                Outcome.SUCCEEDED,
+                new ListingSpecMappingsData("item-spec-backfill",
+                        List.of(new SpecMappingSpecification("规格", List.of(
+                                new SpecMappingSpecificationValue("月卡"),
+                                new SpecMappingSpecificationValue("年卡"),
+                                new SpecMappingSpecificationValue("永久卡")))),
+                        List.of(
+                                new SpecMappingSkuRow(null, Map.of("规格", "永久卡")),
+                                new SpecMappingSkuRow(null, Map.of("规格", "月卡")),
+                                new SpecMappingSkuRow(null, Map.of("规格", "年卡")))),
+                null));
+
+        var first = specMappingSyncService.sync(listing.getId());
+        assertEquals(3, first.matched());
+        assertEquals("item-spec-backfill", first.itemId());
+
+        Map<UUID, SalesChannelListingSpec> rows = listingSpecRepository
+                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
+                .collect(java.util.stream.Collectors.toMap(SalesChannelListingSpec::getProductSpecId, row -> row));
+        assertEquals(Map.of("provider_spec_name", "规格", "provider_spec_value", "月卡"),
+                rows.get(monthId).getProviderMapping());
+        assertEquals(Map.of("provider_spec_name", "规格", "provider_spec_value", "年卡"),
+                rows.get(yearId).getProviderMapping());
+        assertEquals(Map.of("provider_spec_name", "规格", "provider_spec_value", "永久卡"),
+                rows.get(lifetimeId).getProviderMapping());
+        assertNull(rows.get(monthId).getExternalSkuId());
+        assertNull(rows.get(yearId).getExternalSkuId());
+        assertNull(rows.get(lifetimeId).getExternalSkuId());
+        assertEquals(desiredRevision, listingRepository.findById(listing.getId()).orElseThrow().getDesiredRevision());
+        assertEquals(appliedRevision, listingRepository.findById(listing.getId()).orElseThrow().getAppliedRevision());
+        assertEquals(operationCount, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
+                listing.getId()));
+
+        var second = specMappingSyncService.sync(listing.getId());
+        assertEquals(first.mappings(), second.mappings());
+        assertEquals(3, count("select count(*) from sales_channel_listing_specs where sales_channel_listing_id = ?",
+                listing.getId()));
+        assertEquals(operationCount, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
+                listing.getId()));
+        verify(providerClient, org.mockito.Mockito.times(2)).getListingSpecMappings(any());
+    }
+
+    @Test
+    void specMappingOrderImportUsesExactProviderValueAndRejectsFuzzyValue() {
+        UUID productId = insertProduct(true);
+        UUID monthId = insertProductSpec(productId, "月卡");
+        UUID yearId = insertProductSpec(productId, "年卡");
+        UUID lifetimeId = insertProductSpec(productId, "永久卡");
+        SalesChannelAccount account = account("spec-order-backfill");
+        SalesChannelListing listing = listing(account, productId, "item-spec-order-backfill", false);
+        insertListingSpec(listing, monthId);
+        insertListingSpec(listing, yearId);
+        insertListingSpec(listing, lifetimeId);
+        when(providerClient.getListingSpecMappings(any())).thenReturn(new IntegrationEnvelope<>(
+                "provider-read",
+                Outcome.SUCCEEDED,
+                new ListingSpecMappingsData("item-spec-order-backfill",
+                        List.of(new SpecMappingSpecification("规格", List.of(
+                                new SpecMappingSpecificationValue("永久卡"),
+                                new SpecMappingSpecificationValue("月卡"),
+                                new SpecMappingSpecificationValue("年卡")))),
+                        List.of(
+                                new SpecMappingSkuRow(null, Map.of("规格", "永久卡")),
+                                new SpecMappingSkuRow(null, Map.of("规格", "月卡")),
+                                new SpecMappingSkuRow(null, Map.of("规格", "年卡")))),
+                null));
+        specMappingSyncService.sync(listing.getId());
+
+        SalesChannelOrder month = importService.importOrder(account,
+                order(account, "xy-spec-backfill-month", "item-spec-order-backfill", null, "月卡", 1, "20.00"));
+        SalesChannelOrder year = importService.importOrder(account,
+                order(account, "xy-spec-backfill-year", "item-spec-order-backfill", null, "年卡", 1, "20.00"));
+        SalesChannelOrder lifetime = importService.importOrder(account,
+                order(account, "xy-spec-backfill-lifetime", "item-spec-order-backfill", null, "永久卡", 1, "20.00"));
+
+        assertEquals(monthId, scalar("select spec_id from order_items where order_id = ?", UUID.class, month.getOrderId()));
+        assertEquals(yearId, scalar("select spec_id from order_items where order_id = ?", UUID.class, year.getOrderId()));
+        assertEquals(lifetimeId, scalar("select spec_id from order_items where order_id = ?", UUID.class, lifetime.getOrderId()));
+
+        SalesChannelOrder fuzzy = importService.importOrder(account,
+                order(account, "xy-spec-backfill-fuzzy", "item-spec-order-backfill", null, "月", 1, "20.00"));
+        assertEquals("MAPPING_ERROR", fuzzy.getIngestStatus().name());
+        assertEquals("SPEC_MAPPING_ERROR", fuzzy.getLastErrorCode());
+        assertNull(fuzzy.getOrderId());
     }
 
     @Test
@@ -885,6 +1026,14 @@ class SalesChannelPhase4PostgresIntegrationTest {
         listing.setStatus(SalesChannelListingStatus.ONLINE);
         listing.setProviderConfig(Map.of());
         return listingRepository.saveAndFlush(listing);
+    }
+
+    private SalesChannelListingSpec insertListingSpec(SalesChannelListing listing, UUID productSpecId) {
+        SalesChannelListingSpec mapping = new SalesChannelListingSpec();
+        mapping.setSalesChannelListingId(listing.getId());
+        mapping.setProductSpecId(productSpecId);
+        mapping.setProviderMapping(Map.of());
+        return listingSpecRepository.saveAndFlush(mapping);
     }
 
     private AgentOrder order(SalesChannelAccount account, String externalOrderNo,

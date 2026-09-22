@@ -7,9 +7,11 @@ import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.UpdateCommand;
@@ -41,6 +43,8 @@ public interface SalesChannelProviderClient {
     IntegrationEnvelope<ListingOperationData> delete(String itemId, UpdateCommand command);
 
     IntegrationEnvelope<ReconcileData> reconcile(ReconcileCommand command);
+
+    IntegrationEnvelope<ListingSpecMappingsData> getListingSpecMappings(SpecMappingsCommand command);
 
     AddressMetadataResult searchAddress(String keywords, String city);
 

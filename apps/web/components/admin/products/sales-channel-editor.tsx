@@ -51,7 +51,7 @@ const EMPTY_CONFIG: XianyuProviderConfig = {
   stockCapPerSku: null,
 }
 
-type BusyAction = "load" | "sync" | "verify" | "save" | "enable" | "disable" | "retry" | "auto" | null
+type BusyAction = "load" | "sync" | "verify" | "save" | "enable" | "disable" | "retry" | "mapping" | "auto" | null
 
 function configFromListing(listing?: SalesChannelListingSummary): XianyuProviderConfig {
   const config = listing?.providerConfig
@@ -95,12 +95,13 @@ function ReadOnlyCategoryValue({ label, value }: { label: string; value?: string
   </div>
 }
 
-export function SalesChannelEditor({ productId, productTitle, productDescription, deliveryType = "AUTO", stockMode = "CARD_KEY", disabled = false }: {
+export function SalesChannelEditor({ productId, productTitle, productDescription, deliveryType = "AUTO", stockMode = "CARD_KEY", specEnabled = false, disabled = false }: {
   productId: string
   productTitle: string
   productDescription: string
   deliveryType?: "AUTO" | "MANUAL"
   stockMode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  specEnabled?: boolean
   disabled?: boolean
 }) {
   const [accounts, setAccounts] = useState<SalesChannelAccountSummary[]>([])
@@ -133,7 +134,15 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   const type = accountType(selectedAccount)
   const needsVerification = Boolean(selectedAccount && type === "UNKNOWN")
   const canOperate = !disabled && !busy && accountEnabled(selectedAccount) && !needsVerification
-  const autoGateReady = deliveryType === "AUTO" && stockMode === "CARD_KEY" && type === "FISH_SHOP" && Boolean(selectedListing?.externalItemId)
+  const specMappings = selectedListing?.specMappings || []
+  const specMappingReady = !specEnabled || (
+    Boolean(selectedListing) &&
+    specMappings.length > 0 &&
+    specMappings.every((mapping) => Boolean(mapping.externalSkuId?.trim() || (mapping.providerSpecName?.trim() && mapping.providerSpecValue?.trim()))) &&
+    new Set(specMappings.map((mapping) => mapping.productSpecId)).size === specMappings.length &&
+    new Set(specMappings.map((mapping) => `${mapping.providerSpecName?.trim() || ""}\u0000${mapping.providerSpecValue?.trim() || ""}`)).size === specMappings.length
+  )
+  const autoGateReady = deliveryType === "AUTO" && stockMode === "CARD_KEY" && type === "FISH_SHOP" && Boolean(selectedListing?.externalItemId) && specMappingReady
   const finalTitle = config.titleOverride?.trim() || productTitle.trim()
   const finalDescription = config.descriptionOverride?.trim() || productDescription.trim()
 
@@ -435,6 +444,22 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
     }
   }
 
+  const handleSyncSpecMappings = async () => {
+    if (!canOperate || !selectedListing) return
+    setBusy("mapping")
+    try {
+      const result = await adminSalesChannelApi.syncSpecMappings(selectedListing.id)
+      setListings((current) => current.map((listing) => listing.id === selectedListing.id
+        ? { ...listing, specMappings: result.mappings }
+        : listing))
+      toast.success(`已同步 ${result.matched} 个闲鱼规格映射`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "同步闲鱼规格映射失败")
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const handleAutoFulfillment = async () => {
     if (!selectedListing || !canOperate) return
     setBusy("auto")
@@ -491,7 +516,27 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
           <div><strong>自动发卡</strong><p className="mt-1 text-xs text-muted-foreground">Phase 4 仅支持 MyShop 的 AUTO + CARD_KEY + FISH_SHOP 商品；Agent 不分配卡密。</p></div>
           {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleAutoFulfillment()} disabled={!canOperate || !autoGateReady || !selectedListing.externalItemId}>{busy === "auto" ? <Loader2 className="animate-spin" /> : null}{selectedListing.autoFulfillmentEnabled ? "关闭自动发卡" : "开启自动发卡"}</Button>}
         </div>
-        {!autoGateReady && <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">当前不满足开启条件：需要商品交付方式 AUTO、库存模式 CARD_KEY、已验证 FISH_SHOP 账号和已绑定闲鱼 item。</p>}
+        {!autoGateReady && <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">当前不满足开启条件：需要商品交付方式 AUTO、库存模式 CARD_KEY、已验证 FISH_SHOP 账号、已绑定闲鱼 item；规格商品还必须先完成规格映射。</p>}
+      </div>}
+
+      {selectedAccount && specEnabled && <div className="mb-5 rounded-card border border-border-subtle bg-surface-muted/45 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">规格映射</h3>
+            <p className="mt-1 text-xs text-muted-foreground">按规格名称严格匹配闲鱼真实规格；没有 external SKU ID 时，完整 provider mapping 仍可作为正式 identity。</p>
+          </div>
+          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleSyncSpecMappings()} disabled={!canOperate || !selectedListing.externalItemId}>{busy === "mapping" ? <Loader2 className="animate-spin" /> : <RefreshCw />}{busy === "mapping" ? "同步中…" : "同步闲鱼规格映射"}</Button>}
+        </div>
+        {specMappings.length > 0 ? <div className="mt-3 space-y-2">
+          {specMappings.map((mapping) => {
+            const mapped = Boolean(mapping.externalSkuId?.trim() || (mapping.providerSpecName?.trim() && mapping.providerSpecValue?.trim()))
+            return <div key={mapping.productSpecId} className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-border-subtle bg-surface px-3 py-2 text-sm">
+              <span className="font-medium">{mapping.productSpecName}</span>
+              <span className={mapped ? "text-emerald-700 dark:text-emerald-300" : "text-amber-800 dark:text-amber-200"}>{mapped ? "已映射" : "未映射"}</span>
+              {mapped && <span className="basis-full text-xs text-muted-foreground">{mapping.providerSpecName && mapping.providerSpecValue ? `${mapping.providerSpecName} = ${mapping.providerSpecValue}` : "provider mapping"}{mapping.externalSkuId ? ` · SKU ${mapping.externalSkuId}` : ""}</span>}
+            </div>
+          })}
+        </div> : <p className="mt-3 text-xs text-amber-800 dark:text-amber-200">尚未读取闲鱼规格映射。完成映射后才能开启自动发卡。</p>}
       </div>}
 
       <div className="grid gap-4 lg:grid-cols-2">

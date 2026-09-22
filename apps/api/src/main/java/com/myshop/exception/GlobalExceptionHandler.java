@@ -27,6 +27,15 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(e.getCode(), e.getMessage(), e.getParams()));
     }
 
+    @ExceptionHandler(SalesChannelSpecMappingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleSalesChannelSpecMapping(SalesChannelSpecMappingException e) {
+        log.warn("Sales-channel specification mapping failed: code={}, retryable={}",
+                e.getCode(), e.isRetryable());
+        return ResponseEntity.status(e.isRetryable() ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(ApiResponse.error(ErrorCode.BAD_REQUEST, e.getMessage(),
+                        java.util.Map.of("errorCode", e.getCode(), "retryable", e.isRetryable())));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException e) {
         String message = e.getBindingResult().getFieldErrors().stream()

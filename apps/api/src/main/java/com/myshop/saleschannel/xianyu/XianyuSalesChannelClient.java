@@ -18,11 +18,13 @@ import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationError;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSnapshot;
@@ -205,6 +207,15 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
                 command.targetRequestId(), blankToNull(command.expectedItemId()), command.desiredRevision()));
         return exchange("POST", "/listings/reconcile", body, "application/json",
                 responseType(ReconcileData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<ListingSpecMappingsData> getListingSpecMappings(SpecMappingsCommand command) {
+        validateSpecMappingsCommand(command);
+        byte[] body = serialize(new XianyuSpecMappingsRequest(command.requestId(), command.accountId(), command.itemId()));
+        return exchange("POST", "/listings/spec-mappings", body, "application/json",
+                responseType(ListingSpecMappingsData.class), RequestSemantics.READ_ONLY,
                 command.requestId(), command.requestId());
     }
 
@@ -546,6 +557,14 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         if (desiredRevision < 0) throw safeFailure("INVALID_REQUEST", "desired_revision cannot be negative");
     }
 
+    private static void validateSpecMappingsCommand(SpecMappingsCommand command) {
+        if (command == null || blank(command.requestId()) || command.requestId().length() > 255
+                || blank(command.accountId()) || command.accountId().length() > 128
+                || blank(command.itemId()) || command.itemId().length() > 128) {
+            throw safeFailure("INVALID_SPEC_MAPPING_REQUEST", "Spec mapping request fields are invalid");
+        }
+    }
+
     private static void validateListing(ListingSnapshot listing) {
         if (listing == null || blank(listing.title()) || listing.title().length() > 200
                 || blank(listing.description()) || listing.description().length() > 1500
@@ -814,4 +833,10 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             @JsonProperty("target_request_id") String targetRequestId,
             @JsonProperty("expected_item_id") String expectedItemId,
             @JsonProperty("desired_revision") long desiredRevision) { }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record XianyuSpecMappingsRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("item_id") String itemId) { }
 }

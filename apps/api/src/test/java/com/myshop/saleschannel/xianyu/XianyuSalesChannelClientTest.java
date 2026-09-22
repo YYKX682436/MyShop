@@ -9,6 +9,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
@@ -22,6 +23,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount;
 import com.myshop.saleschannel.model.SalesChannelDtos.SkuRow;
 import com.myshop.saleschannel.model.SalesChannelDtos.Specification;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecificationValue;
+import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.UpdateCommand;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -211,6 +213,30 @@ class XianyuSalesChannelClientTest {
             JsonNode selectedRequest = objectMapper.readTree(requests.get(2).body());
             assertEquals("service-card", selectedRequest.path("card_list").get(0).path("seed").asText());
             assertEquals("cat-real-1", selectedRequest.path("selected_category").path("cat_id").asText());
+        }
+    }
+
+    @Test
+    void specMappingReadUsesReadOnlyHmacEndpointAndPreservesProviderSkuIdentity() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SUCCESS)) {
+            XianyuSalesChannelClient client = client(fixture.baseUrl());
+            IntegrationEnvelope<ListingSpecMappingsData> response = client.getListingSpecMappings(
+                    new SpecMappingsCommand("spec-read-1", "acct-1", "item-123"));
+
+            assertEquals(Outcome.SUCCEEDED, response.outcome());
+            assertEquals("item-123", response.data().itemId());
+            assertEquals("规格", response.data().specifications().getFirst().name());
+            assertEquals("sku-month", response.data().skuRows().getFirst().externalSkuId());
+            CapturedRequest request = fixture.requests().getFirst();
+            assertEquals("POST /api/integration/v1/listings/spec-mappings",
+                    request.method() + " " + request.path());
+            JsonNode body = objectMapper.readTree(request.body());
+            assertEquals("spec-read-1", body.path("request_id").asText());
+            assertEquals("acct-1", body.path("account_id").asText());
+            assertEquals("item-123", body.path("item_id").asText());
+            String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
+                    request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
+            assertEquals(independentHmac(SECRET, canonical), request.header("X-MyShop-Signature"));
         }
     }
 
@@ -500,8 +526,15 @@ class XianyuSalesChannelClientTest {
                                 "tb_cat_id", "tb-real-1", "is_selected", true,
                                 "cookie", "do-not-leak", "token", "do-not-leak")),
                         "properties", List.of(Map.of("property_id", "property-1", "property_name", "授权类型",
-                                "options", List.of(Map.of("value_id", "personal", "value_name", "个人版")),
-                                "is_multiple", false)), "card_list", List.of(Map.of("id", "card-1")));
+                        "options", List.of(Map.of("value_id", "personal", "value_name", "个人版")),
+                        "is_multiple", false)), "card_list", List.of(Map.of("id", "card-1")));
+                case "/api/integration/v1/listings/spec-mappings" -> Map.of(
+                        "item_id", "item-123",
+                        "specifications", List.of(Map.of("name", "规格", "values", List.of(
+                                Map.of("name", "月卡"), Map.of("name", "年卡"), Map.of("name", "永久卡")))),
+                        "sku_rows", List.of(Map.of("external_sku_id", "sku-month", "specs", Map.of("规格", "月卡")),
+                                Map.of("external_sku_id", "sku-year", "specs", Map.of("规格", "年卡")),
+                                Map.of("external_sku_id", "sku-life", "specs", Map.of("规格", "永久卡"))));
                 case "/api/integration/v1/media" -> Map.of("media_id", "media-1", "media_type", "image");
                 case "/api/integration/v1/listings/reconcile" -> Map.of(
                         "target_request_id", "target-operation", "operation_type", "PUBLISH",

@@ -177,6 +177,8 @@ public final class SalesChannelDtos {
     public record ReconcileCommand(String requestId, String accountId, String targetRequestId,
                                    String expectedItemId, long desiredRevision) { }
 
+    public record SpecMappingsCommand(String requestId, String accountId, String itemId) { }
+
     /** Target product data needed by the Xianyu publish/edit wire contract. */
     public record ListingSnapshot(
             String title,
@@ -223,6 +225,22 @@ public final class SalesChannelDtos {
             @JsonProperty("external_sku_id") String externalSkuId,
             @JsonProperty("spec_name") String specName,
             @JsonProperty("spec_value") String specValue) { }
+
+    public record ListingSpecMappingsData(
+            @JsonProperty("item_id") String itemId,
+            @JsonProperty("specifications") List<SpecMappingSpecification> specifications,
+            @JsonProperty("sku_rows") List<SpecMappingSkuRow> skuRows) { }
+
+    public record SpecMappingSpecification(
+            @JsonProperty("name") String name,
+            @JsonProperty("values") List<SpecMappingSpecificationValue> values) { }
+
+    public record SpecMappingSpecificationValue(
+            @JsonProperty("name") String name) { }
+
+    public record SpecMappingSkuRow(
+            @JsonProperty("external_sku_id") String externalSkuId,
+            @JsonProperty("specs") Map<String, String> specs) { }
 
     public record ReconcileData(
             @JsonProperty("target_request_id") String targetRequestId,
