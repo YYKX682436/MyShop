@@ -544,6 +544,7 @@ export interface SalesChannelAccountSummary {
   isEnabled?: boolean
   capabilities?: Record<string, boolean | string | null> | null
   lastVerifiedAt?: string | null
+  orderSyncEnabled?: boolean
 }
 
 export interface SalesChannelListingSummary {
@@ -552,6 +553,7 @@ export interface SalesChannelListingSummary {
   displayName?: string | null
   accountType?: "FISH_SHOP" | "PERSONAL" | "UNKNOWN" | string | null
   isEnabled: boolean
+  autoFulfillmentEnabled?: boolean
   status: string
   externalItemId?: string | null
   desiredRevision?: number | null
@@ -564,6 +566,45 @@ export interface SalesChannelListingSummary {
 export interface UpdateXianyuListingRequest {
   accountId: string
   config: XianyuProviderConfig
+}
+
+export interface SalesChannelOrderSummary {
+  id: string
+  provider: string
+  accountId: string
+  externalOrderNo: string
+  myshopOrderNo?: string | null
+  productTitle?: string | null
+  specName?: string | null
+  quantity: number
+  amount: number | string
+  currency: string
+  externalStatus: string
+  ingestStatus: string
+  deliveryStatus: string
+  lastErrorCode?: string | null
+  lastErrorMessage?: string | null
+  sourceUpdatedAt?: string | null
+  autoFulfillmentRequested: boolean
+}
+
+export interface SalesChannelDeliveryOperationSummary {
+  id: string
+  operationType: string
+  unitIndex?: number | null
+  cardKeyId?: string | null
+  status: string
+  requestId: string
+  attemptCount: number
+  startedAt?: string | null
+  finishedAt?: string | null
+  lastErrorCode?: string | null
+  lastErrorMessage?: string | null
+}
+
+export interface SalesChannelOrderDetail {
+  order: SalesChannelOrderSummary
+  deliveryOperations: SalesChannelDeliveryOperationSummary[]
 }
 
 export const adminProductApi = {
@@ -649,6 +690,19 @@ export const adminSalesChannelApi = {
     request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/disable`, { method: "POST" }),
   retryListing: (listingId: string) =>
     request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/retry`, { method: "POST" }),
+  initializeOrderCursor: (accountId: string) =>
+    request<null>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/order-sync/initialize`, { method: "POST" }),
+  enableOrderSync: (accountId: string) =>
+    request<SalesChannelAccountSummary>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/order-sync/enable`, { method: "POST" }),
+  disableOrderSync: (accountId: string) =>
+    request<SalesChannelAccountSummary>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/order-sync/disable`, { method: "POST" }),
+  enableAutoFulfillment: (listingId: string) =>
+    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/auto-fulfillment/enable`, { method: "POST" }),
+  disableAutoFulfillment: (listingId: string) =>
+    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/auto-fulfillment/disable`, { method: "POST" }),
+  getOrders: (params?: Record<string, string | undefined>) =>
+    request<SalesChannelOrderSummary[]>(`/admin/sales-channel-orders?${buildQuery(params || {})}`),
+  getOrder: (id: string) => request<SalesChannelOrderDetail>(`/admin/sales-channel-orders/${encodeURIComponent(id)}`),
   searchXianyuAddress: (data: { keywords: string; city: string }) =>
     request<XianyuAddressSearchData>("/admin/sales-channels/xianyu/metadata/address/search", {
       method: "POST",

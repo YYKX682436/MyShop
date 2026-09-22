@@ -298,7 +298,9 @@ public class FulfillmentTransactionService implements FulfillmentService {
     }
 
     private void notifyAfterCommit(Order order, List<UUID> orderItemIds) {
-        if (order.getOrderType() == OrderType.ADMIN_PICKUP) {
+        // Sales-channel delivery is sent by the provider delivery worker;
+        // only normal storefront orders receive the MyShop email.
+        if (order.getOrderType() != OrderType.NORMAL) {
             return;
         }
         if (TransactionSynchronizationManager.isSynchronizationActive()) {

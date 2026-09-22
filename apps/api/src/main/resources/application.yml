@@ -128,6 +128,13 @@ sales-channel:
     stale-running-ms: ${SALES_CHANNEL_WORKER_STALE_RUNNING_MS:300000}
   sync:
     scan-interval-ms: ${SALES_CHANNEL_SYNC_SCAN_INTERVAL_MS:15000}
+  order-sync:
+    enabled: ${SALES_CHANNEL_ORDER_SYNC_ENABLED:false}
+    interval-ms: ${SALES_CHANNEL_ORDER_SYNC_INTERVAL_MS:5000}
+    batch-size: ${SALES_CHANNEL_ORDER_SYNC_BATCH_SIZE:100}
+  delivery:
+    worker-enabled: ${SALES_CHANNEL_DELIVERY_WORKER_ENABLED:false}
+    interval-ms: ${SALES_CHANNEL_DELIVERY_INTERVAL_MS:1000}
 
 # Dashboard host metrics are read from the internal node-exporter sidecar.
 # The endpoint is admin-protected and has no public metrics route.

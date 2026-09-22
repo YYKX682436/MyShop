@@ -216,7 +216,13 @@ public final class SalesChannelDtos {
             @JsonProperty("item_url") String itemUrl,
             @JsonProperty("capability") AccountCapabilities capability,
             @JsonProperty("idempotent_reused") Boolean idempotentReused,
-            @JsonProperty("desired_revision") Long desiredRevision) { }
+            @JsonProperty("desired_revision") Long desiredRevision,
+            @JsonProperty("sku_mappings") List<SkuMapping> skuMappings) { }
+
+    public record SkuMapping(
+            @JsonProperty("external_sku_id") String externalSkuId,
+            @JsonProperty("spec_name") String specName,
+            @JsonProperty("spec_value") String specValue) { }
 
     public record ReconcileData(
             @JsonProperty("target_request_id") String targetRequestId,
@@ -226,4 +232,72 @@ public final class SalesChannelDtos {
             @JsonProperty("desired_revision") Long desiredRevision,
             @JsonProperty("result") Map<String, Object> result,
             @JsonProperty("target_retryable") Boolean targetRetryable) { }
+
+    public record OrderCursor(
+            @JsonProperty("updated_at") String updatedAt,
+            @JsonProperty("id") Long id) { }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record AgentOrder(
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("external_order_no") String externalOrderNo,
+            @JsonProperty("status") String status,
+            @JsonProperty("item_id") String itemId,
+            @JsonProperty("external_sku_id") String externalSkuId,
+            @JsonProperty("spec_name") String specName,
+            @JsonProperty("spec_value") String specValue,
+            @JsonProperty("quantity") Integer quantity,
+            @JsonProperty("amount") String amount,
+            @JsonProperty("currency") String currency,
+            @JsonProperty("placed_at") String placedAt,
+            @JsonProperty("updated_at") String updatedAt) { }
+
+    public record OrderChangesData(
+            @JsonProperty("orders") List<AgentOrder> orders,
+            @JsonProperty("next_cursor") OrderCursor nextCursor,
+            @JsonProperty("has_more") Boolean hasMore) { }
+
+    public record WatermarkData(
+            @JsonProperty("cursor") OrderCursor cursor,
+            @JsonProperty("empty") Boolean empty) { }
+
+    public record OrderChangesCommand(
+            String requestId,
+            List<String> accountIds,
+            OrderCursor cursor,
+            Integer limit) { }
+
+    public record WatermarkCommand(String requestId, List<String> accountIds) { }
+
+    public record DeliverySendCommand(
+            String requestId,
+            String accountId,
+            String externalOrderNo,
+            Integer unitIndex,
+            List<String> contentParts) { }
+
+    public record DeliveryReconcileCommand(
+            String requestId,
+            String accountId,
+            String targetRequestId,
+            String externalOrderNo,
+            Integer unitIndex) { }
+
+    public record ConfirmDeliveryCommand(
+            String requestId,
+            String accountId,
+            String externalOrderNo) { }
+
+    public record DeliveryData(
+            @JsonProperty("external_order_no") String externalOrderNo,
+            @JsonProperty("unit_index") Integer unitIndex,
+            @JsonProperty("status") String status,
+            @JsonProperty("message_id") String messageId) { }
+
+    public record DeliveryReconcileData(
+            @JsonProperty("target_request_id") String targetRequestId,
+            @JsonProperty("target_outcome") Outcome targetOutcome,
+            @JsonProperty("operation_type") String operationType,
+            @JsonProperty("target_retryable") Boolean targetRetryable,
+            @JsonProperty("result") Map<String, Object> result) { }
 }

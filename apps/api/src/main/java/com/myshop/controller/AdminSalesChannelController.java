@@ -7,6 +7,8 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.AddressSearchRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.CategoryRecommendRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.UpdateXianyuListingRequest;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderDetail;
 import com.myshop.service.SalesChannelAdminService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,10 +18,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 @RestController
 @RequiredArgsConstructor
@@ -56,6 +60,24 @@ public class AdminSalesChannelController {
         return ApiResponse.success(salesChannelAdminService.verifyAccount(accountId));
     }
 
+    @LogOperation(action = "sales_channel.order_sync_initialize", targetType = "SALES_CHANNEL_ACCOUNT", targetId = "#accountId", detail = "'初始化渠道订单游标'")
+    @PostMapping("/admin/sales-channels/accounts/{accountId}/order-sync/initialize")
+    public ApiResponse<Void> initializeOrderCursor(@PathVariable UUID accountId) {
+        salesChannelAdminService.initializeOrderCursor(accountId);
+        return ApiResponse.success(null);
+    }
+
+    @LogOperation(action = "sales_channel.order_sync_enable", targetType = "SALES_CHANNEL_ACCOUNT", targetId = "#accountId", detail = "'开启渠道订单同步'")
+    @PostMapping("/admin/sales-channels/accounts/{accountId}/order-sync/enable")
+    public ApiResponse<AccountSummary> enableOrderSync(@PathVariable UUID accountId) {
+        return ApiResponse.success(salesChannelAdminService.setOrderSyncEnabled(accountId, true));
+    }
+
+    @PostMapping("/admin/sales-channels/accounts/{accountId}/order-sync/disable")
+    public ApiResponse<AccountSummary> disableOrderSync(@PathVariable UUID accountId) {
+        return ApiResponse.success(salesChannelAdminService.setOrderSyncEnabled(accountId, false));
+    }
+
     @GetMapping("/admin/products/{productId}/sales-channels")
     public ApiResponse<List<ListingSummary>> productListings(@PathVariable UUID productId) {
         return ApiResponse.success(salesChannelAdminService.productListings(productId));
@@ -85,5 +107,35 @@ public class AdminSalesChannelController {
     @PostMapping("/admin/sales-channel-listings/{listingId}/retry")
     public ApiResponse<ListingSummary> retryListing(@PathVariable UUID listingId) {
         return ApiResponse.success(salesChannelAdminService.retryListing(listingId));
+    }
+
+    @LogOperation(action = "sales_channel.auto_fulfillment_enable", targetType = "SALES_CHANNEL_LISTING", targetId = "#listingId", detail = "'开启渠道自动发卡'")
+    @PostMapping("/admin/sales-channel-listings/{listingId}/auto-fulfillment/enable")
+    public ApiResponse<ListingSummary> enableAutoFulfillment(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelAdminService.setAutoFulfillmentEnabled(listingId, true));
+    }
+
+    @PostMapping("/admin/sales-channel-listings/{listingId}/auto-fulfillment/disable")
+    public ApiResponse<ListingSummary> disableAutoFulfillment(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelAdminService.setAutoFulfillmentEnabled(listingId, false));
+    }
+
+    @GetMapping("/admin/sales-channel-orders")
+    public ApiResponse<List<SalesChannelOrderSummary>> salesChannelOrders(
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) UUID account,
+            @RequestParam(required = false) String externalStatus,
+            @RequestParam(required = false) String ingestStatus,
+            @RequestParam(required = false) String deliveryStatus,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) LocalDateTime from,
+            @RequestParam(required = false) LocalDateTime to) {
+        return ApiResponse.success(salesChannelAdminService.salesChannelOrders(
+                provider, account, externalStatus, ingestStatus, deliveryStatus, keyword, from, to));
+    }
+
+    @GetMapping("/admin/sales-channel-orders/{id}")
+    public ApiResponse<SalesChannelOrderDetail> salesChannelOrder(@PathVariable UUID id) {
+        return ApiResponse.success(salesChannelAdminService.salesChannelOrder(id));
     }
 }

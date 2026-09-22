@@ -13,6 +13,15 @@ import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.UpdateCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderChangesCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderChangesData;
+import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkData;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliverySendCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ConfirmDeliveryCommand;
 
 /** Provider-neutral boundary for operations performed by a sales-channel agent. */
 public interface SalesChannelProviderClient {
@@ -36,4 +45,16 @@ public interface SalesChannelProviderClient {
     AddressMetadataResult searchAddress(String keywords, String city);
 
     CategoryRecommendResult recommendCategory(CategoryRecommendCommand command);
+
+    IntegrationEnvelope<OrderChangesData> getOrderChanges(OrderChangesCommand command);
+
+    IntegrationEnvelope<WatermarkData> getOrderWatermark(WatermarkCommand command);
+
+    IntegrationEnvelope<DeliveryData> sendDeliveryUnit(DeliverySendCommand command);
+
+    IntegrationEnvelope<DeliveryReconcileData> reconcileDeliveryUnit(DeliveryReconcileCommand command);
+
+    IntegrationEnvelope<DeliveryData> confirmDelivery(ConfirmDeliveryCommand command);
+
+    IntegrationEnvelope<DeliveryReconcileData> reconcileConfirmDelivery(DeliveryReconcileCommand command);
 }

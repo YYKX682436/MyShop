@@ -4,5 +4,6 @@ package com.myshop.constant;
 public enum PricingSource {
     RETAIL,
     LEVEL_MARKUP,
-    LEVEL_OVERRIDE
+    LEVEL_OVERRIDE,
+    SALES_CHANNEL
 }

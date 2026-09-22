@@ -920,7 +920,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
       </Tabs>
 
       {product
-        ? <SalesChannelEditor productId={product.id} productTitle={draft.title} productDescription={draft.description} disabled={saving || dirty} />
+        ? <SalesChannelEditor productId={product.id} productTitle={draft.title} productDescription={draft.description} deliveryType={draft.delivery_type} stockMode={draft.stock_mode} disabled={saving || dirty} />
         : <FormSection title="销售渠道 · 闲鱼" description="保存商品后可选择闲鱼账号、配置发布内容并启用同步。"><p className="text-sm text-muted-foreground">请先创建商品，再配置销售渠道。</p></FormSection>}
 
       <div className="static-material action-bar-material sticky bottom-3 z-20 flex flex-col-reverse gap-3 p-3 sm:flex-row sm:justify-end">

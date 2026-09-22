@@ -11,8 +11,11 @@ import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.List;
 
 public interface SalesChannelAccountRepository extends JpaRepository<SalesChannelAccount, UUID> {
+
+    List<SalesChannelAccount> findByProviderAndEnabledTrueAndOrderSyncEnabledTrue(SalesChannelProvider provider);
 
     Optional<SalesChannelAccount> findByProviderAndProviderAccountId(
             SalesChannelProvider provider, String providerAccountId);

@@ -45,6 +45,10 @@ public class SalesChannelAccount extends BaseEntity {
     @Setter
     private boolean enabled = true;
 
+    @Column(name = "order_sync_enabled", nullable = false)
+    @Setter
+    private boolean orderSyncEnabled = false;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> capabilities = new LinkedHashMap<>();

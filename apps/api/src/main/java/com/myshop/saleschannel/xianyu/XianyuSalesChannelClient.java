@@ -28,6 +28,16 @@ import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.PlatformAttribute;
 import com.myshop.saleschannel.model.SalesChannelDtos.UpdateCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderChangesCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderChangesData;
+import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkData;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliverySendCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ConfirmDeliveryCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderCursor;
 import com.myshop.saleschannel.model.SalesChannelDtos.Specification;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecificationValue;
 import com.myshop.saleschannel.model.SalesChannelDtos.SkuRow;
@@ -240,6 +250,86 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         CategoryRecommendData data = response.data();
         return new CategoryRecommendResult(response.requestId(), sanitizeMetadata(data.candidates()),
                 sanitizeMetadata(data.properties()), sanitizeMetadata(data.cardList()));
+    }
+
+    @Override
+    public IntegrationEnvelope<OrderChangesData> getOrderChanges(OrderChangesCommand command) {
+        if (command == null || blank(command.requestId()) || command.accountIds() == null
+                || command.accountIds().isEmpty() || command.accountIds().size() > 100
+                || command.limit() == null || command.limit() < 1 || command.limit() > 100) {
+            throw safeFailure("INVALID_ORDER_REQUEST", "Order changes request fields are invalid");
+        }
+        byte[] body = serialize(new XianyuOrderChangesRequest(command.requestId(), command.accountIds(),
+                command.cursor(), command.limit()));
+        return exchange("POST", "/orders/changes", body, "application/json",
+                responseType(OrderChangesData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<WatermarkData> getOrderWatermark(WatermarkCommand command) {
+        if (command == null || blank(command.requestId()) || command.accountIds() == null
+                || command.accountIds().isEmpty() || command.accountIds().size() > 100) {
+            throw safeFailure("INVALID_ORDER_REQUEST", "Order watermark request fields are invalid");
+        }
+        byte[] body = serialize(new XianyuWatermarkRequest(command.requestId(), command.accountIds()));
+        return exchange("POST", "/orders/watermark", body, "application/json",
+                responseType(WatermarkData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<DeliveryData> sendDeliveryUnit(DeliverySendCommand command) {
+        validateDeliveryRequest(command == null ? null : command.requestId(),
+                command == null ? null : command.accountId(),
+                command == null ? null : command.externalOrderNo());
+        if (command.unitIndex() == null || command.unitIndex() < 0
+                || command.contentParts() == null || command.contentParts().isEmpty()) {
+            throw safeFailure("INVALID_DELIVERY_REQUEST", "Delivery unit fields are invalid");
+        }
+        byte[] body = serialize(new XianyuDeliverySendRequest(command.requestId(), command.accountId(),
+                command.unitIndex(), command.contentParts()));
+        return exchange("POST", "/orders/" + pathSegment(command.externalOrderNo()) + "/delivery/send",
+                body, "application/json", responseType(DeliveryData.class), RequestSemantics.SIDE_EFFECTING,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<DeliveryReconcileData> reconcileDeliveryUnit(DeliveryReconcileCommand command) {
+        validateDeliveryRequest(command == null ? null : command.requestId(),
+                command == null ? null : command.accountId(),
+                command == null ? null : command.externalOrderNo());
+        if (blank(command.targetRequestId())) {
+            throw safeFailure("INVALID_DELIVERY_REQUEST", "target_request_id is required");
+        }
+        byte[] body = serialize(new XianyuDeliveryReconcileRequest(command.requestId(), command.accountId(),
+                command.targetRequestId(), command.externalOrderNo(), command.unitIndex()));
+        return exchange("POST", "/orders/delivery/reconcile", body, "application/json",
+                responseType(DeliveryReconcileData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<DeliveryData> confirmDelivery(ConfirmDeliveryCommand command) {
+        validateDeliveryRequest(command == null ? null : command.requestId(),
+                command == null ? null : command.accountId(),
+                command == null ? null : command.externalOrderNo());
+        byte[] body = serialize(new XianyuConfirmDeliveryRequest(command.requestId(), command.accountId()));
+        return exchange("POST", "/orders/" + pathSegment(command.externalOrderNo()) + "/confirm-delivery",
+                body, "application/json", responseType(DeliveryData.class), RequestSemantics.SIDE_EFFECTING,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<DeliveryReconcileData> reconcileConfirmDelivery(DeliveryReconcileCommand command) {
+        return reconcileDeliveryUnit(command);
+    }
+
+    private static void validateDeliveryRequest(String requestId, String accountId, String orderNo) {
+        if (blank(requestId) || requestId.length() > 255 || blank(accountId)
+                || blank(orderNo) || orderNo.length() > 128) {
+            throw safeFailure("INVALID_DELIVERY_REQUEST", "Delivery request fields are invalid");
+        }
     }
 
     private SalesChannelProviderClientException metadataFailure(IntegrationError error) {
@@ -584,6 +674,38 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             return HexFormat.of().formatHex(nonce);
         };
     }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record XianyuOrderChangesRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_ids") List<String> accountIds,
+            @JsonProperty("cursor") OrderCursor cursor,
+            @JsonProperty("limit") Integer limit) { }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record XianyuWatermarkRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_ids") List<String> accountIds) { }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record XianyuDeliverySendRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("unit_index") Integer unitIndex,
+            @JsonProperty("content_parts") List<String> contentParts) { }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record XianyuDeliveryReconcileRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("target_request_id") String targetRequestId,
+            @JsonProperty("external_order_no") String externalOrderNo,
+            @JsonProperty("unit_index") Integer unitIndex) { }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record XianyuConfirmDeliveryRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_id") String accountId) { }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record XianyuPublishRequest(

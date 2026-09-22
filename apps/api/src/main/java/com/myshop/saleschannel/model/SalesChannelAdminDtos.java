@@ -24,8 +24,20 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("accountType") String accountType,
             @JsonProperty("status") String status,
             @JsonProperty("enabled") Boolean enabled,
+            @JsonProperty("orderSyncEnabled") Boolean orderSyncEnabled,
             @JsonProperty("capabilities") Map<String, Object> capabilities,
-            @JsonProperty("lastVerifiedAt") LocalDateTime lastVerifiedAt) { }
+            @JsonProperty("lastVerifiedAt") LocalDateTime lastVerifiedAt) {
+        /** Backward-compatible constructor for callers predating Phase 4. */
+        public AccountSummary(String id, String providerAccountId, String displayName,
+                              String accountType, String status, boolean enabled,
+                              Map<?, ?> capabilities, LocalDateTime lastVerifiedAt) {
+            this(id, providerAccountId, displayName, accountType, status, enabled, false,
+                    capabilities == null ? Map.of() : capabilities.entrySet().stream()
+                            .collect(java.util.stream.Collectors.toMap(
+                                    entry -> String.valueOf(entry.getKey()), Map.Entry::getValue)),
+                    lastVerifiedAt);
+        }
+    }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record ListingSummary(
@@ -34,13 +46,25 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("displayName") String displayName,
             @JsonProperty("accountType") String accountType,
             @JsonProperty("isEnabled") Boolean isEnabled,
+            @JsonProperty("autoFulfillmentEnabled") Boolean autoFulfillmentEnabled,
             @JsonProperty("status") String status,
             @JsonProperty("externalItemId") String externalItemId,
             @JsonProperty("desiredRevision") Long desiredRevision,
             @JsonProperty("lastSyncedAt") LocalDateTime lastSyncedAt,
             @JsonProperty("lastErrorCode") String lastErrorCode,
             @JsonProperty("lastErrorMessage") String lastErrorMessage,
-            @JsonProperty("providerConfig") XianyuProviderConfig providerConfig) { }
+            @JsonProperty("providerConfig") XianyuProviderConfig providerConfig) {
+        /** Backward-compatible constructor for callers predating Phase 4. */
+        public ListingSummary(String id, String providerAccountId, String displayName,
+                              String accountType, boolean isEnabled, String status,
+                              String externalItemId, long desiredRevision, LocalDateTime lastSyncedAt,
+                              String lastErrorCode, String lastErrorMessage,
+                              XianyuProviderConfig providerConfig) {
+            this(id, providerAccountId, displayName, accountType, isEnabled, false, status,
+                    externalItemId, desiredRevision, lastSyncedAt, lastErrorCode,
+                    lastErrorMessage, providerConfig);
+        }
+    }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record UpdateXianyuListingRequest(
@@ -63,4 +87,40 @@ public final class SalesChannelAdminDtos {
             cardList = cardList == null ? List.of() : List.copyOf(cardList);
         }
     }
+
+    public record SalesChannelOrderSummary(
+            String id,
+            String provider,
+            String accountId,
+            String externalOrderNo,
+            String myshopOrderNo,
+            String productTitle,
+            String specName,
+            int quantity,
+            java.math.BigDecimal amount,
+            String currency,
+            String externalStatus,
+            String ingestStatus,
+            String deliveryStatus,
+            String lastErrorCode,
+            String lastErrorMessage,
+            java.time.LocalDateTime sourceUpdatedAt,
+            boolean autoFulfillmentRequested) { }
+
+    public record SalesChannelDeliveryOperationSummary(
+            String id,
+            String operationType,
+            Integer unitIndex,
+            String cardKeyId,
+            String status,
+            String requestId,
+            int attemptCount,
+            java.time.LocalDateTime startedAt,
+            java.time.LocalDateTime finishedAt,
+            String lastErrorCode,
+            String lastErrorMessage) { }
+
+    public record SalesChannelOrderDetail(
+            SalesChannelOrderSummary order,
+            List<SalesChannelDeliveryOperationSummary> deliveryOperations) { }
 }

@@ -6,6 +6,19 @@ import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.entity.Product;
+import com.myshop.entity.SalesChannelOrderCursor;
+import com.myshop.entity.SalesChannelOrder;
+import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
+import com.myshop.entity.SalesChannelDeliveryOperation;
+import com.myshop.constant.StockMode;
+import com.myshop.repository.ProductRepository;
+import com.myshop.repository.SalesChannelOrderCursorRepository;
+import com.myshop.repository.SalesChannelOrderRepository;
+import com.myshop.repository.SalesChannelDeliveryOperationRepository;
+import com.myshop.repository.OrderRepository;
+import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
@@ -18,6 +31,12 @@ import com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderCursor;
+import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkData;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderDetail;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelDeliveryOperationSummary;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
@@ -43,6 +62,12 @@ public class SalesChannelAdminService {
     private final SalesChannelAccountRepository accountRepository;
     private final SalesChannelListingRepository listingRepository;
     private final ObjectMapper objectMapper;
+    private final ProductRepository productRepository;
+    private final SalesChannelOrderCursorRepository cursorRepository;
+    private final SalesChannelOrderRepository channelOrderRepository;
+    private final SalesChannelDeliveryOperationRepository deliveryOperationRepository;
+    private final OrderRepository orderRepository;
+    private final OrderItemRepository orderItemRepository;
 
     public List<AccountSummary> accounts() {
         return accountRepository.findAll().stream().filter(account -> account.getProvider() == SalesChannelProvider.XIANYU)
@@ -126,9 +151,63 @@ public class SalesChannelAdminService {
         return listingSummary(listing);
     }
 
+    public List<SalesChannelOrderSummary> salesChannelOrders(String provider, UUID accountId,
+                                                              String externalStatus, String ingestStatus,
+                                                              String deliveryStatus, String keyword,
+                                                              LocalDateTime from, LocalDateTime to) {
+        return channelOrderRepository.findAll().stream()
+                .filter(row -> blank(provider) || row.getProvider().name().equalsIgnoreCase(provider))
+                .filter(row -> accountId == null || accountId.equals(row.getSalesChannelAccountId()))
+                .filter(row -> blank(externalStatus) || row.getExternalStatus().equalsIgnoreCase(externalStatus))
+                .filter(row -> blank(ingestStatus) || row.getIngestStatus().name().equalsIgnoreCase(ingestStatus))
+                .filter(row -> blank(deliveryStatus) || row.getDeliveryStatus().name().equalsIgnoreCase(deliveryStatus))
+                .filter(row -> from == null || !row.getSourceUpdatedAt().isBefore(from))
+                .filter(row -> to == null || !row.getSourceUpdatedAt().isAfter(to))
+                .filter(row -> blank(keyword) || matchesKeyword(row, keyword))
+                .sorted(java.util.Comparator.comparing(SalesChannelOrder::getSourceUpdatedAt).reversed())
+                .map(this::orderSummary)
+                .toList();
+    }
+
+    public SalesChannelOrderDetail salesChannelOrder(UUID id) {
+        SalesChannelOrder row = channelOrderRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Sales-channel order does not exist"));
+        List<SalesChannelDeliveryOperationSummary> operations = deliveryOperationRepository
+                .findBySalesChannelOrderIdOrderByCreatedAtAsc(id).stream().map(operation ->
+                        new SalesChannelDeliveryOperationSummary(operation.getId().toString(),
+                                operation.getOperationType().name(), operation.getUnitIndex(),
+                                operation.getCardKeyId() == null ? null : operation.getCardKeyId().toString(),
+                                operation.getStatus().name(), operation.getRequestId(), operation.getAttemptCount(),
+                                operation.getStartedAt(), operation.getFinishedAt(), operation.getLastErrorCode(),
+                                operation.getLastErrorMessage())).toList();
+        return new SalesChannelOrderDetail(orderSummary(row), operations);
+    }
+
+    private SalesChannelOrderSummary orderSummary(SalesChannelOrder row) {
+        Order order = row.getOrderId() == null ? null : orderRepository.findById(row.getOrderId()).orElse(null);
+        OrderItem item = order == null ? null : orderItemRepository.findByOrderId(order.getId()).stream().findFirst().orElse(null);
+        SalesChannelAccount account = accountRepository.findById(row.getSalesChannelAccountId()).orElse(null);
+        return new SalesChannelOrderSummary(row.getId().toString(), row.getProvider().name(),
+                account == null ? row.getSalesChannelAccountId().toString() : account.getProviderAccountId(),
+                row.getExternalOrderNo(), order == null || order.getOrderNo() == null ? null : order.getOrderNo().toString(),
+                item == null ? null : item.getProductTitle(), item == null ? null : item.getSpecName(), row.getQuantity(),
+                row.getAmount(), row.getCurrency(), row.getExternalStatus(), row.getIngestStatus().name(),
+                row.getDeliveryStatus().name(), row.getLastErrorCode(), row.getLastErrorMessage(),
+                row.getSourceUpdatedAt(), row.isAutoFulfillmentRequested());
+    }
+
+    private boolean matchesKeyword(SalesChannelOrder row, String keyword) {
+        String lower = keyword.toLowerCase();
+        if (row.getExternalOrderNo().toLowerCase().contains(lower)) return true;
+        if (row.getOrderId() == null) return false;
+        return orderItemRepository.findByOrderId(row.getOrderId()).stream()
+                .anyMatch(item -> item.getProductTitle() != null && item.getProductTitle().toLowerCase().contains(lower));
+    }
+
     private AccountSummary accountSummary(SalesChannelAccount account) {
         return new AccountSummary(account.getId().toString(), account.getProviderAccountId(),
                 account.getDisplayName(), accountType(account), account.getStatus().name(), account.isEnabled(),
+                account.isOrderSyncEnabled(),
                 account.getCapabilities(), account.getLastVerifiedAt());
     }
 
@@ -136,9 +215,67 @@ public class SalesChannelAdminService {
         SalesChannelAccount account = findAccount(listing.getSalesChannelAccountId());
         XianyuProviderConfig config = objectMapper.convertValue(listing.getProviderConfig(), XianyuProviderConfig.class);
         return new ListingSummary(listing.getId().toString(), account.getProviderAccountId(),
-                account.getDisplayName(), accountType(account), listing.isEnabled(), listing.getStatus().name(),
+                account.getDisplayName(), accountType(account), listing.isEnabled(), listing.isAutoFulfillmentEnabled(), listing.getStatus().name(),
                 listing.getExternalItemId(), listing.getDesiredRevision(), listing.getLastSyncedAt(),
                 listing.getLastErrorCode(), listing.getLastErrorMessage(), config);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void initializeOrderCursor(UUID accountId) {
+        SalesChannelAccount account = findAccount(accountId);
+        var response = providerClient.getOrderWatermark(new WatermarkCommand(
+                UUID.randomUUID().toString(), List.of(account.getProviderAccountId())));
+        requireSuccess(response.outcome(), response.error() == null ? null : response.error().code());
+        SalesChannelOrderCursor cursor = cursorRepository.findByProviderAndSalesChannelAccountId(
+                account.getProvider(), account.getId()).orElseGet(SalesChannelOrderCursor::new);
+        cursor.setProvider(account.getProvider());
+        cursor.setSalesChannelAccountId(account.getId());
+        OrderCursor value = response.data() == null ? null : response.data().cursor();
+        // An empty watermark is still a real initialized boundary. Use the
+        // initialization instant so enabling sync later cannot replay history.
+        cursor.setCursorUpdatedAt(value == null ? LocalDateTime.now() : parseCursorTime(value));
+        cursor.setCursorId(value == null ? 0L : value.id());
+        cursor.setInitializedAt(LocalDateTime.now());
+        cursorRepository.save(cursor);
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public AccountSummary setOrderSyncEnabled(UUID accountId, boolean enabled) {
+        SalesChannelAccount account = accountRepository.findByIdForUpdate(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("Sales channel account does not exist"));
+        if (enabled && cursorRepository.findByProviderAndSalesChannelAccountId(
+                account.getProvider(), account.getId()).isEmpty()) {
+            throw new IllegalStateException("Initialize the order cursor before enabling order sync");
+        }
+        account.setOrderSyncEnabled(enabled);
+        return accountSummary(accountRepository.save(account));
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public ListingSummary setAutoFulfillmentEnabled(UUID listingId, boolean enabled) {
+        SalesChannelListing listing = listingRepository.findByIdForUpdate(listingId)
+                .orElseThrow(() -> new IllegalArgumentException("Sales channel listing does not exist"));
+        SalesChannelAccount account = findAccount(listing.getSalesChannelAccountId());
+        Product product = productRepository.findById(listing.getProductId())
+                .orElseThrow(() -> new IllegalArgumentException("Product does not exist"));
+        if (enabled) {
+            if (listing.getExternalItemId() == null || listing.getExternalItemId().isBlank()) {
+                throw new IllegalStateException("Only a MyShop-managed listing with an external item can enable auto fulfillment");
+            }
+            if (!"FISH_SHOP".equals(accountType(account))) {
+                throw new IllegalStateException("Auto fulfillment requires a verified FISH_SHOP account");
+            }
+            if (!"AUTO".equalsIgnoreCase(product.getDeliveryType()) || product.getStockMode() != StockMode.CARD_KEY) {
+                throw new IllegalStateException("Phase 4 auto fulfillment requires deliveryType=AUTO and stockMode=CARD_KEY");
+            }
+        }
+        listing.setAutoFulfillmentEnabled(enabled);
+        return listingSummary(listingRepository.save(listing));
+    }
+
+    private LocalDateTime parseCursorTime(OrderCursor cursor) {
+        if (cursor == null || cursor.updatedAt() == null || cursor.updatedAt().isBlank()) return null;
+        return java.time.OffsetDateTime.parse(cursor.updatedAt().replace("Z", "+00:00")).toLocalDateTime();
     }
 
     private SalesChannelAccount findAccount(UUID id) {

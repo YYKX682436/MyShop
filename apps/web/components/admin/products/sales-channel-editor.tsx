@@ -51,7 +51,7 @@ const EMPTY_CONFIG: XianyuProviderConfig = {
   stockCapPerSku: null,
 }
 
-type BusyAction = "load" | "sync" | "verify" | "save" | "enable" | "disable" | "retry" | null
+type BusyAction = "load" | "sync" | "verify" | "save" | "enable" | "disable" | "retry" | "auto" | null
 
 function configFromListing(listing?: SalesChannelListingSummary): XianyuProviderConfig {
   const config = listing?.providerConfig
@@ -95,10 +95,12 @@ function ReadOnlyCategoryValue({ label, value }: { label: string; value?: string
   </div>
 }
 
-export function SalesChannelEditor({ productId, productTitle, productDescription, disabled = false }: {
+export function SalesChannelEditor({ productId, productTitle, productDescription, deliveryType = "AUTO", stockMode = "CARD_KEY", disabled = false }: {
   productId: string
   productTitle: string
   productDescription: string
+  deliveryType?: "AUTO" | "MANUAL"
+  stockMode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
   disabled?: boolean
 }) {
   const [accounts, setAccounts] = useState<SalesChannelAccountSummary[]>([])
@@ -131,6 +133,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   const type = accountType(selectedAccount)
   const needsVerification = Boolean(selectedAccount && type === "UNKNOWN")
   const canOperate = !disabled && !busy && accountEnabled(selectedAccount) && !needsVerification
+  const autoGateReady = deliveryType === "AUTO" && stockMode === "CARD_KEY" && type === "FISH_SHOP" && Boolean(selectedListing?.externalItemId)
   const finalTitle = config.titleOverride?.trim() || productTitle.trim()
   const finalDescription = config.descriptionOverride?.trim() || productDescription.trim()
 
@@ -432,6 +435,22 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
     }
   }
 
+  const handleAutoFulfillment = async () => {
+    if (!selectedListing || !canOperate) return
+    setBusy("auto")
+    try {
+      const updated = selectedListing.autoFulfillmentEnabled
+        ? await adminSalesChannelApi.disableAutoFulfillment(selectedListing.id)
+        : await adminSalesChannelApi.enableAutoFulfillment(selectedListing.id)
+      setListings((current) => updateById(current, updated))
+      toast.success(updated.autoFulfillmentEnabled ? "闲鱼自动发卡已开启" : "闲鱼自动发卡已关闭")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "更新自动发卡状态失败")
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const setText = (key: keyof XianyuProviderConfig, value: string) => patchConfig(key, value)
   const selectClass = "h-10 w-full rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60"
   const labelClass = "flex min-w-0 flex-col gap-1.5 text-sm font-medium"
@@ -459,6 +478,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
         <div><span className="text-muted-foreground">账号类型</span><div className="mt-1 font-medium">{type}</div></div>
         <div><span className="text-muted-foreground">账号状态</span><div className="mt-1 font-medium">{accountStatus(selectedAccount)}</div></div>
         <div><span className="text-muted-foreground">渠道状态</span><div className="mt-1 font-medium">{selectedListing?.status || "尚未配置"}{selectedListing ? ` · ${selectedListing.isEnabled ? "已启用" : "已停用"}` : ""}</div></div>
+        <div><span className="text-muted-foreground">自动发卡</span><div className="mt-1 font-medium">{selectedListing?.autoFulfillmentEnabled ? "已开启" : "已关闭"}</div></div>
         <div><span className="text-muted-foreground">闲鱼 item_id</span><div className="mt-1 break-all font-medium">{selectedListing?.externalItemId || "—"}</div></div>
         <div><span className="text-muted-foreground">目标版本 / 最近同步</span><div className="mt-1 font-medium">{selectedListing?.desiredRevision ?? "—"} / {selectedListing?.lastSyncedAt ? new Date(selectedListing.lastSyncedAt).toLocaleString() : "—"}</div></div>
         {selectedListing?.lastErrorCode && <div className="sm:col-span-2 lg:col-span-4"><span className="text-muted-foreground">最近错误</span><div className="mt-1 flex items-start gap-2 text-destructive"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span><strong>{selectedListing.lastErrorCode}</strong>{selectedListing.lastErrorMessage ? ` · ${selectedListing.lastErrorMessage}` : ""}</span></div></div>}
@@ -466,6 +486,13 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
 
       {needsVerification && <p className="mb-4 flex items-center gap-2 rounded-card border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-200"><AlertTriangle className="size-4 shrink-0" />账号能力尚未确认。验证账号后才能启用渠道。</p>}
       {!accountEnabled(selectedAccount) && selectedAccount && <p className="mb-4 rounded-card border border-border-subtle bg-surface-muted/45 p-3 text-sm text-muted-foreground">此账号已停用，当前只能查看配置。</p>}
+      {selectedAccount && <div className={`mb-4 rounded-card border p-3 text-sm ${autoGateReady ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><strong>自动发卡</strong><p className="mt-1 text-xs text-muted-foreground">Phase 4 仅支持 MyShop 的 AUTO + CARD_KEY + FISH_SHOP 商品；Agent 不分配卡密。</p></div>
+          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleAutoFulfillment()} disabled={!canOperate || !autoGateReady || !selectedListing.externalItemId}>{busy === "auto" ? <Loader2 className="animate-spin" /> : null}{selectedListing.autoFulfillmentEnabled ? "关闭自动发卡" : "开启自动发卡"}</Button>}
+        </div>
+        {!autoGateReady && <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">当前不满足开启条件：需要商品交付方式 AUTO、库存模式 CARD_KEY、已验证 FISH_SHOP 账号和已绑定闲鱼 item。</p>}
+      </div>}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <label className={labelClass}>

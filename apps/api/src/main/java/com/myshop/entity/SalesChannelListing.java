@@ -40,6 +40,9 @@ public class SalesChannelListing extends BaseEntity {
     @Column(name = "is_enabled", nullable = false)
     private boolean enabled;
 
+    @Column(name = "auto_fulfillment_enabled", nullable = false)
+    private boolean autoFulfillmentEnabled;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "desired_state", nullable = false, length = 16)
     @Setter
@@ -89,6 +92,10 @@ public class SalesChannelListing extends BaseEntity {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public void setAutoFulfillmentEnabled(boolean enabled) {
+        this.autoFulfillmentEnabled = enabled;
     }
 
     public String getDesiredFingerprint() {

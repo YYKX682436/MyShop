@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   Package,
   ScrollText,
+  Store,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -66,6 +67,7 @@ const navGroups: AdminNavGroup[] = [
     labelKey: "admin.navTransactions",
     items: [
       { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: true },
+      { labelKey: "admin.salesChannelOrders", href: "/admin/sales-channel-orders", icon: Store },
       { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
     ],
   },
