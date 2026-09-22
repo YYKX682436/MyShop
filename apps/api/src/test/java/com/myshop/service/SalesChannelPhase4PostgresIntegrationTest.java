@@ -353,7 +353,7 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertNull(storedSend.getNextAttemptAt());
         assertEquals("DELIVERY_MAX_ATTEMPTS_EXCEEDED", storedSend.getLastErrorCode());
         assertEquals(SalesChannelOrderDeliveryStatus.FAILED,
-                channelOrderRepository.findByIdForUpdate(row.getId()).orElseThrow().getDeliveryStatus());
+                channelOrderRepository.findById(row.getId()).orElseThrow().getDeliveryStatus());
         assertTrue(deliveryClaimService.claim(send.getId()).isEmpty());
 
         SalesChannelDeliveryOperation reconcile = deliveryOperation(row,
@@ -363,7 +363,7 @@ class SalesChannelPhase4PostgresIntegrationTest {
         deliveryOperationRepository.saveAndFlush(reconcile);
         deliveryStateService.failed(reconcile.getId(), "MESSAGE_UNKNOWN", "still unknown", true);
         assertEquals(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED,
-                channelOrderRepository.findByIdForUpdate(row.getId()).orElseThrow().getDeliveryStatus());
+                channelOrderRepository.findById(row.getId()).orElseThrow().getDeliveryStatus());
         assertEquals(SalesChannelDeliveryOperationStatus.FAILED,
                 deliveryOperationRepository.findById(reconcile.getId()).orElseThrow().getStatus());
         assertNull(deliveryOperationRepository.findById(reconcile.getId()).orElseThrow().getNextAttemptAt());
@@ -527,7 +527,7 @@ class SalesChannelPhase4PostgresIntegrationTest {
             assertEquals(OrderStatus.DELIVERED.name(), status);
             assertEquals(3, sold);
             assertEquals(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED,
-                    channelOrderRepository.findByIdForUpdate(row.getId()).orElseThrow().getDeliveryStatus());
+                    channelOrderRepository.findById(row.getId()).orElseThrow().getDeliveryStatus());
         }
     }
 
