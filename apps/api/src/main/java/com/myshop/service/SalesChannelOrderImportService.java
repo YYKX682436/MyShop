@@ -179,13 +179,18 @@ public class SalesChannelOrderImportService {
         if (!product.isSpecEnabled() && hasExternalSpec(external)) {
             return mappingError(row, "SPEC_MAPPING_ERROR", "An unspec'd product cannot accept a provider SKU/spec");
         }
+        BigDecimal costPriceSnapshot = spec == null ? product.getCostPrice() : spec.getCostPrice();
+        if (costPriceSnapshot == null) {
+            return mappingError(row, "COST_PRICE_SNAPSHOT_UNAVAILABLE",
+                    "A valid MyShop cost price snapshot is required before importing the order");
+        }
         row.setIngestStatus(SalesChannelOrderIngestStatus.IMPORTED);
         row.setDeliveryStatus(autoRequested
                 ? SalesChannelOrderDeliveryStatus.FULFILLMENT_PENDING
                 : SalesChannelOrderDeliveryStatus.NOT_READY);
         Order order = createOrder(external, product, spec);
         orderRepository.saveAndFlush(order);
-        OrderItem item = createOrderItem(order, external, product, spec);
+        OrderItem item = createOrderItem(order, external, product, spec, costPriceSnapshot);
         orderItemRepository.saveAndFlush(item);
         row.setOrderId(order.getId());
         channelOrderRepository.save(row);
@@ -213,7 +218,8 @@ public class SalesChannelOrderImportService {
         return order;
     }
 
-    private OrderItem createOrderItem(Order order, AgentOrder external, Product product, ProductSpec spec) {
+    private OrderItem createOrderItem(Order order, AgentOrder external, Product product, ProductSpec spec,
+                                      BigDecimal costPriceSnapshot) {
         int quantity = normalizeQuantity(external.quantity());
         BigDecimal amount = parseAmount(external.amount());
         BigDecimal unit = amount.divide(BigDecimal.valueOf(quantity), 2, RoundingMode.HALF_UP);
@@ -227,7 +233,7 @@ public class SalesChannelOrderImportService {
         item.setSpecName(spec == null ? null : spec.getName());
         item.setQuantity(quantity);
         item.setUnitPrice(unit);
-        item.setCostPriceSnapshot(spec == null ? product.getCostPrice() : spec.getCostPrice());
+        item.setCostPriceSnapshot(costPriceSnapshot);
         item.setRetailPriceSnapshot(spec == null ? product.getRetailPrice() : spec.getRetailPrice());
         item.setPricingSource(PricingSource.SALES_CHANNEL);
         item.setSubtotal(amount);

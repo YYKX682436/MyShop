@@ -20,9 +20,15 @@ import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.repository.OrderRepository;
+import com.myshop.repository.CardKeyRepository;
+import com.myshop.repository.OrderItemRepository;
 import com.myshop.service.impl.AutoFulfillmentServiceImpl;
 import com.myshop.service.impl.FulfillmentTransactionService;
+import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
+import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
+import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
+import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.utils.CardContentParser;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,6 +60,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * PostgreSQL-only Phase 4 invariants. Testcontainers skips this class when a
@@ -110,6 +120,15 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelDeliveryOperationStateService deliveryStateService;
+
+    @Autowired
+    private CardKeyRepository cardKeyRepository;
+
+    @Autowired
+    private OrderItemRepository orderItemRepository;
+
+    @MockitoBean
+    private SalesChannelProviderClient providerClient;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -426,6 +445,175 @@ class SalesChannelPhase4PostgresIntegrationTest {
     }
 
     @Test
+    void plannerPreservesMessageUnknownProjection() {
+        UnknownMessageFixture fixture = unknownMessageFixture("planner-unknown");
+
+        deliveryPlanner.plan(fixture.row().getId());
+
+        assertEquals(SalesChannelOrderDeliveryStatus.MESSAGE_UNKNOWN,
+                channelOrderRepository.findById(fixture.row().getId()).orElseThrow().getDeliveryStatus());
+        assertEquals(SalesChannelDeliveryOperationStatus.UNKNOWN,
+                deliveryOperationRepository.findById(fixture.send().getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelDeliveryOperationStatus.PENDING,
+                deliveryOperationRepository.findById(fixture.reconcile().getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void reconcileUnknownRetryPreservesProjectionAndNeverSendsAgain() {
+        UnknownMessageFixture fixture = unknownMessageFixture("reconcile-unknown");
+        when(providerClient.reconcileDeliveryUnit(any())).thenReturn(
+                reconcileResponse(fixture.send().getRequestId(), Outcome.UNKNOWN, false));
+
+        deliveryWorker().process(fixture.reconcile());
+
+        SalesChannelDeliveryOperation reconcile = deliveryOperationRepository
+                .findById(fixture.reconcile().getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, reconcile.getStatus());
+        assertNotNull(reconcile.getNextAttemptAt());
+        assertEquals(SalesChannelDeliveryOperationStatus.UNKNOWN,
+                deliveryOperationRepository.findById(fixture.send().getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelOrderDeliveryStatus.MESSAGE_UNKNOWN,
+                channelOrderRepository.findById(fixture.row().getId()).orElseThrow().getDeliveryStatus());
+
+        deliveryPlanner.plan(fixture.row().getId());
+        assertEquals(SalesChannelOrderDeliveryStatus.MESSAGE_UNKNOWN,
+                channelOrderRepository.findById(fixture.row().getId()).orElseThrow().getDeliveryStatus());
+        verify(providerClient, never()).sendDeliveryUnit(any());
+    }
+
+    @Test
+    void retryableFailedMessageReconciliationRestoresPendingAndKeepsRequestId() {
+        UnknownMessageFixture fixture = unknownMessageFixture("reconcile-retryable");
+        String requestId = fixture.send().getRequestId();
+        when(providerClient.reconcileDeliveryUnit(any())).thenReturn(
+                reconcileResponse(requestId, Outcome.FAILED, true));
+
+        deliveryWorker().process(fixture.reconcile());
+
+        SalesChannelDeliveryOperation target = deliveryOperationRepository
+                .findById(fixture.send().getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, target.getStatus());
+        assertNotNull(target.getNextAttemptAt());
+        assertEquals(requestId, target.getRequestId());
+        assertEquals(SalesChannelOrderDeliveryStatus.MESSAGE_PENDING,
+                channelOrderRepository.findById(fixture.row().getId()).orElseThrow().getDeliveryStatus());
+
+        target.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
+        deliveryOperationRepository.saveAndFlush(target);
+        SalesChannelDeliveryOperation claimed = deliveryClaimService.claim(target.getId()).orElseThrow();
+        assertEquals(requestId, claimed.getRequestId());
+        verify(providerClient, never()).sendDeliveryUnit(any());
+    }
+
+    @Test
+    void retryableFailedConfirmReconciliationRestoresPendingAndKeepsRequestId() {
+        UnknownConfirmFixture fixture = unknownConfirmFixture("reconcile-retryable-confirm");
+        String requestId = fixture.target().getRequestId();
+        when(providerClient.reconcileConfirmDelivery(any())).thenReturn(
+                reconcileResponse(requestId, Outcome.FAILED, true));
+
+        deliveryWorker().process(fixture.reconcile());
+
+        SalesChannelDeliveryOperation target = deliveryOperationRepository
+                .findById(fixture.target().getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, target.getStatus());
+        assertNotNull(target.getNextAttemptAt());
+        assertEquals(requestId, target.getRequestId());
+        assertEquals(SalesChannelOrderDeliveryStatus.CONFIRM_PENDING,
+                channelOrderRepository.findById(fixture.row().getId()).orElseThrow().getDeliveryStatus());
+
+        target.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
+        deliveryOperationRepository.saveAndFlush(target);
+        SalesChannelDeliveryOperation claimed = deliveryClaimService.claim(target.getId()).orElseThrow();
+        assertEquals(requestId, claimed.getRequestId());
+        verify(providerClient, never()).confirmDelivery(any());
+    }
+
+    @Test
+    void permanentFailedMessageAndConfirmReconciliationProjectFailedAndStopRetry() {
+        UnknownMessageFixture message = unknownMessageFixture("reconcile-permanent-message");
+        UnknownConfirmFixture confirm = unknownConfirmFixture("reconcile-permanent-confirm");
+        when(providerClient.reconcileDeliveryUnit(any())).thenReturn(
+                reconcileResponse(message.send().getRequestId(), Outcome.FAILED, false));
+        when(providerClient.reconcileConfirmDelivery(any())).thenReturn(
+                reconcileResponse(confirm.target().getRequestId(), Outcome.FAILED, false));
+
+        SalesChannelDeliveryWorker worker = deliveryWorker();
+        worker.process(message.reconcile());
+        worker.process(confirm.reconcile());
+
+        SalesChannelDeliveryOperation messageTarget = deliveryOperationRepository
+                .findById(message.send().getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, messageTarget.getStatus());
+        assertNull(messageTarget.getNextAttemptAt());
+        assertEquals(SalesChannelOrderDeliveryStatus.FAILED,
+                channelOrderRepository.findById(message.row().getId()).orElseThrow().getDeliveryStatus());
+        assertTrue(deliveryOperationRepository.findDue(
+                List.of(SalesChannelDeliveryOperationStatus.PENDING, SalesChannelDeliveryOperationStatus.FAILED),
+                LocalDateTime.now(), PageRequest.of(0, 100)).stream()
+                .noneMatch(operation -> messageTarget.getId().equals(operation.getId())));
+
+        SalesChannelDeliveryOperation confirmTarget = deliveryOperationRepository
+                .findById(confirm.target().getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, confirmTarget.getStatus());
+        assertNull(confirmTarget.getNextAttemptAt());
+        assertEquals(SalesChannelOrderDeliveryStatus.FAILED,
+                channelOrderRepository.findById(confirm.row().getId()).orElseThrow().getDeliveryStatus());
+        verify(providerClient, never()).sendDeliveryUnit(any());
+        verify(providerClient, never()).confirmDelivery(any());
+    }
+
+    @Test
+    void staleReconciliationAtMaxAttemptsBecomesReviewWithoutChangingUnknownTarget() {
+        UnknownMessageFixture message = unknownMessageFixture("stale-reconcile-max-message");
+        UnknownConfirmFixture confirm = unknownConfirmFixture("stale-reconcile-max-confirm");
+        LocalDateTime old = LocalDateTime.now().minusMinutes(10);
+
+        prepareStaleReconcileAtMax(message.reconcile(), message.send().getRequestId(), old);
+        prepareStaleReconcileAtMax(confirm.reconcile(), confirm.target().getRequestId(), old);
+
+        assertEquals(2, deliveryRecoveryService.recoverStaleRunning(
+                LocalDateTime.now().minusMinutes(5), 100));
+
+        SalesChannelDeliveryOperation messageReconcile = deliveryOperationRepository
+                .findById(message.reconcile().getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, messageReconcile.getStatus());
+        assertNull(messageReconcile.getNextAttemptAt());
+        assertEquals(SalesChannelDeliveryOperationStatus.UNKNOWN,
+                deliveryOperationRepository.findById(message.send().getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED,
+                channelOrderRepository.findById(message.row().getId()).orElseThrow().getDeliveryStatus());
+
+        SalesChannelDeliveryOperation confirmReconcile = deliveryOperationRepository
+                .findById(confirm.reconcile().getId()).orElseThrow();
+        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, confirmReconcile.getStatus());
+        assertNull(confirmReconcile.getNextAttemptAt());
+        assertEquals(SalesChannelDeliveryOperationStatus.UNKNOWN,
+                deliveryOperationRepository.findById(confirm.target().getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED,
+                channelOrderRepository.findById(confirm.row().getId()).orElseThrow().getDeliveryStatus());
+        verify(providerClient, never()).reconcileDeliveryUnit(any());
+        verify(providerClient, never()).reconcileConfirmDelivery(any());
+    }
+
+    @Test
+    void plannerAndRecoveryCannotOverwriteReviewProjection() {
+        UnknownMessageFixture fixture = unknownMessageFixture("review-sticky");
+        SalesChannelOrder row = channelOrderRepository.findById(fixture.row().getId()).orElseThrow();
+        row.setDeliveryStatus(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED);
+        row.setLastErrorCode("MANUAL_REVIEW");
+        channelOrderRepository.saveAndFlush(row);
+
+        deliveryPlanner.plan(row.getId());
+        deliveryRecoveryService.recoverStaleRunning(LocalDateTime.now().minusMinutes(5), 100);
+        deliveryPlanner.plan(row.getId());
+
+        SalesChannelOrder stored = channelOrderRepository.findById(row.getId()).orElseThrow();
+        assertEquals(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED, stored.getDeliveryStatus());
+        assertEquals("MANUAL_REVIEW", stored.getLastErrorCode());
+    }
+
+    @Test
     void stableCardKeyUnitMappingSurvivesRepeatedPlanningAndReload() {
         UUID productId = insertProduct(false);
         SalesChannelAccount account = account("stable-units");
@@ -530,6 +718,112 @@ class SalesChannelPhase4PostgresIntegrationTest {
                     channelOrderRepository.findById(row.getId()).orElseThrow().getDeliveryStatus());
         }
     }
+
+    private UnknownMessageFixture unknownMessageFixture(String suffix) {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account(suffix);
+        listing(account, productId, "item-" + suffix, false);
+        UUID cardId = insertCard(productId, null, "card-" + suffix);
+        SalesChannelOrder row = importService.importOrder(account,
+                order(account, "xy-" + suffix, "item-" + suffix, null, null, 1, "10.00"));
+        fulfillmentService.fulfillOrder(row.getOrderId());
+
+        String sendRequestId = "XIANYU_DELIVERY:" + row.getId() + ":0";
+        SalesChannelDeliveryOperation send = persistOperation(row,
+                SalesChannelDeliveryOperationType.SEND_MESSAGE,
+                SalesChannelDeliveryOperationStatus.UNKNOWN, 0, cardId, sendRequestId,
+                new LinkedHashMap<>());
+        SalesChannelDeliveryOperation reconcile = persistOperation(row,
+                SalesChannelDeliveryOperationType.RECONCILE_MESSAGE,
+                SalesChannelDeliveryOperationStatus.RUNNING, 0, null,
+                "XIANYU_RECONCILE_MESSAGE:" + row.getId() + ":0",
+                new LinkedHashMap<>(Map.of("target_request_id", sendRequestId)));
+        row = channelOrderRepository.findById(row.getId()).orElseThrow();
+        row.setDeliveryStatus(SalesChannelOrderDeliveryStatus.MESSAGE_UNKNOWN);
+        channelOrderRepository.saveAndFlush(row);
+        return new UnknownMessageFixture(row, send, reconcile);
+    }
+
+    private UnknownConfirmFixture unknownConfirmFixture(String suffix) {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account(suffix);
+        listing(account, productId, "item-" + suffix, false);
+        UUID cardId = insertCard(productId, null, "card-" + suffix);
+        SalesChannelOrder row = importService.importOrder(account,
+                order(account, "xy-" + suffix, "item-" + suffix, null, null, 1, "10.00"));
+        fulfillmentService.fulfillOrder(row.getOrderId());
+
+        String sendRequestId = "XIANYU_DELIVERY:" + row.getId() + ":0";
+        persistOperation(row, SalesChannelDeliveryOperationType.SEND_MESSAGE,
+                SalesChannelDeliveryOperationStatus.SUCCEEDED, 0, cardId, sendRequestId,
+                new LinkedHashMap<>(Map.of("status", "sent")));
+        String confirmRequestId = "XIANYU_CONFIRM:" + row.getId();
+        SalesChannelDeliveryOperation target = persistOperation(row,
+                SalesChannelDeliveryOperationType.CONFIRM_DELIVERY,
+                SalesChannelDeliveryOperationStatus.UNKNOWN, null, null, confirmRequestId,
+                new LinkedHashMap<>());
+        SalesChannelDeliveryOperation reconcile = persistOperation(row,
+                SalesChannelDeliveryOperationType.RECONCILE_CONFIRM,
+                SalesChannelDeliveryOperationStatus.RUNNING, null, null,
+                "XIANYU_RECONCILE_CONFIRM:" + row.getId(),
+                new LinkedHashMap<>(Map.of("target_request_id", confirmRequestId)));
+        row = channelOrderRepository.findById(row.getId()).orElseThrow();
+        row.setDeliveryStatus(SalesChannelOrderDeliveryStatus.CONFIRM_UNKNOWN);
+        channelOrderRepository.saveAndFlush(row);
+        return new UnknownConfirmFixture(row, target, reconcile);
+    }
+
+    private void prepareStaleReconcileAtMax(SalesChannelDeliveryOperation operation,
+                                            String targetRequestId, LocalDateTime startedAt) {
+        operation.setStatus(SalesChannelDeliveryOperationStatus.RUNNING);
+        operation.setAttemptCount(8);
+        operation.setStartedAt(startedAt);
+        operation.setResultJson(new LinkedHashMap<>(Map.of("target_request_id", targetRequestId)));
+        deliveryOperationRepository.saveAndFlush(operation);
+    }
+
+    private SalesChannelDeliveryOperation persistOperation(
+            SalesChannelOrder row,
+            SalesChannelDeliveryOperationType type,
+            SalesChannelDeliveryOperationStatus status,
+            Integer unitIndex,
+            UUID cardKeyId,
+            String requestId,
+            Map<String, Object> result) {
+        SalesChannelDeliveryOperation operation = new SalesChannelDeliveryOperation();
+        operation.setSalesChannelOrderId(row.getId());
+        operation.setOperationType(type);
+        operation.setUnitIndex(unitIndex);
+        operation.setCardKeyId(cardKeyId);
+        operation.setRequestId(requestId);
+        operation.setPayloadFingerprint("b".repeat(64));
+        operation.setStatus(status);
+        operation.setResultJson(result);
+        return deliveryOperationRepository.saveAndFlush(operation);
+    }
+
+    private IntegrationEnvelope<DeliveryReconcileData> reconcileResponse(String targetRequestId,
+                                                                           Outcome targetOutcome,
+                                                                           boolean targetRetryable) {
+        return new IntegrationEnvelope<>("reconcile-request", Outcome.SUCCEEDED,
+                new DeliveryReconcileData(targetRequestId, targetOutcome, "DELIVERY",
+                        targetRetryable, Map.of("status", targetOutcome.name().toLowerCase())), null);
+    }
+
+    private SalesChannelDeliveryWorker deliveryWorker() {
+        return new SalesChannelDeliveryWorker(deliveryPlanner, deliveryOperationRepository,
+                deliveryClaimService, deliveryRecoveryService, deliveryStateService,
+                channelOrderRepository, orderRepository, accountRepository,
+                cardKeyRepository, orderItemRepository, providerClient);
+    }
+
+    private record UnknownMessageFixture(SalesChannelOrder row,
+                                         SalesChannelDeliveryOperation send,
+                                         SalesChannelDeliveryOperation reconcile) { }
+
+    private record UnknownConfirmFixture(SalesChannelOrder row,
+                                         SalesChannelDeliveryOperation target,
+                                         SalesChannelDeliveryOperation reconcile) { }
 
     private SalesChannelDeliveryOperation deliveryOperation(
             SalesChannelOrder row,

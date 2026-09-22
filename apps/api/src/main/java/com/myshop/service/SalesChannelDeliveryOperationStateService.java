@@ -7,7 +7,6 @@ import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
-import com.myshop.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,8 +24,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SalesChannelDeliveryOperationStateService {
     private final SalesChannelDeliveryOperationRepository operationRepository;
-    private final OrderRepository orderRepository;
     private final SalesChannelOrderRepository channelOrderRepository;
+    private final SalesChannelDeliveryProjectionService projectionService;
 
     @Value("${sales-channel.delivery.max-attempts:8}")
     private int maxAttempts;
@@ -41,29 +40,31 @@ public class SalesChannelDeliveryOperationStateService {
         operation.setFinishedAt(LocalDateTime.now());
         operation.setNextAttemptAt(null);
         operationRepository.save(operation);
+        projectionService.refreshDeliveryProjection(operation.getSalesChannelOrderId());
     }
 
     @Transactional
     public void failed(UUID operationId, String code, String message, boolean retryable) {
         SalesChannelDeliveryOperation operation = operationRepository.findByIdForUpdate(operationId).orElseThrow();
         boolean exhausted = retryable && operation.getAttemptCount() >= configuredMaxAttempts();
+        if (exhausted) {
+            exhaustLocked(operation,
+                    isReconcile(operation)
+                            ? "Read-only reconciliation exhausted its maximum attempt count"
+                            : "Delivery operation reached its maximum attempt count");
+            return;
+        }
         operation.setStatus(SalesChannelDeliveryOperationStatus.FAILED);
-        operation.setLastErrorCode(exhausted ? "DELIVERY_MAX_ATTEMPTS_EXCEEDED" : code);
-        operation.setLastErrorMessage(limit(exhausted
-                ? "Delivery operation reached its maximum attempt count"
-                : message));
+        operation.setLastErrorCode(code);
+        operation.setLastErrorMessage(limit(message));
         LocalDateTime now = LocalDateTime.now();
         operation.setFinishedAt(now);
-        operation.setNextAttemptAt(retryable && !exhausted ? now.plusSeconds(backoff(operation.getAttemptCount())) : null);
+        operation.setNextAttemptAt(retryable ? now.plusSeconds(backoff(operation.getAttemptCount())) : null);
         operationRepository.save(operation);
-        if (exhausted) {
-            setChannelStatus(operation.getSalesChannelOrderId(),
-                    isReconcile(operation) ? SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED
-                            : SalesChannelOrderDeliveryStatus.FAILED,
-                    "DELIVERY_MAX_ATTEMPTS_EXCEEDED",
-                    isReconcile(operation)
-                            ? "Read-only reconciliation reached its maximum attempt count"
-                            : "Delivery operation reached its maximum attempt count");
+        if (!retryable && isReconcile(operation)) {
+            projectionService.markReviewRequired(operation.getSalesChannelOrderId(), code, message);
+        } else {
+            projectionService.refreshDeliveryProjection(operation.getSalesChannelOrderId());
         }
     }
 
@@ -76,13 +77,17 @@ public class SalesChannelDeliveryOperationStateService {
         operation.setFinishedAt(LocalDateTime.now());
         operation.setNextAttemptAt(null);
         operationRepository.save(operation);
+        projectionService.refreshDeliveryProjection(operation.getSalesChannelOrderId());
     }
 
     @Transactional
     public void createReconcile(UUID orderId, SalesChannelDeliveryOperationType type,
                                 Integer unitIndex, String targetRequestId) {
         if (operationRepository.findBySalesChannelOrderIdAndOperationTypeAndUnitIndex(
-                orderId, type, unitIndex).isPresent()) return;
+                orderId, type, unitIndex).isPresent()) {
+            projectionService.refreshDeliveryProjection(orderId);
+            return;
+        }
         SalesChannelDeliveryOperation operation = new SalesChannelDeliveryOperation();
         operation.setSalesChannelOrderId(orderId);
         operation.setOperationType(type);
@@ -94,12 +99,7 @@ public class SalesChannelDeliveryOperationStateService {
         operation.setResultJson(new LinkedHashMap<>(Map.of("target_request_id", targetRequestId)));
         operation.setStatus(SalesChannelDeliveryOperationStatus.PENDING);
         operationRepository.save(operation);
-        channelOrderRepository.findByIdForUpdate(orderId).ifPresent(order -> {
-            order.setDeliveryStatus(type == SalesChannelDeliveryOperationType.RECONCILE_MESSAGE
-                    ? SalesChannelOrderDeliveryStatus.MESSAGE_UNKNOWN
-                    : SalesChannelOrderDeliveryStatus.CONFIRM_UNKNOWN);
-            channelOrderRepository.save(order);
-        });
+        projectionService.refreshDeliveryProjection(orderId);
     }
 
     @Transactional
@@ -108,7 +108,10 @@ public class SalesChannelDeliveryOperationStateService {
         List<SalesChannelDeliveryOperation> sends = operationRepository
                 .findBySalesChannelOrderIdAndOperationTypeOrderByUnitIndexAsc(
                         orderId, SalesChannelDeliveryOperationType.SEND_MESSAGE);
-        if (sends.isEmpty() || sends.stream().anyMatch(item -> item.getStatus() != SalesChannelDeliveryOperationStatus.SUCCEEDED)) return;
+        if (sends.isEmpty() || sends.stream().anyMatch(item -> item.getStatus() != SalesChannelDeliveryOperationStatus.SUCCEEDED)) {
+            projectionService.refreshDeliveryProjection(orderId);
+            return;
+        }
         boolean hasConfirm = operationRepository.findBySalesChannelOrderIdOrderByCreatedAtAsc(orderId).stream()
                 .anyMatch(item -> item.getOperationType() == SalesChannelDeliveryOperationType.CONFIRM_DELIVERY
                         || item.getOperationType() == SalesChannelDeliveryOperationType.RECONCILE_CONFIRM);
@@ -122,18 +125,60 @@ public class SalesChannelDeliveryOperationStateService {
             operation.setStatus(SalesChannelDeliveryOperationStatus.PENDING);
             operationRepository.save(operation);
         }
-        order.setDeliveryStatus(SalesChannelOrderDeliveryStatus.CONFIRM_PENDING);
-        channelOrderRepository.save(order);
+        projectionService.refreshDeliveryProjection(orderId);
     }
 
     @Transactional
     public void setChannelStatus(UUID channelOrderId, SalesChannelOrderDeliveryStatus status,
                                  String code, String message) {
         SalesChannelOrder order = channelOrderRepository.findByIdForUpdate(channelOrderId).orElseThrow();
+        if (status != SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED) {
+            SalesChannelOrderDeliveryStatus projected = projectionService.refreshDeliveryProjection(channelOrderId);
+            if (projected != status) return;
+        }
         order.setDeliveryStatus(status);
         order.setLastErrorCode(code);
         order.setLastErrorMessage(message);
         channelOrderRepository.save(order);
+    }
+
+    /**
+     * Shared max-attempt transition used by both claim and state paths. The
+     * target side-effect operation is never changed to UNKNOWN/FAILED here;
+     * reconciliation exhaustion only changes the reconciliation row and its
+     * channel projection.
+     */
+    @Transactional
+    public boolean exhaustIfAtLimit(UUID operationId) {
+        SalesChannelDeliveryOperation operation = operationRepository.findByIdForUpdate(operationId).orElse(null);
+        if (operation == null || operation.getAttemptCount() < configuredMaxAttempts()) return false;
+        exhaustLocked(operation,
+                isReconcile(operation)
+                        ? "Read-only reconciliation exhausted its maximum attempt count"
+                        : "Delivery operation reached its maximum attempt count");
+        return true;
+    }
+
+    @Transactional
+    public void exhaustOperation(UUID operationId, String message) {
+        SalesChannelDeliveryOperation operation = operationRepository.findByIdForUpdate(operationId).orElseThrow();
+        exhaustLocked(operation, message);
+    }
+
+    private void exhaustLocked(SalesChannelDeliveryOperation operation, String message) {
+        operation.setStatus(SalesChannelDeliveryOperationStatus.FAILED);
+        operation.setLastErrorCode("DELIVERY_MAX_ATTEMPTS_EXCEEDED");
+        operation.setLastErrorMessage(limit(message));
+        operation.setFinishedAt(LocalDateTime.now());
+        operation.setNextAttemptAt(null);
+        operationRepository.save(operation);
+        if (isReconcile(operation)) {
+            projectionService.markReviewRequired(operation.getSalesChannelOrderId(),
+                    "DELIVERY_MAX_ATTEMPTS_EXCEEDED",
+                    "Read-only reconciliation exhausted its maximum attempt count");
+        } else {
+            projectionService.refreshDeliveryProjection(operation.getSalesChannelOrderId());
+        }
     }
 
     private boolean isReconcile(SalesChannelDeliveryOperation operation) {

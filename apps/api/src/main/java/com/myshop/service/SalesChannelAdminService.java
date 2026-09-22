@@ -268,6 +268,10 @@ public class SalesChannelAdminService {
             if (!"AUTO".equalsIgnoreCase(product.getDeliveryType()) || product.getStockMode() != StockMode.CARD_KEY) {
                 throw new IllegalStateException("Phase 4 auto fulfillment requires deliveryType=AUTO and stockMode=CARD_KEY");
             }
+            if (!product.isSpecEnabled() && product.getCostPrice() == null) {
+                throw new IllegalStateException(
+                        "Phase 4 auto fulfillment requires a non-null product cost price for spec-disabled products");
+            }
         }
         listing.setAutoFulfillmentEnabled(enabled);
         return listingSummary(listingRepository.save(listing));

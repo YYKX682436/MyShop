@@ -38,6 +38,7 @@ public class SalesChannelDeliveryPlanner {
     private final OrderItemRepository orderItemRepository;
     private final CardKeyRepository cardKeyRepository;
     private final SalesChannelDeliveryOperationRepository operationRepository;
+    private final SalesChannelDeliveryProjectionService projectionService;
 
     @Transactional
     public void planPending() {
@@ -103,13 +104,11 @@ public class SalesChannelDeliveryPlanner {
             validUnits++;
         }
         if (validUnits == 0) {
-            row.setDeliveryStatus(SalesChannelOrderDeliveryStatus.REVIEW_REQUIRED);
-            row.setLastErrorCode("DATA_INTEGRITY_ERROR");
-            row.setLastErrorMessage("Delivered sales-channel order has no valid SOLD CardKey binding");
+            projectionService.markReviewRequired(row.getId(), "DATA_INTEGRITY_ERROR",
+                    "Delivered sales-channel order has no valid SOLD CardKey binding");
         } else {
-            row.setDeliveryStatus(SalesChannelOrderDeliveryStatus.MESSAGE_PENDING);
+            projectionService.refreshDeliveryProjection(row.getId());
         }
-        channelOrderRepository.save(row);
     }
 
     private String digest(String value) {

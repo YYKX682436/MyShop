@@ -5,6 +5,7 @@ import com.myshop.constant.SalesChannelDeliveryOperationType;
 import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +22,10 @@ public class SalesChannelDeliveryRecoveryService {
 
     private final SalesChannelDeliveryOperationRepository operationRepository;
     private final SalesChannelDeliveryOperationStateService stateService;
+    private final SalesChannelDeliveryProjectionService projectionService;
+
+    @Value("${sales-channel.delivery.max-attempts:8}")
+    private int maxAttempts;
 
     @Transactional
     public int recoverStaleRunning(LocalDateTime cutoff, int batchSize) {
@@ -47,6 +52,12 @@ public class SalesChannelDeliveryRecoveryService {
                         SalesChannelDeliveryOperationType.RECONCILE_CONFIRM,
                         null, operation.getRequestId());
             } else {
+                if (operation.getAttemptCount() >= Math.max(1, maxAttempts)) {
+                    stateService.exhaustOperation(operation.getId(),
+                            "Read-only reconciliation exhausted its maximum attempt count");
+                    recovered++;
+                    continue;
+                }
                 // Reconciliation has no side effect, so the same durable
                 // operation/request can safely be attempted again.
                 operation.setStatus(SalesChannelDeliveryOperationStatus.PENDING);
@@ -56,6 +67,7 @@ public class SalesChannelDeliveryRecoveryService {
                 operation.setLastErrorCode("WORKER_ATTEMPT_STALE");
                 operation.setLastErrorMessage("Read-only reconciliation was recovered after a worker restart");
                 operationRepository.save(operation);
+                projectionService.refreshDeliveryProjection(operation.getSalesChannelOrderId());
             }
             recovered++;
         }

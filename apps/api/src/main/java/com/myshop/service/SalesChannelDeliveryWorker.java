@@ -186,7 +186,16 @@ public class SalesChannelDeliveryWorker {
             stateService.ensureConfirmOperation(channelOrder.getId(), "XIANYU_CONFIRM:" + channelOrder.getId(), channelOrder.getExternalOrderNo());
         } else if (data.targetOutcome() == Outcome.FAILED) {
             stateService.succeeded(operation.getId(), Map.of("target_outcome", "FAILED"));
-            stateService.failed(targetOperation.getId(), "DELIVERY_FAILED", "Agent reconciliation proved delivery failed", Boolean.TRUE.equals(data.targetRetryable()));
+            boolean retryable = Boolean.TRUE.equals(data.targetRetryable());
+            stateService.failed(targetOperation.getId(), "DELIVERY_FAILED",
+                    "Agent reconciliation proved delivery failed", retryable);
+            stateService.setChannelStatus(channelOrder.getId(),
+                    retryable ? SalesChannelOrderDeliveryStatus.MESSAGE_PENDING
+                            : SalesChannelOrderDeliveryStatus.FAILED,
+                    "DELIVERY_FAILED",
+                    retryable
+                            ? "Agent proved the previous message was not sent; retry is safe"
+                            : "Agent proved message delivery failed permanently");
         } else {
             stateService.failed(operation.getId(), "MESSAGE_UNKNOWN",
                     "Reconciliation could not prove whether the message was sent", true);
@@ -254,7 +263,16 @@ public class SalesChannelDeliveryWorker {
             stateService.setChannelStatus(channelOrder.getId(), SalesChannelOrderDeliveryStatus.SUCCEEDED, null, null);
         } else if (data.targetOutcome() == Outcome.FAILED) {
             stateService.succeeded(operation.getId(), Map.of("target_outcome", "FAILED"));
-            stateService.failed(targetOperation.getId(), "CONFIRM_FAILED", "Reconciliation proved confirm delivery failed", Boolean.TRUE.equals(data.targetRetryable()));
+            boolean retryable = Boolean.TRUE.equals(data.targetRetryable());
+            stateService.failed(targetOperation.getId(), "CONFIRM_FAILED",
+                    "Reconciliation proved confirm delivery failed", retryable);
+            stateService.setChannelStatus(channelOrder.getId(),
+                    retryable ? SalesChannelOrderDeliveryStatus.CONFIRM_PENDING
+                            : SalesChannelOrderDeliveryStatus.FAILED,
+                    "CONFIRM_FAILED",
+                    retryable
+                            ? "Agent proved confirm did not apply; retry is safe"
+                            : "Agent proved confirm delivery failed permanently");
         } else {
             stateService.failed(operation.getId(), "CONFIRM_UNKNOWN",
                     "Reconciliation could not prove whether confirm delivery applied", true);

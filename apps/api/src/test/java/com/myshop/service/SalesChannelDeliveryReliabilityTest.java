@@ -132,11 +132,11 @@ class SalesChannelDeliveryReliabilityTest {
         operation.setAttemptCount(8);
         operation.setNextAttemptAt(java.time.LocalDateTime.now().minusMinutes(1));
         when(operationRepository.findByIdForUpdate(operation.getId())).thenReturn(Optional.of(operation));
+        when(stateService.exhaustIfAtLimit(operation.getId())).thenReturn(true);
 
         assertEquals(Optional.empty(), claimServiceUnderTest.claim(operation.getId()));
-        assertEquals(SalesChannelDeliveryOperationStatus.FAILED, operation.getStatus());
-        assertEquals("DELIVERY_MAX_ATTEMPTS_EXCEEDED", operation.getLastErrorCode());
-        verify(operationRepository).save(operation);
+        verify(stateService).exhaustIfAtLimit(operation.getId());
+        verify(operationRepository, never()).save(operation);
     }
 
     private IntegrationEnvelope<DeliveryReconcileData> reconcileResponse(String targetRequestId,

@@ -4,7 +4,6 @@ import com.myshop.constant.SalesChannelDeliveryOperationStatus;
 import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,9 +15,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SalesChannelDeliveryClaimService {
     private final SalesChannelDeliveryOperationRepository repository;
-
-    @Value("${sales-channel.delivery.max-attempts:8}")
-    private int maxAttempts;
+    private final SalesChannelDeliveryOperationStateService stateService;
 
     @Transactional
     public Optional<SalesChannelDeliveryOperation> claim(UUID operationId) {
@@ -36,13 +33,7 @@ public class SalesChannelDeliveryClaimService {
         if (operation.getNextAttemptAt() != null && operation.getNextAttemptAt().isAfter(now)) {
             return Optional.empty();
         }
-        if (operation.getAttemptCount() >= configuredMaxAttempts()) {
-            operation.setStatus(SalesChannelDeliveryOperationStatus.FAILED);
-            operation.setLastErrorCode("DELIVERY_MAX_ATTEMPTS_EXCEEDED");
-            operation.setLastErrorMessage("Delivery operation reached its maximum attempt count");
-            operation.setFinishedAt(now);
-            operation.setNextAttemptAt(null);
-            repository.save(operation);
+        if (stateService.exhaustIfAtLimit(operationId)) {
             return Optional.empty();
         }
         operation.setStatus(SalesChannelDeliveryOperationStatus.RUNNING);
@@ -52,7 +43,4 @@ public class SalesChannelDeliveryClaimService {
         return Optional.of(repository.save(operation));
     }
 
-    private int configuredMaxAttempts() {
-        return Math.max(1, maxAttempts);
-    }
 }
