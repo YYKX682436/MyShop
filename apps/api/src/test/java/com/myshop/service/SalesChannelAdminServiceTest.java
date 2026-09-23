@@ -20,6 +20,12 @@ import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
+import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
+import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
+import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
+import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.service.impl.SalesChannelAccountServiceImpl;
 import com.myshop.service.impl.SalesChannelListingServiceImpl;
 import org.junit.jupiter.api.Test;
@@ -32,11 +38,16 @@ import java.math.BigDecimal;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -142,5 +153,72 @@ class SalesChannelAdminServiceTest {
                 () -> service.setAutoFulfillmentEnabled(listingId, true));
         verify(specMappingValidator).assertCompleteForAutoFulfillment(any(), any());
         verify(listingRepository, never()).save(any(SalesChannelListing.class));
+    }
+
+    @Test
+    void successfulQrStatusSynchronizesAndVerifiesTheSameAccountOnRepeatedSuccess() {
+        String providerAccountId = "2215747465381";
+        UUID localAccountId = UUID.randomUUID();
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setId(localAccountId);
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId(providerAccountId);
+        account.setDisplayName("现有闲鱼账号");
+        account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        account.setCapabilities(Map.of("account_type", "FISH_SHOP"));
+
+        var qrStatus = new QrLoginStatusData("SUCCESS", providerAccountId, false, null);
+        when(providerClient.getQrLoginStatus(any())).thenReturn(new IntegrationEnvelope<>(
+                "status-request", Outcome.SUCCEEDED, qrStatus, null));
+        var remoteAccount = new com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount(
+                providerAccountId, "现有闲鱼账号", "active", true,
+                "2026-09-23T12:30:00+08:00", null, null);
+        when(providerClient.listAccounts()).thenReturn(new IntegrationEnvelope<>(
+                null, Outcome.SUCCEEDED, new AccountsData(List.of(remoteAccount)), null));
+        when(accountRepository.findByProviderAndProviderAccountId(SalesChannelProvider.XIANYU, providerAccountId))
+                .thenReturn(Optional.of(account));
+        when(accountRepository.findById(localAccountId)).thenReturn(Optional.of(account));
+        var capabilities = new AccountCapabilities("FISH_SHOP", true, true, true, true, true);
+        when(providerClient.verifyAccount(providerAccountId)).thenReturn(new IntegrationEnvelope<>(
+                "verify-request", Outcome.SUCCEEDED, new CapabilityData(capabilities), null));
+        when(accountService.upsert(any(), any(), any(), any(), any(), any(), any())).thenReturn(account);
+
+        var first = service.getQrLoginStatus("status-request", UUID.randomUUID().toString());
+        var repeated = service.getQrLoginStatus("status-request-2", UUID.randomUUID().toString());
+
+        assertEquals("SUCCESS", first.status());
+        assertEquals(providerAccountId, first.accountId());
+        assertEquals(first.accountId(), repeated.accountId());
+        verify(accountService, times(4)).upsert(any(), any(), any(), any(), any(), any(), any());
+        verify(providerClient, times(2)).verifyAccount(providerAccountId);
+        verify(accountRepository, times(4)).findByProviderAndProviderAccountId(
+                SalesChannelProvider.XIANYU, providerAccountId);
+    }
+
+    @Test
+    void accountSyncPreservesPreviouslyVerifiedCapabilitiesWhenAgentHasNoCapabilityCache() {
+        String providerAccountId = "2215747465381";
+        Map<String, Object> verifiedCapabilities = Map.of(
+                "account_type", "FISH_SHOP", "publish", true, "edit", true);
+        SalesChannelAccount existing = new SalesChannelAccount();
+        existing.setId(UUID.randomUUID());
+        existing.setProvider(SalesChannelProvider.XIANYU);
+        existing.setProviderAccountId(providerAccountId);
+        existing.setDisplayName("现有闲鱼账号");
+        existing.setStatus(SalesChannelAccountStatus.CONNECTED);
+        existing.setCapabilities(verifiedCapabilities);
+
+        var remoteAccount = new com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount(
+                providerAccountId, "现有闲鱼账号", "active", true, null, null, null);
+        when(providerClient.listAccounts()).thenReturn(new IntegrationEnvelope<>(
+                null, Outcome.SUCCEEDED, new AccountsData(List.of(remoteAccount)), null));
+        when(accountRepository.findByProviderAndProviderAccountId(SalesChannelProvider.XIANYU, providerAccountId))
+                .thenReturn(Optional.of(existing));
+
+        service.syncXianyuAccounts();
+
+        verify(accountService).upsert(
+                eq(SalesChannelProvider.XIANYU), eq(providerAccountId), eq("现有闲鱼账号"),
+                eq(SalesChannelAccountStatus.CONNECTED), eq(verifiedCapabilities), isNull(), isNull());
     }
 }

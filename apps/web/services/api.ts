@@ -544,7 +544,21 @@ export interface SalesChannelAccountSummary {
   isEnabled?: boolean
   capabilities?: Record<string, boolean | string | null> | null
   lastVerifiedAt?: string | null
+  lastLoginAt?: string | null
   orderSyncEnabled?: boolean
+}
+
+export interface XianyuQrLoginStartResponse {
+  loginSessionId: string
+  qrCodeDataUrl: string
+  expiresInSeconds: number
+}
+
+export interface XianyuQrLoginStatusResponse {
+  status: "WAITING" | "SCANNED" | "VERIFICATION_REQUIRED" | "SUCCESS" | "EXPIRED" | "CANCELLED" | "FAILED"
+  accountId?: string | null
+  isNewAccount?: boolean | null
+  verificationMessage?: string | null
 }
 
 export interface SalesChannelSpecMappingSummary {
@@ -689,6 +703,21 @@ export const adminProductApi = {
 export const adminSalesChannelApi = {
   getAccounts: () =>
     request<SalesChannelAccountSummary[]>("/admin/sales-channels/accounts"),
+  getXianyuAccounts: () =>
+    request<SalesChannelAccountSummary[]>("/admin/xianyu/accounts"),
+  startXianyuQrLogin: (requestId: string) =>
+    request<XianyuQrLoginStartResponse>("/admin/xianyu/accounts/login/qr", {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId }),
+    }),
+  getXianyuQrLoginStatus: (sessionId: string, requestId: string) =>
+    request<XianyuQrLoginStatusResponse>(
+      `/admin/xianyu/accounts/login/qr/${encodeURIComponent(sessionId)}/status`,
+      {
+        method: "POST",
+        body: JSON.stringify({ request_id: requestId, login_session_id: sessionId }),
+      },
+    ),
   syncXianyuAccounts: () =>
     request<unknown>("/admin/sales-channels/xianyu/accounts/sync", { method: "POST" }),
   verifyAccount: (accountId: string) =>

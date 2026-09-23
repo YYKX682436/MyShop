@@ -11,6 +11,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
@@ -31,6 +35,10 @@ public interface SalesChannelProviderClient {
     IntegrationEnvelope<AccountsData> listAccounts();
 
     IntegrationEnvelope<CapabilityData> verifyAccount(String accountId);
+
+    IntegrationEnvelope<QrLoginStartData> startQrLogin(QrLoginStartCommand command);
+
+    IntegrationEnvelope<QrLoginStatusData> getQrLoginStatus(QrLoginStatusCommand command);
 
     IntegrationEnvelope<MediaUploadData> uploadMedia(MediaUploadCommand command);
 

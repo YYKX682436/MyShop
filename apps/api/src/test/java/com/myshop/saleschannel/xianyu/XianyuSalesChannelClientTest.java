@@ -17,6 +17,8 @@ import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.PlatformAttribute;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount;
@@ -41,6 +43,7 @@ import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -65,6 +68,41 @@ class XianyuSalesChannelClientTest {
                 XianyuRequestSigner.signature(SECRET,
                         XianyuRequestSigner.canonicalString("POST", "/api/integration/v1/listings/publish",
                                 "1700000000", "nonce-123", "{\"x\":2}".getBytes(StandardCharsets.UTF_8))));
+    }
+
+    @Test
+    void qrLoginUsesTheExistingSignedIntegrationClientAndMapsVerificationStatus() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SUCCESS)) {
+            XianyuSalesChannelClient client = client(fixture.baseUrl());
+            String startRequestId = UUID.randomUUID().toString();
+            var started = client.startQrLogin(new QrLoginStartCommand(startRequestId));
+            assertEquals(Outcome.SUCCEEDED, started.outcome());
+            assertEquals("qr-session-1", started.data().loginSessionId());
+            assertEquals("data:image/png;base64,AA==", started.data().qrCodeDataUrl());
+
+            String statusRequestId = UUID.randomUUID().toString();
+            var status = client.getQrLoginStatus(new QrLoginStatusCommand(statusRequestId, "qr-session-1"));
+            assertEquals(Outcome.SUCCEEDED, status.outcome());
+            assertEquals("VERIFICATION_REQUIRED", status.data().status());
+            assertEquals("闲鱼要求进行安全验证，请按手机端提示完成验证。",
+                    status.data().verificationMessage());
+
+            List<CapturedRequest> requests = fixture.requests();
+            assertEquals(List.of(
+                    "POST /api/integration/v1/accounts/login/qr/start",
+                    "POST /api/integration/v1/accounts/login/qr/status"),
+                    requests.stream().map(r -> r.method() + " " + r.path()).toList());
+            JsonNode startBody = objectMapper.readTree(requests.get(0).body());
+            assertEquals(startRequestId, startBody.path("request_id").asText());
+            JsonNode statusBody = objectMapper.readTree(requests.get(1).body());
+            assertEquals(statusRequestId, statusBody.path("request_id").asText());
+            assertEquals("qr-session-1", statusBody.path("login_session_id").asText());
+            for (CapturedRequest request : requests) {
+                String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
+                        request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
+                assertEquals(independentHmac(SECRET, canonical), request.header("X-MyShop-Signature"));
+            }
+        }
     }
 
     @Test
@@ -507,6 +545,13 @@ class XianyuSalesChannelClientTest {
                 if (matcher.find()) requestId = matcher.group(1);
             }
             Object data = switch (exchange.getRequestURI().getRawPath()) {
+                case "/api/integration/v1/accounts/login/qr/start" -> Map.of(
+                        "login_session_id", "qr-session-1",
+                        "qr_code_data_url", "data:image/png;base64,AA==",
+                        "expires_in_seconds", 300);
+                case "/api/integration/v1/accounts/login/qr/status" -> Map.of(
+                        "status", "VERIFICATION_REQUIRED",
+                        "verification_message", "闲鱼要求进行安全验证，请按手机端提示完成验证。");
                 case "/api/integration/v1/accounts" -> Map.of("accounts", List.of(Map.of(
                         "provider_account_id", "acct-1", "display_name", "Fixture account",
                         "status", "ACTIVE", "enabled", true,

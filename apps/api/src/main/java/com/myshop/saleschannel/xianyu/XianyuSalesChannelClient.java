@@ -24,6 +24,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
@@ -133,6 +137,27 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         String path = "/accounts/" + pathSegment(accountId) + "/verify";
         return exchange("POST", path, new byte[0], "application/json",
                 responseType(CapabilityData.class), RequestSemantics.READ_ONLY, UUID.randomUUID().toString(), null);
+    }
+
+    @Override
+    public IntegrationEnvelope<QrLoginStartData> startQrLogin(QrLoginStartCommand command) {
+        validateQrLoginRequest(command == null ? null : command.requestId());
+        byte[] body = serialize(command);
+        return exchange("POST", "/accounts/login/qr/start", body, "application/json",
+                responseType(QrLoginStartData.class), RequestSemantics.SAFE_REPEATABLE,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<QrLoginStatusData> getQrLoginStatus(QrLoginStatusCommand command) {
+        validateQrLoginRequest(command == null ? null : command.requestId());
+        if (command == null || blank(command.loginSessionId()) || command.loginSessionId().length() > 80) {
+            throw safeFailure("INVALID_QR_LOGIN_SESSION", "A QR login session identifier is required");
+        }
+        byte[] body = serialize(command);
+        return exchange("POST", "/accounts/login/qr/status", body, "application/json",
+                responseType(QrLoginStatusData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
     }
 
     @Override
@@ -613,6 +638,15 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
                 || command.content().length > (command.mediaType() == MediaType.VIDEO
                         ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES)) {
             throw safeFailure("INVALID_MEDIA", "Media upload fields or file size are invalid");
+        }
+    }
+
+    private static void validateQrLoginRequest(String requestId) {
+        try {
+            if (requestId == null || requestId.length() > 255) throw new IllegalArgumentException();
+            UUID.fromString(requestId);
+        } catch (IllegalArgumentException e) {
+            throw safeFailure("INVALID_REQUEST_ID", "A UUID request_id is required for QR login");
         }
     }
 

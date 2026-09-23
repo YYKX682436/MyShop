@@ -4,6 +4,9 @@ import com.myshop.common.PageResult;
 import com.myshop.model.response.AdministratorResponse;
 import com.myshop.service.AdministratorService;
 import com.myshop.service.OperationLogService;
+import com.myshop.service.SalesChannelAdminService;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +55,9 @@ class SecurityAuthorizationIntegrationTest {
     @MockitoBean
     private OperationLogService operationLogService;
 
+    @MockitoBean
+    private SalesChannelAdminService salesChannelAdminService;
+
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
@@ -61,6 +67,12 @@ class SecurityAuthorizationIntegrationTest {
                 .thenReturn(PageResult.of(java.util.List.<AdministratorResponse>of(), 1, 20, 0));
         when(operationLogService.listLogs(any(), anyString(), anyString(), anyString(), anyString(), anyInt(), anyInt()))
                 .thenReturn(PageResult.of(java.util.List.of(), 1, 20, 0));
+        when(salesChannelAdminService.accounts()).thenReturn(java.util.List.of());
+        when(salesChannelAdminService.startQrLogin(anyString()))
+                .thenReturn(new QrLoginStartData("11111111-1111-1111-1111-111111111111",
+                        "data:image/png;base64,AA==", 300));
+        when(salesChannelAdminService.getQrLoginStatus(anyString(), anyString()))
+                .thenReturn(new QrLoginStatusData("WAITING", null, null, null));
     }
 
     @Test
@@ -91,6 +103,13 @@ class SecurityAuthorizationIntegrationTest {
     void unauthenticatedAdminRouteRemainsUnauthorizedAndLoginRemainsPublic() throws Exception {
         mockMvc.perform(get("/api/admin/operation-logs").contextPath("/api"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/admin/xianyu/accounts").contextPath("/api"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr")
+                        .contextPath("/api")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\"}"))
+                .andExpect(status().isUnauthorized());
 
         mockMvc.perform(post("/api/auth/login")
                         .contextPath("/api")
@@ -110,11 +129,38 @@ class SecurityAuthorizationIntegrationTest {
                         .contextPath("/api")
                         .with(user("muchen-admin").roles("SUPER_ADMIN")))
                 .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/admin/xianyu/accounts")
+                        .contextPath("/api")
+                        .with(user("ordinary-admin").roles("ADMIN")))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/xianyu/accounts")
+                        .contextPath("/api")
+                        .with(user("muchen-admin").roles("SUPER_ADMIN")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr")
+                        .contextPath("/api")
+                        .with(user("ordinary-admin").roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr/11111111-1111-1111-1111-111111111111/status")
+                        .contextPath("/api")
+                        .with(user("ordinary-admin").roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request_id\":\"22222222-2222-2222-2222-222222222222\","
+                                + "\"login_session_id\":\"11111111-1111-1111-1111-111111111111\"}"))
+                .andExpect(status().isOk());
     }
 
     @Test
     void userCannotUseBackendAndOrdinaryAdminCannotManageAdministrators() throws Exception {
         mockMvc.perform(get("/api/admin/operation-logs")
+                        .contextPath("/api")
+                        .with(user("buyer").roles("USER")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/admin/xianyu/accounts")
                         .contextPath("/api")
                         .with(user("buyer").roles("USER")))
                 .andExpect(status().isForbidden());

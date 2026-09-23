@@ -64,6 +64,10 @@ const navGroups: AdminNavGroup[] = [
     ],
   },
   {
+    labelKey: "admin.navXianyu",
+    items: [{ labelKey: "admin.xianyuAccounts", href: "/admin/xianyu/accounts", icon: Store }],
+  },
+  {
     labelKey: "admin.navTransactions",
     items: [
       { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: true },

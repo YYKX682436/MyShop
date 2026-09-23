@@ -57,6 +57,10 @@ public class SalesChannelAccount extends BaseEntity {
     @Setter
     private LocalDateTime lastVerifiedAt;
 
+    @Column(name = "last_login_at")
+    @Setter
+    private LocalDateTime lastLoginAt;
+
     public void setCapabilities(Map<String, Object> capabilities) {
         this.capabilities = capabilities == null
                 ? new LinkedHashMap<>()

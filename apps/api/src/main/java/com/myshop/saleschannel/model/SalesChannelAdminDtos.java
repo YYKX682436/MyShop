@@ -26,18 +26,8 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("enabled") Boolean enabled,
             @JsonProperty("orderSyncEnabled") Boolean orderSyncEnabled,
             @JsonProperty("capabilities") Map<String, Object> capabilities,
-            @JsonProperty("lastVerifiedAt") LocalDateTime lastVerifiedAt) {
-        /** Backward-compatible constructor for callers predating Phase 4. */
-        public AccountSummary(String id, String providerAccountId, String displayName,
-                              String accountType, String status, boolean enabled,
-                              Map<?, ?> capabilities, LocalDateTime lastVerifiedAt) {
-            this(id, providerAccountId, displayName, accountType, status, enabled, false,
-                    capabilities == null ? Map.of() : capabilities.entrySet().stream()
-                            .collect(java.util.stream.Collectors.toMap(
-                                    entry -> String.valueOf(entry.getKey()), Map.Entry::getValue)),
-                    lastVerifiedAt);
-        }
-    }
+            @JsonProperty("lastVerifiedAt") LocalDateTime lastVerifiedAt,
+            @JsonProperty("lastLoginAt") LocalDateTime lastLoginAt) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record ListingSummary(
@@ -54,18 +44,7 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("lastErrorCode") String lastErrorCode,
             @JsonProperty("lastErrorMessage") String lastErrorMessage,
             @JsonProperty("providerConfig") XianyuProviderConfig providerConfig,
-            @JsonProperty("specMappings") List<ListingSpecMappingSummary> specMappings) {
-        /** Backward-compatible constructor for callers predating Phase 4. */
-        public ListingSummary(String id, String providerAccountId, String displayName,
-                              String accountType, boolean isEnabled, String status,
-                              String externalItemId, long desiredRevision, LocalDateTime lastSyncedAt,
-                              String lastErrorCode, String lastErrorMessage,
-                              XianyuProviderConfig providerConfig) {
-            this(id, providerAccountId, displayName, accountType, isEnabled, false, status,
-                    externalItemId, desiredRevision, lastSyncedAt, lastErrorCode,
-                    lastErrorMessage, providerConfig, List.of());
-        }
-    }
+            @JsonProperty("specMappings") List<ListingSpecMappingSummary> specMappings) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record ListingSpecMappingSummary(
@@ -103,6 +82,26 @@ public final class SalesChannelAdminDtos {
             cardList = cardList == null ? List.of() : List.copyOf(cardList);
         }
     }
+
+    public record XianyuQrLoginStartRequest(
+            @JsonProperty("request_id") @NotBlank @Size(max = 36) String requestId) { }
+
+    public record XianyuQrLoginStatusRequest(
+            @JsonProperty("request_id") @NotBlank @Size(max = 36) String requestId,
+            @JsonProperty("login_session_id") @NotBlank @Size(max = 80) String loginSessionId) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuQrLoginStartResponse(
+            String loginSessionId,
+            String qrCodeDataUrl,
+            Integer expiresInSeconds) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuQrLoginStatusResponse(
+            String status,
+            String accountId,
+            Boolean isNewAccount,
+            String verificationMessage) { }
 
     public record SalesChannelOrderSummary(
             String id,

@@ -10,6 +10,10 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.UpdateXianyuListingRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderDetail;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartRequest;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusRequest;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartResponse;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusResponse;
 import com.myshop.service.SalesChannelAdminService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +39,37 @@ public class AdminSalesChannelController {
     @GetMapping("/admin/sales-channels/accounts")
     public ApiResponse<List<AccountSummary>> accounts() {
         return ApiResponse.success(salesChannelAdminService.accounts());
+    }
+
+    @GetMapping("/admin/xianyu/accounts")
+    public ApiResponse<List<AccountSummary>> xianyuAccounts() {
+        return ApiResponse.success(salesChannelAdminService.accounts());
+    }
+
+    @PostMapping("/admin/xianyu/accounts/login/qr")
+    public ApiResponse<XianyuQrLoginStartResponse> startXianyuQrLogin(
+            @Valid @RequestBody XianyuQrLoginStartRequest request) {
+        var data = salesChannelAdminService.startQrLogin(canonicalUuid(request.requestId()));
+        return ApiResponse.success(new XianyuQrLoginStartResponse(
+                data.loginSessionId(), data.qrCodeDataUrl(), data.expiresInSeconds()));
+    }
+
+    @PostMapping("/admin/xianyu/accounts/login/qr/{sessionId}/status")
+    public ApiResponse<XianyuQrLoginStatusResponse> xianyuQrLoginStatus(
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody XianyuQrLoginStatusRequest request) {
+        UUID requestId = UUID.fromString(request.requestId());
+        UUID bodySessionId = UUID.fromString(request.loginSessionId());
+        if (!sessionId.equals(bodySessionId)) {
+            throw new IllegalArgumentException("QR login session path and body do not match");
+        }
+        var data = salesChannelAdminService.getQrLoginStatus(requestId.toString(), sessionId.toString());
+        return ApiResponse.success(new XianyuQrLoginStatusResponse(
+                data.status(), data.accountId(), data.isNewAccount(), data.verificationMessage()));
+    }
+
+    private static String canonicalUuid(String value) {
+        return UUID.fromString(value).toString();
     }
 
     @PostMapping("/admin/sales-channels/xianyu/metadata/address/search")

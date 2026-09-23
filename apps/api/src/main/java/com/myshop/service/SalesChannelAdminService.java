@@ -37,6 +37,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.saleschannel.model.SalesChannelDtos.OrderCursor;
 import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkData;
@@ -52,6 +56,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -84,6 +90,43 @@ public class SalesChannelAdminService {
                 .map(this::accountSummary).toList();
     }
 
+    public QrLoginStartData startQrLogin(String requestId) {
+        IntegrationEnvelope<QrLoginStartData> response = providerClient.startQrLogin(
+                new QrLoginStartCommand(requestId));
+        requireSuccess(response.outcome(), response.error() == null ? null : response.error().code());
+        if (response.data() == null || blank(response.data().loginSessionId())
+                || blank(response.data().qrCodeDataUrl()) || response.data().expiresInSeconds() == null) {
+            throw new IllegalStateException("Xianyu Agent returned an incomplete QR login response");
+        }
+        return response.data();
+    }
+
+    public QrLoginStatusData getQrLoginStatus(String requestId, String loginSessionId) {
+        IntegrationEnvelope<QrLoginStatusData> response = providerClient.getQrLoginStatus(
+                new QrLoginStatusCommand(requestId, loginSessionId));
+        requireSuccess(response.outcome(), response.error() == null ? null : response.error().code());
+        QrLoginStatusData status = response.data();
+        if (status == null || blank(status.status())) {
+            throw new IllegalStateException("Xianyu Agent returned no QR login status");
+        }
+        if ("SUCCESS".equalsIgnoreCase(status.status())) {
+            if (blank(status.accountId())) {
+                throw new IllegalStateException("Xianyu Agent returned no account identifier after QR login");
+            }
+            syncXianyuAccounts();
+            SalesChannelAccount account = accountRepository
+                    .findByProviderAndProviderAccountId(SalesChannelProvider.XIANYU, status.accountId())
+                    .orElseThrow(() -> new IllegalStateException("The QR login account was not synchronized"));
+            try {
+                verifyAccount(account.getId());
+            } catch (RuntimeException verificationFailure) {
+                return new QrLoginStatusData(status.status(), status.accountId(), status.isNewAccount(),
+                        "账号已登录，能力校验暂不可用。可稍后在账号页重试校验。");
+            }
+        }
+        return status;
+    }
+
     public AddressMetadataResult searchAddress(String keywords, String city) {
         return providerClient.searchAddress(keywords, city);
     }
@@ -109,10 +152,13 @@ public class SalesChannelAdminService {
         for (var account : remote) {
             if (blank(account.providerAccountId())) continue;
             Map<String, Object> capabilities = account.capabilities() == null
-                    ? Map.of() : objectMapper.convertValue(account.capabilities(), new TypeReference<>() { });
+                    ? accountRepository.findByProviderAndProviderAccountId(
+                            SalesChannelProvider.XIANYU, account.providerAccountId())
+                            .map(SalesChannelAccount::getCapabilities).orElse(Map.of())
+                    : objectMapper.convertValue(account.capabilities(), new TypeReference<>() { });
             SalesChannelAccountStatus status = mapStatus(account.status(), account.enabled());
             accountService.upsert(SalesChannelProvider.XIANYU, account.providerAccountId(),
-                    account.displayName(), status, capabilities, null);
+                    account.displayName(), status, capabilities, parseProviderTimestamp(account.lastLoginAt()), null);
         }
         return accounts();
     }
@@ -127,7 +173,8 @@ public class SalesChannelAdminService {
         Map<String, Object> capabilities = objectMapper.convertValue(response.data().capabilities(),
                 new TypeReference<>() { });
         SalesChannelAccount updated = accountService.upsert(account.getProvider(), account.getProviderAccountId(),
-                account.getDisplayName(), SalesChannelAccountStatus.CONNECTED, capabilities, LocalDateTime.now());
+                account.getDisplayName(), SalesChannelAccountStatus.CONNECTED, capabilities,
+                account.getLastLoginAt(), LocalDateTime.now());
         return accountSummary(updated);
     }
 
@@ -222,7 +269,20 @@ public class SalesChannelAdminService {
         return new AccountSummary(account.getId().toString(), account.getProviderAccountId(),
                 account.getDisplayName(), accountType(account), account.getStatus().name(), account.isEnabled(),
                 account.isOrderSyncEnabled(),
-                account.getCapabilities(), account.getLastVerifiedAt());
+                account.getCapabilities(), account.getLastVerifiedAt(), account.getLastLoginAt());
+    }
+
+    private LocalDateTime parseProviderTimestamp(String value) {
+        if (blank(value)) return null;
+        try {
+            return OffsetDateTime.parse(value).toLocalDateTime();
+        } catch (DateTimeParseException ignored) {
+            try {
+                return LocalDateTime.parse(value);
+            } catch (DateTimeParseException invalid) {
+                return null;
+            }
+        }
     }
 
     private ListingSummary listingSummary(SalesChannelListing listing) {

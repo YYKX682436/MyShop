@@ -23,6 +23,14 @@ public class SalesChannelAccountServiceImpl {
     public SalesChannelAccount upsert(SalesChannelProvider provider, String providerAccountId,
                                       String displayName, SalesChannelAccountStatus status,
                                       Map<String, Object> capabilities, LocalDateTime lastVerifiedAt) {
+        return upsert(provider, providerAccountId, displayName, status, capabilities, null, lastVerifiedAt);
+    }
+
+    @Transactional
+    public SalesChannelAccount upsert(SalesChannelProvider provider, String providerAccountId,
+                                      String displayName, SalesChannelAccountStatus status,
+                                      Map<String, Object> capabilities, LocalDateTime lastLoginAt,
+                                      LocalDateTime lastVerifiedAt) {
         Objects.requireNonNull(provider, "provider is required");
         Objects.requireNonNull(status, "status is required");
         if (providerAccountId == null || providerAccountId.isBlank() || providerAccountId.length() > 128) {
@@ -39,6 +47,9 @@ public class SalesChannelAccountServiceImpl {
         account.setDisplayName(displayName);
         account.setStatus(status);
         account.setCapabilities(capabilities);
+        if (lastLoginAt != null || account.getLastLoginAt() == null) {
+            account.setLastLoginAt(lastLoginAt);
+        }
         if (lastVerifiedAt != null || account.getLastVerifiedAt() == null) {
             account.setLastVerifiedAt(lastVerifiedAt);
         }

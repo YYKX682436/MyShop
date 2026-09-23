@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartResponse;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.UpdateXianyuListingRequest;
 import org.junit.jupiter.api.Test;
 
@@ -26,8 +28,8 @@ class SalesChannelAdminDtosJsonTest {
     @Test
     void accountSummaryUsesTheCamelCaseContractExpectedByTheAdminUi() {
         AccountSummary summary = new AccountSummary("local-id", "provider-id", "Test shop",
-                "FISH_SHOP", "CONNECTED", true, Map.of("account_type", "FISH_SHOP"),
-                LocalDateTime.of(2026, 9, 21, 12, 0));
+                "FISH_SHOP", "CONNECTED", true, false, Map.of("account_type", "FISH_SHOP"),
+                LocalDateTime.of(2026, 9, 21, 12, 0), null);
 
         JsonNode json = objectMapper.valueToTree(summary);
 
@@ -42,8 +44,8 @@ class SalesChannelAdminDtosJsonTest {
     @Test
     void listingSummaryUsesCamelCaseForFieldsConsumedByTheAdminUi() {
         ListingSummary summary = new ListingSummary("listing-id", "provider-id", "Test shop",
-                "FISH_SHOP", false, "PENDING", "item-1", 3L,
-                LocalDateTime.of(2026, 9, 21, 12, 0), "", "", null);
+                "FISH_SHOP", false, false, "PENDING", "item-1", 3L,
+                LocalDateTime.of(2026, 9, 21, 12, 0), "", "", null, java.util.List.of());
 
         JsonNode json = objectMapper.valueToTree(summary);
 
@@ -54,6 +56,23 @@ class SalesChannelAdminDtosJsonTest {
         assertFalse(json.path("isEnabled").asBoolean());
         assertFalse(json.has("provider_account_id"));
         assertFalse(json.has("external_item_id"));
+    }
+
+    @Test
+    void xianyuQrLoginResponsesUseCamelCaseForTheBrowserContract() {
+        JsonNode start = objectMapper.valueToTree(new XianyuQrLoginStartResponse(
+                "session-1", "data:image/png;base64,AA==", 300));
+        assertEquals("session-1", start.path("loginSessionId").asText());
+        assertEquals("data:image/png;base64,AA==", start.path("qrCodeDataUrl").asText());
+        assertEquals(300, start.path("expiresInSeconds").asInt());
+        assertFalse(start.has("login_session_id"));
+
+        JsonNode status = objectMapper.valueToTree(new XianyuQrLoginStatusResponse(
+                "SUCCESS", "account-1", false, null));
+        assertEquals("account-1", status.path("accountId").asText());
+        assertFalse(status.path("isNewAccount").asBoolean());
+        assertTrue(status.has("verificationMessage"));
+        assertFalse(status.has("verification_message"));
     }
 
     @Test

@@ -10,6 +10,8 @@ const orders = readSource("../app/admin/orders/page.tsx")
 const productForm = readSource("../components/admin/products/product-form.tsx")
 const salesChannelEditor = readSource("../components/admin/products/sales-channel-editor.tsx")
 const salesChannelApi = readSource("../services/api.ts")
+const xianyuAccounts = readSource("../app/admin/xianyu/accounts/page.tsx")
+const adminSidebar = readSource("../components/layout/admin-sidebar.tsx")
 const productTabs = readSource("../components/ui/tabs.tsx")
 const categoryPage = readSource("../app/admin/categories/page.tsx")
 
@@ -74,6 +76,18 @@ test("Xianyu address and category configuration use MyShop metadata pickers", ()
   assert.doesNotMatch(salesChannelEditor, /平台分类 ID<Input/)
   assert.match(salesChannelApi, /\/admin\/sales-channels\/xianyu\/metadata\/address\/search/)
   assert.match(salesChannelApi, /\/admin\/sales-channels\/xianyu\/metadata\/category\/recommend/)
+})
+
+test("Xianyu account onboarding stays inside MyShop and cleans up QR polling", () => {
+  assert.match(adminSidebar, /labelKey: "admin\.navXianyu"[\s\S]*?href: "\/admin\/xianyu\/accounts"/)
+  assert.match(salesChannelApi, /\/admin\/xianyu\/accounts\/login\/qr/)
+  assert.match(xianyuAccounts, /setTimeout\(\(\) => void poll\(\), 2000\)/)
+  assert.match(xianyuAccounts, /clearTimeout\(timer\)/)
+  for (const state of ["WAITING", "SCANNED", "VERIFICATION_REQUIRED", "SUCCESS", "EXPIRED", "CANCELLED", "FAILED"]) {
+    assert.match(xianyuAccounts, new RegExp(state))
+  }
+  assert.match(xianyuAccounts, /闲鱼要求进行安全验证，请按手机端提示完成验证。/)
+  assert.doesNotMatch(xianyuAccounts, /<iframe\b/i)
 })
 
 test("dashboard content groups use tokenized surfaces and one responsive KPI separator system", () => {

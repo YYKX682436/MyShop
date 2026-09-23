@@ -75,6 +75,26 @@ public final class SalesChannelDtos {
     public record AccountsData(
             @JsonProperty("accounts") List<SalesChannelAccount> accounts) { }
 
+    public record QrLoginStartCommand(
+            @JsonProperty("request_id") String requestId) { }
+
+    public record QrLoginStatusCommand(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("login_session_id") String loginSessionId) { }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record QrLoginStartData(
+            @JsonProperty("login_session_id") String loginSessionId,
+            @JsonProperty("qr_code_data_url") String qrCodeDataUrl,
+            @JsonProperty("expires_in_seconds") Integer expiresInSeconds) { }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record QrLoginStatusData(
+            @JsonProperty("status") String status,
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("is_new_account") Boolean isNewAccount,
+            @JsonProperty("verification_message") String verificationMessage) { }
+
     public record CapabilityData(
             @JsonProperty("capabilities") AccountCapabilities capabilities) { }
 

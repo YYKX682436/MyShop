@@ -29,6 +29,7 @@ node_modules/
 out/
 dist/
 target/
+/apps/api/bin/
 test-uploads/
 .env
 .env.local
