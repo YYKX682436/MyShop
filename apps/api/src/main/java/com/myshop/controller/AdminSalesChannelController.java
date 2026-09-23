@@ -65,7 +65,8 @@ public class AdminSalesChannelController {
         }
         var data = salesChannelAdminService.getQrLoginStatus(requestId.toString(), sessionId.toString());
         return ApiResponse.success(new XianyuQrLoginStatusResponse(
-                data.status(), data.accountId(), data.isNewAccount(), data.verificationMessage()));
+                data.status(), data.accountId(), data.isNewAccount(), data.verificationMessage(),
+                data.verificationQrCodeDataUrl()));
     }
 
     private static String canonicalUuid(String value) {

@@ -121,7 +121,8 @@ public class SalesChannelAdminService {
                 verifyAccount(account.getId());
             } catch (RuntimeException verificationFailure) {
                 return new QrLoginStatusData(status.status(), status.accountId(), status.isNewAccount(),
-                        "账号已登录，能力校验暂不可用。可稍后在账号页重试校验。");
+                        "账号已登录，能力校验暂不可用。可稍后在账号页重试校验。",
+                        status.verificationQrCodeDataUrl());
             }
         }
         return status;

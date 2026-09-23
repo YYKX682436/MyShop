@@ -87,6 +87,8 @@ test("Xianyu account onboarding stays inside MyShop and cleans up QR polling", (
     assert.match(xianyuAccounts, new RegExp(state))
   }
   assert.match(xianyuAccounts, /闲鱼要求进行安全验证，请按手机端提示完成验证。/)
+  assert.match(xianyuAccounts, /verificationQrCodeDataUrl/)
+  assert.match(xianyuAccounts, /闲鱼 App 再次扫码/)
   assert.doesNotMatch(xianyuAccounts, /<iframe\b/i)
 })
 

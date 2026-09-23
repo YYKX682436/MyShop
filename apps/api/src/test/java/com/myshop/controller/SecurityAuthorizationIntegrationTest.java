@@ -73,7 +73,7 @@ class SecurityAuthorizationIntegrationTest {
                 .thenReturn(new QrLoginStartData("11111111-1111-1111-1111-111111111111",
                         "data:image/png;base64,AA==", 300));
         when(salesChannelAdminService.getQrLoginStatus(anyString(), anyString()))
-                .thenReturn(new QrLoginStatusData("WAITING", null, null, null));
+                .thenReturn(new QrLoginStatusData("WAITING", null, null, null, null));
     }
 
     @Test

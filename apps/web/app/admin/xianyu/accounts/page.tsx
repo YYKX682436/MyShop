@@ -32,6 +32,7 @@ interface LoginSession {
   sessionId?: string
   qrCodeDataUrl?: string
   verificationMessage?: string
+  verificationQrCodeDataUrl?: string
 }
 
 const terminalStatuses = new Set<LoginStatus>(["SUCCESS", "EXPIRED", "CANCELLED", "FAILED"])
@@ -126,6 +127,7 @@ export default function XianyuAccountsPage() {
           ...current,
           status: status.status,
           verificationMessage: status.verificationMessage || undefined,
+          verificationQrCodeDataUrl: status.verificationQrCodeDataUrl || current.verificationQrCodeDataUrl,
         } : current)
         if (status.status === "SUCCESS") {
           await loadAccounts()
@@ -241,7 +243,15 @@ export default function XianyuAccountsPage() {
                 <p className="mt-3 text-sm text-muted-foreground">请打开闲鱼 App 扫码</p>
               </>}
               {login.status === "SCANNED" && <p className="text-sm font-medium">已扫码，请在手机上确认</p>}
-              {login.status === "VERIFICATION_REQUIRED" && <p className="max-w-xs text-sm font-medium">{login.verificationMessage || defaultVerificationMessage}</p>}
+              {login.status === "VERIFICATION_REQUIRED" && <>
+                {login.verificationQrCodeDataUrl ? <>
+                  <Image src={login.verificationQrCodeDataUrl} alt="闲鱼人脸验证二维码" width={208} height={208} unoptimized className="size-52 rounded-card bg-white p-2" />
+                  <p className="max-w-xs text-sm font-medium">请用闲鱼 App 再次扫码，并按手机提示完成人脸或安全验证。</p>
+                </> : <>
+                  <p className="max-w-xs text-sm font-medium">{login.verificationMessage || defaultVerificationMessage}</p>
+                  <p className="text-xs text-muted-foreground">正在获取人脸验证二维码…</p>
+                </>}
+              </>}
               {login.status === "SUCCESS" && <div><StatusBadge label="登录成功" tone="success" /><p className="mt-3 text-sm text-muted-foreground">账号列表已刷新。</p>{login.verificationMessage && <p className="mt-2 text-xs text-muted-foreground">{login.verificationMessage}</p>}</div>}
               {login.status === "EXPIRED" && <p className="text-sm">二维码已过期，请重新生成。</p>}
               {login.status === "CANCELLED" && <p className="text-sm">本次登录已取消。</p>}

@@ -101,7 +101,8 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("status") String status,
             @JsonProperty("accountId") String accountId,
             @JsonProperty("isNewAccount") Boolean isNewAccount,
-            @JsonProperty("verificationMessage") String verificationMessage) { }
+            @JsonProperty("verificationMessage") String verificationMessage,
+            @JsonProperty("verificationQrCodeDataUrl") String verificationQrCodeDataUrl) { }
 
     public record SalesChannelOrderSummary(
             String id,

@@ -93,7 +93,8 @@ public final class SalesChannelDtos {
             @JsonProperty("status") String status,
             @JsonProperty("account_id") String accountId,
             @JsonProperty("is_new_account") Boolean isNewAccount,
-            @JsonProperty("verification_message") String verificationMessage) { }
+            @JsonProperty("verification_message") String verificationMessage,
+            @JsonProperty("verification_qr_code_data_url") String verificationQrCodeDataUrl) { }
 
     public record CapabilityData(
             @JsonProperty("capabilities") AccountCapabilities capabilities) { }

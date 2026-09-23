@@ -559,6 +559,7 @@ export interface XianyuQrLoginStatusResponse {
   accountId?: string | null
   isNewAccount?: boolean | null
   verificationMessage?: string | null
+  verificationQrCodeDataUrl?: string | null
 }
 
 export interface SalesChannelSpecMappingSummary {

@@ -68,11 +68,13 @@ class SalesChannelAdminDtosJsonTest {
         assertFalse(start.has("login_session_id"));
 
         JsonNode status = objectMapper.valueToTree(new XianyuQrLoginStatusResponse(
-                "SUCCESS", "account-1", false, null));
-        assertEquals("account-1", status.path("accountId").asText());
-        assertFalse(status.path("isNewAccount").asBoolean());
+                "VERIFICATION_REQUIRED", null, null, "安全验证", "data:image/png;base64,AA=="));
+        assertEquals("VERIFICATION_REQUIRED", status.path("status").asText());
+        assertEquals("data:image/png;base64,AA==", status.path("verificationQrCodeDataUrl").asText());
         assertTrue(status.has("verificationMessage"));
+        assertTrue(status.has("verificationQrCodeDataUrl"));
         assertFalse(status.has("verification_message"));
+        assertFalse(status.has("verification_qr_code_data_url"));
     }
 
     @Test

@@ -167,7 +167,7 @@ class SalesChannelAdminServiceTest {
         account.setStatus(SalesChannelAccountStatus.CONNECTED);
         account.setCapabilities(Map.of("account_type", "FISH_SHOP"));
 
-        var qrStatus = new QrLoginStatusData("SUCCESS", providerAccountId, false, null);
+        var qrStatus = new QrLoginStatusData("SUCCESS", providerAccountId, false, null, null);
         when(providerClient.getQrLoginStatus(any())).thenReturn(new IntegrationEnvelope<>(
                 "status-request", Outcome.SUCCEEDED, qrStatus, null));
         var remoteAccount = new com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount(

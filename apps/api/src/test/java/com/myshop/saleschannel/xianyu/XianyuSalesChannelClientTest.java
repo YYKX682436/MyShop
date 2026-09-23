@@ -86,6 +86,8 @@ class XianyuSalesChannelClientTest {
             assertEquals("VERIFICATION_REQUIRED", status.data().status());
             assertEquals("闲鱼要求进行安全验证，请按手机端提示完成验证。",
                     status.data().verificationMessage());
+            assertEquals("data:image/png;base64,iVBORw0KGgo=",
+                    status.data().verificationQrCodeDataUrl());
 
             List<CapturedRequest> requests = fixture.requests();
             assertEquals(List.of(
@@ -551,7 +553,8 @@ class XianyuSalesChannelClientTest {
                         "expires_in_seconds", 300);
                 case "/api/integration/v1/accounts/login/qr/status" -> Map.of(
                         "status", "VERIFICATION_REQUIRED",
-                        "verification_message", "闲鱼要求进行安全验证，请按手机端提示完成验证。");
+                        "verification_message", "闲鱼要求进行安全验证，请按手机端提示完成验证。",
+                        "verification_qr_code_data_url", "data:image/png;base64,iVBORw0KGgo=");
                 case "/api/integration/v1/accounts" -> Map.of("accounts", List.of(Map.of(
                         "provider_account_id", "acct-1", "display_name", "Fixture account",
                         "status", "ACTIVE", "enabled", true,
