@@ -65,7 +65,10 @@ const navGroups: AdminNavGroup[] = [
   },
   {
     labelKey: "admin.navXianyu",
-    items: [{ labelKey: "admin.xianyuAccounts", href: "/admin/xianyu/accounts", icon: Store }],
+    items: [
+      { labelKey: "admin.xianyuAccounts", href: "/admin/xianyu/accounts", icon: Store },
+      { labelKey: "admin.xianyuItems", href: "/admin/xianyu/items", icon: Package },
+    ],
   },
   {
     labelKey: "admin.navTransactions",

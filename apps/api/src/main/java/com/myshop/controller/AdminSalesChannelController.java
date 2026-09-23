@@ -14,6 +14,8 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartReq
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusResponse;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemsPage;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemSyncSummary;
 import com.myshop.service.SalesChannelAdminService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -44,6 +46,22 @@ public class AdminSalesChannelController {
     @GetMapping("/admin/xianyu/accounts")
     public ApiResponse<List<AccountSummary>> xianyuAccounts() {
         return ApiResponse.success(salesChannelAdminService.accounts());
+    }
+
+    @GetMapping("/admin/xianyu/items")
+    public ApiResponse<XianyuItemsPage> xianyuItems(
+            @RequestParam UUID accountId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int pageSize,
+            @RequestParam(defaultValue = "") String keyword) {
+        return ApiResponse.success(salesChannelAdminService.queryXianyuItems(
+                accountId, page, pageSize, keyword));
+    }
+
+    @PostMapping("/admin/xianyu/accounts/{accountId}/items/sync")
+    public ApiResponse<XianyuItemSyncSummary> syncXianyuItems(@PathVariable UUID accountId) {
+        return ApiResponse.success(salesChannelAdminService.syncXianyuItems(
+                accountId, UUID.randomUUID().toString()));
     }
 
     @PostMapping("/admin/xianyu/accounts/login/qr")

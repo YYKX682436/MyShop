@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import java.util.List;
+import java.util.Collection;
 import java.util.UUID;
 
 public interface SalesChannelListingRepository extends JpaRepository<SalesChannelListing, UUID> {
@@ -16,6 +17,9 @@ public interface SalesChannelListingRepository extends JpaRepository<SalesChanne
     Optional<SalesChannelListing> findBySalesChannelAccountIdAndProductId(UUID accountId, UUID productId);
 
     Optional<SalesChannelListing> findBySalesChannelAccountIdAndExternalItemId(UUID accountId, String externalItemId);
+
+    List<SalesChannelListing> findBySalesChannelAccountIdAndExternalItemIdIn(
+            UUID accountId, Collection<String> externalItemIds);
 
     List<SalesChannelListing> findByEnabledTrueOrderByUpdatedAtAsc();
 

@@ -20,11 +20,17 @@ import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
+import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
+import com.myshop.saleschannel.model.SalesChannelDtos.CatalogItem;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.service.impl.SalesChannelAccountServiceImpl;
 import com.myshop.service.impl.SalesChannelListingServiceImpl;
@@ -42,6 +48,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -50,6 +58,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class SalesChannelAdminServiceTest {
@@ -220,5 +229,152 @@ class SalesChannelAdminServiceTest {
         verify(accountService).upsert(
                 eq(SalesChannelProvider.XIANYU), eq(providerAccountId), eq("现有闲鱼账号"),
                 eq(SalesChannelAccountStatus.CONNECTED), eq(verifiedCapabilities), isNull(), isNull());
+    }
+
+    @Test
+    void catalogQueryAnnotatesOnlyExactExistingListingsAndBatchLoadsProducts() {
+        UUID accountId = UUID.randomUUID();
+        UUID linkedProductId = UUID.randomUUID();
+        UUID conflictProductId1 = UUID.randomUUID();
+        UUID conflictProductId2 = UUID.randomUUID();
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setId(accountId);
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId("2215747465381");
+        account.setEnabled(true);
+
+        CatalogItem linked = catalogItem("linked-item", "安卓定制V");
+        CatalogItem unlinked = catalogItem("unlinked-item", "安卓定制V similar title");
+        CatalogItem conflict = catalogItem("conflict-item", "Conflict title");
+        ItemsQueryData remote = new ItemsQueryData(List.of(linked, unlinked, conflict), 1, 20, 3L, 1);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+        when(providerClient.queryItems(any())).thenReturn(new IntegrationEnvelope<>(
+                null, Outcome.SUCCEEDED, remote, null));
+
+        SalesChannelListing linkedListing = listing(accountId, linkedProductId, "linked-item");
+        SalesChannelListing conflictListing1 = listing(accountId, conflictProductId1, "conflict-item");
+        SalesChannelListing conflictListing2 = listing(accountId, conflictProductId2, "conflict-item");
+        when(listingRepository.findBySalesChannelAccountIdAndExternalItemIdIn(
+                eq(accountId), any())).thenReturn(List.of(linkedListing, conflictListing1, conflictListing2));
+
+        Product linkedProduct = product(linkedProductId, "安卓定制V");
+        Product conflictProduct1 = product(conflictProductId1, "Conflict A");
+        Product conflictProduct2 = product(conflictProductId2, "Conflict B");
+        when(productRepository.findAllById(any())).thenReturn(
+                List.of(linkedProduct, conflictProduct1, conflictProduct2));
+
+        var result = service.queryXianyuItems(accountId, 1, 20, "");
+
+        assertEquals(3, result.items().size());
+        var linkedResult = result.items().get(0);
+        assertEquals("LINKED", linkedResult.bindingState());
+        assertEquals(linkedListing.getId().toString(), linkedResult.listingId());
+        assertEquals(linkedProductId.toString(), linkedResult.productId());
+        assertEquals("安卓定制V", linkedResult.productTitle());
+
+        var unlinkedResult = result.items().get(1);
+        assertEquals("UNLINKED", unlinkedResult.bindingState());
+        assertNull(unlinkedResult.productId());
+        assertTrue(unlinkedResult.bindings().isEmpty());
+
+        var conflictResult = result.items().get(2);
+        assertEquals("CONFLICT", conflictResult.bindingState());
+        assertNull(conflictResult.listingId());
+        assertEquals(2, conflictResult.bindings().size());
+        assertEquals(List.of(conflictProductId1.toString(), conflictProductId2.toString()),
+                conflictResult.bindings().stream().map(binding -> binding.productId()).toList());
+
+        verify(providerClient).queryItems(new ItemsQueryCommand("2215747465381", 1, 20, ""));
+        verify(listingRepository).findBySalesChannelAccountIdAndExternalItemIdIn(eq(accountId), any());
+        verify(productRepository).findAllById(any());
+        verify(listingRepository, never()).save(any());
+        verifyNoInteractions(listingService);
+    }
+
+    @Test
+    void queryRejectsDisabledOrNonXianyuAccountBeforeProviderAccess() {
+        UUID accountId = UUID.randomUUID();
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setId(accountId);
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setEnabled(false);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        assertThrows(RuntimeException.class, () -> service.queryXianyuItems(accountId, 1, 20, ""));
+        verifyNoInteractions(providerClient);
+
+        account.setEnabled(true);
+        account.setProvider(null);
+        assertThrows(RuntimeException.class, () -> service.syncXianyuItems(accountId, UUID.randomUUID().toString()));
+        verifyNoInteractions(providerClient);
+    }
+
+    @Test
+    void manualCatalogSyncIsSafeRepeatableAndDoesNotTouchListingOrOrderState() {
+        UUID accountId = UUID.randomUUID();
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setId(accountId);
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId("2215747465381");
+        account.setEnabled(true);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+        when(providerClient.syncItems(any())).thenReturn(new IntegrationEnvelope<>(
+                UUID.randomUUID().toString(), Outcome.SUCCEEDED,
+                new ItemsSyncData("2215747465381", 42, 40, 3, false), null));
+
+        String requestId = UUID.randomUUID().toString();
+        var result = service.syncXianyuItems(accountId, requestId);
+
+        assertEquals(accountId.toString(), result.accountId());
+        assertEquals(42, result.fetchedCount());
+        assertEquals(40, result.savedCount());
+        assertEquals(3, result.pages());
+        verify(providerClient).syncItems(new ItemsSyncCommand(requestId, "2215747465381"));
+        verifyNoInteractions(listingRepository, listingService, cursorRepository, channelOrderRepository,
+                deliveryOperationRepository, orderRepository, orderItemRepository);
+    }
+
+    @Test
+    void retryableCatalogSyncFailureKeepsSafeRepeatableDisposition() {
+        UUID accountId = UUID.randomUUID();
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setId(accountId);
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId("2215747465381");
+        account.setEnabled(true);
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+        when(providerClient.syncItems(any())).thenReturn(new IntegrationEnvelope<>(
+                "retry", Outcome.FAILED, null,
+                new com.myshop.saleschannel.model.SalesChannelDtos.IntegrationError(
+                        "ITEM_SYNC_BUSY", "busy", true)));
+
+        SalesChannelProviderClientException error = assertThrows(SalesChannelProviderClientException.class,
+                () -> service.syncXianyuItems(accountId, UUID.randomUUID().toString()));
+        assertEquals("ITEM_SYNC_BUSY", error.getErrorCode());
+        assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE,
+                error.getDisposition());
+        verifyNoInteractions(listingRepository, listingService, cursorRepository, channelOrderRepository,
+                deliveryOperationRepository, orderRepository, orderItemRepository);
+    }
+
+    private static CatalogItem catalogItem(String itemId, String title) {
+        return new CatalogItem("2215747465381", itemId, title, "20", 5, "在售",
+                1, false, true, "2026-09-24T00:00:00Z", "2026-09-24T01:00:00Z");
+    }
+
+    private static SalesChannelListing listing(UUID accountId, UUID productId, String itemId) {
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(UUID.randomUUID());
+        listing.setSalesChannelAccountId(accountId);
+        listing.setProductId(productId);
+        listing.bindExternalItemId(itemId);
+        return listing;
+    }
+
+    private static Product product(UUID id, String title) {
+        Product product = new Product();
+        product.setId(id);
+        product.setTitle(title);
+        return product;
     }
 }

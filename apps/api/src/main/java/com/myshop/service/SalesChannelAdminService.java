@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.ErrorCode;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.Product;
@@ -26,11 +27,16 @@ import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
+import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.CategoryRecommendRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSpecMappingSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuCatalogItemSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBinding;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemsPage;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemSyncSummary;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.AddressMetadataResult;
@@ -48,18 +54,29 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderSumm
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderDetail;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelDeliveryOperationSummary;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
+import com.myshop.saleschannel.model.SalesChannelDtos.CatalogItem;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
+import com.myshop.exception.BusinessException;
 import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
 import com.myshop.service.impl.SalesChannelAccountServiceImpl;
 import com.myshop.service.impl.SalesChannelListingServiceImpl;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /** Admin-only orchestration. Agent credentials and session data never cross this API boundary. */
@@ -89,6 +106,115 @@ public class SalesChannelAdminService {
         return accountRepository.findAll().stream().filter(account -> account.getProvider() == SalesChannelProvider.XIANYU)
                 .map(this::accountSummary).toList();
     }
+
+    public XianyuItemsPage queryXianyuItems(UUID accountId, int page, int pageSize, String keyword) {
+        SalesChannelAccount account = findEnabledXianyuAccount(accountId);
+        if (page < 1 || pageSize < 1 || pageSize > 100) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "闲鱼商品分页参数无效");
+        }
+        IntegrationEnvelope<ItemsQueryData> response = providerClient.queryItems(
+                new ItemsQueryCommand(account.getProviderAccountId(), page, pageSize,
+                        keyword == null ? "" : keyword.trim()));
+        ItemsQueryData data = requireCatalogData(response, "闲鱼商品目录读取失败");
+        List<CatalogItem> remoteItems = data.items() == null ? List.of() : data.items();
+        if (remoteItems.isEmpty()) {
+            return new XianyuItemsPage(account.getId().toString(), List.of(),
+                    safeInt(data.page(), page), safeInt(data.pageSize(), pageSize),
+                    safeLong(data.total()), safeInt(data.totalPages(), 0));
+        }
+
+        Set<String> itemIds = new LinkedHashSet<>();
+        remoteItems.stream().map(CatalogItem::itemId).filter(value -> !blank(value)).forEach(itemIds::add);
+        List<SalesChannelListing> listings = itemIds.isEmpty() ? List.of()
+                : listingRepository.findBySalesChannelAccountIdAndExternalItemIdIn(account.getId(), itemIds);
+        Map<String, List<SalesChannelListing>> listingsByItem = new HashMap<>();
+        Set<UUID> productIds = new LinkedHashSet<>();
+        for (SalesChannelListing listing : listings) {
+            listingsByItem.computeIfAbsent(listing.getExternalItemId(), ignored -> new ArrayList<>()).add(listing);
+            productIds.add(listing.getProductId());
+        }
+        Map<UUID, Product> products = new HashMap<>();
+        if (!productIds.isEmpty()) {
+            productRepository.findAllById(productIds).forEach(product -> products.put(product.getId(), product));
+        }
+
+        List<XianyuCatalogItemSummary> annotated = remoteItems.stream()
+                .map(item -> annotateCatalogItem(item, listingsByItem.getOrDefault(item.itemId(), List.of()), products))
+                .toList();
+        return new XianyuItemsPage(account.getId().toString(), annotated,
+                safeInt(data.page(), page), safeInt(data.pageSize(), pageSize),
+                safeLong(data.total()), safeInt(data.totalPages(), 0));
+    }
+
+    public XianyuItemSyncSummary syncXianyuItems(UUID accountId, String requestId) {
+        SalesChannelAccount account = findEnabledXianyuAccount(accountId);
+        IntegrationEnvelope<ItemsSyncData> response = providerClient.syncItems(
+                new ItemsSyncCommand(requestId, account.getProviderAccountId()));
+        ItemsSyncData data = requireCatalogData(response, "闲鱼商品同步失败");
+        if (!account.getProviderAccountId().equals(data.accountId()) || Boolean.TRUE.equals(data.skipped())) {
+            throw new SalesChannelProviderClientException(
+                    SalesChannelProviderClientException.Disposition.SAFE_PERMANENT,
+                    "AGENT_RESPONSE_INVALID", "Xianyu Agent returned an invalid catalog sync summary");
+        }
+        return new XianyuItemSyncSummary(account.getId().toString(),
+                safeInt(data.fetchedCount(), 0), safeInt(data.savedCount(), 0),
+                safeInt(data.pages(), 0), Boolean.TRUE.equals(data.skipped()));
+    }
+
+    private SalesChannelAccount findEnabledXianyuAccount(UUID accountId) {
+        SalesChannelAccount account = accountRepository.findById(accountId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND,
+                        "闲鱼账号不存在", HttpStatus.NOT_FOUND));
+        if (account.getProvider() != SalesChannelProvider.XIANYU) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "所选账号不是闲鱼账号");
+        }
+        if (!account.isEnabled()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "闲鱼账号已禁用");
+        }
+        return account;
+    }
+
+    private <T> T requireCatalogData(IntegrationEnvelope<T> response, String fallbackMessage) {
+        if (response == null || response.outcome() != Outcome.SUCCEEDED || response.data() == null) {
+            String code = response == null || response.error() == null
+                    ? "AGENT_REQUEST_FAILED" : response.error().code();
+            String message = response == null || response.error() == null || blank(response.error().message())
+                    ? fallbackMessage : response.error().message();
+            boolean retryable = response != null && response.error() != null
+                    && Boolean.TRUE.equals(response.error().retryable());
+            throw new SalesChannelProviderClientException(
+                    retryable ? SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE
+                            : SalesChannelProviderClientException.Disposition.SAFE_PERMANENT,
+                    blank(code) ? "AGENT_REQUEST_FAILED" : code,
+                    message);
+        }
+        return response.data();
+    }
+
+    private XianyuCatalogItemSummary annotateCatalogItem(
+            CatalogItem item, List<SalesChannelListing> matches, Map<UUID, Product> products) {
+        List<XianyuItemBinding> bindings = matches.stream().map(listing -> {
+            Product product = products.get(listing.getProductId());
+            return new XianyuItemBinding(listing.getId().toString(), listing.getProductId().toString(),
+                    product == null ? null : product.getTitle());
+        }).toList();
+        boolean linked = matches.size() == 1;
+        boolean conflict = matches.size() > 1;
+        XianyuItemBinding binding = linked ? bindings.get(0) : null;
+        return new XianyuCatalogItemSummary(
+                item.accountId(), item.itemId(), item.title(), item.price(), item.quantity(), item.statusDesc(),
+                safeInt(item.skuCount(), 0), Boolean.TRUE.equals(item.multiSpec()),
+                Boolean.TRUE.equals(item.sellerItem()), item.catalogCreatedAt(), item.catalogUpdatedAt(),
+                conflict ? "CONFLICT" : linked ? "LINKED" : "UNLINKED",
+                binding == null ? null : binding.listingId(),
+                binding == null ? null : binding.productId(),
+                binding == null ? null : binding.productTitle(),
+                bindings);
+    }
+
+    private int safeInt(Integer value, int fallback) { return value == null ? fallback : value; }
+
+    private long safeLong(Long value) { return value == null ? 0 : value; }
 
     public QrLoginStartData startQrLogin(String requestId) {
         IntegrationEnvelope<QrLoginStartData> response = providerClient.startQrLogin(

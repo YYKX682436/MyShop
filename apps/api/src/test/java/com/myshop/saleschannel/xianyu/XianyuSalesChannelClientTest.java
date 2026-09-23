@@ -10,6 +10,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
@@ -277,6 +281,60 @@ class XianyuSalesChannelClientTest {
             String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
                     request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
             assertEquals(independentHmac(SECRET, canonical), request.header("X-MyShop-Signature"));
+        }
+    }
+
+    @Test
+    void catalogQueryAndManualSyncUseTheExistingSignedClientAndSafeSemantics() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SUCCESS)) {
+            XianyuSalesChannelClient client = client(fixture.baseUrl());
+            IntegrationEnvelope<ItemsQueryData> query = client.queryItems(
+                    new ItemsQueryCommand("acct-1", 2, 50, "安卓"));
+            String requestId = UUID.randomUUID().toString();
+            IntegrationEnvelope<ItemsSyncData> sync = client.syncItems(
+                    new ItemsSyncCommand(requestId, "acct-1"));
+
+            assertEquals(Outcome.SUCCEEDED, query.outcome());
+            assertEquals(1L, query.data().total());
+            assertEquals("item-123", query.data().items().getFirst().itemId());
+            assertEquals(Outcome.SUCCEEDED, sync.outcome());
+            assertEquals(requestId, sync.requestId());
+            assertEquals(3, sync.data().pages());
+            assertEquals(List.of(
+                    "POST /api/integration/v1/items/query",
+                    "POST /api/integration/v1/items/sync"),
+                    fixture.requests().stream().map(r -> r.method() + " " + r.path()).toList());
+
+            JsonNode queryBody = objectMapper.readTree(fixture.requests().get(0).body());
+            assertEquals("acct-1", queryBody.path("account_id").asText());
+            assertEquals(2, queryBody.path("page").asInt());
+            assertEquals(50, queryBody.path("page_size").asInt());
+            assertEquals("安卓", queryBody.path("keyword").asText());
+            JsonNode syncBody = objectMapper.readTree(fixture.requests().get(1).body());
+            assertEquals(requestId, syncBody.path("request_id").asText());
+            assertEquals("acct-1", syncBody.path("account_id").asText());
+            for (CapturedRequest request : fixture.requests()) {
+                String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
+                        request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
+                assertEquals(independentHmac(SECRET, canonical), request.header("X-MyShop-Signature"));
+            }
+            String safeResponse = objectMapper.writeValueAsString(query.data().items().getFirst());
+            assertFalse(safeResponse.toLowerCase().contains("cookie"));
+            assertFalse(safeResponse.toLowerCase().contains("token"));
+            assertFalse(safeResponse.toLowerCase().contains("password"));
+            assertFalse(safeResponse.toLowerCase().contains("metadata"));
+        }
+    }
+
+    @Test
+    void manualCatalogSyncTransportFailureRemainsSafeRepeatableAndNeverUnknown() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.RESET_AFTER_READ)) {
+            String requestId = UUID.randomUUID().toString();
+            SalesChannelProviderClientException error = assertThrows(SalesChannelProviderClientException.class,
+                    () -> client(fixture.baseUrl()).syncItems(new ItemsSyncCommand(requestId, "acct-1")));
+            assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE, error.getDisposition());
+            assertNotEquals("UNKNOWN", error.getDisposition().name());
+            assertEquals("/api/integration/v1/items/sync", fixture.requests().getFirst().path());
         }
     }
 
@@ -563,6 +621,21 @@ class XianyuSalesChannelClientTest {
                 case "/api/integration/v1/accounts/acct-1/verify" -> Map.of("capabilities", Map.of(
                         "account_type", "FISH_SHOP", "publish", true, "edit", true,
                         "stock_sync", true, "sku", true, "video", true));
+                case "/api/integration/v1/items/query" -> Map.of(
+                        "items", List.of(Map.ofEntries(
+                                Map.entry("account_id", "acct-1"), Map.entry("item_id", "item-123"),
+                                Map.entry("title", "安卓定制V"), Map.entry("price", "20"),
+                                Map.entry("quantity", 5), Map.entry("status_desc", "在售"),
+                                Map.entry("sku_count", 3), Map.entry("is_multi_spec", true),
+                                Map.entry("is_seller_item", true),
+                                Map.entry("catalog_created_at", "2026-09-24T00:00:00Z"),
+                                Map.entry("catalog_updated_at", "2026-09-24T01:00:00Z"),
+                                Map.entry("cookie", "must-not-escape"), Map.entry("token", "must-not-escape"),
+                                Map.entry("metadata_json", Map.of("ai_prompt", "private")))),
+                        "page", 2, "page_size", 50, "total", 1, "total_pages", 1);
+                case "/api/integration/v1/items/sync" -> Map.of(
+                        "account_id", "acct-1", "fetched_count", 25, "saved_count", 20,
+                        "pages", 3, "skipped", false);
                 case "/api/integration/v1/metadata/address/search" -> Map.of("keywords", "上海市徐汇区",
                         "tips", List.of(Map.of("id", "poi-1", "name", "徐家汇", "district", "徐汇区",
                                 "adcode", "310104", "location", "121.4365,31.1885", "address", "虹桥路1号",

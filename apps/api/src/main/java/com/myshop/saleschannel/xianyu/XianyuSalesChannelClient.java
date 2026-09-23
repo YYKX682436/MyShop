@@ -19,6 +19,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationError;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
@@ -130,6 +134,30 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
     public IntegrationEnvelope<AccountsData> listAccounts() {
         return exchange("GET", "/accounts", new byte[0], "application/json",
                 responseType(AccountsData.class), RequestSemantics.READ_ONLY, null, null);
+    }
+
+    @Override
+    public IntegrationEnvelope<ItemsQueryData> queryItems(ItemsQueryCommand command) {
+        if (command == null || blank(command.accountId()) || command.accountId().length() > 80
+                || command.page() < 1 || command.pageSize() < 1 || command.pageSize() > 100
+                || (command.keyword() != null && command.keyword().length() > 255)) {
+            throw safeFailure("INVALID_ITEM_QUERY", "Xianyu item query fields are invalid");
+        }
+        byte[] body = serialize(command);
+        return exchange("POST", "/items/query", body, "application/json",
+                responseType(ItemsQueryData.class), RequestSemantics.READ_ONLY, null, null);
+    }
+
+    @Override
+    public IntegrationEnvelope<ItemsSyncData> syncItems(ItemsSyncCommand command) {
+        if (command == null || blank(command.accountId()) || command.accountId().length() > 80) {
+            throw safeFailure("INVALID_ITEM_SYNC", "Xianyu item sync account is invalid");
+        }
+        validateQrLoginRequest(command.requestId());
+        byte[] body = serialize(command);
+        return exchange("POST", "/items/sync", body, "application/json",
+                responseType(ItemsSyncData.class), RequestSemantics.SAFE_REPEATABLE,
+                command.requestId(), command.requestId());
     }
 
     @Override

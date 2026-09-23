@@ -8,6 +8,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
@@ -33,6 +37,10 @@ import com.myshop.saleschannel.model.SalesChannelDtos.ConfirmDeliveryCommand;
 public interface SalesChannelProviderClient {
 
     IntegrationEnvelope<AccountsData> listAccounts();
+
+    IntegrationEnvelope<ItemsQueryData> queryItems(ItemsQueryCommand command);
+
+    IntegrationEnvelope<ItemsSyncData> syncItems(ItemsSyncCommand command);
 
     IntegrationEnvelope<CapabilityData> verifyAccount(String accountId);
 

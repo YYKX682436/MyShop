@@ -30,6 +30,48 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("lastLoginAt") LocalDateTime lastLoginAt) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuItemsPage(
+            @JsonProperty("accountId") String accountId,
+            @JsonProperty("items") List<XianyuCatalogItemSummary> items,
+            @JsonProperty("page") int page,
+            @JsonProperty("pageSize") int pageSize,
+            @JsonProperty("total") long total,
+            @JsonProperty("totalPages") int totalPages) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuCatalogItemSummary(
+            @JsonProperty("accountId") String accountId,
+            @JsonProperty("itemId") String itemId,
+            @JsonProperty("title") String title,
+            @JsonProperty("price") String price,
+            @JsonProperty("quantity") Integer quantity,
+            @JsonProperty("statusDesc") String statusDesc,
+            @JsonProperty("skuCount") int skuCount,
+            @JsonProperty("isMultiSpec") boolean multiSpec,
+            @JsonProperty("isSellerItem") boolean sellerItem,
+            @JsonProperty("catalogCreatedAt") String catalogCreatedAt,
+            @JsonProperty("catalogUpdatedAt") String catalogUpdatedAt,
+            @JsonProperty("bindingState") String bindingState,
+            @JsonProperty("listingId") String listingId,
+            @JsonProperty("productId") String productId,
+            @JsonProperty("productTitle") String productTitle,
+            @JsonProperty("bindings") List<XianyuItemBinding> bindings) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuItemBinding(
+            @JsonProperty("listingId") String listingId,
+            @JsonProperty("productId") String productId,
+            @JsonProperty("productTitle") String productTitle) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuItemSyncSummary(
+            @JsonProperty("accountId") String accountId,
+            @JsonProperty("fetchedCount") int fetchedCount,
+            @JsonProperty("savedCount") int savedCount,
+            @JsonProperty("pages") int pages,
+            @JsonProperty("skipped") boolean skipped) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record ListingSummary(
             @JsonProperty("id") String id,
             @JsonProperty("providerAccountId") String providerAccountId,

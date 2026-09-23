@@ -75,6 +75,45 @@ public final class SalesChannelDtos {
     public record AccountsData(
             @JsonProperty("accounts") List<SalesChannelAccount> accounts) { }
 
+    public record ItemsQueryCommand(
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("page") int page,
+            @JsonProperty("page_size") int pageSize,
+            @JsonProperty("keyword") String keyword) { }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record CatalogItem(
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("item_id") String itemId,
+            @JsonProperty("title") String title,
+            @JsonProperty("price") String price,
+            @JsonProperty("quantity") Integer quantity,
+            @JsonProperty("status_desc") String statusDesc,
+            @JsonProperty("sku_count") Integer skuCount,
+            @JsonProperty("is_multi_spec") Boolean multiSpec,
+            @JsonProperty("is_seller_item") Boolean sellerItem,
+            @JsonProperty("catalog_created_at") String catalogCreatedAt,
+            @JsonProperty("catalog_updated_at") String catalogUpdatedAt) { }
+
+    public record ItemsQueryData(
+            @JsonProperty("items") List<CatalogItem> items,
+            @JsonProperty("page") Integer page,
+            @JsonProperty("page_size") Integer pageSize,
+            @JsonProperty("total") Long total,
+            @JsonProperty("total_pages") Integer totalPages) { }
+
+    public record ItemsSyncCommand(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_id") String accountId) { }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ItemsSyncData(
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("fetched_count") Integer fetchedCount,
+            @JsonProperty("saved_count") Integer savedCount,
+            @JsonProperty("pages") Integer pages,
+            @JsonProperty("skipped") Boolean skipped) { }
+
     public record QrLoginStartCommand(
             @JsonProperty("request_id") String requestId) { }
 

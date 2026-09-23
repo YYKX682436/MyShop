@@ -106,6 +106,12 @@ class SecurityAuthorizationIntegrationTest {
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/admin/xianyu/accounts").contextPath("/api"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
+                        .contextPath("/api"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
+                        .contextPath("/api"))
+                .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr")
                         .contextPath("/api")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -136,6 +142,22 @@ class SecurityAuthorizationIntegrationTest {
                         .with(user("ordinary-admin").roles("ADMIN")))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/admin/xianyu/accounts")
+                        .contextPath("/api")
+                        .with(user("muchen-admin").roles("SUPER_ADMIN")))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
+                        .contextPath("/api")
+                        .with(user("ordinary-admin").roles("ADMIN")))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
+                        .contextPath("/api")
+                        .with(user("muchen-admin").roles("SUPER_ADMIN")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
+                        .contextPath("/api")
+                        .with(user("ordinary-admin").roles("ADMIN")))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
                         .contextPath("/api")
                         .with(user("muchen-admin").roles("SUPER_ADMIN")))
                 .andExpect(status().isOk());
@@ -170,6 +192,14 @@ class SecurityAuthorizationIntegrationTest {
                 .andExpect(status().isForbidden());
 
         mockMvc.perform(get("/api/admin/xianyu/accounts")
+                        .contextPath("/api")
+                        .with(user("buyer").roles("USER")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
+                        .contextPath("/api")
+                        .with(user("buyer").roles("USER")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
                         .contextPath("/api")
                         .with(user("buyer").roles("USER")))
                 .andExpect(status().isForbidden());

@@ -562,6 +562,48 @@ export interface XianyuQrLoginStatusResponse {
   verificationQrCodeDataUrl?: string | null
 }
 
+export interface XianyuItemBindingSummary {
+  listingId: string
+  productId: string
+  productTitle?: string | null
+}
+
+export interface XianyuCatalogItemSummary {
+  accountId: string
+  itemId: string
+  title?: string | null
+  price?: string | null
+  quantity?: number | null
+  statusDesc?: string | null
+  skuCount: number
+  isMultiSpec: boolean
+  isSellerItem: boolean
+  catalogCreatedAt?: string | null
+  catalogUpdatedAt?: string | null
+  bindingState: "LINKED" | "UNLINKED" | "CONFLICT"
+  listingId?: string | null
+  productId?: string | null
+  productTitle?: string | null
+  bindings: XianyuItemBindingSummary[]
+}
+
+export interface XianyuItemsPage {
+  accountId: string
+  items: XianyuCatalogItemSummary[]
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
+
+export interface XianyuItemSyncSummary {
+  accountId: string
+  fetchedCount: number
+  savedCount: number
+  pages: number
+  skipped: boolean
+}
+
 export interface SalesChannelSpecMappingSummary {
   productSpecId: string
   productSpecName: string
@@ -706,6 +748,12 @@ export const adminSalesChannelApi = {
     request<SalesChannelAccountSummary[]>("/admin/sales-channels/accounts"),
   getXianyuAccounts: () =>
     request<SalesChannelAccountSummary[]>("/admin/xianyu/accounts"),
+  getXianyuItems: (params: { accountId: string; page?: number; pageSize?: number; keyword?: string }) =>
+    request<XianyuItemsPage>(`/admin/xianyu/items?${buildQuery(params)}`),
+  syncXianyuItems: (accountId: string) =>
+    request<XianyuItemSyncSummary>(`/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/sync`, {
+      method: "POST",
+    }),
   startXianyuQrLogin: (requestId: string) =>
     request<XianyuQrLoginStartResponse>("/admin/xianyu/accounts/login/qr", {
       method: "POST",
