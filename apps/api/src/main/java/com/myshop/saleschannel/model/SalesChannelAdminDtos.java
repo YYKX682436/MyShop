@@ -92,16 +92,16 @@ public final class SalesChannelAdminDtos {
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuQrLoginStartResponse(
-            String loginSessionId,
-            String qrCodeDataUrl,
-            Integer expiresInSeconds) { }
+            @JsonProperty("loginSessionId") String loginSessionId,
+            @JsonProperty("qrCodeDataUrl") String qrCodeDataUrl,
+            @JsonProperty("expiresInSeconds") Integer expiresInSeconds) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuQrLoginStatusResponse(
-            String status,
-            String accountId,
-            Boolean isNewAccount,
-            String verificationMessage) { }
+            @JsonProperty("status") String status,
+            @JsonProperty("accountId") String accountId,
+            @JsonProperty("isNewAccount") Boolean isNewAccount,
+            @JsonProperty("verificationMessage") String verificationMessage) { }
 
     public record SalesChannelOrderSummary(
             String id,

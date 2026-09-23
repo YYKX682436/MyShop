@@ -34,6 +34,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -143,14 +144,22 @@ class SecurityAuthorizationIntegrationTest {
                         .with(user("ordinary-admin").roles("ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.loginSessionId").value("11111111-1111-1111-1111-111111111111"))
+                .andExpect(jsonPath("$.data.qrCodeDataUrl").value("data:image/png;base64,AA=="))
+                .andExpect(jsonPath("$.data.expiresInSeconds").value(300))
+                .andExpect(jsonPath("$.data.login_session_id").doesNotExist())
+                .andExpect(jsonPath("$.data.qr_code_data_url").doesNotExist());
         mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr/11111111-1111-1111-1111-111111111111/status")
                         .contextPath("/api")
                         .with(user("ordinary-admin").roles("ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"request_id\":\"22222222-2222-2222-2222-222222222222\","
                                 + "\"login_session_id\":\"11111111-1111-1111-1111-111111111111\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("WAITING"))
+                .andExpect(jsonPath("$.data.accountId").doesNotExist())
+                .andExpect(jsonPath("$.data.isNewAccount").doesNotExist());
     }
 
     @Test
