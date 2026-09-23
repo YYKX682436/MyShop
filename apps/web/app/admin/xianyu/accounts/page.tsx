@@ -163,7 +163,7 @@ export default function XianyuAccountsPage() {
       <PageHeader title="闲鱼账号" description="在 MyShop 管理闲鱼账号登录状态与已验证能力。" />
       <PageToolbar>
         <div className="flex w-full flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">账号登录信息由 MyShop 保存；平台 Cookie 和登录凭据不会返回浏览器。</p>
+          <p className="text-sm text-muted-foreground">账号状态由 MyShop 管理；闲鱼 Cookie 和登录凭据仅保存在 Xianyu Agent，不进入 MyShop 或浏览器。</p>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={() => void loadAccounts()} disabled={loading}>
               <RefreshCw className={loading ? "animate-spin" : ""} />刷新
