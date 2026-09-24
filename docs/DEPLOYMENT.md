@@ -2,8 +2,8 @@
 
 This runbook describes the only supported production model. The application
 artifact is an immutable container image reference plus its builder-generated
-release manifest. Production never builds application images and never runs
-from `/opt/myshop/releases/<SHA>` source directories.
+release manifest. Production never builds application images and runs only
+from the immutable image manifest recorded under `/opt/myshop/runtime`.
 
 ## Host layout and immutable Compose
 

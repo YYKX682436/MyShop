@@ -51,9 +51,9 @@ docker compose logs -f api
 ```
 
 `docker-compose.yml` 是本地源码构建编排；`docker-compose.prod.yml` 是唯一生产
-编排，明确禁止 `build:`。无论当前 release 目录是否以 SHA 命名，生产 Compose
-都必须使用 canonical project identity `myshop`。生产操作统一从 release 根目录
-调用受保护入口：
+编排，明确禁止 `build:`。生产 application artifact 只有 CI 生成的 immutable
+image manifest；生产 host 只使用 `/opt/myshop/runtime`，不从源码 release
+目录运行。生产操作统一从受保护入口调用：
 
 ```bash
 bash scripts/myshop-compose.sh --env-file /opt/myshop/.env config

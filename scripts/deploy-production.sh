@@ -52,7 +52,7 @@ if [[ -f "$PROJECT_ROOT/accepted-images.env" ]]; then
   image_env_existed=1
 fi
 
-declare -A before_ref before_digest candidate_ref candidate_digest
+declare -A before_ref before_digest baseline_container_ref candidate_ref candidate_digest
 candidate_ref[api]=$api_ref
 candidate_ref[web]=$web_ref
 candidate_digest[api]=$api_digest
@@ -92,7 +92,8 @@ else
   for service in api web; do
     container_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter "label=com.docker.compose.service=$service" -q | head -n 1)
     [[ -n "$container_id" ]] || die "bootstrap baseline container is missing: $service"
-    before_ref[$service]=$(docker inspect --format '{{.Config.Image}}' "$container_id")
+    baseline_container_ref[$service]=$(docker inspect --format '{{.Config.Image}}' "$container_id")
+    before_ref[$service]=${baseline_container_ref[$service]}
     before_digest[$service]=$(docker inspect --format '{{.Id}}' "${before_ref[$service]}" 2>/dev/null || true)
     [[ -n "${before_digest[$service]}" ]] || before_digest[$service]=$(docker inspect --format '{{.Image}}' "$container_id")
     [[ "${before_ref[$service]}" != *:latest && "${before_ref[$service]}" != *:local ]] || die "bootstrap baseline is mutable: ${before_ref[$service]}"
@@ -102,13 +103,18 @@ else
     fi
   done
 fi
+if (( state_existed )); then
+  for service in api web; do
+    baseline_container_ref[$service]=${before_ref[$service]}
+  done
+fi
 [[ -n "${before_ref[api]:-}" && -n "${before_ref[web]:-}" ]] || die 'accepted baseline image refs are incomplete'
 
 verify_baseline() {
   for service in api web; do
     container_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter "label=com.docker.compose.service=$service" -q | head -n 1)
     [[ -n "$container_id" ]] || return 1
-    [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${before_ref[$service]}" ]] || return 1
+    [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${baseline_container_ref[$service]}" ]] || return 1
     image_id=$(docker image inspect --format '{{.Id}}' "${before_ref[$service]}" 2>/dev/null) || return 1
     [[ "$image_id" == "${before_digest[$service]}" ]] && continue
     docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${before_ref[$service]}" 2>/dev/null \
@@ -163,6 +169,26 @@ run_before_compose() {
   MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" MYSHOP_APPROVED_REGISTRY="$approved_registry" \
     MYSHOP_API_IMAGE="${before_ref[api]}" MYSHOP_WEB_IMAGE="${before_ref[web]}" \
     "$COMPOSE_WRAPPER" --env-file "$ENV_FILE" "$@"
+}
+
+prepare_bootstrap_rollback_refs() {
+  (( state_existed )) && return 0
+  # The pre-state production stack predates the immutable registry model and
+  # uses local full-SHA tags. If a candidate has already started, rollback
+  # must still pass the production wrapper's approved-namespace check. Make
+  # a temporary local alias in that namespace without changing image content;
+  # it is never written to accepted state and scoped retention removes it
+  # after a successful bootstrap when no container still references it.
+  for service in api web; do
+    baseline=${before_ref[$service]}
+    tag=${baseline##*:}
+    [[ "$baseline" == *:* && "$tag" =~ ^[0-9a-f]{40}$ ]] || return 1
+    alias="$approved_registry/myshop-$service:$tag"
+    docker tag "$baseline" "$alias" || return 1
+    alias_id=$(docker image inspect --format '{{.Id}}' "$alias" 2>/dev/null) || return 1
+    [[ "$alias_id" == "${before_digest[$service]}" ]] || return 1
+    before_ref[$service]=$alias
+  done
 }
 
 wait_health() {
@@ -287,6 +313,7 @@ pull_candidate || failed pull
 [[ "${DEPLOY_TEST_FAIL:-}" != health ]] || failed health
 run_compose config --quiet || failed compose
 run_compose pull || failed pull
+prepare_bootstrap_rollback_refs || failed bootstrap-rollback-prepare
 candidate_started=1
 run_compose up -d || failed start
 wait_health myshop || failed health

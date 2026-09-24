@@ -5,10 +5,7 @@ repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 valid_env="$(mktemp)"
 missing_env="$(mktemp)"
 production_env="$(mktemp)"
-regression_parent="$(mktemp -d)"
-sha_release_dir="$regression_parent/0123456789abcdef0123456789abcdef01234567"
-mkdir -p "$sha_release_dir"
-trap 'rm -f "$valid_env" "$missing_env" "$production_env"; rm -rf "$regression_parent"' EXIT
+trap 'rm -f "$valid_env" "$missing_env" "$production_env"' EXIT
 
 cat >"$valid_env" <<'EOF'
 SITE_DOMAIN=store.example.test
@@ -77,17 +74,6 @@ if [[ "$(grep -Fc 'driver: local' "$repo_dir/docker-compose.prod.yml")" -lt 1 ]]
   exit 1
 fi
 
-# A release directory is named by its full commit SHA in production. Copy the
-# minimum Compose inputs into a temporary SHA-named directory and let Compose
-# discover docker-compose.yml from that directory, reproducing the incident.
-cp "$repo_dir/docker-compose.yml" "$sha_release_dir/docker-compose.yml"
-cp "$repo_dir/Caddyfile" "$sha_release_dir/Caddyfile"
-sha_release_config="$(
-  cd "$sha_release_dir"
-  docker compose --env-file "$valid_env" config
-)"
-assert_project_name "$sha_release_config" "SHA-named release directory"
-
 wrapper_path="$repo_dir/scripts/myshop-compose.sh"
 wrapper_config="$(MYSHOP_APPROVED_REGISTRY=ghcr.io/example "$wrapper_path" --env-file "$production_env" config)"
 assert_project_name "$wrapper_config" "production wrapper"
@@ -106,8 +92,8 @@ wrapper_must_reject '--project-name' --project-name wrong
 wrapper_must_reject '--project-name=...' --project-name=wrong
 wrapper_must_reject '-f' -f "$repo_dir/docker-compose.yml"
 wrapper_must_reject '--file' --file "$repo_dir/docker-compose.yml"
-wrapper_must_reject '--project-directory' --project-directory "$sha_release_dir"
-wrapper_must_reject '--project-directory=...' --project-directory="$sha_release_dir"
+wrapper_must_reject '--project-directory' --project-directory "$repo_dir"
+wrapper_must_reject '--project-directory=...' --project-directory="$repo_dir"
 wrapper_must_reject 'build' build
 wrapper_must_reject '--build' up --build
 
