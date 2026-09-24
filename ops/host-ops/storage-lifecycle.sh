@@ -4,7 +4,7 @@ set -Eeuo pipefail
 LOCK_FILE=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-xianyu-deploy.lock}
 DATA_MOUNTPOINT=${DATA_MOUNTPOINT:-/data}
 MYSHOP_RETENTION=${MYSHOP_RETENTION_SCRIPT:-/opt/myshop/scripts/cleanup-docker-retention.sh}
-AGENT_RETENTION=${AGENT_RETENTION_SCRIPT:-/opt/xianyu-agent/source/ops/cleanup-docker-retention.sh}
+AGENT_RETENTION=${AGENT_RETENTION_SCRIPT:-/opt/xianyu-agent/runtime/cleanup-docker-retention.sh}
 STORAGE_HEALTH=${HOST_STORAGE_HEALTH_SCRIPT:-/opt/host-ops/check-storage-health.sh}
 HOST_MAINTENANCE=${HOST_MAINTENANCE_SCRIPT:-/opt/host-ops/docker-maintenance.sh}
 
