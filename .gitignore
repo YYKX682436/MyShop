@@ -35,6 +35,8 @@ test-uploads/
 .env.local
 .env.*.local
 *.tsbuildinfo
+__pycache__/
+*.pyc
 
 # Windows reserved names
 nul
