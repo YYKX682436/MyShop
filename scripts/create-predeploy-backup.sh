@@ -21,7 +21,7 @@ rm -f -- "$temporary"
 trap 'rm -f -- "$temporary"' EXIT
 docker exec -i "$db_id" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$temporary"
 [[ -s "$temporary" ]] || { printf 'PostgreSQL backup is empty\n' >&2; exit 1; }
-pg_restore -l "$temporary" >/dev/null
+docker exec -i "$db_id" pg_restore -l - <"$temporary" >/dev/null
 mv -f -- "$temporary" "$final_file"
 trap - EXIT
 size=$(stat -c '%s' "$final_file")
