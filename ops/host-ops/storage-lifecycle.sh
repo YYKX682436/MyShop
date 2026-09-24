@@ -19,7 +19,11 @@ set +e
 "$STORAGE_HEALTH"
 pre_status=$?
 set -e
-(( pre_status < 4 )) || die "precheck hard-failed: $pre_status"
+case "$pre_status" in
+  0|1|4) ;;
+  2|3) die "precheck hard-failed: $pre_status" ;;
+  *) die "precheck returned unexpected status: $pre_status" ;;
+esac
 
 # Both application retainers are mandatory once their accepted state exists.
 # Missing or malformed state is a service failure, never a successful no-op.

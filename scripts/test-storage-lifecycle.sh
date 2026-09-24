@@ -22,6 +22,7 @@ grep -Fq 'os.fsync' "$state_writer" || fail 'state writer has no fsync'
 ! grep -Eiq 'docker volume|volume prune|builder prune|system prune' "$retention" || fail 'app retention owns forbidden cleanup'
 [[ -f "$repo_dir/ops/systemd/storage-lifecycle.service" && -f "$repo_dir/ops/systemd/storage-lifecycle.timer" ]] || fail 'orchestrator units are missing'
 [[ ! -e "$repo_dir/ops/systemd/myshop-docker-retention.timer" ]] || fail 'old retention timer remains'
+grep -Fq '0|1|4' "$repo_dir/ops/host-ops/storage-lifecycle.sh" || fail 'orchestrator does not continue maintenance-required precheck'
 pass 'static image-only/runtime/state/retention/orchestrator checks'
 
 sha1=$(printf 'a%.0s' {1..40})
