@@ -18,14 +18,13 @@ candidate_sha=$(printf 'd%.0s' {1..40})
 registry=registry.test
 
 base_state="$tmp_dir/base-state.json"
-base_env="$tmp_dir/base-accepted-images.env"
 manifest="$tmp_dir/candidate-manifest.json"
-python3 - "$base_state" "$base_env" "$manifest" "$old_sha" "$rollback1_sha" "$rollback2_sha" "$candidate_sha" "$registry" <<'PY'
+python3 - "$base_state" "$manifest" "$old_sha" "$rollback1_sha" "$rollback2_sha" "$candidate_sha" "$registry" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-state_path, env_path, manifest_path, old, rollback1, rollback2, candidate, registry = sys.argv[1:]
+state_path, manifest_path, old, rollback1, rollback2, candidate, registry = sys.argv[1:]
 digests = {
     old: "sha256:" + "1" * 64,
     rollback1: "sha256:" + "2" * 64,
@@ -53,10 +52,6 @@ state = {
     "history": [record(old, "2026-09-24T00:00:00Z"), record(rollback1, "2026-09-23T00:00:00Z"), record(rollback2, "2026-09-22T00:00:00Z")],
 }
 Path(state_path).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-Path(env_path).write_text(
-    f"MYSHOP_API_IMAGE={registry}/myshop-api:{old}\nMYSHOP_WEB_IMAGE={registry}/myshop-web:{old}\n",
-    encoding="utf-8",
-)
 manifest = {
     "version": 1,
     "project": "myshop",
@@ -323,7 +318,7 @@ reset_case() {
   rm -rf -- "$case_root"
   mkdir -p -- "$case_root/candidates" "$case_root/maintenance"
   cp -- "$base_state" "$case_root/deploy-state.json"
-  cp -- "$base_env" "$case_root/accepted-images.env"
+  rm -f -- "$case_root/accepted-images.env"
   printf 'old\n' >"$case_root/running"
   printf 'PUBLIC_SITE_URL=http://myshop.test\n' >"$case_root/.env"
   : >"$case_root/pull.log"
@@ -374,7 +369,7 @@ assert_pre_commit_failure() {
   (( status != 0 )) || fail "$hook unexpectedly succeeded"
   grep -Fq 'DEPLOYMENT FAILED / ROLLED BACK' <<<"$output" || fail "$hook did not roll back"
   cmp -s "$base_state" "$case_root/deploy-state.json" || fail "$hook changed accepted state"
-  cmp -s "$base_env" "$case_root/accepted-images.env" || fail "$hook changed accepted image environment"
+  [[ ! -e "$case_root/accepted-images.env" ]] || fail "$hook recreated a second accepted image state"
   [[ "$(<"$case_root/running")" == old ]] || fail "$hook did not restore old stack"
   [[ -f "$case_root/candidates/$candidate_sha.failed.json" ]] || fail "$hook did not mark candidate FAILED"
   ! grep -Ev 'dry=yes' "$case_root/retention.log" | grep -q . || fail "$hook executed destructive retention"
@@ -396,6 +391,7 @@ set -e
 (( rollback_status == 2 )) || fail 'rollback failure did not return status 2'
 grep -Fq 'CRITICAL_ROLLBACK_FAILED' <<<"$rollback_output" || fail 'rollback failure did not fail closed'
 cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'rollback failure changed accepted state'
+[[ ! -e "$case_root/accepted-images.env" ]] || fail 'rollback failure recreated a second accepted image state'
 [[ -f "$case_root/candidates/$candidate_sha.failed.json" ]] || fail 'rollback failure did not mark candidate FAILED'
 ! grep -Ev 'dry=yes' "$case_root/retention.log" | grep -q . || fail 'rollback failure executed destructive retention'
 printf 'PRE-COMMIT rollback-failure status=%s state=unchanged retention=none\n' "$rollback_status"
@@ -416,6 +412,7 @@ assert state['history'][-1]['source_sha'] == candidate_sha
 assert len(state['rollback']) == 2
 PY
 [[ "$(<"$case_root/running")" == candidate ]] || fail 'successful deployment did not leave candidate running'
+[[ ! -e "$case_root/accepted-images.env" ]] || fail 'successful deployment created a second accepted image state'
 grep -Fq 'dry=yes' "$case_root/retention.log" || fail 'prospective retention preflight was not executed'
 grep -Fq 'dry=no' "$case_root/retention.log" || fail 'post-commit retention was not executed'
 printf 'COMMIT SUCCESS active=%s rollback=[%s,%s] history_append=%s\n' "$candidate_sha" "$old_sha" "$rollback1_sha" "$candidate_sha"

@@ -22,7 +22,8 @@ grep -Fq 'os.fsync' "$state_writer" || fail 'state writer has no fsync'
 ! grep -Eiq 'docker volume|volume prune|builder prune|system prune' "$retention" || fail 'app retention owns forbidden cleanup'
 [[ -f "$repo_dir/ops/systemd/storage-lifecycle.service" && -f "$repo_dir/ops/systemd/storage-lifecycle.timer" ]] || fail 'orchestrator units are missing'
 [[ ! -e "$repo_dir/ops/systemd/myshop-docker-retention.timer" ]] || fail 'old retention timer remains'
-grep -Fq '0|1|4' "$repo_dir/ops/host-ops/storage-lifecycle.sh" || fail 'orchestrator does not continue maintenance-required precheck'
+grep -Fq '0|1|2|3|4' "$repo_dir/ops/host-ops/storage-lifecycle.sh" || fail 'orchestrator does not continue all safe high-water prechecks'
+! grep -Fq 'accepted-images.env' "$repo_dir/scripts/deploy-production.sh" "$repo_dir/scripts/myshop-compose.sh" "$repo_dir/scripts/write-deploy-state.sh" || fail 'production path still depends on accepted-images.env'
 grep -Fq 'candidate_started=0' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap candidate start tracking is missing'
 grep -Fq '! state_existed && ! candidate_started' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap pre-start rollback is not fail-closed'
 grep -Fq 'prepare_bootstrap_rollback_refs' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap post-start rollback does not normalize legacy image refs'
@@ -44,6 +45,7 @@ json.dump({"version": 1, "project": "myshop", "source_sha": sha, "created_at": "
 }}, open(path, "w", encoding="utf-8"))
 PY
 bash "$state_writer" "$state" "$manifest" >/dev/null
+[[ ! -e "$tmp_dir/accepted-images.env" ]] || fail 'state writer still creates accepted-images.env'
 python3 - "$state" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -63,6 +65,7 @@ json.dump(data, open(path, 'w', encoding='utf-8'))
 PY
   bash "$state_writer" "$state" "$manifest" >/dev/null
 done
+[[ ! -e "$tmp_dir/accepted-images.env" ]] || fail 'state writer recreated accepted-images.env during promotion'
 python3 - "$state" "$sha1" "$sha2" "$sha3" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -73,6 +76,48 @@ assert [x['source_sha'] for x in state['history']] == [sha1, sha2, sha3]
 PY
 if bash "$state_writer" "$state" "$sha1" "$sha2" "$sha3" >/dev/null 2>&1; then fail 'old state writer interface still accepted'; fi
 pass 'history rolls automatically to two derived rollback records'
+
+wrapper_runtime="$tmp_dir/wrapper-runtime"
+wrapper_env="$tmp_dir/wrapper.env"
+wrapper_bin="$tmp_dir/wrapper-bin"
+mkdir -p "$wrapper_runtime" "$wrapper_bin"
+cp "$compose" "$wrapper_runtime/docker-compose.prod.yml"
+printf 'PUBLIC_SITE_URL=http://example.invalid\n' >"$wrapper_env"
+cat >"$wrapper_bin/docker" <<'DOCKER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${1:-}" != compose ]]; then exit 99; fi
+if [[ "${2:-}" == version ]]; then exit 0; fi
+printf '%s|%s\n' "${MYSHOP_API_IMAGE:-}" "${MYSHOP_WEB_IMAGE:-}" >>"${WRAPPER_LOG:?}"
+DOCKER
+chmod +x "$wrapper_bin/docker"
+wrapper_log="$tmp_dir/wrapper.log"
+PATH="$wrapper_bin:$PATH" \
+  MYSHOP_RUNTIME_ROOT="$wrapper_runtime" \
+  MYSHOP_DEPLOY_STATE="$state" \
+  MYSHOP_ENV_FILE="$wrapper_env" \
+  MYSHOP_APPROVED_REGISTRY='registry.example:5000/team' \
+  WRAPPER_LOG="$wrapper_log" \
+  bash "$wrapper" config --quiet
+grep -Fq "registry.example:5000/team/myshop-api:$sha3|registry.example:5000/team/myshop-web:$sha3" "$wrapper_log" || fail 'wrapper did not read active refs from deploy-state.json'
+pass 'production wrapper reads active refs from deploy-state.json without a second state file'
+
+rm -f -- "$state"
+printf 'MYSHOP_API_IMAGE=legacy-api:%s\nMYSHOP_WEB_IMAGE=legacy-web:%s\n' "$sha1" "$sha1" >"$wrapper_env"
+PATH="$wrapper_bin:$PATH" \
+  MYSHOP_RUNTIME_ROOT="$wrapper_runtime" \
+  MYSHOP_DEPLOY_STATE="$state" \
+  MYSHOP_ENV_FILE="$wrapper_env" \
+  MYSHOP_APPROVED_REGISTRY='registry.example:5000/team' \
+  WRAPPER_LOG="$wrapper_log" \
+  bash "$wrapper" config --quiet
+pass 'bootstrap without deploy-state uses only the legacy baseline env path'
+
+printf '{"version":1,"active":{"source_sha":"broken"}}\n' >"$state"
+if PATH="$wrapper_bin:$PATH" MYSHOP_RUNTIME_ROOT="$wrapper_runtime" MYSHOP_DEPLOY_STATE="$state" MYSHOP_ENV_FILE="$wrapper_env" MYSHOP_APPROVED_REGISTRY='registry.example:5000/team' WRAPPER_LOG="$wrapper_log" bash "$wrapper" config --quiet >/dev/null 2>&1; then
+  fail 'malformed deploy-state did not fail closed in production wrapper'
+fi
+pass 'malformed deploy-state fails closed in production wrapper'
 
 printf '{"version":1,"active":{"source_sha":"broken"}}\n' >"$state"
 fake_bin="$tmp_dir/fake-bin"

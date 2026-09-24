@@ -36,9 +36,7 @@ web_digest=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(j
 
 tmp_dir=$(mktemp -d)
 state_backup="$tmp_dir/state.json"
-image_env_backup="$tmp_dir/accepted-images.env"
 state_existed=0
-image_env_existed=0
 candidate_started=0
 committed=0
 cleanup_tmp() { rm -rf -- "$tmp_dir"; }
@@ -49,11 +47,6 @@ if [[ -f "$STATE_FILE" ]]; then
   cp -p -- "$STATE_FILE" "$state_backup"
   state_existed=1
 fi
-if [[ -f "$PROJECT_ROOT/accepted-images.env" ]]; then
-  cp -p -- "$PROJECT_ROOT/accepted-images.env" "$image_env_backup"
-  image_env_existed=1
-fi
-
 declare -A before_ref before_digest baseline_container_ref candidate_ref candidate_digest
 candidate_ref[api]=$api_ref
 candidate_ref[web]=$web_ref
@@ -241,7 +234,7 @@ smoke() {
 }
 
 rollback_state() {
-  python3 - "$state_backup" "$STATE_FILE" "$state_existed" "$image_env_backup" "$PROJECT_ROOT/accepted-images.env" "$image_env_existed" <<'PY'
+  python3 - "$state_backup" "$STATE_FILE" "$state_existed" <<'PY'
 import os
 import shutil
 import stat
@@ -282,7 +275,6 @@ def restore(source: Path, target: Path, existed: bool) -> None:
 
 
 restore(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3] == "1")
-restore(Path(sys.argv[4]), Path(sys.argv[5]), sys.argv[6] == "1")
 PY
 }
 
@@ -412,7 +404,7 @@ verify_candidate_identity || pre_commit_fail final-identity
 
 # Validate the post-commit accepted set before changing the production state.
 # The prospective state is written only below tmp_dir; the production state
-# and accepted-images.env remain untouched until the real commit point.
+# and the accepted deployment state remain untouched until the real commit point.
 prepare_prospective_state || pre_commit_fail retention-preflight
 HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" \
   MYSHOP_RUNTIME_ROOT="$prospective_root" MYSHOP_DEPLOY_STATE="$prospective_state" \
@@ -420,7 +412,7 @@ HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" \
   || pre_commit_fail retention-preflight
 
 # COMMIT POINT: write-deploy-state performs fsync plus atomic rename for the
-# accepted state and its derived image environment. Once it returns
+# sole accepted deployment state. Once it returns
 # successfully, application rollback is forbidden; only post-commit
 # maintenance may fail.
 "$STATE_WRITER" "$STATE_FILE" "$manifest" >/dev/null || pre_commit_fail promote

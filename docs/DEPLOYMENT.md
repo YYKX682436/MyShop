@@ -12,7 +12,6 @@ The host framework is `/opt/myshop/runtime`:
 ```text
 /opt/myshop/runtime/docker-compose.prod.yml
 /opt/myshop/runtime/deploy-state.json
-/opt/myshop/runtime/accepted-images.env
 /opt/myshop/runtime/candidates/*.failed.json
 /opt/myshop/scripts/*.sh
 ```
@@ -96,9 +95,10 @@ post-storage failures and checks this contract.
 deployment therefore has active plus zero rollback; the second derives one
 rollback from the old active; the third derives two. Later promotions keep the
 two most recent accepted records. `history` contains only completed
-acceptances. Failed candidates are never added. State and the derived
-`accepted-images.env` are written with a temporary file, fsync, atomic rename,
-and directory fsync on Linux. Malformed state fails closed.
+acceptances. Failed candidates are never added. The state file is written with
+a temporary file, fsync, atomic rename, and directory fsync on Linux.
+Production wrappers read active image references directly from this file; no
+second accepted-image state file is maintained. Malformed state fails closed.
 
 Retention verifies source SHA, image ref, and image digest together. It protects
 all accepted records, all running container image IDs, and never infers history
@@ -151,6 +151,13 @@ Watermarks are based on the real `/data` filesystem: below 60% `OK`, 60--69%
 `CRITICAL`. Deployment precheck refuses 80% or more. A post-retention result
 of 70% or more is not accepted. Host GC never uses volume prune and never
 touches `/data/docker` or `/data/containerd` directly.
+
+The storage lifecycle service has a different responsibility from deployment:
+after the mount, Docker, and accepted-state safety prerequisites pass, it still
+runs both scoped retainers and host safe maintenance at every watermark,
+including 80% and 90%+. Its postcheck returns `SUCCESS` below 70%,
+`MAINTENANCE_INCOMPLETE` at 70--79%, `HARD_FAIL` at 80--89%, and `CRITICAL`
+at 90%+.
 
 ## Acceptance contract
 

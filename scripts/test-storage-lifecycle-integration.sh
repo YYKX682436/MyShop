@@ -24,7 +24,14 @@ cat >"$tmp_dir/health.sh" <<'HEALTH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf 'health\n' >>"${EVENT_LOG:?}"
-exit 0
+counter_file=${HEALTH_COUNTER_FILE:?}
+count=$(cat "$counter_file" 2>/dev/null || printf 0)
+count=$((count + 1))
+printf '%s\n' "$count" >"$counter_file"
+if (( count == 1 )); then
+  exit "${HEALTH_PRE_STATUS:-0}"
+fi
+exit "${HEALTH_POST_STATUS:-0}"
 HEALTH
 
 cat >"$tmp_dir/myshop-retention.sh" <<'RETENTION'
@@ -48,8 +55,10 @@ MAINTENANCE
 chmod +x -- "$fake_bin/findmnt" "$tmp_dir/health.sh" "$tmp_dir/myshop-retention.sh" "$tmp_dir/agent-retention.sh" "$tmp_dir/maintenance.sh"
 
 run_orchestrator() {
+  : >"$tmp_dir/health-count"
   PATH="$fake_bin:$PATH" \
     EVENT_LOG="$1" \
+    HEALTH_COUNTER_FILE="$tmp_dir/health-count" \
     HOST_DEPLOY_LOCK_FILE="$lock_file" \
     DATA_MOUNTPOINT=/data \
     HOST_STORAGE_HEALTH_SCRIPT="$tmp_dir/health.sh" \
@@ -74,6 +83,32 @@ for index in "${!expected[@]}"; do
 done
 grep -Fq 'SUCCESS pre_status=0 post_status=0' "$tmp_dir/success.out" || fail 'successful orchestrator run did not report success'
 pass 'orchestrator owns one lock and invokes both retainers plus host maintenance in order'
+
+run_high_water_case() {
+  local label=$1 pre_status=$2 post_status=$3 expected=$4 log="$tmp_dir/$1-events.log" output status
+  : >"$log"
+  set +e
+  output=$(HEALTH_PRE_STATUS="$pre_status" HEALTH_POST_STATUS="$post_status" run_orchestrator "$log" 2>&1)
+  status=$?
+  set -e
+  grep -Fq 'myshop held=1' "$log" || fail "$label did not run MyShop retention"
+  grep -Fq 'agent held=1' "$log" || fail "$label did not run Agent retention"
+  grep -Fq 'maintenance held=1' "$log" || fail "$label did not run host maintenance"
+  [[ "$(grep -c '^health$' "$log")" -eq 2 ]] || fail "$label did not run both storage checks"
+  if [[ "$expected" == SUCCESS ]]; then
+    (( status == 0 )) || fail "$label unexpectedly failed: $output"
+    grep -Fq '[storage-lifecycle] SUCCESS' <<<"$output" || fail "$label did not report success"
+  else
+    (( status != 0 )) || fail "$label incorrectly returned success"
+    grep -Fq "$expected" <<<"$output" || fail "$label did not report $expected"
+  fi
+  pass "$label precheck=$pre_status cleanup=executed postcheck=$post_status result=$expected"
+}
+
+run_high_water_case 69-percent 1 0 SUCCESS
+run_high_water_case 75-percent 4 4 MAINTENANCE_INCOMPLETE
+run_high_water_case 85-percent 3 3 HARD_FAIL
+run_high_water_case 95-percent 2 2 CRITICAL
 
 contention_log="$tmp_dir/contention-events.log"
 ready_file="$tmp_dir/lock-holder.ready"

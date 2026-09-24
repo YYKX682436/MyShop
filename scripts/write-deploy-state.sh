@@ -148,32 +148,6 @@ finally:
     if os.path.exists(temporary):
         os.unlink(temporary)
 
-# Compose restart identity is a small runtime artifact, not a second source
-# release. It is derived from the same accepted record and written atomically.
-image_env_path = state_path.parent / "accepted-images.env"
-fd, image_env_tmp = tempfile.mkstemp(prefix=".accepted-images.", dir=state_path.parent)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        for service, image in sorted(candidate["images"].items()):
-            handle.write(f"MYSHOP_{service.upper()}_IMAGE={image['ref']}\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.chmod(image_env_tmp, 0o640)
-    os.replace(image_env_tmp, image_env_path)
-    try:
-        directory_fd = os.open(state_path.parent, os.O_RDONLY)
-    except OSError:
-        if os.name != "nt":
-            raise
-    else:
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-finally:
-    if os.path.exists(image_env_tmp):
-        os.unlink(image_env_tmp)
-
 print(json.dumps({
     "state": str(state_path),
     "active": candidate["source_sha"],

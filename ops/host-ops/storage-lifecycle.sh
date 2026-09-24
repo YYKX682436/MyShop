@@ -20,8 +20,7 @@ set +e
 pre_status=$?
 set -e
 case "$pre_status" in
-  0|1|4) ;;
-  2|3) die "precheck hard-failed: $pre_status" ;;
+  0|1|2|3|4) ;;
   *) die "precheck returned unexpected status: $pre_status" ;;
 esac
 
@@ -41,5 +40,20 @@ set +e
 "$STORAGE_HEALTH"
 post_status=$?
 set -e
-(( post_status < 4 )) || die "postcheck is at or above 70 percent: $post_status"
-printf '[storage-lifecycle] SUCCESS pre_status=%s post_status=%s\n' "$pre_status" "$post_status"
+case "$post_status" in
+  0|1)
+    printf '[storage-lifecycle] SUCCESS pre_status=%s post_status=%s\n' "$pre_status" "$post_status"
+    ;;
+  4)
+    die "MAINTENANCE_INCOMPLETE: postcheck remains at 70-79 percent (status=$post_status)"
+    ;;
+  3)
+    die "HARD_FAIL: postcheck remains at 80-89 percent (status=$post_status)"
+    ;;
+  2)
+    die "CRITICAL: postcheck remains at or above 90 percent (status=$post_status)"
+    ;;
+  *)
+    die "postcheck returned unexpected status: $post_status"
+    ;;
+esac
