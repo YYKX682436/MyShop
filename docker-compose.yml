@@ -4,9 +4,16 @@
 # Keep the Compose stack identity independent of the release directory name.
 name: myshop
 
+x-default-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
+    logging: *default-logging
     environment:
       POSTGRES_DB: myshop
       POSTGRES_USER: ${DB_USERNAME:-myshop}
@@ -28,6 +35,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     image: ${API_IMAGE:-myshop-api:local}
+    logging: *default-logging
     environment:
       TZ: Asia/Shanghai
       DB_URL: ${DB_URL:-jdbc:postgresql://db:5432/myshop}
@@ -108,6 +116,7 @@ services:
   node-exporter:
     # Optional sidecar: it must not appear in any application depends_on chain.
     image: quay.io/prometheus/node-exporter:v1.12.1
+    logging: *default-logging
     command:
       - --path.procfs=/host/proc
       - --path.sysfs=/host/sys
@@ -132,6 +141,7 @@ services:
       context: .
       dockerfile: Dockerfile.web
     image: ${WEB_IMAGE:-myshop-web:local}
+    logging: *default-logging
     environment:
       TZ: Asia/Shanghai
       BACKEND_URL: http://api:8083
@@ -151,6 +161,7 @@ services:
   caddy:
     # The public edge depends only on API/Web; the monitoring sidecar is never a startup dependency.
     image: caddy:2-alpine
+    logging: *default-logging
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN is required}
       ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}

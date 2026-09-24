@@ -5,10 +5,11 @@ not a production deployment action performed by CI or this acceptance pass.
 
 ## Compose project identity and production entrypoint
 
-The top-level `name: myshop` in `docker-compose.yml` is the canonical
-production Compose project identity. The basename of a checkout or of a
-release directory such as `/opt/myshop/releases/<SHA>` must never change the
-stack name. Production therefore keeps using the existing resources
+The top-level `name: myshop` in `docker-compose.prod.yml` is the canonical
+production Compose project identity. `docker-compose.yml` is development-only;
+the production file contains no `build:` entries. The basename of a checkout or
+of a release directory such as `/opt/myshop/releases/<SHA>` must never change
+the stack name. Production therefore keeps using the existing resources
 `myshop_postgres_data`, `myshop_caddy_data`, `myshop_caddy_config`, and
 `myshop_internal`.
 
@@ -18,20 +19,35 @@ production Compose operation:
 ```bash
 release=/opt/myshop/releases/<full-sha>
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env config
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env build api web
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env pull
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env up -d db node-exporter api web caddy
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
 ```
 
-`scripts/myshop-compose.sh` resolves its own repository/release root, pins
-`docker-compose.yml` and `--project-directory` to that root, and explicitly
-sets `COMPOSE_PROJECT_NAME=myshop`. It accepts normal Compose arguments such
-as `--env-file`, `config`, `build`, `up`, `ps`, `logs`, and `exec`, but rejects
-caller-supplied `-p`/`--project-name`, `-f`/`--file`, and
-`--project-directory` overrides. Do not rely on `docker compose -p myshop` or
-pass the old server-side runtime override as a second Compose file. Local or
-CI experiments may call Compose directly when they intentionally need an
-isolated project name; that does not change the production rule.
+`scripts/myshop-compose.sh` resolves its own release root, pins
+`docker-compose.prod.yml` and `--project-directory` to that root, and explicitly
+sets `COMPOSE_PROJECT_NAME=myshop`. It accepts pull/run/inspection commands but
+rejects `build`, `--build`, `:latest`, `:local`, non-approved registries, and
+caller-supplied `-p`/`--project-name`, `-f`/`--file`, or
+`--project-directory` overrides. Do not pass a development Compose file to
+production.
+
+The release wrapper is not the acceptance gate by itself. The production
+deployment entrypoint requires `MYSHOP_APPROVED_REGISTRY` and
+`MYSHOP_VERIFIED_BACKUP_PATH` in the protected operator environment, pulls the
+two exact full-SHA images, verifies both RepoDigests, performs health/smoke and
+`SELECT 1`, then writes state and runs retention under the shared lock:
+
+```bash
+MYSHOP_APPROVED_REGISTRY=ghcr.io/<owner> \
+MYSHOP_VERIFIED_BACKUP_PATH=/data/myshop/backups/database/<verified.dump> \
+bash /opt/myshop/current/scripts/deploy-production.sh \
+  <active-sha> <rollback-sha-1> <rollback-sha-2> \
+  <api-sha256-digest> <web-sha256-digest>
+```
+
+The three SHAs must already be backed by real successful deployment/acceptance
+records. A build-only or failed candidate is not a rollback slot.
 
 ## Topology
 
@@ -75,8 +91,18 @@ Prometheus or Grafana for this dashboard.
 3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, matching `PUBLIC_SITE_URL`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, `PRIVATE_UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
 4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
 5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
-6. Create the public upload directory and the separate private after-sale directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because all three binds use `create_host_path: false`. Provision the two official non-empty XDB files there when available, then run `bash scripts/myshop-compose.sh --env-file .env up -d --build`, inspect `bash scripts/myshop-compose.sh --env-file .env ps`, and read API logs with `bash scripts/myshop-compose.sh --env-file .env logs api`. Missing XDB files only degrade the detail estimate to `未知`; they do not prevent API startup.
-7. After API and Web health checks pass, run `bash /opt/myshop/scripts/cleanup-docker-retention.sh` to retain only the active release and two rollback releases and to remove unused Docker build cache. The script never touches Docker volumes, uploads, or database backups.
+6. Create the public upload directory and the separate private after-sale directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because all three binds use `create_host_path: false`. Provision the two official non-empty XDB files there when available. Production then uses CI-published full-SHA images through `scripts/myshop-compose.sh`; it never uses `up --build`.
+7. After API/Web/Caddy health, smoke, schema and digest checks pass, atomically update `deploy-state.json`, run scoped MyShop retention, and require the post-deploy storage gate to report `<70%`. Retention never touches Docker volumes, uploads, private uploads, Caddy data, database backups, Agent images, or global BuildKit cache.
+
+Install the host-owned files from `ops/host-ops/` as
+`/opt/host-ops/check-storage-health.sh` and
+`/opt/host-ops/docker-maintenance.sh`, and install the four units from
+`ops/systemd/` before enabling the timers. The storage-health and maintenance
+services use the same `/run/myshop-xianyu-deploy.lock` as application deploys;
+they must be enabled and active, not merely copied to `/etc/systemd/system`.
+The daily maintenance service is the only place allowed to run host-wide
+BuildKit/dangling-image GC. It never prunes volumes and it refuses to run while
+a build process is detected.
 
 Before startup, `bash scripts/check-compose.sh` verifies that Compose receives
 `SITE_DOMAIN`, `ACME_EMAIL`, `DB_PASSWORD`, and `JWT_SECRET`, and that missing
@@ -252,13 +278,14 @@ the `/opt/myshop/current` target, the active Compose labels, the existing
 `myshop_*` volumes and `myshop_internal` network, and a verified PostgreSQL
 custom backup. Extract the release to
 `/opt/myshop/releases/<full-sha>`, set the protected production `.env` image
-tags to `myshop-api:<full-sha>` and `myshop-web:<full-sha>`, and validate it
+references to approved-registry `myshop-api:<full-sha>` and
+`myshop-web:<full-sha>`, and validate it
 from the SHA directory:
 
 ```bash
 release=/opt/myshop/releases/<full-sha>
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env config
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env build api web
+bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env pull
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env up -d db node-exporter api web caddy
 bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
 ```
@@ -460,10 +487,13 @@ bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
 ```
 
 Keep backups in `/data/myshop/backups`, outside the repository, and periodically
-perform a restore test into an isolated PostgreSQL instance. To roll back an application image,
-change `API_IMAGE`/`WEB_IMAGE` to the previous immutable tags and run
-`bash /opt/myshop/current/scripts/myshop-compose.sh --env-file /opt/myshop/.env up -d`; never roll back a database migration by deleting rows
-or editing Flyway history. A migration requiring rollback must ship a new
+perform a restore test into an isolated PostgreSQL instance. An application
+rollback is valid only when its SHA is already present in
+`/opt/myshop/deploy-state.json` and its image digest is recorded there; do not
+select a release by directory mtime or by a build-only tag. Use the same
+image-only deployment wrapper and run the full health, smoke, schema, digest,
+retention, and disk gates. Never roll back a database migration by deleting
+rows or editing Flyway history. A migration requiring rollback must ship a new
 forward migration after a reviewed backup.
 
 ## Docker retention
@@ -473,30 +503,36 @@ the two most recent rollback candidates. The retention boundary applies to
 both `/opt/myshop/releases/<SHA>` directories and the matching
 `myshop-api:<SHA>`/`myshop-web:<SHA>` image tags.
 
-After every successful deployment, run:
+After every accepted deployment, run:
 
 ```bash
 bash /opt/myshop/scripts/cleanup-docker-retention.sh
 ```
 
-The script removes unused application images, dangling images, and all unused
-BuildKit cache, then removes release directories outside the three-version
-window. It verifies `DEPLOYED_SHA`, the `current` symlink, and the running
-API/Web image plus `com.docker.compose.project=myshop` and
-`com.docker.compose.service=api|web` labels before deleting anything. If the
-active service labels identify a SHA-named or otherwise ambiguous project,
-retention fails closed without deleting an image or release. It must not be replaced with
-`docker volume prune` or `docker system prune --volumes`; PostgreSQL, Caddy,
-uploads, and backups are outside the cleanup scope.
+The script reads `/opt/myshop/deploy-state.json` and retains only its explicit
+active plus two accepted rollback SHAs; it never uses release mtime. It checks
+the running API/Web labels and image refs before removing only the MyShop image
+namespace and non-accepted SHA release directories. Malformed or missing state,
+ambiguous labels, a deployment lock, or a missing accepted image fail closed.
+It never prunes BuildKit, touches containerd, removes volumes, or affects Agent,
+PostgreSQL, Caddy, uploads, private uploads, or backups.
 
 Install `ops/systemd/myshop-docker-retention.service` and
 `ops/systemd/myshop-docker-retention.timer` on the production host as a daily
-fallback. The deployment hook remains required so fast release iteration does
-not leave a full day's build cache on the data disk.
+fallback. Host-level BuildKit GC is separate at `/opt/host-ops/docker-maintenance.sh`
+and uses the same host deployment lock; application retention must not perform
+global builder cleanup.
+
+The release acceptance contract is: source SHA verified, exact image RepoDigest
+verified, canonical Compose project verified, `/data` mount and Docker/
+containerd roots verified, required database backup verified, health/smoke/schema
+checks passed, deployment state atomically committed, app retention passed, host
+storage health passed, data disk `<70%`, and active plus two accepted rollback
+images present. Missing any item means `DEPLOYMENT NOT ACCEPTED`.
 
 ## Operational boundaries
 
-There is no Kubernetes, message broker, Elasticsearch, Redis requirement, or
-automated production deploy in Phase 1. Add those only when measured load or
-reliability requirements justify them and after preserving the transaction
-boundaries described above.
+Production deployment is image-only and gate-driven; the CI/independent-builder
+path publishes immutable images and the production wrapper pulls them. Add
+other infrastructure only when measured load or reliability requirements
+justify it and after preserving the transaction boundaries described above.

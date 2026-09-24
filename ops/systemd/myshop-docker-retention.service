@@ -1,9 +1,10 @@
 [Unit]
-Description=Prune unused MyShop Docker images and build cache
+Description=Scoped MyShop image and release retention
 After=docker.service
 Requires=docker.service
+RequiresMountsFor=/data
 ConditionPathExists=/opt/myshop/scripts/cleanup-docker-retention.sh
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/bash /opt/myshop/scripts/cleanup-docker-retention.sh
+ExecStart=/usr/bin/python3 /opt/myshop/scripts/cleanup-docker-retention.sh

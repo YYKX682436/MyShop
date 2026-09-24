@@ -24,6 +24,7 @@ apps/web/       Next.js storefront/admin
 docs/           支付 SPI 和部署 runbook
 Caddyfile       Compose 反向代理配置
 docker-compose.yml
+docker-compose.prod.yml
 ```
 
 ## 本地开发
@@ -49,21 +50,23 @@ docker compose ps
 docker compose logs -f api
 ```
 
-`docker-compose.yml` 在顶层声明 canonical Compose project name `myshop`；无论
-当前 checkout 或生产 release 目录是否以 SHA 命名，Compose 都必须使用这个
-project identity。生产操作统一从 release 根目录调用受保护入口：
+`docker-compose.yml` 是本地源码构建编排；`docker-compose.prod.yml` 是唯一生产
+编排，明确禁止 `build:`。无论当前 release 目录是否以 SHA 命名，生产 Compose
+都必须使用 canonical project identity `myshop`。生产操作统一从 release 根目录
+调用受保护入口：
 
 ```bash
 bash scripts/myshop-compose.sh --env-file /opt/myshop/.env config
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env up -d --build
+bash scripts/myshop-compose.sh --env-file /opt/myshop/.env pull
+bash scripts/myshop-compose.sh --env-file /opt/myshop/.env up -d
 bash scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
 ```
 
-该入口固定 `docker-compose.yml` 和 `--project-directory`，显式设置
-`COMPOSE_PROJECT_NAME=myshop`，并拒绝 `-p`、`--project-name`、`-f`、`--file`
-及 `--project-directory` 覆盖。生产不要求操作者记忆 `docker compose -p myshop`，
-也禁止人为传入其他 project name。本地或 CI 如需隔离 stack，可以有意识地直接
-调用 Compose 并 override project；这不改变生产规则。生产持久化资源继续属于
+该入口固定 `docker-compose.prod.yml` 和 `--project-directory`，显式设置
+`COMPOSE_PROJECT_NAME=myshop`，并拒绝 `build`、`--build`、`latest`、`local`、
+非 approved registry 以及 `-p`、`--project-name`、`-f`、`--file`、
+`--project-directory` 覆盖。本地或 CI 构建只能直接调用开发 Compose；这不改变
+生产规则。生产持久化资源继续属于
 `myshop`，包括 `myshop_postgres_data`、Caddy volumes 和 `myshop_internal`。
 
 Compose 默认只有 PostgreSQL、API、Web 和 Caddy：数据库有持久化卷，API/Web 没有宿主机直连端口，公开流量只经过 Caddy。生产服务器初始化、备份、恢复和回滚步骤见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。

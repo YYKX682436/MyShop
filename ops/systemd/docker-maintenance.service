@@ -1,0 +1,9 @@
+[Unit]
+Description=Host Docker/BuildKit maintenance
+After=docker.service host-storage-health.service
+Requires=docker.service
+RequiresMountsFor=/data
+
+[Service]
+Type=oneshot
+ExecStart=/opt/host-ops/docker-maintenance.sh

@@ -1,0 +1,194 @@
+# MyShop production stack.
+# This file is intentionally image-only. Application images are immutable full-SHA
+# references supplied by the deployment environment; production never builds.
+name: myshop
+
+x-default-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: myshop
+      POSTGRES_USER: ${DB_USERNAME:-myshop}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: 172.30.0.10
+
+  api:
+    image: ${MYSHOP_API_IMAGE:?MYSHOP_API_IMAGE must be a registry image tagged with the full 40-character release SHA}
+    logging: *default-logging
+    environment:
+      TZ: Asia/Shanghai
+      DB_URL: ${DB_URL:-jdbc:postgresql://db:5432/myshop}
+      DB_USERNAME: ${DB_USERNAME:-myshop}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_SUPER_ADMIN_USERNAME: ${BOOTSTRAP_SUPER_ADMIN_USERNAME:-}
+      BOOTSTRAP_SUPER_ADMIN_PASSWORD: ${BOOTSTRAP_SUPER_ADMIN_PASSWORD:-}
+      XIANYU_AGENT_BASE_URL: ${XIANYU_AGENT_BASE_URL:-}
+      XIANYU_AGENT_KEY_ID: ${XIANYU_AGENT_KEY_ID:-}
+      XIANYU_AGENT_SECRET: ${XIANYU_AGENT_SECRET:-}
+      XIANYU_AGENT_TIMEOUT_MS: ${XIANYU_AGENT_TIMEOUT_MS:-10000}
+      SALES_CHANNEL_WORKER_ENABLED: ${SALES_CHANNEL_WORKER_ENABLED:-false}
+      SALES_CHANNEL_WORKER_INTERVAL_MS: ${SALES_CHANNEL_WORKER_INTERVAL_MS:-1000}
+      SALES_CHANNEL_WORKER_BATCH_SIZE: ${SALES_CHANNEL_WORKER_BATCH_SIZE:-10}
+      SALES_CHANNEL_WORKER_MAX_ATTEMPTS: ${SALES_CHANNEL_WORKER_MAX_ATTEMPTS:-8}
+      SALES_CHANNEL_WORKER_STALE_RUNNING_MS: ${SALES_CHANNEL_WORKER_STALE_RUNNING_MS:-300000}
+      SALES_CHANNEL_SYNC_SCAN_INTERVAL_MS: ${SALES_CHANNEL_SYNC_SCAN_INTERVAL_MS:-15000}
+      SALES_CHANNEL_ORDER_SYNC_ENABLED: ${SALES_CHANNEL_ORDER_SYNC_ENABLED:-false}
+      SALES_CHANNEL_ORDER_SYNC_INTERVAL_MS: ${SALES_CHANNEL_ORDER_SYNC_INTERVAL_MS:-5000}
+      SALES_CHANNEL_ORDER_SYNC_BATCH_SIZE: ${SALES_CHANNEL_ORDER_SYNC_BATCH_SIZE:-100}
+      SALES_CHANNEL_DELIVERY_WORKER_ENABLED: ${SALES_CHANNEL_DELIVERY_WORKER_ENABLED:-false}
+      SALES_CHANNEL_DELIVERY_INTERVAL_MS: ${SALES_CHANNEL_DELIVERY_INTERVAL_MS:-1000}
+      UPLOAD_PATH: ${UPLOAD_PATH:-/app/uploads}
+      UPLOAD_URL_PREFIX: ${UPLOAD_URL_PREFIX:-/api/uploads}
+      PRIVATE_UPLOAD_PATH: ${PRIVATE_UPLOAD_PATH:-/app/private-uploads}
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      MAIL_HOST: ${MAIL_HOST:-localhost}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_SITE_URL: ${MAIL_SITE_URL:-https://store.invalid}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be set in .env}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:-172.30.0.2,127.0.0.1,::1}
+      IP_GEO_IPV4_DB_PATH: ${IP_GEO_IPV4_DB_PATH:-/app/ipdb/ip2region_v4.xdb}
+      IP_GEO_IPV6_DB_PATH: ${IP_GEO_IPV6_DB_PATH:-/app/ipdb/ip2region_v6.xdb}
+      NODE_EXPORTER_URL: ${NODE_EXPORTER_URL:-http://node-exporter:9100}
+      DATA_DISK_MOUNTPOINT: ${DATA_DISK_MOUNTPOINT:-/data}
+    volumes:
+      - type: bind
+        source: ${UPLOAD_HOST_PATH:?UPLOAD_HOST_PATH must point to the existing production uploads directory}
+        target: /app/uploads
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PRIVATE_UPLOAD_HOST_PATH:?PRIVATE_UPLOAD_HOST_PATH must point to the existing production private uploads directory}
+        target: /app/private-uploads
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${IP_GEO_HOST_PATH:?IP_GEO_HOST_PATH must point to the existing production ipdb directory}
+        target: /app/ipdb
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8083/api/site/config || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: 172.30.0.20
+      myshop-xianyu-internal:
+        aliases:
+          - myshop-api
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v1.12.1
+    logging: *default-logging
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: 172.30.0.40
+
+  web:
+    image: ${MYSHOP_WEB_IMAGE:?MYSHOP_WEB_IMAGE must be a registry image tagged with the full 40-character release SHA}
+    logging: *default-logging
+    environment:
+      TZ: Asia/Shanghai
+      BACKEND_URL: http://api:8083
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: 172.30.0.30
+
+  caddy:
+    image: caddy:2-alpine
+    logging: *default-logging
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN is required}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      internal:
+        ipv4_address: 172.30.0.2
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  myshop-xianyu-internal:
+    name: myshop-xianyu-internal
+    external: true
