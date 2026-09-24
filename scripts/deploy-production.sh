@@ -7,7 +7,7 @@ manifest=$1
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_ROOT=${MYSHOP_RUNTIME_ROOT:-/opt/myshop/runtime}
 STATE_FILE=${MYSHOP_DEPLOY_STATE:-$PROJECT_ROOT/deploy-state.json}
-ENV_FILE=${MYSHOP_ENV_FILE:-$PROJECT_ROOT/.env}
+ENV_FILE=${MYSHOP_ENV_FILE:-/opt/myshop/.env}
 COMPOSE_WRAPPER=${MYSHOP_COMPOSE_WRAPPER:-$SCRIPT_DIR/myshop-compose.sh}
 STATE_WRITER=${MYSHOP_STATE_WRITER:-$SCRIPT_DIR/write-deploy-state.sh}
 SCHEMA_SCRIPT=${MYSHOP_SCHEMA_SCRIPT:-$SCRIPT_DIR/check-production-schema.sh}
