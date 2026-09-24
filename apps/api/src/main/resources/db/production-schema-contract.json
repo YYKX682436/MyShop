@@ -4,15 +4,15 @@
   "latest_migration_version": "33",
   "tables": {
     "users": ["id", "username", "role"],
-    "products": ["id", "name", "price"],
+    "products": ["id", "title", "retail_price"],
     "orders": ["id", "order_no", "status", "created_at"],
     "order_items": ["id", "order_id", "product_id"],
     "card_keys": ["id", "product_id", "status"],
-    "sales_channel_accounts": ["id", "channel_type", "status"],
+    "sales_channel_accounts": ["id", "provider", "status"],
     "sales_channel_listings": ["id", "sales_channel_account_id", "product_id", "is_enabled"],
     "sales_channel_listing_specs": ["id", "sales_channel_listing_id", "product_spec_id"],
     "sales_channel_operations": ["id", "sales_channel_listing_id", "status", "operation_type"],
-    "sales_channel_orders": ["id", "sales_channel_account_id", "sales_channel_listing_id", "order_id", "status"],
+    "sales_channel_orders": ["id", "sales_channel_account_id", "sales_channel_listing_id", "order_id", "ingest_status", "delivery_status"],
     "sales_channel_delivery_operations": ["id", "sales_channel_order_id", "card_key_id", "status"]
   },
   "indexes": [
