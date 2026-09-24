@@ -130,6 +130,7 @@ def main() -> int:
                 repositories.add(repo)
                 accepted_ids.add(image_id)
 
+        owned_repositories = repositories | {"myshop-api", "myshop-web"}
         for service, expected in active["images"].items():
             rows = docker("ps", "--filter", "label=com.docker.compose.project=myshop", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}	{{.Image}}")
             matches = [line.split("\t", 1) for line in rows.splitlines() if "\t" in line]
@@ -147,7 +148,7 @@ def main() -> int:
             if len(fields) != 3:
                 continue
             repo, tag, image_id = fields
-            if repo not in repositories or not tag or tag == "<none>":
+            if repo not in owned_repositories or not tag or tag == "<none>":
                 continue
             ref = f"{repo}:{tag}"
             if ref in accepted_refs or image_id in accepted_ids:
