@@ -137,10 +137,6 @@ case "$pre_status" in
   *) die "predeploy storage gate failed: $pre_status" ;;
 esac
 
-# A fresh verified backup is part of this transaction, not an operator-supplied
-# path from an earlier deployment.
-"$BACKUP_SCRIPT" "$active_sha" "$manifest" >/dev/null
-
 verify_remote_digest() {
   local ref=$1 expected=$2 image_id
   image_id=$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null) || return 1
@@ -277,6 +273,11 @@ failed() {
 
 [[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || failed pull
 pull_candidate || failed pull
+# A fresh verified backup is part of this transaction, not an operator-supplied
+# path from an earlier deployment.  Pull and digest verification happen first,
+# so a registry failure cannot create backup churn without a candidate that can
+# actually be started.
+"$BACKUP_SCRIPT" "$active_sha" "$manifest" >/dev/null
 [[ "${DEPLOY_TEST_FAIL:-}" != health ]] || failed health
 run_compose config --quiet || failed compose
 run_compose pull || failed pull
