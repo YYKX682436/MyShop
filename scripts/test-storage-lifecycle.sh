@@ -28,6 +28,8 @@ grep -Fq 'HOST_DEPLOY_LOCK_FILE' "$repo_dir/scripts/deploy-production.sh" || fai
 grep -Fq 'DATA_DISK_HIGH_WATERMARK' "$repo_dir/scripts/deploy-production.sh" || fail 'deployment has no hard disk gate'
 grep -Fq 'docker inspect' "$repo_dir/ops/host-ops/capture-phase0.sh" || fail 'Phase 0 evidence capture is incomplete'
 grep -Fq 'docker exec' "$repo_dir/ops/host-ops/capture-phase0.sh" || fail 'Phase 0 backup/database evidence is incomplete'
+grep -Fq 'dockerd --validate' "$repo_dir/ops/host-ops/validate-docker-config.sh" || fail 'Docker config validation is missing'
+grep -Fq 'systemctl restart docker' "$repo_dir/ops/host-ops/apply-daemon-gc.sh" || fail 'Docker config apply lacks explicit restart/rollback path'
 pass 'static MyShop retention, production Compose, logging, and gate checks'
 
 active=$(printf 'a%.0s' {1..40})

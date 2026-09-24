@@ -15,7 +15,7 @@ for sha in "$active_sha" "$rollback_one" "$rollback_two"; do [[ "$sha" =~ ^[0-9a
 readonly PROJECT_ROOT=/opt/myshop
 readonly HOST_LOCK=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-xianyu-deploy.lock}
 readonly HEALTH_SCRIPT=${HOST_STORAGE_HEALTH_SCRIPT:-/opt/host-ops/check-storage-health.sh}
-readonly CURRENT_ROOT="$PROJECT_ROOT/current"
+readonly CURRENT_ROOT="$PROJECT_ROOT"
 [[ -x "$HEALTH_SCRIPT" ]] || die "storage health gate is missing: $HEALTH_SCRIPT"
 [[ -x "$CURRENT_ROOT/scripts/myshop-compose.sh" ]] || die 'current production wrapper is missing'
 

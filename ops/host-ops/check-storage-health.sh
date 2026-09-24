@@ -26,6 +26,10 @@ df -hT "$DATA_MOUNTPOINT"
 docker_available=0
 if command -v docker >/dev/null 2>&1; then
   docker_available=1
+  config_validator="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/validate-docker-config.sh"
+  if [[ -x "$config_validator" && -x "$(command -v dockerd 2>/dev/null || true)" ]]; then
+    "$config_validator"
+  fi
   docker info --format 'docker_root={{.DockerRootDir}} storage_driver={{.Driver}} server={{.ServerVersion}}' || true
   docker system df -v || true
 fi
@@ -48,7 +52,7 @@ printf 'agent_release_count='; find "$AGENT_ROOT/releases" -mindepth 1 -maxdepth
 if (( docker_available )); then
   printf 'myshop_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0=="myshop-api" || $0=="myshop-web"' | wc -l
   printf 'agent_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0 ~ /(^|\/)xianyu-agent-(backend-web|websocket|scheduler|frontend)$/' | wc -l
-  printf 'build_cache='; docker system df --format '{{.Type}} {{.Reclaimable}}' | awk '$1=="Build" {print $2; found=1} END {if (!found) print "unknown"}'
+  printf 'build_cache='; docker system df --format '{{.Type}}|{{.Reclaimable}}' | awk -F'|' '$1=="Build Cache" {print $2; found=1} END {if (!found) print "unknown"}'
 else
   printf 'myshop_app_image_count=unknown\nagent_app_image_count=unknown\nbuild_cache=unknown\n'
 fi
