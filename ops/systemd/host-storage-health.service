@@ -1,8 +1,0 @@
-[Unit]
-Description=Check MyShop/Xianyu data disk storage health
-After=local-fs.target docker.service
-RequiresMountsFor=/data
-
-[Service]
-Type=oneshot
-ExecStart=/opt/host-ops/check-storage-health.sh
