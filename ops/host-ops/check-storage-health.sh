@@ -52,7 +52,7 @@ printf 'agent_release_count='; find "$AGENT_ROOT/releases" -mindepth 1 -maxdepth
 if (( docker_available )); then
   printf 'myshop_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0=="myshop-api" || $0=="myshop-web"' | wc -l
   printf 'agent_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0 ~ /(^|\/)xianyu-agent-(backend-web|websocket|scheduler|frontend)$/' | wc -l
-  printf 'build_cache='; docker system df --format '{{.Type}}|{{.Reclaimable}}' | awk -F'|' '$1=="Build Cache" {print $2; found=1} END {if (!found) print "unknown"}'
+  printf 'build_cache='; docker system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' | awk -F'|' '$1=="Build Cache" {print $2 " (reclaimable " $3 ")"; found=1} END {if (!found) print "unknown"}'
 else
   printf 'myshop_app_image_count=unknown\nagent_app_image_count=unknown\nbuild_cache=unknown\n'
 fi
