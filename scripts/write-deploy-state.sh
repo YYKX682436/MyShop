@@ -64,6 +64,8 @@ def validate_record(record: object, label: str, services: set[str] | None = None
         digest = image.get("digest")
         if not isinstance(ref, str) or not ref or ":latest" in ref or ":local" in ref:
             fail(f"{label}.images.{service}.ref is mutable")
+        if ref.rsplit(":", 1)[-1] != sha:
+            fail(f"{label}.images.{service}.ref tag must equal source_sha")
         if not isinstance(digest, str) or not digest_re.fullmatch(digest):
             fail(f"{label}.images.{service}.digest is invalid")
     return {

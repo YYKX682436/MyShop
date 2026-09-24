@@ -193,16 +193,49 @@ smoke() {
 }
 
 rollback_state() {
-  if (( state_existed )); then
-    cp -p -- "$state_backup" "$STATE_FILE"
-  else
-    rm -f -- "$STATE_FILE"
-  fi
-  if (( image_env_existed )); then
-    cp -p -- "$image_env_backup" "$PROJECT_ROOT/accepted-images.env"
-  else
-    rm -f -- "$PROJECT_ROOT/accepted-images.env"
-  fi
+  python3 - "$state_backup" "$STATE_FILE" "$state_existed" "$image_env_backup" "$PROJECT_ROOT/accepted-images.env" "$image_env_existed" <<'PY'
+import os
+import shutil
+import stat
+import sys
+import tempfile
+from pathlib import Path
+
+
+def fsync_dir(path: Path) -> None:
+    if os.name == "nt":
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def restore(source: Path, target: Path, existed: bool) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if existed:
+        fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.restore.", dir=target.parent)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                with source.open("rb") as source_handle:
+                    shutil.copyfileobj(source_handle, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, stat.S_IMODE(source.stat().st_mode))
+            os.replace(temporary, target)
+            fsync_dir(target.parent)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    elif target.exists():
+        target.unlink()
+        fsync_dir(target.parent)
+
+
+restore(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3] == "1")
+restore(Path(sys.argv[4]), Path(sys.argv[5]), sys.argv[6] == "1")
+PY
 }
 
 mark_failed() {
@@ -270,6 +303,8 @@ for service in api web; do
   [[ -n "$container_id" ]] || failed final-identity
   [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${candidate_ref[$service]}" ]] || failed final-identity
   image_id=$(docker inspect --format '{{.Image}}' "$container_id")
-  [[ -n "$image_id" ]] || failed final-identity
+  [[ "$image_id" == "$(docker image inspect --format '{{.Id}}' "${candidate_ref[$service]}")" ]] || failed final-identity
+  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${candidate_ref[$service]}" \
+    | grep -F "@${candidate_digest[$service]}" >/dev/null || failed final-identity
 done
 printf 'DEPLOYMENT ACCEPTED source=%s active_state=%s post_storage_status=%s\n' "$candidate_sha" "$STATE_FILE" "$post_status"
