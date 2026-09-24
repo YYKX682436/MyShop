@@ -27,7 +27,8 @@ set +e
 pre_status=$?
 set -e
 case "$pre_status" in
-  0|1) die "predeploy storage gate failed: $pre_status" ;;
+  0) ;;
+  1) die "predeploy storage gate failed: $pre_status" ;;
   2|3) die 'DATA_DISK_HIGH_WATERMARK' ;;
   4)
     [[ -f "$PROJECT_ROOT/deploy-state.json" ]] || die 'MAINTENANCE_REQUIRED but no accepted deployment state exists'
