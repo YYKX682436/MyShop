@@ -38,6 +38,7 @@ state_backup="$tmp_dir/state.json"
 image_env_backup="$tmp_dir/accepted-images.env"
 state_existed=0
 image_env_existed=0
+candidate_started=0
 cleanup_tmp() { rm -rf -- "$tmp_dir"; }
 trap cleanup_tmp EXIT
 exec 9>"$HOST_LOCK"
@@ -254,6 +255,11 @@ PY
 
 restore_old() {
   rollback_state
+  if (( ! state_existed && ! candidate_started )); then
+    verify_baseline || return 1
+    smoke || return 1
+    return 0
+  fi
   run_before_compose config --quiet || return 1
   run_before_compose up -d || return 1
   wait_health myshop || return 1
@@ -281,6 +287,7 @@ pull_candidate || failed pull
 [[ "${DEPLOY_TEST_FAIL:-}" != health ]] || failed health
 run_compose config --quiet || failed compose
 run_compose pull || failed pull
+candidate_started=1
 run_compose up -d || failed start
 wait_health myshop || failed health
 [[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || failed schema
