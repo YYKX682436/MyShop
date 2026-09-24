@@ -52,12 +52,12 @@ and performs the following sequence:
 1. Verify the `/data` mount and disk watermark.
 2. Read the previous accepted state, or capture the currently running image
    refs/digests for the first bootstrap.
-3. Create a fresh PostgreSQL custom backup in the transaction and verify it
+3. Pull exact candidate refs and require local RepoDigest equality with the
+   manifest digest. A failed registry pull stops before a backup is created.
+4. Create a fresh PostgreSQL custom backup in the transaction and verify it
    with `pg_restore -l`; emit a mode-600 backup manifest containing source
    active SHA, candidate SHA, database identity, file size, SHA-256, and
    validation result.
-4. Pull exact candidate refs and require local RepoDigest equality with the
-   manifest digest.
 5. Start the candidate, wait for health, run public smoke checks, run the
    artifact-packaged Flyway/schema contract, and run the candidate storage
    gate.
