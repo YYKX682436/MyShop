@@ -16,6 +16,7 @@ RUN apt-get update \
  && groupadd --gid 10001 myshop \
  && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin myshop
 COPY --from=build /build/apps/api/target/myshop-api-*.jar /app/app.jar
+COPY apps/api/src/main/resources/db/production-schema-contract.json /app/production-schema-contract.json
 RUN mkdir -p /app/uploads /app/private-uploads && chown -R 10001:10001 /app
 USER 10001:10001
 EXPOSE 8083

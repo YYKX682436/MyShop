@@ -6,7 +6,7 @@ DATA_MOUNTPOINT=${DATA_MOUNTPOINT:-/data}
 if [[ "${HOST_DEPLOY_LOCK_HELD:-0}" != 1 ]]; then
   mkdir -p -- "$(dirname -- "$LOCK_FILE")"
   exec 9>"$LOCK_FILE"
-  flock -n 9 || { printf 'HOST_MAINTENANCE_ALREADY_RUNNING\n' >&2; exit 0; }
+  flock -n 9 || { printf 'HOST_MAINTENANCE_ALREADY_RUNNING\n' >&2; exit 1; }
 fi
 
 findmnt -n -o TARGET -M "$DATA_MOUNTPOINT" | grep -Fx "$DATA_MOUNTPOINT" >/dev/null || {

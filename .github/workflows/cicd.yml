@@ -153,6 +153,7 @@ jobs:
         shell: bash
         run: echo "owner=$(printf '%s' "$REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
       - name: Build and publish API image
+        id: api-image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -162,6 +163,7 @@ jobs:
           cache-from: type=gha,scope=myshop-api
           cache-to: type=gha,mode=max,scope=myshop-api
       - name: Build and publish Web image
+        id: web-image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -170,3 +172,44 @@ jobs:
           tags: ghcr.io/${{ steps.image-owner.outputs.owner }}/myshop-web:${{ github.sha }}
           cache-from: type=gha,scope=myshop-web
           cache-to: type=gha,mode=max,scope=myshop-web
+      - name: Generate immutable release manifest
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE_OWNER: ${{ steps.image-owner.outputs.owner }}
+          API_DIGEST: ${{ steps.api-image.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web-image.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          sha = os.environ["SOURCE_SHA"]
+          api_digest = os.environ["API_DIGEST"]
+          web_digest = os.environ["WEB_DIGEST"]
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("invalid source SHA")
+          for value in (api_digest, web_digest):
+              if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+                  raise SystemExit(f"invalid builder digest: {value}")
+          owner = os.environ["IMAGE_OWNER"]
+          manifest = {
+              "version": 1,
+              "project": "myshop",
+              "source_sha": sha,
+              "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "images": {
+                  "api": {"ref": f"ghcr.io/{owner}/myshop-api:{sha}", "digest": api_digest},
+                  "web": {"ref": f"ghcr.io/{owner}/myshop-web:{sha}", "digest": web_digest},
+              },
+          }
+          Path("release-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+      - name: Upload immutable release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: myshop-release-manifest-${{ github.sha }}
+          path: release-manifest.json
+          if-no-files-found: error

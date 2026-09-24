@@ -6,8 +6,8 @@ set -Eeuo pipefail
 DATA_MOUNTPOINT=${DATA_MOUNTPOINT:-/data}
 CONTAINERD_ROOT=${CONTAINERD_ROOT:-/data/containerd}
 DOCKER_ROOT=${DOCKER_ROOT:-/data/docker}
-MYSHOP_ROOT=${MYSHOP_ROOT:-/opt/myshop}
-AGENT_ROOT=${AGENT_ROOT:-/opt/xianyu-agent}
+MYSHOP_ROOT=${MYSHOP_ROOT:-/opt/myshop/runtime}
+AGENT_ROOT=${AGENT_ROOT:-/opt/xianyu-agent/runtime}
 
 die() { printf '%s\n' "$*" >&2; exit 1; }
 command -v findmnt >/dev/null 2>&1 || die 'findmnt is required'
@@ -46,8 +46,23 @@ if [[ -d "$DOCKER_ROOT" ]]; then
 else
   printf 'missing\n'
 fi
-printf 'myshop_release_count='; find "$MYSHOP_ROOT/releases" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l
-printf 'agent_release_count='; find "$AGENT_ROOT/releases" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l
+printf 'myshop_accepted_count='; python3 - "$MYSHOP_ROOT/deploy-state.json" <<'PY'
+import json, sys
+try:
+    state = json.load(open(sys.argv[1], encoding='utf-8'))
+    print(1 + len(state.get('rollback', [])) if state.get('version') == 1 else 'invalid')
+except Exception:
+    print('missing')
+PY
+printf 'agent_accepted_count='; python3 - "$AGENT_ROOT/deploy-state.json" <<'PY'
+import json, sys
+try:
+    state = json.load(open(sys.argv[1], encoding='utf-8'))
+    print(1 + len(state.get('rollback', [])) if state.get('version') == 1 else 'invalid')
+except Exception:
+    print('missing')
+PY
+printf 'source_release_directories=disabled\n'
 
 if (( docker_available )); then
   printf 'myshop_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0=="myshop-api" || $0=="myshop-web"' | wc -l

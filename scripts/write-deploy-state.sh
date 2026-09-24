@@ -1,68 +1,180 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Write accepted deployment state only from an explicit operator/deployment
-# decision. This script intentionally does not inspect release mtimes.
-
-usage() {
-  printf 'Usage: %s <state-file> <active-sha> <rollback-sha-1> <rollback-sha-2> <api-ref> <api-digest> <web-ref> <web-digest>\n' "$0" >&2
+# Promote one fully accepted builder manifest. Rollbacks are derived only from
+# the previous state; callers cannot provide or invent rollback SHAs.
+(( $# == 2 )) || {
+  printf 'usage: %s <state-file> <release-manifest.json>\n' "$0" >&2
   exit 2
 }
 
-(( $# == 8 )) || usage
-state_file=$1
-active_sha=$2
-rollback_one=$3
-rollback_two=$4
-api_ref=$5
-api_digest=$6
-web_ref=$7
-web_digest=$8
+exec python3 - "$1" "$2" <<'PY'
+from __future__ import annotations
 
-for sha in "$active_sha" "$rollback_one" "$rollback_two"; do
-  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { printf 'invalid full SHA: %s\n' "$sha" >&2; exit 1; }
-done
-[[ "$active_sha" != "$rollback_one" && "$active_sha" != "$rollback_two" && "$rollback_one" != "$rollback_two" ]] || {
-  printf 'accepted deployment state must contain three unique SHAs\n' >&2
-  exit 1
-}
-[[ "$api_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'invalid API digest\n' >&2; exit 1; }
-[[ "$web_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'invalid Web digest\n' >&2; exit 1; }
-[[ "$api_ref" != *:latest && "$api_ref" != *:local && "$web_ref" != *:latest && "$web_ref" != *:local ]] || {
-  printf 'mutable image tag is forbidden\n' >&2
-  exit 1
-}
-[[ "$api_ref" =~ (^|/)myshop-api:${active_sha}$ ]] || { printf 'API image must be the active MyShop SHA\n' >&2; exit 1; }
-[[ "$web_ref" =~ (^|/)myshop-web:${active_sha}$ ]] || { printf 'Web image must be the active MyShop SHA\n' >&2; exit 1; }
-
-state_dir=$(dirname -- "$state_file")
-mkdir -p -- "$state_dir"
-tmp_file=$(mktemp "$state_dir/.deploy-state.XXXXXX")
-cleanup() { rm -f -- "$tmp_file"; }
-trap cleanup EXIT
-
-python3 - "$tmp_file" "$active_sha" "$rollback_one" "$rollback_two" "$api_ref" "$api_digest" "$web_ref" "$web_digest" <<'PY'
 import json
+import os
+import re
 import sys
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
-path, active, rollback_one, rollback_two, api_ref, api_digest, web_ref, web_digest = sys.argv[1:]
-state = {
-    "active": active,
-    "rollback": [rollback_one, rollback_two],
-    "accepted": [active, rollback_one, rollback_two],
-    "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-    "images": {
-        "api": {"ref": api_ref, "digest": api_digest},
-        "web": {"ref": web_ref, "digest": web_digest},
-    },
+state_path = Path(sys.argv[1])
+manifest_path = Path(sys.argv[2])
+sha_re = re.compile(r"^[0-9a-f]{40}$")
+digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+service_re = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
+def fail(message: str) -> "NoReturn":
+    raise SystemExit(f"[myshop-state] ERROR: {message}")
+
+
+def read_json(path: Path, label: str) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"{label} is not valid JSON: {exc}")
+    if not isinstance(value, dict):
+        fail(f"{label} must be a JSON object")
+    return value
+
+
+def validate_record(record: object, label: str, services: set[str] | None = None) -> dict:
+    if not isinstance(record, dict):
+        fail(f"{label} must be an object")
+    sha = record.get("source_sha")
+    accepted_at = record.get("accepted_at")
+    images = record.get("images")
+    if not isinstance(sha, str) or not sha_re.fullmatch(sha):
+        fail(f"{label}.source_sha must be a full lowercase SHA")
+    if not isinstance(accepted_at, str) or not accepted_at:
+        fail(f"{label}.accepted_at is required")
+    if not isinstance(images, dict) or not images:
+        fail(f"{label}.images must be a non-empty object")
+    names = set(images)
+    if services is not None and names != services:
+        fail(f"{label}.images services differ from the existing state")
+    for service, image in images.items():
+        if not isinstance(service, str) or not service_re.fullmatch(service):
+            fail(f"{label}.images contains an invalid service name")
+        if not isinstance(image, dict):
+            fail(f"{label}.images.{service} must be an object")
+        ref = image.get("ref")
+        digest = image.get("digest")
+        if not isinstance(ref, str) or not ref or ":latest" in ref or ":local" in ref:
+            fail(f"{label}.images.{service}.ref is mutable")
+        if not isinstance(digest, str) or not digest_re.fullmatch(digest):
+            fail(f"{label}.images.{service}.digest is invalid")
+    return {
+        "source_sha": sha,
+        "accepted_at": accepted_at,
+        "images": images,
+    }
+
+
+manifest = read_json(manifest_path, "release manifest")
+if manifest.get("version") != 1 or manifest.get("project") != "myshop":
+    fail("manifest version/project is not supported")
+candidate = {
+    "source_sha": manifest.get("source_sha"),
+    "accepted_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "images": manifest.get("images"),
 }
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(state, handle, indent=2, sort_keys=True)
-    handle.write("\n")
-PY
+candidate = validate_record(candidate, "candidate")
 
-chmod 0640 -- "$tmp_file"
-mv -f -- "$tmp_file" "$state_file"
-trap - EXIT
-printf 'accepted deployment state atomically written: %s\n' "$state_file"
+old_state = None
+if state_path.exists():
+    old_state = read_json(state_path, "deployment state")
+    if old_state.get("version") != 1:
+        fail("deployment state version is unsupported")
+    old_active = validate_record(old_state.get("active"), "state.active")
+    old_rollback_raw = old_state.get("rollback")
+    old_history_raw = old_state.get("history")
+    if not isinstance(old_rollback_raw, list) or len(old_rollback_raw) > 2:
+        fail("state.rollback must contain 0..2 records")
+    if not isinstance(old_history_raw, list):
+        fail("state.history must be an array")
+    services = set(old_active["images"])
+    old_rollback = [validate_record(item, f"state.rollback[{i}]", services) for i, item in enumerate(old_rollback_raw)]
+    old_history = [validate_record(item, f"state.history[{i}]", services) for i, item in enumerate(old_history_raw)]
+    if set(candidate["images"]) != services:
+        fail("candidate service set differs from accepted state")
+    if candidate["source_sha"] in {old_active["source_sha"], *(item["source_sha"] for item in old_rollback)}:
+        fail("candidate SHA is already accepted")
+else:
+    old_active = None
+    old_rollback = []
+    old_history = []
+    services = set(candidate["images"])
+
+if old_active is not None:
+    # The previous active becomes rollback #1; previous rollback #1 becomes
+    # rollback #2. No caller-controlled value enters this list.
+    new_rollback = [old_active, *old_rollback[:1]]
+else:
+    new_rollback = []
+
+state = {
+    "version": 1,
+    "active": candidate,
+    "rollback": new_rollback,
+    "history": [*old_history, candidate],
+}
+
+state_path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary = tempfile.mkstemp(prefix=".deploy-state.", dir=state_path.parent)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o640)
+    os.replace(temporary, state_path)
+    try:
+        directory_fd = os.open(state_path.parent, os.O_RDONLY)
+    except OSError:
+        if os.name != "nt":
+            raise
+    else:
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+
+# Compose restart identity is a small runtime artifact, not a second source
+# release. It is derived from the same accepted record and written atomically.
+image_env_path = state_path.parent / "accepted-images.env"
+fd, image_env_tmp = tempfile.mkstemp(prefix=".accepted-images.", dir=state_path.parent)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        for service, image in sorted(candidate["images"].items()):
+            handle.write(f"MYSHOP_{service.upper()}_IMAGE={image['ref']}\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(image_env_tmp, 0o640)
+    os.replace(image_env_tmp, image_env_path)
+    try:
+        directory_fd = os.open(state_path.parent, os.O_RDONLY)
+    except OSError:
+        if os.name != "nt":
+            raise
+    else:
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+finally:
+    if os.path.exists(image_env_tmp):
+        os.unlink(image_env_tmp)
+
+print(json.dumps({
+    "state": str(state_path),
+    "active": candidate["source_sha"],
+    "rollback": [item["source_sha"] for item in new_rollback],
+}, sort_keys=True))
+PY

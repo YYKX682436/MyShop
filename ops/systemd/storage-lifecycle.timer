@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily application and Docker storage lifecycle
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=15m
+Unit=storage-lifecycle.service
+
+[Install]
+WantedBy=timers.target

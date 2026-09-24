@@ -11,7 +11,7 @@ x-default-logging: &default-logging
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     logging: *default-logging
     environment:
       POSTGRES_DB: myshop
@@ -110,7 +110,7 @@ services:
           - myshop-api
 
   node-exporter:
-    image: quay.io/prometheus/node-exporter:v1.12.1
+    image: quay.io/prometheus/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
     logging: *default-logging
     command:
       - --path.procfs=/host/proc
@@ -151,7 +151,7 @@ services:
         ipv4_address: 172.30.0.30
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     logging: *default-logging
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:?SITE_DOMAIN is required}

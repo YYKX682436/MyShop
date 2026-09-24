@@ -1,538 +1,178 @@
-# MyShop Phase 1 deployment runbook
+# MyShop production storage-lifecycle runbook
 
-This document describes the intended single-host deployment. It is a runbook,
-not a production deployment action performed by CI or this acceptance pass.
+This runbook describes the only supported production model. The application
+artifact is an immutable container image reference plus its builder-generated
+release manifest. Production never builds application images and never runs
+from `/opt/myshop/releases/<SHA>` source directories.
 
-## Compose project identity and production entrypoint
+## Host layout and immutable Compose
 
-The top-level `name: myshop` in `docker-compose.prod.yml` is the canonical
-production Compose project identity. `docker-compose.yml` is development-only;
-the production file contains no `build:` entries. The basename of a checkout or
-of a release directory such as `/opt/myshop/releases/<SHA>` must never change
-the stack name. Production therefore keeps using the existing resources
-`myshop_postgres_data`, `myshop_caddy_data`, `myshop_caddy_config`, and
-`myshop_internal`.
-
-From a checkout or release directory, use the repository wrapper for every
-production Compose operation:
-
-```bash
-release=/opt/myshop/releases/<full-sha>
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env config
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env pull
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env up -d db node-exporter api web caddy
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
-```
-
-`scripts/myshop-compose.sh` resolves its own release root, pins
-`docker-compose.prod.yml` and `--project-directory` to that root, and explicitly
-sets `COMPOSE_PROJECT_NAME=myshop`. It accepts pull/run/inspection commands but
-rejects `build`, `--build`, `:latest`, `:local`, non-approved registries, and
-caller-supplied `-p`/`--project-name`, `-f`/`--file`, or
-`--project-directory` overrides. Do not pass a development Compose file to
-production.
-
-The release wrapper is not the acceptance gate by itself. The production
-deployment entrypoint requires `MYSHOP_APPROVED_REGISTRY` and
-`MYSHOP_VERIFIED_BACKUP_PATH` in the protected operator environment, pulls the
-two exact full-SHA images, verifies both RepoDigests, performs health/smoke and
-`SELECT 1`, then writes state and runs retention under the shared lock:
-
-```bash
-MYSHOP_APPROVED_REGISTRY=ghcr.io/<owner> \
-MYSHOP_VERIFIED_BACKUP_PATH=/data/myshop/backups/database/<verified.dump> \
-bash /opt/myshop/current/scripts/deploy-production.sh \
-  <active-sha> <rollback-sha-1> <rollback-sha-2> \
-  <api-sha256-digest> <web-sha256-digest>
-```
-
-The three SHAs must already be backed by real successful deployment/acceptance
-records. A build-only or failed candidate is not a rollback slot.
-
-## Topology
-
-Use one Docker Compose project with five services:
+The host framework is `/opt/myshop/runtime`:
 
 ```text
-Internet -> Caddy (80/443) -> Web (private) -> API (private) -> PostgreSQL (private)
-                                      \-> node-exporter (private host metrics)
+/opt/myshop/runtime/docker-compose.prod.yml
+/opt/myshop/runtime/deploy-state.json
+/opt/myshop/runtime/accepted-images.env
+/opt/myshop/runtime/candidates/*.failed.json
+/opt/myshop/scripts/*.sh
 ```
 
-Only Caddy publishes host ports. PostgreSQL uses a named persistent volume;
-public uploads use the explicit `UPLOAD_HOST_PATH` bind and private after-sale
-evidence uses the separate `PRIVATE_UPLOAD_HOST_PATH` bind (production uses
-`/data/myshop/uploads` and `/data/myshop/private-uploads`, never release-local
-directories or symlinks). The private directory is mounted at
-`PRIVATE_UPLOAD_PATH=/app/private-uploads` and has no static resource mapping;
-the API streams an attachment only after its database ownership check. IP
-geography XDB files use the separate `/data/myshop/ipdb` bind mounted
-read-only at `/app/ipdb`; Caddy uses persistent certificate/config volumes. The
-application services have restart policies and health checks; node-exporter is
-intentionally optional to API startup so a missing exporter only degrades the
-Dashboard metrics.
+`/opt/myshop/.env` remains a protected secret file. The Compose project name
+is always `myshop`; existing PostgreSQL, Caddy, upload, private-upload, and
+ipdb identities are preserved. `docker-compose.prod.yml` contains no `build:`
+entry, application images use full SHA tags, and infrastructure images use
+explicit tag plus digest pins. The wrapper rejects `build`, `--build`,
+`latest`, `local`, project/file overrides, and an image outside the exact
+approved registry namespace.
 
-Compose attaches all five services to the private `172.30.0.0/24` network.
-Caddy is fixed at `172.30.0.2`, API at `172.30.0.20`, Web at `172.30.0.30`,
-PostgreSQL at `172.30.0.10`, and node-exporter at `172.30.0.40`. The API trusts only the exact Caddy address,
-and Caddy overwrites `X-Real-IP` and `X-Forwarded-For` before proxying. Do not
-add a broad private CIDR or publish API/Web/DB/node-exporter ports.
+Manual inspection is allowed only through the installed wrapper:
 
-node-exporter is pinned to `quay.io/prometheus/node-exporter:v1.12.1`, has no
-host `ports` mapping, and is reachable only from the Compose network. It reads
-the host `/proc`, `/sys`, and root filesystem through read-only mounts to expose
-host CPU, memory, root filesystem, uptime, and load metrics. It does not mount
-`/var/run/docker.sock`, and the API does not need Docker access. Do not install
-Prometheus or Grafana for this dashboard.
+```bash
+bash /opt/myshop/scripts/myshop-compose.sh --env-file /opt/myshop/.env config
+bash /opt/myshop/scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
+```
 
-## First setup
+Do not run `docker compose` directly in the production directory and do not
+run `up --build`.
 
-1. Provision a supported Linux host with Docker Engine and Compose v2.
-2. Copy the repository and `.env.example` to a protected deployment directory.
-3. Copy `.env.example` to `.env`; set a unique long database password, a random JWT secret of at least 64 bytes, `SITE_DOMAIN`, matching `PUBLIC_SITE_URL`, `ACME_EMAIL`, `AUTH_COOKIE_SECURE=true`, `UPLOAD_HOST_PATH`, `PRIVATE_UPLOAD_HOST_PATH`, and `IP_GEO_HOST_PATH=/data/myshop/ipdb`.
-4. Set the bootstrap admin variables only for the first startup. Passwords use 6-72 ASCII visible characters. If a fixed super administrator is required, also set `BOOTSTRAP_SUPER_ADMIN_USERNAME` and `BOOTSTRAP_SUPER_ADMIN_PASSWORD`; an existing account is never reset by a later restart. Remove bootstrap password variables after successful initialization.
-5. Point DNS for `SITE_DOMAIN` to the host and allow TCP 80/443.
-6. Create the public upload directory and the separate private after-sale directory with owner `10001:10001` and mode `0750`, and create `/data/myshop/ipdb` before Compose starts because all three binds use `create_host_path: false`. Provision the two official non-empty XDB files there when available. Production then uses CI-published full-SHA images through `scripts/myshop-compose.sh`; it never uses `up --build`.
-7. After API/Web/Caddy health, smoke, schema and digest checks pass, atomically update `deploy-state.json`, run scoped MyShop retention, and require the post-deploy storage gate to report `<70%`. Retention never touches Docker volumes, uploads, private uploads, Caddy data, database backups, Agent images, or global BuildKit cache.
+## Release manifest and transaction
 
-Install the host-owned files from `ops/host-ops/` as
-`/opt/host-ops/check-storage-health.sh` and
-`/opt/host-ops/docker-maintenance.sh`, and install the four units from
-`ops/systemd/` before enabling the timers. The storage-health and maintenance
-services use the same `/run/myshop-xianyu-deploy.lock` as application deploys;
-they must be enabled and active, not merely copied to `/etc/systemd/system`.
-The daily maintenance service is the only place allowed to run host-wide
-BuildKit/dangling-image GC. It never prunes volumes and it refuses to run while
-a build process is detected.
+CI publishes `myshop-api:<full-source-sha>` and
+`myshop-web:<full-source-sha>` to the approved registry and uploads a JSON
+manifest containing `source_sha`, exact refs, and builder-reported digests.
+The operator supplies only that manifest:
 
-Before startup, `bash scripts/check-compose.sh` verifies that Compose receives
-`SITE_DOMAIN`, `ACME_EMAIL`, `DB_PASSWORD`, and `JWT_SECRET`, and that missing
-required values fail fast. The Caddy service explicitly receives its domain
-and ACME email; it does not depend on root `.env` values being implicitly
-passed into a container.
+```bash
+bash /opt/myshop/scripts/deploy-production.sh /path/to/release-manifest.json
+```
 
-## Public response headers
+The deployer holds `/run/myshop-xianyu-deploy.lock` for the entire transaction
+and performs the following sequence:
 
-Caddy adds the baseline security headers at the public edge, so they cover both
-Spring API responses and Next.js pages: HSTS on HTTPS requests only,
-`X-Content-Type-Options: nosniff`,
-`Referrer-Policy: strict-origin-when-cross-origin`, a restrictive
-`Permissions-Policy`, and `X-Frame-Options: DENY`. The repository's
-`scripts/check-compose.sh` performs a lightweight presence check for these
-rules and the Caddy client-IP overwrite rules.
+1. Verify the `/data` mount and disk watermark.
+2. Read the previous accepted state, or capture the currently running image
+   refs/digests for the first bootstrap.
+3. Create a fresh PostgreSQL custom backup in the transaction and verify it
+   with `pg_restore -l`; emit a mode-600 backup manifest containing source
+   active SHA, candidate SHA, database identity, file size, SHA-256, and
+   validation result.
+4. Pull exact candidate refs and require local RepoDigest equality with the
+   manifest digest.
+5. Start the candidate, wait for health, run public smoke checks, run the
+   artifact-packaged Flyway/schema contract, and run the candidate storage
+   gate.
+6. Promote the manifest into state atomically, run MyShop-scoped retention,
+   and run the post-retention storage gate.
+7. Verify running image refs and digests and print `DEPLOYMENT ACCEPTED`.
 
-No CSP is enabled in this Phase 1 pass. Before production, validate a staged
-CSP against Next.js assets, payment QR/image loading, and Cloudflare Turnstile;
-only then add a policy that does not break login or payment flows.
+Any failure before acceptance writes a small `FAILED` candidate marker, restores
+the previous accepted image refs, runs `compose up -d` for the old stack, and
+verifies old health and smoke. The state file is unchanged. If restoration
+fails, the command returns `CRITICAL_ROLLBACK_FAILED` and does not run
+retention. The regression suite injects pull, health, smoke, schema, and
+post-storage failures and checks this contract.
 
-Flyway runs before the application validates the schema. Do not change
-production `spring.jpa.hibernate.ddl-auto` from `validate`, and do not run
-`flyway clean`.
+## Deployment state
 
-## Dedicated host data disk
+`/opt/myshop/runtime/deploy-state.json` is the sole accepted-history source:
 
-For a single-shop host with a separate ext4 data disk, keep the operating
-system and release files on the root filesystem, and mount the data disk at
-`/data` before Docker starts. The recommended production layout is:
+```json
+{
+  "version": 1,
+  "active": {
+    "source_sha": "<full sha>",
+    "accepted_at": "<UTC>",
+    "images": {
+      "api": {"ref": "<approved>/myshop-api:<sha>", "digest": "sha256:<64 hex>"},
+      "web": {"ref": "<approved>/myshop-web:<sha>", "digest": "sha256:<64 hex>"}
+    }
+  },
+  "rollback": [],
+  "history": []
+}
+```
+
+`rollback` is allowed to contain zero, one, or two records. The first accepted
+deployment therefore has active plus zero rollback; the second derives one
+rollback from the old active; the third derives two. Later promotions keep the
+two most recent accepted records. `history` contains only completed
+acceptances. Failed candidates are never added. State and the derived
+`accepted-images.env` are written with a temporary file, fsync, atomic rename,
+and directory fsync on Linux. Malformed state fails closed.
+
+Retention verifies source SHA, image ref, and image digest together. It protects
+all accepted records, all running container image IDs, and never infers history
+from mtime. It processes only `myshop-api` and `myshop-web`, never volumes,
+uploads, backups, Agent images, source release directories, or BuildKit cache.
+
+## Schema and backup acceptance
+
+The API image packages `db/production-schema-contract.json`. The deployment
+extracts that contract from the exact running artifact and checks Flyway has no
+failed migration, the expected migration count/latest version, every declared
+table and column, and the sales-channel indexes/constraints. `SELECT 1` alone
+is not an acceptance check. A schema failure rolls the candidate back.
+
+The backup is created by the deployment itself while the lock is held. An old
+operator-supplied `MYSHOP_VERIFIED_BACKUP_PATH` is not accepted as proof for a
+new deployment. Database rollback is never performed by deleting rows or
+editing Flyway history; a required schema rollback ships a reviewed forward
+migration after a verified backup.
+
+Uploads and private uploads are not copied on every application deploy. Their
+backup workflow is independent and must keep a verified recovery point with an
+explicit local retention policy. This lifecycle does not delete the unique
+database or upload recovery point.
+
+## Storage lifecycle and timers
+
+`/opt/host-ops/storage-lifecycle.sh` is the only scheduled orchestrator. It
+obtains the same host lock and runs, in order:
+
+1. storage precheck;
+2. MyShop scoped retention;
+3. Agent scoped retention;
+4. host BuildKit/dangling-image maintenance;
+5. storage postcheck.
+
+The service is non-zero for a lock collision or any failed step. A collision is
+not reported as successful maintenance. Enable and verify:
+
+```bash
+systemctl enable --now storage-lifecycle.timer
+systemctl is-enabled storage-lifecycle.timer
+systemctl is-active storage-lifecycle.timer
+systemctl status storage-lifecycle.service
+journalctl -u storage-lifecycle.service --since today
+```
+
+Watermarks are based on the real `/data` filesystem: below 60% `OK`, 60--69%
+`WARNING`, 70--79% `MAINTENANCE_REQUIRED`, 80--89% `HARD_FAIL`, and 90%+
+`CRITICAL`. Deployment precheck refuses 80% or more. A post-retention result
+of 70% or more is not accepted. Host GC never uses volume prune and never
+touches `/data/docker` or `/data/containerd` directly.
+
+## Acceptance contract
+
+Every production deployment must record all of the following before it is
+accepted:
 
 ```text
-/data/docker             Docker metadata, containers, and named volumes
-/data/containerd         Docker image layers and BuildKit/containerd snapshots
-/data/myshop/uploads     Product and site uploads
-/data/myshop/private-uploads  Private after-sale evidence
-/data/myshop/ipdb        Official ip2region IPv4/IPv6 XDB files
-/data/myshop/backups     PostgreSQL backups
-/opt/myshop              Releases, Compose files, and runtime configuration
+SOURCE_SHA verified
+IMAGE_DIGEST verified
+compose project verified
+/data mount verified
+Docker/containerd roots verified
+transaction-created verified database backup
+health passed
+smoke passed
+schema contract passed
+state atomically committed
+application retention passed
+host storage lifecycle passed
+disk <70%
+active plus valid rollback set
 ```
 
-Configure Docker's `data-root` to `/data/docker` and set the production `.env`
-values `UPLOAD_HOST_PATH=/data/myshop/uploads`,
-`PRIVATE_UPLOAD_HOST_PATH=/data/myshop/private-uploads`, and
-`IP_GEO_HOST_PATH=/data/myshop/ipdb`. Do not create or depend on an
-`/opt/myshop/uploads` symlink. Set `DATA_DISK_MOUNTPOINT=/data` so the
-Dashboard reports the real data filesystem. Do not format an existing disk as
-part of a migration; verify its device, stable UUID, filesystem, mountpoint,
-and contents first, then copy Docker and application data while Docker is
-stopped. Retain a database backup before changing Docker's data root.
-
-Use a stable UUID entry in `/etc/fstab`, for example:
-
-```fstab
-UUID=<data-disk-uuid> /data ext4 defaults 0 2
-```
-
-Make Docker wait for the data disk with
-`/etc/systemd/system/docker.service.d/myshop-data.conf`:
-
-```ini
-[Unit]
-RequiresMountsFor=/data
-```
-
-Before every deployment, require all of the following to succeed:
-
-```bash
-findmnt -M /data
-docker info --format '{{.DockerRootDir}}' # must be /data/docker
-docker volume inspect myshop_postgres_data myshop_caddy_data myshop_caddy_config \
-  --format '{{.Name}} {{.Mountpoint}}' # each mountpoint must be under /data/docker/volumes
-bash /opt/myshop/current/scripts/myshop-compose.sh --env-file /opt/myshop/.env config
-```
-
-Never remove Docker volumes as part of a data-disk or schema migration. Verify
-that PostgreSQL and Caddy data remain available before continuing.
-
-## IP geography database updates
-
-The API uses the replaceable `IpLocationService` boundary and official
-ip2region Java binding. The API never downloads XDB data during startup. Run
-the repository's operator script from the deployment checkout to fetch the
-latest formal official release, verify non-empty IPv4 and IPv6 files with the
-binding, atomically replace both files, write `/data/myshop/ipdb/manifest`, and
-restart only the API so the new data is loaded:
-
-```bash
-bash ops/update-ip2region.sh
-```
-
-The script never touches PostgreSQL/Caddy volumes, uploads, backups, or the
-application source. If download or query validation fails, the existing XDB
-files remain in place. Set `RESTART_API=false` when a later controlled restart
-is preferred.
-
-## Dashboard server metrics
-
-The admin-only `GET /api/admin/dashboard/system-status` endpoint fetches the
-node-exporter text endpoint through `NODE_EXPORTER_URL` (the Compose default is
-`http://node-exporter:9100`). CPU usage is calculated from consecutive
-`node_cpu_seconds_total` counter samples; memory uses MemTotal minus
-MemAvailable; disk uses the real host root filesystem and excludes pseudo
-filesystems; data disk uses the real filesystem mounted at
-`DATA_DISK_MOUNTPOINT` (default `/data`); uptime comes from boot time and load
-from `node_load1`. If the configured data mountpoint is absent, the data disk
-metric is unavailable while the root disk metric remains independent.
-
-The endpoint also performs short best-effort checks for PostgreSQL (`SELECT 1`),
-Web (`http://web:3000/`), and a TCP connection to Caddy port 80. Every check is
-isolated: an unavailable exporter or service returns `available=false`, null
-metrics, or a `DOWN`/`UNKNOWN` status inside a successful JSON response. These
-checks are not a public health or metrics API.
-
-## Payment callback checklist
-
-- Set the canonical public storefront origin in `PUBLIC_SITE_URL`, aligned with `SITE_DOMAIN` and without a query or fragment.
-- Configure one enabled Epay-compatible channel with only `api_url` (支付网关), `pid` (商户号 / PID), and `key` (商户密钥 / KEY). A root gateway URL or explicit `submit.php` uses a browser Form POST to `submit.php`; explicit `mapi.php` or `pay/apisubmit` uses the server-side API POST. API `qrcode` / `qr_code` responses are always raw QR payloads rendered locally by the storefront, even when the value is an HTTP(S) URL. Valid HTTP(S) values in `payurl`, `payurl2`, `url`, or `pay_action_url` are top-level redirects, and `urlscheme` is a DeepLink. An HTML or non-JSON response from an explicitly configured API endpoint fails with guidance to configure the gateway root or `submit.php`; order queries use `/api.php` on the normalized gateway root.
-- The server generates the provider-generic callback route `/api/payments/webhook/{providerId}` and the storefront payment-result return page; no callback or return URL is entered in the admin UI.
-- Verify the generated callback route is reachable through Caddy while the API remains private.
-- Test a successful callback, wrong amount, bad signature, unpaid server query, query-unavailable policy, and duplicate webhook before accepting real orders.
-- Disabling, editing, or soft-deleting a channel blocks only new payment attempts. Existing attempts continue with their immutable provider/config/payment-type/channel snapshots.
-- Never put Epay keys in Compose files, Git, screenshots, or ordinary logs.
-
-## Delivery correctness
-
-The P0 invariant is all-or-nothing delivery. The payment transaction commits
-`PAID` and its webhook event first. A separate fulfillment transaction locks
-the order row, locks every requested available card-key pool with PostgreSQL
-`FOR UPDATE SKIP LOCKED`, verifies all quantities, and only then changes all
-keys and the order. A shortage throws and rolls back the earlier locks and
-mutations while leaving the committed order `PAID`. A one-minute scheduler
-retries a bounded batch of paid, undelivered orders after stock is restored.
-A second scheduler or compensation attempt waits on the order lock and then
-observes DELIVERED, so it cannot allocate a second set of keys. Fulfillment is
-started by the internal service and scheduler paths; it has no browser-facing
-fallback endpoint.
-
-The PostgreSQL integration tests cover automatic callback delivery without a
-browser request, duplicate callbacks, shortage rollback plus later retry,
-guest idempotency and session ownership, and two concurrent delivery/payment
-attempts.
-They require Docker because they start real PostgreSQL Testcontainers instances.
-
-## Authentication and sensitive data
-
-The API refuses to start when `JWT_SECRET` is missing, shorter than 64 bytes, or
-has obviously insufficient character diversity. Test configuration supplies a
-separate fixed test value; `application.yml` has no production fallback. Login
-and registration JSON contains only the public user profile. The JWT is created
-only as an internal result and written to an HttpOnly cookie by the controller.
-
-Guest ownership is bound to the browser session captured when the order is
-created. The session token is sent through the request header and must never be
-copied into admin exports, operation logs, exception messages, screenshots, or
-support bundles. A signed-in user cannot use authentication alone to access a
-guest order without that order's matching session.
-
-## Runtime support gate
-
-The API baseline is Java 25 LTS with Spring Boot 4.1.1. The web baseline is
-Next.js 16.3.3, upgraded to the official security release for the 16.3.x
-Active LTS line. The security-version upgrade is complete in this baseline;
-production deployment requires a successful CI run for the exact revision and
-explicit browser acceptance. After deployment, record the exact deployed
-revision in /opt/myshop/DEPLOYED_SHA.
-
-## Release deployment sequence
-
-Deploy the exact pushed SHA as a release snapshot; do not run production from
-a Git checkout. Before changing containers, record `/opt/myshop/DEPLOYED_SHA`,
-the `/opt/myshop/current` target, the active Compose labels, the existing
-`myshop_*` volumes and `myshop_internal` network, and a verified PostgreSQL
-custom backup. Extract the release to
-`/opt/myshop/releases/<full-sha>`, set the protected production `.env` image
-references to approved-registry `myshop-api:<full-sha>` and
-`myshop-web:<full-sha>`, and validate it
-from the SHA directory:
-
-```bash
-release=/opt/myshop/releases/<full-sha>
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env config
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env pull
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env up -d db node-exporter api web caddy
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
-```
-
-The rendered project must be `myshop`; the deployment must reuse
-`myshop_postgres_data`, `myshop_caddy_data`, `myshop_caddy_config`, and
-`myshop_internal`. It must not create resources named with the release SHA.
-After the services are healthy, atomically update `DEPLOYED_SHA` and
-`current`, perform the smoke/schema/health checks below, and only then run
-retention cleanup. Never delete or recreate the PostgreSQL volume as part of
-this sequence.
-
-## Post-release smoke, schema, and safety checks
-
-Run these checks with the same SHA-named release directory that started the
-containers. They deliberately avoid authentication credentials and real order
-identifiers. The first two checks validate the internal container health
-contracts; the public requests validate the Caddy-to-Web/API path:
-
-```bash
-release=/opt/myshop/releases/<full-sha>
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T api \
-  wget -q -O /dev/null http://127.0.0.1:8083/api/site/config
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T web \
-  wget -q -O /dev/null http://127.0.0.1:3000/
-public_url="$(awk -F= '/^PUBLIC_SITE_URL=/{print $2; exit}' /opt/myshop/.env)"
-curl --fail --silent --show-error --output /dev/null "$public_url/"
-curl --fail --silent --show-error --output /dev/null "$public_url/api/site/config"
-```
-
-Verify Flyway V28, V29, and V30 and their database contracts without printing
-credentials or card contents. The query must report one successful V28,
-one successful V29, and one successful V30 migration, the
-`users.avatar_url` column, the `orders.refunded_at` column, an
-`orders_status_check` constraint containing `AFTER_SALE`, the
-`order_items.product_cover_url` column, the
-`balance_transactions_refund_contract_check` constraint, the partial unique
-refund index, both after-sale tables, their core constraints, and the partial
-unique pending-request index, the conversation-message table and its
-attachment binding:
-
-```bash
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "
-    SELECT version, success FROM flyway_schema_history
-      WHERE version IN ('\''28'\'', '\''29'\'', '\''30'\'') AND success ORDER BY version;
-    SELECT to_regclass('\''public.users'\'') IS NOT NULL
-      AND EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_name = '\''users'\'' AND column_name = '\''avatar_url'\''
-                    AND is_nullable = '\''YES'\'' AND character_maximum_length = 500)
-      AND to_regclass('\''public.orders'\'') IS NOT NULL
-      AND EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_name = '\''orders'\'' AND column_name = '\''refunded_at'\'')
-      AND EXISTS (SELECT 1 FROM information_schema.columns
-                  WHERE table_name = '\''order_items'\'' AND column_name = '\''product_cover_url'\''
-                    AND is_nullable = '\''YES'\'')
-      AND EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = '\''orders_status_check'\''
-                    AND pg_get_constraintdef(oid) LIKE '\''%AFTER_SALE%'\'')
-      AND EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = '\''balance_transactions_refund_contract_check'\'')
-      AND EXISTS (SELECT 1 FROM pg_indexes
-                  WHERE indexname = '\''uq_balance_transactions_order_refund'\'')
-      AND EXISTS (SELECT 1 FROM pg_class
-                  WHERE relname = '\''card_key_reclaims'\'')
-      AND EXISTS (SELECT 1 FROM pg_constraint
-                  WHERE conname = '\''uq_card_key_reclaims_order_card_key'\'')
-      AND EXISTS (SELECT 1 FROM pg_indexes
-                  WHERE indexname = '\''idx_card_key_reclaims_order'\'')
-      AND to_regclass('\''public.after_sale_requests'\'') IS NOT NULL
-      AND to_regclass('\''public.after_sale_attachments'\'') IS NOT NULL
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''after_sale_requests'\''
-                     AND column_name = '\''source_order_status'\'')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''after_sale_requests'\''
-                     AND column_name = '\''rejection_reason'\'')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''after_sale_requests'\''
-                     AND column_name = '\''waiting_for'\'')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''after_sale_requests'\''
-                     AND column_name = '\''last_activity_at'\'')
-       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-                      WHERE table_name = '\''after_sale_requests'\''
-                        AND column_name = '\''admin_reply'\'')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''after_sale_attachments'\''
-                     AND column_name = '\''storage_key'\'')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''after_sale_attachments'\''
-                     AND column_name = '\''message_id'\'')
-       AND to_regclass('\''public.after_sale_messages'\'') IS NOT NULL
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''after_sale_messages'\''
-                     AND column_name IN ('\''request_id'\'', '\''sender_type'\'',
-                                         '\''sender_user_id'\'', '\''content'\'', '\''created_at'\''))
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''after_sale_requests_status_check'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''after_sale_requests_rejection_reason_check'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''after_sale_requests_waiting_for_check'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''after_sale_requests_source_status_check'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''after_sale_attachments_file_size_check'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''after_sale_attachments_message_request_fkey'\'')
-       AND EXISTS (SELECT 1 FROM pg_indexes
-                   WHERE indexname = '\''idx_after_sale_messages_request_created'\'')
-       AND EXISTS (SELECT 1 FROM pg_indexes
-                   WHERE indexname = '\''uq_after_sale_requests_pending_order'\''
-                     AND indexdef LIKE '\''%WHERE%PENDING%'\'')
-       AND EXISTS (SELECT 1 FROM pg_indexes
-                   WHERE indexname = '\''idx_after_sale_requests_pending_attention'\''
-                     AND indexdef LIKE '\''%WHERE%PENDING%'\'')
-       AND to_regclass('\''public.sales_channel_accounts'\'') IS NOT NULL
-       AND to_regclass('\''public.sales_channel_listings'\'') IS NOT NULL
-       AND to_regclass('\''public.sales_channel_listing_specs'\'') IS NOT NULL
-       AND to_regclass('\''public.sales_channel_operations'\'') IS NOT NULL
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''sales_channel_accounts'\''
-                     AND column_name = '\''provider_account_id'\''
-                     AND character_maximum_length = 128)
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''sales_channel_accounts'\''
-                     AND column_name = '\''capabilities'\'' AND data_type = '\''jsonb'\'')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''sales_channel_listings'\''
-                     AND column_name IN ('\''desired_revision'\'', '\''applied_revision'\'',
-                                         '\''provider_config'\''))
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''sales_channel_listing_specs'\''
-                     AND column_name = '\''product_spec_id'\'')
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                   WHERE table_name = '\''sales_channel_operations'\''
-                     AND column_name IN ('\''operation_type'\'', '\''idempotency_key'\'',
-                                         '\''next_attempt_at'\''))
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''uq_sales_channel_accounts_provider_account'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''uq_sales_channel_listings_account_product'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''uq_sales_channel_listing_specs_listing_spec'\'')
-       AND EXISTS (SELECT 1 FROM pg_constraint
-                   WHERE conname = '\''uq_sales_channel_operations_idempotency_key'\'')
-       AND EXISTS (SELECT 1 FROM pg_indexes
-                   WHERE indexname = '\''idx_sales_channel_operations_worker'\'')
-       AND EXISTS (SELECT 1 FROM pg_indexes
-                   WHERE indexname = '\''idx_sales_channel_operations_listing_revision'\'')
-       AND EXISTS (SELECT 1 FROM pg_indexes
-                   WHERE indexname = '\''uq_sales_channel_operations_running_listing'\''
-                     AND indexdef LIKE '\''%WHERE%RUNNING%'\'')
-       AND EXISTS (SELECT 1 FROM pg_trigger
-                   WHERE tgname = '\''trg_sales_channel_listings_revision_monotonic'\''
-                     AND NOT tgisinternal)
-       AND NOT EXISTS (SELECT 1 FROM information_schema.columns
-                       WHERE table_schema = '\''public'\''
-                         AND table_name IN ('\''products'\'', '\''product_specs'\'', '\''orders'\'')
-                         AND column_name LIKE '\''xianyu_%'\'');
-  "'
-```
-
-Finish the production safety-ablation check with a fixed UUID that is not an
-order identifier. Do not substitute a real order ID. Without an admin session,
-the refund endpoint must reject the request with HTTP 401 or 403 before any
-state change; a successful response is a deployment failure and must be
-investigated before retention cleanup:
-
-```bash
-probe_order_id=00000000-0000-4000-8000-000000000000
-status_code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-  --request POST --header 'Content-Type: application/json' \
-  --data '{"confirmed":true,"reason":"safe deployment negative probe"}' \
-  "$public_url/api/admin/orders/$probe_order_id/refund")"
-test "$status_code" = 401 || test "$status_code" = 403
-```
-
-This probe is only an authorization-boundary check. It is not a substitute for
-the dedicated CI/API refund tests, which cover optional reason normalization,
-guest rejection, terminal-state rejection, idempotency, balance/ledger
-constraints, safe card-key reclaim with rollback on anomalies, and concurrent
-refund, fulfillment, and payment transitions. Never perform a real production
-refund as part of a release smoke test.
-
-## Backup and rollback
-
-Before every schema or image change:
-
-```bash
-mkdir -p /data/myshop/backups
-release=/opt/myshop/current
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env exec -T db \
-  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' \
-  > /data/myshop/backups/myshop-$(date +%Y%m%d-%H%M%S).dump
-bash "$release/scripts/myshop-compose.sh" --env-file /opt/myshop/.env ps
-```
-
-Keep backups in `/data/myshop/backups`, outside the repository, and periodically
-perform a restore test into an isolated PostgreSQL instance. An application
-rollback is valid only when its SHA is already present in
-`/opt/myshop/deploy-state.json` and its image digest is recorded there; do not
-select a release by directory mtime or by a build-only tag. Use the same
-image-only deployment wrapper and run the full health, smoke, schema, digest,
-retention, and disk gates. Never roll back a database migration by deleting
-rows or editing Flyway history. A migration requiring rollback must ship a new
-forward migration after a reviewed backup.
-
-## Docker retention
-
-Production keeps exactly three application versions: the active version and
-the two most recent rollback candidates. The retention boundary applies to
-both `/opt/myshop/releases/<SHA>` directories and the matching
-`myshop-api:<SHA>`/`myshop-web:<SHA>` image tags.
-
-After every accepted deployment, run:
-
-```bash
-bash /opt/myshop/scripts/cleanup-docker-retention.sh
-```
-
-The script reads `/opt/myshop/deploy-state.json` and retains only its explicit
-active plus two accepted rollback SHAs; it never uses release mtime. It checks
-the running API/Web labels and image refs before removing only the MyShop image
-namespace and non-accepted SHA release directories. Malformed or missing state,
-ambiguous labels, a deployment lock, or a missing accepted image fail closed.
-It never prunes BuildKit, touches containerd, removes volumes, or affects Agent,
-PostgreSQL, Caddy, uploads, private uploads, or backups.
-
-Install `ops/systemd/myshop-docker-retention.service` and
-`ops/systemd/myshop-docker-retention.timer` on the production host as a daily
-fallback. Host-level BuildKit GC is separate at `/opt/host-ops/docker-maintenance.sh`
-and uses the same host deployment lock; application retention must not perform
-global builder cleanup.
-
-The release acceptance contract is: source SHA verified, exact image RepoDigest
-verified, canonical Compose project verified, `/data` mount and Docker/
-containerd roots verified, required database backup verified, health/smoke/schema
-checks passed, deployment state atomically committed, app retention passed, host
-storage health passed, data disk `<70%`, and active plus two accepted rollback
-images present. Missing any item means `DEPLOYMENT NOT ACCEPTED`.
-
-## Operational boundaries
-
-Production deployment is image-only and gate-driven; the CI/independent-builder
-path publishes immutable images and the production wrapper pulls them. Add
-other infrastructure only when measured load or reliability requirements
-justify it and after preserving the transaction boundaries described above.
+Missing any item means `DEPLOYMENT NOT ACCEPTED`. A healthy container by itself
+is not a successful deployment.

@@ -1,0 +1,11 @@
+[Unit]
+Description=MyShop and Xianyu Agent storage lifecycle orchestrator
+After=docker.service
+Requires=docker.service
+ConditionPathIsMountPoint=/data
+
+[Service]
+Type=oneshot
+ExecStart=/opt/host-ops/storage-lifecycle.sh
+User=root
+Group=root
