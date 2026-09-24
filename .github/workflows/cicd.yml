@@ -125,6 +125,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run storage lifecycle regression tests
         run: bash scripts/test-storage-lifecycle.sh
+      - name: Run deployment transaction regression tests
+        run: bash scripts/test-deployment-transaction.sh
       - name: Validate required Compose variables
         run: bash scripts/check-compose.sh
 

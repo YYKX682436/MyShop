@@ -18,7 +18,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 ROOT = Path(os.environ.get("MYSHOP_RUNTIME_ROOT", "/opt/myshop/runtime"))
-STATE = Path(os.environ.get("MYSHOP_DEPLOY_STATE", str(ROOT / "deploy-state.json")))
+DEFAULT_STATE = Path(os.environ.get("MYSHOP_DEPLOY_STATE", str(ROOT / "deploy-state.json")))
 LOCK = Path(os.environ.get("HOST_DEPLOY_LOCK_FILE", "/run/myshop-xianyu-deploy.lock"))
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -54,11 +54,11 @@ def record(value: object, label: str, services: set[str] = SERVICES) -> dict:
     return value
 
 
-def load_records() -> list[dict]:
-    if not STATE.is_file():
-        die(f"accepted deployment state is missing: {STATE}")
+def load_records(state_path: Path) -> list[dict]:
+    if not state_path.is_file():
+        die(f"accepted deployment state is missing: {state_path}")
     try:
-        state = json.loads(STATE.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
     except Exception as exc:
         die(f"malformed deployment state: {exc}")
     if not isinstance(state, dict) or state.get("version") != 1:
@@ -90,8 +90,13 @@ def image_matches(ref: str, expected_digest: str) -> tuple[str, bool]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--state-file")
+    parser.add_argument("--prospective", action="store_true")
     args = parser.parse_args()
-    records = load_records()
+    if args.prospective and not args.dry_run:
+        die("--prospective requires --dry-run")
+    state_path = Path(args.state_file) if args.state_file else DEFAULT_STATE
+    records = load_records(state_path)
     active = records[0]
 
     LOCK.parent.mkdir(parents=True, exist_ok=True)
@@ -130,16 +135,17 @@ def main() -> int:
                 accepted_ids.add(image_id)
 
         owned_repositories = repositories | {"myshop-api", "myshop-web"}
-        for service, expected in active["images"].items():
-            rows = docker("ps", "--filter", "label=com.docker.compose.project=myshop", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
-            matches = [line.split("|", 1) for line in rows.splitlines() if "|" in line]
-            if len(matches) != 1:
-                die(f"expected one active MyShop {service} container, found {len(matches)}")
-            if matches[0][1] != expected["ref"]:
-                die(f"active MyShop {service} image differs from state")
-            running_id = docker("inspect", "--format", "{{.Image}}", matches[0][0]).strip()
-            if running_id not in accepted_ids:
-                die(f"active MyShop {service} image ID is not protected")
+        if not args.prospective:
+            for service, expected in active["images"].items():
+                rows = docker("ps", "--filter", "label=com.docker.compose.project=myshop", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
+                matches = [line.split("|", 1) for line in rows.splitlines() if "|" in line]
+                if len(matches) != 1:
+                    die(f"expected one active MyShop {service} container, found {len(matches)}")
+                if matches[0][1] != expected["ref"]:
+                    die(f"active MyShop {service} image differs from state")
+                running_id = docker("inspect", "--format", "{{.Image}}", matches[0][0]).strip()
+                if running_id not in accepted_ids:
+                    die(f"active MyShop {service} image ID is not protected")
 
         rows = docker("image", "ls", "-a", "--no-trunc", "--format", "{{.Repository}}|{{.Tag}}|{{.ID}}").splitlines()
         for row in rows:
@@ -155,6 +161,16 @@ def main() -> int:
             print(f"[myshop-retention] {'would remove' if args.dry_run else 'remove'} image: {ref}")
             if not args.dry_run:
                 docker("image", "rm", ref)
+
+        # The accepted set is the post-commit invariant. Verify it after the
+        # deletion pass as well as before it; a partial Docker failure must be
+        # reported as maintenance failure and must never be repaired by
+        # restoring an older deployment state.
+        for item in records:
+            for image in item["images"].values():
+                _, matches = image_matches(image["ref"], image["digest"])
+                if not matches:
+                    die(f"accepted image disappeared or changed: {image['ref']}")
 
         print(docker("system", "df", "-v"), end="")
         print(subprocess.run(["df", "-h", "/data"], check=False, text=True, capture_output=True).stdout, end="")

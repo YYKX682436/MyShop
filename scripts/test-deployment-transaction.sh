@@ -3,6 +3,7 @@ set -Eeuo pipefail
 grep -Fq 'DEPLOY_TEST_FAIL' "$(dirname -- "$0")/deploy-production.sh"
 grep -Fq 'CRITICAL_ROLLBACK_FAILED' "$(dirname -- "$0")/deploy-production.sh"
 grep -Fq 'health-after-start' "$(dirname -- "$0")/deploy-production.sh"
+grep -Fq 'COMMIT POINT' "$(dirname -- "$0")/deploy-production.sh"
 python3 - <<'PY'
 from copy import deepcopy
 
@@ -40,3 +41,4 @@ result, state, running, promoted = transaction("post-storage", rollback_failure=
 assert result == "CRITICAL_ROLLBACK_FAILED" and state == old_state and running == old_running
 print("deployment transaction failure-injection regression passed: pull health smoke schema post-storage")
 PY
+bash "$(dirname -- "$0")/test-deployment-transaction-integration.sh"

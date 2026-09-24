@@ -17,6 +17,7 @@ HEALTH_SCRIPT=${HOST_STORAGE_HEALTH_SCRIPT:-/opt/host-ops/check-storage-health.s
 HOST_MAINTENANCE=${HOST_MAINTENANCE_SCRIPT:-/opt/host-ops/docker-maintenance.sh}
 HOST_LOCK=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-xianyu-deploy.lock}
 RUNTIME_CANDIDATES="$PROJECT_ROOT/candidates"
+MAINTENANCE_DIR=${MYSHOP_MAINTENANCE_DIR:-$PROJECT_ROOT/maintenance}
 
 [[ -f "$manifest" ]] || die "release manifest is missing: $manifest"
 [[ -f "$ENV_FILE" ]] || die "production environment file is missing: $ENV_FILE"
@@ -39,6 +40,7 @@ image_env_backup="$tmp_dir/accepted-images.env"
 state_existed=0
 image_env_existed=0
 candidate_started=0
+committed=0
 cleanup_tmp() { rm -rf -- "$tmp_dir"; }
 trap cleanup_tmp EXIT
 exec 9>"$HOST_LOCK"
@@ -191,6 +193,29 @@ prepare_bootstrap_rollback_refs() {
   done
 }
 
+verify_candidate_identity() {
+  for service in api web; do
+    container_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter "label=com.docker.compose.service=$service" -q | head -n 1)
+    [[ -n "$container_id" ]] || return 1
+    [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${candidate_ref[$service]}" ]] || return 1
+    image_id=$(docker inspect --format '{{.Image}}' "$container_id")
+    expected_id=$(docker image inspect --format '{{.Id}}' "${candidate_ref[$service]}") || return 1
+    [[ "$image_id" == "$expected_id" ]] || return 1
+    docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${candidate_ref[$service]}" \
+      | grep -F "@${candidate_digest[$service]}" >/dev/null || return 1
+  done
+}
+
+prepare_prospective_state() {
+  prospective_root="$tmp_dir/prospective"
+  prospective_state="$prospective_root/deploy-state.json"
+  mkdir -p -- "$prospective_root"
+  if (( state_existed )); then
+    cp -p -- "$state_backup" "$prospective_state"
+  fi
+  "$STATE_WRITER" "$prospective_state" "$manifest" >/dev/null
+}
+
 wait_health() {
   local project=$1
   for attempt in $(seq 1 30); do
@@ -279,21 +304,67 @@ finally:
 PY
 }
 
+write_maintenance_failure() {
+  local phase=$1 reason=${2:-$phase}
+  mkdir -p -- "$MAINTENANCE_DIR"
+  python3 - "$MAINTENANCE_DIR/$candidate_sha.failed.json" "$candidate_sha" "$phase" "$reason" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+payload = {
+    "version": 1,
+    "source_sha": sys.argv[2],
+    "accepted": True,
+    "maintenance_status": "FAILED",
+    "phase": sys.argv[3],
+    "failed_at": datetime.now(timezone.utc).isoformat(),
+    "reason": sys.argv[4],
+}
+path.parent.mkdir(parents=True, exist_ok=True)
+fd, temporary = tempfile.mkstemp(prefix=".maintenance-failure.", dir=path.parent)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
 restore_old() {
   rollback_state
   if (( ! state_existed && ! candidate_started )); then
     verify_baseline || return 1
+    unset DEPLOY_TEST_FAIL
     smoke || return 1
     return 0
   fi
   run_before_compose config --quiet || return 1
   run_before_compose up -d || return 1
   wait_health myshop || return 1
+  unset DEPLOY_TEST_FAIL
   smoke || return 1
 }
 
-failed() {
+pre_commit_fail() {
   local reason=$1
+  if (( committed )); then
+    post_commit_fail "$reason"
+  fi
   mark_failed "$reason"
   if restore_old; then
     printf 'DEPLOYMENT FAILED / ROLLED BACK source=%s reason=%s\n' "$candidate_sha" "$reason" >&2
@@ -303,44 +374,63 @@ failed() {
   exit 2
 }
 
-[[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || failed pull
-pull_candidate || failed pull
+post_commit_fail() {
+  local phase=$1
+  write_maintenance_failure "$phase" "$phase"
+  printf 'DEPLOYMENT ACCEPTED source=%s maintenance_status=FAILED phase=%s active_state=%s\n' \
+    "$candidate_sha" "$phase" "$STATE_FILE" >&2
+  exit 1
+}
+
+[[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || pre_commit_fail pull
+pull_candidate || pre_commit_fail pull
 # A fresh verified backup is part of this transaction, not an operator-supplied
 # path from an earlier deployment.  Pull and digest verification happen first,
 # so a registry failure cannot create backup churn without a candidate that can
 # actually be started.
-"$BACKUP_SCRIPT" "$active_sha" "$manifest" >/dev/null
-[[ "${DEPLOY_TEST_FAIL:-}" != health ]] || failed health
-run_compose config --quiet || failed compose
-run_compose pull || failed pull
-prepare_bootstrap_rollback_refs || failed bootstrap-rollback-prepare
+"$BACKUP_SCRIPT" "$active_sha" "$manifest" >/dev/null || pre_commit_fail backup
+[[ "${DEPLOY_TEST_FAIL:-}" != health ]] || pre_commit_fail health
+run_compose config --quiet || pre_commit_fail compose
+run_compose pull || pre_commit_fail pull
+prepare_bootstrap_rollback_refs || pre_commit_fail bootstrap-rollback-prepare
+[[ "${DEPLOY_TEST_FAIL:-}" != start ]] || pre_commit_fail start
 candidate_started=1
-run_compose up -d || failed start
-wait_health myshop || failed health
-[[ "${DEPLOY_TEST_FAIL:-}" != health-after-start ]] || failed health
-[[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || failed schema
-"$SCHEMA_SCRIPT" || failed schema
-smoke || failed smoke
+run_compose up -d || pre_commit_fail start
+wait_health myshop || pre_commit_fail health
+[[ "${DEPLOY_TEST_FAIL:-}" != health-after-start ]] || pre_commit_fail health-after-start
+[[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || pre_commit_fail schema
+"$SCHEMA_SCRIPT" || pre_commit_fail schema
+smoke || pre_commit_fail smoke
 post_candidate_status=0
 storage_gate || post_candidate_status=$?
-(( post_candidate_status < 4 )) || failed post-storage
+(( post_candidate_status < 4 )) || pre_commit_fail candidate-storage
 
-"$STATE_WRITER" "$STATE_FILE" "$manifest" >/dev/null || failed promote
-if [[ "${DEPLOY_TEST_FAIL:-}" == retention ]]; then
-  failed post-retention
-fi
-HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_DEPLOY_STATE="$STATE_FILE" MYSHOP_RETENTION_SCRIPT="$RETENTION" "$RETENTION" || failed post-retention
+# Running identity is part of the transactional phase. Promotion is not
+# allowed to precede this check because retention must never be asked to
+# protect an image that the running Compose service did not actually start.
+verify_candidate_identity || pre_commit_fail final-identity
+
+# Validate the post-commit accepted set before changing the production state.
+# The prospective state is written only below tmp_dir; the production state
+# and accepted-images.env remain untouched until the real commit point.
+prepare_prospective_state || pre_commit_fail retention-preflight
+HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" \
+  MYSHOP_RUNTIME_ROOT="$prospective_root" MYSHOP_DEPLOY_STATE="$prospective_state" \
+  "$RETENTION" --dry-run --state-file "$prospective_state" --prospective \
+  || pre_commit_fail retention-preflight
+
+# COMMIT POINT: write-deploy-state performs fsync plus atomic rename for the
+# accepted state and its derived image environment. Once it returns
+# successfully, application rollback is forbidden; only post-commit
+# maintenance may fail.
+"$STATE_WRITER" "$STATE_FILE" "$manifest" >/dev/null || pre_commit_fail promote
+committed=1
+printf 'DEPLOYMENT TRANSACTION COMMITTED source=%s active_state=%s\n' "$candidate_sha" "$STATE_FILE"
+
+# From this point onward the candidate is accepted. Maintenance failure is
+# observable and retryable, but must never restore an older application state.
+HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_DEPLOY_STATE="$STATE_FILE" MYSHOP_RETENTION_SCRIPT="$RETENTION" "$RETENTION" || post_commit_fail retention
 post_status=0
 storage_gate || post_status=$?
-(( post_status < 4 )) || failed post-storage
-
-for service in api web; do
-  container_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter "label=com.docker.compose.service=$service" -q | head -n 1)
-  [[ -n "$container_id" ]] || failed final-identity
-  [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${candidate_ref[$service]}" ]] || failed final-identity
-  image_id=$(docker inspect --format '{{.Image}}' "$container_id")
-  [[ "$image_id" == "$(docker image inspect --format '{{.Id}}' "${candidate_ref[$service]}")" ]] || failed final-identity
-  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${candidate_ref[$service]}" \
-    | grep -F "@${candidate_digest[$service]}" >/dev/null || failed final-identity
-done
+(( post_status < 4 )) || post_commit_fail post-storage
 printf 'DEPLOYMENT ACCEPTED source=%s active_state=%s post_storage_status=%s\n' "$candidate_sha" "$STATE_FILE" "$post_status"

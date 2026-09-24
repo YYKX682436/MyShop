@@ -121,4 +121,5 @@ PATH="$fake_bin:$PATH" FAKE_DOCKER_LOG="$fake_log" FAKE_ACTIVE_SHA="$sha3" FAKE_
 grep -Fq 'registry.example:5000/team/myshop-api:candidate' "$fake_log" || fail 'candidate was not selected'
 ! grep -Fq "$sha3" "$fake_log" || fail 'active image was selected'
 pass 'retention selects only own non-accepted image refs'
+bash "$repo_dir/scripts/test-storage-lifecycle-integration.sh"
 printf 'MyShop storage lifecycle regression tests passed\n'
