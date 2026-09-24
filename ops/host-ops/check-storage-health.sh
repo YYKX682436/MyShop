@@ -65,7 +65,10 @@ PY
 printf 'source_release_directories=disabled\n'
 
 if (( docker_available )); then
-  printf 'myshop_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0=="myshop-api" || $0=="myshop-web"' | wc -l
+  # Production images are immutable registry-qualified refs (for example
+  # ghcr.io/<namespace>/myshop-api:<sha>), so matching only the short local
+  # repository name under-counts every production MyShop image.
+  printf 'myshop_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0 ~ /(^|\/)myshop-(api|web)$/' | wc -l
   printf 'agent_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0 ~ /(^|\/)xianyu-agent-(backend-web|websocket|scheduler|frontend)$/' | wc -l
   printf 'build_cache='; docker system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' | awk -F'|' '$1=="Build Cache" {print $2 " (reclaimable " $3 ")"; found=1} END {if (!found) print "unknown"}'
 else

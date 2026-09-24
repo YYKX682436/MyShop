@@ -28,6 +28,7 @@ grep -Fq 'candidate_started=0' "$repo_dir/scripts/deploy-production.sh" || fail 
 grep -Fq '! state_existed && ! candidate_started' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap pre-start rollback is not fail-closed'
 grep -Fq 'prepare_bootstrap_rollback_refs' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap post-start rollback does not normalize legacy image refs'
 grep -Fq 'ENV_FILE=${MYSHOP_ENV_FILE:-/opt/myshop/.env}' "$repo_dir/scripts/deploy-production.sh" || fail 'production secret path is not separated from runtime artifacts'
+grep -Fq '(^|\/)myshop-(api|web)$' "$repo_dir/ops/host-ops/check-storage-health.sh" || fail 'storage health image count does not match registry-qualified MyShop repositories'
 pass 'static image-only/runtime/state/retention/orchestrator checks'
 
 sha1=$(printf 'a%.0s' {1..40})
