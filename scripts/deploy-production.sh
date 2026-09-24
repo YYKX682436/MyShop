@@ -80,7 +80,7 @@ PY
 }
 
 active_sha=bootstrap
-if state_existed; then
+if (( state_existed )); then
   while IFS=$'\t' read -r key value digest; do
     case "$key" in
       api|web) before_ref[$key]=$value; before_digest[$key]=$digest ;;
