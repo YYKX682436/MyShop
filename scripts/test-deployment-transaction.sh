@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 grep -Fq 'DEPLOY_TEST_FAIL' "$(dirname -- "$0")/deploy-production.sh"
 grep -Fq 'CRITICAL_ROLLBACK_FAILED' "$(dirname -- "$0")/deploy-production.sh"
+grep -Fq 'health-after-start' "$(dirname -- "$0")/deploy-production.sh"
 python3 - <<'PY'
 from copy import deepcopy
 

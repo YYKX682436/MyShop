@@ -317,6 +317,7 @@ prepare_bootstrap_rollback_refs || failed bootstrap-rollback-prepare
 candidate_started=1
 run_compose up -d || failed start
 wait_health myshop || failed health
+[[ "${DEPLOY_TEST_FAIL:-}" != health-after-start ]] || failed health
 [[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || failed schema
 "$SCHEMA_SCRIPT" || failed schema
 smoke || failed smoke
