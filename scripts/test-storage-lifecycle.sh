@@ -94,16 +94,18 @@ cat >"$fake_bin/docker" <<'DOCKER'
 set -Eeuo pipefail
 log=${FAKE_DOCKER_LOG:?}; active=${FAKE_ACTIVE_SHA:?}; digest=${FAKE_DIGEST:?}
 if [[ "$1" == ps && "$*" == *"--format"* ]]; then
-  [[ "$*" == *"service=api"* ]] && printf 'api-container\tregistry.example:5000/team/myshop-api:%s\n' "$active"
-  [[ "$*" == *"service=web"* ]] && printf 'web-container\tregistry.example:5000/team/myshop-web:%s\n' "$active"
+  [[ "$*" == *"service=api"* ]] && printf 'api-container|registry.example:5000/team/myshop-api:%s\n' "$active"
+  [[ "$*" == *"service=web"* ]] && printf 'web-container|registry.example:5000/team/myshop-web:%s\n' "$active"
 elif [[ "$1" == ps && "$2" == -aq ]]; then printf 'api-container\nweb-container\nstopped-container\n'
 elif [[ "$1" == inspect ]]; then case "${4:-}" in api-container|web-container) printf 'sha256:accepted\n';; stopped-container) printf 'sha256:stopped\n';; esac
-elif [[ "$1" == image && "$2" == inspect ]]; then target=${5:-}; printf 'sha256:accepted\nregistry.example:5000/team/%s@%s\n' "$(basename "${target%:*}")" "$digest"
+elif [[ "$1" == image && "$2" == inspect ]]; then
+  target=${5:-}
+  [[ "${4:-}" == "{{.Id}}" ]] && printf 'sha256:accepted\n' || printf 'registry.example:5000/team/%s@%s\n' "$(basename "${target%:*}")" "$digest"
 elif [[ "$1" == image && "$2" == ls ]]; then
-  printf 'registry.example:5000/team/myshop-api\t%s\tsha256:accepted\n' "$active"
-  printf 'registry.example:5000/team/myshop-api\tcandidate\tsha256:candidate\n'
-  printf 'registry.example:5000/team/myshop-web\t%s\tsha256:accepted\n' "$active"
-  printf 'registry.example:5000/team/myshop-web\tcandidate\tsha256:candidate-web\n'
+  printf 'registry.example:5000/team/myshop-api|%s|sha256:accepted\n' "$active"
+  printf 'registry.example:5000/team/myshop-api|candidate|sha256:candidate\n'
+  printf 'registry.example:5000/team/myshop-web|%s|sha256:accepted\n' "$active"
+  printf 'registry.example:5000/team/myshop-web|candidate|sha256:candidate-web\n'
 elif [[ "$1" == image && "$2" == rm ]]; then printf '%s\n' "$3" >>"$log"
 elif [[ "$1" == system && "$2" == df ]]; then printf 'fake docker system df\n'
 else exit 99; fi

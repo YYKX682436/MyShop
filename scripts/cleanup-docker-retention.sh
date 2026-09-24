@@ -80,12 +80,11 @@ def load_records() -> list[dict]:
 
 
 def image_matches(ref: str, expected_digest: str) -> tuple[str, bool]:
-    output = docker("image", "inspect", "--format", "{{.Id}}\t{{range .RepoDigests}}{{println .}}{{end}}", ref, check=False)
-    if not output.strip():
+    image_id = docker("image", "inspect", "--format", "{{.Id}}", ref, check=False).strip()
+    if not image_id:
         return "", False
-    lines = output.splitlines()
-    image_id = lines[0].strip()
-    return image_id, image_id == expected_digest or any(line.endswith("@" + expected_digest) for line in lines[1:])
+    repo_digests = docker("image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", ref, check=False)
+    return image_id, image_id == expected_digest or any(line.endswith("@" + expected_digest) for line in repo_digests.splitlines())
 
 
 def main() -> int:
@@ -132,8 +131,8 @@ def main() -> int:
 
         owned_repositories = repositories | {"myshop-api", "myshop-web"}
         for service, expected in active["images"].items():
-            rows = docker("ps", "--filter", "label=com.docker.compose.project=myshop", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}	{{.Image}}")
-            matches = [line.split("\t", 1) for line in rows.splitlines() if "\t" in line]
+            rows = docker("ps", "--filter", "label=com.docker.compose.project=myshop", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
+            matches = [line.split("|", 1) for line in rows.splitlines() if "|" in line]
             if len(matches) != 1:
                 die(f"expected one active MyShop {service} container, found {len(matches)}")
             if matches[0][1] != expected["ref"]:
@@ -142,9 +141,9 @@ def main() -> int:
             if running_id not in accepted_ids:
                 die(f"active MyShop {service} image ID is not protected")
 
-        rows = docker("image", "ls", "-a", "--no-trunc", "--format", "{{.Repository}}\t{{.Tag}}\t{{.ID}}").splitlines()
+        rows = docker("image", "ls", "-a", "--no-trunc", "--format", "{{.Repository}}|{{.Tag}}|{{.ID}}").splitlines()
         for row in rows:
-            fields = row.split("\t", 2)
+            fields = row.split("|", 2)
             if len(fields) != 3:
                 continue
             repo, tag, image_id = fields

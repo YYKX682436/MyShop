@@ -108,10 +108,10 @@ verify_baseline() {
     container_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter "label=com.docker.compose.service=$service" -q | head -n 1)
     [[ -n "$container_id" ]] || return 1
     [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${before_ref[$service]}" ]] || return 1
-    output=$(docker image inspect --format '{{.Id}}\t{{range .RepoDigests}}{{println .}}{{end}}' "${before_ref[$service]}" 2>/dev/null) || return 1
-    first=$(printf '%s\n' "$output" | head -n 1)
-    [[ "$first" == "${before_digest[$service]}" ]] && continue
-    printf '%s\n' "$output" | tail -n +2 | grep -F "@${before_digest[$service]}" >/dev/null || return 1
+    image_id=$(docker image inspect --format '{{.Id}}' "${before_ref[$service]}" 2>/dev/null) || return 1
+    [[ "$image_id" == "${before_digest[$service]}" ]] && continue
+    docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${before_ref[$service]}" 2>/dev/null \
+      | grep -F "@${before_digest[$service]}" >/dev/null || return 1
   done
 }
 verify_baseline || die 'running production does not match the accepted baseline image refs/digests'
@@ -142,9 +142,11 @@ esac
 "$BACKUP_SCRIPT" "$active_sha" "$manifest" >/dev/null
 
 verify_remote_digest() {
-  local ref=$1 expected=$2 output
-  output=$(docker image inspect --format '{{.Id}}\t{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null) || return 1
-  printf '%s\n' "$output" | tail -n +2 | grep -F "@$expected" >/dev/null
+  local ref=$1 expected=$2 image_id
+  image_id=$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null) || return 1
+  [[ "$image_id" == "$expected" ]] && return 0
+  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null \
+    | grep -F "@$expected" >/dev/null
 }
 
 pull_candidate() {
