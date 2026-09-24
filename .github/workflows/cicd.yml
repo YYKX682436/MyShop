@@ -127,6 +127,8 @@ jobs:
         run: bash scripts/test-storage-lifecycle.sh
       - name: Run deployment transaction regression tests
         run: bash scripts/test-deployment-transaction.sh
+      - name: Run production schema contract regression tests
+        run: bash scripts/test-production-schema-contract.sh
       - name: Validate required Compose variables
         run: bash scripts/check-compose.sh
 

@@ -26,7 +26,9 @@ for table, columns in contract["tables"].items():
             raise SystemExit(f"unsafe column: {table}.{column}")
 print("SELECT 'flyway_failures=' || COUNT(*) FROM flyway_schema_history WHERE success = false;")
 print("SELECT 'flyway_count=' || COUNT(*) FROM flyway_schema_history WHERE type = 'SQL';")
-print("SELECT 'flyway_latest=' || COALESCE(MAX(version), '') FROM flyway_schema_history WHERE type = 'SQL';")
+# Flyway stores version as text. A lexical MAX reports `9` after `33`, which
+# would reject a valid production schema even though all migrations succeeded.
+print("SELECT 'flyway_latest=' || COALESCE(MAX(version::bigint)::text, '') FROM flyway_schema_history WHERE type = 'SQL';")
 for table, columns in contract["tables"].items():
     print(f"SELECT 'table={table}' WHERE to_regclass('public.{table}') IS NOT NULL;")
     for column in columns:
