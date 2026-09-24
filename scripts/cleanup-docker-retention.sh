@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 ROOT = Path(os.environ.get("MYSHOP_RUNTIME_ROOT", "/opt/myshop/runtime"))
@@ -95,11 +96,13 @@ def main() -> int:
     active = records[0]
 
     LOCK.parent.mkdir(parents=True, exist_ok=True)
-    with LOCK.open("a+") as lock:
-        try:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            die("deployment/maintenance lock is held")
+    lock_context = nullcontext(None) if os.environ.get("HOST_DEPLOY_LOCK_HELD") == "1" else LOCK.open("a+")
+    with lock_context as lock:
+        if lock is not None:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                die("deployment/maintenance lock is held")
 
         running_ids: set[str] = set()
         for container_id in docker("ps", "-aq").splitlines():

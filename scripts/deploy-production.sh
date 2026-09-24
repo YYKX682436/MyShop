@@ -258,7 +258,7 @@ storage_gate || post_candidate_status=$?
 if [[ "${DEPLOY_TEST_FAIL:-}" == retention ]]; then
   failed post-retention
 fi
-MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_DEPLOY_STATE="$STATE_FILE" MYSHOP_RETENTION_SCRIPT="$RETENTION" "$RETENTION" || failed post-retention
+HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_DEPLOY_STATE="$STATE_FILE" MYSHOP_RETENTION_SCRIPT="$RETENTION" "$RETENTION" || failed post-retention
 post_status=0
 storage_gate || post_status=$?
 (( post_status < 4 )) || failed post-storage
