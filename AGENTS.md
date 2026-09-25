@@ -10,6 +10,7 @@
 - 修改完成后必须依次完成：本地验证、push `main`、精确 SHA 的 CI 全绿、部署该精确 SHA，以及生产 smoke/schema/health 验收。
 - 管理员验收凭据从本地环境变量 `MYSHOP_ADMIN_USERNAME` 和 `MYSHOP_ADMIN_PASSWORD` 读取。
 - 普通用户验收凭据从本地环境变量 `MYSHOP_TEST_USERNAME` 和 `MYSHOP_TEST_PASSWORD` 读取。
+- Windows 本地管理员账户凭据从本地环境变量 `WINDOWS_ADMIN_USERNAME` 和 `WINDOWS_ADMIN_PASSWORD` 读取，仅用于本机需要管理员权限的操作。
 - 凭据不得写入仓库、日志或文档。
 - 修改完成后进行安全消融实验
 - 代码处理干净利落不留后患
