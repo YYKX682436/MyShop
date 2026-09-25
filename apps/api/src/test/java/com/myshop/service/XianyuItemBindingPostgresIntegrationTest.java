@@ -64,6 +64,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
@@ -291,12 +292,12 @@ class XianyuItemBindingPostgresIntegrationTest {
         assertEquals(404, productError.getHttpStatus().value());
         assertEquals(0, count("SELECT count(*) FROM sales_channel_listings"));
 
-        when(providerClient.queryItems(any())).thenAnswer(invocation -> {
+        doAnswer(invocation -> {
             ItemsQueryCommand command = invocation.getArgument(0);
             CatalogItem other = catalogItem(command.accountId(), "different-item");
             return new IntegrationEnvelope<>("not-found", Outcome.SUCCEEDED,
                     new ItemsQueryData(List.of(other), 1, 100, 1L, 1), null);
-        });
+        }).when(providerClient).queryItems(any(ItemsQueryCommand.class));
         BusinessException itemError = assertThrows(BusinessException.class,
                 () -> bindingService.link(fixture.account().getId(), "phase2b-item-not-found", fixture.product().getId()));
         assertEquals(ErrorCode.XIANYU_ITEM_NOT_FOUND, itemError.getCode());
@@ -509,12 +510,12 @@ class XianyuItemBindingPostgresIntegrationTest {
     }
 
     private void stubExactCatalog() {
-        when(providerClient.queryItems(any())).thenAnswer(invocation -> {
+        doAnswer(invocation -> {
             ItemsQueryCommand command = invocation.getArgument(0);
             return new IntegrationEnvelope<>("query-" + UUID.randomUUID(), Outcome.SUCCEEDED,
                     new ItemsQueryData(List.of(catalogItem(command.accountId(), command.keyword())),
                             1, 100, 1L, 1), null);
-        });
+        }).when(providerClient).queryItems(any(ItemsQueryCommand.class));
     }
 
     private CatalogItem catalogItem(String accountId, String itemId) {
