@@ -45,10 +45,11 @@ jobs:
             target/surefire-reports/TEST-com.myshop.service.impl.AfterSaleConcurrencyIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.SalesChannelDomainIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.SalesChannelPhase4PostgresIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.XianyuItemBindingPostgresIntegrationTest.xml
           )
           rm -f "${reports[@]}"
           mvn -B \
-            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,OrderRefundConcurrencyIntegrationTest,PostgresDeliveryIntegrationTest,AfterSaleConcurrencyIntegrationTest,SalesChannelDomainIntegrationTest,SalesChannelPhase4PostgresIntegrationTest \
+            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,OrderRefundConcurrencyIntegrationTest,PostgresDeliveryIntegrationTest,AfterSaleConcurrencyIntegrationTest,SalesChannelDomainIntegrationTest,SalesChannelPhase4PostgresIntegrationTest,com.myshop.service.XianyuItemBindingPostgresIntegrationTest \
             -Dsurefire.failIfNoSpecifiedTests=true \
             test
 

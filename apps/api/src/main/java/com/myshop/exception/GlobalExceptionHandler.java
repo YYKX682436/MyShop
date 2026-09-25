@@ -111,6 +111,16 @@ public class GlobalExceptionHandler {
                     .body(ApiResponse.error(ErrorCode.USERNAME_EXISTS,
                             "用户名已存在"));
         }
+        if (detail.contains("uq_sales_channel_listings_account_external_item")) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.error(ErrorCode.ITEM_ALREADY_LINKED,
+                            "该闲鱼商品已关联其它 MyShop 商品"));
+        }
+        if (detail.contains("uq_sales_channel_listings_account_product")) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.error(ErrorCode.PRODUCT_ALREADY_LINKED,
+                            "该 MyShop 商品已关联其它闲鱼商品"));
+        }
         log.warn("Data integrity violation");
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "数据校验失败"));

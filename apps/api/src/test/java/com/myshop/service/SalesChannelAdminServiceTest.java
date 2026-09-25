@@ -17,6 +17,7 @@ import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
@@ -34,6 +35,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.service.impl.SalesChannelAccountServiceImpl;
 import com.myshop.service.impl.SalesChannelListingServiceImpl;
+import com.myshop.service.XianyuItemBindingService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -69,6 +71,7 @@ class SalesChannelAdminServiceTest {
     @Mock private SalesChannelDesiredStatePlanner planner;
     @Mock private SalesChannelAccountRepository accountRepository;
     @Mock private SalesChannelListingRepository listingRepository;
+    @Mock private SalesChannelOperationRepository operationRepository;
     @Mock private ObjectMapper objectMapper;
     @Mock private ProductRepository productRepository;
     @Mock private ProductSpecRepository productSpecRepository;
@@ -80,6 +83,7 @@ class SalesChannelAdminServiceTest {
     @Mock private SalesChannelDeliveryOperationRepository deliveryOperationRepository;
     @Mock private OrderRepository orderRepository;
     @Mock private OrderItemRepository orderItemRepository;
+    @Mock private XianyuItemBindingService itemBindingService;
 
     @InjectMocks private SalesChannelAdminService service;
 

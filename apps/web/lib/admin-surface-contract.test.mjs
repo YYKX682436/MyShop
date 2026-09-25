@@ -171,7 +171,7 @@ test("product editor keeps segmented tabs without the extra underline", () => {
   assert.match(productTabs, /segmented-control-item/)
 })
 
-test("Xianyu catalog is reached from MyShop admin and exposes only browse and manual refresh controls", () => {
+test("Xianyu catalog exposes safe manual identity linking without platform takeover controls", () => {
   assert.match(adminSidebar, /href: "\/admin\/xianyu\/items", icon: Package/)
   assert.match(xianyuItems, /title="闲鱼商品" description="查看并同步闲鱼账号中的商品。"/)
   assert.match(xianyuItems, /adminSalesChannelApi\.getXianyuItems\(/)
@@ -181,5 +181,14 @@ test("Xianyu catalog is reached from MyShop admin and exposes only browse and ma
   assert.match(xianyuItems, /闲鱼登录已失效，请先重新登录账号。/)
   assert.match(xianyuItems, /href="\/admin\/xianyu\/accounts"/)
   assert.match(xianyuItems, /LINKED|UNLINKED|CONFLICT/)
-  assert.doesNotMatch(xianyuItems, /iframe|立即关联|解除绑定|createListing|updateXianyuListing/)
+  assert.match(xianyuItems, /getXianyuLinkCandidates\(/)
+  assert.match(xianyuItems, /bindXianyuItem\(/)
+  assert.match(xianyuItems, /关联商品/)
+  assert.match(xianyuItems, /本操作只建立 MyShop 与该闲鱼商品的本地关联关系。不会修改闲鱼商品/)
+  assert.match(xianyuItems, /setTimeout\(\(\) => \{[\s\S]*setDebouncedCandidateKeyword\(candidateKeyword\.trim\(\)\)[\s\S]*\}, 300\)/)
+  assert.match(xianyuItems, /candidatePageSize\] = useState\(10\)/)
+  const confirmation = xianyuItems.match(/const confirmBinding = async \(\) => \{[\s\S]*?\n  \}/)?.[0] || ""
+  assert.match(confirmation, /bindingSubmitting/)
+  assert.doesNotMatch(confirmation, /syncXianyuItems/)
+  assert.doesNotMatch(xianyuItems, /iframe|解除绑定|重新绑定|batchBind|createListing|updateXianyuListing/)
 })

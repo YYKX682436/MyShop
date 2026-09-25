@@ -26,6 +26,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
@@ -35,6 +36,9 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSpecMappingSum
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuCatalogItemSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBinding;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBindingResponse;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuLinkCandidate;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuLinkCandidatesPage;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemsPage;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemSyncSummary;
 import com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities;
@@ -65,8 +69,10 @@ import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
 import com.myshop.service.impl.SalesChannelAccountServiceImpl;
 import com.myshop.service.impl.SalesChannelListingServiceImpl;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -78,6 +84,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Locale;
 
 /** Admin-only orchestration. Agent credentials and session data never cross this API boundary. */
 @Service
@@ -90,6 +97,7 @@ public class SalesChannelAdminService {
     private final SalesChannelDesiredStatePlanner planner;
     private final SalesChannelAccountRepository accountRepository;
     private final SalesChannelListingRepository listingRepository;
+    private final SalesChannelOperationRepository operationRepository;
     private final ObjectMapper objectMapper;
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
@@ -101,6 +109,7 @@ public class SalesChannelAdminService {
     private final SalesChannelDeliveryOperationRepository deliveryOperationRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
+    private final XianyuItemBindingService itemBindingService;
 
     public List<AccountSummary> accounts() {
         return accountRepository.findAll().stream().filter(account -> account.getProvider() == SalesChannelProvider.XIANYU)
@@ -161,6 +170,52 @@ public class SalesChannelAdminService {
                 safeInt(data.pages(), 0), Boolean.TRUE.equals(data.skipped()));
     }
 
+    public XianyuLinkCandidatesPage queryXianyuLinkCandidates(UUID accountId, String itemId,
+                                                               int page, int pageSize, String keyword) {
+        SalesChannelAccount account = findEnabledXianyuAccount(accountId);
+        if (blank(itemId)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "闲鱼商品 ID 不能为空");
+        }
+        if (page < 1 || pageSize < 1 || pageSize > 100) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "商品候选分页参数无效");
+        }
+
+        String normalizedKeyword = keyword == null ? null : keyword.trim();
+        Long productNo = parseProductNo(normalizedKeyword);
+        PageRequest pageable = PageRequest.of(page - 1, pageSize,
+                ProductListSort.resolve("sort_weight", "desc"));
+        Page<Product> productPage = normalizedKeyword != null && !normalizedKeyword.isBlank()
+                ? productRepository.findAdminProductsByKeyword(null,
+                        "%" + normalizedKeyword.toLowerCase(Locale.ROOT) + "%",
+                        productNo, null, pageable)
+                : productRepository.findAdminProducts(null, null, pageable);
+
+        List<UUID> productIds = productPage.getContent().stream().map(Product::getId).toList();
+        List<SalesChannelListing> listings = productIds.isEmpty() ? List.of()
+                : listingRepository.findBySalesChannelAccountIdAndProductIdIn(accountId, productIds);
+        Map<UUID, SalesChannelListing> listingByProduct = listings.stream()
+                .collect(java.util.stream.Collectors.toMap(SalesChannelListing::getProductId,
+                        value -> value, (left, right) -> left));
+        Set<UUID> listingIds = listings.stream().map(SalesChannelListing::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<UUID> operationListingIds = listingIds.isEmpty() ? Set.of()
+                : operationRepository.findListingIdsWithOperations(listingIds);
+        Set<UUID> orderListingIds = listingIds.isEmpty() ? Set.of()
+                : channelOrderRepository.findListingIdsWithOrders(listingIds);
+
+        List<XianyuLinkCandidate> candidates = productPage.getContent().stream()
+                .map(product -> linkCandidate(product, itemId, listingByProduct.get(product.getId()),
+                        operationListingIds, orderListingIds))
+                .toList();
+        return new XianyuLinkCandidatesPage(account.getId().toString(), itemId, candidates,
+                productPage.getNumber() + 1, productPage.getSize(), productPage.getTotalElements(),
+                productPage.getTotalPages());
+    }
+
+    public XianyuItemBindingResponse linkXianyuItem(UUID accountId, String itemId, UUID productId) {
+        return itemBindingService.link(accountId, itemId, productId);
+    }
+
     private SalesChannelAccount findEnabledXianyuAccount(UUID accountId) {
         SalesChannelAccount account = accountRepository.findById(accountId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND,
@@ -196,7 +251,7 @@ public class SalesChannelAdminService {
         List<XianyuItemBinding> bindings = matches.stream().map(listing -> {
             Product product = products.get(listing.getProductId());
             return new XianyuItemBinding(listing.getId().toString(), listing.getProductId().toString(),
-                    product == null ? null : product.getTitle());
+                    product == null ? null : product.getTitle(), listing.getManagementMode().name());
         }).toList();
         boolean linked = matches.size() == 1;
         boolean conflict = matches.size() > 1;
@@ -206,10 +261,55 @@ public class SalesChannelAdminService {
                 safeInt(item.skuCount(), 0), Boolean.TRUE.equals(item.multiSpec()),
                 Boolean.TRUE.equals(item.sellerItem()), item.catalogCreatedAt(), item.catalogUpdatedAt(),
                 conflict ? "CONFLICT" : linked ? "LINKED" : "UNLINKED",
+                binding == null ? null : matches.get(0).getManagementMode().name(),
                 binding == null ? null : binding.listingId(),
                 binding == null ? null : binding.productId(),
                 binding == null ? null : binding.productTitle(),
                 bindings);
+    }
+
+    private XianyuLinkCandidate linkCandidate(Product product, String itemId,
+                                               SalesChannelListing listing,
+                                               Set<UUID> operationListingIds,
+                                               Set<UUID> orderListingIds) {
+        if (listing == null) {
+            return new XianyuLinkCandidate(product.getId().toString(), product.getProductNo(),
+                    product.getTitle(), product.isEnabled(), "AVAILABLE", null, null, null, null);
+        }
+        String existingListingId = listing.getId().toString();
+        String existingExternalItemId = listing.getExternalItemId();
+        String managementMode = listing.getManagementMode().name();
+        if (itemId.equals(existingExternalItemId)) {
+            return new XianyuLinkCandidate(product.getId().toString(), product.getProductNo(),
+                    product.getTitle(), product.isEnabled(), "ALREADY_LINKED_THIS_ITEM",
+                    existingListingId, existingExternalItemId, managementMode,
+                    "ALREADY_LINKED_THIS_ITEM");
+        }
+        if (!blank(existingExternalItemId)) {
+            return new XianyuLinkCandidate(product.getId().toString(), product.getProductNo(),
+                    product.getTitle(), product.isEnabled(), "LINKED_TO_OTHER_ITEM",
+                    existingListingId, existingExternalItemId, managementMode,
+                    "LINKED_TO_OTHER_ITEM");
+        }
+        boolean safe = !listing.isEnabled() && !listing.isAutoFulfillmentEnabled()
+                && listing.getDesiredState() == com.myshop.constant.SalesChannelListingDesiredState.OFFLINE
+                && (listing.getStatus() == com.myshop.constant.SalesChannelListingStatus.DRAFT
+                || listing.getStatus() == com.myshop.constant.SalesChannelListingStatus.OFFLINE)
+                && !operationListingIds.contains(listing.getId())
+                && !orderListingIds.contains(listing.getId());
+        return new XianyuLinkCandidate(product.getId().toString(), product.getProductNo(),
+                product.getTitle(), product.isEnabled(), safe ? "AVAILABLE" : "LISTING_NOT_LINKABLE",
+                existingListingId, existingExternalItemId, managementMode,
+                safe ? null : "LISTING_NOT_LINKABLE");
+    }
+
+    private Long parseProductNo(String keyword) {
+        if (keyword == null || !keyword.matches("\\d+")) return null;
+        try {
+            return Long.valueOf(keyword);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     private int safeInt(Integer value, int fallback) { return value == null ? fallback : value; }
@@ -416,7 +516,8 @@ public class SalesChannelAdminService {
         SalesChannelAccount account = findAccount(listing.getSalesChannelAccountId());
         XianyuProviderConfig config = objectMapper.convertValue(listing.getProviderConfig(), XianyuProviderConfig.class);
         return new ListingSummary(listing.getId().toString(), account.getProviderAccountId(),
-                account.getDisplayName(), accountType(account), listing.isEnabled(), listing.isAutoFulfillmentEnabled(), listing.getStatus().name(),
+                account.getDisplayName(), accountType(account), listing.getManagementMode().name(),
+                listing.isEnabled(), listing.isAutoFulfillmentEnabled(), listing.getStatus().name(),
                 listing.getExternalItemId(), listing.getDesiredRevision(), listing.getLastSyncedAt(),
                 listing.getLastErrorCode(), listing.getLastErrorMessage(), config, specMappingSummaries(listing));
     }
@@ -479,6 +580,11 @@ public class SalesChannelAdminService {
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException("Product does not exist"));
         if (enabled) {
+            if (listing.getManagementMode()
+                    == com.myshop.constant.SalesChannelListingManagementMode.LINKED_ONLY) {
+                throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
+                        "仅关联的闲鱼商品不属于 MyShop 管理范围", HttpStatus.CONFLICT);
+            }
             if (listing.getExternalItemId() == null || listing.getExternalItemId().isBlank()) {
                 throw new IllegalStateException("Only a MyShop-managed listing with an external item can enable auto fulfillment");
             }

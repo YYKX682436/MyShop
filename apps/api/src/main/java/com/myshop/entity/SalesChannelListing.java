@@ -1,6 +1,7 @@
 package com.myshop.entity;
 
 import com.myshop.constant.SalesChannelListingDesiredState;
+import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -36,6 +37,11 @@ public class SalesChannelListing extends BaseEntity {
 
     @Column(name = "external_item_id", length = 128)
     private String externalItemId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "management_mode", nullable = false, length = 32)
+    @Setter
+    private SalesChannelListingManagementMode managementMode = SalesChannelListingManagementMode.MANAGED;
 
     @Column(name = "is_enabled", nullable = false)
     private boolean enabled;

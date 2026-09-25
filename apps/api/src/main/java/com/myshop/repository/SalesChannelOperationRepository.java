@@ -12,6 +12,8 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Collection;
+import java.util.Set;
 import java.util.UUID;
 
 public interface SalesChannelOperationRepository extends JpaRepository<SalesChannelOperation, UUID> {
@@ -22,6 +24,12 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
             UUID listingId, long desiredRevision);
 
     List<SalesChannelOperation> findBySalesChannelListingIdOrderByCreatedAtAsc(UUID listingId);
+
+    boolean existsBySalesChannelListingId(UUID listingId);
+
+    @Query("SELECT DISTINCT operation.salesChannelListingId FROM SalesChannelOperation operation "
+            + "WHERE operation.salesChannelListingId IN :listingIds")
+    Set<UUID> findListingIdsWithOperations(@Param("listingIds") Collection<UUID> listingIds);
 
     boolean existsBySalesChannelListingIdAndStatus(UUID listingId, SalesChannelOperationStatus status);
 

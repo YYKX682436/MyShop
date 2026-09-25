@@ -16,6 +16,9 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartRes
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemsPage;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemSyncSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.BindXianyuItemRequest;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBindingResponse;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuLinkCandidatesPage;
 import com.myshop.service.SalesChannelAdminService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -56,6 +59,28 @@ public class AdminSalesChannelController {
             @RequestParam(defaultValue = "") String keyword) {
         return ApiResponse.success(salesChannelAdminService.queryXianyuItems(
                 accountId, page, pageSize, keyword));
+    }
+
+    @GetMapping("/admin/xianyu/accounts/{accountId}/items/{itemId}/link-candidates")
+    public ApiResponse<XianyuLinkCandidatesPage> xianyuLinkCandidates(
+            @PathVariable UUID accountId,
+            @PathVariable String itemId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(defaultValue = "") String keyword) {
+        return ApiResponse.success(salesChannelAdminService.queryXianyuLinkCandidates(
+                accountId, itemId, page, pageSize, keyword));
+    }
+
+    @LogOperation(action = "sales_channel.item_link", targetType = "SALES_CHANNEL_ITEM",
+            targetId = "#itemId", detail = "'人工关联闲鱼商品与 MyShop 商品'")
+    @PutMapping("/admin/xianyu/accounts/{accountId}/items/{itemId}/binding")
+    public ApiResponse<XianyuItemBindingResponse> bindXianyuItem(
+            @PathVariable UUID accountId,
+            @PathVariable String itemId,
+            @Valid @RequestBody BindXianyuItemRequest request) {
+        return ApiResponse.success(salesChannelAdminService.linkXianyuItem(
+                accountId, itemId, request.productId()));
     }
 
     @PostMapping("/admin/xianyu/accounts/{accountId}/items/sync")

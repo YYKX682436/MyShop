@@ -44,7 +44,7 @@ class SalesChannelAdminDtosJsonTest {
     @Test
     void listingSummaryUsesCamelCaseForFieldsConsumedByTheAdminUi() {
         ListingSummary summary = new ListingSummary("listing-id", "provider-id", "Test shop",
-                "FISH_SHOP", false, false, "PENDING", "item-1", 3L,
+                "FISH_SHOP", "MANAGED", false, false, "PENDING", "item-1", 3L,
                 LocalDateTime.of(2026, 9, 21, 12, 0), "", "", null, java.util.List.of());
 
         JsonNode json = objectMapper.valueToTree(summary);

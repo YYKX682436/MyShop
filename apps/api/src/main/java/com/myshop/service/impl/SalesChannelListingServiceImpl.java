@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.SalesChannelListingDesiredState;
+import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelListing;
@@ -74,6 +75,9 @@ public class SalesChannelListingServiceImpl {
         if (Objects.equals(listing.getProviderConfig(), normalized)) return listing;
 
         listing.setProviderConfig(normalized);
+        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) {
+            return listingRepository.saveAndFlush(listing);
+        }
         listing.incrementDesiredRevision();
         return saveRevisionAndSupersedePending(listing);
     }
@@ -82,6 +86,11 @@ public class SalesChannelListingServiceImpl {
     public SalesChannelListing setDesiredState(UUID listingId, SalesChannelListingDesiredState desiredState) {
         Objects.requireNonNull(desiredState, "desiredState is required");
         SalesChannelListing listing = lockListing(listingId);
+        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) {
+            throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
+                    "仅关联的闲鱼商品不属于 MyShop 管理范围",
+                    org.springframework.http.HttpStatus.CONFLICT);
+        }
         if (listing.getDesiredState() == desiredState) return listing;
 
         listing.setDesiredState(desiredState);

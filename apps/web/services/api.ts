@@ -566,6 +566,7 @@ export interface XianyuItemBindingSummary {
   listingId: string
   productId: string
   productTitle?: string | null
+  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
 }
 
 export interface XianyuCatalogItemSummary {
@@ -581,6 +582,7 @@ export interface XianyuCatalogItemSummary {
   catalogCreatedAt?: string | null
   catalogUpdatedAt?: string | null
   bindingState: "LINKED" | "UNLINKED" | "CONFLICT"
+  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
   listingId?: string | null
   productId?: string | null
   productTitle?: string | null
@@ -604,6 +606,37 @@ export interface XianyuItemSyncSummary {
   skipped: boolean
 }
 
+export interface XianyuLinkCandidate {
+  productId: string
+  productNo: number
+  title: string
+  isEnabled: boolean
+  eligibility: "AVAILABLE" | "ALREADY_LINKED_THIS_ITEM" | "LINKED_TO_OTHER_ITEM" | "LISTING_NOT_LINKABLE"
+  existingListingId?: string | null
+  existingExternalItemId?: string | null
+  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
+  reasonCode?: string | null
+}
+
+export interface XianyuLinkCandidatesPage {
+  accountId: string
+  itemId: string
+  candidates: XianyuLinkCandidate[]
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+}
+
+export interface XianyuItemBindingResponse {
+  itemId: string
+  listingId: string
+  productId: string
+  productTitle: string
+  managementMode: "MANAGED" | "LINKED_ONLY"
+  result: "LINKED" | "ALREADY_LINKED"
+}
+
 export interface SalesChannelSpecMappingSummary {
   productSpecId: string
   productSpecName: string
@@ -617,6 +650,7 @@ export interface SalesChannelListingSummary {
   providerAccountId: string
   displayName?: string | null
   accountType?: "FISH_SHOP" | "PERSONAL" | "UNKNOWN" | string | null
+  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
   isEnabled: boolean
   autoFulfillmentEnabled?: boolean
   status: string
@@ -750,6 +784,15 @@ export const adminSalesChannelApi = {
     request<SalesChannelAccountSummary[]>("/admin/xianyu/accounts"),
   getXianyuItems: (params: { accountId: string; page?: number; pageSize?: number; keyword?: string }) =>
     request<XianyuItemsPage>(`/admin/xianyu/items?${buildQuery(params)}`),
+  getXianyuLinkCandidates: (accountId: string, itemId: string, params: { page?: number; pageSize?: number; keyword?: string }) =>
+    request<XianyuLinkCandidatesPage>(
+      `/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/${encodeURIComponent(itemId)}/link-candidates?${buildQuery(params)}`,
+    ),
+  bindXianyuItem: (accountId: string, itemId: string, productId: string) =>
+    request<XianyuItemBindingResponse>(
+      `/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/${encodeURIComponent(itemId)}/binding`,
+      { method: "PUT", body: JSON.stringify({ productId }) },
+    ),
   syncXianyuItems: (accountId: string) =>
     request<XianyuItemSyncSummary>(`/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/sync`, {
       method: "POST",

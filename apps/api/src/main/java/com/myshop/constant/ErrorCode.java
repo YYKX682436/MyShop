@@ -70,4 +70,11 @@ public final class ErrorCode {
     public static final int PRICE_OVERRIDE_CONFLICT = 70010;
     public static final int CARD_KEY_UNAVAILABLE = 70011;
     public static final int PAYMENT_CHANNEL_HAS_PENDING_ORDERS = 70012;
+
+    // ── Sales-channel admin 71001~71099 ──
+    public static final int XIANYU_ITEM_NOT_FOUND = 71001;
+    public static final int ITEM_ALREADY_LINKED = 71002;
+    public static final int PRODUCT_ALREADY_LINKED = 71003;
+    public static final int LISTING_NOT_LINKABLE = 71004;
+    public static final int LINKED_ITEM_NOT_MANAGED = 71005;
 }

@@ -19,6 +19,12 @@ public interface SalesChannelOrderRepository extends JpaRepository<SalesChannelO
     Optional<SalesChannelOrder> findByProviderAndSalesChannelAccountIdAndExternalOrderNo(
             SalesChannelProvider provider, UUID accountId, String externalOrderNo);
 
+    boolean existsBySalesChannelListingId(UUID listingId);
+
+    @Query("SELECT DISTINCT row.salesChannelListingId FROM SalesChannelOrder row "
+            + "WHERE row.salesChannelListingId IN :listingIds")
+    java.util.Set<UUID> findListingIdsWithOrders(@Param("listingIds") Collection<UUID> listingIds);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT row FROM SalesChannelOrder row WHERE row.id = :id")
     Optional<SalesChannelOrder> findByIdForUpdate(@Param("id") UUID id);

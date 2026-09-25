@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
@@ -52,6 +53,7 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("catalogCreatedAt") String catalogCreatedAt,
             @JsonProperty("catalogUpdatedAt") String catalogUpdatedAt,
             @JsonProperty("bindingState") String bindingState,
+            @JsonProperty("managementMode") String managementMode,
             @JsonProperty("listingId") String listingId,
             @JsonProperty("productId") String productId,
             @JsonProperty("productTitle") String productTitle,
@@ -61,7 +63,43 @@ public final class SalesChannelAdminDtos {
     public record XianyuItemBinding(
             @JsonProperty("listingId") String listingId,
             @JsonProperty("productId") String productId,
-            @JsonProperty("productTitle") String productTitle) { }
+            @JsonProperty("productTitle") String productTitle,
+            @JsonProperty("managementMode") String managementMode) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuLinkCandidate(
+            @JsonProperty("productId") String productId,
+            @JsonProperty("productNo") Long productNo,
+            @JsonProperty("title") String title,
+            @JsonProperty("isEnabled") boolean enabled,
+            @JsonProperty("eligibility") String eligibility,
+            @JsonProperty("existingListingId") String existingListingId,
+            @JsonProperty("existingExternalItemId") String existingExternalItemId,
+            @JsonProperty("managementMode") String managementMode,
+            @JsonProperty("reasonCode") String reasonCode) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuLinkCandidatesPage(
+            @JsonProperty("accountId") String accountId,
+            @JsonProperty("itemId") String itemId,
+            @JsonProperty("candidates") List<XianyuLinkCandidate> candidates,
+            @JsonProperty("page") int page,
+            @JsonProperty("pageSize") int pageSize,
+            @JsonProperty("total") long total,
+            @JsonProperty("totalPages") int totalPages) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record BindXianyuItemRequest(
+            @JsonProperty("productId") @NotNull UUID productId) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuItemBindingResponse(
+            @JsonProperty("itemId") String itemId,
+            @JsonProperty("listingId") String listingId,
+            @JsonProperty("productId") String productId,
+            @JsonProperty("productTitle") String productTitle,
+            @JsonProperty("managementMode") String managementMode,
+            @JsonProperty("result") String result) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuItemSyncSummary(
@@ -77,6 +115,7 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("providerAccountId") String providerAccountId,
             @JsonProperty("displayName") String displayName,
             @JsonProperty("accountType") String accountType,
+            @JsonProperty("managementMode") String managementMode,
             @JsonProperty("isEnabled") Boolean isEnabled,
             @JsonProperty("autoFulfillmentEnabled") Boolean autoFulfillmentEnabled,
             @JsonProperty("status") String status,
