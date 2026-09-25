@@ -3,6 +3,7 @@ package com.myshop.service;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelOrderCursor;
+import com.myshop.exception.UnmanagedSalesChannelItemException;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
@@ -77,6 +78,9 @@ public class SalesChannelOrderSyncWorker {
             for (AgentOrder order : data.orders() == null ? List.<AgentOrder>of() : data.orders()) {
                 try {
                     importService.importOrder(account, order);
+                } catch (UnmanagedSalesChannelItemException ignored) {
+                    log.info("sales_channel_order_ignored_unmanaged_item accountId={} externalItemId={} externalOrderNo={} reason=LINKED_ONLY",
+                            ignored.getAccountId(), ignored.getExternalItemId(), ignored.getExternalOrderNo());
                 } catch (RuntimeException exception) {
                     importService.persistImportFailure(account, order, "IMPORT_ERROR", "External order could not be persisted safely");
                 }

@@ -8,6 +8,7 @@ import com.myshop.constant.PricingSource;
 import com.myshop.constant.SalesChannelOrderDeliveryStatus;
 import com.myshop.constant.SalesChannelOrderIngestStatus;
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.Product;
@@ -16,6 +17,7 @@ import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.entity.SalesChannelOrder;
+import com.myshop.exception.UnmanagedSalesChannelItemException;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.ProductRepository;
@@ -26,6 +28,7 @@ import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -48,6 +51,7 @@ import java.util.UUID;
 /** Imports already-paid provider orders without reusing the storefront checkout path. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SalesChannelOrderImportService {
 
     private final ObjectMapper objectMapper;
@@ -69,6 +73,8 @@ public class SalesChannelOrderImportService {
         if (external == null || external.externalOrderNo() == null || external.externalOrderNo().isBlank()) {
             throw new IllegalArgumentException("External order number is required");
         }
+        SalesChannelListing listing = resolveListing(account, external);
+        rejectUnmanagedItem(account, external, listing);
         String fingerprint = fingerprint(account.getProvider(), null, external);
         SalesChannelOrder row = channelOrderRepository
                 .findByProviderAndSalesChannelAccountIdAndExternalOrderNo(
@@ -103,7 +109,7 @@ public class SalesChannelOrderImportService {
             row.setLastErrorMessage("Phase 4 only imports pending_ship as an automatic fulfillment entry point");
             return row;
         }
-        return mapAndCreate(account, external, row);
+        return mapAndCreate(account, external, row, listing);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -112,6 +118,11 @@ public class SalesChannelOrderImportService {
         if (external == null || external.externalOrderNo() == null || external.externalOrderNo().isBlank()) return;
         account = accountRepository.findByIdForUpdate(account.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Sales-channel account does not exist"));
+        SalesChannelListing listing = resolveListing(account, external);
+        if (isUnmanagedItem(listing)) {
+            logIgnoredUnmanagedItem(account, external);
+            return;
+        }
         SalesChannelOrder row = channelOrderRepository
                 .findByProviderAndSalesChannelAccountIdAndExternalOrderNo(
                         account.getProvider(), account.getId(), external.externalOrderNo())
@@ -150,10 +161,7 @@ public class SalesChannelOrderImportService {
     }
 
     private SalesChannelOrder mapAndCreate(SalesChannelAccount account, AgentOrder external,
-                                           SalesChannelOrder row) {
-        SalesChannelListing listing = listingRepository
-                .findBySalesChannelAccountIdAndExternalItemId(account.getId(), external.itemId())
-                .orElse(null);
+                                           SalesChannelOrder row, SalesChannelListing listing) {
         if (listing == null) {
             return mappingError(row, "LISTING_NOT_FOUND", "No MyShop listing matches the provider item");
         }
@@ -196,6 +204,30 @@ public class SalesChannelOrderImportService {
         channelOrderRepository.save(row);
         triggerAfterCommit(row, order.getId());
         return row;
+    }
+
+    private SalesChannelListing resolveListing(SalesChannelAccount account, AgentOrder external) {
+        String externalItemId = external == null ? null : blankToNull(external.itemId());
+        if (externalItemId == null) return null;
+        return listingRepository
+                .findBySalesChannelAccountIdAndExternalItemId(account.getId(), externalItemId)
+                .orElse(null);
+    }
+
+    private void rejectUnmanagedItem(SalesChannelAccount account, AgentOrder external,
+                                     SalesChannelListing listing) {
+        if (!isUnmanagedItem(listing)) return;
+        throw new UnmanagedSalesChannelItemException(account.getId(), external.itemId(), external.externalOrderNo());
+    }
+
+    private boolean isUnmanagedItem(SalesChannelListing listing) {
+        return listing != null
+                && listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY;
+    }
+
+    private void logIgnoredUnmanagedItem(SalesChannelAccount account, AgentOrder external) {
+        log.info("sales_channel_order_ignored_unmanaged_item accountId={} externalItemId={} externalOrderNo={} reason=LINKED_ONLY",
+                account.getId(), external.itemId(), external.externalOrderNo());
     }
 
     private Order createOrder(AgentOrder external, Product product, ProductSpec spec) {

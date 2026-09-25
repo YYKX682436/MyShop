@@ -6,6 +6,7 @@ import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelDeliveryOperationStatus;
 import com.myshop.constant.SalesChannelDeliveryOperationType;
 import com.myshop.constant.SalesChannelListingDesiredState;
+import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOrderDeliveryStatus;
 import com.myshop.constant.SalesChannelProvider;
@@ -14,12 +15,15 @@ import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.entity.SalesChannelOrder;
+import com.myshop.entity.SalesChannelOrderCursor;
 import com.myshop.exception.SalesChannelSpecMappingException;
+import com.myshop.exception.UnmanagedSalesChannelItemException;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
+import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -29,6 +33,8 @@ import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderChangesData;
+import com.myshop.saleschannel.model.SalesChannelDtos.OrderCursor;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSpecification;
@@ -99,6 +105,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelOrderRepository channelOrderRepository;
+
+    @Autowired
+    private SalesChannelOrderCursorRepository cursorRepository;
 
     @Autowired
     private SalesChannelDeliveryOperationRepository deliveryOperationRepository;
@@ -187,6 +196,104 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(3, count("select count(*) from card_keys where order_id = ? and status = 'SOLD'", first.getOrderId()));
         assertEquals(3, scalar("select quantity from order_items where order_id = ?", Integer.class, first.getOrderId()));
         assertEquals(listing.getId(), first.getSalesChannelListingId());
+    }
+
+    @Test
+    void linkedOnlyPendingShipOrderIsIgnoredBeforeAnyOrderDomainMutation() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("linked-only-pending");
+        linkedOnlyListing(account, productId, "item-linked-only-pending");
+        UUID cardId = insertCard(productId, null, "linked-only-pending-card");
+        AgentOrder external = order(account, "xy-linked-only-pending", "item-linked-only-pending",
+                null, null, 1, "10.00");
+
+        UnmanagedSalesChannelItemException ignored = assertThrows(UnmanagedSalesChannelItemException.class,
+                () -> importService.importOrder(account, external));
+
+        assertEquals(account.getId(), ignored.getAccountId());
+        assertEquals("item-linked-only-pending", ignored.getExternalItemId());
+        assertEquals("xy-linked-only-pending", ignored.getExternalOrderNo());
+        assertEquals(0, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-linked-only-pending"));
+        assertEquals(0, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-linked-only-pending"));
+        assertEquals(0, count("select count(*) from order_items where order_id in "
+                + "(select id from orders where idempotency_key = ?)",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-linked-only-pending"));
+        assertEquals(1, count("select count(*) from card_keys where id = ? and status = 'AVAILABLE'", cardId));
+    }
+
+    @Test
+    void linkedOnlyNonPendingShipOrderIsIgnoredBeforeUnsupportedRowCreation() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("linked-only-completed");
+        linkedOnlyListing(account, productId, "item-linked-only-completed");
+        AgentOrder external = new AgentOrder(account.getProviderAccountId(), "xy-linked-only-completed",
+                "completed", "item-linked-only-completed", null, null, null, 1, "10.00", "CNY",
+                "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z");
+
+        assertThrows(UnmanagedSalesChannelItemException.class, () -> importService.importOrder(account, external));
+        assertEquals(0, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-linked-only-completed"));
+        assertEquals(0, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-linked-only-completed"));
+    }
+
+    @Test
+    void persistImportFailureIsFailClosedForLinkedOnlyItem() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("linked-only-failure");
+        linkedOnlyListing(account, productId, "item-linked-only-failure");
+        AgentOrder external = order(account, "xy-linked-only-failure", "item-linked-only-failure",
+                null, null, 1, "10.00");
+
+        importService.persistImportFailure(account, external, "IMPORT_ERROR", "should not persist");
+
+        assertEquals(0, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-linked-only-failure"));
+        assertEquals(0, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-linked-only-failure"));
+    }
+
+    @Test
+    void workerSkipsLinkedOnlyOrderAndImportsManagedOrderFromSamePage() {
+        UUID linkedProductId = insertProduct(false);
+        UUID managedProductId = insertProduct(false);
+        SalesChannelAccount account = account("linked-only-worker-page");
+        account.setOrderSyncEnabled(true);
+        accountRepository.saveAndFlush(account);
+        linkedOnlyListing(account, linkedProductId, "item-linked-only-worker");
+        listing(account, managedProductId, "item-managed-worker", false);
+
+        SalesChannelOrderCursor cursor = new SalesChannelOrderCursor();
+        cursor.setProvider(SalesChannelProvider.XIANYU);
+        cursor.setSalesChannelAccountId(account.getId());
+        cursor.setCursorUpdatedAt(LocalDateTime.of(2026, 9, 25, 0, 0));
+        cursor.setCursorId(1L);
+        cursor.setInitializedAt(LocalDateTime.of(2026, 9, 25, 0, 0));
+        cursorRepository.saveAndFlush(cursor);
+
+        AgentOrder linkedOrder = order(account, "xy-linked-only-worker", "item-linked-only-worker",
+                null, null, 1, "10.00");
+        AgentOrder managedOrder = order(account, "xy-managed-worker", "item-managed-worker",
+                null, null, 1, "11.00");
+        when(providerClient.getOrderChanges(any())).thenReturn(new IntegrationEnvelope<>(
+                "order-page-linked-only-worker", Outcome.SUCCEEDED,
+                new OrderChangesData(List.of(linkedOrder, managedOrder),
+                        new OrderCursor("2026-09-25T00:00:01Z", 2L), false), null));
+
+        new SalesChannelOrderSyncWorker(accountRepository, cursorRepository, providerClient, importService).poll();
+
+        assertEquals(0, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-linked-only-worker"));
+        assertEquals(1, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-managed-worker"));
+        assertEquals(0, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-linked-only-worker"));
+        assertEquals(1, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-managed-worker"));
+        assertEquals(2L, scalar("select cursor_id from sales_channel_order_cursors "
+                + "where sales_channel_account_id = ?", Long.class, account.getId()));
     }
 
     @Test
@@ -1025,6 +1132,17 @@ class SalesChannelPhase4PostgresIntegrationTest {
         listing.setDesiredState(SalesChannelListingDesiredState.ONLINE);
         listing.setStatus(SalesChannelListingStatus.ONLINE);
         listing.setProviderConfig(Map.of());
+        return listingRepository.saveAndFlush(listing);
+    }
+
+    private SalesChannelListing linkedOnlyListing(SalesChannelAccount account, UUID productId,
+                                                  String externalItemId) {
+        SalesChannelListing listing = listing(account, productId, externalItemId, false);
+        listing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
+        listing.setEnabled(false);
+        listing.setAutoFulfillmentEnabled(false);
+        listing.setDesiredState(SalesChannelListingDesiredState.OFFLINE);
+        listing.setStatus(SalesChannelListingStatus.DRAFT);
         return listingRepository.saveAndFlush(listing);
     }
 
