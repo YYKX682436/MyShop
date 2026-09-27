@@ -39,7 +39,8 @@ public class XianyuItemBindingService {
         return transactionService.link(accountId, itemId, productId);
     }
 
-    private void verifyExactCatalogItem(SalesChannelAccount account, String requestedItemId) {
+    /** Shared exact account/item catalog proof used by link and takeover. */
+    void verifyExactCatalogItem(SalesChannelAccount account, String requestedItemId) {
         IntegrationEnvelope<ItemsQueryData> response = providerClient.queryItems(
                 new ItemsQueryCommand(account.getProviderAccountId(), 1, 100, requestedItemId));
         if (response == null || response.outcome() != Outcome.SUCCEEDED || response.data() == null) {

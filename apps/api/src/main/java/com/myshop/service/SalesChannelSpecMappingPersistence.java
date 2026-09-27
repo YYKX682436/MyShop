@@ -1,6 +1,7 @@
 package com.myshop.service;
 
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
@@ -63,7 +64,7 @@ public class SalesChannelSpecMappingPersistence {
                 .toList();
         return new ListingSpecSyncSnapshot(listing.getId(), listing.getSalesChannelAccountId(),
                 account.getProviderAccountId(), listing.getProductId(), listing.getExternalItemId(),
-                listing.getDesiredRevision(), productSpecs, existingMappings);
+                listing.getManagementMode(), listing.getDesiredRevision(), productSpecs, existingMappings);
     }
 
     /**
@@ -172,6 +173,7 @@ public class SalesChannelSpecMappingPersistence {
             String providerAccountId,
             UUID productId,
             String externalItemId,
+            SalesChannelListingManagementMode managementMode,
             long desiredRevision,
             List<SalesChannelSpecMappingValidator.ProductSpecSnapshot> productSpecs,
             List<SalesChannelSpecMappingValidator.ExistingMappingSnapshot> existingMappings) { }

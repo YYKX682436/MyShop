@@ -1,6 +1,7 @@
 package com.myshop.service;
 
 import com.myshop.constant.CardKeyStatus;
+import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelDeliveryOperationStatus;
@@ -9,6 +10,7 @@ import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOrderDeliveryStatus;
+import com.myshop.constant.SalesChannelOrderIngestStatus;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelDeliveryOperation;
@@ -16,6 +18,7 @@ import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.entity.SalesChannelOrderCursor;
+import com.myshop.exception.BusinessException;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.exception.UnmanagedSalesChannelItemException;
 import com.myshop.repository.SalesChannelAccountRepository;
@@ -24,6 +27,7 @@ import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
+import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -31,12 +35,15 @@ import com.myshop.service.impl.AutoFulfillmentServiceImpl;
 import com.myshop.service.impl.FulfillmentTransactionService;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
+import com.myshop.saleschannel.model.SalesChannelDtos.CatalogItem;
 import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
 import com.myshop.saleschannel.model.SalesChannelDtos.OrderChangesData;
 import com.myshop.saleschannel.model.SalesChannelDtos.OrderCursor;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
+import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
+import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSpecification;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSpecificationValue;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSkuRow;
@@ -110,6 +117,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
     private SalesChannelOrderCursorRepository cursorRepository;
 
     @Autowired
+    private SalesChannelOperationRepository operationRepository;
+
+    @Autowired
     private SalesChannelDeliveryOperationRepository deliveryOperationRepository;
 
     @Autowired
@@ -117,6 +127,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelSpecMappingSyncService specMappingSyncService;
+
+    @Autowired
+    private XianyuItemTakeoverService takeoverService;
 
     @Autowired
     private FulfillmentTransactionService fulfillmentService;
@@ -170,6 +183,105 @@ class SalesChannelPhase4PostgresIntegrationTest {
         registry.add("sales-channel.worker.enabled", () -> false);
         registry.add("sales-channel.order-sync.enabled", () -> false);
         registry.add("sales-channel.delivery.worker-enabled", () -> false);
+    }
+
+    @Test
+    void takeoverUnknownLeavesPendingAndSameClaimRetryFinalizesWithoutOperationOrRevisionMutation() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("takeover-recovery");
+        String itemId = "item-takeover-recovery";
+        SalesChannelListing listing = linkedOnlyListing(account, productId, itemId);
+        long revision = listing.getDesiredRevision();
+        String desiredFingerprint = listing.getDesiredFingerprint();
+
+        when(providerClient.queryItems(any())).thenReturn(new IntegrationEnvelope<>(
+                "catalog-read", Outcome.SUCCEEDED,
+                new ItemsQueryData(List.of(new CatalogItem(account.getProviderAccountId(), itemId,
+                        "takeover item", "10.00", 1, "online", 0, false, true, null, null)),
+                        1, 100, 1L, 1), null));
+        when(providerClient.inspectItemSpecMappings(any())).thenReturn(new IntegrationEnvelope<>(
+                "spec-read", Outcome.SUCCEEDED,
+                new ListingSpecMappingsData(itemId, List.of(), List.of(), true), null));
+        when(providerClient.claimOwnership(any())).thenReturn(
+                new IntegrationEnvelope<>("claim-unknown", Outcome.UNKNOWN, null, null),
+                new IntegrationEnvelope<>(null, Outcome.SUCCEEDED,
+                        new OwnershipClaimData(account.getProviderAccountId(), itemId,
+                                "MYSHOP", "ALREADY_CLAIMED"), null));
+
+        var pending = takeoverService.takeover(account.getId(), itemId);
+
+        assertEquals("TAKEOVER_PENDING", pending.result());
+        SalesChannelListing afterPending = listingRepository.findById(listing.getId()).orElseThrow();
+        assertEquals(SalesChannelListingManagementMode.TAKEOVER_PENDING, afterPending.getManagementMode());
+        assertEquals(revision, afterPending.getDesiredRevision());
+        assertEquals(desiredFingerprint, afterPending.getDesiredFingerprint());
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).size());
+
+        var completed = takeoverService.takeover(account.getId(), itemId);
+
+        assertEquals("TAKEOVER_COMPLETED", completed.result());
+        SalesChannelListing finalListing = listingRepository.findById(listing.getId()).orElseThrow();
+        assertEquals(SalesChannelListingManagementMode.MANAGED, finalListing.getManagementMode());
+        assertEquals(SalesChannelListingStatus.DRAFT, finalListing.getStatus());
+        assertEquals(SalesChannelListingDesiredState.OFFLINE, finalListing.getDesiredState());
+        assertFalse(finalListing.isEnabled());
+        assertFalse(finalListing.isAutoFulfillmentEnabled());
+        assertEquals(revision, finalListing.getDesiredRevision());
+        assertEquals(desiredFingerprint, finalListing.getDesiredFingerprint());
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).size());
+        verify(providerClient, org.mockito.Mockito.times(2)).claimOwnership(any());
+    }
+
+    @Test
+    void takeoverSpecMismatchFailsBeforeClaimAndKeepsLinkedOnly() {
+        UUID productId = insertProduct(true);
+        UUID productSpecId = insertProductSpec(productId, "规格");
+        SalesChannelAccount account = account("takeover-spec-mismatch");
+        String itemId = "item-takeover-spec-mismatch";
+        SalesChannelListing listing = linkedOnlyListing(account, productId, itemId);
+        insertListingSpec(listing, productSpecId);
+
+        when(providerClient.queryItems(any())).thenReturn(new IntegrationEnvelope<>(
+                "catalog-read", Outcome.SUCCEEDED,
+                new ItemsQueryData(List.of(new CatalogItem(account.getProviderAccountId(), itemId,
+                        "spec item", "10.00", 2, "online", 2, true, true, null, null)),
+                        1, 100, 1L, 1), null));
+        when(providerClient.inspectItemSpecMappings(any())).thenReturn(new IntegrationEnvelope<>(
+                "spec-read", Outcome.SUCCEEDED,
+                new ListingSpecMappingsData(itemId,
+                        List.of(
+                                new SpecMappingSpecification("颜色", List.of(
+                                        new SpecMappingSpecificationValue("黑"))),
+                                new SpecMappingSpecification("尺码", List.of(
+                                        new SpecMappingSpecificationValue("大")))),
+                        List.of(), false), null));
+
+        BusinessException failure = assertThrows(BusinessException.class,
+                () -> takeoverService.takeover(account.getId(), itemId));
+
+        assertEquals(ErrorCode.TAKEOVER_NOT_ALLOWED, failure.getCode());
+        assertEquals(SalesChannelListingManagementMode.LINKED_ONLY,
+                listingRepository.findById(listing.getId()).orElseThrow().getManagementMode());
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).size());
+        verify(providerClient, never()).claimOwnership(any());
+    }
+
+    @Test
+    void takeoverMissingCostFailsBeforeAnyAgentClaim() {
+        UUID productId = insertProduct(false);
+        jdbcTemplate.update("update products set cost_price = null where id = ?", productId);
+        SalesChannelAccount account = account("takeover-cost-missing");
+        String itemId = "item-takeover-cost-missing";
+        SalesChannelListing listing = linkedOnlyListing(account, productId, itemId);
+
+        BusinessException failure = assertThrows(BusinessException.class,
+                () -> takeoverService.takeover(account.getId(), itemId));
+
+        assertEquals(ErrorCode.TAKEOVER_NOT_ORDER_READY, failure.getCode());
+        assertEquals(SalesChannelListingManagementMode.LINKED_ONLY,
+                listingRepository.findById(listing.getId()).orElseThrow().getManagementMode());
+        verify(providerClient, never()).queryItems(any());
+        verify(providerClient, never()).claimOwnership(any());
     }
 
     @Test
@@ -256,13 +368,52 @@ class SalesChannelPhase4PostgresIntegrationTest {
     }
 
     @Test
+    void takeoverPendingOrderIsImportedButCannotRequestFulfillmentOrConsumeCards() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("takeover-pending-order");
+        SalesChannelListing listing = pendingListing(account, productId, "item-takeover-pending-order", true);
+        UUID cardId = insertCard(productId, null, "takeover-pending-card");
+
+        SalesChannelOrder imported = importService.importOrder(account,
+                order(account, "xy-takeover-pending-order", "item-takeover-pending-order",
+                        null, null, 1, "10.00"));
+
+        assertEquals(SalesChannelOrderIngestStatus.IMPORTED, imported.getIngestStatus());
+        assertFalse(imported.isAutoFulfillmentRequested());
+        assertEquals(SalesChannelOrderDeliveryStatus.NOT_READY, imported.getDeliveryStatus());
+        assertEquals(0, count("select count(*) from sales_channel_delivery_operations where sales_channel_order_id = ?",
+                imported.getId()));
+        assertEquals(1, count("select count(*) from card_keys where id = ? and status = 'AVAILABLE'", cardId));
+        assertEquals(SalesChannelListingManagementMode.TAKEOVER_PENDING,
+                listingRepository.findById(listing.getId()).orElseThrow().getManagementMode());
+    }
+
+    @Test
+    void persistImportFailureRecordsTakeoverPendingOrderFacts() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("takeover-pending-failure");
+        pendingListing(account, productId, "item-takeover-pending-failure", false);
+        AgentOrder external = order(account, "xy-takeover-pending-failure",
+                "item-takeover-pending-failure", null, null, 1, "10.00");
+
+        importService.persistImportFailure(account, external, "IMPORT_ERROR", "spec mapping unavailable");
+
+        assertEquals(1, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-takeover-pending-failure"));
+        assertEquals("IMPORT_ERROR", scalar("select last_error_code from sales_channel_orders "
+                + "where external_order_no = ?", String.class, "xy-takeover-pending-failure"));
+    }
+
+    @Test
     void workerSkipsLinkedOnlyOrderAndImportsManagedOrderFromSamePage() {
         UUID linkedProductId = insertProduct(false);
+        UUID pendingProductId = insertProduct(false);
         UUID managedProductId = insertProduct(false);
         SalesChannelAccount account = account("linked-only-worker-page");
         account.setOrderSyncEnabled(true);
         accountRepository.saveAndFlush(account);
         linkedOnlyListing(account, linkedProductId, "item-linked-only-worker");
+        pendingListing(account, pendingProductId, "item-takeover-pending-worker", true);
         listing(account, managedProductId, "item-managed-worker", false);
 
         SalesChannelOrderCursor cursor = new SalesChannelOrderCursor();
@@ -275,11 +426,13 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
         AgentOrder linkedOrder = order(account, "xy-linked-only-worker", "item-linked-only-worker",
                 null, null, 1, "10.00");
+        AgentOrder pendingOrder = order(account, "xy-takeover-pending-worker", "item-takeover-pending-worker",
+                null, null, 1, "10.50");
         AgentOrder managedOrder = order(account, "xy-managed-worker", "item-managed-worker",
                 null, null, 1, "11.00");
         when(providerClient.getOrderChanges(any())).thenReturn(new IntegrationEnvelope<>(
                 "order-page-linked-only-worker", Outcome.SUCCEEDED,
-                new OrderChangesData(List.of(linkedOrder, managedOrder),
+                new OrderChangesData(List.of(linkedOrder, pendingOrder, managedOrder),
                         new OrderCursor("2026-09-25T00:00:01Z", 2L), false), null));
 
         new SalesChannelOrderSyncWorker(accountRepository, cursorRepository, providerClient, importService).poll();
@@ -288,6 +441,11 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 "xy-linked-only-worker"));
         assertEquals(1, count("select count(*) from sales_channel_orders where external_order_no = ?",
                 "xy-managed-worker"));
+        assertEquals(1, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-takeover-pending-worker"));
+        assertFalse(channelOrderRepository.findByProviderAndSalesChannelAccountIdAndExternalOrderNo(
+                SalesChannelProvider.XIANYU, account.getId(), "xy-takeover-pending-worker")
+                .orElseThrow().isAutoFulfillmentRequested());
         assertEquals(0, count("select count(*) from orders where idempotency_key = ?",
                 "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-linked-only-worker"));
         assertEquals(1, count("select count(*) from orders where idempotency_key = ?",
@@ -1141,6 +1299,17 @@ class SalesChannelPhase4PostgresIntegrationTest {
         listing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
         listing.setEnabled(false);
         listing.setAutoFulfillmentEnabled(false);
+        listing.setDesiredState(SalesChannelListingDesiredState.OFFLINE);
+        listing.setStatus(SalesChannelListingStatus.DRAFT);
+        return listingRepository.saveAndFlush(listing);
+    }
+
+    private SalesChannelListing pendingListing(SalesChannelAccount account, UUID productId,
+                                                String externalItemId, boolean autoFulfillment) {
+        SalesChannelListing listing = listing(account, productId, externalItemId, autoFulfillment);
+        listing.setManagementMode(SalesChannelListingManagementMode.TAKEOVER_PENDING);
+        listing.setEnabled(false);
+        listing.setAutoFulfillmentEnabled(autoFulfillment);
         listing.setDesiredState(SalesChannelListingDesiredState.OFFLINE);
         listing.setStatus(SalesChannelListingStatus.DRAFT);
         return listingRepository.saveAndFlush(listing);

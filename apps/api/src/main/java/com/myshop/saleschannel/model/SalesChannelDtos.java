@@ -239,6 +239,16 @@ public final class SalesChannelDtos {
 
     public record SpecMappingsCommand(String requestId, String accountId, String itemId) { }
 
+    /** Fixed-principal ownership handoff; callers cannot choose managed_by. */
+    public record OwnershipClaimCommand(String requestId, String accountId, String itemId) { }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record OwnershipClaimData(
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("item_id") String itemId,
+            @JsonProperty("managed_by") String managedBy,
+            @JsonProperty("result") String result) { }
+
     /** Target product data needed by the Xianyu publish/edit wire contract. */
     public record ListingSnapshot(
             String title,
@@ -289,7 +299,13 @@ public final class SalesChannelDtos {
     public record ListingSpecMappingsData(
             @JsonProperty("item_id") String itemId,
             @JsonProperty("specifications") List<SpecMappingSpecification> specifications,
-            @JsonProperty("sku_rows") List<SpecMappingSkuRow> skuRows) { }
+            @JsonProperty("sku_rows") List<SpecMappingSkuRow> skuRows,
+            @JsonProperty("spec_dimensions_verified") Boolean specDimensionsVerified) {
+        public ListingSpecMappingsData(String itemId, List<SpecMappingSpecification> specifications,
+                                       List<SpecMappingSkuRow> skuRows) {
+            this(itemId, specifications, skuRows, null);
+        }
+    }
 
     public record SpecMappingSpecification(
             @JsonProperty("name") String name,

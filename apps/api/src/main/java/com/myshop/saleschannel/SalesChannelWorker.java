@@ -26,6 +26,7 @@ import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.xianyu.XianyuMediaMaterializer;
 import com.myshop.saleschannel.xianyu.XianyuMediaMaterializer.MaterializedImage;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
+import com.myshop.service.SalesChannelListingManagementPolicy;
 import com.myshop.service.SalesChannelOperationClaimService;
 import com.myshop.service.impl.SalesChannelOperationServiceImpl;
 import lombok.extern.slf4j.Slf4j;
@@ -150,6 +151,12 @@ public class SalesChannelWorker {
                     "The sales channel account must be verified before operations can run");
             return;
         }
+        if (SalesChannelListingManagementPolicy.providerSideEffect(operation.getOperationType())
+                && !SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
+            operationService.markFailed(operationId, "LISTING_NOT_MANAGED",
+                    "Provider writes are forbidden until the listing is MyShop-managed");
+            return;
+        }
 
         boolean sideEffectCallStarted = false;
         try {
@@ -166,10 +173,12 @@ public class SalesChannelWorker {
                                     "Personal accounts do not support automatic listing edits or price and stock sync");
                             return;
                         }
-                        ListingSnapshot materialized = materialize(snapshot, account);
+                        ListingSnapshot materialized = materialize(snapshot, account, listing);
                         UpdateCommand command = new UpdateCommand(operation.getIdempotencyKey(),
                                 account.getProviderAccountId(), operation.getDesiredRevision(), materialized);
                         if (operation.getOperationType() == SalesChannelOperationType.PUBLISH) {
+                            SalesChannelListing current = listingRepository.findById(listing.getId()).orElse(listing);
+                            SalesChannelListingManagementPolicy.requireProviderWritesAllowed(current);
                             sideEffectCallStarted = true;
                             handleListingEnvelope(operation, listing, providerClient.publish(new PublishCommand(
                                     command.requestId(), command.accountId(), command.desiredRevision(), command.listing())),
@@ -180,6 +189,8 @@ public class SalesChannelWorker {
                                         "A SYNC requires a bound external item id");
                                 return;
                             }
+                            SalesChannelListing current = listingRepository.findById(listing.getId()).orElse(listing);
+                            SalesChannelListingManagementPolicy.requireProviderWritesAllowed(current);
                             sideEffectCallStarted = true;
                             handleListingEnvelope(operation, listing,
                                     providerClient.update(listing.getExternalItemId(), command), fingerprint);
@@ -191,6 +202,8 @@ public class SalesChannelWorker {
                             operationService.markSucceeded(operationId, Map.of("no_external_item", true), fingerprint);
                             return;
                         }
+                        SalesChannelListing current = listingRepository.findById(listing.getId()).orElse(listing);
+                        SalesChannelListingManagementPolicy.requireProviderWritesAllowed(current);
                         sideEffectCallStarted = true;
                         IntegrationEnvelope<ListingOperationData> envelope = operation.getOperationType()
                                 == SalesChannelOperationType.OFFLINE
@@ -228,13 +241,16 @@ public class SalesChannelWorker {
         }
     }
 
-    private ListingSnapshot materialize(DesiredListingSnapshot desired, SalesChannelAccount account) {
+    private ListingSnapshot materialize(DesiredListingSnapshot desired, SalesChannelAccount account,
+                                        SalesChannelListing listing) {
         List<String> mediaIds = new ArrayList<>();
         for (String imageUrl : desired.sourceImageUrls()) {
             MaterializedImage image = mediaMaterializer.readImage(imageUrl);
             var command = new com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand(
                     account.getProviderAccountId(), MediaType.IMAGE, image.filename(),
                     image.contentType(), image.content());
+            SalesChannelListing current = listingRepository.findById(listing.getId()).orElse(listing);
+            SalesChannelListingManagementPolicy.requireProviderWritesAllowed(current);
             var envelope = providerClient.uploadMedia(command);
             if (envelope.outcome() == Outcome.FAILED) {
                 IntegrationError error = envelope.error();

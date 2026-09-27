@@ -14,6 +14,7 @@ import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.service.SalesChannelListingManagementPolicy;
 import com.myshop.constant.SalesChannelOperationStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -75,7 +76,7 @@ public class SalesChannelListingServiceImpl {
         if (Objects.equals(listing.getProviderConfig(), normalized)) return listing;
 
         listing.setProviderConfig(normalized);
-        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) {
+        if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
             return listingRepository.saveAndFlush(listing);
         }
         listing.incrementDesiredRevision();
@@ -86,11 +87,7 @@ public class SalesChannelListingServiceImpl {
     public SalesChannelListing setDesiredState(UUID listingId, SalesChannelListingDesiredState desiredState) {
         Objects.requireNonNull(desiredState, "desiredState is required");
         SalesChannelListing listing = lockListing(listingId);
-        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) {
-            throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
-                    "仅关联的闲鱼商品不属于 MyShop 管理范围",
-                    org.springframework.http.HttpStatus.CONFLICT);
-        }
+        SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
         if (listing.getDesiredState() == desiredState) return listing;
 
         listing.setDesiredState(desiredState);

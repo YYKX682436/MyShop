@@ -19,6 +19,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
+import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimData;
 import com.myshop.saleschannel.model.SalesChannelDtos.PlatformAttribute;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
@@ -281,6 +282,42 @@ class XianyuSalesChannelClientTest {
             String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
                     request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
             assertEquals(independentHmac(SECRET, canonical), request.header("X-MyShop-Signature"));
+        }
+    }
+
+    @Test
+    void takeoverPreflightAndOwnershipClaimUseSeparateSignedSafeRepeatableEndpoints() throws Exception {
+        try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SUCCESS)) {
+            XianyuSalesChannelClient client = client(fixture.baseUrl());
+
+            IntegrationEnvelope<ListingSpecMappingsData> inspection = client.inspectItemSpecMappings(
+                    new SpecMappingsCommand("spec-inspect-1", "acct-1", "item-123"));
+            IntegrationEnvelope<OwnershipClaimData> claim = client.claimOwnership(
+                    new com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimCommand(
+                            "claim-1", "acct-1", "item-123"));
+
+            assertEquals(Outcome.SUCCEEDED, inspection.outcome());
+            assertTrue(inspection.data().specDimensionsVerified());
+            assertEquals(Outcome.SUCCEEDED, claim.outcome());
+            assertEquals("ALREADY_CLAIMED", claim.data().result());
+            assertEquals(List.of("POST /api/integration/v1/items/spec-mappings",
+                            "POST /api/integration/v1/items/ownership/claim"),
+                    fixture.requests().stream().map(r -> r.method() + " " + r.path()).toList());
+
+            JsonNode inspectionBody = objectMapper.readTree(fixture.requests().get(0).body());
+            assertEquals("spec-inspect-1", inspectionBody.path("request_id").asText());
+            assertEquals("acct-1", inspectionBody.path("account_id").asText());
+            assertEquals("item-123", inspectionBody.path("item_id").asText());
+            JsonNode claimBody = objectMapper.readTree(fixture.requests().get(1).body());
+            assertEquals("claim-1", claimBody.path("request_id").asText());
+            assertEquals("acct-1", claimBody.path("account_id").asText());
+            assertEquals("item-123", claimBody.path("item_id").asText());
+            assertFalse(claimBody.has("managed_by"));
+            for (CapturedRequest request : fixture.requests()) {
+                String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
+                        request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
+                assertEquals(independentHmac(SECRET, canonical), request.header("X-MyShop-Signature"));
+            }
         }
     }
 
@@ -656,6 +693,12 @@ class XianyuSalesChannelClientTest {
                         "sku_rows", List.of(Map.of("external_sku_id", "sku-month", "specs", Map.of("规格", "月卡")),
                                 Map.of("external_sku_id", "sku-year", "specs", Map.of("规格", "年卡")),
                                 Map.of("external_sku_id", "sku-life", "specs", Map.of("规格", "永久卡"))));
+                case "/api/integration/v1/items/spec-mappings" -> Map.of(
+                        "item_id", "item-123", "specifications", List.of(), "sku_rows", List.of(),
+                        "spec_dimensions_verified", true);
+                case "/api/integration/v1/items/ownership/claim" -> Map.of(
+                        "account_id", "acct-1", "item_id", "item-123", "managed_by", "MYSHOP",
+                        "result", "ALREADY_CLAIMED");
                 case "/api/integration/v1/media" -> Map.of("media_id", "media-1", "media_type", "image");
                 case "/api/integration/v1/listings/reconcile" -> Map.of(
                         "target_request_id", "target-operation", "operation_type", "PUBLISH",

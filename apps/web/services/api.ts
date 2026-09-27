@@ -566,7 +566,7 @@ export interface XianyuItemBindingSummary {
   listingId: string
   productId: string
   productTitle?: string | null
-  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
+  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
 }
 
 export interface XianyuCatalogItemSummary {
@@ -582,7 +582,7 @@ export interface XianyuCatalogItemSummary {
   catalogCreatedAt?: string | null
   catalogUpdatedAt?: string | null
   bindingState: "LINKED" | "UNLINKED" | "CONFLICT"
-  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
+  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
   listingId?: string | null
   productId?: string | null
   productTitle?: string | null
@@ -614,7 +614,7 @@ export interface XianyuLinkCandidate {
   eligibility: "AVAILABLE" | "ALREADY_LINKED_THIS_ITEM" | "LINKED_TO_OTHER_ITEM" | "LISTING_NOT_LINKABLE"
   existingListingId?: string | null
   existingExternalItemId?: string | null
-  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
+  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
   reasonCode?: string | null
 }
 
@@ -633,8 +633,16 @@ export interface XianyuItemBindingResponse {
   listingId: string
   productId: string
   productTitle: string
-  managementMode: "MANAGED" | "LINKED_ONLY"
+  managementMode: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING"
   result: "LINKED" | "ALREADY_LINKED"
+}
+
+export interface XianyuTakeoverResponse {
+  itemId: string
+  listingId: string
+  productId: string
+  managementMode: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING"
+  result: "TAKEOVER_COMPLETED" | "TAKEOVER_PENDING" | "ALREADY_MANAGED" | "OWNERSHIP_REPAIRED"
 }
 
 export interface SalesChannelSpecMappingSummary {
@@ -650,7 +658,7 @@ export interface SalesChannelListingSummary {
   providerAccountId: string
   displayName?: string | null
   accountType?: "FISH_SHOP" | "PERSONAL" | "UNKNOWN" | string | null
-  managementMode?: "MANAGED" | "LINKED_ONLY" | string | null
+  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
   isEnabled: boolean
   autoFulfillmentEnabled?: boolean
   status: string
@@ -792,6 +800,11 @@ export const adminSalesChannelApi = {
     request<XianyuItemBindingResponse>(
       `/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/${encodeURIComponent(itemId)}/binding`,
       { method: "PUT", body: JSON.stringify({ productId }) },
+    ),
+  takeoverXianyuItem: (accountId: string, itemId: string) =>
+    request<XianyuTakeoverResponse>(
+      `/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/${encodeURIComponent(itemId)}/takeover`,
+      { method: "POST" },
     ),
   syncXianyuItems: (accountId: string) =>
     request<XianyuItemSyncSummary>(`/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/sync`, {

@@ -37,6 +37,7 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuCatalogItemSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBinding;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBindingResponse;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuTakeoverResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuLinkCandidate;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuLinkCandidatesPage;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemsPage;
@@ -68,6 +69,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
 import com.myshop.service.impl.SalesChannelAccountServiceImpl;
 import com.myshop.service.impl.SalesChannelListingServiceImpl;
+import com.myshop.service.SalesChannelListingManagementPolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -110,6 +112,7 @@ public class SalesChannelAdminService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final XianyuItemBindingService itemBindingService;
+    private final XianyuItemTakeoverService itemTakeoverService;
 
     public List<AccountSummary> accounts() {
         return accountRepository.findAll().stream().filter(account -> account.getProvider() == SalesChannelProvider.XIANYU)
@@ -214,6 +217,10 @@ public class SalesChannelAdminService {
 
     public XianyuItemBindingResponse linkXianyuItem(UUID accountId, String itemId, UUID productId) {
         return itemBindingService.link(accountId, itemId, productId);
+    }
+
+    public XianyuTakeoverResponse takeoverXianyuItem(UUID accountId, String itemId) {
+        return itemTakeoverService.takeover(accountId, itemId);
     }
 
     private SalesChannelAccount findEnabledXianyuAccount(UUID accountId) {
@@ -580,10 +587,10 @@ public class SalesChannelAdminService {
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException("Product does not exist"));
         if (enabled) {
-            if (listing.getManagementMode()
-                    == com.myshop.constant.SalesChannelListingManagementMode.LINKED_ONLY) {
+            SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
+            if (!SalesChannelListingManagementPolicy.autoFulfillmentAllowed(listing)) {
                 throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
-                        "仅关联的闲鱼商品不属于 MyShop 管理范围", HttpStatus.CONFLICT);
+                        "该闲鱼商品尚未完成 MyShop 接管，不能开启自动发货", HttpStatus.CONFLICT);
             }
             if (listing.getExternalItemId() == null || listing.getExternalItemId().isBlank()) {
                 throw new IllegalStateException("Only a MyShop-managed listing with an external item can enable auto fulfillment");

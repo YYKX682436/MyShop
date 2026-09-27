@@ -134,6 +134,9 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   const type = accountType(selectedAccount)
   const needsVerification = Boolean(selectedAccount && type === "UNKNOWN")
   const canOperate = !disabled && !busy && accountEnabled(selectedAccount) && !needsVerification
+  const takeoverPending = selectedListing?.managementMode === "LINKED_ONLY"
+    || selectedListing?.managementMode === "TAKEOVER_PENDING"
+  const canProviderOperate = canOperate && !takeoverPending
   const specMappings = selectedListing?.specMappings || []
   const specMappingReady = !specEnabled || (
     Boolean(selectedListing) &&
@@ -402,7 +405,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   }
 
   const handleEnable = async () => {
-    if (!canOperate || !selectedAccount) return
+    if (!canProviderOperate || !selectedAccount) return
     setBusy("enable")
     try {
       const saved = await persistConfig()
@@ -417,7 +420,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   }
 
   const handleDisable = async () => {
-    if (!canOperate || !selectedListing) return
+    if (!canProviderOperate || !selectedListing) return
     setBusy("disable")
     try {
       const updated = await adminSalesChannelApi.disableListing(selectedListing.id)
@@ -431,7 +434,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   }
 
   const handleRetry = async () => {
-    if (!canOperate || !selectedListing) return
+    if (!canProviderOperate || !selectedListing) return
     setBusy("retry")
     try {
       const updated = await adminSalesChannelApi.retryListing(selectedListing.id)
@@ -461,7 +464,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   }
 
   const handleAutoFulfillment = async () => {
-    if (!selectedListing || !canOperate) return
+    if (!selectedListing || !canProviderOperate) return
     setBusy("auto")
     try {
       const updated = selectedListing.autoFulfillmentEnabled
@@ -502,6 +505,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
       {selectedAccount && <div className="mb-5 grid gap-3 rounded-card border border-border-subtle bg-surface-muted/45 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
         <div><span className="text-muted-foreground">账号类型</span><div className="mt-1 font-medium">{type}</div></div>
         <div><span className="text-muted-foreground">账号状态</span><div className="mt-1 font-medium">{accountStatus(selectedAccount)}</div></div>
+        <div><span className="text-muted-foreground">管理模式</span><div className="mt-1 font-medium">{selectedListing?.managementMode === "LINKED_ONLY" ? "仅关联" : selectedListing?.managementMode === "TAKEOVER_PENDING" ? "接管待完成" : selectedListing?.managementMode === "MANAGED" ? "MyShop 管理" : "尚未配置"}</div></div>
         <div><span className="text-muted-foreground">渠道状态</span><div className="mt-1 font-medium">{selectedListing?.status || "尚未配置"}{selectedListing ? ` · ${selectedListing.isEnabled ? "已启用" : "已停用"}` : ""}</div></div>
         <div><span className="text-muted-foreground">自动发卡</span><div className="mt-1 font-medium">{selectedListing?.autoFulfillmentEnabled ? "已开启" : "已关闭"}</div></div>
         <div><span className="text-muted-foreground">闲鱼 item_id</span><div className="mt-1 break-all font-medium">{selectedListing?.externalItemId || "—"}</div></div>
@@ -511,10 +515,11 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
 
       {needsVerification && <p className="mb-4 flex items-center gap-2 rounded-card border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-200"><AlertTriangle className="size-4 shrink-0" />账号能力尚未确认。验证账号后才能启用渠道。</p>}
       {!accountEnabled(selectedAccount) && selectedAccount && <p className="mb-4 rounded-card border border-border-subtle bg-surface-muted/45 p-3 text-sm text-muted-foreground">此账号已停用，当前只能查看配置。</p>}
+      {selectedListing && takeoverPending && <p className="mb-4 rounded-card border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-200">当前管理模式为“{selectedListing.managementMode === "TAKEOVER_PENDING" ? "接管待完成" : "仅关联"}”。可以保存本地配置、读取地址/分类 metadata 和只读规格映射；接管完成前禁止启用、停止平台商品、重试和自动发货。</p>}
       {selectedAccount && <div className={`mb-4 rounded-card border p-3 text-sm ${autoGateReady ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div><strong>自动发卡</strong><p className="mt-1 text-xs text-muted-foreground">Phase 4 仅支持 MyShop 的 AUTO + CARD_KEY + FISH_SHOP 商品；Agent 不分配卡密。</p></div>
-          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleAutoFulfillment()} disabled={!canOperate || !autoGateReady || !selectedListing.externalItemId}>{busy === "auto" ? <Loader2 className="animate-spin" /> : null}{selectedListing.autoFulfillmentEnabled ? "关闭自动发卡" : "开启自动发卡"}</Button>}
+          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleAutoFulfillment()} disabled={!canProviderOperate || !autoGateReady || !selectedListing.externalItemId}>{busy === "auto" ? <Loader2 className="animate-spin" /> : null}{selectedListing.autoFulfillmentEnabled ? "关闭自动发卡" : "开启自动发卡"}</Button>}
         </div>
         {!autoGateReady && <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">当前不满足开启条件：需要商品交付方式 AUTO、库存模式 CARD_KEY、已验证 FISH_SHOP 账号、已绑定闲鱼 item；规格商品还必须先完成规格映射。</p>}
       </div>}
@@ -734,9 +739,9 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
 
       <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border-subtle pt-4">
         <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={!canOperate || noSelection}><CheckCircle2 />保存配置</Button>
-        <Button type="button" onClick={() => void handleEnable()} disabled={!canOperate || noSelection}>{busy === "enable" ? <Loader2 className="animate-spin" /> : null}{selectedListing?.isEnabled ? "启用并同步" : "发布到闲鱼 / 启用"}</Button>
-        {selectedListing?.isEnabled && <Button type="button" variant="outline" onClick={() => void handleDisable()} disabled={!canOperate}>{busy === "disable" ? <Loader2 className="animate-spin" /> : null}停止闲鱼销售</Button>}
-        {selectedListing && <Button type="button" variant="outline" onClick={() => void handleRetry()} disabled={!canOperate}>{busy === "retry" ? <Loader2 className="animate-spin" /> : null}重试</Button>}
+        <Button type="button" onClick={() => void handleEnable()} disabled={!canProviderOperate || noSelection}>{busy === "enable" ? <Loader2 className="animate-spin" /> : null}{selectedListing?.isEnabled ? "启用并同步" : "发布到闲鱼 / 启用"}</Button>
+        {selectedListing?.isEnabled && <Button type="button" variant="outline" onClick={() => void handleDisable()} disabled={!canProviderOperate}>{busy === "disable" ? <Loader2 className="animate-spin" /> : null}停止闲鱼销售</Button>}
+        {selectedListing && <Button type="button" variant="outline" onClick={() => void handleRetry()} disabled={!canProviderOperate}>{busy === "retry" ? <Loader2 className="animate-spin" /> : null}重试</Button>}
         {disabled && <span className="text-xs text-muted-foreground">请先保存当前商品编辑，再执行渠道操作。</span>}
         {busy && busy !== "load" && <span className="text-xs text-muted-foreground" role="status">{busyLabel}</span>}
       </div>

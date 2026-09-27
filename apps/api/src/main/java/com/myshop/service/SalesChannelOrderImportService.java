@@ -8,7 +8,6 @@ import com.myshop.constant.PricingSource;
 import com.myshop.constant.SalesChannelOrderDeliveryStatus;
 import com.myshop.constant.SalesChannelOrderIngestStatus;
 import com.myshop.constant.SalesChannelProvider;
-import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.Product;
@@ -170,7 +169,8 @@ public class SalesChannelOrderImportService {
             return mappingError(row, "PRODUCT_NOT_FOUND", "The provider item is not mapped to an active product");
         }
         row.setSalesChannelListingId(listing.getId());
-        boolean autoRequested = listing.isAutoFulfillmentEnabled();
+        boolean autoRequested = SalesChannelListingManagementPolicy.autoFulfillmentAllowed(listing)
+                && listing.isAutoFulfillmentEnabled();
         row.setAutoFulfillmentRequested(autoRequested);
         if (autoRequested && (!"AUTO".equalsIgnoreCase(product.getDeliveryType())
                 || product.getStockMode() != com.myshop.constant.StockMode.CARD_KEY)) {
@@ -221,12 +221,11 @@ public class SalesChannelOrderImportService {
     }
 
     private boolean isUnmanagedItem(SalesChannelListing listing) {
-        return listing != null
-                && listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY;
+        return listing != null && !SalesChannelListingManagementPolicy.orderImportAllowed(listing);
     }
 
     private void logIgnoredUnmanagedItem(SalesChannelAccount account, AgentOrder external) {
-        log.info("sales_channel_order_ignored_unmanaged_item accountId={} externalItemId={} externalOrderNo={} reason=LINKED_ONLY",
+        log.info("sales_channel_order_ignored_unmanaged_item accountId={} externalItemId={} externalOrderNo={} reason=LISTING_MANAGEMENT_MODE",
                 account.getId(), external.itemId(), external.externalOrderNo());
     }
 

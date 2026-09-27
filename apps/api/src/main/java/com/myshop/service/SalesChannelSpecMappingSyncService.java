@@ -26,8 +26,11 @@ public class SalesChannelSpecMappingSyncService {
         SalesChannelSpecMappingPersistence.ListingSpecSyncSnapshot snapshot = persistence.snapshot(listingId);
         IntegrationEnvelope<ListingSpecMappingsData> response;
         try {
-            response = providerClient.getListingSpecMappings(new SpecMappingsCommand(
-                    UUID.randomUUID().toString(), snapshot.providerAccountId(), snapshot.externalItemId()));
+            SpecMappingsCommand command = new SpecMappingsCommand(
+                    UUID.randomUUID().toString(), snapshot.providerAccountId(), snapshot.externalItemId());
+            response = SalesChannelListingManagementPolicy.providerWritesAllowed(snapshot.managementMode())
+                    ? providerClient.getListingSpecMappings(command)
+                    : providerClient.inspectItemSpecMappings(command);
         } catch (SalesChannelProviderClientException exception) {
             boolean retryable = exception.getDisposition()
                     == SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE;

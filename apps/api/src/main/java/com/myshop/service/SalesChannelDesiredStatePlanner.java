@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.myshop.constant.SalesChannelListingDesiredState;
-import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
@@ -76,11 +75,9 @@ public class SalesChannelDesiredStatePlanner {
     @Transactional
     public SalesChannelListing setEnabled(UUID listingId, boolean enabled) {
         SalesChannelListing listing = lockListing(listingId);
-        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) {
+        if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
             if (enabled) {
-                throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
-                        "仅关联的闲鱼商品不属于 MyShop 管理范围",
-                        org.springframework.http.HttpStatus.CONFLICT);
+                SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
             }
             listing.setEnabled(false);
             return listingRepository.saveAndFlush(listing);
@@ -123,7 +120,7 @@ public class SalesChannelDesiredStatePlanner {
     @Transactional
     public SalesChannelListing refresh(UUID listingId) {
         SalesChannelListing listing = lockListing(listingId);
-        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) {
+        if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
             return listing;
         }
         return planLocked(listing);
@@ -132,11 +129,7 @@ public class SalesChannelDesiredStatePlanner {
     @Transactional
     public void retry(UUID listingId) {
         SalesChannelListing listing = lockListing(listingId);
-        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) {
-            throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
-                    "仅关联的闲鱼商品不属于 MyShop 管理范围",
-                    org.springframework.http.HttpStatus.CONFLICT);
-        }
+        SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
         if ("EXTERNAL_ITEM_ID_CONFLICT".equals(listing.getLastErrorCode())) {
             SalesChannelOperation target = operationRepository
                     .findBySalesChannelListingIdOrderByCreatedAtAsc(listingId).stream()
@@ -210,7 +203,7 @@ public class SalesChannelDesiredStatePlanner {
     private void returnQueue(SalesChannelListing listing, SalesChannelAccount account,
                              DesiredListingSnapshot snapshot, SalesChannelListingDesiredState desiredState,
                              String fingerprint) {
-        if (listing.getManagementMode() == SalesChannelListingManagementMode.LINKED_ONLY) return;
+        if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) return;
         if (desiredState == SalesChannelListingDesiredState.OFFLINE) {
             if (listing.getExternalItemId() == null) {
                 listing.setStatus(SalesChannelListingStatus.OFFLINE);

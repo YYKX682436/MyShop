@@ -77,4 +77,8 @@ public final class ErrorCode {
     public static final int PRODUCT_ALREADY_LINKED = 71003;
     public static final int LISTING_NOT_LINKABLE = 71004;
     public static final int LINKED_ITEM_NOT_MANAGED = 71005;
+    public static final int ITEM_NOT_LINKED = 71006;
+    public static final int TAKEOVER_NOT_ALLOWED = 71007;
+    public static final int TAKEOVER_NOT_ORDER_READY = 71008;
+    public static final int OWNERSHIP_CONFLICT = 71009;
 }

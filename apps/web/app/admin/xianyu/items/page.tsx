@@ -28,6 +28,7 @@ import {
   type SalesChannelAccountSummary,
   type XianyuCatalogItemSummary,
   type XianyuItemBindingResponse,
+  type XianyuTakeoverResponse,
   type XianyuLinkCandidate,
   type XianyuLinkCandidatesPage,
   type XianyuItemsPage,
@@ -81,6 +82,9 @@ export default function XianyuItemsPage() {
   const [candidateLoadError, setCandidateLoadError] = useState(false)
   const [selectedProductId, setSelectedProductId] = useState("")
   const [bindingSubmitting, setBindingSubmitting] = useState(false)
+  const [takeoverDialogOpen, setTakeoverDialogOpen] = useState(false)
+  const [takeoverItem, setTakeoverItem] = useState<XianyuCatalogItemSummary | null>(null)
+  const [takeoverSubmitting, setTakeoverSubmitting] = useState(false)
 
   const loadAccounts = useCallback(async () => {
     setAccountsLoading(true)
@@ -230,6 +234,41 @@ export default function XianyuItemsPage() {
     }
   }
 
+  const openTakeoverDialog = (item: XianyuCatalogItemSummary) => {
+    setTakeoverItem(item)
+    setTakeoverDialogOpen(true)
+  }
+
+  const closeTakeoverDialog = (open: boolean) => {
+    setTakeoverDialogOpen(open)
+    if (!open) setTakeoverItem(null)
+  }
+
+  const confirmTakeover = async () => {
+    if (!accountId || !takeoverItem || takeoverSubmitting) return
+    setTakeoverSubmitting(true)
+    try {
+      const result: XianyuTakeoverResponse = await requestOrThrow(() => adminSalesChannelApi.takeoverXianyuItem(
+        accountId, takeoverItem.itemId,
+      ))
+      if (result.result === "TAKEOVER_PENDING") {
+        toast.info("接管仍待完成，可稍后继续接管。")
+      } else if (result.result === "OWNERSHIP_REPAIRED") {
+        toast.success("Agent ownership 已安全修复，MyShop 保持原有 listing。")
+      } else if (result.result === "ALREADY_MANAGED") {
+        toast.success("该商品已经由 MyShop 管理。")
+      } else {
+        toast.success("接管完成。闲鱼商品仍保持原样，MyShop 已成为管理方。")
+      }
+      closeTakeoverDialog(false)
+      setRefreshVersion((version) => version + 1)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "接管闲鱼商品失败")
+    } finally {
+      setTakeoverSubmitting(false)
+    }
+  }
+
   return (
     <AdminPage>
       <PageHeader title="闲鱼商品" description="查看并同步闲鱼账号中的商品。" />
@@ -337,8 +376,8 @@ export default function XianyuItemsPage() {
                         )}
                         {item.bindingState === "LINKED" && (
                           <StatusBadge
-                            label={item.managementMode === "LINKED_ONLY" ? "仅关联" : "MyShop 管理"}
-                            tone={item.managementMode === "LINKED_ONLY" ? "info" : "success"}
+                            label={item.managementMode === "LINKED_ONLY" ? "仅关联" : item.managementMode === "TAKEOVER_PENDING" ? "接管待完成" : "MyShop 管理"}
+                            tone={item.managementMode === "MANAGED" ? "success" : "info"}
                           />
                         )}
                         {item.bindingState === "CONFLICT" && (
@@ -356,6 +395,11 @@ export default function XianyuItemsPage() {
                       {item.bindingState === "UNLINKED" && (
                         <Button type="button" variant="outline" size="sm" onClick={() => openLinkDialog(item)}>
                           <Link2 />关联商品
+                        </Button>
+                      )}
+                      {item.bindingState === "LINKED" && (item.managementMode === "LINKED_ONLY" || item.managementMode === "TAKEOVER_PENDING") && (
+                        <Button type="button" variant="outline" size="sm" onClick={() => openTakeoverDialog(item)} disabled={takeoverSubmitting}>
+                          <Link2 />{item.managementMode === "TAKEOVER_PENDING" ? "继续接管" : "接管到 MyShop"}
                         </Button>
                       )}
                     </td>
@@ -444,7 +488,7 @@ export default function XianyuItemsPage() {
                         </div>
                         <div className={`mt-1 text-xs ${available ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"}`}>
                           {candidateReason(candidate.eligibility)}
-                          {candidate.managementMode && ` · ${candidate.managementMode === "LINKED_ONLY" ? "仅关联" : "MyShop 管理"}`}
+                          {candidate.managementMode && ` · ${candidate.managementMode === "LINKED_ONLY" ? "仅关联" : candidate.managementMode === "TAKEOVER_PENDING" ? "接管待完成" : "MyShop 管理"}`}
                         </div>
                       </div>
                       <Button
@@ -482,6 +526,41 @@ export default function XianyuItemsPage() {
             <Button type="button" onClick={() => void confirmBinding()} disabled={!selectedProductId || bindingSubmitting}>
               {bindingSubmitting && <Loader2 className="animate-spin" />}
               {bindingSubmitting ? "正在关联…" : "确认关联"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={takeoverDialogOpen} onOpenChange={closeTakeoverDialog}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{takeoverItem?.managementMode === "TAKEOVER_PENDING" ? "继续接管闲鱼商品" : "接管闲鱼商品"}</DialogTitle>
+            <DialogDescription>
+              请确认 ownership/control-plane handoff。接管不会立即修改闲鱼商品。
+            </DialogDescription>
+          </DialogHeader>
+          {takeoverItem && (
+            <div className="space-y-3 rounded-card border border-border-subtle bg-surface-muted/40 p-4 text-sm leading-6">
+              <div className="font-medium">闲鱼商品：{takeoverItem.title || "—"}</div>
+              <div className="font-mono text-xs text-muted-foreground">itemId {takeoverItem.itemId}</div>
+              <p>接管后 MyShop 将成为该商品的管理方，Agent 原生自动发货将避让该商品。</p>
+              <p>本操作不会自动开启：</p>
+              <ul className="list-disc space-y-1 pl-5">
+                <li>价格同步</li>
+                <li>库存同步</li>
+                <li>上下架</li>
+                <li>订单同步</li>
+                <li>自动发货</li>
+              </ul>
+              <p>自动发货仍需后续单独开启。</p>
+              <p>本阶段暂不支持将已接管商品恢复为“仅关联”。</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => closeTakeoverDialog(false)} disabled={takeoverSubmitting}>取消</Button>
+            <Button type="button" onClick={() => void confirmTakeover()} disabled={!takeoverItem || takeoverSubmitting}>
+              {takeoverSubmitting && <Loader2 className="animate-spin" />}
+              {takeoverSubmitting ? "接管处理中…" : "确认接管"}
             </Button>
           </DialogFooter>
         </DialogContent>

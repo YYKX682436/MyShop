@@ -102,6 +102,14 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("result") String result) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record XianyuTakeoverResponse(
+            @JsonProperty("itemId") String itemId,
+            @JsonProperty("listingId") String listingId,
+            @JsonProperty("productId") String productId,
+            @JsonProperty("managementMode") String managementMode,
+            @JsonProperty("result") String result) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuItemSyncSummary(
             @JsonProperty("accountId") String accountId,
             @JsonProperty("fetchedCount") int fetchedCount,

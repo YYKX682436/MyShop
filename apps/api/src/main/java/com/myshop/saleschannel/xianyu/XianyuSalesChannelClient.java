@@ -33,6 +33,8 @@ import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSnapshot;
@@ -269,6 +271,25 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         byte[] body = serialize(new XianyuSpecMappingsRequest(command.requestId(), command.accountId(), command.itemId()));
         return exchange("POST", "/listings/spec-mappings", body, "application/json",
                 responseType(ListingSpecMappingsData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<ListingSpecMappingsData> inspectItemSpecMappings(SpecMappingsCommand command) {
+        validateSpecMappingsCommand(command);
+        byte[] body = serialize(new XianyuSpecMappingsRequest(command.requestId(), command.accountId(), command.itemId()));
+        return exchange("POST", "/items/spec-mappings", body, "application/json",
+                responseType(ListingSpecMappingsData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<OwnershipClaimData> claimOwnership(OwnershipClaimCommand command) {
+        validateOwnershipClaimCommand(command);
+        byte[] body = serialize(new XianyuOwnershipClaimRequest(
+                command.requestId(), command.accountId(), command.itemId()));
+        return exchange("POST", "/items/ownership/claim", body, "application/json",
+                responseType(OwnershipClaimData.class), RequestSemantics.SAFE_REPEATABLE,
                 command.requestId(), command.requestId());
     }
 
@@ -618,6 +639,14 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         }
     }
 
+    private static void validateOwnershipClaimCommand(OwnershipClaimCommand command) {
+        if (command == null || blank(command.requestId()) || command.requestId().length() > 255
+                || blank(command.accountId()) || command.accountId().length() > 128
+                || blank(command.itemId()) || command.itemId().length() > 128) {
+            throw safeFailure("INVALID_OWNERSHIP_CLAIM_REQUEST", "Ownership claim request fields are invalid");
+        }
+    }
+
     private static void validateListing(ListingSnapshot listing) {
         if (listing == null || blank(listing.title()) || listing.title().length() > 200
                 || blank(listing.description()) || listing.description().length() > 1500
@@ -898,6 +927,12 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record XianyuSpecMappingsRequest(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("item_id") String itemId) { }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private record XianyuOwnershipClaimRequest(
             @JsonProperty("request_id") String requestId,
             @JsonProperty("account_id") String accountId,
             @JsonProperty("item_id") String itemId) { }

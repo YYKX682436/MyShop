@@ -18,6 +18,7 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemsPage;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemSyncSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.BindXianyuItemRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBindingResponse;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuTakeoverResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuLinkCandidatesPage;
 import com.myshop.service.SalesChannelAdminService;
 import jakarta.validation.Valid;
@@ -81,6 +82,15 @@ public class AdminSalesChannelController {
             @Valid @RequestBody BindXianyuItemRequest request) {
         return ApiResponse.success(salesChannelAdminService.linkXianyuItem(
                 accountId, itemId, request.productId()));
+    }
+
+    @LogOperation(action = "sales_channel.item_takeover", targetType = "SALES_CHANNEL_ITEM",
+            targetId = "#itemId", detail = "'接管闲鱼商品为 MyShop 管理'" )
+    @PostMapping("/admin/xianyu/accounts/{accountId}/items/{itemId}/takeover")
+    public ApiResponse<XianyuTakeoverResponse> takeoverXianyuItem(
+            @PathVariable UUID accountId,
+            @PathVariable String itemId) {
+        return ApiResponse.success(salesChannelAdminService.takeoverXianyuItem(accountId, itemId));
     }
 
     @PostMapping("/admin/xianyu/accounts/{accountId}/items/sync")

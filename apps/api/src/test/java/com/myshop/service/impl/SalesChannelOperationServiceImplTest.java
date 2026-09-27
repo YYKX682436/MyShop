@@ -2,9 +2,11 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
+import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelOperation;
+import com.myshop.exception.BusinessException;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
@@ -67,6 +69,71 @@ class SalesChannelOperationServiceImplTest {
         assertEquals(key, repeated.getIdempotencyKey());
         assertEquals(Map.of("snapshot", "fixed"), first.getPayload());
         verify(operationRepository, org.mockito.Mockito.times(1)).saveAndFlush(any(SalesChannelOperation.class));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = SalesChannelListingManagementMode.class,
+            names = {"LINKED_ONLY", "TAKEOVER_PENDING"})
+    void directProviderSideEffectRequestIsRejectedOutsideManagedMode(
+            SalesChannelListingManagementMode managementMode) {
+        UUID listingId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.setSalesChannelAccountId(accountId);
+        listing.setManagementMode(managementMode);
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setProvider(SalesChannelProvider.XIANYU);
+
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+
+        assertThrows(BusinessException.class,
+                () -> service.request(listingId, SalesChannelOperationType.OFFLINE, Map.of()));
+        verify(operationRepository, never()).findByIdempotencyKey(any());
+        verify(operationRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void managedModeStillAllowsOriginalOperationPath() {
+        UUID listingId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.setSalesChannelAccountId(accountId);
+        listing.setManagementMode(SalesChannelListingManagementMode.MANAGED);
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setProvider(SalesChannelProvider.XIANYU);
+        String key = "XIANYU:" + listingId + ":OFFLINE:0";
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+        when(operationRepository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
+        when(operationRepository.saveAndFlush(any(SalesChannelOperation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        SalesChannelOperation operation = service.request(listingId, SalesChannelOperationType.OFFLINE, Map.of());
+
+        assertEquals(SalesChannelOperationType.OFFLINE, operation.getOperationType());
+        verify(operationRepository).saveAndFlush(any(SalesChannelOperation.class));
+    }
+
+    @Test
+    void stalePendingProviderOperationCannotStartAfterListingLeavesManagedMode() {
+        UUID listingId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.setManagementMode(SalesChannelListingManagementMode.TAKEOVER_PENDING);
+        SalesChannelOperation operation = new SalesChannelOperation(listingId,
+                SalesChannelOperationType.SYNC, 0, "XIANYU:" + listingId + ":SYNC:0", Map.of());
+        operation.setId(operationId);
+
+        when(operationRepository.findById(operationId)).thenReturn(Optional.of(operation));
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(operationRepository.findByIdForUpdate(operationId)).thenReturn(Optional.of(operation));
+
+        assertFalse(service.markRunning(operationId));
+        assertEquals(SalesChannelOperationStatus.SUPERSEDED, operation.getStatus());
     }
 
     @Test

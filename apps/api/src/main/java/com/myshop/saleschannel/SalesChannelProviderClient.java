@@ -20,6 +20,8 @@ import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.UpdateCommand;
@@ -61,6 +63,10 @@ public interface SalesChannelProviderClient {
     IntegrationEnvelope<ReconcileData> reconcile(ReconcileCommand command);
 
     IntegrationEnvelope<ListingSpecMappingsData> getListingSpecMappings(SpecMappingsCommand command);
+
+    IntegrationEnvelope<ListingSpecMappingsData> inspectItemSpecMappings(SpecMappingsCommand command);
+
+    IntegrationEnvelope<OwnershipClaimData> claimOwnership(OwnershipClaimCommand command);
 
     AddressMetadataResult searchAddress(String keywords, String city);
 

@@ -10,6 +10,7 @@ import com.myshop.entity.SalesChannelOperation;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.service.SalesChannelListingManagementPolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,9 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelListing listing = lockListing(listingId);
         SalesChannelAccount account = accountRepository.findById(listing.getSalesChannelAccountId())
                 .orElseThrow(() -> new IllegalStateException("Listing account is missing"));
+        if (SalesChannelListingManagementPolicy.providerSideEffect(operationType)) {
+            SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
+        }
         String idempotencyKey = account.getProvider().name() + ":" + listing.getId() + ":"
                 + operationType.name() + ":" + listing.getDesiredRevision();
         var existing = operationRepository.findByIdempotencyKey(idempotencyKey);
@@ -96,6 +100,11 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelListing listing = lockListing(snapshot.getSalesChannelListingId());
         SalesChannelOperation operation = lockOperation(operationId);
         LocalDateTime now = LocalDateTime.now();
+        if (SalesChannelListingManagementPolicy.providerSideEffect(operation.getOperationType())
+                && !SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
+            operation.supersede(now);
+            return false;
+        }
         if (operation.getStatus() != SalesChannelOperationStatus.PENDING) return false;
         if (operation.getNextAttemptAt() != null && operation.getNextAttemptAt().isAfter(now)) return false;
         if (operation.getOperationType() != SalesChannelOperationType.RECONCILE
@@ -179,6 +188,10 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation snapshot = findOperation(operationId);
         SalesChannelListing listing = lockListing(snapshot.getSalesChannelListingId());
         SalesChannelOperation operation = lockOperation(operationId);
+        if (SalesChannelListingManagementPolicy.providerSideEffect(operation.getOperationType())
+                && !SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
+            return false;
+        }
         if (operation.getOperationType() == SalesChannelOperationType.RECONCILE
                 && operationRepository.hasUnresolvedUnknown(listing.getId())) {
             throw new IllegalStateException("A reconciliation cannot succeed until its UNKNOWN target is resolved");
