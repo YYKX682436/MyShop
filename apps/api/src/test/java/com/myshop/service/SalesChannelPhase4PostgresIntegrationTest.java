@@ -268,7 +268,12 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Test
     void takeoverMissingCostFailsBeforeAnyAgentClaim() {
-        UUID productId = insertProduct(false);
+        // The production schema requires root cost_price for spec-disabled products.
+        // Use a spec-enabled product with no active specs instead: this is the
+        // database-valid representation of an order-unready spec product, and it
+        // exercises the same fail-closed cost/spec preflight without weakening a
+        // production constraint merely to make the test fixture invalid.
+        UUID productId = insertProduct(true);
         jdbcTemplate.update("update products set cost_price = null where id = ?", productId);
         SalesChannelAccount account = account("takeover-cost-missing");
         String itemId = "item-takeover-cost-missing";
