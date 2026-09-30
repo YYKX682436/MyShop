@@ -22,6 +22,7 @@ assert contract["tables"]["sales_channel_orders"] == [
     "id",
     "sales_channel_account_id",
     "sales_channel_listing_id",
+    "sales_channel_listing_generation_id",
     "order_id",
     "ingest_status",
     "delivery_status",

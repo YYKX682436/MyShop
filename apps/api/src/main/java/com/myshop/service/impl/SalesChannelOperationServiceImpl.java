@@ -219,10 +219,18 @@ public class SalesChannelOperationServiceImpl {
         if (operation.getOperationType() == SalesChannelOperationType.PUBLISH && externalItemId == null) {
             throw new IllegalArgumentException("A successful PUBLISH result must include item_id");
         }
-        validateFrozenGenerationIdentity(operation, externalItemId);
+        boolean identityConflict = !frozenGenerationIdentityMatches(operation, externalItemId);
         if (!operation.succeed(result, now)) return false;
         if (operation.getOperationType() == SalesChannelOperationType.PUBLISH) {
             ensurePublishGeneration(listing, externalItemId);
+        }
+        if (identityConflict) {
+            if (operation.getDesiredRevision() == listing.getDesiredRevision()) {
+                listing.setStatus(SalesChannelListingStatus.UNKNOWN);
+                listing.setLastErrorCode("EXTERNAL_ITEM_ID_CONFLICT");
+                listing.setLastErrorMessage("Provider returned an item identity different from the frozen generation target");
+            }
+            return true;
         }
         if (operation.getDesiredRevision() != listing.getDesiredRevision()) return true;
 
@@ -252,7 +260,6 @@ public class SalesChannelOperationServiceImpl {
         if (target.getOperationType() == SalesChannelOperationType.PUBLISH && externalItemId == null) {
             throw new IllegalArgumentException("A reconciled successful PUBLISH result must include item_id");
         }
-        validateFrozenGenerationIdentity(target, externalItemId);
         if (target.getStatus() == SalesChannelOperationStatus.SUCCEEDED) {
             String savedItemId = extractExternalItemId(target.getResult());
             if (externalItemId != null && savedItemId != null && !externalItemId.equals(savedItemId)) {
@@ -263,11 +270,18 @@ public class SalesChannelOperationServiceImpl {
             }
             return true;
         }
+        boolean identityConflict = !frozenGenerationIdentityMatches(target, externalItemId);
         if (!target.resolveUnknownAsSucceeded(targetResult, now)) return false;
         if (target.getOperationType() == SalesChannelOperationType.PUBLISH) {
             ensurePublishGeneration(listing, externalItemId);
         }
-        if (target.getDesiredRevision() == listing.getDesiredRevision()) {
+        if (identityConflict) {
+            if (target.getDesiredRevision() == listing.getDesiredRevision()) {
+                listing.setStatus(SalesChannelListingStatus.UNKNOWN);
+                listing.setLastErrorCode("EXTERNAL_ITEM_ID_CONFLICT");
+                listing.setLastErrorMessage("Provider returned an item identity different from the frozen generation target");
+            }
+        } else if (target.getDesiredRevision() == listing.getDesiredRevision()) {
             listing.advanceAppliedRevision(target.getDesiredRevision());
             listing.setStatus(succeededStatus(target, listing));
             listing.setAppliedFingerprint(appliedFingerprint);
@@ -437,16 +451,14 @@ public class SalesChannelOperationServiceImpl {
         return itemId.isBlank() ? null : itemId;
     }
 
-    private void validateFrozenGenerationIdentity(SalesChannelOperation operation, String resultItemId) {
+    private boolean frozenGenerationIdentityMatches(SalesChannelOperation operation, String resultItemId) {
         if (operation.getOperationType() == SalesChannelOperationType.PUBLISH
                 || operation.getOperationType() == SalesChannelOperationType.RECONCILE
-                || resultItemId == null) return;
+                || resultItemId == null) return true;
         UUID generationId = operation.getSalesChannelListingGenerationId();
         SalesChannelListingGeneration generation = generationId == null
                 ? null : generationRepository.findById(generationId).orElse(null);
-        if (generation == null || !resultItemId.equals(generation.getExternalItemId())) {
-            throw new IllegalStateException("Provider result item identity does not match the frozen generation target");
-        }
+        return generation != null && resultItemId.equals(generation.getExternalItemId());
     }
 
     private SalesChannelListingGeneration ensurePublishGeneration(SalesChannelListing listing,
