@@ -74,6 +74,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -205,11 +206,16 @@ class SalesChannelPhase4PostgresIntegrationTest {
         when(providerClient.inspectItemSpecMappings(any())).thenReturn(new IntegrationEnvelope<>(
                 "spec-read", Outcome.SUCCEEDED,
                 new ListingSpecMappingsData(itemId, List.of(), List.of(), true), null));
-        when(providerClient.claimOwnership(any())).thenReturn(
-                new IntegrationEnvelope<>("claim-unknown", Outcome.UNKNOWN, null, null),
-                new IntegrationEnvelope<>(null, Outcome.SUCCEEDED,
-                        new OwnershipClaimData(account.getProviderAccountId(), itemId,
-                                "MYSHOP", "ALREADY_CLAIMED"), null));
+        AtomicInteger claimAttempts = new AtomicInteger();
+        when(providerClient.claimOwnership(any())).thenAnswer(invocation -> {
+            OwnershipClaimCommand command = invocation.getArgument(0, OwnershipClaimCommand.class);
+            if (claimAttempts.getAndIncrement() == 0) {
+                return new IntegrationEnvelope<>(command.requestId(), Outcome.UNKNOWN, null, null);
+            }
+            return new IntegrationEnvelope<>(command.requestId(), Outcome.SUCCEEDED,
+                    new OwnershipClaimData(account.getProviderAccountId(), itemId,
+                            "MYSHOP", "ALREADY_CLAIMED"), null);
+        });
 
         var pending = takeoverService.takeover(account.getId(), itemId);
 
