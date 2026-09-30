@@ -34,6 +34,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.service.impl.AutoFulfillmentServiceImpl;
 import com.myshop.service.impl.FulfillmentTransactionService;
 import com.myshop.saleschannel.SalesChannelProviderClient;
+import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import com.myshop.saleschannel.model.SalesChannelDtos.CatalogItem;
 import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
@@ -44,6 +45,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
 import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimData;
+import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSpecification;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSpecificationValue;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingSkuRow;
@@ -72,6 +74,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -230,6 +233,98 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(desiredFingerprint, finalListing.getDesiredFingerprint());
         assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).size());
         verify(providerClient, org.mockito.Mockito.times(2)).claimOwnership(any());
+    }
+
+    @Test
+    void takeoverPersistsExactSpecMappingsBeforeClaimAndImportsTheMappedSku() {
+        UUID productId = insertProduct(true);
+        UUID monthId = insertProductSpec(productId, "月卡");
+        UUID yearId = insertProductSpec(productId, "年卡");
+        UUID lifetimeId = insertProductSpec(productId, "永久卡");
+        SalesChannelAccount account = account("takeover-spec-mapping");
+        String itemId = "item-takeover-spec-mapping";
+        SalesChannelListing listing = linkedOnlyListing(account, productId, itemId);
+        insertListingSpec(listing, monthId);
+        insertListingSpec(listing, yearId);
+        insertListingSpec(listing, lifetimeId);
+
+        when(providerClient.queryItems(any())).thenReturn(new IntegrationEnvelope<>(
+                "catalog-read", Outcome.SUCCEEDED,
+                new ItemsQueryData(List.of(new CatalogItem(account.getProviderAccountId(), itemId,
+                        "takeover spec item", "20.00", 13, "online", 13, true, true, null, null)),
+                        1, 100, 1L, 1), null));
+        when(providerClient.inspectItemSpecMappings(any())).thenReturn(new IntegrationEnvelope<>(
+                "spec-read", Outcome.SUCCEEDED,
+                new ListingSpecMappingsData(itemId,
+                        List.of(new SpecMappingSpecification("规格", List.of(
+                                new SpecMappingSpecificationValue("月卡"),
+                                new SpecMappingSpecificationValue("年卡"),
+                                new SpecMappingSpecificationValue("永久卡")))),
+                        List.of(
+                                new SpecMappingSkuRow("sku-lifetime", Map.of("规格", "永久卡")),
+                                new SpecMappingSkuRow("sku-month", Map.of("规格", "月卡")),
+                                new SpecMappingSkuRow("sku-year", Map.of("规格", "年卡"))), true), null));
+        when(providerClient.claimOwnership(any())).thenAnswer(invocation -> {
+            OwnershipClaimCommand command = invocation.getArgument(0, OwnershipClaimCommand.class);
+            assertEquals(SalesChannelListingManagementMode.TAKEOVER_PENDING.name(),
+                    scalar("select management_mode from sales_channel_listings where id = ?",
+                            String.class, listing.getId()));
+            assertEquals(3, count("select count(*) from sales_channel_listing_specs "
+                    + "where sales_channel_listing_id = ? and external_sku_id is not null "
+                    + "and provider_mapping ->> 'provider_spec_name' = '规格'", listing.getId()));
+            assertEquals("sku-month", scalar("select external_sku_id from sales_channel_listing_specs "
+                    + "where sales_channel_listing_id = ? and product_spec_id = ?", String.class,
+                    listing.getId(), monthId));
+            assertEquals("月卡", scalar("select provider_mapping ->> 'provider_spec_value' "
+                    + "from sales_channel_listing_specs where sales_channel_listing_id = ? and product_spec_id = ?",
+                    String.class, listing.getId(), monthId));
+            assertEquals("sku-year", scalar("select external_sku_id from sales_channel_listing_specs "
+                    + "where sales_channel_listing_id = ? and product_spec_id = ?", String.class,
+                    listing.getId(), yearId));
+            assertEquals("sku-lifetime", scalar("select external_sku_id from sales_channel_listing_specs "
+                    + "where sales_channel_listing_id = ? and product_spec_id = ?", String.class,
+                    listing.getId(), lifetimeId));
+            return new IntegrationEnvelope<>(command.requestId(), Outcome.SUCCEEDED,
+                    new OwnershipClaimData(account.getProviderAccountId(), itemId, "MYSHOP", "CLAIMED"), null);
+        });
+
+        var completed = takeoverService.takeover(account.getId(), itemId);
+
+        assertEquals("TAKEOVER_COMPLETED", completed.result());
+        assertEquals(SalesChannelListingManagementMode.MANAGED,
+                listingRepository.findById(listing.getId()).orElseThrow().getManagementMode());
+        SalesChannelOrder imported = importService.importOrder(account,
+                order(account, "xy-takeover-spec-mapping", itemId, "sku-year", "年卡", 1, "32.00"));
+        assertEquals(SalesChannelOrderIngestStatus.IMPORTED, imported.getIngestStatus());
+        assertEquals(yearId, scalar("select spec_id from order_items where order_id = ?", UUID.class,
+                imported.getOrderId()));
+        verify(providerClient, org.mockito.Mockito.times(1)).inspectItemSpecMappings(any());
+        verify(providerClient, org.mockito.Mockito.times(1)).claimOwnership(any());
+    }
+
+    @Test
+    void managedClaimRejectsWrongItemIdentity() {
+        assertManagedClaimResponseRejected((expectedAccountId, expectedItemId) ->
+                new OwnershipClaimData(expectedAccountId, "wrong-item", "MYSHOP", "ALREADY_CLAIMED"));
+    }
+
+    @Test
+    void managedClaimRejectsWrongAccountIdentity() {
+        assertManagedClaimResponseRejected((expectedAccountId, expectedItemId) ->
+                new OwnershipClaimData("wrong-account", expectedItemId, "MYSHOP", "ALREADY_CLAIMED"));
+    }
+
+    @Test
+    void managedClaimRejectsNonMyShopOwner() {
+        assertManagedClaimResponseRejected((expectedAccountId, expectedItemId) ->
+                new OwnershipClaimData(expectedAccountId, expectedItemId,
+                        "OTHER_INTEGRATION", "ALREADY_CLAIMED"));
+    }
+
+    @Test
+    void managedClaimRejectsUnknownResult() {
+        assertManagedClaimResponseRejected((expectedAccountId, expectedItemId) ->
+                new OwnershipClaimData(expectedAccountId, expectedItemId, "MYSHOP", "UNKNOWN"));
     }
 
     @Test
@@ -1263,6 +1358,36 @@ class SalesChannelPhase4PostgresIntegrationTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("concurrency test interrupted", exception);
         }
+    }
+
+    private void assertManagedClaimResponseRejected(
+            BiFunction<String, String, OwnershipClaimData> responseFactory) {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("managed-identity");
+        String itemId = "item-managed-identity";
+        SalesChannelListing listing = linkedOnlyListing(account, productId, itemId);
+        listing.setManagementMode(SalesChannelListingManagementMode.MANAGED);
+        listing.setStatus(SalesChannelListingStatus.OFFLINE);
+        listing.setDesiredState(SalesChannelListingDesiredState.OFFLINE);
+        listing.setEnabled(false);
+        listing.setAutoFulfillmentEnabled(false);
+        listingRepository.saveAndFlush(listing);
+
+        when(providerClient.claimOwnership(any())).thenAnswer(invocation -> {
+            OwnershipClaimCommand command = invocation.getArgument(0, OwnershipClaimCommand.class);
+            return new IntegrationEnvelope<>(command.requestId(), Outcome.SUCCEEDED,
+                    responseFactory.apply(command.accountId(), command.itemId()), null);
+        });
+
+        assertThrows(SalesChannelProviderClientException.class,
+                () -> takeoverService.takeover(account.getId(), itemId));
+
+        SalesChannelListing unchanged = listingRepository.findById(listing.getId()).orElseThrow();
+        assertEquals(SalesChannelListingManagementMode.MANAGED, unchanged.getManagementMode());
+        assertEquals(SalesChannelListingStatus.OFFLINE, unchanged.getStatus());
+        assertFalse(unchanged.isEnabled());
+        assertFalse(unchanged.isAutoFulfillmentEnabled());
+        verify(providerClient, org.mockito.Mockito.times(1)).claimOwnership(any());
     }
 
     private SalesChannelOrder importAfter(CountDownLatch start, CountDownLatch ready,

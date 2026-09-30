@@ -36,6 +36,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -101,7 +102,17 @@ public class XianyuItemTakeoverService {
         } catch (SalesChannelProviderClientException exception) {
             throw exception;
         }
-        OwnershipClaimData data = requireClaimSuccess(response, requestId);
+        OwnershipClaimData data;
+        try {
+            data = validateOwnershipClaimSuccess(response, requestId,
+                    account.getProviderAccountId(), listing.getExternalItemId());
+        } catch (SalesChannelProviderClientException exception) {
+            if ("OWNERSHIP_CONFLICT".equals(exception.getErrorCode())) {
+                throw failure(ErrorCode.OWNERSHIP_CONFLICT,
+                        "闲鱼商品 ownership 已被其它主体占用", HttpStatus.CONFLICT);
+            }
+            throw exception;
+        }
         String result = data.result();
         if ("ALREADY_CLAIMED".equals(result)) {
             return new XianyuTakeoverResponse(listing.getExternalItemId(), listing.getId().toString(),
@@ -148,17 +159,11 @@ public class XianyuItemTakeoverService {
             return claimFailure(preflight, code, message, null);
         }
 
-        OwnershipClaimData data = response.data();
-        if (response.requestId() != null && !requestId.equals(response.requestId())) {
-            return claimFailure(preflight, "TAKEOVER_CLAIM_REQUEST_ID_MISMATCH",
-                    "Agent ownership claim request id did not match", null);
-        }
-        if (data == null || !preflight.itemId().equals(data.itemId())
-                || !account.getProviderAccountId().equals(data.accountId())
-                || !"MYSHOP".equals(data.managedBy())
-                || !("CLAIMED".equals(data.result()) || "ALREADY_CLAIMED".equals(data.result()))) {
-            return claimFailure(preflight, "TAKEOVER_CLAIM_RESPONSE_INVALID",
-                    "Agent ownership claim response did not match the exact item identity", null);
+        try {
+            validateOwnershipClaimSuccess(response, requestId,
+                    account.getProviderAccountId(), preflight.itemId());
+        } catch (SalesChannelProviderClientException exception) {
+            return claimFailure(preflight, exception.getErrorCode(), exception.getMessage(), exception);
         }
         return transactionService.finalizeTakeover(preflight);
     }
@@ -186,8 +191,16 @@ public class XianyuItemTakeoverService {
                 SalesChannelListingManagementMode.TAKEOVER_PENDING.name(), "TAKEOVER_PENDING");
     }
 
-    private OwnershipClaimData requireClaimSuccess(IntegrationEnvelope<OwnershipClaimData> response,
-                                                   String requestId) {
+    /**
+     * One strict success-contract validator shared by new claims and the
+     * MANAGED idempotent/repair path.  A successful envelope is not enough:
+     * the request, account, item, owner, and result must all match exactly.
+     */
+    private OwnershipClaimData validateOwnershipClaimSuccess(
+            IntegrationEnvelope<OwnershipClaimData> response,
+            String expectedRequestId,
+            String expectedProviderAccountId,
+            String expectedItemId) {
         if (response == null || response.outcome() == Outcome.UNKNOWN) {
             throw new SalesChannelProviderClientException(
                     SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE,
@@ -205,12 +218,23 @@ public class XianyuItemTakeoverService {
                             : SalesChannelProviderClientException.Disposition.SAFE_PERMANENT,
                     code, response.error() == null ? "Agent ownership claim failed" : response.error().message());
         }
-        if (response.requestId() != null && !requestId.equals(response.requestId())) {
+        if (response.requestId() == null || !expectedRequestId.equals(response.requestId())) {
             throw new SalesChannelProviderClientException(
                     SalesChannelProviderClientException.Disposition.SAFE_PERMANENT,
                     "TAKEOVER_CLAIM_REQUEST_ID_MISMATCH", "Agent ownership claim request id did not match");
         }
-        return response.data();
+        OwnershipClaimData data = response.data();
+        if (data == null
+                || !Objects.equals(expectedProviderAccountId, data.accountId())
+                || !Objects.equals(expectedItemId, data.itemId())
+                || !"MYSHOP".equals(data.managedBy())
+                || !("CLAIMED".equals(data.result()) || "ALREADY_CLAIMED".equals(data.result()))) {
+            throw new SalesChannelProviderClientException(
+                    SalesChannelProviderClientException.Disposition.SAFE_PERMANENT,
+                    "TAKEOVER_CLAIM_RESPONSE_INVALID",
+                    "Agent ownership claim response did not match the exact account, item, owner, and result identity");
+        }
+        return data;
     }
 
     private TakeoverPreflight preparePreflight(SalesChannelAccount account,
@@ -245,9 +269,10 @@ public class XianyuItemTakeoverService {
                 new SpecMappingsCommand(deterministicSpecRequestId(account.getId(), listing.getId(), itemId),
                         account.getProviderAccountId(), itemId));
         ListingSpecMappingsData providerSpecs = requireSpecInspection(specResponse, itemId);
+        List<SalesChannelSpecMappingValidator.ResolvedSpecMapping> resolvedMappings = List.of();
         if (product.isSpecEnabled()) {
             try {
-                specMappingValidator.resolve(validatorSpecs, validatorMappings, providerSpecs);
+                resolvedMappings = specMappingValidator.resolve(validatorSpecs, validatorMappings, providerSpecs);
             } catch (SalesChannelSpecMappingException exception) {
                 throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                         "闲鱼规格与 MyShop active ProductSpec 无法完成 exact mapping: " + exception.getMessage());
@@ -268,8 +293,26 @@ public class XianyuItemTakeoverService {
         List<XianyuItemTakeoverTransactionService.MappingIdentity> mappingIdentities = mappings.stream()
                 .map(mapping -> new XianyuItemTakeoverTransactionService.MappingIdentity(
                         mapping.getProductSpecId(), mapping.getExternalSkuId(), mapping.getProviderMapping())).toList();
+        Map<UUID, XianyuItemTakeoverTransactionService.MappingIdentity> existingMappingsBySpec = mappingIdentities
+                .stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        XianyuItemTakeoverTransactionService.MappingIdentity::productSpecId,
+                        mapping -> mapping, (left, right) -> left, LinkedHashMap::new));
+        List<XianyuItemTakeoverTransactionService.MappingIdentity> persistedMappings = product.isSpecEnabled()
+                ? resolvedMappings.stream().map(mapping -> {
+                    XianyuItemTakeoverTransactionService.MappingIdentity existing = existingMappingsBySpec
+                            .get(mapping.productSpecId());
+                    Map<String, Object> providerMapping = new LinkedHashMap<>(
+                            existing == null ? Map.of() : existing.providerMapping());
+                    providerMapping.put("provider_spec_name", mapping.providerSpecName());
+                    providerMapping.put("provider_spec_value", mapping.providerSpecValue());
+                    return new XianyuItemTakeoverTransactionService.MappingIdentity(
+                            mapping.productSpecId(), mapping.externalSkuId(), providerMapping);
+                }).toList()
+                : mappingIdentities;
         return new TakeoverPreflight(account.getId(), listing.getId(), product.getId(), itemId,
-                listing.getDesiredRevision(), product.isSpecEnabled(), specs, mappingIdentities);
+                account.getProviderAccountId(), listing.getManagementMode(), listing.getDesiredRevision(),
+                product.isSpecEnabled(), specs, mappingIdentities, resolvedMappings, persistedMappings);
     }
 
     private ListingSpecMappingsData requireSpecInspection(IntegrationEnvelope<ListingSpecMappingsData> response,

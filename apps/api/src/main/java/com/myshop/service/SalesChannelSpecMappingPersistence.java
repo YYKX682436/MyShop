@@ -19,10 +19,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /** Transaction boundaries for spec backfill; no transaction spans Agent HTTP. */
@@ -84,6 +86,22 @@ public class SalesChannelSpecMappingPersistence {
                 .orElseThrow(() -> failure("ACCOUNT_NOT_FOUND", "Sales channel account does not exist"));
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> failure("PRODUCT_NOT_FOUND", "Product does not exist"));
+        return applyLocked(snapshot, resolved, account, product, listing, lockedRows);
+    }
+
+    /**
+     * Applies already-resolved provider identities while the caller owns the
+     * Account -> Product -> Listing/ListingSpec lock order.  The ordinary
+     * spec-sync path and takeover path both use this method so they cannot
+     * drift into different conflict or persistence rules.
+     */
+    public SpecMappingSyncResult applyLocked(
+            ListingSpecSyncSnapshot snapshot,
+            List<SalesChannelSpecMappingValidator.ResolvedSpecMapping> resolved,
+            SalesChannelAccount account,
+            Product product,
+            SalesChannelListing listing,
+            List<SalesChannelListingSpec> lockedRows) {
         if (account.getProvider() != SalesChannelProvider.XIANYU
                 || !Objects.equals(account.getId(), snapshot.accountId())
                 || !Objects.equals(account.getProviderAccountId(), snapshot.providerAccountId())
@@ -106,28 +124,15 @@ public class SalesChannelSpecMappingPersistence {
             throw failure("LISTING_CHANGED_DURING_SYNC", "The listing specification identity changed during provider read");
         }
 
-        Map<UUID, SalesChannelListingSpec> rowsBySpec = new LinkedHashMap<>();
-        for (SalesChannelListingSpec row : lockedRows) {
-            if (rowsBySpec.put(row.getProductSpecId(), row) != null) {
-                throw failure("SPEC_MAPPING_INCOMPLETE", "A listing specification row is duplicated");
-            }
-        }
-        for (SalesChannelSpecMappingValidator.ResolvedSpecMapping mapping : resolved) {
-            SalesChannelListingSpec row = rowsBySpec.get(mapping.productSpecId());
-            if (row == null) {
-                throw failure("SPEC_MAPPING_INCOMPLETE", "Every active product specification needs a listing mapping row");
-            }
-            if (row.getExternalSkuId() != null && mapping.externalSkuId() != null
-                    && !row.getExternalSkuId().equals(mapping.externalSkuId())) {
-                throw failure("EXTERNAL_SKU_ID_CONFLICT", "An existing external SKU identity conflicts with the provider");
-            }
-        }
+        Map<UUID, SalesChannelListingSpec> rowsBySpec = validateResolvedMappings(currentSpecs, lockedRows, resolved);
 
         for (SalesChannelSpecMappingValidator.ResolvedSpecMapping mapping : resolved) {
             SalesChannelListingSpec row = rowsBySpec.get(mapping.productSpecId());
-            row.setProviderMapping(Map.of(
-                    "provider_spec_name", mapping.providerSpecName(),
-                    "provider_spec_value", mapping.providerSpecValue()));
+            Map<String, Object> providerMapping = new LinkedHashMap<>(
+                    row.getProviderMapping() == null ? Map.of() : row.getProviderMapping());
+            providerMapping.put("provider_spec_name", mapping.providerSpecName());
+            providerMapping.put("provider_spec_value", mapping.providerSpecValue());
+            row.setProviderMapping(providerMapping);
             if (mapping.externalSkuId() != null) {
                 row.setExternalSkuId(mapping.externalSkuId());
             }
@@ -141,6 +146,58 @@ public class SalesChannelSpecMappingPersistence {
                 .toList();
         return new SpecMappingSyncResult(listing.getId().toString(), listing.getExternalItemId(),
                 summaries.size(), summaries);
+    }
+
+    private Map<UUID, SalesChannelListingSpec> validateResolvedMappings(
+            List<SalesChannelSpecMappingValidator.ProductSpecSnapshot> currentSpecs,
+            List<SalesChannelListingSpec> lockedRows,
+            List<SalesChannelSpecMappingValidator.ResolvedSpecMapping> resolved) {
+        if (resolved == null) {
+            throw failure("SPEC_MAPPING_INCOMPLETE", "Resolved provider specification mappings are required");
+        }
+        Set<UUID> activeSpecIds = currentSpecs.stream()
+                .map(SalesChannelSpecMappingValidator.ProductSpecSnapshot::id)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        Map<UUID, SalesChannelListingSpec> rowsBySpec = new LinkedHashMap<>();
+        for (SalesChannelListingSpec row : lockedRows) {
+            if (!activeSpecIds.contains(row.getProductSpecId())) {
+                throw failure("SPEC_MAPPING_INCOMPLETE",
+                        "A listing specification row does not belong to an active product specification");
+            }
+            if (rowsBySpec.put(row.getProductSpecId(), row) != null) {
+                throw failure("SPEC_MAPPING_INCOMPLETE", "A listing specification row is duplicated");
+            }
+        }
+        if (rowsBySpec.size() != activeSpecIds.size() || resolved.size() != activeSpecIds.size()) {
+            throw failure("SPEC_MAPPING_INCOMPLETE",
+                    "Every active product specification needs exactly one listing mapping row");
+        }
+        Set<UUID> resolvedSpecIds = new HashSet<>();
+        Set<String> externalSkuIds = new HashSet<>();
+        for (SalesChannelSpecMappingValidator.ResolvedSpecMapping mapping : resolved) {
+            if (!activeSpecIds.contains(mapping.productSpecId())
+                    || !resolvedSpecIds.add(mapping.productSpecId())) {
+                throw failure("SPEC_MAPPING_INCOMPLETE",
+                        "Resolved provider specification mappings must cover active specs exactly once");
+            }
+            SalesChannelListingSpec row = rowsBySpec.get(mapping.productSpecId());
+            if (row.getExternalSkuId() != null && mapping.externalSkuId() != null
+                    && !row.getExternalSkuId().equals(mapping.externalSkuId())) {
+                throw failure("EXTERNAL_SKU_ID_CONFLICT", "An existing external SKU identity conflicts with the provider");
+            }
+            if (mapping.externalSkuId() != null && !externalSkuIds.add(mapping.externalSkuId())) {
+                throw failure("SPEC_MAPPING_INCOMPLETE", "External SKU identities must be unique");
+            }
+            if (mapping.providerSpecName() == null || mapping.providerSpecName().isBlank()
+                    || mapping.providerSpecValue() == null || mapping.providerSpecValue().isBlank()) {
+                throw failure("PROVIDER_SPEC_MAPPING_CONFLICT", "Provider specification mapping is incomplete");
+            }
+        }
+        if (resolvedSpecIds.size() != activeSpecIds.size()) {
+            throw failure("SPEC_MAPPING_INCOMPLETE",
+                    "Resolved provider specification mappings must cover every active product specification");
+        }
+        return rowsBySpec;
     }
 
     private boolean sameProductSpecs(

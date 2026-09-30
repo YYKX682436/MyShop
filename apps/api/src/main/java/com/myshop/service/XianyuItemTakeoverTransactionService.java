@@ -45,6 +45,7 @@ public class XianyuItemTakeoverTransactionService {
     private final SalesChannelListingSpecRepository listingSpecRepository;
     private final SalesChannelOperationRepository operationRepository;
     private final SalesChannelOrderRepository orderRepository;
+    private final SalesChannelSpecMappingPersistence mappingPersistence;
 
     /**
      * Locks Account -> Product -> Listing/ListingSpecs and only then moves a
@@ -59,10 +60,19 @@ public class XianyuItemTakeoverTransactionService {
         SalesChannelListing listing = lockListing(preflight.listingId());
         List<SalesChannelListingSpec> mappings = listingSpecRepository
                 .findBySalesChannelListingIdForUpdate(preflight.listingId());
-        validateIdentity(preflight, account, product, listing, mappings);
 
         if (listing.getManagementMode() == SalesChannelListingManagementMode.MANAGED) {
             return new BeginResult(SalesChannelListingManagementMode.MANAGED, false);
+        }
+        if (listing.getManagementMode() != preflight.managementMode()) {
+            throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
+                    "接管期间 listing management mode 发生变化");
+        }
+        validateIdentity(preflight, account, product, listing, mappings, preflight.mappings());
+        if (preflight.specEnabled()) {
+            mappingPersistence.applyLocked(
+                    preflight.mappingSnapshot(preflight.providerAccountId()),
+                    preflight.resolvedMappings(), account, product, listing, mappings);
         }
         if (listing.getManagementMode() == SalesChannelListingManagementMode.TAKEOVER_PENDING) {
             return new BeginResult(SalesChannelListingManagementMode.TAKEOVER_PENDING, false);
@@ -86,7 +96,7 @@ public class XianyuItemTakeoverTransactionService {
         SalesChannelListing listing = lockListing(preflight.listingId());
         List<SalesChannelListingSpec> mappings = listingSpecRepository
                 .findBySalesChannelListingIdForUpdate(preflight.listingId());
-        validateIdentity(preflight, account, product, listing, mappings);
+        validateIdentity(preflight, account, product, listing, mappings, preflight.persistedMappings());
 
         if (listing.getManagementMode() == SalesChannelListingManagementMode.MANAGED) {
             return response(preflight.itemId(), listing, product, "ALREADY_MANAGED");
@@ -116,7 +126,7 @@ public class XianyuItemTakeoverTransactionService {
         SalesChannelListing listing = lockListing(preflight.listingId());
         List<SalesChannelListingSpec> mappings = listingSpecRepository
                 .findBySalesChannelListingIdForUpdate(preflight.listingId());
-        validateIdentity(preflight, account, product, listing, mappings);
+        validateIdentity(preflight, account, product, listing, mappings, preflight.persistedMappings());
         if (listing.getManagementMode() == SalesChannelListingManagementMode.TAKEOVER_PENDING) {
             listing.setLastErrorCode(code == null || code.isBlank() ? "TAKEOVER_CLAIM_FAILED" : code);
             listing.setLastErrorMessage(message == null || message.isBlank()
@@ -157,7 +167,8 @@ public class XianyuItemTakeoverTransactionService {
      */
     private void requireAccountIdentity(SalesChannelAccount account, TakeoverPreflight preflight) {
         if (account.getProvider() != SalesChannelProvider.XIANYU
-                || !Objects.equals(account.getId(), preflight.accountId())) {
+                || !Objects.equals(account.getId(), preflight.accountId())
+                || !Objects.equals(account.getProviderAccountId(), preflight.providerAccountId())) {
             throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED, "接管账号身份发生变化");
         }
     }
@@ -170,8 +181,10 @@ public class XianyuItemTakeoverTransactionService {
 
     private void validateIdentity(TakeoverPreflight preflight, SalesChannelAccount account,
                                   Product product, SalesChannelListing listing,
-                                  List<SalesChannelListingSpec> mappings) {
+                                  List<SalesChannelListingSpec> mappings,
+                                  List<MappingIdentity> expectedMappings) {
         if (!Objects.equals(account.getId(), preflight.accountId())
+                || !Objects.equals(account.getProviderAccountId(), preflight.providerAccountId())
                 || !Objects.equals(product.getId(), preflight.productId())
                 || !Objects.equals(listing.getSalesChannelAccountId(), preflight.accountId())
                 || !Objects.equals(listing.getProductId(), preflight.productId())
@@ -188,7 +201,7 @@ public class XianyuItemTakeoverTransactionService {
         List<MappingIdentity> currentMappings = mappings.stream()
                 .map(this::mappingIdentity).toList();
         if (!Objects.equals(preflight.specs(), currentSpecs)
-                || !Objects.equals(preflight.mappings(), currentMappings)) {
+                || !Objects.equals(expectedMappings, currentMappings)) {
             throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                     "接管期间商品规格或 listing 规格映射发生变化");
         }
@@ -230,13 +243,34 @@ public class XianyuItemTakeoverTransactionService {
             UUID listingId,
             UUID productId,
             String itemId,
+            String providerAccountId,
+            SalesChannelListingManagementMode managementMode,
             long desiredRevision,
             boolean specEnabled,
             List<ProductSpecIdentity> specs,
-            List<MappingIdentity> mappings) {
+            List<MappingIdentity> mappings,
+            List<SalesChannelSpecMappingValidator.ResolvedSpecMapping> resolvedMappings,
+            List<MappingIdentity> persistedMappings) {
         public TakeoverPreflight {
             specs = List.copyOf(specs == null ? List.of() : specs);
             mappings = List.copyOf(mappings == null ? List.of() : mappings);
+            resolvedMappings = List.copyOf(resolvedMappings == null ? List.of() : resolvedMappings);
+            persistedMappings = List.copyOf(persistedMappings == null ? List.of() : persistedMappings);
+        }
+
+        public SalesChannelSpecMappingPersistence.ListingSpecSyncSnapshot mappingSnapshot(
+                String currentProviderAccountId) {
+            return new SalesChannelSpecMappingPersistence.ListingSpecSyncSnapshot(
+                    listingId, accountId, currentProviderAccountId, productId, itemId,
+                    managementMode, desiredRevision,
+                    specs.stream()
+                            .map(spec -> new SalesChannelSpecMappingValidator.ProductSpecSnapshot(
+                                    spec.id(), spec.name()))
+                            .toList(),
+                    mappings.stream()
+                            .map(mapping -> new SalesChannelSpecMappingValidator.ExistingMappingSnapshot(
+                                    mapping.productSpecId(), mapping.externalSkuId(), mapping.providerMapping()))
+                            .toList());
         }
     }
 

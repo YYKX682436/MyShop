@@ -55,6 +55,10 @@ public class SalesChannelSpecMappingValidator {
             if (existingBySpec.put(mapping.productSpecId(), mapping) != null) {
                 fail("SPEC_MAPPING_INCOMPLETE", "A listing specification row is duplicated");
             }
+            if (productSpecs.stream().noneMatch(spec -> spec.id().equals(mapping.productSpecId()))) {
+                fail("SPEC_MAPPING_INCOMPLETE",
+                        "A listing specification row does not belong to an active product specification");
+            }
         }
 
         List<ResolvedSpecMapping> resolved = new ArrayList<>();
