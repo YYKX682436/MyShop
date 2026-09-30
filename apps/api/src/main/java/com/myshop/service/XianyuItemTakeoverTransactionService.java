@@ -201,10 +201,38 @@ public class XianyuItemTakeoverTransactionService {
         List<MappingIdentity> currentMappings = mappings.stream()
                 .map(this::mappingIdentity).toList();
         if (!Objects.equals(preflight.specs(), currentSpecs)
-                || !Objects.equals(expectedMappings, currentMappings)) {
+                || !sameMappingIdentities(expectedMappings, currentMappings)) {
             throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                     "接管期间商品规格或 listing 规格映射发生变化");
         }
+    }
+
+    /**
+     * Listing-spec row order is not an identity fact: provider inspection may
+     * return SKU rows in a different order from the local rows.  Compare the
+     * complete mapping keyed by ProductSpec id while still rejecting duplicate
+     * or missing rows rather than allowing a lossy map comparison.
+     */
+    private boolean sameMappingIdentities(List<MappingIdentity> expected,
+                                          List<MappingIdentity> actual) {
+        if (expected == null || actual == null || expected.size() != actual.size()) {
+            return false;
+        }
+        Map<UUID, MappingIdentity> expectedBySpec = new LinkedHashMap<>();
+        Map<UUID, MappingIdentity> actualBySpec = new LinkedHashMap<>();
+        for (MappingIdentity mapping : expected) {
+            if (mapping == null || mapping.productSpecId() == null
+                    || expectedBySpec.put(mapping.productSpecId(), mapping) != null) {
+                return false;
+            }
+        }
+        for (MappingIdentity mapping : actual) {
+            if (mapping == null || mapping.productSpecId() == null
+                    || actualBySpec.put(mapping.productSpecId(), mapping) != null) {
+                return false;
+            }
+        }
+        return expectedBySpec.equals(actualBySpec);
     }
 
     private ProductSpecIdentity specIdentity(ProductSpec spec) {
