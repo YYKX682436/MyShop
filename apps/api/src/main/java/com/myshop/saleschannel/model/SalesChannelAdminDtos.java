@@ -64,7 +64,15 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("listingId") String listingId,
             @JsonProperty("productId") String productId,
             @JsonProperty("productTitle") String productTitle,
-            @JsonProperty("managementMode") String managementMode) { }
+            @JsonProperty("managementMode") String managementMode,
+            @JsonProperty("generationId") String generationId,
+            @JsonProperty("generationNo") Long generationNo,
+            @JsonProperty("isCurrent") Boolean isCurrent) {
+        public XianyuItemBinding(String listingId, String productId, String productTitle,
+                                 String managementMode) {
+            this(listingId, productId, productTitle, managementMode, null, null, null);
+        }
+    }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuLinkCandidate(
@@ -133,7 +141,23 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("lastErrorCode") String lastErrorCode,
             @JsonProperty("lastErrorMessage") String lastErrorMessage,
             @JsonProperty("providerConfig") XianyuProviderConfig providerConfig,
-            @JsonProperty("specMappings") List<ListingSpecMappingSummary> specMappings) { }
+            @JsonProperty("specMappings") List<ListingSpecMappingSummary> specMappings,
+            @JsonProperty("currentExternalItemId") String currentExternalItemId,
+            @JsonProperty("currentGenerationId") String currentGenerationId,
+            @JsonProperty("currentGenerationNo") Long currentGenerationNo,
+            @JsonProperty("generationCount") Integer generationCount,
+            @JsonProperty("appliedRevision") Long appliedRevision) {
+        public ListingSummary(String id, String providerAccountId, String displayName, String accountType,
+                              String managementMode, Boolean isEnabled, Boolean autoFulfillmentEnabled,
+                              String status, String externalItemId, Long desiredRevision,
+                              LocalDateTime lastSyncedAt, String lastErrorCode, String lastErrorMessage,
+                              XianyuProviderConfig providerConfig, List<ListingSpecMappingSummary> specMappings) {
+            this(id, providerAccountId, displayName, accountType, managementMode, isEnabled,
+                    autoFulfillmentEnabled, status, externalItemId, desiredRevision, lastSyncedAt,
+                    lastErrorCode, lastErrorMessage, providerConfig, specMappings,
+                    externalItemId, null, null, 0, null);
+        }
+    }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record ListingSpecMappingSummary(

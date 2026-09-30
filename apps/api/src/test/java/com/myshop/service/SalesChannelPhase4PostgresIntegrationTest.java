@@ -15,7 +15,8 @@ import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelDeliveryOperation;
 import com.myshop.entity.SalesChannelListing;
-import com.myshop.entity.SalesChannelListingSpec;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.entity.SalesChannelOrderCursor;
 import com.myshop.exception.BusinessException;
@@ -24,7 +25,8 @@ import com.myshop.exception.UnmanagedSalesChannelItemException;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
@@ -112,7 +114,10 @@ class SalesChannelPhase4PostgresIntegrationTest {
     private SalesChannelListingRepository listingRepository;
 
     @Autowired
-    private SalesChannelListingSpecRepository listingSpecRepository;
+    private SalesChannelListingGenerationRepository generationRepository;
+
+    @Autowired
+    private SalesChannelListingGenerationSpecRepository generationSpecRepository;
 
     @Autowired
     private SalesChannelOrderRepository channelOrderRepository;
@@ -275,21 +280,22 @@ class SalesChannelPhase4PostgresIntegrationTest {
             assertEquals(SalesChannelListingManagementMode.TAKEOVER_PENDING.name(),
                     scalar("select management_mode from sales_channel_listings where id = ?",
                             String.class, listing.getId()));
-            assertEquals(3, count("select count(*) from sales_channel_listing_specs "
-                    + "where sales_channel_listing_id = ? and external_sku_id is not null "
-                    + "and provider_mapping ->> 'provider_spec_name' = '规格'", listing.getId()));
-            assertEquals("sku-month", scalar("select external_sku_id from sales_channel_listing_specs "
-                    + "where sales_channel_listing_id = ? and product_spec_id = ?", String.class,
-                    listing.getId(), monthId));
+            UUID generationId = generationRepository.findCurrentByListingId(listing.getId()).orElseThrow().getId();
+            assertEquals(3, count("select count(*) from sales_channel_listing_generation_specs "
+                    + "where sales_channel_listing_generation_id = ? and external_sku_id is not null "
+                    + "and provider_mapping ->> 'provider_spec_name' = '规格'", generationId));
+            assertEquals("sku-month", scalar("select external_sku_id from sales_channel_listing_generation_specs "
+                    + "where sales_channel_listing_generation_id = ? and product_spec_id = ?", String.class,
+                    generationId, monthId));
             assertEquals("月卡", scalar("select provider_mapping ->> 'provider_spec_value' "
-                    + "from sales_channel_listing_specs where sales_channel_listing_id = ? and product_spec_id = ?",
-                    String.class, listing.getId(), monthId));
-            assertEquals("sku-year", scalar("select external_sku_id from sales_channel_listing_specs "
-                    + "where sales_channel_listing_id = ? and product_spec_id = ?", String.class,
-                    listing.getId(), yearId));
-            assertEquals("sku-lifetime", scalar("select external_sku_id from sales_channel_listing_specs "
-                    + "where sales_channel_listing_id = ? and product_spec_id = ?", String.class,
-                    listing.getId(), lifetimeId));
+                    + "from sales_channel_listing_generation_specs where sales_channel_listing_generation_id = ? and product_spec_id = ?",
+                    String.class, generationId, monthId));
+            assertEquals("sku-year", scalar("select external_sku_id from sales_channel_listing_generation_specs "
+                    + "where sales_channel_listing_generation_id = ? and product_spec_id = ?", String.class,
+                    generationId, yearId));
+            assertEquals("sku-lifetime", scalar("select external_sku_id from sales_channel_listing_generation_specs "
+                    + "where sales_channel_listing_generation_id = ? and product_spec_id = ?", String.class,
+                    generationId, lifetimeId));
             return new IntegrationEnvelope<>(command.requestId(), Outcome.SUCCEEDED,
                     new OwnershipClaimData(account.getProviderAccountId(), itemId, "MYSHOP", "CLAIMED"), null);
         });
@@ -628,12 +634,13 @@ class SalesChannelPhase4PostgresIntegrationTest {
         UUID specId = insertProductSpec(productId, "月卡");
         SalesChannelAccount account = account("spec");
         SalesChannelListing listing = listing(account, productId, "item-spec", true);
-        SalesChannelListingSpec mapping = new SalesChannelListingSpec();
-        mapping.setSalesChannelListingId(listing.getId());
+        SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
+        mapping.setSalesChannelListingGenerationId(
+                generationRepository.findCurrentByListingId(listing.getId()).orElseThrow().getId());
         mapping.setProductSpecId(specId);
         mapping.setExternalSkuId("sku-month");
         mapping.setProviderMapping(Map.of("provider_spec_name", "规格", "provider_spec_value", "月卡"));
-        listingSpecRepository.saveAndFlush(mapping);
+        generationSpecRepository.saveAndFlush(mapping);
         insertCard(productId, specId, "spec-card");
 
         SalesChannelOrder row = importService.importOrder(
@@ -649,6 +656,48 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(1, operations.stream().filter(operation -> specId != null && operation.getCardKeyId() != null).count());
         assertEquals(0, operations.stream().filter(operation -> operation.getResultJson() != null
                 && operation.getResultJson().containsKey("content")).count());
+    }
+
+    @Test
+    void oldGenerationOrderResolvesLogicalListingAndOldGenerationSkuAfterCurrentSwitch() {
+        UUID productId = insertProduct(true);
+        UUID oldSpecId = insertProductSpec(productId, "月卡");
+        UUID currentSpecId = insertProductSpec(productId, "年卡");
+        SalesChannelAccount account = account("old-generation-order");
+        SalesChannelListing listing = listing(account, productId, "generation-item-a", false);
+        SalesChannelListingGeneration generationOne = generationRepository
+                .findCurrentByListingId(listing.getId()).orElseThrow();
+        generationOne.setCurrent(false);
+        generationOne.setRetiredAt(LocalDateTime.now());
+        generationRepository.saveAndFlush(generationOne);
+        SalesChannelListingGeneration generationTwo = new SalesChannelListingGeneration(
+                listing.getId(), account.getId(), 2L, "generation-item-b", true, "PUBLISH");
+        generationTwo.setActivatedAt(LocalDateTime.now());
+        generationRepository.saveAndFlush(generationTwo);
+
+        SalesChannelListingGenerationSpec oldMapping = new SalesChannelListingGenerationSpec();
+        oldMapping.setSalesChannelListingGenerationId(generationOne.getId());
+        oldMapping.setProductSpecId(oldSpecId);
+        oldMapping.setExternalSkuId("sku-old-month");
+        oldMapping.setProviderMapping(Map.of("provider_spec_name", "规格", "provider_spec_value", "月卡"));
+        generationSpecRepository.saveAndFlush(oldMapping);
+        SalesChannelListingGenerationSpec currentMapping = new SalesChannelListingGenerationSpec();
+        currentMapping.setSalesChannelListingGenerationId(generationTwo.getId());
+        currentMapping.setProductSpecId(currentSpecId);
+        currentMapping.setExternalSkuId("sku-current-year");
+        currentMapping.setProviderMapping(Map.of("provider_spec_name", "规格", "provider_spec_value", "年卡"));
+        generationSpecRepository.saveAndFlush(currentMapping);
+
+        SalesChannelOrder imported = importService.importOrder(account,
+                order(account, "xy-old-generation-1", "generation-item-a", "sku-old-month", "月卡", 1, "20.00"));
+
+        assertEquals(SalesChannelOrderIngestStatus.IMPORTED, imported.getIngestStatus());
+        assertEquals(listing.getId(), imported.getSalesChannelListingId());
+        assertEquals(generationOne.getId(), imported.getSalesChannelListingGenerationId());
+        assertEquals(oldSpecId, scalar("select spec_id from order_items where order_id = ?", UUID.class,
+                imported.getOrderId()));
+        assertEquals(generationTwo.getId(), generationRepository.findCurrentByListingId(listing.getId())
+                .orElseThrow().getId());
     }
 
     @Test
@@ -687,9 +736,10 @@ class SalesChannelPhase4PostgresIntegrationTest {
         SalesChannelSpecMappingException failure = assertThrows(SalesChannelSpecMappingException.class,
                 () -> specMappingSyncService.sync(listing.getId()));
         assertEquals("SPEC_MAPPING_INCOMPLETE", failure.getCode());
-        assertEquals(3, count("select count(*) from sales_channel_listing_specs "
-                + "where sales_channel_listing_id = ? and provider_mapping = '{}'::jsonb and external_sku_id is null",
-                listing.getId()));
+        UUID generationId = generationRepository.findCurrentByListingId(listing.getId()).orElseThrow().getId();
+        assertEquals(3, count("select count(*) from sales_channel_listing_generation_specs "
+                + "where sales_channel_listing_generation_id = ? and provider_mapping = '{}'::jsonb and external_sku_id is null",
+                generationId));
         assertEquals(desiredRevision, listingRepository.findById(listing.getId()).orElseThrow().getDesiredRevision());
         assertEquals(appliedRevision, listingRepository.findById(listing.getId()).orElseThrow().getAppliedRevision());
         assertEquals(operationCount, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
@@ -713,9 +763,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(3, first.matched());
         assertEquals("item-spec-backfill", first.itemId());
 
-        Map<UUID, SalesChannelListingSpec> rows = listingSpecRepository
-                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
-                .collect(java.util.stream.Collectors.toMap(SalesChannelListingSpec::getProductSpecId, row -> row));
+        Map<UUID, SalesChannelListingGenerationSpec> rows = generationSpecRepository
+                .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(generationId).stream()
+                .collect(java.util.stream.Collectors.toMap(SalesChannelListingGenerationSpec::getProductSpecId, row -> row));
         assertEquals(Map.of("provider_spec_name", "规格", "provider_spec_value", "月卡"),
                 rows.get(monthId).getProviderMapping());
         assertEquals(Map.of("provider_spec_name", "规格", "provider_spec_value", "年卡"),
@@ -732,8 +782,8 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
         var second = specMappingSyncService.sync(listing.getId());
         assertEquals(first.mappings(), second.mappings());
-        assertEquals(3, count("select count(*) from sales_channel_listing_specs where sales_channel_listing_id = ?",
-                listing.getId()));
+        assertEquals(3, count("select count(*) from sales_channel_listing_generation_specs where sales_channel_listing_generation_id = ?",
+                generationId));
         assertEquals(operationCount, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
                 listing.getId()));
         verify(providerClient, org.mockito.Mockito.times(3)).getListingSpecMappings(any());
@@ -1420,13 +1470,17 @@ class SalesChannelPhase4PostgresIntegrationTest {
         SalesChannelListing listing = new SalesChannelListing();
         listing.setSalesChannelAccountId(account.getId());
         listing.setProductId(productId);
-        listing.bindExternalItemId(externalItemId);
         listing.setEnabled(true);
         listing.setAutoFulfillmentEnabled(autoFulfillment);
         listing.setDesiredState(SalesChannelListingDesiredState.ONLINE);
         listing.setStatus(SalesChannelListingStatus.ONLINE);
         listing.setProviderConfig(Map.of());
-        return listingRepository.saveAndFlush(listing);
+        SalesChannelListing saved = listingRepository.saveAndFlush(listing);
+        SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
+                saved.getId(), account.getId(), 1L, externalItemId, true, "LEGACY_MIGRATION");
+        generation.setActivatedAt(LocalDateTime.now());
+        generationRepository.saveAndFlush(generation);
+        return saved;
     }
 
     private SalesChannelListing linkedOnlyListing(SalesChannelAccount account, UUID productId,
@@ -1451,12 +1505,13 @@ class SalesChannelPhase4PostgresIntegrationTest {
         return listingRepository.saveAndFlush(listing);
     }
 
-    private SalesChannelListingSpec insertListingSpec(SalesChannelListing listing, UUID productSpecId) {
-        SalesChannelListingSpec mapping = new SalesChannelListingSpec();
-        mapping.setSalesChannelListingId(listing.getId());
+    private SalesChannelListingGenerationSpec insertListingSpec(SalesChannelListing listing, UUID productSpecId) {
+        SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
+        mapping.setSalesChannelListingGenerationId(
+                generationRepository.findCurrentByListingId(listing.getId()).orElseThrow().getId());
         mapping.setProductSpecId(productSpecId);
         mapping.setProviderMapping(Map.of());
-        return listingSpecRepository.saveAndFlush(mapping);
+        return generationSpecRepository.saveAndFlush(mapping);
     }
 
     private AgentOrder order(SalesChannelAccount account, String externalOrderNo,

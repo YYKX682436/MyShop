@@ -1,6 +1,6 @@
 package com.myshop.service;
 
-import com.myshop.entity.SalesChannelListingSpec;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.entity.ProductSpec;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
@@ -131,7 +131,7 @@ public class SalesChannelSpecMappingValidator {
         return new ProductSpecSnapshot(productSpec.getId(), productSpec.getName());
     }
 
-    public static ExistingMappingSnapshot snapshot(SalesChannelListingSpec mapping) {
+    public static ExistingMappingSnapshot snapshot(SalesChannelListingGenerationSpec mapping) {
         return new ExistingMappingSnapshot(mapping.getProductSpecId(), mapping.getExternalSkuId(),
                 mapping.getProviderMapping());
     }

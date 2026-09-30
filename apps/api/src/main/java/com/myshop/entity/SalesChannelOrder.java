@@ -33,6 +33,9 @@ public class SalesChannelOrder extends BaseEntity {
     @Column(name = "sales_channel_listing_id")
     private UUID salesChannelListingId;
 
+    @Column(name = "sales_channel_listing_generation_id")
+    private UUID salesChannelListingGenerationId;
+
     @Column(name = "order_id", unique = true)
     private UUID orderId;
 

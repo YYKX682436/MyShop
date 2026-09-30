@@ -145,7 +145,8 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
     new Set(specMappings.map((mapping) => mapping.productSpecId)).size === specMappings.length &&
     new Set(specMappings.map((mapping) => `${mapping.providerSpecName?.trim() || ""}\u0000${mapping.providerSpecValue?.trim() || ""}`)).size === specMappings.length
   )
-  const autoGateReady = deliveryType === "AUTO" && stockMode === "CARD_KEY" && type === "FISH_SHOP" && Boolean(selectedListing?.externalItemId) && specMappingReady
+  const currentItemId = selectedListing?.currentExternalItemId || selectedListing?.externalItemId
+  const autoGateReady = deliveryType === "AUTO" && stockMode === "CARD_KEY" && type === "FISH_SHOP" && Boolean(currentItemId) && specMappingReady
   const finalTitle = config.titleOverride?.trim() || productTitle.trim()
   const finalDescription = config.descriptionOverride?.trim() || productDescription.trim()
 
@@ -508,8 +509,8 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
         <div><span className="text-muted-foreground">管理模式</span><div className="mt-1 font-medium">{selectedListing?.managementMode === "LINKED_ONLY" ? "仅关联" : selectedListing?.managementMode === "TAKEOVER_PENDING" ? "接管待完成" : selectedListing?.managementMode === "MANAGED" ? "MyShop 管理" : "尚未配置"}</div></div>
         <div><span className="text-muted-foreground">渠道状态</span><div className="mt-1 font-medium">{selectedListing?.status || "尚未配置"}{selectedListing ? ` · ${selectedListing.isEnabled ? "已启用" : "已停用"}` : ""}</div></div>
         <div><span className="text-muted-foreground">自动发卡</span><div className="mt-1 font-medium">{selectedListing?.autoFulfillmentEnabled ? "已开启" : "已关闭"}</div></div>
-        <div><span className="text-muted-foreground">闲鱼 item_id</span><div className="mt-1 break-all font-medium">{selectedListing?.externalItemId || "—"}</div></div>
-        <div><span className="text-muted-foreground">目标版本 / 最近同步</span><div className="mt-1 font-medium">{selectedListing?.desiredRevision ?? "—"} / {selectedListing?.lastSyncedAt ? new Date(selectedListing.lastSyncedAt).toLocaleString() : "—"}</div></div>
+        <div><span className="text-muted-foreground">闲鱼 item_id</span><div className="mt-1 break-all font-medium">{currentItemId || "—"}</div></div>
+        <div><span className="text-muted-foreground">目标版本 / 已应用版本</span><div className="mt-1 font-medium">{selectedListing?.desiredRevision ?? "—"} / {selectedListing?.appliedRevision ?? "—"}</div></div>
         {selectedListing?.lastErrorCode && <div className="sm:col-span-2 lg:col-span-4"><span className="text-muted-foreground">最近错误</span><div className="mt-1 flex items-start gap-2 text-destructive"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span><strong>{selectedListing.lastErrorCode}</strong>{selectedListing.lastErrorMessage ? ` · ${selectedListing.lastErrorMessage}` : ""}</span></div></div>}
       </div>}
 
@@ -519,7 +520,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
       {selectedAccount && <div className={`mb-4 rounded-card border p-3 text-sm ${autoGateReady ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div><strong>自动发卡</strong><p className="mt-1 text-xs text-muted-foreground">Phase 4 仅支持 MyShop 的 AUTO + CARD_KEY + FISH_SHOP 商品；Agent 不分配卡密。</p></div>
-          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleAutoFulfillment()} disabled={!canProviderOperate || !autoGateReady || !selectedListing.externalItemId}>{busy === "auto" ? <Loader2 className="animate-spin" /> : null}{selectedListing.autoFulfillmentEnabled ? "关闭自动发卡" : "开启自动发卡"}</Button>}
+          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleAutoFulfillment()} disabled={!canProviderOperate || !autoGateReady || !currentItemId}>{busy === "auto" ? <Loader2 className="animate-spin" /> : null}{selectedListing.autoFulfillmentEnabled ? "关闭自动发卡" : "开启自动发卡"}</Button>}
         </div>
         {!autoGateReady && <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">当前不满足开启条件：需要商品交付方式 AUTO、库存模式 CARD_KEY、已验证 FISH_SHOP 账号、已绑定闲鱼 item；规格商品还必须先完成规格映射。</p>}
       </div>}
@@ -530,7 +531,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
             <h3 className="text-sm font-semibold">规格映射</h3>
             <p className="mt-1 text-xs text-muted-foreground">按规格名称严格匹配闲鱼真实规格；没有 external SKU ID 时，完整 provider mapping 仍可作为正式 identity。</p>
           </div>
-          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleSyncSpecMappings()} disabled={!canOperate || !selectedListing.externalItemId}>{busy === "mapping" ? <Loader2 className="animate-spin" /> : <RefreshCw />}{busy === "mapping" ? "同步中…" : "同步闲鱼规格映射"}</Button>}
+          {selectedListing && <Button type="button" variant="outline" size="sm" onClick={() => void handleSyncSpecMappings()} disabled={!canOperate || !currentItemId}>{busy === "mapping" ? <Loader2 className="animate-spin" /> : <RefreshCw />}{busy === "mapping" ? "同步中…" : "同步闲鱼规格映射"}</Button>}
         </div>
         {specMappings.length > 0 ? <div className="mt-3 space-y-2">
           {specMappings.map((mapping) => {

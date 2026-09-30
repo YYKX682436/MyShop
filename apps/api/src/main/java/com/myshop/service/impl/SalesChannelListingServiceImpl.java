@@ -4,15 +4,11 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.entity.Product;
-import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelListing;
-import com.myshop.entity.SalesChannelListingSpec;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.ProductRepository;
-import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.service.SalesChannelListingManagementPolicy;
 import com.myshop.constant.SalesChannelOperationStatus;
@@ -33,9 +29,7 @@ public class SalesChannelListingServiceImpl {
 
     private final SalesChannelAccountRepository accountRepository;
     private final ProductRepository productRepository;
-    private final ProductSpecRepository productSpecRepository;
     private final SalesChannelListingRepository listingRepository;
-    private final SalesChannelListingSpecRepository listingSpecRepository;
     private final SalesChannelOperationRepository operationRepository;
 
     @Transactional
@@ -55,16 +49,6 @@ public class SalesChannelListingServiceImpl {
                     return listingRepository.saveAndFlush(created);
                 });
 
-        List<ProductSpec> activeSpecs = productSpecRepository
-                .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
-        for (ProductSpec spec : activeSpecs) {
-            if (!listingSpecRepository.existsBySalesChannelListingIdAndProductSpecId(listing.getId(), spec.getId())) {
-                SalesChannelListingSpec mapping = new SalesChannelListingSpec();
-                mapping.setSalesChannelListingId(listing.getId());
-                mapping.setProductSpecId(spec.getId());
-                listingSpecRepository.save(mapping);
-            }
-        }
         return listing;
     }
 

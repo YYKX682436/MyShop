@@ -6,9 +6,11 @@ import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.saleschannel.model.DesiredListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
@@ -146,7 +148,6 @@ class SalesChannelWorkerTest {
             Map<String, Object> reconciliationResult = invocation.getArgument(3);
             target.resolveUnknownAsSucceeded(targetResult, LocalDateTime.now());
             reconciliation.succeed(reconciliationResult, LocalDateTime.now());
-            fixture.listing.bindExternalItemId("item-123");
             return true;
         }).when(fixture.operationService).resolveUnknownAsSucceeded(
                 eq(reconciliation.getId()), eq(target.getId()), any(), any(), any());
@@ -155,7 +156,6 @@ class SalesChannelWorkerTest {
 
         assertEquals(SalesChannelOperationStatus.SUCCEEDED, target.getStatus());
         assertEquals("item-123", target.getResult().get("item_id"));
-        assertEquals("item-123", fixture.listing.getExternalItemId());
         assertEquals(SalesChannelOperationStatus.SUCCEEDED, reconciliation.getStatus());
         verify(fixture.providerClient, never()).publish(any());
         verify(fixture.providerClient, never()).update(any(), any());
@@ -211,18 +211,47 @@ class SalesChannelWorkerTest {
         verifyNoInteractions(fixture.providerClient);
     }
 
+    @Test
+    void existingItemWorkerUsesFrozenGenerationAfterCurrentGenerationChanges() {
+        UUID listingId = UUID.randomUUID();
+        UUID generationId = UUID.randomUUID();
+        SalesChannelOperation operation = new SalesChannelOperation(listingId, generationId,
+                SalesChannelOperationType.OFFLINE, 1, "offline-generation-a", Map.of());
+        operation.setPayload(Map.of("desired_snapshot", snapshot(), "desired_fingerprint", FINGERPRINT));
+        operation.setId(UUID.randomUUID());
+        WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.CONNECTED);
+        fixture.listing.incrementDesiredRevision();
+        SalesChannelListingGeneration frozen = new SalesChannelListingGeneration(
+                listingId, fixture.account.getId(), 1L, "item-generation-a", false, "LEGACY_MIGRATION");
+        frozen.setId(generationId);
+        when(fixture.generationRepository.findById(generationId)).thenReturn(Optional.of(frozen));
+        when(fixture.providerClient.offline(eq("item-generation-a"), any())).thenReturn(
+                new IntegrationEnvelope<>(operation.getIdempotencyKey(), Outcome.SUCCEEDED,
+                        new ListingOperationData("item-generation-a", null, null, false, 1L, List.of()), null));
+
+        fixture.worker.runBatch();
+
+        verify(fixture.providerClient).offline(eq("item-generation-a"), any());
+        verify(fixture.providerClient, never()).delete(any(), any());
+        verify(fixture.providerClient, never()).publish(any());
+        verify(fixture.providerClient, never()).update(any(), any());
+    }
+
     private static SalesChannelOperation publishOperation(String suffix) {
         UUID listingId = UUID.randomUUID();
-        DesiredListingSnapshot snapshot = new DesiredListingSnapshot("account-123", "FISH_SHOP", "ONLINE",
+        SalesChannelOperation operation = new SalesChannelOperation(listingId, SalesChannelOperationType.PUBLISH,
+                1, "publish-" + suffix.replace(' ', '-'),
+                Map.of("desired_snapshot", snapshot(), "desired_fingerprint", FINGERPRINT));
+        operation.setId(UUID.randomUUID());
+        return operation;
+    }
+
+    private static DesiredListingSnapshot snapshot() {
+        return new DesiredListingSnapshot("account-123", "FISH_SHOP", "ONLINE",
                 "Test listing", "Description", new BigDecimal("12.50"), new BigDecimal("15.00"),
                 List.of("https://images.example.test/cover.jpg"), "cat-1", "Category", null, null,
                 "leaf-1", null, List.of(), 3, List.of(), List.of(), "Address", "Address check",
                 "delivery", "shipping", false, BigDecimal.ZERO);
-        SalesChannelOperation operation = new SalesChannelOperation(listingId, SalesChannelOperationType.PUBLISH,
-                1, "publish-" + suffix.replace(' ', '-'),
-                Map.of("desired_snapshot", snapshot, "desired_fingerprint", FINGERPRINT));
-        operation.setId(UUID.randomUUID());
-        return operation;
     }
 
     private static SalesChannelOperation reconciliationOperation(SalesChannelOperation target, String key) {
@@ -243,6 +272,7 @@ class SalesChannelWorkerTest {
         private final SalesChannelOperationClaimService claimService = mock(SalesChannelOperationClaimService.class);
         private final SalesChannelOperationRepository operationRepository = mock(SalesChannelOperationRepository.class);
         private final SalesChannelListingRepository listingRepository = mock(SalesChannelListingRepository.class);
+        private final SalesChannelListingGenerationRepository generationRepository = mock(SalesChannelListingGenerationRepository.class);
         private final SalesChannelAccountRepository accountRepository = mock(SalesChannelAccountRepository.class);
         private final SalesChannelOperationServiceImpl operationService = mock(SalesChannelOperationServiceImpl.class);
         private final SalesChannelProviderClient providerClient = mock(SalesChannelProviderClient.class);
@@ -290,7 +320,7 @@ class SalesChannelWorkerTest {
                         invocation.getArgument(2), invocation.getArgument(3));
             }).when(operationService).reschedule(any(), any(), any(), any());
 
-            worker = new SalesChannelWorker(claimService, operationRepository, listingRepository, accountRepository,
+            worker = new SalesChannelWorker(claimService, operationRepository, listingRepository, generationRepository, accountRepository,
                     operationService, providerClient, planner, mediaMaterializer, new ObjectMapper(), 10, 8, 300_000);
         }
 

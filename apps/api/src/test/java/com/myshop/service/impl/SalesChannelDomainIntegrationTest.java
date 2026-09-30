@@ -15,7 +15,9 @@ import com.myshop.entity.ProductCategory;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
-import com.myshop.entity.SalesChannelListingSpec;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.ProductCategoryRepository;
@@ -24,7 +26,8 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.SalesChannelAdminService;
@@ -84,7 +87,8 @@ class SalesChannelDomainIntegrationTest {
     @Autowired private ProductSpecRepository productSpecRepository;
     @Autowired private SalesChannelAccountRepository accountRepository;
     @Autowired private SalesChannelListingRepository listingRepository;
-    @Autowired private SalesChannelListingSpecRepository listingSpecRepository;
+    @Autowired private SalesChannelListingGenerationRepository generationRepository;
+    @Autowired private SalesChannelListingGenerationSpecRepository generationSpecRepository;
     @Autowired private SalesChannelOperationRepository operationRepository;
     @Autowired private SalesChannelAccountServiceImpl accountService;
     @Autowired private SalesChannelListingServiceImpl listingService;
@@ -114,7 +118,8 @@ class SalesChannelDomainIntegrationTest {
     @BeforeEach
     void resetSalesChannelFixtures() {
         jdbcTemplate.update("DELETE FROM sales_channel_operations");
-        jdbcTemplate.update("DELETE FROM sales_channel_listing_specs");
+        jdbcTemplate.update("DELETE FROM sales_channel_listing_generation_specs");
+        jdbcTemplate.update("DELETE FROM sales_channel_listing_generations");
         jdbcTemplate.update("DELETE FROM sales_channel_listings");
         jdbcTemplate.update("DELETE FROM sales_channel_accounts");
         jdbcTemplate.update("DELETE FROM card_keys WHERE product_id IN "
@@ -157,7 +162,7 @@ class SalesChannelDomainIntegrationTest {
 
         SalesChannelListing secondCall = listingService.ensureDraft(fixture.account().getId(), fixture.product().getId());
         assertEquals(fixture.listing().getId(), secondCall.getId());
-        assertEquals(0, listingSpecRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(secondCall.getId()).size());
+        assertTrue(generationRepository.findCurrentByListingId(secondCall.getId()).isEmpty());
 
         assertThrows(DataAccessException.class,
                 () -> jdbcTemplate.update("DELETE FROM products WHERE id = ?", fixture.product().getId()));
@@ -277,8 +282,7 @@ class SalesChannelDomainIntegrationTest {
     @Test
     void activeSpecMappingsUseStableProductSpecIdsAndNeverInventRowsForProductsWithoutSpecs() {
         Fixture noSpecs = fixture(false);
-        assertTrue(listingSpecRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(noSpecs.listing().getId())
-                .isEmpty());
+        assertTrue(generationRepository.findCurrentByListingId(noSpecs.listing().getId()).isEmpty());
 
         Fixture withSpecs = fixture(true);
         UUID visibleSpecId = addSpec(withSpecs.product().getId(), "visible", true, 0);
@@ -288,19 +292,21 @@ class SalesChannelDomainIntegrationTest {
         retired.setIsDeleted(1);
         productSpecRepository.saveAndFlush(retired);
 
-        listingService.ensureDraft(withSpecs.account().getId(), withSpecs.product().getId());
-        List<SalesChannelListingSpec> mappings = listingSpecRepository
-                .findBySalesChannelListingIdOrderByCreatedAtAsc(withSpecs.listing().getId());
-        Set<UUID> mappedSpecIds = mappings.stream().map(SalesChannelListingSpec::getProductSpecId)
+        SalesChannelListingGeneration generation = createGeneration(withSpecs, "active-spec-item");
+        insertGenerationSpec(generation, visibleSpecId);
+        insertGenerationSpec(generation, hiddenButActiveSpecId);
+        List<SalesChannelListingGenerationSpec> mappings = generationSpecRepository
+                .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(generation.getId());
+        Set<UUID> mappedSpecIds = mappings.stream().map(SalesChannelListingGenerationSpec::getProductSpecId)
                 .collect(Collectors.toSet());
         assertEquals(Set.of(visibleSpecId, hiddenButActiveSpecId), mappedSpecIds);
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
-                INSERT INTO sales_channel_listing_specs(id, sales_channel_listing_id, product_spec_id)
+                INSERT INTO sales_channel_listing_generation_specs(id, sales_channel_listing_generation_id, product_spec_id)
                 VALUES (?, ?, ?)
-                """, UUID.randomUUID(), withSpecs.listing().getId(), visibleSpecId));
+                """, UUID.randomUUID(), generation.getId(), visibleSpecId));
         entityManager.clear();
-        assertTrue(listingSpecRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
-                withSpecs.listing().getId()).stream().anyMatch(mapping -> visibleSpecId.equals(mapping.getProductSpecId())));
+        assertTrue(generationSpecRepository.findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(
+                generation.getId()).stream().anyMatch(mapping -> visibleSpecId.equals(mapping.getProductSpecId())));
     }
 
     @Test
@@ -316,7 +322,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(first.getIdempotencyKey(), duplicate.getIdempotencyKey());
         assertEquals(Map.of("snapshot", "initial"), duplicate.getPayload());
         assertTrue(first.getIdempotencyKey().matches("XIANYU:" + fixture.listing().getId()
-                + ":PUBLISH:1"));
+                + ":NEW:PUBLISH:1"));
         assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
                 INSERT INTO sales_channel_operations(id, sales_channel_listing_id, operation_type,
                     status, desired_revision, idempotency_key)
@@ -592,6 +598,7 @@ class SalesChannelDomainIntegrationTest {
                 operationRepository.findById(succeeded.getId()).orElseThrow().getStatus());
 
         Fixture failedFixture = fixture(false);
+        bindExistingItem(failedFixture);
         SalesChannelOperation failed = operationService.request(failedFixture.listing().getId(),
                 SalesChannelOperationType.OFFLINE, Map.of());
         assertTrue(operationService.markRunning(failed.getId()));
@@ -601,6 +608,7 @@ class SalesChannelDomainIntegrationTest {
                 operationRepository.findById(failed.getId()).orElseThrow().getStatus());
 
         Fixture pendingFixture = fixture(false);
+        bindExistingItem(pendingFixture);
         SalesChannelOperation pending = operationService.request(pendingFixture.listing().getId(),
                 SalesChannelOperationType.DELETE, Map.of());
         listingService.setDesiredState(pendingFixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
@@ -612,21 +620,23 @@ class SalesChannelDomainIntegrationTest {
     void aListingCannotRunTwoOperationsAtOnce() {
         Fixture fixture = fixture(false);
         listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
-        SalesChannelOperation publish = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.PUBLISH, Map.of());
-        SalesChannelOperation sync = operationService.request(fixture.listing().getId(),
+        bindExistingItem(fixture);
+        SalesChannelOperation first = operationService.request(fixture.listing().getId(),
                 SalesChannelOperationType.SYNC, Map.of());
 
-        assertTrue(operationService.markRunning(publish.getId()));
-        assertFalse(operationService.markRunning(sync.getId()));
+        assertTrue(operationService.markRunning(first.getId()));
+        listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "second revision"));
+        SalesChannelOperation second = operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of());
+        assertFalse(operationService.markRunning(second.getId()));
         assertEquals(SalesChannelOperationStatus.PENDING,
-                operationRepository.findById(sync.getId()).orElseThrow().getStatus());
+                operationRepository.findById(second.getId()).orElseThrow().getStatus());
         assertTrue(operationService.findReadyPending(LocalDateTime.now(), 10).isEmpty());
-        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "publish-123"), null));
-        assertEquals(List.of(sync.getId()), operationService.findReadyPending(LocalDateTime.now(), 10)
+        assertTrue(operationService.markSucceeded(first.getId(), Map.of("synced", true), null));
+        assertEquals(List.of(second.getId()), operationService.findReadyPending(LocalDateTime.now(), 10)
                 .stream().map(SalesChannelOperation::getId).toList());
-        assertTrue(operationService.markRunning(sync.getId()));
-        assertTrue(operationService.markSucceeded(sync.getId(), Map.of("synced", true), null));
+        assertTrue(operationService.markRunning(second.getId()));
+        assertTrue(operationService.markSucceeded(second.getId(), Map.of("synced", true), null));
     }
 
     @Test
@@ -744,7 +754,7 @@ class SalesChannelDomainIntegrationTest {
         assertTrue(operationService.markSucceeded(stalePublish.getId(), Map.of("item_id", "remote-123"),
                 "revision-one-fingerprint"));
         SalesChannelListing afterCompletion = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertEquals("remote-123", afterCompletion.getExternalItemId());
+        assertEquals("remote-123", currentItem(fixture.listing().getId()));
         assertEquals(0, afterCompletion.getAppliedRevision());
         assertNull(afterCompletion.getAppliedFingerprint());
         assertEquals(SalesChannelListingStatus.PUBLISHING, afterCompletion.getStatus());
@@ -773,7 +783,7 @@ class SalesChannelDomainIntegrationTest {
         assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "personal-item-1"),
                 "revision-one-fingerprint"));
         SalesChannelListing afterPublish = desiredStatePlanner.refresh(enabled.getId());
-        assertEquals("personal-item-1", afterPublish.getExternalItemId());
+        assertEquals("personal-item-1", currentItem(enabled.getId()));
         assertEquals(SalesChannelListingStatus.ERROR, afterPublish.getStatus());
         assertEquals("UNSUPPORTED_ACCOUNT_CAPABILITY", afterPublish.getLastErrorCode());
         assertTrue(operationRepository
@@ -832,7 +842,7 @@ class SalesChannelDomainIntegrationTest {
                 Map.of("item_id", "one-confirmed-item"), Map.of("target_outcome", "SUCCEEDED"),
                 "revision-one-fingerprint"));
         SalesChannelListing reconciled = desiredStatePlanner.refresh(enabled.getId());
-        assertEquals("one-confirmed-item", reconciled.getExternalItemId());
+        assertEquals("one-confirmed-item", currentItem(enabled.getId()));
 
         List<SalesChannelOperation> revisionTwoOperations = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 2);
@@ -846,8 +856,7 @@ class SalesChannelDomainIntegrationTest {
         assertFalse(operationService.markRunning(erroneousPublish.getId()));
         assertEquals(SalesChannelOperationStatus.SUPERSEDED,
                 operationRepository.findById(erroneousPublish.getId()).orElseThrow().getStatus());
-        assertEquals("one-confirmed-item",
-                listingRepository.findById(enabled.getId()).orElseThrow().getExternalItemId());
+        assertEquals("one-confirmed-item", currentItem(enabled.getId()));
     }
 
     @Test
@@ -868,7 +877,7 @@ class SalesChannelDomainIntegrationTest {
                 "second-fingerprint"));
 
         SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertEquals("remote-123", conflicted.getExternalItemId());
+        assertEquals("remote-123", currentItem(fixture.listing().getId()));
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
@@ -911,7 +920,7 @@ class SalesChannelDomainIntegrationTest {
                 "sync-fingerprint"));
 
         SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertEquals("remote-123", conflicted.getExternalItemId());
+        assertEquals("remote-123", currentItem(fixture.listing().getId()));
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
@@ -933,19 +942,14 @@ class SalesChannelDomainIntegrationTest {
         secondProduct = productRepository.saveAndFlush(secondProduct);
         SalesChannelListing secondListing = listingService.ensureDraft(fixture.account().getId(), secondProduct.getId());
 
-        assertNull(listingRepository.findById(fixture.listing().getId()).orElseThrow().getExternalItemId());
-        assertNull(listingRepository.findById(secondListing.getId()).orElseThrow().getExternalItemId());
-        jdbcTemplate.update("UPDATE sales_channel_listings SET external_item_id = 'remote-shared' WHERE id = ?",
-                fixture.listing().getId());
-        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
-                "UPDATE sales_channel_listings SET external_item_id = 'remote-shared' WHERE id = ?",
-                secondListing.getId()));
+        assertNull(currentItem(fixture.listing().getId()));
+        assertNull(currentItem(secondListing.getId()));
+        createGeneration(fixture, "remote-shared");
+        assertThrows(DataAccessException.class, () -> createGeneration(secondListing, "remote-shared"));
 
         Fixture anotherAccount = fixture(false);
-        jdbcTemplate.update("UPDATE sales_channel_listings SET external_item_id = 'remote-shared' WHERE id = ?",
-                anotherAccount.listing().getId());
-        assertEquals("remote-shared", listingRepository.findById(anotherAccount.listing().getId())
-                .orElseThrow().getExternalItemId());
+        createGeneration(anotherAccount, "remote-shared");
+        assertEquals("remote-shared", currentItem(anotherAccount.listing().getId()));
     }
 
     @Test
@@ -956,8 +960,8 @@ class SalesChannelDomainIntegrationTest {
                 SalesChannelOperationType.PUBLISH, Map.of("immutable", "revision-one"));
         assertTrue(operationService.markRunning(target.getId()));
         listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision two"));
-        SalesChannelOperation newerDesired = operationService.request(fixture.listing().getId(),
-                SalesChannelOperationType.SYNC, Map.of("immutable", "revision-two"));
+        assertThrows(IllegalStateException.class, () -> operationService.request(fixture.listing().getId(),
+                SalesChannelOperationType.SYNC, Map.of("immutable", "revision-two")));
         assertTrue(operationService.markUnknown(target.getId(), "HTTP_TIMEOUT", "publish result uncertain"));
 
         SalesChannelOperation reconciliation = operationService.requestReconciliation(target.getId());
@@ -975,12 +979,11 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(Map.of("item_id", "remote-published"), resolvedTarget.getResult());
         assertEquals(SalesChannelOperationStatus.SUCCEEDED, resolvedReconciliation.getStatus());
         assertEquals("SUCCEEDED", resolvedReconciliation.getResult().get("target_outcome"));
-        assertEquals("remote-published", listing.getExternalItemId());
+        assertEquals("remote-published", currentItem(fixture.listing().getId()));
         assertEquals(0, listing.getAppliedRevision());
         assertNull(listing.getAppliedFingerprint());
         assertEquals(SalesChannelListingStatus.PUBLISHING, listing.getStatus());
-        assertEquals(SalesChannelOperationStatus.PENDING,
-                operationRepository.findById(newerDesired.getId()).orElseThrow().getStatus());
+        assertTrue(operationRepository.findById(target.getId()).orElseThrow().getSalesChannelListingGenerationId() == null);
     }
 
     @Test
@@ -1148,6 +1151,7 @@ class SalesChannelDomainIntegrationTest {
     void durableQueueSelectsDuePendingOperationsInOrderAndSupportsSkipLockedClaims() {
         Fixture fixture = fixture(false);
         listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
+        bindExistingItem(fixture);
         SalesChannelOperation first = operationService.request(fixture.listing().getId(),
                 SalesChannelOperationType.PUBLISH, Map.of());
         SalesChannelOperation second = operationService.request(fixture.listing().getId(),
@@ -1255,8 +1259,31 @@ class SalesChannelDomainIntegrationTest {
 
     private void bindExistingItem(Fixture fixture) {
         SalesChannelListing listing = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        listing.bindExternalItemId("existing-item-" + UUID.randomUUID());
-        listingRepository.saveAndFlush(listing);
+        createGeneration(listing, "existing-item-" + UUID.randomUUID());
+    }
+
+    private SalesChannelListingGeneration createGeneration(Fixture fixture, String itemId) {
+        return createGeneration(fixture.listing(), itemId);
+    }
+
+    private SalesChannelListingGeneration createGeneration(SalesChannelListing listing, String itemId) {
+        SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
+                listing.getId(), listing.getSalesChannelAccountId(), 1L, itemId, true, "LEGACY_MIGRATION");
+        generation.setActivatedAt(LocalDateTime.now());
+        return generationRepository.saveAndFlush(generation);
+    }
+
+    private void insertGenerationSpec(SalesChannelListingGeneration generation, UUID productSpecId) {
+        SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
+        mapping.setSalesChannelListingGenerationId(generation.getId());
+        mapping.setProductSpecId(productSpecId);
+        generationSpecRepository.saveAndFlush(mapping);
+    }
+
+    private String currentItem(UUID listingId) {
+        return generationRepository.findCurrentByListingId(listingId)
+                .map(SalesChannelListingGeneration::getExternalItemId)
+                .orElse(null);
     }
 
     private void verifiedAccount(Fixture fixture, String accountType) {

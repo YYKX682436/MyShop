@@ -8,6 +8,7 @@ import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
@@ -16,7 +17,8 @@ import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelDeliveryOperationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
@@ -71,11 +73,12 @@ class SalesChannelAdminServiceTest {
     @Mock private SalesChannelDesiredStatePlanner planner;
     @Mock private SalesChannelAccountRepository accountRepository;
     @Mock private SalesChannelListingRepository listingRepository;
+    @Mock private SalesChannelListingGenerationRepository generationRepository;
     @Mock private SalesChannelOperationRepository operationRepository;
     @Mock private ObjectMapper objectMapper;
     @Mock private ProductRepository productRepository;
     @Mock private ProductSpecRepository productSpecRepository;
-    @Mock private SalesChannelListingSpecRepository listingSpecRepository;
+    @Mock private SalesChannelListingGenerationSpecRepository generationSpecRepository;
     @Mock private SalesChannelSpecMappingValidator specMappingValidator;
     @Mock private SalesChannelSpecMappingSyncService specMappingSyncService;
     @Mock private SalesChannelOrderCursorRepository cursorRepository;
@@ -97,7 +100,9 @@ class SalesChannelAdminServiceTest {
         listing.setId(listingId);
         listing.setSalesChannelAccountId(accountId);
         listing.setProductId(productId);
-        listing.bindExternalItemId("external-item");
+        SalesChannelListingGeneration generation = generation(listing, "external-item");
+        when(generationRepository.findBySalesChannelListingIdAndCurrentTrue(listingId))
+                .thenReturn(Optional.of(generation));
 
         SalesChannelAccount account = new SalesChannelAccount();
         account.setId(accountId);
@@ -133,7 +138,9 @@ class SalesChannelAdminServiceTest {
         listing.setId(listingId);
         listing.setSalesChannelAccountId(accountId);
         listing.setProductId(productId);
-        listing.bindExternalItemId("external-item");
+        SalesChannelListingGeneration generation = generation(listing, "external-item");
+        when(generationRepository.findBySalesChannelListingIdAndCurrentTrue(listingId))
+                .thenReturn(Optional.of(generation));
 
         SalesChannelAccount account = new SalesChannelAccount();
         account.setId(accountId);
@@ -157,7 +164,7 @@ class SalesChannelAdminServiceTest {
         when(productRepository.findById(productId)).thenReturn(Optional.of(product));
         when(productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0))
                 .thenReturn(java.util.List.of(spec));
-        when(listingSpecRepository.findBySalesChannelListingIdForUpdate(listingId))
+        when(generationSpecRepository.findBySalesChannelListingGenerationIdForUpdate(generation.getId()))
                 .thenReturn(java.util.List.of());
         doThrow(new SalesChannelSpecMappingException("SPEC_MAPPING_INCOMPLETE", "mapping required"))
                 .when(specMappingValidator).assertCompleteForAutoFulfillment(any(), any());
@@ -258,8 +265,13 @@ class SalesChannelAdminServiceTest {
         SalesChannelListing linkedListing = listing(accountId, linkedProductId, "linked-item");
         SalesChannelListing conflictListing1 = listing(accountId, conflictProductId1, "conflict-item");
         SalesChannelListing conflictListing2 = listing(accountId, conflictProductId2, "conflict-item");
-        when(listingRepository.findBySalesChannelAccountIdAndExternalItemIdIn(
-                eq(accountId), any())).thenReturn(List.of(linkedListing, conflictListing1, conflictListing2));
+        SalesChannelListingGeneration linkedGeneration = generation(linkedListing, "linked-item");
+        SalesChannelListingGeneration conflictGeneration1 = generation(conflictListing1, "conflict-item");
+        SalesChannelListingGeneration conflictGeneration2 = generation(conflictListing2, "conflict-item");
+        when(generationRepository.findAllBySalesChannelAccountIdAndExternalItemIdIn(
+                eq(accountId), any())).thenReturn(List.of(linkedGeneration, conflictGeneration1, conflictGeneration2));
+        when(listingRepository.findAllById(any())).thenReturn(
+                List.of(linkedListing, conflictListing1, conflictListing2));
 
         Product linkedProduct = product(linkedProductId, "安卓定制V");
         Product conflictProduct1 = product(conflictProductId1, "Conflict A");
@@ -289,7 +301,7 @@ class SalesChannelAdminServiceTest {
                 conflictResult.bindings().stream().map(binding -> binding.productId()).toList());
 
         verify(providerClient).queryItems(new ItemsQueryCommand("2215747465381", 1, 20, ""));
-        verify(listingRepository).findBySalesChannelAccountIdAndExternalItemIdIn(eq(accountId), any());
+        verify(generationRepository).findAllBySalesChannelAccountIdAndExternalItemIdIn(eq(accountId), any());
         verify(productRepository).findAllById(any());
         verify(listingRepository, never()).save(any());
         verifyNoInteractions(listingService);
@@ -371,8 +383,14 @@ class SalesChannelAdminServiceTest {
         listing.setId(UUID.randomUUID());
         listing.setSalesChannelAccountId(accountId);
         listing.setProductId(productId);
-        listing.bindExternalItemId(itemId);
         return listing;
+    }
+
+    private static SalesChannelListingGeneration generation(SalesChannelListing listing, String itemId) {
+        SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
+                listing.getId(), listing.getSalesChannelAccountId(), 1, itemId, true, "LEGACY_MIGRATION");
+        generation.setId(UUID.randomUUID());
+        return generation;
     }
 
     private static Product product(UUID id, String title) {

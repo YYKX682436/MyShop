@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("35", flyway.info().current().getVersion().getVersion());
-        assertEquals(35, flyway.info().all().length);
+        assertEquals("36", flyway.info().current().getVersion().getVersion());
+        assertEquals(36, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -64,7 +64,8 @@ class MigrationChainIntegrationTest {
                 "payment_channels", "site_configs", "user_number_sequences", "balance_transactions", "operation_logs",
                 "visit_stats", "webhook_events", "manual_stocks", "payment_attempts",
                 "card_key_reclaims", "after_sale_requests", "after_sale_attachments", "after_sale_messages",
-                "sales_channel_accounts", "sales_channel_listings", "sales_channel_listing_specs",
+                "sales_channel_accounts", "sales_channel_listings", "sales_channel_listing_generations",
+                "sales_channel_listing_generation_specs",
                 "sales_channel_operations")) {
             assertTrue(tableExists(table), "missing table: " + table);
         }
@@ -72,7 +73,7 @@ class MigrationChainIntegrationTest {
                 "is_enabled", "capabilities", "last_verified_at", "last_login_at", "created_at", "updated_at")) {
             assertTrue(columnExists("sales_channel_accounts", column), "missing account column: " + column);
         }
-        for (String column : List.of("id", "sales_channel_account_id", "product_id", "external_item_id",
+        for (String column : List.of("id", "sales_channel_account_id", "product_id",
                 "desired_state", "status", "desired_revision", "applied_revision", "provider_config",
                 "management_mode",
                 "applied_fingerprint", "desired_fingerprint", "is_enabled", "last_synced_at",
@@ -80,12 +81,19 @@ class MigrationChainIntegrationTest {
                 "created_at", "updated_at")) {
             assertTrue(columnExists("sales_channel_listings", column), "missing listing column: " + column);
         }
-        for (String column : List.of("id", "sales_channel_listing_id", "product_spec_id", "external_sku_id",
+        for (String column : List.of("id", "sales_channel_listing_id", "sales_channel_account_id",
+                "generation_no", "external_item_id", "is_current", "origin", "activated_at", "retired_at",
+                "created_at", "updated_at")) {
+            assertTrue(columnExists("sales_channel_listing_generations", column),
+                    "missing listing generation column: " + column);
+        }
+        for (String column : List.of("id", "sales_channel_listing_generation_id", "product_spec_id", "external_sku_id",
                 "provider_mapping", "created_at", "updated_at")) {
-            assertTrue(columnExists("sales_channel_listing_specs", column), "missing listing spec column: " + column);
+            assertTrue(columnExists("sales_channel_listing_generation_specs", column),
+                    "missing listing generation spec column: " + column);
         }
         for (String column : List.of("id", "sales_channel_listing_id", "operation_type", "status",
-                "desired_revision", "idempotency_key", "payload", "result", "attempt_count",
+                "desired_revision", "sales_channel_listing_generation_id", "idempotency_key", "payload", "result", "attempt_count",
                 "next_attempt_at", "started_at", "finished_at", "last_error_code", "last_error_message",
                 "created_at", "updated_at")) {
             assertTrue(columnExists("sales_channel_operations", column), "missing operation column: " + column);
@@ -97,34 +105,34 @@ class MigrationChainIntegrationTest {
         assertEquals("YES", nullableValue("sales_channel_listings", "desired_fingerprint"));
         assertTrue(defaultValue("sales_channel_listings", "is_enabled").contains("false"));
         assertTrue(defaultValue("sales_channel_listings", "management_mode").contains("MANAGED"));
-        assertEquals("jsonb", dataType("sales_channel_listing_specs", "provider_mapping"));
+        assertEquals("jsonb", dataType("sales_channel_listing_generation_specs", "provider_mapping"));
         assertEquals("jsonb", dataType("sales_channel_operations", "payload"));
         assertEquals("jsonb", dataType("sales_channel_operations", "result"));
         assertEquals("NO", nullableValue("sales_channel_accounts", "capabilities"));
         assertEquals("NO", nullableValue("sales_channel_listings", "provider_config"));
-        assertEquals("NO", nullableValue("sales_channel_listing_specs", "provider_mapping"));
+        assertEquals("NO", nullableValue("sales_channel_listing_generation_specs", "provider_mapping"));
         assertEquals("NO", nullableValue("sales_channel_operations", "payload"));
         assertTrue(defaultValue("sales_channel_accounts", "capabilities").contains("{}"));
         assertTrue(defaultValue("sales_channel_listings", "provider_config").contains("{}"));
-        assertTrue(defaultValue("sales_channel_listing_specs", "provider_mapping").contains("{}"));
+        assertTrue(defaultValue("sales_channel_listing_generation_specs", "provider_mapping").contains("{}"));
         assertTrue(defaultValue("sales_channel_operations", "payload").contains("{}"));
         for (String constraint : List.of("uq_sales_channel_accounts_provider_account",
-                "uq_sales_channel_listings_account_product", "uq_sales_channel_listing_specs_listing_spec",
-                "uq_sales_channel_listings_account_external_item", "uq_sales_channel_operations_idempotency_key")) {
+                "uq_sales_channel_listings_account_product", "uq_sales_channel_listings_id_account",
+                "uq_sales_channel_listing_generations_account_item", "uq_sales_channel_listing_generations_listing_no",
+                "uq_sales_channel_operations_idempotency_key")) {
             assertTrue(indexExists(constraint), "missing unique index: " + constraint);
         }
-        String externalItemUniqueIndex = jdbcTemplate.queryForObject(
-                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' "
-                        + "AND indexname = 'uq_sales_channel_listings_account_external_item'", String.class);
-        assertTrue(externalItemUniqueIndex.toLowerCase().contains("where (external_item_id is not null)"));
         for (String foreignKey : List.of("fk_sales_channel_listings_account", "fk_sales_channel_listings_product",
-                "fk_sales_channel_listing_specs_listing", "fk_sales_channel_listing_specs_product_spec",
-                "fk_sales_channel_operations_listing")) {
+                "fk_sales_channel_listing_generations_listing_account",
+                "fk_sales_channel_listing_generation_specs_generation",
+                "fk_sales_channel_listing_generation_specs_product_spec",
+                "fk_sales_channel_operations_listing", "fk_sales_channel_operations_generation")) {
             assertTrue(foreignKeyExists(foreignKey), "missing foreign key: " + foreignKey);
             assertTrue(foreignKeyUsesNoAction(foreignKey), "sales channel history must not cascade-delete: " + foreignKey);
         }
         for (String index : List.of("idx_sales_channel_listings_product", "idx_sales_channel_listings_account_status",
-                "idx_sales_channel_listings_external_item", "idx_sales_channel_listing_specs_product_spec",
+                "idx_sales_channel_listing_generations_listing", "idx_sales_channel_listing_generations_account_item",
+                "idx_sales_channel_listing_generation_specs_product_spec",
                 "idx_sales_channel_operations_worker", "idx_sales_channel_operations_listing_revision",
                 "uq_sales_channel_operations_running_listing")) {
             assertTrue(indexExists(index), "missing sales channel index: " + index);
@@ -141,6 +149,9 @@ class MigrationChainIntegrationTest {
         assertTrue(managementModeConstraint.contains("TAKEOVER_PENDING"));
         assertTrue(checkConstraintExists("sales_channel_operations_type_check"));
         assertTrue(checkConstraintExists("sales_channel_operations_status_check"));
+        assertTrue(checkConstraintExists("sales_channel_operations_generation_required_check"));
+        assertFalse(columnExists("sales_channel_listings", "external_item_id"));
+        assertFalse(tableExists("sales_channel_listing_specs"));
         assertEquals(0, jdbcTemplate.queryForObject("""
                 SELECT count(*) FROM information_schema.columns
                 WHERE table_schema = 'public' AND column_name LIKE 'xianyu_%'
@@ -513,6 +524,105 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
+    void v36MigratesLegacyProviderIdentitySpecsOrdersAndExistingItemOperationsExactly() {
+        flyway("35").migrate();
+
+        UUID categoryId = UUID.randomUUID();
+        UUID productId = UUID.randomUUID();
+        UUID productSpecId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        UUID listingId = UUID.randomUUID();
+        UUID legacySpecId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        UUID channelOrderId = UUID.randomUUID();
+        String itemId = "1084013851108";
+
+        jdbcTemplate.update("INSERT INTO product_categories(id, name) VALUES (?, 'v36-category')", categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, product_no, retail_price, cost_price, category_id, spec_enabled)
+                VALUES (?, 'v36-product', nextval('product_no_sequence'), 10.00, NULL, ?, true)
+                """, productId, categoryId);
+        jdbcTemplate.update("""
+                INSERT INTO product_specs(id, product_id, name, retail_price, cost_price)
+                VALUES (?, ?, '月卡', 10.00, 5.00)
+                """, productSpecId, productId);
+        jdbcTemplate.update("""
+                INSERT INTO sales_channel_accounts(id, provider, provider_account_id, status)
+                VALUES (?, 'XIANYU', 'v36-account', 'CONNECTED')
+                """, accountId);
+        jdbcTemplate.update("""
+                INSERT INTO sales_channel_listings(
+                    id, sales_channel_account_id, product_id, external_item_id,
+                    desired_state, status, desired_revision, applied_revision,
+                    provider_config, management_mode, is_enabled, auto_fulfillment_enabled)
+                VALUES (?, ?, ?, ?, 'OFFLINE', 'OFFLINE', 8, 8, '{}'::jsonb,
+                        'MANAGED', false, false)
+                """, listingId, accountId, productId, itemId);
+        jdbcTemplate.update("""
+                INSERT INTO sales_channel_listing_specs(
+                    id, sales_channel_listing_id, product_spec_id, external_sku_id, provider_mapping)
+                VALUES (?, ?, ?, '6304286850203', '{"provider_spec_name":"规格","provider_spec_value":"月卡"}'::jsonb)
+                """, legacySpecId, listingId, productSpecId);
+        jdbcTemplate.update("""
+                INSERT INTO sales_channel_operations(
+                    id, sales_channel_listing_id, operation_type, status, desired_revision,
+                    idempotency_key, payload, result)
+                VALUES (?, ?, 'SYNC', 'SUCCEEDED', 8, 'v36-sync-operation', '{}'::jsonb, '{}'::jsonb)
+                """, operationId, listingId);
+        jdbcTemplate.update("""
+                INSERT INTO sales_channel_orders(
+                    id, provider, sales_channel_account_id, sales_channel_listing_id,
+                    external_order_no, external_item_id, quantity, amount, currency,
+                    external_status, source_updated_at, source_fingerprint)
+                VALUES (?, 'XIANYU', ?, ?, 'v36-order', ?, 1, 10.00, 'CNY',
+                        'pending_ship', CURRENT_TIMESTAMP, repeat('a', 64))
+                """, channelOrderId, accountId, listingId, itemId);
+
+        flyway().migrate();
+
+        UUID generationId = jdbcTemplate.queryForObject("""
+                SELECT id FROM sales_channel_listing_generations
+                WHERE sales_channel_listing_id = ? AND generation_no = 1
+                """, UUID.class, listingId);
+        assertNotNull(generationId);
+        assertEquals(itemId, jdbcTemplate.queryForObject(
+                "SELECT external_item_id FROM sales_channel_listing_generations WHERE id = ?",
+                String.class, generationId));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM sales_channel_listing_generations WHERE sales_channel_account_id = ? AND external_item_id = ?",
+                Integer.class, accountId, itemId));
+        assertEquals("6304286850203", jdbcTemplate.queryForObject(
+                "SELECT external_sku_id FROM sales_channel_listing_generation_specs WHERE sales_channel_listing_generation_id = ?",
+                String.class, generationId));
+        assertEquals(generationId, jdbcTemplate.queryForObject(
+                "SELECT sales_channel_listing_generation_id FROM sales_channel_orders WHERE id = ?",
+                UUID.class, channelOrderId));
+        assertEquals(generationId, jdbcTemplate.queryForObject(
+                "SELECT sales_channel_listing_generation_id FROM sales_channel_operations WHERE id = ?",
+                UUID.class, operationId));
+
+        UUID generation2 = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO sales_channel_listing_generations(
+                    id, sales_channel_listing_id, sales_channel_account_id, generation_no,
+                    external_item_id, is_current, origin)
+                VALUES (?, ?, ?, 2, 'replacement-item', false, 'PUBLISH')
+                """, generation2, listingId, accountId);
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO sales_channel_listing_generations(
+                    id, sales_channel_listing_id, sales_channel_account_id, generation_no,
+                    external_item_id, is_current, origin)
+                VALUES (?, ?, ?, 3, 'third-item', true, 'PUBLISH')
+                """, UUID.randomUUID(), listingId, accountId));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO sales_channel_listing_generations(
+                    id, sales_channel_listing_id, sales_channel_account_id, generation_no,
+                    external_item_id, is_current, origin)
+                VALUES (?, ?, ?, 3, ?, false, 'PUBLISH')
+                """, UUID.randomUUID(), listingId, accountId, itemId));
+    }
+
+    @Test
     void v29RenamesHistoricalRepliesBackfillsWaitingStateAndAddsConversationSchema() {
         flyway("28").migrate();
         UUID levelId = defaultUserLevelId();
@@ -544,7 +654,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("after_sale_requests", "admin_reply"));
         assertEquals("历史管理员说明", jdbcTemplate.queryForObject(
                 "SELECT rejection_reason FROM after_sale_requests WHERE id = ?", String.class,
@@ -617,7 +727,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
                 "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
         assertNull(jdbcTemplate.queryForObject(
@@ -647,7 +757,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -741,7 +851,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -942,7 +1052,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -1012,7 +1122,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -1061,7 +1171,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -1261,7 +1371,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1307,7 +1417,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("35", flyway().info().current().getVersion().getVersion());
+        assertEquals("36", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

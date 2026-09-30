@@ -9,7 +9,8 @@ import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
-import com.myshop.entity.SalesChannelListingSpec;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.entity.SalesChannelOrderCursor;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.entity.Order;
@@ -25,7 +26,8 @@ import com.myshop.repository.OrderRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.SalesChannelProviderClientException;
@@ -87,6 +89,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Locale;
+import java.util.stream.Collectors;
 
 /** Admin-only orchestration. Agent credentials and session data never cross this API boundary. */
 @Service
@@ -103,7 +106,8 @@ public class SalesChannelAdminService {
     private final ObjectMapper objectMapper;
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
-    private final SalesChannelListingSpecRepository listingSpecRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
+    private final SalesChannelListingGenerationSpecRepository generationSpecRepository;
     private final SalesChannelSpecMappingValidator specMappingValidator;
     private final SalesChannelSpecMappingSyncService specMappingSyncService;
     private final SalesChannelOrderCursorRepository cursorRepository;
@@ -137,13 +141,20 @@ public class SalesChannelAdminService {
 
         Set<String> itemIds = new LinkedHashSet<>();
         remoteItems.stream().map(CatalogItem::itemId).filter(value -> !blank(value)).forEach(itemIds::add);
-        List<SalesChannelListing> listings = itemIds.isEmpty() ? List.of()
-                : listingRepository.findBySalesChannelAccountIdAndExternalItemIdIn(account.getId(), itemIds);
-        Map<String, List<SalesChannelListing>> listingsByItem = new HashMap<>();
+        List<SalesChannelListingGeneration> generations = itemIds.isEmpty() ? List.of()
+                : generationRepository.findAllBySalesChannelAccountIdAndExternalItemIdIn(account.getId(), itemIds);
+        Map<String, List<SalesChannelListingGeneration>> generationsByItem = new HashMap<>();
+        Set<UUID> listingIds = generations.stream()
+                .map(SalesChannelListingGeneration::getSalesChannelListingId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<UUID, SalesChannelListing> listingsById = listingIds.isEmpty() ? Map.of()
+                : listingRepository.findAllById(listingIds).stream()
+                .collect(Collectors.toMap(SalesChannelListing::getId, value -> value));
         Set<UUID> productIds = new LinkedHashSet<>();
-        for (SalesChannelListing listing : listings) {
-            listingsByItem.computeIfAbsent(listing.getExternalItemId(), ignored -> new ArrayList<>()).add(listing);
-            productIds.add(listing.getProductId());
+        for (SalesChannelListingGeneration generation : generations) {
+            generationsByItem.computeIfAbsent(generation.getExternalItemId(), ignored -> new ArrayList<>()).add(generation);
+            SalesChannelListing listing = listingsById.get(generation.getSalesChannelListingId());
+            if (listing != null) productIds.add(listing.getProductId());
         }
         Map<UUID, Product> products = new HashMap<>();
         if (!productIds.isEmpty()) {
@@ -151,7 +162,8 @@ public class SalesChannelAdminService {
         }
 
         List<XianyuCatalogItemSummary> annotated = remoteItems.stream()
-                .map(item -> annotateCatalogItem(item, listingsByItem.getOrDefault(item.itemId(), List.of()), products))
+                .map(item -> annotateCatalogItem(item, generationsByItem.getOrDefault(item.itemId(), List.of()),
+                        listingsById, products))
                 .toList();
         return new XianyuItemsPage(account.getId().toString(), annotated,
                 safeInt(data.page(), page), safeInt(data.pageSize(), pageSize),
@@ -254,11 +266,15 @@ public class SalesChannelAdminService {
     }
 
     private XianyuCatalogItemSummary annotateCatalogItem(
-            CatalogItem item, List<SalesChannelListing> matches, Map<UUID, Product> products) {
-        List<XianyuItemBinding> bindings = matches.stream().map(listing -> {
+            CatalogItem item, List<SalesChannelListingGeneration> matches,
+            Map<UUID, SalesChannelListing> listingsById, Map<UUID, Product> products) {
+        List<XianyuItemBinding> bindings = matches.stream().map(generation -> {
+            SalesChannelListing listing = listingsById.get(generation.getSalesChannelListingId());
+            if (listing == null) throw new IllegalStateException("Generation listing is missing");
             Product product = products.get(listing.getProductId());
             return new XianyuItemBinding(listing.getId().toString(), listing.getProductId().toString(),
-                    product == null ? null : product.getTitle(), listing.getManagementMode().name());
+                    product == null ? null : product.getTitle(), listing.getManagementMode().name(),
+                    generation.getId().toString(), generation.getGenerationNo(), generation.isCurrent());
         }).toList();
         boolean linked = matches.size() == 1;
         boolean conflict = matches.size() > 1;
@@ -268,7 +284,7 @@ public class SalesChannelAdminService {
                 safeInt(item.skuCount(), 0), Boolean.TRUE.equals(item.multiSpec()),
                 Boolean.TRUE.equals(item.sellerItem()), item.catalogCreatedAt(), item.catalogUpdatedAt(),
                 conflict ? "CONFLICT" : linked ? "LINKED" : "UNLINKED",
-                binding == null ? null : matches.get(0).getManagementMode().name(),
+                binding == null ? null : binding.managementMode(),
                 binding == null ? null : binding.listingId(),
                 binding == null ? null : binding.productId(),
                 binding == null ? null : binding.productTitle(),
@@ -284,7 +300,9 @@ public class SalesChannelAdminService {
                     product.getTitle(), product.isEnabled(), "AVAILABLE", null, null, null, null);
         }
         String existingListingId = listing.getId().toString();
-        String existingExternalItemId = listing.getExternalItemId();
+        SalesChannelListingGeneration generation = generationRepository
+                .findBySalesChannelListingIdAndCurrentTrue(listing.getId()).orElse(null);
+        String existingExternalItemId = generation == null ? null : generation.getExternalItemId();
         String managementMode = listing.getManagementMode().name();
         if (itemId.equals(existingExternalItemId)) {
             return new XianyuLinkCandidate(product.getId().toString(), product.getProductNo(),
@@ -522,21 +540,31 @@ public class SalesChannelAdminService {
     private ListingSummary listingSummary(SalesChannelListing listing) {
         SalesChannelAccount account = findAccount(listing.getSalesChannelAccountId());
         XianyuProviderConfig config = objectMapper.convertValue(listing.getProviderConfig(), XianyuProviderConfig.class);
+        List<SalesChannelListingGeneration> generations = generationRepository
+                .findAllBySalesChannelListingIdOrderByGenerationNoAsc(listing.getId());
+        SalesChannelListingGeneration current = generations.stream().filter(SalesChannelListingGeneration::isCurrent)
+                .findFirst().orElse(null);
         return new ListingSummary(listing.getId().toString(), account.getProviderAccountId(),
                 account.getDisplayName(), accountType(account), listing.getManagementMode().name(),
                 listing.isEnabled(), listing.isAutoFulfillmentEnabled(), listing.getStatus().name(),
-                listing.getExternalItemId(), listing.getDesiredRevision(), listing.getLastSyncedAt(),
-                listing.getLastErrorCode(), listing.getLastErrorMessage(), config, specMappingSummaries(listing));
+                current == null ? null : current.getExternalItemId(), listing.getDesiredRevision(),
+                listing.getLastSyncedAt(), listing.getLastErrorCode(), listing.getLastErrorMessage(), config,
+                specMappingSummaries(listing, current),
+                current == null ? null : current.getExternalItemId(),
+                current == null ? null : current.getId().toString(),
+                current == null ? null : current.getGenerationNo(), generations.size(), listing.getAppliedRevision());
     }
 
-    private List<ListingSpecMappingSummary> specMappingSummaries(SalesChannelListing listing) {
-        Map<UUID, SalesChannelListingSpec> mappings = listingSpecRepository
-                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
-                .collect(java.util.stream.Collectors.toMap(SalesChannelListingSpec::getProductSpecId,
+    private List<ListingSpecMappingSummary> specMappingSummaries(SalesChannelListing listing,
+                                                                  SalesChannelListingGeneration current) {
+        Map<UUID, SalesChannelListingGenerationSpec> mappings = current == null ? Map.of()
+                : generationSpecRepository
+                .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(current.getId()).stream()
+                .collect(java.util.stream.Collectors.toMap(SalesChannelListingGenerationSpec::getProductSpecId,
                         value -> value, (left, right) -> left));
         return productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(listing.getProductId(), 0).stream()
                 .map(spec -> {
-                    SalesChannelListingSpec mapping = mappings.get(spec.getId());
+                    SalesChannelListingGenerationSpec mapping = mappings.get(spec.getId());
                     Map<String, Object> provider = mapping == null ? Map.of() : mapping.getProviderMapping();
                     Object providerName = provider.get("provider_spec_name");
                     Object providerValue = provider.get("provider_spec_value");
@@ -592,7 +620,9 @@ public class SalesChannelAdminService {
                 throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
                         "该闲鱼商品尚未完成 MyShop 接管，不能开启自动发货", HttpStatus.CONFLICT);
             }
-            if (listing.getExternalItemId() == null || listing.getExternalItemId().isBlank()) {
+            SalesChannelListingGeneration current = generationRepository
+                    .findBySalesChannelListingIdAndCurrentTrue(listing.getId()).orElse(null);
+            if (current == null || current.getExternalItemId() == null || current.getExternalItemId().isBlank()) {
                 throw new IllegalStateException("Only a MyShop-managed listing with an external item can enable auto fulfillment");
             }
             if (!"FISH_SHOP".equals(accountType(account))) {
@@ -608,8 +638,11 @@ public class SalesChannelAdminService {
             if (product.isSpecEnabled()) {
                 List<ProductSpec> activeSpecs = productSpecRepository
                         .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
-                List<SalesChannelListingSpec> mappingRows = listingSpecRepository
-                        .findBySalesChannelListingIdForUpdate(listing.getId());
+                if (current == null) {
+                    throw new IllegalStateException("Current provider generation is required for specification mappings");
+                }
+                List<SalesChannelListingGenerationSpec> mappingRows = generationSpecRepository
+                        .findBySalesChannelListingGenerationIdForUpdate(current.getId());
                 specMappingValidator.assertCompleteForAutoFulfillment(
                         activeSpecs.stream().map(SalesChannelSpecMappingValidator::snapshot).toList(),
                         mappingRows.stream().map(SalesChannelSpecMappingValidator::snapshot).toList());

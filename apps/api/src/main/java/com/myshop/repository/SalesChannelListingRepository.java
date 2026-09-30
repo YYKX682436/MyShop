@@ -16,11 +16,6 @@ public interface SalesChannelListingRepository extends JpaRepository<SalesChanne
 
     Optional<SalesChannelListing> findBySalesChannelAccountIdAndProductId(UUID accountId, UUID productId);
 
-    Optional<SalesChannelListing> findBySalesChannelAccountIdAndExternalItemId(UUID accountId, String externalItemId);
-
-    List<SalesChannelListing> findBySalesChannelAccountIdAndExternalItemIdIn(
-            UUID accountId, Collection<String> externalItemIds);
-
     List<SalesChannelListing> findBySalesChannelAccountIdAndProductIdIn(
             UUID accountId, Collection<UUID> productIds);
 

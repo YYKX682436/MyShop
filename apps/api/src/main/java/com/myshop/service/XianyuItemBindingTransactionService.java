@@ -8,10 +8,15 @@ import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.Product;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.ProductRepository;
+import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBindingResponse;
@@ -30,7 +35,10 @@ public class XianyuItemBindingTransactionService {
 
     private final SalesChannelAccountRepository accountRepository;
     private final ProductRepository productRepository;
+    private final ProductSpecRepository productSpecRepository;
     private final SalesChannelListingRepository listingRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
+    private final SalesChannelListingGenerationSpecRepository generationSpecRepository;
     private final SalesChannelOperationRepository operationRepository;
     private final SalesChannelOrderRepository orderRepository;
     private final SalesChannelListingServiceImpl listingService;
@@ -50,14 +58,16 @@ public class XianyuItemBindingTransactionService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND,
                         "商品不存在", HttpStatus.NOT_FOUND));
 
-        SalesChannelListing itemListing = listingRepository
+        SalesChannelListingGeneration itemGeneration = generationRepository
                 .findBySalesChannelAccountIdAndExternalItemId(accountId, itemId)
                 .orElse(null);
         SalesChannelListing productListing = listingRepository
                 .findBySalesChannelAccountIdAndProductId(accountId, productId)
                 .orElse(null);
 
-        if (itemListing != null) {
+        if (itemGeneration != null) {
+            SalesChannelListing itemListing = listingRepository.findById(itemGeneration.getSalesChannelListingId())
+                    .orElseThrow(() -> new IllegalStateException("Generation listing is missing"));
             if (!productId.equals(itemListing.getProductId())) {
                 throw conflict(ErrorCode.ITEM_ALREADY_LINKED,
                         "该闲鱼商品已关联其它 MyShop 商品");
@@ -66,8 +76,7 @@ public class XianyuItemBindingTransactionService {
         }
 
         if (productListing != null) {
-            if (productListing.getExternalItemId() != null
-                    && !productListing.getExternalItemId().isBlank()) {
+            if (generationRepository.findBySalesChannelListingIdAndCurrentTrue(productListing.getId()).isPresent()) {
                 throw conflict(ErrorCode.PRODUCT_ALREADY_LINKED,
                         "该 MyShop 商品已关联其它闲鱼商品");
             }
@@ -76,16 +85,33 @@ public class XianyuItemBindingTransactionService {
                         "该 MyShop 渠道 listing 当前不可复用作人工关联");
             }
             productListing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
-            productListing.bindExternalItemId(itemId);
             SalesChannelListing saved = listingRepository.saveAndFlush(productListing);
+            createGeneration(saved, itemId, product);
             return response(itemId, saved, product, "LINKED");
         }
 
         SalesChannelListing created = listingService.ensureDraft(accountId, productId);
         created.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
-        created.bindExternalItemId(itemId);
         SalesChannelListing saved = listingRepository.saveAndFlush(created);
+        createGeneration(saved, itemId, product);
         return response(itemId, saved, product, "LINKED");
+    }
+
+    private SalesChannelListingGeneration createGeneration(SalesChannelListing listing, String itemId,
+                                                           Product product) {
+        SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
+                listing.getId(), listing.getSalesChannelAccountId(),
+                generationRepository.nextGenerationNumber(listing.getId()), itemId, true, "LINK");
+        generation.setActivatedAt(java.time.LocalDateTime.now());
+        SalesChannelListingGeneration saved = generationRepository.saveAndFlush(generation);
+        productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0).forEach(spec -> {
+            SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
+            mapping.setSalesChannelListingGenerationId(saved.getId());
+            mapping.setProductSpecId(spec.getId());
+            generationSpecRepository.save(mapping);
+        });
+        generationSpecRepository.flush();
+        return saved;
     }
 
     private boolean isSafeNullIdentityListing(SalesChannelListing listing) {

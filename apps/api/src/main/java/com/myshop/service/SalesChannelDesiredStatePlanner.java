@@ -20,6 +20,7 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.saleschannel.model.DesiredListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.PlatformAttribute;
@@ -59,6 +60,7 @@ public class SalesChannelDesiredStatePlanner {
     private final ProductSpecRepository productSpecRepository;
     private final SalesChannelAccountRepository accountRepository;
     private final SalesChannelListingRepository listingRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
     private final SalesChannelOperationRepository operationRepository;
     private final ProductInventoryBatchService inventoryBatchService;
     private final SalesChannelOperationServiceImpl operationService;
@@ -205,12 +207,18 @@ public class SalesChannelDesiredStatePlanner {
                              String fingerprint) {
         if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) return;
         if (desiredState == SalesChannelListingDesiredState.OFFLINE) {
-            if (listing.getExternalItemId() == null) {
+            boolean hasGeneration = generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isPresent();
+            if (!hasGeneration) {
                 listing.setStatus(SalesChannelListingStatus.OFFLINE);
+                listing.advanceAppliedRevision(listing.getDesiredRevision());
+                listing.setAppliedFingerprint(fingerprint);
+                listing.setLastErrorCode(null);
+                listing.setLastErrorMessage(null);
                 return;
             }
             if (listing.getStatus() == SalesChannelListingStatus.OFFLINE) {
                 listing.advanceAppliedRevision(listing.getDesiredRevision());
+                listing.setAppliedFingerprint(fingerprint);
                 listing.setLastErrorCode(null);
                 listing.setLastErrorMessage(null);
                 return;
@@ -227,7 +235,8 @@ public class SalesChannelDesiredStatePlanner {
             listing.setLastErrorMessage("Verify the Xianyu account before enabling automated listing operations");
             return;
         }
-        if (listing.getExternalItemId() == null) {
+        boolean hasNoGeneration = generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isEmpty();
+        if (hasNoGeneration) {
             if (hasOperation(listing.getId(), SalesChannelOperationType.PUBLISH,
                     SalesChannelOperationStatus.UNKNOWN)) return;
             boolean publishRunning = hasOperation(listing.getId(), SalesChannelOperationType.PUBLISH,
@@ -239,7 +248,8 @@ public class SalesChannelDesiredStatePlanner {
             return;
         }
 
-        if (listing.getStatus() == SalesChannelListingStatus.OFFLINE) {
+        if (listing.getStatus() == SalesChannelListingStatus.OFFLINE
+                || listing.getStatus() == SalesChannelListingStatus.DRAFT) {
             listing.setStatus(SalesChannelListingStatus.RELIST_REQUIRED);
             listing.setLastErrorCode("RELIST_REQUIRED");
             listing.setLastErrorMessage("The current Agent contract does not prove that this offline item can be safely restored");
@@ -259,7 +269,7 @@ public class SalesChannelDesiredStatePlanner {
                                                       SalesChannelListingDesiredState desiredState,
                                                       String fingerprint) {
         if ("PERSONAL".equals(accountType(account))
-                && listing.getExternalItemId() != null
+                && generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isPresent()
                 && desiredState == SalesChannelListingDesiredState.ONLINE
                 && listing.getAppliedRevision() < listing.getDesiredRevision()) {
             operationRepository.supersedePendingSyncAtRevision(listing.getId(), listing.getDesiredRevision(),

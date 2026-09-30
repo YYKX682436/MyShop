@@ -33,6 +33,10 @@ public class SalesChannelOperation extends BaseEntity {
     @Column(name = "sales_channel_listing_id", nullable = false)
     private UUID salesChannelListingId;
 
+    /** Frozen provider generation target. Null is permitted only for PUBLISH. */
+    @Column(name = "sales_channel_listing_generation_id")
+    private UUID salesChannelListingGenerationId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "operation_type", nullable = false, length = 16)
     private SalesChannelOperationType operationType;
@@ -76,7 +80,15 @@ public class SalesChannelOperation extends BaseEntity {
 
     public SalesChannelOperation(UUID listingId, SalesChannelOperationType operationType,
                                  long desiredRevision, String idempotencyKey, Map<String, Object> payload) {
+        this(listingId, null, operationType, desiredRevision, idempotencyKey, payload);
+    }
+
+    public SalesChannelOperation(UUID listingId, UUID generationId,
+                                 SalesChannelOperationType operationType,
+                                 long desiredRevision, String idempotencyKey,
+                                 Map<String, Object> payload) {
         this.salesChannelListingId = listingId;
+        this.salesChannelListingGenerationId = generationId;
         this.operationType = operationType;
         this.desiredRevision = desiredRevision;
         this.idempotencyKey = idempotencyKey;

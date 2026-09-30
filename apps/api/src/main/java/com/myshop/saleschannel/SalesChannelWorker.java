@@ -6,9 +6,11 @@ import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.saleschannel.model.DesiredListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
@@ -53,6 +55,7 @@ public class SalesChannelWorker {
     private final SalesChannelOperationClaimService claimService;
     private final SalesChannelOperationRepository operationRepository;
     private final SalesChannelListingRepository listingRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
     private final SalesChannelAccountRepository accountRepository;
     private final SalesChannelOperationServiceImpl operationService;
     private final SalesChannelProviderClient providerClient;
@@ -66,6 +69,7 @@ public class SalesChannelWorker {
     public SalesChannelWorker(SalesChannelOperationClaimService claimService,
                               SalesChannelOperationRepository operationRepository,
                               SalesChannelListingRepository listingRepository,
+                              SalesChannelListingGenerationRepository generationRepository,
                               SalesChannelAccountRepository accountRepository,
                               SalesChannelOperationServiceImpl operationService,
                               SalesChannelProviderClient providerClient,
@@ -78,6 +82,7 @@ public class SalesChannelWorker {
         this.claimService = claimService;
         this.operationRepository = operationRepository;
         this.listingRepository = listingRepository;
+        this.generationRepository = generationRepository;
         this.accountRepository = accountRepository;
         this.operationService = operationService;
         this.providerClient = providerClient;
@@ -123,7 +128,9 @@ public class SalesChannelWorker {
         if (!operationService.markRunning(operationId)) {
             if (candidate.getOperationType() == SalesChannelOperationType.PUBLISH) {
                 SalesChannelListing listing = listingRepository.findById(candidate.getSalesChannelListingId()).orElse(null);
-                if (listing != null && listing.getExternalItemId() != null) refreshAfterOutcome(listing.getId());
+                if (listing != null && generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isPresent()) {
+                    refreshAfterOutcome(listing.getId());
+                }
             }
             return;
         }
@@ -184,21 +191,23 @@ public class SalesChannelWorker {
                                     command.requestId(), command.accountId(), command.desiredRevision(), command.listing())),
                                     fingerprint);
                         } else {
-                            if (listing.getExternalItemId() == null) {
+                            SalesChannelListingGeneration generation = frozenGeneration(operation);
+                            if (generation == null) {
                                 operationService.markFailed(operationId, "PUBLISH_REQUIRED",
-                                        "A SYNC requires a bound external item id");
+                                        "An existing-item operation requires a frozen provider generation");
                                 return;
                             }
                             SalesChannelListing current = listingRepository.findById(listing.getId()).orElse(listing);
                             SalesChannelListingManagementPolicy.requireProviderWritesAllowed(current);
                             sideEffectCallStarted = true;
                             handleListingEnvelope(operation, listing,
-                                    providerClient.update(listing.getExternalItemId(), command), fingerprint);
+                                    providerClient.update(generation.getExternalItemId(), command), fingerprint);
                         }
                     } else {
                         UpdateCommand command = new UpdateCommand(operation.getIdempotencyKey(),
                                 account.getProviderAccountId(), operation.getDesiredRevision(), null);
-                        if (listing.getExternalItemId() == null) {
+                        SalesChannelListingGeneration generation = frozenGeneration(operation);
+                        if (generation == null) {
                             operationService.markSucceeded(operationId, Map.of("no_external_item", true), fingerprint);
                             return;
                         }
@@ -207,8 +216,8 @@ public class SalesChannelWorker {
                         sideEffectCallStarted = true;
                         IntegrationEnvelope<ListingOperationData> envelope = operation.getOperationType()
                                 == SalesChannelOperationType.OFFLINE
-                                ? providerClient.offline(listing.getExternalItemId(), command)
-                                : providerClient.delete(listing.getExternalItemId(), command);
+                                ? providerClient.offline(generation.getExternalItemId(), command)
+                                : providerClient.delete(generation.getExternalItemId(), command);
                         handleListingEnvelope(operation, listing, envelope, fingerprint);
                     }
                 }
@@ -288,15 +297,22 @@ public class SalesChannelWorker {
                 desired.supportPickup(), desired.postage());
     }
 
+    private SalesChannelListingGeneration frozenGeneration(SalesChannelOperation operation) {
+        UUID generationId = operation.getSalesChannelListingGenerationId();
+        return generationId == null ? null : generationRepository.findById(generationId).orElse(null);
+    }
+
     private void executeReconciliation(SalesChannelOperation reconciliation, SalesChannelListing listing,
                                       SalesChannelAccount account) {
         Map<String, Object> payload = reconciliation.getPayload();
         UUID targetId = UUID.fromString(string(payload.get("target_operation_id")));
         SalesChannelOperation target = operationRepository.findById(targetId)
                 .orElseThrow(() -> new IllegalStateException("Reconciliation target is missing"));
+        SalesChannelListingGeneration targetGeneration = frozenGeneration(target);
         IntegrationEnvelope<ReconcileData> envelope = providerClient.reconcile(new ReconcileCommand(
                 reconciliation.getIdempotencyKey(), account.getProviderAccountId(), target.getIdempotencyKey(),
-                listing.getExternalItemId(), reconciliation.getDesiredRevision()));
+                targetGeneration == null ? null : targetGeneration.getExternalItemId(),
+                reconciliation.getDesiredRevision()));
 
         if (envelope.outcome() != Outcome.SUCCEEDED || envelope.data() == null
                 || envelope.data().targetOutcome() == null) {

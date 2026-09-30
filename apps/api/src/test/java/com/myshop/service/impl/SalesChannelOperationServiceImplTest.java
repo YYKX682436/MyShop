@@ -5,11 +5,15 @@ import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.exception.BusinessException;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
+import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,6 +43,9 @@ class SalesChannelOperationServiceImplTest {
 
     @Mock private SalesChannelAccountRepository accountRepository;
     @Mock private SalesChannelListingRepository listingRepository;
+    @Mock private SalesChannelListingGenerationRepository generationRepository;
+    @Mock private SalesChannelListingGenerationSpecRepository generationSpecRepository;
+    @Mock private ProductSpecRepository productSpecRepository;
     @Mock private SalesChannelOperationRepository operationRepository;
     @InjectMocks private SalesChannelOperationServiceImpl service;
 
@@ -52,10 +59,13 @@ class SalesChannelOperationServiceImplTest {
         listing.incrementDesiredRevision();
         SalesChannelAccount account = new SalesChannelAccount();
         account.setProvider(SalesChannelProvider.XIANYU);
-        String key = "XIANYU:" + listingId + ":SYNC:1";
+        SalesChannelListingGeneration generation = generation(listingId, accountId, "item-1", true);
+        String key = "XIANYU:" + listingId + ":" + generation.getId() + ":SYNC:1";
 
         when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+        when(generationRepository.findBySalesChannelListingIdAndCurrentTrue(listingId))
+                .thenReturn(Optional.of(generation));
         when(operationRepository.findByIdempotencyKey(key)).thenReturn(Optional.empty(), Optional.of(operation(key)));
         when(operationRepository.saveAndFlush(any(SalesChannelOperation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -104,9 +114,12 @@ class SalesChannelOperationServiceImplTest {
         listing.setManagementMode(SalesChannelListingManagementMode.MANAGED);
         SalesChannelAccount account = new SalesChannelAccount();
         account.setProvider(SalesChannelProvider.XIANYU);
-        String key = "XIANYU:" + listingId + ":OFFLINE:0";
+        SalesChannelListingGeneration generation = generation(listingId, accountId, "item-1", true);
+        String key = "XIANYU:" + listingId + ":" + generation.getId() + ":OFFLINE:0";
         when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+        when(generationRepository.findBySalesChannelListingIdAndCurrentTrue(listingId))
+                .thenReturn(Optional.of(generation));
         when(operationRepository.findByIdempotencyKey(key)).thenReturn(Optional.empty());
         when(operationRepository.saveAndFlush(any(SalesChannelOperation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -115,6 +128,33 @@ class SalesChannelOperationServiceImplTest {
 
         assertEquals(SalesChannelOperationType.OFFLINE, operation.getOperationType());
         verify(operationRepository).saveAndFlush(any(SalesChannelOperation.class));
+        assertEquals(generation.getId(), operation.getSalesChannelListingGenerationId());
+    }
+
+    @Test
+    void existingItemOperationFreezesGenerationBeforeCurrentGenerationCanChange() {
+        UUID listingId = UUID.randomUUID();
+        UUID accountId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.setSalesChannelAccountId(accountId);
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setProvider(SalesChannelProvider.XIANYU);
+        SalesChannelListingGeneration first = generation(listingId, accountId, "item-a", true);
+        SalesChannelListingGeneration second = generation(listingId, accountId, "item-b", true);
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
+        when(generationRepository.findBySalesChannelListingIdAndCurrentTrue(listingId))
+                .thenReturn(Optional.of(first), Optional.of(second));
+        when(operationRepository.findByIdempotencyKey(any())).thenReturn(Optional.empty());
+        when(operationRepository.saveAndFlush(any(SalesChannelOperation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        SalesChannelOperation operation = service.request(listingId, SalesChannelOperationType.OFFLINE, Map.of());
+
+        assertEquals(first.getId(), operation.getSalesChannelListingGenerationId());
+        assertEquals("item-a", first.getExternalItemId());
+        assertEquals("item-b", second.getExternalItemId());
     }
 
     @Test
@@ -261,5 +301,13 @@ class SalesChannelOperationServiceImplTest {
     private SalesChannelOperation operation(String idempotencyKey) {
         return new SalesChannelOperation(UUID.randomUUID(), SalesChannelOperationType.PUBLISH, 0,
                 idempotencyKey, Map.of());
+    }
+
+    private SalesChannelListingGeneration generation(UUID listingId, UUID accountId,
+                                                      String itemId, boolean current) {
+        SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
+                listingId, accountId, current ? 1 : 2, itemId, current, "LINK");
+        generation.setId(UUID.randomUUID());
+        return generation;
     }
 }

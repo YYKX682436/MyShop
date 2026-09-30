@@ -663,7 +663,12 @@ export interface SalesChannelListingSummary {
   autoFulfillmentEnabled?: boolean
   status: string
   externalItemId?: string | null
+  currentExternalItemId?: string | null
+  currentGenerationId?: string | null
+  currentGenerationNo?: number | null
+  generationCount?: number | null
   desiredRevision?: number | null
+  appliedRevision?: number | null
   lastSyncedAt?: string | null
   lastErrorCode?: string | null
   lastErrorMessage?: string | null

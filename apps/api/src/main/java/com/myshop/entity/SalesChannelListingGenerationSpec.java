@@ -13,15 +13,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
+/** Provider SKU/spec mapping scoped to one immutable item generation. */
 @Entity
-@Table(name = "sales_channel_listing_specs")
+@Table(name = "sales_channel_listing_generation_specs")
 @Getter
 @Setter
 @NoArgsConstructor
-public class SalesChannelListingSpec extends BaseEntity {
+public class SalesChannelListingGenerationSpec extends BaseEntity {
 
-    @Column(name = "sales_channel_listing_id", nullable = false)
-    private UUID salesChannelListingId;
+    @Column(name = "sales_channel_listing_generation_id", nullable = false)
+    private UUID salesChannelListingGenerationId;
 
     @Column(name = "product_spec_id", nullable = false)
     private UUID productSpecId;
@@ -35,7 +36,7 @@ public class SalesChannelListingSpec extends BaseEntity {
 
     public void setProviderMapping(Map<String, Object> providerMapping) {
         this.providerMapping = providerMapping == null
-                ? new LinkedHashMap<>()
-                : new LinkedHashMap<>(providerMapping);
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(providerMapping);
     }
+
 }

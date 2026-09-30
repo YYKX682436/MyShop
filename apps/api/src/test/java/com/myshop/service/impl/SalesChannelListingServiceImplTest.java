@@ -8,7 +8,7 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,7 +34,7 @@ class SalesChannelListingServiceImplTest {
     @Mock private ProductRepository productRepository;
     @Mock private ProductSpecRepository productSpecRepository;
     @Mock private SalesChannelListingRepository listingRepository;
-    @Mock private SalesChannelListingSpecRepository listingSpecRepository;
+    @Mock private SalesChannelListingGenerationSpecRepository generationSpecRepository;
     @Mock private SalesChannelOperationRepository operationRepository;
     @InjectMocks private SalesChannelListingServiceImpl service;
 

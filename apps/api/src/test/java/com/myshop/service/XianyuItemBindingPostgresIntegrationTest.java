@@ -10,12 +10,14 @@ import com.myshop.entity.Product;
 import com.myshop.entity.ProductCategory;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.ProductCategoryRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBindingResponse;
@@ -83,6 +85,7 @@ class XianyuItemBindingPostgresIntegrationTest {
     @Autowired private ProductRepository productRepository;
     @Autowired private SalesChannelAccountRepository accountRepository;
     @Autowired private SalesChannelListingRepository listingRepository;
+    @Autowired private SalesChannelListingGenerationRepository generationRepository;
     @Autowired private SalesChannelOperationRepository operationRepository;
     @Autowired private SalesChannelAccountServiceImpl accountService;
     @Autowired private SalesChannelListingServiceImpl listingService;
@@ -120,7 +123,8 @@ class XianyuItemBindingPostgresIntegrationTest {
         jdbcTemplate.update("DELETE FROM sales_channel_orders");
         jdbcTemplate.update("DELETE FROM sales_channel_order_cursors");
         jdbcTemplate.update("DELETE FROM sales_channel_operations");
-        jdbcTemplate.update("DELETE FROM sales_channel_listing_specs");
+        jdbcTemplate.update("DELETE FROM sales_channel_listing_generation_specs");
+        jdbcTemplate.update("DELETE FROM sales_channel_listing_generations");
         jdbcTemplate.update("DELETE FROM sales_channel_listings");
         jdbcTemplate.update("DELETE FROM sales_channel_accounts");
         jdbcTemplate.update("DELETE FROM products WHERE title LIKE 'phase2b-binding-%'");
@@ -144,7 +148,7 @@ class XianyuItemBindingPostgresIntegrationTest {
         assertEquals(itemId, result.itemId());
         assertEquals(SalesChannelListingManagementMode.LINKED_ONLY.name(), result.managementMode());
         assertEquals(SalesChannelListingManagementMode.LINKED_ONLY, listing.getManagementMode());
-        assertEquals(itemId, listing.getExternalItemId());
+        assertEquals(itemId, generationRepository.findCurrentByListingId(listing.getId()).orElseThrow().getExternalItemId());
         assertFalse(listing.isEnabled());
         assertFalse(listing.isAutoFulfillmentEnabled());
         assertEquals("OFFLINE", listing.getDesiredState().name());
@@ -199,7 +203,8 @@ class XianyuItemBindingPostgresIntegrationTest {
         assertEquals(409, error.getHttpStatus().value());
         assertEquals(beforeListings, count("SELECT count(*) FROM sales_channel_listings"));
         assertEquals(beforeOperations, count("SELECT count(*) FROM sales_channel_operations"));
-        assertEquals(1, count("SELECT count(*) FROM sales_channel_listings WHERE external_item_id = ?", itemId));
+        assertEquals(1, count("SELECT count(*) FROM sales_channel_listing_generations WHERE sales_channel_account_id = ? AND external_item_id = ?",
+                account.getId(), itemId));
     }
 
     @Test
@@ -216,9 +221,10 @@ class XianyuItemBindingPostgresIntegrationTest {
         assertEquals(ErrorCode.PRODUCT_ALREADY_LINKED, error.getCode());
         assertEquals(409, error.getHttpStatus().value());
         assertEquals(1, count("SELECT count(*) FROM sales_channel_listings"));
-        assertEquals(firstItem, listingRepository
+        SalesChannelListing linked = listingRepository
                 .findBySalesChannelAccountIdAndProductId(fixture.account().getId(), fixture.product().getId())
-                .orElseThrow().getExternalItemId());
+                .orElseThrow();
+        assertEquals(firstItem, generationRepository.findCurrentByListingId(linked.getId()).orElseThrow().getExternalItemId());
     }
 
     @Test
@@ -270,7 +276,7 @@ class XianyuItemBindingPostgresIntegrationTest {
                         fixture.product().getId()));
 
         assertEquals(ErrorCode.LISTING_NOT_LINKABLE, error.getCode());
-        assertNull(listingRepository.findById(listing.getId()).orElseThrow().getExternalItemId());
+        assertTrue(generationRepository.findCurrentByListingId(listing.getId()).isEmpty());
     }
 
     @Test
@@ -315,11 +321,9 @@ class XianyuItemBindingPostgresIntegrationTest {
         listingService.ensureDraft(account.getId(), current.getId());
         SalesChannelListing currentListing = listingRepository
                 .findBySalesChannelAccountIdAndProductId(account.getId(), current.getId()).orElseThrow();
-        currentListing.bindExternalItemId("candidate-current");
-        listingRepository.saveAndFlush(currentListing);
+        createGeneration(currentListing, "candidate-current");
         SalesChannelListing otherListing = listingService.ensureDraft(account.getId(), other.getId());
-        otherListing.bindExternalItemId("candidate-other");
-        listingRepository.saveAndFlush(otherListing);
+        createGeneration(otherListing, "candidate-other");
         SalesChannelListing unsafeListing = listingService.ensureDraft(account.getId(), unsafe.getId());
         unsafeListing.setEnabled(true);
         listingRepository.saveAndFlush(unsafeListing);
@@ -378,10 +382,10 @@ class XianyuItemBindingPostgresIntegrationTest {
         String itemId = "1084013851108";
         SalesChannelListing listing = listingService.ensureDraft(
                 fixture.account().getId(), fixture.product().getId());
-        listing.bindExternalItemId(itemId);
         listing.setManagementMode(SalesChannelListingManagementMode.MANAGED);
         listing.setStatus(SalesChannelListingStatus.OFFLINE);
         listing = listingRepository.saveAndFlush(listing);
+        createGeneration(listing, itemId);
         stubExactCatalog();
 
         XianyuItemBindingResponse result = bindingService.link(
@@ -426,7 +430,7 @@ class XianyuItemBindingPostgresIntegrationTest {
                 && error.getCode() == ErrorCode.ITEM_ALREADY_LINKED).count());
         assertEquals(1, count("SELECT count(*) FROM sales_channel_listings WHERE sales_channel_account_id = ?",
                 account.getId()));
-        assertEquals(1, count("SELECT count(*) FROM sales_channel_listings WHERE sales_channel_account_id = ? AND external_item_id = ?",
+        assertEquals(1, count("SELECT count(*) FROM sales_channel_listing_generations WHERE sales_channel_account_id = ? AND external_item_id = ?",
                 account.getId(), itemId));
         assertTrue(results.stream().noneMatch(value -> value instanceof DataIntegrityViolationException));
     }
@@ -465,7 +469,7 @@ class XianyuItemBindingPostgresIntegrationTest {
                 () -> bindingService.link(fixture.account().getId(), "phase2b-item-unsafe-" + UUID.randomUUID(),
                         fixture.product().getId()));
         assertEquals(ErrorCode.LISTING_NOT_LINKABLE, error.getCode());
-        assertNull(listingRepository.findById(listing.getId()).orElseThrow().getExternalItemId());
+        assertTrue(generationRepository.findCurrentByListingId(listing.getId()).isEmpty());
     }
 
     private List<Object> concurrentlyLink(UUID accountId, String firstItemId, UUID firstProductId,
@@ -545,6 +549,13 @@ class XianyuItemBindingPostgresIntegrationTest {
         product.setCategoryId(category.getId());
         product.setEnabled(true);
         return productRepository.saveAndFlush(product);
+    }
+
+    private SalesChannelListingGeneration createGeneration(SalesChannelListing listing, String itemId) {
+        SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
+                listing.getId(), listing.getSalesChannelAccountId(), 1L, itemId, true, "LINK");
+        generation.setActivatedAt(LocalDateTime.now());
+        return generationRepository.saveAndFlush(generation);
     }
 
     private int count(String sql, Object... args) {

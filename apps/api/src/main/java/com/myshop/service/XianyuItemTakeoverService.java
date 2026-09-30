@@ -8,14 +8,16 @@ import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
-import com.myshop.entity.SalesChannelListingSpec;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.exception.BusinessException;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.saleschannel.SalesChannelProviderClient;
@@ -54,7 +56,8 @@ public class XianyuItemTakeoverService {
     private final SalesChannelOrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
-    private final SalesChannelListingSpecRepository listingSpecRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
+    private final SalesChannelListingGenerationSpecRepository generationSpecRepository;
     private final XianyuItemBindingService bindingService;
     private final SalesChannelSpecMappingValidator specMappingValidator;
     private final XianyuItemTakeoverTransactionService transactionService;
@@ -65,10 +68,17 @@ public class XianyuItemTakeoverService {
                 .orElseThrow(() -> failure(ErrorCode.NOT_FOUND, "闲鱼账号不存在", HttpStatus.NOT_FOUND));
         requireAccount(account);
 
-        SalesChannelListing listing = listingRepository
+        SalesChannelListingGeneration generation = generationRepository
                 .findBySalesChannelAccountIdAndExternalItemId(accountId, itemId)
                 .orElseThrow(() -> failure(ErrorCode.ITEM_NOT_LINKED,
                         "该闲鱼商品尚未关联 MyShop 商品", HttpStatus.CONFLICT));
+        if (!generation.isCurrent()) {
+            throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
+                    "只有 listing 的 current provider generation 才能接管", HttpStatus.CONFLICT);
+        }
+        SalesChannelListing listing = listingRepository.findById(generation.getSalesChannelListingId())
+                .orElseThrow(() -> failure(ErrorCode.ITEM_NOT_LINKED,
+                        "该闲鱼商品关联的 listing 不存在", HttpStatus.CONFLICT));
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> failure(ErrorCode.TAKEOVER_NOT_ALLOWED, "关联商品不存在"));
 
@@ -98,14 +108,14 @@ public class XianyuItemTakeoverService {
         IntegrationEnvelope<OwnershipClaimData> response;
         try {
             response = providerClient.claimOwnership(new OwnershipClaimCommand(
-                    requestId, account.getProviderAccountId(), listing.getExternalItemId()));
+                    requestId, account.getProviderAccountId(), currentItemId(listing)));
         } catch (SalesChannelProviderClientException exception) {
             throw exception;
         }
         OwnershipClaimData data;
         try {
             data = validateOwnershipClaimSuccess(response, requestId,
-                    account.getProviderAccountId(), listing.getExternalItemId());
+                    account.getProviderAccountId(), currentItemId(listing));
         } catch (SalesChannelProviderClientException exception) {
             if ("OWNERSHIP_CONFLICT".equals(exception.getErrorCode())) {
                 throw failure(ErrorCode.OWNERSHIP_CONFLICT,
@@ -115,11 +125,11 @@ public class XianyuItemTakeoverService {
         }
         String result = data.result();
         if ("ALREADY_CLAIMED".equals(result)) {
-            return new XianyuTakeoverResponse(listing.getExternalItemId(), listing.getId().toString(),
+            return new XianyuTakeoverResponse(currentItemId(listing), listing.getId().toString(),
                     product.getId().toString(), listing.getManagementMode().name(), "ALREADY_MANAGED");
         }
         if ("CLAIMED".equals(result)) {
-            return new XianyuTakeoverResponse(listing.getExternalItemId(), listing.getId().toString(),
+            return new XianyuTakeoverResponse(currentItemId(listing), listing.getId().toString(),
                     product.getId().toString(), listing.getManagementMode().name(), "OWNERSHIP_REPAIRED");
         }
         throw failure(ErrorCode.OWNERSHIP_CONFLICT, "Agent ownership claim returned an invalid result",
@@ -241,7 +251,12 @@ public class XianyuItemTakeoverService {
                                                SalesChannelListing listing,
                                                Product product,
                                                String itemId) {
-        if (listing.getExternalItemId() == null || !itemId.equals(listing.getExternalItemId())) {
+        SalesChannelListingGeneration generation = generationRepository
+                .findBySalesChannelListingIdAndCurrentTrue(listing.getId())
+                .orElseThrow(() -> failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
+                        "listing 没有稳定的 current provider generation"));
+        if (!itemId.equals(generation.getExternalItemId())
+                || !account.getId().equals(generation.getSalesChannelAccountId())) {
             throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED, "listing 没有稳定的闲鱼商品 identity");
         }
         List<ProductSpec> activeSpecs = productSpecRepository
@@ -257,8 +272,8 @@ public class XianyuItemTakeoverService {
             }
         }
 
-        List<SalesChannelListingSpec> mappings = listingSpecRepository
-                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId());
+        List<SalesChannelListingGenerationSpec> mappings = generationSpecRepository
+                .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(generation.getId());
         List<SalesChannelSpecMappingValidator.ProductSpecSnapshot> validatorSpecs = activeSpecs.stream()
                 .map(SalesChannelSpecMappingValidator::snapshot).toList();
         List<SalesChannelSpecMappingValidator.ExistingMappingSnapshot> validatorMappings = mappings.stream()
@@ -310,7 +325,7 @@ public class XianyuItemTakeoverService {
                             mapping.productSpecId(), mapping.externalSkuId(), providerMapping);
                 }).toList()
                 : mappingIdentities;
-        return new TakeoverPreflight(account.getId(), listing.getId(), product.getId(), itemId,
+        return new TakeoverPreflight(account.getId(), listing.getId(), generation.getId(), product.getId(), itemId,
                 account.getProviderAccountId(), listing.getManagementMode(), listing.getDesiredRevision(),
                 product.isSpecEnabled(), specs, mappingIdentities, resolvedMappings, persistedMappings);
     }
@@ -377,6 +392,13 @@ public class XianyuItemTakeoverService {
         Map<String, Object> capabilities = account.getCapabilities();
         Object type = capabilities == null ? null : capabilities.get("account_type");
         return type == null ? "UNKNOWN" : type.toString().toUpperCase();
+    }
+
+    private String currentItemId(SalesChannelListing listing) {
+        return generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId())
+                .map(SalesChannelListingGeneration::getExternalItemId)
+                .orElseThrow(() -> failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
+                        "listing 没有 current provider generation"));
     }
 
     private void validateItemId(String itemId) {

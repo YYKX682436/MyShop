@@ -6,13 +6,15 @@ import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
-import com.myshop.entity.SalesChannelListingSpec;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSpecMappingSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +38,8 @@ public class SalesChannelSpecMappingPersistence {
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
     private final SalesChannelListingRepository listingRepository;
-    private final SalesChannelListingSpecRepository listingSpecRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
+    private final SalesChannelListingGenerationSpecRepository generationSpecRepository;
     private final SalesChannelSpecMappingValidator validator;
 
     @Transactional(readOnly = true)
@@ -48,9 +51,9 @@ public class SalesChannelSpecMappingPersistence {
         if (account.getProvider() != SalesChannelProvider.XIANYU) {
             throw failure("UNSUPPORTED_PROVIDER", "Specification backfill is supported only for XIANYU listings");
         }
-        if (listing.getExternalItemId() == null || listing.getExternalItemId().isBlank()) {
-            throw failure("EXTERNAL_ITEM_REQUIRED", "The listing has no bound external item");
-        }
+        SalesChannelListingGeneration generation = generationRepository
+                .findBySalesChannelListingIdAndCurrentTrue(listing.getId())
+                .orElseThrow(() -> failure("EXTERNAL_ITEM_REQUIRED", "The listing has no current provider generation"));
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> failure("PRODUCT_NOT_FOUND", "Product does not exist"));
         if (!product.isSpecEnabled()) {
@@ -60,12 +63,12 @@ public class SalesChannelSpecMappingPersistence {
                 .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0).stream()
                 .map(SalesChannelSpecMappingValidator::snapshot)
                 .toList();
-        List<SalesChannelSpecMappingValidator.ExistingMappingSnapshot> existingMappings = listingSpecRepository
-                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
+        List<SalesChannelSpecMappingValidator.ExistingMappingSnapshot> existingMappings = generationSpecRepository
+                .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(generation.getId()).stream()
                 .map(SalesChannelSpecMappingValidator::snapshot)
                 .toList();
-        return new ListingSpecSyncSnapshot(listing.getId(), listing.getSalesChannelAccountId(),
-                account.getProviderAccountId(), listing.getProductId(), listing.getExternalItemId(),
+        return new ListingSpecSyncSnapshot(listing.getId(), generation.getId(), listing.getSalesChannelAccountId(),
+                account.getProviderAccountId(), listing.getProductId(), generation.getExternalItemId(),
                 listing.getManagementMode(), listing.getDesiredRevision(), productSpecs, existingMappings);
     }
 
@@ -79,14 +82,18 @@ public class SalesChannelSpecMappingPersistence {
             List<SalesChannelSpecMappingValidator.ResolvedSpecMapping> resolved) {
         SalesChannelListing listing = listingRepository.findByIdForUpdate(snapshot.listingId())
                 .orElseThrow(() -> failure("LISTING_NOT_FOUND", "Sales channel listing does not exist"));
-        List<SalesChannelListingSpec> lockedRows = listingSpecRepository
-                .findBySalesChannelListingIdForUpdate(snapshot.listingId());
+        SalesChannelListingGeneration generation = generationRepository
+                .findCurrentByListingIdForUpdate(snapshot.listingId())
+                .filter(candidate -> candidate.getId().equals(snapshot.generationId()))
+                .orElseThrow(() -> failure("LISTING_CHANGED_DURING_SYNC", "The current provider generation changed"));
+        List<SalesChannelListingGenerationSpec> lockedRows = generationSpecRepository
+                .findBySalesChannelListingGenerationIdForUpdate(snapshot.generationId());
 
         SalesChannelAccount account = accountRepository.findById(listing.getSalesChannelAccountId())
                 .orElseThrow(() -> failure("ACCOUNT_NOT_FOUND", "Sales channel account does not exist"));
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> failure("PRODUCT_NOT_FOUND", "Product does not exist"));
-        return applyLocked(snapshot, resolved, account, product, listing, lockedRows);
+        return applyLocked(snapshot, resolved, account, product, listing, generation, lockedRows);
     }
 
     /**
@@ -101,12 +108,15 @@ public class SalesChannelSpecMappingPersistence {
             SalesChannelAccount account,
             Product product,
             SalesChannelListing listing,
-            List<SalesChannelListingSpec> lockedRows) {
+            SalesChannelListingGeneration generation,
+            List<SalesChannelListingGenerationSpec> lockedRows) {
         if (account.getProvider() != SalesChannelProvider.XIANYU
                 || !Objects.equals(account.getId(), snapshot.accountId())
                 || !Objects.equals(account.getProviderAccountId(), snapshot.providerAccountId())
                 || !Objects.equals(listing.getProductId(), snapshot.productId())
-                || !Objects.equals(listing.getExternalItemId(), snapshot.externalItemId())
+                || !Objects.equals(generation.getExternalItemId(), snapshot.externalItemId())
+                || !Objects.equals(generation.getSalesChannelListingId(), snapshot.listingId())
+                || !Objects.equals(generation.getSalesChannelAccountId(), snapshot.accountId())
                 || listing.getDesiredRevision() != snapshot.desiredRevision()
                 || !product.isSpecEnabled()) {
             throw failure("LISTING_CHANGED_DURING_SYNC", "The listing identity changed while reading provider specifications");
@@ -124,10 +134,10 @@ public class SalesChannelSpecMappingPersistence {
             throw failure("LISTING_CHANGED_DURING_SYNC", "The listing specification identity changed during provider read");
         }
 
-        Map<UUID, SalesChannelListingSpec> rowsBySpec = validateResolvedMappings(currentSpecs, lockedRows, resolved);
+        Map<UUID, SalesChannelListingGenerationSpec> rowsBySpec = validateResolvedMappings(currentSpecs, lockedRows, resolved);
 
         for (SalesChannelSpecMappingValidator.ResolvedSpecMapping mapping : resolved) {
-            SalesChannelListingSpec row = rowsBySpec.get(mapping.productSpecId());
+            SalesChannelListingGenerationSpec row = rowsBySpec.get(mapping.productSpecId());
             Map<String, Object> providerMapping = new LinkedHashMap<>(
                     row.getProviderMapping() == null ? Map.of() : row.getProviderMapping());
             providerMapping.put("provider_spec_name", mapping.providerSpecName());
@@ -137,20 +147,20 @@ public class SalesChannelSpecMappingPersistence {
                 row.setExternalSkuId(mapping.externalSkuId());
             }
         }
-        listingSpecRepository.saveAllAndFlush(lockedRows);
+        generationSpecRepository.saveAllAndFlush(lockedRows);
 
         List<ListingSpecMappingSummary> summaries = resolved.stream()
                 .map(mapping -> new ListingSpecMappingSummary(mapping.productSpecId().toString(),
                         mapping.productSpecName(), mapping.providerSpecName(), mapping.providerSpecValue(),
                         mapping.externalSkuId()))
                 .toList();
-        return new SpecMappingSyncResult(listing.getId().toString(), listing.getExternalItemId(),
+        return new SpecMappingSyncResult(listing.getId().toString(), generation.getExternalItemId(),
                 summaries.size(), summaries);
     }
 
-    private Map<UUID, SalesChannelListingSpec> validateResolvedMappings(
+    private Map<UUID, SalesChannelListingGenerationSpec> validateResolvedMappings(
             List<SalesChannelSpecMappingValidator.ProductSpecSnapshot> currentSpecs,
-            List<SalesChannelListingSpec> lockedRows,
+            List<SalesChannelListingGenerationSpec> lockedRows,
             List<SalesChannelSpecMappingValidator.ResolvedSpecMapping> resolved) {
         if (resolved == null) {
             throw failure("SPEC_MAPPING_INCOMPLETE", "Resolved provider specification mappings are required");
@@ -158,8 +168,8 @@ public class SalesChannelSpecMappingPersistence {
         Set<UUID> activeSpecIds = currentSpecs.stream()
                 .map(SalesChannelSpecMappingValidator.ProductSpecSnapshot::id)
                 .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
-        Map<UUID, SalesChannelListingSpec> rowsBySpec = new LinkedHashMap<>();
-        for (SalesChannelListingSpec row : lockedRows) {
+        Map<UUID, SalesChannelListingGenerationSpec> rowsBySpec = new LinkedHashMap<>();
+        for (SalesChannelListingGenerationSpec row : lockedRows) {
             if (!activeSpecIds.contains(row.getProductSpecId())) {
                 throw failure("SPEC_MAPPING_INCOMPLETE",
                         "A listing specification row does not belong to an active product specification");
@@ -180,7 +190,7 @@ public class SalesChannelSpecMappingPersistence {
                 throw failure("SPEC_MAPPING_INCOMPLETE",
                         "Resolved provider specification mappings must cover active specs exactly once");
             }
-            SalesChannelListingSpec row = rowsBySpec.get(mapping.productSpecId());
+            SalesChannelListingGenerationSpec row = rowsBySpec.get(mapping.productSpecId());
             if (row.getExternalSkuId() != null && mapping.externalSkuId() != null
                     && !row.getExternalSkuId().equals(mapping.externalSkuId())) {
                 throw failure("EXTERNAL_SKU_ID_CONFLICT", "An existing external SKU identity conflicts with the provider");
@@ -226,6 +236,7 @@ public class SalesChannelSpecMappingPersistence {
 
     public record ListingSpecSyncSnapshot(
             UUID listingId,
+            UUID generationId,
             UUID accountId,
             String providerAccountId,
             UUID productId,

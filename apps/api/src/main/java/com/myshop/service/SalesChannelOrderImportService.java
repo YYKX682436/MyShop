@@ -14,7 +14,8 @@ import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
-import com.myshop.entity.SalesChannelListingSpec;
+import com.myshop.entity.SalesChannelListingGeneration;
+import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.exception.UnmanagedSalesChannelItemException;
 import com.myshop.repository.OrderItemRepository;
@@ -23,7 +24,8 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
-import com.myshop.repository.SalesChannelListingSpecRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +58,8 @@ public class SalesChannelOrderImportService {
     private final ObjectMapper objectMapper;
     private final SalesChannelAccountRepository accountRepository;
     private final SalesChannelListingRepository listingRepository;
-    private final SalesChannelListingSpecRepository listingSpecRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
+    private final SalesChannelListingGenerationSpecRepository generationSpecRepository;
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
     private final SalesChannelOrderRepository channelOrderRepository;
@@ -72,7 +75,9 @@ public class SalesChannelOrderImportService {
         if (external == null || external.externalOrderNo() == null || external.externalOrderNo().isBlank()) {
             throw new IllegalArgumentException("External order number is required");
         }
-        SalesChannelListing listing = resolveListing(account, external);
+        SalesChannelListingGeneration generation = resolveGeneration(account, external);
+        SalesChannelListing listing = generation == null ? null : listingRepository.findById(
+                generation.getSalesChannelListingId()).orElse(null);
         rejectUnmanagedItem(account, external, listing);
         String fingerprint = fingerprint(account.getProvider(), null, external);
         SalesChannelOrder row = channelOrderRepository
@@ -86,6 +91,10 @@ public class SalesChannelOrderImportService {
         row = new SalesChannelOrder();
         row.setProvider(account.getProvider());
         row.setSalesChannelAccountId(account.getId());
+        if (generation != null) {
+            row.setSalesChannelListingId(generation.getSalesChannelListingId());
+            row.setSalesChannelListingGenerationId(generation.getId());
+        }
         row.setExternalOrderNo(external.externalOrderNo());
         row.setExternalItemId(external.itemId());
         row.setExternalSkuId(blankToNull(external.externalSkuId()));
@@ -108,7 +117,7 @@ public class SalesChannelOrderImportService {
             row.setLastErrorMessage("Phase 4 only imports pending_ship as an automatic fulfillment entry point");
             return row;
         }
-        return mapAndCreate(account, external, row, listing);
+        return mapAndCreate(account, external, row, listing, generation);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -117,7 +126,9 @@ public class SalesChannelOrderImportService {
         if (external == null || external.externalOrderNo() == null || external.externalOrderNo().isBlank()) return;
         account = accountRepository.findByIdForUpdate(account.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Sales-channel account does not exist"));
-        SalesChannelListing listing = resolveListing(account, external);
+        SalesChannelListingGeneration generation = resolveGeneration(account, external);
+        SalesChannelListing listing = generation == null ? null : listingRepository.findById(
+                generation.getSalesChannelListingId()).orElse(null);
         if (isUnmanagedItem(listing)) {
             logIgnoredUnmanagedItem(account, external);
             return;
@@ -130,6 +141,10 @@ public class SalesChannelOrderImportService {
         row.setSalesChannelAccountId(account.getId());
         row.setExternalOrderNo(external.externalOrderNo());
         row.setExternalItemId(external.itemId() == null ? "UNKNOWN" : external.itemId());
+        if (generation != null) {
+            row.setSalesChannelListingId(generation.getSalesChannelListingId());
+            row.setSalesChannelListingGenerationId(generation.getId());
+        }
         row.setExternalSkuId(blankToNull(external.externalSkuId()));
         row.setExternalSpecName(blankToNull(external.specName()));
         row.setExternalSpecValue(blankToNull(external.specValue()));
@@ -160,7 +175,8 @@ public class SalesChannelOrderImportService {
     }
 
     private SalesChannelOrder mapAndCreate(SalesChannelAccount account, AgentOrder external,
-                                           SalesChannelOrder row, SalesChannelListing listing) {
+                                           SalesChannelOrder row, SalesChannelListing listing,
+                                           SalesChannelListingGeneration generation) {
         if (listing == null) {
             return mappingError(row, "LISTING_NOT_FOUND", "No MyShop listing matches the provider item");
         }
@@ -169,6 +185,7 @@ public class SalesChannelOrderImportService {
             return mappingError(row, "PRODUCT_NOT_FOUND", "The provider item is not mapped to an active product");
         }
         row.setSalesChannelListingId(listing.getId());
+        row.setSalesChannelListingGenerationId(generation.getId());
         boolean autoRequested = SalesChannelListingManagementPolicy.autoFulfillmentAllowed(listing)
                 && listing.isAutoFulfillmentEnabled();
         row.setAutoFulfillmentRequested(autoRequested);
@@ -177,7 +194,7 @@ public class SalesChannelOrderImportService {
             return mappingError(row, "AUTO_FULFILLMENT_GATE", "Listing auto fulfillment requires AUTO + CARD_KEY");
         }
 
-        ProductSpec spec = resolveSpec(product, listing, external);
+        ProductSpec spec = resolveSpec(product, generation, external);
         if (product.isSpecEnabled() && spec == null && hasExternalSpec(external)) {
             return mappingError(row, "SPEC_MAPPING_ERROR", "The provider SKU/spec has no unique exact mapping");
         }
@@ -206,10 +223,10 @@ public class SalesChannelOrderImportService {
         return row;
     }
 
-    private SalesChannelListing resolveListing(SalesChannelAccount account, AgentOrder external) {
+    private SalesChannelListingGeneration resolveGeneration(SalesChannelAccount account, AgentOrder external) {
         String externalItemId = external == null ? null : blankToNull(external.itemId());
         if (externalItemId == null) return null;
-        return listingRepository
+        return generationRepository
                 .findBySalesChannelAccountIdAndExternalItemId(account.getId(), externalItemId)
                 .orElse(null);
     }
@@ -275,11 +292,11 @@ public class SalesChannelOrderImportService {
         return item;
     }
 
-    private ProductSpec resolveSpec(Product product, SalesChannelListing listing, AgentOrder external) {
+    private ProductSpec resolveSpec(Product product, SalesChannelListingGeneration generation, AgentOrder external) {
         if (!product.isSpecEnabled()) return null;
-        List<SalesChannelListingSpec> mappings = listingSpecRepository
-                .findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId());
-        List<SalesChannelListingSpec> matches;
+        List<SalesChannelListingGenerationSpec> mappings = generationSpecRepository
+                .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(generation.getId());
+        List<SalesChannelListingGenerationSpec> matches;
         String sku = blankToNull(external.externalSkuId());
         if (sku != null) {
             matches = mappings.stream().filter(mapping -> sku.equals(mapping.getExternalSkuId())).toList();

@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 35,
-  "latest_migration_version": "35",
+  "migration_count": 36,
+  "latest_migration_version": "36",
   "tables": {
     "users": ["id", "username", "role"],
     "products": ["id", "title", "retail_price"],
@@ -10,13 +10,15 @@
     "card_keys": ["id", "product_id", "status"],
     "sales_channel_accounts": ["id", "provider", "status"],
     "sales_channel_listings": ["id", "sales_channel_account_id", "product_id", "is_enabled", "management_mode"],
-    "sales_channel_listing_specs": ["id", "sales_channel_listing_id", "product_spec_id"],
-    "sales_channel_operations": ["id", "sales_channel_listing_id", "status", "operation_type"],
-    "sales_channel_orders": ["id", "sales_channel_account_id", "sales_channel_listing_id", "order_id", "ingest_status", "delivery_status"],
+    "sales_channel_listing_generations": ["id", "sales_channel_listing_id", "sales_channel_account_id", "generation_no", "external_item_id", "is_current", "origin"],
+    "sales_channel_listing_generation_specs": ["id", "sales_channel_listing_generation_id", "product_spec_id", "external_sku_id"],
+    "sales_channel_operations": ["id", "sales_channel_listing_id", "sales_channel_listing_generation_id", "status", "operation_type"],
+    "sales_channel_orders": ["id", "sales_channel_account_id", "sales_channel_listing_id", "sales_channel_listing_generation_id", "order_id", "ingest_status", "delivery_status"],
     "sales_channel_delivery_operations": ["id", "sales_channel_order_id", "card_key_id", "status"]
   },
   "indexes": [
-    "uq_sales_channel_listings_account_external_item",
+    "uq_sales_channel_listing_generations_account_item",
+    "uq_sales_channel_listing_generations_current",
     "uq_sales_channel_delivery_unit",
     "idx_sales_channel_orders_status",
     "idx_sales_channel_delivery_worker"
