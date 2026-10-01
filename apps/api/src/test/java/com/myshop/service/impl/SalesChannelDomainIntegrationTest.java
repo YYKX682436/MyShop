@@ -878,7 +878,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
-        assertEquals("first-fingerprint", conflicted.getAppliedFingerprint());
+        assertNull(conflicted.getAppliedFingerprint());
         SalesChannelOperation conflictReconciliation = operationService.requestReconciliation(conflictingSync.getId());
         assertTrue(operationService.markRunning(conflictReconciliation.getId()));
         assertTrue(operationService.resolveUnknownAsSucceeded(conflictReconciliation.getId(), conflictingSync.getId(),
@@ -920,7 +920,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
-        assertEquals("publish-fingerprint", conflicted.getAppliedFingerprint());
+        assertNull(conflicted.getAppliedFingerprint());
         assertEquals(SalesChannelOperationStatus.SUCCEEDED,
                 operationRepository.findById(sync.getId()).orElseThrow().getStatus());
     }
