@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.constant.StockMode;
@@ -70,6 +71,7 @@ public class SalesChannelDesiredStatePlanner {
         if (config == null) throw new IllegalArgumentException("Xianyu provider config is required");
         config.validateForSave();
         SalesChannelListing listing = lockListing(listingId);
+        requireNoCandidate(listing);
         listing.setProviderConfig(objectMapper.convertValue(config, Map.class));
         return listingRepository.saveAndFlush(listing);
     }
@@ -77,6 +79,7 @@ public class SalesChannelDesiredStatePlanner {
     @Transactional
     public SalesChannelListing setEnabled(UUID listingId, boolean enabled) {
         SalesChannelListing listing = lockListing(listingId);
+        requireNoCandidate(listing);
         if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
             if (enabled) {
                 SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
@@ -87,6 +90,12 @@ public class SalesChannelDesiredStatePlanner {
         if (enabled) preflightForEnable(listing);
         listing.setEnabled(enabled);
         return planLocked(listing);
+    }
+
+    private void requireNoCandidate(SalesChannelListing listing) {
+        if (generationRepository.findCandidateByListingId(listing.getId()).isPresent()) {
+            throw new IllegalStateException("REPLACEMENT_PENDING: candidate generation activation is required first");
+        }
     }
 
     private void preflightForEnable(SalesChannelListing listing) {
@@ -155,8 +164,8 @@ public class SalesChannelDesiredStatePlanner {
         if (listing.getStatus() == SalesChannelListingStatus.UNKNOWN) {
             throw new IllegalStateException("UNKNOWN operations must be reconciled before retry");
         }
-        if (listing.getStatus() == SalesChannelListingStatus.RELIST_REQUIRED) {
-            throw new IllegalStateException("RELIST_REQUIRED needs a separately designed relist flow");
+        if (listing.getStatus() == SalesChannelListingStatus.REPLACEMENT_PENDING) {
+            throw new IllegalStateException("REPLACEMENT_PENDING requires local candidate activation");
         }
         SalesChannelAccount account = loadAccount(listing);
         Product product = loadProduct(listing);
@@ -175,6 +184,17 @@ public class SalesChannelDesiredStatePlanner {
     }
 
     private SalesChannelListing planLocked(SalesChannelListing listing) {
+        if (generationRepository.findCandidateByListingId(listing.getId()).isPresent()) {
+            // A candidate freezes the provider write target.  Preserve a
+            // permanent mapping error so a later refresh cannot hide the
+            // required manual review; a normal pending candidate remains in
+            // the explicit replacement-pending state.
+            if (listing.getStatus() != SalesChannelListingStatus.ERROR
+                    || !"REPLACEMENT_MAPPING_ERROR".equals(listing.getLastErrorCode())) {
+                listing.setStatus(SalesChannelListingStatus.REPLACEMENT_PENDING);
+            }
+            return listingRepository.saveAndFlush(listing);
+        }
         SalesChannelAccount account = loadAccount(listing);
         Product product = loadProduct(listing);
         SalesChannelListingDesiredState desiredState = effectiveDesiredState(listing, account, product);
@@ -207,7 +227,7 @@ public class SalesChannelDesiredStatePlanner {
                              String fingerprint) {
         if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) return;
         if (desiredState == SalesChannelListingDesiredState.OFFLINE) {
-            boolean hasGeneration = generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isPresent();
+            boolean hasGeneration = generationRepository.findCurrentByListingId(listing.getId()).isPresent();
             if (!hasGeneration) {
                 listing.setStatus(SalesChannelListingStatus.OFFLINE);
                 listing.advanceAppliedRevision(listing.getDesiredRevision());
@@ -235,7 +255,15 @@ public class SalesChannelDesiredStatePlanner {
             listing.setLastErrorMessage("Verify the Xianyu account before enabling automated listing operations");
             return;
         }
-        boolean hasNoGeneration = generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isEmpty();
+        boolean hasCurrent = generationRepository.findCurrentByListingId(listing.getId()).isPresent();
+        boolean hasCandidate = generationRepository.findCandidateByListingId(listing.getId()).isPresent();
+        boolean hasNoGeneration = !hasCurrent;
+        if (hasCandidate) {
+            listing.setStatus(SalesChannelListingStatus.REPLACEMENT_PENDING);
+            listing.setLastErrorCode(null);
+            listing.setLastErrorMessage(null);
+            return;
+        }
         if (hasNoGeneration) {
             if (hasOperation(listing.getId(), SalesChannelOperationType.PUBLISH,
                     SalesChannelOperationStatus.UNKNOWN)) return;
@@ -248,11 +276,19 @@ public class SalesChannelDesiredStatePlanner {
             return;
         }
 
-        if (listing.getStatus() == SalesChannelListingStatus.OFFLINE
-                || listing.getStatus() == SalesChannelListingStatus.DRAFT) {
-            listing.setStatus(SalesChannelListingStatus.RELIST_REQUIRED);
-            listing.setLastErrorCode("RELIST_REQUIRED");
-            listing.setLastErrorMessage("The current Agent contract does not prove that this offline item can be safely restored");
+        if (listing.getStatus() == SalesChannelListingStatus.OFFLINE) {
+            Map<String, Object> replacementPayload = payload(snapshot, fingerprint);
+            replacementPayload.put("replacement_of_item_id", generationRepository
+                    .findCurrentByListingId(listing.getId())
+                    .orElseThrow().getExternalItemId());
+            operationService.request(listing.getId(), SalesChannelOperationType.REPUBLISH, replacementPayload);
+            listing.setStatus(SalesChannelListingStatus.REPUBLISHING);
+            return;
+        }
+        if (listing.getStatus() == SalesChannelListingStatus.DRAFT) {
+            listing.setStatus(SalesChannelListingStatus.ERROR);
+            listing.setLastErrorCode("PROVIDER_STATE_REQUIRED");
+            listing.setLastErrorMessage("A current provider generation is not in a writable online state");
             return;
         }
         if ("PERSONAL".equals(accountType)) {
@@ -269,7 +305,7 @@ public class SalesChannelDesiredStatePlanner {
                                                       SalesChannelListingDesiredState desiredState,
                                                       String fingerprint) {
         if ("PERSONAL".equals(accountType(account))
-                && generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isPresent()
+                && generationRepository.findCurrentByListingId(listing.getId()).isPresent()
                 && desiredState == SalesChannelListingDesiredState.ONLINE
                 && listing.getAppliedRevision() < listing.getDesiredRevision()) {
             operationRepository.supersedePendingSyncAtRevision(listing.getId(), listing.getDesiredRevision(),
@@ -282,7 +318,7 @@ public class SalesChannelDesiredStatePlanner {
         }
         if (listing.getLastErrorCode() != null
                 && (listing.getLastErrorCode().equals("UNSUPPORTED_ACCOUNT_CAPABILITY")
-                || listing.getLastErrorCode().equals("RELIST_REQUIRED"))) return;
+                || listing.getLastErrorCode().equals("PROVIDER_STATE_REQUIRED"))) return;
         boolean hasCurrentOperation = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(
                         listing.getId(), listing.getDesiredRevision()).stream()

@@ -231,6 +231,9 @@ public final class SalesChannelDtos {
     public record PublishCommand(String requestId, String accountId, long desiredRevision,
                                  ListingSnapshot listing) { }
 
+    public record RepublishCommand(String requestId, String accountId, String replacementOfItemId,
+                                   long desiredRevision, ListingSnapshot listing) { }
+
     public record UpdateCommand(String requestId, String accountId, long desiredRevision,
                                 ListingSnapshot listing) { }
 

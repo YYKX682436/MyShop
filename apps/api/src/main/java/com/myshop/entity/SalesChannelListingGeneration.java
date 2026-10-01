@@ -1,7 +1,10 @@
 package com.myshop.entity;
 
+import com.myshop.constant.SalesChannelGenerationState;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -36,8 +39,12 @@ public class SalesChannelListingGeneration extends BaseEntity {
     @Column(name = "external_item_id", nullable = false, length = 128)
     private String externalItemId;
 
-    @Column(name = "is_current", nullable = false)
-    private boolean current;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "generation_state", nullable = false, length = 16)
+    private SalesChannelGenerationState generationState;
+
+    @Column(name = "replaces_generation_id")
+    private UUID replacesGenerationId;
 
     @Column(name = "origin", nullable = false, length = 32)
     private String origin;
@@ -49,12 +56,13 @@ public class SalesChannelListingGeneration extends BaseEntity {
     private LocalDateTime retiredAt;
 
     public SalesChannelListingGeneration(UUID listingId, UUID accountId, long generationNo,
-                                         String externalItemId, boolean current, String origin) {
+                                         String externalItemId, SalesChannelGenerationState state, String origin) {
         this.salesChannelListingId = listingId;
         this.salesChannelAccountId = accountId;
         this.generationNo = generationNo;
         this.externalItemId = externalItemId;
-        this.current = current;
+        this.generationState = state;
         this.origin = origin;
     }
+
 }

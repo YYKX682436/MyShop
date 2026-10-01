@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOperationStatus;
@@ -155,10 +156,9 @@ class SalesChannelDomainIntegrationTest {
                 VALUES (?, ?, ?)
                 """, UUID.randomUUID(), fixture.account().getId(), fixture.product().getId()));
 
-        fixture.listing().setStatus(SalesChannelListingStatus.RELIST_REQUIRED);
-        listingRepository.saveAndFlush(fixture.listing());
-        assertEquals(SalesChannelListingStatus.RELIST_REQUIRED,
-                listingRepository.findById(fixture.listing().getId()).orElseThrow().getStatus());
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update(
+                "UPDATE sales_channel_listings SET status = 'RELIST_REQUIRED' WHERE id = ?",
+                fixture.listing().getId()));
 
         SalesChannelListing secondCall = listingService.ensureDraft(fixture.account().getId(), fixture.product().getId());
         assertEquals(fixture.listing().getId(), secondCall.getId());
@@ -983,7 +983,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(0, listing.getAppliedRevision());
         assertNull(listing.getAppliedFingerprint());
         assertEquals(SalesChannelListingStatus.PUBLISHING, listing.getStatus());
-        assertTrue(operationRepository.findById(target.getId()).orElseThrow().getSalesChannelListingGenerationId() == null);
+        assertTrue(operationRepository.findById(target.getId()).orElseThrow().getTargetGenerationId() == null);
     }
 
     @Test
@@ -1268,7 +1268,8 @@ class SalesChannelDomainIntegrationTest {
 
     private SalesChannelListingGeneration createGeneration(SalesChannelListing listing, String itemId) {
         SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
-                listing.getId(), listing.getSalesChannelAccountId(), 1L, itemId, true, "LEGACY_MIGRATION");
+                listing.getId(), listing.getSalesChannelAccountId(), 1L, itemId,
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
         generation.setActivatedAt(LocalDateTime.now());
         return generationRepository.saveAndFlush(generation);
     }

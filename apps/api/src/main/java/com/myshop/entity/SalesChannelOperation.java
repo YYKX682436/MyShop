@@ -33,9 +33,13 @@ public class SalesChannelOperation extends BaseEntity {
     @Column(name = "sales_channel_listing_id", nullable = false)
     private UUID salesChannelListingId;
 
-    /** Frozen provider generation target. Null is permitted only for PUBLISH. */
-    @Column(name = "sales_channel_listing_generation_id")
-    private UUID salesChannelListingGenerationId;
+    /** Frozen provider generation target. PUBLISH has no target. */
+    @Column(name = "target_generation_id")
+    private UUID targetGenerationId;
+
+    /** Provider generation created by PUBLISH/REPUBLISH after a confirmed result. */
+    @Column(name = "result_generation_id")
+    private UUID resultGenerationId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "operation_type", nullable = false, length = 16)
@@ -88,11 +92,23 @@ public class SalesChannelOperation extends BaseEntity {
                                  long desiredRevision, String idempotencyKey,
                                  Map<String, Object> payload) {
         this.salesChannelListingId = listingId;
-        this.salesChannelListingGenerationId = generationId;
+        this.targetGenerationId = generationId;
         this.operationType = operationType;
         this.desiredRevision = desiredRevision;
         this.idempotencyKey = idempotencyKey;
         setPayload(payload);
+    }
+
+    public UUID getTargetGenerationId() {
+        return targetGenerationId;
+    }
+
+    public UUID getResultGenerationId() {
+        return resultGenerationId;
+    }
+
+    public void setResultGenerationId(UUID resultGenerationId) {
+        this.resultGenerationId = resultGenerationId;
     }
 
     public void setPayload(Map<String, Object> payload) {

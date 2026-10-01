@@ -15,6 +15,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.RepublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
@@ -53,6 +54,8 @@ public interface SalesChannelProviderClient {
     IntegrationEnvelope<MediaUploadData> uploadMedia(MediaUploadCommand command);
 
     IntegrationEnvelope<ListingOperationData> publish(PublishCommand command);
+
+    IntegrationEnvelope<ListingOperationData> republish(RepublishCommand command);
 
     IntegrationEnvelope<ListingOperationData> update(String itemId, UpdateCommand command);
 

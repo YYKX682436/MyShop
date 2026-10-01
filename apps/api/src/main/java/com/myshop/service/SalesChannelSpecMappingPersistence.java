@@ -52,7 +52,7 @@ public class SalesChannelSpecMappingPersistence {
             throw failure("UNSUPPORTED_PROVIDER", "Specification backfill is supported only for XIANYU listings");
         }
         SalesChannelListingGeneration generation = generationRepository
-                .findBySalesChannelListingIdAndCurrentTrue(listing.getId())
+                .findCurrentByListingId(listing.getId())
                 .orElseThrow(() -> failure("EXTERNAL_ITEM_REQUIRED", "The listing has no current provider generation"));
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> failure("PRODUCT_NOT_FOUND", "Product does not exist"));

@@ -274,7 +274,8 @@ public class SalesChannelAdminService {
             Product product = products.get(listing.getProductId());
             return new XianyuItemBinding(listing.getId().toString(), listing.getProductId().toString(),
                     product == null ? null : product.getTitle(), listing.getManagementMode().name(),
-                    generation.getId().toString(), generation.getGenerationNo(), generation.isCurrent());
+                    generation.getId().toString(), generation.getGenerationNo(),
+                    generation.getGenerationState() == com.myshop.constant.SalesChannelGenerationState.CURRENT);
         }).toList();
         boolean linked = matches.size() == 1;
         boolean conflict = matches.size() > 1;
@@ -301,7 +302,7 @@ public class SalesChannelAdminService {
         }
         String existingListingId = listing.getId().toString();
         SalesChannelListingGeneration generation = generationRepository
-                .findBySalesChannelListingIdAndCurrentTrue(listing.getId()).orElse(null);
+                .findCurrentByListingId(listing.getId()).orElse(null);
         String existingExternalItemId = generation == null ? null : generation.getExternalItemId();
         String managementMode = listing.getManagementMode().name();
         if (itemId.equals(existingExternalItemId)) {
@@ -542,7 +543,9 @@ public class SalesChannelAdminService {
         XianyuProviderConfig config = objectMapper.convertValue(listing.getProviderConfig(), XianyuProviderConfig.class);
         List<SalesChannelListingGeneration> generations = generationRepository
                 .findAllBySalesChannelListingIdOrderByGenerationNoAsc(listing.getId());
-        SalesChannelListingGeneration current = generations.stream().filter(SalesChannelListingGeneration::isCurrent)
+        SalesChannelListingGeneration current = generations.stream()
+                .filter(generation -> generation.getGenerationState()
+                        == com.myshop.constant.SalesChannelGenerationState.CURRENT)
                 .findFirst().orElse(null);
         return new ListingSummary(listing.getId().toString(), account.getProviderAccountId(),
                 account.getDisplayName(), accountType(account), listing.getManagementMode().name(),
@@ -611,6 +614,9 @@ public class SalesChannelAdminService {
     public ListingSummary setAutoFulfillmentEnabled(UUID listingId, boolean enabled) {
         SalesChannelListing listing = listingRepository.findByIdForUpdate(listingId)
                 .orElseThrow(() -> new IllegalArgumentException("Sales channel listing does not exist"));
+        if (generationRepository.findCandidateByListingId(listingId).isPresent()) {
+            throw new IllegalStateException("REPLACEMENT_PENDING: candidate generation activation is required first");
+        }
         SalesChannelAccount account = findAccount(listing.getSalesChannelAccountId());
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException("Product does not exist"));
@@ -621,7 +627,7 @@ public class SalesChannelAdminService {
                         "该闲鱼商品尚未完成 MyShop 接管，不能开启自动发货", HttpStatus.CONFLICT);
             }
             SalesChannelListingGeneration current = generationRepository
-                    .findBySalesChannelListingIdAndCurrentTrue(listing.getId()).orElse(null);
+                    .findCurrentByListingId(listing.getId()).orElse(null);
             if (current == null || current.getExternalItemId() == null || current.getExternalItemId().isBlank()) {
                 throw new IllegalStateException("Only a MyShop-managed listing with an external item can enable auto fulfillment");
             }

@@ -1,6 +1,7 @@
 package com.myshop.service;
 
 import com.myshop.constant.ErrorCode;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
@@ -553,7 +554,8 @@ class XianyuItemBindingPostgresIntegrationTest {
 
     private SalesChannelListingGeneration createGeneration(SalesChannelListing listing, String itemId) {
         SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
-                listing.getId(), listing.getSalesChannelAccountId(), 1L, itemId, true, "LINK");
+                listing.getId(), listing.getSalesChannelAccountId(), 1L, itemId,
+                SalesChannelGenerationState.CURRENT, "LINK");
         generation.setActivatedAt(LocalDateTime.now());
         return generationRepository.saveAndFlush(generation);
     }

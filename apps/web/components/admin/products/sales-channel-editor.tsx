@@ -82,6 +82,33 @@ function accountStatus(account: SalesChannelAccountSummary | undefined) {
   return account.status || "UNKNOWN"
 }
 
+function listingStatusLabel(status?: string | null) {
+  switch (status) {
+    case "REPUBLISHING":
+      return "替代商品发布中"
+    case "REPLACEMENT_PENDING":
+      return "新闲鱼商品已创建，正在完成映射/接管"
+    case "PUBLISHING":
+      return "发布中"
+    case "SYNCING":
+      return "同步中"
+    case "OFFLINING":
+      return "下架中"
+    case "ONLINE":
+      return "在线"
+    case "OFFLINE":
+      return "已下架"
+    case "DRAFT":
+      return "草稿"
+    case "ERROR":
+      return "错误"
+    case "UNKNOWN":
+      return "状态未知"
+    default:
+      return status || "尚未配置"
+  }
+}
+
 function updateById<T extends { id: string }>(items: T[], updated: T) {
   const index = items.findIndex((item) => item.id === updated.id)
   if (index < 0) return [...items, updated]
@@ -507,12 +534,15 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
         <div><span className="text-muted-foreground">账号类型</span><div className="mt-1 font-medium">{type}</div></div>
         <div><span className="text-muted-foreground">账号状态</span><div className="mt-1 font-medium">{accountStatus(selectedAccount)}</div></div>
         <div><span className="text-muted-foreground">管理模式</span><div className="mt-1 font-medium">{selectedListing?.managementMode === "LINKED_ONLY" ? "仅关联" : selectedListing?.managementMode === "TAKEOVER_PENDING" ? "接管待完成" : selectedListing?.managementMode === "MANAGED" ? "MyShop 管理" : "尚未配置"}</div></div>
-        <div><span className="text-muted-foreground">渠道状态</span><div className="mt-1 font-medium">{selectedListing?.status || "尚未配置"}{selectedListing ? ` · ${selectedListing.isEnabled ? "已启用" : "已停用"}` : ""}</div></div>
+        <div><span className="text-muted-foreground">渠道状态</span><div className="mt-1 font-medium">{listingStatusLabel(selectedListing?.status)}{selectedListing ? ` · ${selectedListing.isEnabled ? "已启用" : "已停用"}` : ""}</div></div>
         <div><span className="text-muted-foreground">自动发卡</span><div className="mt-1 font-medium">{selectedListing?.autoFulfillmentEnabled ? "已开启" : "已关闭"}</div></div>
         <div><span className="text-muted-foreground">闲鱼 item_id</span><div className="mt-1 break-all font-medium">{currentItemId || "—"}</div></div>
+        <div><span className="text-muted-foreground">当前 generation</span><div className="mt-1 break-all font-medium">{selectedListing?.currentGenerationNo == null ? "—" : `第 ${selectedListing.currentGenerationNo} 代 · 共 ${selectedListing.generationCount ?? 0} 代`}</div></div>
         <div><span className="text-muted-foreground">目标版本 / 已应用版本</span><div className="mt-1 font-medium">{selectedListing?.desiredRevision ?? "—"} / {selectedListing?.appliedRevision ?? "—"}</div></div>
         {selectedListing?.lastErrorCode && <div className="sm:col-span-2 lg:col-span-4"><span className="text-muted-foreground">最近错误</span><div className="mt-1 flex items-start gap-2 text-destructive"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span><strong>{selectedListing.lastErrorCode}</strong>{selectedListing.lastErrorMessage ? ` · ${selectedListing.lastErrorMessage}` : ""}</span></div></div>}
       </div>}
+
+      {selectedListing?.status === "REPLACEMENT_PENDING" && <p className="mb-4 rounded-card border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-200">新闲鱼商品已创建，正在完成映射/接管。映射完成前不会把候选商品显示为在线，也不会再次创建替代商品。</p>}
 
       {needsVerification && <p className="mb-4 flex items-center gap-2 rounded-card border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-800 dark:text-amber-200"><AlertTriangle className="size-4 shrink-0" />账号能力尚未确认。验证账号后才能启用渠道。</p>}
       {!accountEnabled(selectedAccount) && selectedAccount && <p className="mb-4 rounded-card border border-border-subtle bg-surface-muted/45 p-3 text-sm text-muted-foreground">此账号已停用，当前只能查看配置。</p>}

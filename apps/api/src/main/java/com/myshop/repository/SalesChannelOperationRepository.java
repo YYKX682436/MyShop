@@ -92,6 +92,8 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
     @Query("SELECT operation FROM SalesChannelOperation operation WHERE operation.id = :id")
     Optional<SalesChannelOperation> findByIdForUpdate(@Param("id") UUID id);
 
+    Optional<SalesChannelOperation> findByResultGenerationId(UUID resultGenerationId);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE SalesChannelOperation operation "
             + "SET operation.status = :superseded, operation.finishedAt = :now, operation.updatedAt = :now "

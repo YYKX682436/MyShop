@@ -3,6 +3,7 @@ package com.myshop.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
@@ -101,7 +102,7 @@ class SalesChannelAdminServiceTest {
         listing.setSalesChannelAccountId(accountId);
         listing.setProductId(productId);
         SalesChannelListingGeneration generation = generation(listing, "external-item");
-        when(generationRepository.findBySalesChannelListingIdAndCurrentTrue(listingId))
+        when(generationRepository.findCurrentByListingId(listingId))
                 .thenReturn(Optional.of(generation));
 
         SalesChannelAccount account = new SalesChannelAccount();
@@ -139,7 +140,7 @@ class SalesChannelAdminServiceTest {
         listing.setSalesChannelAccountId(accountId);
         listing.setProductId(productId);
         SalesChannelListingGeneration generation = generation(listing, "external-item");
-        when(generationRepository.findBySalesChannelListingIdAndCurrentTrue(listingId))
+        when(generationRepository.findCurrentByListingId(listingId))
                 .thenReturn(Optional.of(generation));
 
         SalesChannelAccount account = new SalesChannelAccount();
@@ -388,7 +389,8 @@ class SalesChannelAdminServiceTest {
 
     private static SalesChannelListingGeneration generation(SalesChannelListing listing, String itemId) {
         SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
-                listing.getId(), listing.getSalesChannelAccountId(), 1, itemId, true, "LEGACY_MIGRATION");
+                listing.getId(), listing.getSalesChannelAccountId(), 1, itemId,
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
         generation.setId(UUID.randomUUID());
         return generation;
     }

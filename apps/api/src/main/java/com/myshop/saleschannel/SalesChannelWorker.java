@@ -2,6 +2,7 @@ package com.myshop.saleschannel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelAccount;
@@ -20,8 +21,11 @@ import com.myshop.saleschannel.model.SalesChannelDtos.ListingSnapshot;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.RepublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
+import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.ListingSpecMappingsData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SkuRow;
 import com.myshop.saleschannel.model.SalesChannelDtos.UpdateCommand;
 import com.myshop.saleschannel.SalesChannelProviderClientException;
@@ -30,9 +34,12 @@ import com.myshop.saleschannel.xianyu.XianyuMediaMaterializer.MaterializedImage;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
 import com.myshop.service.SalesChannelListingManagementPolicy;
 import com.myshop.service.SalesChannelOperationClaimService;
+import com.myshop.service.SalesChannelGenerationActivationService;
+import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.service.impl.SalesChannelOperationServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -66,6 +73,9 @@ public class SalesChannelWorker {
     private final int maxAttempts;
     private final long staleRunningMs;
 
+    @Autowired(required = false)
+    private SalesChannelGenerationActivationService generationActivationService;
+
     public SalesChannelWorker(SalesChannelOperationClaimService claimService,
                               SalesChannelOperationRepository operationRepository,
                               SalesChannelListingRepository listingRepository,
@@ -97,8 +107,29 @@ public class SalesChannelWorker {
     @Scheduled(fixedDelayString = "${sales-channel.worker.interval-ms:1000}")
     public void runBatch() {
         recoverStaleRunningOperations();
+        convergePendingCandidates();
         List<UUID> ids = claimService.selectReadyIds(LocalDateTime.now(), batchSize);
         for (UUID id : ids) process(id);
+    }
+
+    /**
+     * Completes a persisted provider result after a crash between the provider
+     * commit and the normal post-result refresh.  This path only performs a
+     * read-only provider mapping inspection followed by local activation; it
+     * never publishes or retries a provider write.
+     */
+    private void convergePendingCandidates() {
+        if (generationActivationService == null) return;
+        List<SalesChannelListingGeneration> candidates = generationRepository
+                .findAllByGenerationStateOrderByCreatedAtAsc(SalesChannelGenerationState.CANDIDATE);
+        candidates.stream().limit(batchSize).forEach(candidate -> {
+            SalesChannelOperation operation = operationRepository
+                    .findByResultGenerationId(candidate.getId()).orElse(null);
+            if (operation == null || operation.getStatus() != SalesChannelOperationStatus.SUCCEEDED
+                    || (operation.getOperationType() != SalesChannelOperationType.PUBLISH
+                    && operation.getOperationType() != SalesChannelOperationType.REPUBLISH)) return;
+            convergeCandidate(operation);
+        });
     }
 
     private void recoverStaleRunningOperations() {
@@ -128,7 +159,7 @@ public class SalesChannelWorker {
         if (!operationService.markRunning(operationId)) {
             if (candidate.getOperationType() == SalesChannelOperationType.PUBLISH) {
                 SalesChannelListing listing = listingRepository.findById(candidate.getSalesChannelListingId()).orElse(null);
-                if (listing != null && generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isPresent()) {
+                if (listing != null && generationRepository.findCurrentByListingId(listing.getId()).isPresent()) {
                     refreshAfterOutcome(listing.getId());
                 }
             }
@@ -169,10 +200,11 @@ public class SalesChannelWorker {
         try {
             switch (operation.getOperationType()) {
                 case RECONCILE -> executeReconciliation(operation, listing, account);
-                case PUBLISH, SYNC, OFFLINE, DELETE -> {
+                case PUBLISH, REPUBLISH, SYNC, OFFLINE, DELETE -> {
                     DesiredListingSnapshot snapshot = desiredSnapshot(operation);
                     String fingerprint = string(operation.getPayload().get("desired_fingerprint"));
                     if (operation.getOperationType() == SalesChannelOperationType.PUBLISH
+                            || operation.getOperationType() == SalesChannelOperationType.REPUBLISH
                             || operation.getOperationType() == SalesChannelOperationType.SYNC) {
                         if (operation.getOperationType() == SalesChannelOperationType.SYNC
                                 && "PERSONAL".equals(snapshot.accountType())) {
@@ -190,6 +222,21 @@ public class SalesChannelWorker {
                             handleListingEnvelope(operation, listing, providerClient.publish(new PublishCommand(
                                     command.requestId(), command.accountId(), command.desiredRevision(), command.listing())),
                                     fingerprint);
+                            activateCandidateAfterProviderResult(operation);
+                        } else if (operation.getOperationType() == SalesChannelOperationType.REPUBLISH) {
+                            SalesChannelListingGeneration source = frozenGeneration(operation);
+                            if (source == null) {
+                                operationService.markFailed(operationId, "REPLACEMENT_SOURCE_REQUIRED",
+                                        "REPUBLISH requires a frozen source generation");
+                                return;
+                            }
+                            SalesChannelListing current = listingRepository.findById(listing.getId()).orElse(listing);
+                            SalesChannelListingManagementPolicy.requireProviderWritesAllowed(current);
+                            sideEffectCallStarted = true;
+                            handleListingEnvelope(operation, listing, providerClient.republish(new RepublishCommand(
+                                    operation.getIdempotencyKey(), account.getProviderAccountId(),
+                                    source.getExternalItemId(), operation.getDesiredRevision(), materialized)), fingerprint);
+                            activateCandidateAfterProviderResult(operation);
                         } else {
                             SalesChannelListingGeneration generation = frozenGeneration(operation);
                             if (generation == null) {
@@ -298,7 +345,7 @@ public class SalesChannelWorker {
     }
 
     private SalesChannelListingGeneration frozenGeneration(SalesChannelOperation operation) {
-        UUID generationId = operation.getSalesChannelListingGenerationId();
+        UUID generationId = operation.getTargetGenerationId();
         return generationId == null ? null : generationRepository.findById(generationId).orElse(null);
     }
 
@@ -343,6 +390,7 @@ public class SalesChannelWorker {
                 String fingerprint = string(target.getPayload().get("desired_fingerprint"));
                 operationService.resolveUnknownAsSucceeded(reconciliation.getId(), target.getId(), targetResult,
                         reconciliationResult, fingerprint);
+                activateCandidateAfterProviderResult(target);
                 refreshAfterOutcome(listing.getId());
             }
             case FAILED -> {
@@ -363,6 +411,39 @@ public class SalesChannelWorker {
                 }
                 refreshAfterOutcome(listing.getId());
             }
+        }
+    }
+
+    private void activateCandidateAfterProviderResult(SalesChannelOperation operation) {
+        if (generationActivationService == null
+                || (operation.getOperationType() != SalesChannelOperationType.PUBLISH
+                && operation.getOperationType() != SalesChannelOperationType.REPUBLISH)) return;
+        convergeCandidate(operation);
+    }
+
+    private void convergeCandidate(SalesChannelOperation operation) {
+        SalesChannelOperation latest = operationRepository.findById(operation.getId()).orElse(null);
+        if (latest == null || latest.getResultGenerationId() == null
+                || latest.getStatus() != SalesChannelOperationStatus.SUCCEEDED) return;
+        SalesChannelListingGeneration generation = generationRepository.findById(latest.getResultGenerationId()).orElse(null);
+        if (generation == null) return;
+        SalesChannelListing listing = listingRepository.findById(latest.getSalesChannelListingId()).orElse(null);
+        SalesChannelAccount account = listing == null ? null : accountRepository.findById(listing.getSalesChannelAccountId()).orElse(null);
+        if (listing == null || account == null) return;
+        try {
+            IntegrationEnvelope<ListingSpecMappingsData> mappings = providerClient.inspectItemSpecMappings(
+                    new SpecMappingsCommand(latest.getIdempotencyKey(), account.getProviderAccountId(),
+                            generation.getExternalItemId()));
+            if (mappings.outcome() != Outcome.SUCCEEDED || mappings.data() == null) return;
+            generationActivationService.persistCandidateMappings(latest.getId(), mappings.data());
+            if (generationActivationService.activate(latest.getId())) {
+                refreshAfterOutcome(listing.getId());
+            }
+        } catch (SalesChannelSpecMappingException exception) {
+            generationActivationService.markCandidateMappingError(latest.getId(), exception.getCode(), exception.getMessage());
+        } catch (RuntimeException exception) {
+            log.warn("Candidate generation {} awaits read-only mapping convergence: {}",
+                    generation.getId(), exception.getClass().getSimpleName());
         }
     }
 

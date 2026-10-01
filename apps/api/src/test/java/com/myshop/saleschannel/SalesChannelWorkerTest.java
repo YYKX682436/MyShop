@@ -2,6 +2,7 @@ package com.myshop.saleschannel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelAccount;
@@ -222,7 +223,8 @@ class SalesChannelWorkerTest {
         WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.CONNECTED);
         fixture.listing.incrementDesiredRevision();
         SalesChannelListingGeneration frozen = new SalesChannelListingGeneration(
-                listingId, fixture.account.getId(), 1L, "item-generation-a", false, "LEGACY_MIGRATION");
+                listingId, fixture.account.getId(), 1L, "item-generation-a",
+                SalesChannelGenerationState.RETIRED, "LEGACY_MIGRATION");
         frozen.setId(generationId);
         when(fixture.generationRepository.findById(generationId)).thenReturn(Optional.of(frozen));
         when(fixture.providerClient.offline(eq("item-generation-a"), any())).thenReturn(

@@ -72,7 +72,7 @@ public class XianyuItemTakeoverService {
                 .findBySalesChannelAccountIdAndExternalItemId(accountId, itemId)
                 .orElseThrow(() -> failure(ErrorCode.ITEM_NOT_LINKED,
                         "该闲鱼商品尚未关联 MyShop 商品", HttpStatus.CONFLICT));
-        if (!generation.isCurrent()) {
+        if (generation.getGenerationState() != com.myshop.constant.SalesChannelGenerationState.CURRENT) {
             throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                     "只有 listing 的 current provider generation 才能接管", HttpStatus.CONFLICT);
         }
@@ -252,7 +252,7 @@ public class XianyuItemTakeoverService {
                                                Product product,
                                                String itemId) {
         SalesChannelListingGeneration generation = generationRepository
-                .findBySalesChannelListingIdAndCurrentTrue(listing.getId())
+                .findCurrentByListingId(listing.getId())
                 .orElseThrow(() -> failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                         "listing 没有稳定的 current provider generation"));
         if (!itemId.equals(generation.getExternalItemId())
@@ -395,7 +395,7 @@ public class XianyuItemTakeoverService {
     }
 
     private String currentItemId(SalesChannelListing listing) {
-        return generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId())
+        return generationRepository.findCurrentByListingId(listing.getId())
                 .map(SalesChannelListingGeneration::getExternalItemId)
                 .orElseThrow(() -> failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                         "listing 没有 current provider generation"));

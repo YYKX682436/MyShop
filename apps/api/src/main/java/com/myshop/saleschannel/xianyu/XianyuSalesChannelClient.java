@@ -28,6 +28,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
 import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.RepublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
@@ -209,6 +210,25 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         byte[] body = serialize(new XianyuPublishRequest(command.requestId(), command.accountId(),
                 command.desiredRevision(), command.listing()));
         return exchange("POST", "/listings/publish", body, "application/json",
+                responseType(ListingOperationData.class), RequestSemantics.SIDE_EFFECTING,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<ListingOperationData> republish(RepublishCommand command) {
+        validateOperation(command == null ? null : command.requestId(),
+                command == null ? null : command.accountId(),
+                command == null ? -1 : command.desiredRevision());
+        if (command == null || blank(command.replacementOfItemId())
+                || command.replacementOfItemId().length() > 128) {
+            throw safeFailure("INVALID_REPUBLISH_REQUEST", "replacement_of_item_id is required");
+        }
+        validateListing(command.listing());
+        XianyuPublishRequest publish = new XianyuPublishRequest(command.requestId(), command.accountId(),
+                command.desiredRevision(), command.listing());
+        Map<String, Object> values = objectMapper.convertValue(publish, Map.class);
+        values.put("replacement_of_item_id", command.replacementOfItemId());
+        return exchange("POST", "/listings/republish", serialize(values), "application/json",
                 responseType(ListingOperationData.class), RequestSemantics.SIDE_EFFECTING,
                 command.requestId(), command.requestId());
     }

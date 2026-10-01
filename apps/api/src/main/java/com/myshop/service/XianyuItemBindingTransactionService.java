@@ -3,6 +3,7 @@ package com.myshop.service;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingManagementMode;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.Product;
@@ -76,7 +77,7 @@ public class XianyuItemBindingTransactionService {
         }
 
         if (productListing != null) {
-            if (generationRepository.findBySalesChannelListingIdAndCurrentTrue(productListing.getId()).isPresent()) {
+            if (generationRepository.findCurrentByListingId(productListing.getId()).isPresent()) {
                 throw conflict(ErrorCode.PRODUCT_ALREADY_LINKED,
                         "该 MyShop 商品已关联其它闲鱼商品");
             }
@@ -101,7 +102,8 @@ public class XianyuItemBindingTransactionService {
                                                            Product product) {
         SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
                 listing.getId(), listing.getSalesChannelAccountId(),
-                generationRepository.nextGenerationNumber(listing.getId()), itemId, true, "LINK");
+                generationRepository.nextGenerationNumber(listing.getId()), itemId,
+                SalesChannelGenerationState.CURRENT, "LINK");
         generation.setActivatedAt(java.time.LocalDateTime.now());
         SalesChannelListingGeneration saved = generationRepository.saveAndFlush(generation);
         productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0).forEach(spec -> {

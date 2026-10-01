@@ -4,6 +4,7 @@ import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingGeneration;
@@ -49,16 +50,27 @@ public class SalesChannelOperationServiceImpl {
         }
         UUID generationId = null;
         if (operationType != SalesChannelOperationType.PUBLISH) {
-            generationId = generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId())
+            generationId = generationRepository.findCurrentByListingId(listing.getId())
                     .orElseThrow(() -> new IllegalStateException(
                             "Existing-item operation requires a current provider generation"))
                     .getId();
+        }
+        if (operationType == SalesChannelOperationType.REPUBLISH) {
+            String requestedSource = payload == null ? null : Objects.toString(payload.get("replacement_of_item_id"), null);
+            String frozenSource = generationRepository.findById(generationId).orElseThrow().getExternalItemId();
+            if (!Objects.equals(requestedSource, frozenSource)) {
+                throw new IllegalStateException("REPUBLISH source must match the frozen current generation");
+            }
         }
         String idempotencyKey = account.getProvider().name() + ":" + listing.getId() + ":"
                 + (generationId == null ? "NEW" : generationId) + ":"
                 + operationType.name() + ":" + listing.getDesiredRevision();
         var existing = operationRepository.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) return existing.get();
+        if (operationType != SalesChannelOperationType.RECONCILE
+                && generationRepository.findCandidateByListingId(listing.getId()).isPresent()) {
+            throw new IllegalStateException("REPLACEMENT_PENDING: a candidate generation must be activated first");
+        }
         if (operationType != SalesChannelOperationType.RECONCILE
                 && "EXTERNAL_ITEM_ID_CONFLICT".equals(listing.getLastErrorCode())) {
             throw new IllegalStateException("External item identity conflict must be resolved before more provider writes");
@@ -77,7 +89,7 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation targetSnapshot = findOperation(targetOperationId);
         SalesChannelListing listing = lockListing(targetSnapshot.getSalesChannelListingId());
         SalesChannelOperation target = lockOperation(targetOperationId);
-        UUID targetGenerationId = target.getSalesChannelListingGenerationId();
+        UUID targetGenerationId = target.getTargetGenerationId();
         boolean identityConflict = target.getStatus() == SalesChannelOperationStatus.SUCCEEDED
                 && listing.getStatus() == SalesChannelListingStatus.UNKNOWN
                 && "EXTERNAL_ITEM_ID_CONFLICT".equals(listing.getLastErrorCode());
@@ -138,7 +150,8 @@ public class SalesChannelOperationServiceImpl {
             return false;
         }
         if (operation.getOperationType() == SalesChannelOperationType.PUBLISH
-                && generationRepository.existsBySalesChannelListingIdAndCurrentTrue(listing.getId())) {
+                && generationRepository.existsBySalesChannelListingIdAndGenerationState(
+                listing.getId(), SalesChannelGenerationState.CURRENT)) {
             operation.supersede(now);
             return false;
         }
@@ -151,7 +164,7 @@ public class SalesChannelOperationServiceImpl {
             return false;
         }
         if (operation.getOperationType() == SalesChannelOperationType.SYNC
-                && operation.getSalesChannelListingGenerationId() == null) {
+                && operation.getTargetGenerationId() == null) {
             boolean publishInFlight = operationRepository.existsBySalesChannelListingIdAndOperationTypeAndStatus(
                     listing.getId(), SalesChannelOperationType.PUBLISH, SalesChannelOperationStatus.PENDING)
                     || operationRepository.existsBySalesChannelListingIdAndOperationTypeAndStatus(
@@ -216,13 +229,20 @@ public class SalesChannelOperationServiceImpl {
         }
         LocalDateTime now = LocalDateTime.now();
         String externalItemId = extractExternalItemId(result);
-        if (operation.getOperationType() == SalesChannelOperationType.PUBLISH && externalItemId == null) {
-            throw new IllegalArgumentException("A successful PUBLISH result must include item_id");
+        if ((operation.getOperationType() == SalesChannelOperationType.PUBLISH
+                || operation.getOperationType() == SalesChannelOperationType.REPUBLISH) && externalItemId == null) {
+            throw new IllegalArgumentException("A successful provider publish result must include item_id");
         }
         boolean identityConflict = !frozenGenerationIdentityMatches(operation, externalItemId);
         if (!operation.succeed(result, now)) return false;
-        if (operation.getOperationType() == SalesChannelOperationType.PUBLISH) {
-            ensurePublishGeneration(listing, externalItemId);
+        if (operation.getOperationType() == SalesChannelOperationType.PUBLISH
+                || operation.getOperationType() == SalesChannelOperationType.REPUBLISH) {
+            SalesChannelListingGeneration candidate = ensureCandidateGeneration(listing, operation, externalItemId);
+            operation.setResultGenerationId(candidate.getId());
+            listing.setStatus(SalesChannelListingStatus.REPLACEMENT_PENDING);
+            listing.setLastErrorCode(null);
+            listing.setLastErrorMessage(null);
+            return true;
         }
         if (identityConflict) {
             if (operation.getDesiredRevision() == listing.getDesiredRevision()) {
@@ -257,8 +277,9 @@ public class SalesChannelOperationServiceImpl {
         requireOutcome(reconciliationResult, "SUCCEEDED");
         LocalDateTime now = LocalDateTime.now();
         String externalItemId = extractExternalItemId(targetResult);
-        if (target.getOperationType() == SalesChannelOperationType.PUBLISH && externalItemId == null) {
-            throw new IllegalArgumentException("A reconciled successful PUBLISH result must include item_id");
+        if ((target.getOperationType() == SalesChannelOperationType.PUBLISH
+                || target.getOperationType() == SalesChannelOperationType.REPUBLISH) && externalItemId == null) {
+            throw new IllegalArgumentException("A reconciled successful provider publish result must include item_id");
         }
         if (target.getStatus() == SalesChannelOperationStatus.SUCCEEDED) {
             String savedItemId = extractExternalItemId(target.getResult());
@@ -272,8 +293,17 @@ public class SalesChannelOperationServiceImpl {
         }
         boolean identityConflict = !frozenGenerationIdentityMatches(target, externalItemId);
         if (!target.resolveUnknownAsSucceeded(targetResult, now)) return false;
-        if (target.getOperationType() == SalesChannelOperationType.PUBLISH) {
-            ensurePublishGeneration(listing, externalItemId);
+        if (target.getOperationType() == SalesChannelOperationType.PUBLISH
+                || target.getOperationType() == SalesChannelOperationType.REPUBLISH) {
+            SalesChannelListingGeneration candidate = ensureCandidateGeneration(listing, target, externalItemId);
+            target.setResultGenerationId(candidate.getId());
+            listing.setStatus(SalesChannelListingStatus.REPLACEMENT_PENDING);
+            listing.setLastErrorCode(null);
+            listing.setLastErrorMessage(null);
+            if (!reconciliation.succeed(reconciliationResult, now)) {
+                throw new IllegalStateException("Reconciliation operation is no longer RUNNING");
+            }
+            return true;
         }
         if (identityConflict) {
             if (target.getDesiredRevision() == listing.getDesiredRevision()) {
@@ -429,8 +459,8 @@ public class SalesChannelOperationServiceImpl {
         if (reconciliation.getOperationType() != SalesChannelOperationType.RECONCILE
                 || reconciliation.getStatus() != SalesChannelOperationStatus.RUNNING
                 || !reconciliation.getSalesChannelListingId().equals(target.getSalesChannelListingId())
-                || !Objects.equals(reconciliation.getSalesChannelListingGenerationId(),
-                target.getSalesChannelListingGenerationId())
+                || !Objects.equals(reconciliation.getTargetGenerationId(),
+                target.getTargetGenerationId())
                 || reconciliation.getDesiredRevision() < target.getDesiredRevision()) {
             throw new IllegalArgumentException("A RUNNING reconciliation for the target listing is required");
         }
@@ -454,23 +484,35 @@ public class SalesChannelOperationServiceImpl {
     private boolean frozenGenerationIdentityMatches(SalesChannelOperation operation, String resultItemId) {
         if (operation.getOperationType() == SalesChannelOperationType.PUBLISH
                 || operation.getOperationType() == SalesChannelOperationType.RECONCILE
+                || operation.getOperationType() == SalesChannelOperationType.REPUBLISH
                 || resultItemId == null) return true;
-        UUID generationId = operation.getSalesChannelListingGenerationId();
+        UUID generationId = operation.getTargetGenerationId();
         SalesChannelListingGeneration generation = generationId == null
                 ? null : generationRepository.findById(generationId).orElse(null);
         return generation != null && resultItemId.equals(generation.getExternalItemId());
     }
 
-    private SalesChannelListingGeneration ensurePublishGeneration(SalesChannelListing listing,
-                                                                    String externalItemId) {
+    private SalesChannelListingGeneration ensureCandidateGeneration(SalesChannelListing listing,
+                                                                     SalesChannelOperation operation,
+                                                                     String externalItemId) {
         return generationRepository.findBySalesChannelAccountIdAndExternalItemId(
                         listing.getSalesChannelAccountId(), externalItemId)
                 .map(existing -> {
                     if (!existing.getSalesChannelListingId().equals(listing.getId())) {
                         throw new IllegalStateException("PUBLISH returned an item already owned by another listing");
                     }
-                    if (!existing.isCurrent()) {
-                        throw new IllegalStateException("PUBLISH returned a retired provider generation");
+                    if (existing.getGenerationState() != SalesChannelGenerationState.CANDIDATE) {
+                        throw new IllegalStateException("PUBLISH returned an item already represented by a non-candidate generation");
+                    }
+                    if (operation.getOperationType() == SalesChannelOperationType.REPUBLISH) {
+                        if (!"REPUBLISH".equals(existing.getOrigin())
+                                || !Objects.equals(existing.getReplacesGenerationId(), operation.getTargetGenerationId())
+                                || Objects.equals(existing.getId(), operation.getTargetGenerationId())) {
+                            throw new IllegalStateException("REPUBLISH result does not match the frozen source generation");
+                        }
+                    } else if (!"PUBLISH".equals(existing.getOrigin())
+                            || existing.getReplacesGenerationId() != null) {
+                        throw new IllegalStateException("PUBLISH result does not match an initial candidate generation");
                     }
                     return existing;
                 })
@@ -478,18 +520,12 @@ public class SalesChannelOperationServiceImpl {
                     SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
                             listing.getId(), listing.getSalesChannelAccountId(),
                             generationRepository.nextGenerationNumber(listing.getId()), externalItemId,
-                            true, "PUBLISH");
-                    generation.setActivatedAt(LocalDateTime.now());
+                            SalesChannelGenerationState.CANDIDATE,
+                            operation.getOperationType() == SalesChannelOperationType.REPUBLISH ? "REPUBLISH" : "PUBLISH");
+                    if (operation.getOperationType() == SalesChannelOperationType.REPUBLISH) {
+                        generation.setReplacesGenerationId(operation.getTargetGenerationId());
+                    }
                     SalesChannelListingGeneration saved = generationRepository.saveAndFlush(generation);
-                    productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(
-                                    listing.getProductId(), 0)
-                            .forEach(spec -> {
-                                SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
-                                mapping.setSalesChannelListingGenerationId(saved.getId());
-                                mapping.setProductSpecId(spec.getId());
-                                generationSpecRepository.save(mapping);
-                            });
-                    generationSpecRepository.flush();
                     return saved;
                 });
     }
@@ -498,13 +534,15 @@ public class SalesChannelOperationServiceImpl {
         if (listing.getDesiredState() == SalesChannelListingDesiredState.OFFLINE) {
             return SalesChannelListingStatus.OFFLINE;
         }
-        return generationRepository.findBySalesChannelListingIdAndCurrentTrue(listing.getId()).isEmpty()
+        return generationRepository.findBySalesChannelListingIdAndGenerationState(
+                listing.getId(), SalesChannelGenerationState.CURRENT).isEmpty()
                 ? SalesChannelListingStatus.DRAFT : SalesChannelListingStatus.ONLINE;
     }
 
     private SalesChannelListingStatus runningStatus(SalesChannelOperationType type) {
         return switch (type) {
             case PUBLISH -> SalesChannelListingStatus.PUBLISHING;
+            case REPUBLISH -> SalesChannelListingStatus.REPUBLISHING;
             case OFFLINE, DELETE -> SalesChannelListingStatus.OFFLINING;
             case SYNC, RECONCILE -> SalesChannelListingStatus.SYNCING;
         };
@@ -512,7 +550,7 @@ public class SalesChannelOperationServiceImpl {
 
     private SalesChannelListingStatus succeededStatus(SalesChannelOperation operation, SalesChannelListing listing) {
         return switch (operation.getOperationType()) {
-            case PUBLISH -> SalesChannelListingStatus.ONLINE;
+            case PUBLISH, REPUBLISH -> SalesChannelListingStatus.REPLACEMENT_PENDING;
             case SYNC -> listing.getDesiredState() == SalesChannelListingDesiredState.ONLINE
                     ? SalesChannelListingStatus.ONLINE : SalesChannelListingStatus.OFFLINE;
             case OFFLINE, DELETE -> SalesChannelListingStatus.OFFLINE;
@@ -523,7 +561,7 @@ public class SalesChannelOperationServiceImpl {
 
     private boolean isCompatible(SalesChannelOperationType type, SalesChannelListingDesiredState desiredState) {
         return switch (type) {
-            case PUBLISH -> desiredState == SalesChannelListingDesiredState.ONLINE;
+            case PUBLISH, REPUBLISH -> desiredState == SalesChannelListingDesiredState.ONLINE;
             case OFFLINE, DELETE -> desiredState == SalesChannelListingDesiredState.OFFLINE;
             case SYNC, RECONCILE -> true;
         };

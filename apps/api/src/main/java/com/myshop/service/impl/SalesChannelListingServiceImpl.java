@@ -10,6 +10,7 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.service.SalesChannelListingManagementPolicy;
 import com.myshop.constant.SalesChannelOperationStatus;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class SalesChannelListingServiceImpl {
     private final ProductRepository productRepository;
     private final SalesChannelListingRepository listingRepository;
     private final SalesChannelOperationRepository operationRepository;
+    private final SalesChannelListingGenerationRepository generationRepository;
 
     @Transactional
     public SalesChannelListing ensureDraft(UUID accountId, UUID productId) {
@@ -55,6 +57,7 @@ public class SalesChannelListingServiceImpl {
     @Transactional
     public SalesChannelListing updateProviderConfig(UUID listingId, Map<String, Object> providerConfig) {
         SalesChannelListing listing = lockListing(listingId);
+        requireNoCandidate(listing);
         Map<String, Object> normalized = providerConfig == null
                 ? new LinkedHashMap<>() : new LinkedHashMap<>(providerConfig);
         if (Objects.equals(listing.getProviderConfig(), normalized)) return listing;
@@ -71,6 +74,7 @@ public class SalesChannelListingServiceImpl {
     public SalesChannelListing setDesiredState(UUID listingId, SalesChannelListingDesiredState desiredState) {
         Objects.requireNonNull(desiredState, "desiredState is required");
         SalesChannelListing listing = lockListing(listingId);
+        requireNoCandidate(listing);
         SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
         if (listing.getDesiredState() == desiredState) return listing;
 
@@ -82,6 +86,12 @@ public class SalesChannelListingServiceImpl {
     private SalesChannelListing lockListing(UUID listingId) {
         return listingRepository.findByIdForUpdate(listingId)
                 .orElseThrow(() -> new IllegalArgumentException("Sales channel listing does not exist"));
+    }
+
+    private void requireNoCandidate(SalesChannelListing listing) {
+        if (generationRepository.findCandidateByListingId(listing.getId()).isPresent()) {
+            throw new IllegalStateException("REPLACEMENT_PENDING: candidate generation activation is required first");
+        }
     }
 
     private SalesChannelListing saveRevisionAndSupersedePending(SalesChannelListing listing) {

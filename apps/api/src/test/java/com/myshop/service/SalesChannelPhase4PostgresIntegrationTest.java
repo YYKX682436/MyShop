@@ -4,6 +4,7 @@ import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.SalesChannelAccountStatus;
+import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelDeliveryOperationStatus;
 import com.myshop.constant.SalesChannelDeliveryOperationType;
 import com.myshop.constant.SalesChannelListingDesiredState;
@@ -667,11 +668,12 @@ class SalesChannelPhase4PostgresIntegrationTest {
         SalesChannelListing listing = listing(account, productId, "generation-item-a", false);
         SalesChannelListingGeneration generationOne = generationRepository
                 .findCurrentByListingId(listing.getId()).orElseThrow();
-        generationOne.setCurrent(false);
+        generationOne.setGenerationState(SalesChannelGenerationState.RETIRED);
         generationOne.setRetiredAt(LocalDateTime.now());
         generationRepository.saveAndFlush(generationOne);
         SalesChannelListingGeneration generationTwo = new SalesChannelListingGeneration(
-                listing.getId(), account.getId(), 2L, "generation-item-b", true, "PUBLISH");
+                listing.getId(), account.getId(), 2L, "generation-item-b",
+                SalesChannelGenerationState.CURRENT, "PUBLISH");
         generationTwo.setActivatedAt(LocalDateTime.now());
         generationRepository.saveAndFlush(generationTwo);
 
@@ -1477,7 +1479,8 @@ class SalesChannelPhase4PostgresIntegrationTest {
         listing.setProviderConfig(Map.of());
         SalesChannelListing saved = listingRepository.saveAndFlush(listing);
         SalesChannelListingGeneration generation = new SalesChannelListingGeneration(
-                saved.getId(), account.getId(), 1L, externalItemId, true, "LEGACY_MIGRATION");
+                saved.getId(), account.getId(), 1L, externalItemId,
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
         generation.setActivatedAt(LocalDateTime.now());
         generationRepository.saveAndFlush(generation);
         return saved;
