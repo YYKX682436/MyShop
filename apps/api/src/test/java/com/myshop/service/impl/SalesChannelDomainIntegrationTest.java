@@ -824,7 +824,30 @@ class SalesChannelDomainIntegrationTest {
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst();
         assertEquals(SalesChannelOperationType.PUBLISH, firstPublish.getOperationType());
         assertTrue(operationService.markRunning(firstPublish.getId()));
+
+        SalesChannelListing waitingForFirstPublish = desiredStatePlanner.refresh(enabled.getId());
+        assertEquals(1, operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).size());
+        assertEquals(SalesChannelOperationType.PUBLISH, operationRepository
+                .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 1).getFirst()
+                .getOperationType());
+        assertEquals(SalesChannelListingStatus.PUBLISHING, waitingForFirstPublish.getStatus());
+        assertEquals(1, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(enabled.getId()).stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.PUBLISH).count());
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(enabled.getId()).stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.SYNC).count());
+
         assertTrue(operationService.markUnknown(firstPublish.getId(), "TIMEOUT", "publish result is unknown"));
+
+        desiredStatePlanner.refresh(enabled.getId());
+        List<SalesChannelOperation> afterUnknownRefresh = operationRepository
+                .findBySalesChannelListingIdOrderByCreatedAtAsc(enabled.getId());
+        assertEquals(1, afterUnknownRefresh.stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.PUBLISH).count());
+        assertEquals(1, afterUnknownRefresh.stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.RECONCILE).count());
+        assertEquals(0, afterUnknownRefresh.stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.SYNC).count());
 
         Product product = productRepository.findById(fixture.product().getId()).orElseThrow();
         product.setTitle(product.getTitle() + " newer");

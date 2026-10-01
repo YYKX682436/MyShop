@@ -104,6 +104,48 @@ class SalesChannelWorkerTest {
     }
 
     @Test
+    void republishSuccessWithoutItemIdentityBecomesUnknownAndQueuesOnlyReconciliation() {
+        UUID listingId = UUID.randomUUID();
+        UUID generationId = UUID.randomUUID();
+        SalesChannelOperation operation = new SalesChannelOperation(listingId, generationId,
+                SalesChannelOperationType.REPUBLISH, 9, "republish-incomplete-item-id",
+                Map.of("desired_snapshot", snapshot(), "desired_fingerprint", FINGERPRINT,
+                        "replacement_of_item_id", "source-item-1"));
+        operation.setId(UUID.randomUUID());
+        WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.CONNECTED);
+        fixture.mediaMaterializerReturnsImage();
+        fixture.stubSuccessfulMediaUpload();
+        SalesChannelListingGeneration source = new SalesChannelListingGeneration(
+                listingId, fixture.account.getId(), 1L, "source-item-1",
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
+        source.setId(generationId);
+        when(fixture.generationRepository.findById(generationId)).thenReturn(Optional.of(source));
+        when(fixture.providerClient.republish(any())).thenReturn(new IntegrationEnvelope<>(
+                operation.getIdempotencyKey(), Outcome.SUCCEEDED,
+                new ListingOperationData("  ", null, null, false, 9L, List.of()), null));
+
+        fixture.worker.runBatch();
+        fixture.worker.runBatch();
+
+        assertEquals(SalesChannelOperationStatus.UNKNOWN, operation.getStatus());
+        assertEquals("AGENT_RESULT_INCOMPLETE", operation.getLastErrorCode());
+        assertEquals(null, operation.getResultGenerationId());
+        List<SalesChannelOperation> reconciliations = fixture.operations.values().stream()
+                .filter(candidate -> candidate.getOperationType() == SalesChannelOperationType.RECONCILE)
+                .toList();
+        assertEquals(1, reconciliations.size());
+        assertEquals(SalesChannelOperationStatus.PENDING, reconciliations.getFirst().getStatus());
+        assertEquals(generationId, reconciliations.getFirst().getTargetGenerationId());
+        assertEquals(operation.getId().toString(), reconciliations.getFirst().getPayload().get("target_operation_id"));
+        verify(fixture.operationService).requestReconciliation(operation.getId());
+        verify(fixture.providerClient).republish(any());
+        verify(fixture.providerClient, never()).publish(any());
+        verify(fixture.providerClient, never()).offline(any(), any());
+        verify(fixture.providerClient, never()).delete(any(), any());
+        verify(fixture.operationService, never()).markSucceeded(eq(operation.getId()), any(), any());
+    }
+
+    @Test
     void unknownReconciliationOnlyRetriesReadOnlyReconcile() {
         SalesChannelOperation target = publishOperation("reconcile target");
         target.start(LocalDateTime.now());
@@ -321,6 +363,26 @@ class SalesChannelWorkerTest {
                 return operation != null && operation.reschedule(invocation.getArgument(1),
                         invocation.getArgument(2), invocation.getArgument(3));
             }).when(operationService).reschedule(any(), any(), any(), any());
+            doAnswer(invocation -> {
+                UUID targetId = invocation.getArgument(0);
+                SalesChannelOperation target = operations.get(targetId);
+                SalesChannelOperation existing = operations.values().stream()
+                        .filter(candidate -> candidate.getOperationType() == SalesChannelOperationType.RECONCILE)
+                        .filter(candidate -> targetId.toString().equals(
+                                candidate.getPayload().get("target_operation_id")))
+                        .filter(candidate -> candidate.getStatus() == SalesChannelOperationStatus.PENDING
+                                || candidate.getStatus() == SalesChannelOperationStatus.RUNNING)
+                        .findFirst().orElse(null);
+                if (existing != null) return existing;
+                SalesChannelOperation reconcile = new SalesChannelOperation(target.getSalesChannelListingId(),
+                        target.getTargetGenerationId(), SalesChannelOperationType.RECONCILE,
+                        target.getDesiredRevision(), "reconcile-" + target.getIdempotencyKey(),
+                        Map.of("target_operation_id", targetId.toString(),
+                                "target_request_id", target.getIdempotencyKey()));
+                reconcile.setId(UUID.randomUUID());
+                operations.put(reconcile.getId(), reconcile);
+                return reconcile;
+            }).when(operationService).requestReconciliation(any());
 
             worker = new SalesChannelWorker(claimService, operationRepository, listingRepository, generationRepository, accountRepository,
                     operationService, providerClient, planner, mediaMaterializer, new ObjectMapper(), 10, 8, 300_000);

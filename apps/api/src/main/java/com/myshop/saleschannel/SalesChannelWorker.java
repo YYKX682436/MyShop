@@ -498,8 +498,9 @@ public class SalesChannelWorker {
             return;
         }
         ListingOperationData data = envelope.data();
-        if (data == null || operation.getOperationType() == SalesChannelOperationType.PUBLISH
-                && blank(data.itemId())) {
+        boolean publishResult = operation.getOperationType() == SalesChannelOperationType.PUBLISH
+                || operation.getOperationType() == SalesChannelOperationType.REPUBLISH;
+        if (data == null || publishResult && blank(data.itemId())) {
             if (operationService.markUnknown(operation.getId(), "AGENT_RESULT_INCOMPLETE",
                     "Agent reported success without the external item identity")) ensureReconciliation(operation);
             return;

@@ -265,14 +265,25 @@ public class SalesChannelDesiredStatePlanner {
             return;
         }
         if (hasNoGeneration) {
-            if (hasOperation(listing.getId(), SalesChannelOperationType.PUBLISH,
-                    SalesChannelOperationStatus.UNKNOWN)) return;
-            boolean publishRunning = hasOperation(listing.getId(), SalesChannelOperationType.PUBLISH,
-                    SalesChannelOperationStatus.RUNNING);
-            if (publishRunning && "PERSONAL".equals(accountType)) return;
-            SalesChannelOperationType type = publishRunning
-                    ? SalesChannelOperationType.SYNC : SalesChannelOperationType.PUBLISH;
-            operationService.request(listing.getId(), type, payload(snapshot, fingerprint));
+            SalesChannelOperation inFlightPublish = operationRepository
+                    .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(
+                            listing.getId(), listing.getDesiredRevision()).stream()
+                    .filter(operation -> operation.getOperationType() == SalesChannelOperationType.PUBLISH)
+                    .filter(operation -> operation.getStatus() == SalesChannelOperationStatus.PENDING
+                            || operation.getStatus() == SalesChannelOperationStatus.RUNNING
+                            || operation.getStatus() == SalesChannelOperationStatus.UNKNOWN)
+                    .findFirst()
+                    .orElse(null);
+            if (inFlightPublish != null) {
+                if (inFlightPublish.getStatus() == SalesChannelOperationStatus.UNKNOWN) {
+                    // UNKNOWN is a read-only reconciliation barrier. Re-requesting
+                    // reconciliation is idempotent while one is already pending/running.
+                    operationService.requestReconciliation(inFlightPublish.getId());
+                }
+                return;
+            }
+            operationService.request(listing.getId(), SalesChannelOperationType.PUBLISH,
+                    payload(snapshot, fingerprint));
             return;
         }
 
