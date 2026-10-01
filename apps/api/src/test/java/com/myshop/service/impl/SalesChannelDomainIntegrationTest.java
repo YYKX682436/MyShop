@@ -850,8 +850,7 @@ class SalesChannelDomainIntegrationTest {
         List<SalesChannelOperation> revisionTwoSideEffects = revisionTwoOperations.stream()
                 .filter(operation -> operation.getOperationType() != SalesChannelOperationType.RECONCILE)
                 .toList();
-        assertEquals(1, revisionTwoSideEffects.size());
-        assertEquals(SalesChannelOperationType.SYNC, revisionTwoSideEffects.getFirst().getOperationType());
+        assertEquals(0, revisionTwoSideEffects.size());
         assertThrows(IllegalStateException.class, () -> operationService.request(enabled.getId(),
                 SalesChannelOperationType.PUBLISH, Map.of("unexpected", true)));
         assertNull(currentItem(enabled.getId()));
@@ -864,9 +863,7 @@ class SalesChannelDomainIntegrationTest {
         listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
         SalesChannelOperation firstPublish = operationService.request(fixture.listing().getId(),
                 SalesChannelOperationType.PUBLISH, Map.of("revision", 1));
-        assertTrue(operationService.markRunning(firstPublish.getId()));
-        assertTrue(operationService.markSucceeded(firstPublish.getId(), Map.of("item_id", "remote-123"),
-                "first-fingerprint"));
+        completePublish(fixture, firstPublish, "remote-123");
 
         listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision two"));
         SalesChannelOperation conflictingSync = operationService.request(fixture.listing().getId(),
@@ -908,9 +905,7 @@ class SalesChannelDomainIntegrationTest {
         listingService.setDesiredState(fixture.listing().getId(), SalesChannelListingDesiredState.ONLINE);
         SalesChannelOperation publish = operationService.request(fixture.listing().getId(),
                 SalesChannelOperationType.PUBLISH, Map.of("revision", 1));
-        assertTrue(operationService.markRunning(publish.getId()));
-        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "remote-123"),
-                "publish-fingerprint"));
+        completePublish(fixture, publish, "remote-123");
 
         listingService.updateProviderConfig(fixture.listing().getId(), Map.of("title", "revision two"));
         SalesChannelOperation sync = operationService.request(fixture.listing().getId(),
@@ -984,7 +979,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals("remote-published", candidateItem(fixture.listing().getId()));
         assertEquals(0, listing.getAppliedRevision());
         assertNull(listing.getAppliedFingerprint());
-        assertEquals(SalesChannelListingStatus.PUBLISHING, listing.getStatus());
+        assertEquals(SalesChannelListingStatus.REPLACEMENT_PENDING, listing.getStatus());
         assertTrue(operationRepository.findById(target.getId()).orElseThrow().getTargetGenerationId() == null);
     }
 
