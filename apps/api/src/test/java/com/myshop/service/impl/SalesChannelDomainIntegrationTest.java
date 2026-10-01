@@ -873,8 +873,8 @@ class SalesChannelDomainIntegrationTest {
                 "second-fingerprint"));
 
         SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertNull(currentItem(fixture.listing().getId()));
-        assertEquals("remote-123", candidateItem(fixture.listing().getId()));
+        assertEquals("remote-123", currentItem(fixture.listing().getId()));
+        assertNull(candidateItem(fixture.listing().getId()));
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
@@ -915,8 +915,8 @@ class SalesChannelDomainIntegrationTest {
                 "sync-fingerprint"));
 
         SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertNull(currentItem(fixture.listing().getId()));
-        assertEquals("remote-123", candidateItem(fixture.listing().getId()));
+        assertEquals("remote-123", currentItem(fixture.listing().getId()));
+        assertNull(candidateItem(fixture.listing().getId()));
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
