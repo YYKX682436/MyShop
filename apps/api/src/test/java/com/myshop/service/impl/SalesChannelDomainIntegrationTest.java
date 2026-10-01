@@ -33,6 +33,7 @@ import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.SalesChannelAdminService;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
+import com.myshop.service.SalesChannelGenerationActivationService;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -95,6 +96,7 @@ class SalesChannelDomainIntegrationTest {
     @Autowired private SalesChannelListingServiceImpl listingService;
     @Autowired private SalesChannelOperationServiceImpl operationService;
     @Autowired private SalesChannelDesiredStatePlanner desiredStatePlanner;
+    @Autowired private SalesChannelGenerationActivationService generationActivationService;
     @Autowired private ManualStockService manualStockService;
     @Autowired private SalesChannelAdminService salesChannelAdminService;
     @Autowired private ObjectMapper objectMapper;
@@ -374,9 +376,7 @@ class SalesChannelDomainIntegrationTest {
         Map<String, Object> initialSnapshot = (Map<String, Object>) publish.getPayload().get("desired_snapshot");
         assertEquals(10, ((Number) initialSnapshot.get("quantity")).intValue());
 
-        assertTrue(operationService.markRunning(publish.getId()));
-        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "fish-shop-item-1"),
-                String.valueOf(publish.getPayload().get("desired_fingerprint"))));
+        completePublish(fixture, publish, "fish-shop-item-1");
 
         manualStockService.setAvailable(product.getId(), null, 0);
         SalesChannelListing zeroPlan = desiredStatePlanner.refresh(fixture.listing().getId());
@@ -439,9 +439,7 @@ class SalesChannelDomainIntegrationTest {
                 .findBySalesChannelListingIdOrderByCreatedAtAsc(fixture.listing().getId()).size());
         assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
 
-        assertTrue(operationService.markRunning(publish.getId()));
-        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "stock-cap-test-item"),
-                String.valueOf(publish.getPayload().get("desired_fingerprint"))));
+        completePublish(fixture, publish, "stock-cap-test-item");
 
         salesChannelAdminService.updateXianyuListing(fixture.product().getId(), fixture.account().getId(),
                 publishConfigWithStockCap(fixture, 1));
@@ -500,9 +498,7 @@ class SalesChannelDomainIntegrationTest {
 
         SalesChannelOperation publish = operationAtRevision(fixture, 1, SalesChannelOperationType.PUBLISH);
         assertSkuSnapshot(publish, List.of(1, 1, 1), 3);
-        assertTrue(operationService.markRunning(publish.getId()));
-        assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "stock-drift-test-item"),
-                String.valueOf(publish.getPayload().get("desired_fingerprint"))));
+        completePublish(fixture, publish, "stock-drift-test-item");
         String fullStockFingerprint = listingRepository.findById(fixture.listing().getId()).orElseThrow()
                 .getDesiredFingerprint();
         assertAvailableCardKeys(product.getId(), specIds, List.of(5, 4, 4));
@@ -754,10 +750,11 @@ class SalesChannelDomainIntegrationTest {
         assertTrue(operationService.markSucceeded(stalePublish.getId(), Map.of("item_id", "remote-123"),
                 "revision-one-fingerprint"));
         SalesChannelListing afterCompletion = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertEquals("remote-123", currentItem(fixture.listing().getId()));
+        assertNull(currentItem(fixture.listing().getId()));
+        assertEquals("remote-123", candidateItem(fixture.listing().getId()));
         assertEquals(0, afterCompletion.getAppliedRevision());
         assertNull(afterCompletion.getAppliedFingerprint());
-        assertEquals(SalesChannelListingStatus.PUBLISHING, afterCompletion.getStatus());
+        assertEquals(SalesChannelListingStatus.REPLACEMENT_PENDING, afterCompletion.getStatus());
     }
 
     @Test
@@ -783,9 +780,10 @@ class SalesChannelDomainIntegrationTest {
         assertTrue(operationService.markSucceeded(publish.getId(), Map.of("item_id", "personal-item-1"),
                 "revision-one-fingerprint"));
         SalesChannelListing afterPublish = desiredStatePlanner.refresh(enabled.getId());
-        assertEquals("personal-item-1", currentItem(enabled.getId()));
-        assertEquals(SalesChannelListingStatus.ERROR, afterPublish.getStatus());
-        assertEquals("UNSUPPORTED_ACCOUNT_CAPABILITY", afterPublish.getLastErrorCode());
+        assertNull(currentItem(enabled.getId()));
+        assertEquals("personal-item-1", candidateItem(enabled.getId()));
+        assertEquals(SalesChannelListingStatus.REPLACEMENT_PENDING, afterPublish.getStatus());
+        assertNull(afterPublish.getLastErrorCode());
         assertTrue(operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 2).isEmpty());
     }
@@ -842,7 +840,10 @@ class SalesChannelDomainIntegrationTest {
                 Map.of("item_id", "one-confirmed-item"), Map.of("target_outcome", "SUCCEEDED"),
                 "revision-one-fingerprint"));
         SalesChannelListing reconciled = desiredStatePlanner.refresh(enabled.getId());
-        assertEquals("one-confirmed-item", currentItem(enabled.getId()));
+        assertNull(currentItem(enabled.getId()));
+        assertEquals("one-confirmed-item", candidateItem(enabled.getId()));
+        assertEquals(SalesChannelListingStatus.REPLACEMENT_PENDING,
+                listingRepository.findById(enabled.getId()).orElseThrow().getStatus());
 
         List<SalesChannelOperation> revisionTwoOperations = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(enabled.getId(), 2);
@@ -851,12 +852,10 @@ class SalesChannelDomainIntegrationTest {
                 .toList();
         assertEquals(1, revisionTwoSideEffects.size());
         assertEquals(SalesChannelOperationType.SYNC, revisionTwoSideEffects.getFirst().getOperationType());
-        SalesChannelOperation erroneousPublish = operationService.request(enabled.getId(),
-                SalesChannelOperationType.PUBLISH, Map.of("unexpected", true));
-        assertFalse(operationService.markRunning(erroneousPublish.getId()));
-        assertEquals(SalesChannelOperationStatus.SUPERSEDED,
-                operationRepository.findById(erroneousPublish.getId()).orElseThrow().getStatus());
-        assertEquals("one-confirmed-item", currentItem(enabled.getId()));
+        assertThrows(IllegalStateException.class, () -> operationService.request(enabled.getId(),
+                SalesChannelOperationType.PUBLISH, Map.of("unexpected", true)));
+        assertNull(currentItem(enabled.getId()));
+        assertEquals("one-confirmed-item", candidateItem(enabled.getId()));
     }
 
     @Test
@@ -877,7 +876,8 @@ class SalesChannelDomainIntegrationTest {
                 "second-fingerprint"));
 
         SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertEquals("remote-123", currentItem(fixture.listing().getId()));
+        assertNull(currentItem(fixture.listing().getId()));
+        assertEquals("remote-123", candidateItem(fixture.listing().getId()));
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
@@ -920,7 +920,8 @@ class SalesChannelDomainIntegrationTest {
                 "sync-fingerprint"));
 
         SalesChannelListing conflicted = listingRepository.findById(fixture.listing().getId()).orElseThrow();
-        assertEquals("remote-123", currentItem(fixture.listing().getId()));
+        assertNull(currentItem(fixture.listing().getId()));
+        assertEquals("remote-123", candidateItem(fixture.listing().getId()));
         assertEquals(SalesChannelListingStatus.UNKNOWN, conflicted.getStatus());
         assertEquals("EXTERNAL_ITEM_ID_CONFLICT", conflicted.getLastErrorCode());
         assertEquals(1, conflicted.getAppliedRevision());
@@ -979,7 +980,8 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(Map.of("item_id", "remote-published"), resolvedTarget.getResult());
         assertEquals(SalesChannelOperationStatus.SUCCEEDED, resolvedReconciliation.getStatus());
         assertEquals("SUCCEEDED", resolvedReconciliation.getResult().get("target_outcome"));
-        assertEquals("remote-published", currentItem(fixture.listing().getId()));
+        assertNull(currentItem(fixture.listing().getId()));
+        assertEquals("remote-published", candidateItem(fixture.listing().getId()));
         assertEquals(0, listing.getAppliedRevision());
         assertNull(listing.getAppliedFingerprint());
         assertEquals(SalesChannelListingStatus.PUBLISHING, listing.getStatus());
@@ -1285,6 +1287,30 @@ class SalesChannelDomainIntegrationTest {
         return generationRepository.findCurrentByListingId(listingId)
                 .map(SalesChannelListingGeneration::getExternalItemId)
                 .orElse(null);
+    }
+
+    private String candidateItem(UUID listingId) {
+        return generationRepository.findCandidateByListingId(listingId)
+                .map(SalesChannelListingGeneration::getExternalItemId)
+                .orElse(null);
+    }
+
+    private void completePublish(Fixture fixture, SalesChannelOperation operation, String itemId) {
+        assertTrue(operationService.markRunning(operation.getId()));
+        assertTrue(operationService.markSucceeded(operation.getId(), Map.of("item_id", itemId),
+                String.valueOf(operation.getPayload().get("desired_fingerprint"))));
+        List<ProductSpec> activeSpecs = productSpecRepository
+                .findByProductIdAndIsDeletedOrderBySortOrderAsc(fixture.product().getId(), 0);
+        SalesChannelListingGeneration candidate = generationRepository.findCandidateByListingId(fixture.listing().getId())
+                .orElseThrow();
+        for (ProductSpec spec : activeSpecs) {
+            SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
+            mapping.setSalesChannelListingGenerationId(candidate.getId());
+            mapping.setProductSpecId(spec.getId());
+            generationSpecRepository.save(mapping);
+        }
+        generationSpecRepository.flush();
+        assertTrue(generationActivationService.activate(operation.getId()));
     }
 
     private void verifiedAccount(Fixture fixture, String accountType) {
