@@ -265,23 +265,7 @@ public class SalesChannelDesiredStatePlanner {
             return;
         }
         if (hasNoGeneration) {
-            SalesChannelOperation inFlightPublish = operationRepository
-                    .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(
-                            listing.getId(), listing.getDesiredRevision()).stream()
-                    .filter(operation -> operation.getOperationType() == SalesChannelOperationType.PUBLISH)
-                    .filter(operation -> operation.getStatus() == SalesChannelOperationStatus.PENDING
-                            || operation.getStatus() == SalesChannelOperationStatus.RUNNING
-                            || operation.getStatus() == SalesChannelOperationStatus.UNKNOWN)
-                    .findFirst()
-                    .orElse(null);
-            if (inFlightPublish != null) {
-                if (inFlightPublish.getStatus() == SalesChannelOperationStatus.UNKNOWN) {
-                    // UNKNOWN is a read-only reconciliation barrier. Re-requesting
-                    // reconciliation is idempotent while one is already pending/running.
-                    operationService.requestReconciliation(inFlightPublish.getId());
-                }
-                return;
-            }
+            if (waitForUnresolvedPublish(listing.getId())) return;
             operationService.request(listing.getId(), SalesChannelOperationType.PUBLISH,
                     payload(snapshot, fingerprint));
             return;
@@ -330,6 +314,8 @@ public class SalesChannelDesiredStatePlanner {
         if (listing.getLastErrorCode() != null
                 && (listing.getLastErrorCode().equals("UNSUPPORTED_ACCOUNT_CAPABILITY")
                 || listing.getLastErrorCode().equals("PROVIDER_STATE_REQUIRED"))) return;
+        if (generationRepository.findCurrentByListingId(listing.getId()).isEmpty()
+                && waitForUnresolvedPublish(listing.getId())) return;
         boolean hasCurrentOperation = operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(
                         listing.getId(), listing.getDesiredRevision()).stream()
@@ -338,6 +324,24 @@ public class SalesChannelDesiredStatePlanner {
         if (!hasCurrentOperation && listing.getAppliedRevision() < listing.getDesiredRevision()) {
             returnQueue(listing, account, snapshot, desiredState, fingerprint);
         }
+    }
+
+    private boolean waitForUnresolvedPublish(UUID listingId) {
+        SalesChannelOperation unresolvedPublish = operationRepository
+                .findBySalesChannelListingIdOrderByCreatedAtAsc(listingId).stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.PUBLISH)
+                .filter(operation -> operation.getStatus() == SalesChannelOperationStatus.PENDING
+                        || operation.getStatus() == SalesChannelOperationStatus.RUNNING
+                        || operation.getStatus() == SalesChannelOperationStatus.UNKNOWN)
+                .findFirst()
+                .orElse(null);
+        if (unresolvedPublish == null) return false;
+        if (unresolvedPublish.getStatus() == SalesChannelOperationStatus.UNKNOWN) {
+            // UNKNOWN is a read-only reconciliation barrier. Re-requesting
+            // reconciliation is idempotent while one is already pending/running.
+            operationService.requestReconciliation(unresolvedPublish.getId());
+        }
+        return true;
     }
 
     private boolean hasOperation(UUID listingId, SalesChannelOperationType type, SalesChannelOperationStatus status) {
