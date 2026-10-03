@@ -1,6 +1,7 @@
 package com.myshop.config;
 
 import lombok.RequiredArgsConstructor;
+import com.myshop.saleschannel.xianyu.XianyuReplyRequestSignatureFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -21,6 +22,7 @@ public class SecurityConfig {
     private final CsrfCookieFilter csrfCookieFilter;
     private final CustomAuthenticationEntryPoint authenticationEntryPoint;
     private final CustomAccessDeniedHandler accessDeniedHandler;
+    private final XianyuReplyRequestSignatureFilter xianyuReplyRequestSignatureFilter;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -58,6 +60,8 @@ public class SecurityConfig {
                         // the database ownership service before it is streamed.
                         .requestMatchers(HttpMethod.GET, "/after-sale-attachments/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/visit/track").permitAll()
+                        // The HMAC filter authenticates this read-only service endpoint.
+                        .requestMatchers(HttpMethod.POST, "/internal/xianyu/reply/resolve").permitAll()
                         // Authenticated user endpoints
                         .requestMatchers("/auth/logout").authenticated()
                         .requestMatchers("/user/**").authenticated()
@@ -67,6 +71,7 @@ public class SecurityConfig {
                         // Default
                         .anyRequest().authenticated())
                 .addFilterBefore(csrfCookieFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(xianyuReplyRequestSignatureFilter, JwtAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

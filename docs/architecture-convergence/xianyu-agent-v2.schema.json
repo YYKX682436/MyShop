@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://myshop.invalid/contracts/xianyu-agent-v2.schema.json",
+  "title": "MyShop and Xianyu Agent convergence API v2",
+  "description": "Provider-gateway contracts. UNKNOWN and provider action names are intentionally absent from MyShop-visible responses.",
+  "x-idempotency": {
+    "fingerprint": "SHA-256 of canonical UTF-8 JSON with request_id excluded; canonicalization sorts object keys and uses stable decimal strings.",
+    "same_request_id_same_fingerprint": "Return the stored APPLYING, SUCCEEDED, or FAILED observation without creating another provider write.",
+    "same_request_id_different_fingerprint": "Return HTTP 409 IDEMPOTENCY_CONFLICT.",
+    "ensure_listing_request_id": "Stable for the same listing_key and revision, for example ensure:{listing_key}:{revision}.",
+    "delivery_request_id": "Stable for the same external_order_id and unit_index; confirmation uses one stable request_id per external_order_id."
+  },
+  "x-endpoints": {
+    "ensureListing": "POST /api/integration/v2/listings/ensure",
+    "observeOperation": "GET /api/integration/v2/operations/{request_id}",
+    "adoptExistingItem": "POST /api/integration/v2/listings/adopt",
+    "sendDelivery": "POST /api/integration/v2/orders/{external_order_id}/delivery/send",
+    "confirmDelivery": "POST /api/integration/v2/orders/{external_order_id}/delivery/confirm",
+    "resolveReply": "POST /internal/xianyu/reply/resolve",
+    "orderChanges": "POST /api/integration/v2/orders/changes",
+    "orderWatermark": "POST /api/integration/v2/orders/watermark"
+  },
+  "x-operation-contracts": {
+    "ensureListing": { "request": "#/$defs/ensureListingRequest", "response": "#/$defs/operationObservation", "providerActionsVisibleToMyShop": false },
+    "observeOperation": { "response": "#/$defs/operationObservation", "terminalStates": ["SUCCEEDED", "FAILED"] },
+    "adoptExistingItem": { "request": "#/$defs/adoptExistingItemRequest", "response": "#/$defs/operationObservation" },
+    "sendDelivery": { "request": "#/$defs/sendDeliveryRequest", "response": "#/$defs/operationObservation" },
+    "confirmDelivery": { "request": "#/$defs/confirmDeliveryRequest", "response": "#/$defs/operationObservation" },
+    "resolveReply": { "request": "#/$defs/messageEvent", "response": "#/$defs/replyResolution" },
+    "orderChanges": { "request": "#/$defs/orderChangesRequest", "response": "#/$defs/orderChangesResponse" },
+    "orderWatermark": { "request": "#/$defs/orderWatermarkRequest", "response": "#/$defs/orderWatermarkResponse" }
+  },
+  "$defs": {
+    "money": {
+      "type": "string",
+      "pattern": "^[0-9]{1,8}(\\.[0-9]{1,2})?$",
+      "description": "Decimal price string to avoid binary floating-point rounding; precision matches MyShop products.base_price and product_specs.price numeric(10,2)."
+    },
+    "orderAmount": {
+      "type": "string",
+      "pattern": "^[0-9]{1,10}(\\.[0-9]{1,2})?$",
+      "description": "External order amount string; precision matches sales_channel_orders.amount numeric(12,2)."
+    },
+    "operationState": {
+      "type": "string",
+      "enum": ["APPLYING", "SUCCEEDED", "FAILED"]
+    },
+    "desiredState": {
+      "type": "string",
+      "enum": ["ONLINE", "OFFLINE"]
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset_key", "source_url", "sha256"],
+      "properties": {
+        "asset_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source_url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "platformAttribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "property_id": { "type": ["string", "null"], "maxLength": 64 },
+        "property_name": { "type": ["string", "null"], "maxLength": 100 },
+        "value_id": { "type": ["string", "null"], "maxLength": 64 },
+        "value_name": { "type": ["string", "null"], "maxLength": 200 },
+        "text": { "type": ["string", "null"], "maxLength": 200 },
+        "properties": { "type": ["object", "null"], "additionalProperties": true }
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "category_id": { "type": ["string", "null"], "maxLength": 64 },
+        "category_name": { "type": ["string", "null"], "maxLength": 100 },
+        "channel_category_id": { "type": ["string", "null"], "maxLength": 64 },
+        "channel_category_name": { "type": ["string", "null"], "maxLength": 100 },
+        "leaf_id": { "type": ["string", "null"], "maxLength": 64 }
+      }
+    },
+    "address": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": ["string", "null"], "maxLength": 128 },
+        "name": { "type": ["string", "null"], "maxLength": 200 },
+        "district": { "type": ["string", "null"], "maxLength": 200 },
+        "adcode": { "type": ["string", "null"], "maxLength": 32 },
+        "location": { "type": ["string", "null"], "maxLength": 128 },
+        "address": { "type": ["string", "null"], "maxLength": 500 },
+        "city": { "type": ["string", "null"], "maxLength": 100 },
+        "expected_text": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    },
+    "specification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "values"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "values": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 100 } }
+      }
+    },
+    "sku": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sku_key", "spec_values", "price", "stock"],
+      "properties": {
+        "sku_key": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque MyShop SKU reference. Agent stores and returns it without interpreting business meaning." },
+        "spec_values": { "type": "object", "additionalProperties": { "type": "string" } },
+        "price": { "$ref": "#/$defs/money" },
+        "stock": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "listingSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "description", "price", "stock", "images", "category", "address", "platform_attributes", "specifications", "skus"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": ["string", "null"] },
+        "price": { "$ref": "#/$defs/money" },
+        "stock": { "type": "integer", "minimum": 0, "description": "Aggregate stock. When SKUs exist this equals the sum of sku stock values." },
+        "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
+        "category": { "$ref": "#/$defs/category" },
+        "address": { "$ref": "#/$defs/address" },
+        "platform_attributes": { "type": "array", "items": { "$ref": "#/$defs/platformAttribute" } },
+        "specifications": { "type": "array", "items": { "$ref": "#/$defs/specification" } },
+        "skus": { "type": "array", "items": { "$ref": "#/$defs/sku" } }
+      }
+    },
+    "operationError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "operationObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "listing_key", "state"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "state": { "$ref": "#/$defs/operationState" },
+        "external_item_id": { "type": ["string", "null"], "maxLength": 128 },
+        "external_order_id": { "type": ["string", "null"], "maxLength": 128 },
+        "revision": { "type": ["integer", "null"], "minimum": 0 },
+        "unit_index": { "type": ["integer", "null"], "minimum": 0 },
+        "error": { "oneOf": [{ "$ref": "#/$defs/operationError" }, { "type": "null" }] }
+      }
+    },
+    "ensureListingRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "listing_key", "account_id", "revision", "desired_state", "desired_snapshot"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "desired_state": { "$ref": "#/$defs/desiredState" },
+        "desired_snapshot": { "$ref": "#/$defs/listingSnapshot" }
+      }
+    },
+    "adoptExistingItemRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "listing_key", "account_id", "external_item_id"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_item_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "sendDeliveryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "listing_key", "account_id", "external_item_id", "external_order_id", "unit_index", "content_parts"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_item_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_order_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "unit_index": { "type": "integer", "minimum": 0 },
+        "content_parts": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      },
+      "description": "Card content is sent only from the already-allocated MyShop order unit. Do not include content_parts in logs or operation result_json; fingerprint it by SHA-256."
+    },
+    "confirmDeliveryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "listing_key", "account_id", "external_item_id", "external_order_id"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_item_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_order_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "orderEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "external_order_id", "listing_key", "external_item_id", "external_status", "quantity", "amount", "currency", "updated_at"],
+      "properties": {
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_order_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_item_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "external_status": { "type": "string", "minLength": 1, "maxLength": 32, "description": "Raw provider order status; MyShop retains the provider fact." },
+        "sku_key": { "type": ["string", "null"], "maxLength": 128, "description": "Opaque MyShop key captured in the Agent item snapshot; MyShop validates it against its product SKU mapping." },
+        "spec_values": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 100 } },
+        "quantity": { "type": "integer", "minimum": 1 },
+        "amount": { "$ref": "#/$defs/orderAmount" },
+        "currency": { "type": "string", "minLength": 1, "maxLength": 8 },
+        "placed_at": { "type": ["string", "null"], "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "orderCursor": {
+      "type": ["string", "null"],
+      "description": "Opaque Agent-owned cursor. MyShop persists and returns it without interpreting provider ordering fields."
+    },
+    "orderChangesRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "account_id", "cursor", "limit"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "cursor": { "$ref": "#/$defs/orderCursor" },
+        "limit": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "orderChangesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orders", "next_cursor", "has_more"],
+      "properties": {
+        "orders": { "type": "array", "items": { "$ref": "#/$defs/orderEvent" } },
+        "next_cursor": { "$ref": "#/$defs/orderCursor" },
+        "has_more": { "type": "boolean" }
+      }
+    },
+    "orderWatermarkRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "account_id"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "orderWatermarkResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cursor", "empty"],
+      "properties": {
+        "cursor": { "$ref": "#/$defs/orderCursor" },
+        "empty": { "type": "boolean" }
+      }
+    },
+    "messageEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message_id", "account_id", "conversation_id", "sender_id", "sender_name", "external_item_id", "listing_key", "order_id", "message_type", "text", "timestamp"],
+      "properties": {
+        "message_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "conversation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sender_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sender_name": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "external_item_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "order_id": { "type": ["string", "null"], "maxLength": 128 },
+        "message_type": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "text": { "type": ["string", "null"], "maxLength": 20000 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "replyImage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "content_type", "sha256"],
+      "properties": {
+        "url": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "content_type": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "replyResolution": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["message_id", "action"],
+          "properties": { "message_id": { "type": "string", "minLength": 1 }, "action": { "const": "NO_REPLY" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["message_id", "action", "text"],
+          "properties": { "message_id": { "type": "string", "minLength": 1 }, "action": { "const": "SEND_TEXT" }, "text": { "type": "string", "minLength": 1, "maxLength": 2000 } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["message_id", "action", "image"],
+          "properties": { "message_id": { "type": "string", "minLength": 1 }, "action": { "const": "SEND_IMAGE" }, "image": { "$ref": "#/$defs/replyImage" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["message_id", "action", "text", "image"],
+          "properties": { "message_id": { "type": "string", "minLength": 1 }, "action": { "const": "SEND_TEXT_AND_IMAGE" }, "text": { "type": "string", "minLength": 1, "maxLength": 2000 }, "image": { "$ref": "#/$defs/replyImage" } }
+        }
+      ]
+    }
+  }
+}
