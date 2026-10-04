@@ -132,11 +132,21 @@ class FakeAgent:
                     prior = db.execute("SELECT * FROM listing_ops WHERE request_id=?", (command["request_id"],)).fetchone()
                 return self._observation(prior)
 
+            latest = db.execute("SELECT revision, fingerprint FROM listing_ops WHERE account_id=? AND listing_key=? ORDER BY revision DESC LIMIT 1",
+                                (command["account_id"], command["listing_key"])).fetchone()
+            if latest and command["revision"] == latest["revision"] and fingerprint != latest["fingerprint"]:
+                raise IdempotencyConflict("revision fingerprint changed")
+            stale = latest is not None and command["revision"] < latest["revision"]
             db.execute(
                 "INSERT INTO listing_ops VALUES (?, ?, ?, ?, ?, ?, ?, 'APPLYING', NULL, NULL, NULL)",
                 (command["request_id"], fingerprint, command["account_id"], command["listing_key"],
                  command["revision"], command["desired_state"], snapshot_json),
             )
+            if stale:
+                db.execute("UPDATE listing_ops SET state='FAILED', error_code='STALE_REVISION' WHERE request_id=?",
+                           (command["request_id"],))
+                return self._observation(db.execute("SELECT * FROM listing_ops WHERE request_id=?",
+                                                    (command["request_id"],)).fetchone())
             auth = db.execute("SELECT auth_state FROM account_state WHERE account_id=?", (command["account_id"],)).fetchone()
             if auth and auth["auth_state"] != "VALID":
                 db.execute("UPDATE listing_ops SET state='FAILED', error_code='AUTH_REQUIRED' WHERE request_id=?",
@@ -245,7 +255,8 @@ class FakeAgent:
     def _observation(row: sqlite3.Row) -> dict[str, Any]:
         return {"request_id": row["request_id"], "listing_key": row["listing_key"],
                 "revision": row["revision"], "state": row["state"],
-                "external_item_id": row["external_item_id"], "error_code": row["error_code"]}
+                "external_item_id": row["external_item_id"],
+                "error": {"code": row["error_code"], "message": row["error_code"]} if row["error_code"] else None}
 
     def invalidate_current_item(self, account_id: str, listing_key: str) -> None:
         with self.db() as db:
@@ -287,7 +298,7 @@ class FakeAgent:
             )
             return {"account_id": account_id, "external_order_id": external_order_id,
                     "listing_key": item["listing_key"], "external_item_id": external_item_id,
-                    "status": status, "external_sku_id": external_sku_id, "sku_key": sku_key,
+                    "external_status": status, "sku_key": sku_key,
                     "spec_values": spec_values, "quantity": quantity, "amount": amount,
                     "currency": "CNY", "placed_at": None, "updated_at": "2026-10-02T00:00:00Z"}
 
@@ -307,7 +318,7 @@ class FakeAgent:
                 if row["state"] == "APPLYING":
                     self._reconcile_delivery(db, row)
                     row = db.execute("SELECT * FROM delivery_ops WHERE request_id=?", (command["request_id"],)).fetchone()
-                return {"state": row["state"]}
+                return self._delivery_observation(command, row["state"])
 
             db.execute("INSERT INTO delivery_ops VALUES (?, ?, ?, ?, ?, 'APPLYING', NULL)",
                        (command["request_id"], operation_type, fingerprint,
@@ -322,9 +333,17 @@ class FakeAgent:
                            (command["account_id"], command["external_order_id"]))
             if lose_response:
                 db.commit()
-                return {"state": "APPLYING"}
+                return self._delivery_observation(command, "APPLYING")
             db.execute("UPDATE delivery_ops SET state='SUCCEEDED' WHERE request_id=?", (command["request_id"],))
-            return {"state": "SUCCEEDED"}
+            return self._delivery_observation(command, "SUCCEEDED")
+
+    @staticmethod
+    def _delivery_observation(command: dict[str, Any], state: str) -> dict[str, Any]:
+        result = {key: command[key] for key in ("request_id", "listing_key", "external_item_id", "external_order_id")}
+        result["state"] = state
+        if "unit_index" in command:
+            result["unit_index"] = command["unit_index"]
+        return result
 
     def _reconcile_delivery(self, db: sqlite3.Connection, operation: sqlite3.Row) -> None:
         action = "SEND_MESSAGE" if operation["operation_type"] == "SEND" else "CONFIRM_DELIVERY"
@@ -399,12 +418,15 @@ class FakeMyShop:
 
     @staticmethod
     def request_id(listing_key: str, revision: int) -> str:
-        return f"listing:{listing_key}:{revision}"
+        return f"ensure:{listing_key}:{revision}"
 
     def ensure_listing(self, agent: FakeAgent, listing_key: str, account_id: str,
                        revision: int, desired_state: str, snapshot: dict[str, Any],
                        *, lose_response: bool = False) -> dict[str, Any]:
         with self.db() as db:
+            current = db.execute("SELECT revision FROM listings WHERE listing_key=?", (listing_key,)).fetchone()
+            if current and revision < current["revision"]:
+                raise ValueError("STALE_REVISION")
             db.execute(
                 "INSERT INTO listings VALUES (?, ?, ?, ?, ?, 'APPLYING', NULL) "
                 "ON CONFLICT(listing_key) DO UPDATE SET account_id=excluded.account_id, revision=excluded.revision, "
@@ -429,6 +451,9 @@ class FakeMyShop:
     def _apply_observation(self, listing_key: str, observation: dict[str, Any]) -> None:
         status = {"APPLYING": "APPLYING", "SUCCEEDED": "ONLINE", "FAILED": "ERROR"}[observation["state"]]
         with self.db() as db:
+            current_revision = db.execute("SELECT revision FROM listings WHERE listing_key=?", (listing_key,)).fetchone()
+            if current_revision and observation["revision"] != current_revision["revision"]:
+                return
             if observation["state"] == "SUCCEEDED":
                 current = db.execute("SELECT desired_state FROM listings WHERE listing_key=?", (listing_key,)).fetchone()
                 status = "OFFLINE" if current and current["desired_state"] == "OFFLINE" else "ONLINE"
@@ -511,7 +536,7 @@ class FakeMyShop:
             sold_cards = db.execute("SELECT * FROM card_keys WHERE order_id=? AND status='SOLD' ORDER BY id",
                                     (order_id,)).fetchall()
             for unit, card in enumerate(sold_cards):
-                request_id = f"delivery:{order_id}:{unit}"
+                request_id = f"delivery:{order['external_order_id']}:{unit}"
                 db.execute("INSERT OR IGNORE INTO delivery_commands VALUES (?, ?, ?, ?, ?, 'PENDING')",
                            (order_id, unit, request_id, card["id"], card["content"]))
             return db.execute("SELECT * FROM delivery_commands WHERE order_id=? ORDER BY unit_index",
@@ -744,10 +769,49 @@ class GoldenFlowTests(unittest.TestCase):
         for _ in range(20):
             repeated = self.ensure()
         self.assertEqual("FAILED", first["state"])
-        self.assertEqual("AUTH_REQUIRED", first["error_code"])
+        self.assertEqual("AUTH_REQUIRED", first["error"]["code"])
         self.assertEqual("FAILED", repeated["state"])
         self.assertEqual(0, self.agent.write_count())
         self.assertEqual("ERROR", self.myshop.listing(self.listing_key)["status"])
+
+    def test_17_same_request_id_different_fingerprint_conflicts_without_provider_write(self):
+        self.ensure()
+        changed = json.loads(canonical(SNAPSHOT))
+        changed["price"] = "11.00"
+        before = self.agent.write_count()
+        with self.assertRaises(IdempotencyConflict):
+            self.ensure(snapshot=changed)
+        self.assertEqual(before, self.agent.write_count())
+
+    def test_18_delivery_observation_and_ledger_never_contain_card_content(self):
+        event = self.create_order()
+        order_id = self.import_and_fulfill(event, count=1)
+        results = self.myshop.send_delivery(self.agent, order_id)
+        with self.myshop.db() as db:
+            content = db.execute("SELECT content FROM delivery_commands WHERE order_id=?", (order_id,)).fetchone()[0]
+        self.assertNotIn(content, canonical(results))
+        with self.agent.db() as db:
+            rows = [dict(row) for row in db.execute("SELECT * FROM delivery_ops")]
+        self.assertNotIn(content, canonical(rows))
+        self.assertNotIn("content_parts", canonical(rows))
+        self.assertEqual({"request_id", "listing_key", "external_item_id", "external_order_id", "unit_index", "state"}, set(results[0]))
+
+    def test_19_stale_revision_and_observation_cannot_overwrite_newer_desired_state(self):
+        self.ensure(revision=2)
+        changed = json.loads(canonical(SNAPSHOT))
+        changed["price"] = "12.00"
+        self.ensure(revision=3, snapshot=changed)
+        before = self.agent.write_count()
+        stale = self.agent.ensure_listing({"request_id": "ensure:listing-1:1", "listing_key": self.listing_key,
+                "account_id": self.account, "revision": 1, "desired_state": "OFFLINE", "desired_snapshot": SNAPSHOT})
+        self.assertEqual("FAILED", stale["state"])
+        self.assertEqual("STALE_REVISION", stale["error"]["code"])
+        self.assertEqual(before, self.agent.write_count())
+        self.myshop.observe(self.agent, self.listing_key, 2)
+        self.assertEqual(3, self.myshop.listing(self.listing_key)["revision"])
+        self.assertEqual("12.00", json.loads(self.agent.current_item(self.account, self.listing_key)["snapshot_json"])["price"])
+        with self.assertRaisesRegex(ValueError, "STALE_REVISION"):
+            self.ensure(revision=1)
 
 
 if __name__ == "__main__":

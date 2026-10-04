@@ -71,8 +71,8 @@ public class SecurityConfig {
                         // Default
                         .anyRequest().authenticated())
                 .addFilterBefore(csrfCookieFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(xianyuReplyRequestSignatureFilter, JwtAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(xianyuReplyRequestSignatureFilter, JwtAuthenticationFilter.class);
 
         return http.build();
     }

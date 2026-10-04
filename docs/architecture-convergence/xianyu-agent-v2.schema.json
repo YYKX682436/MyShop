@@ -10,6 +10,11 @@
     "ensure_listing_request_id": "Stable for the same listing_key and revision, for example ensure:{listing_key}:{revision}.",
     "delivery_request_id": "Stable for the same external_order_id and unit_index; confirmation uses one stable request_id per external_order_id."
   },
+  "x-revision-fencing": {
+    "identity": "revision is the nonnegative desired-state fencing identity for (account_id, listing_key), not a wall-clock timestamp.",
+    "stale_revision": "Reject older desired revisions without provider writes; MyShop must not apply observations over a newer desired revision.",
+    "same_revision_changed_snapshot": "Reject a changed desired-state fingerprint at the same revision; advance revision for changed intent."
+  },
   "x-endpoints": {
     "ensureListing": "POST /api/integration/v2/listings/ensure",
     "observeOperation": "GET /api/integration/v2/operations/{request_id}",
@@ -33,12 +38,12 @@
   "$defs": {
     "money": {
       "type": "string",
-      "pattern": "^[0-9]{1,8}(\\.[0-9]{1,2})?$",
+      "pattern": "^[0-9]{1,8}(\\.[0-9]{1,2})?(?![\\s\\S])",
       "description": "Decimal price string to avoid binary floating-point rounding; precision matches MyShop products.base_price and product_specs.price numeric(10,2)."
     },
     "orderAmount": {
       "type": "string",
-      "pattern": "^[0-9]{1,10}(\\.[0-9]{1,2})?$",
+      "pattern": "^[0-9]{1,10}(\\.[0-9]{1,2})?(?![\\s\\S])",
       "description": "External order amount string; precision matches sales_channel_orders.amount numeric(12,2)."
     },
     "operationState": {
@@ -56,7 +61,7 @@
       "properties": {
         "asset_key": { "type": "string", "minLength": 1, "maxLength": 128 },
         "source_url": { "type": "string", "format": "uri" },
-        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}(?![\\s\\S])" }
       }
     },
     "platformAttribute": {
@@ -111,9 +116,9 @@
       "required": ["sku_key", "spec_values", "price", "stock"],
       "properties": {
         "sku_key": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque MyShop SKU reference. Agent stores and returns it without interpreting business meaning." },
-        "spec_values": { "type": "object", "additionalProperties": { "type": "string" } },
+        "spec_values": { "type": "object", "minProperties": 1, "propertyNames": { "minLength": 1 }, "additionalProperties": { "type": "string", "minLength": 1 } },
         "price": { "$ref": "#/$defs/money" },
-        "stock": { "type": "integer", "minimum": 0 }
+        "stock": { "type": "integer", "minimum": 0, "maximum": 2147483647 }
       }
     },
     "listingSnapshot": {
@@ -124,7 +129,7 @@
         "title": { "type": "string", "minLength": 1 },
         "description": { "type": ["string", "null"] },
         "price": { "$ref": "#/$defs/money" },
-        "stock": { "type": "integer", "minimum": 0, "description": "Aggregate stock. When SKUs exist this equals the sum of sku stock values." },
+        "stock": { "type": "integer", "minimum": 0, "maximum": 2147483647, "description": "Aggregate stock. When SKUs exist this equals the sum of sku stock values." },
         "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
         "category": { "$ref": "#/$defs/category" },
         "address": { "$ref": "#/$defs/address" },
@@ -152,8 +157,8 @@
         "state": { "$ref": "#/$defs/operationState" },
         "external_item_id": { "type": ["string", "null"], "maxLength": 128 },
         "external_order_id": { "type": ["string", "null"], "maxLength": 128 },
-        "revision": { "type": ["integer", "null"], "minimum": 0 },
-        "unit_index": { "type": ["integer", "null"], "minimum": 0 },
+        "revision": { "type": ["integer", "null"], "minimum": 0, "maximum": 9223372036854775807 },
+        "unit_index": { "type": ["integer", "null"], "minimum": 0, "maximum": 2147483647 },
         "error": { "oneOf": [{ "$ref": "#/$defs/operationError" }, { "type": "null" }] }
       }
     },
@@ -165,7 +170,7 @@
         "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
         "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
         "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "revision": { "type": "integer", "minimum": 0 },
+        "revision": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
         "desired_state": { "$ref": "#/$defs/desiredState" },
         "desired_snapshot": { "$ref": "#/$defs/listingSnapshot" }
       }
@@ -191,7 +196,7 @@
         "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "external_item_id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "external_order_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "unit_index": { "type": "integer", "minimum": 0 },
+        "unit_index": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
         "content_parts": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
       },
       "description": "Card content is sent only from the already-allocated MyShop order unit. Do not include content_parts in logs or operation result_json; fingerprint it by SHA-256."
@@ -295,7 +300,7 @@
       "properties": {
         "url": { "type": "string", "format": "uri", "maxLength": 2048 },
         "content_type": { "type": "string", "minLength": 1, "maxLength": 100 },
-        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}(?![\\s\\S])" }
       }
     },
     "replyResolution": {

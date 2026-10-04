@@ -8,8 +8,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
@@ -33,6 +35,7 @@ public class XianyuReplyRequestSignatureFilter extends OncePerRequestFilter {
     private final String secret;
     private final Clock clock;
 
+    @Autowired
     public XianyuReplyRequestSignatureFilter(
             @Value("${xianyu.agent.key-id:MYSHOP}") String expectedKeyId,
             @Value("${xianyu.agent.secret:}") String secret) {
@@ -101,10 +104,9 @@ public class XianyuReplyRequestSignatureFilter extends OncePerRequestFilter {
     }
 
     private static String pathWithoutContext(HttpServletRequest request) {
-        String uri = request.getRequestURI();
-        String context = request.getContextPath();
-        return context != null && !context.isEmpty() && uri.startsWith(context)
-                ? uri.substring(context.length()) : uri;
+        // Use the servlet's decoded routing path, not the raw request URI:
+        // an encoded segment such as %72esolve must not bypass the HMAC gate.
+        return UrlPathHelper.defaultInstance.getPathWithinApplication(request);
     }
 
     private static void reject(HttpServletResponse response, int status, String code) throws IOException {

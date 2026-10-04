@@ -64,6 +64,134 @@ class XianyuReplyRequestSignatureFilterTest {
         assertEquals(503, response.getStatus());
     }
 
+
+    @Test
+    void wrongKeyExpiredFutureMissingAndOversizedNonceFailClosed() throws Exception {
+        for (String[] change : new String[][] {
+                {"X-MyShop-Key-Id", "OTHER"},
+                {"X-MyShop-Timestamp", Long.toString(CLOCK.instant().getEpochSecond() - 301)},
+                {"X-MyShop-Timestamp", Long.toString(CLOCK.instant().getEpochSecond() + 301)},
+                {"X-MyShop-Timestamp", "9223372036854775807"},
+                {"X-MyShop-Nonce", ""}, {"X-MyShop-Nonce", "n".repeat(129)}}) {
+            var request = request();
+            sign(request);
+            request.removeHeader(change[0]);
+            request.addHeader(change[0], change[1]);
+            assertRejected(request, "phase-one-secret", 401);
+        }
+        var missing = request();
+        sign(missing);
+        missing.removeHeader("X-MyShop-Nonce");
+        assertRejected(missing, "phase-one-secret", 401);
+        assertRejected(request(), "   ", 503);
+    }
+
+    @Test
+    void bodyLimitAndExactBoundaryAreEnforced() throws Exception {
+        var oversized = request();
+        oversized.setContent(new byte[256 * 1024 + 1]);
+        assertRejected(oversized, "phase-one-secret", 413);
+        var boundary = request();
+        byte[] body = new byte[256 * 1024];
+        boundary.setContent(body);
+        sign(boundary, body, "nonce-1", CLOCK.instant().getEpochSecond());
+        new XianyuReplyRequestSignatureFilter("MYSHOP", "phase-one-secret", CLOCK)
+                .doFilter(boundary, new MockHttpServletResponse(), (wrapped, response) ->
+                        assertEquals(body.length, wrapped.getInputStream().readAllBytes().length));
+    }
+
+    @Test
+    void contextPathReplayAndRepeatedBodyReadsAreSafeForReadOnlyResolution() throws Exception {
+        var filter = new XianyuReplyRequestSignatureFilter("MYSHOP", "phase-one-secret", CLOCK);
+        for (int i = 0; i < 2; i++) {
+            var request = request();
+            request.setContextPath("/shop");
+            request.setRequestURI("/shop" + XianyuReplyRequestSignatureFilter.PATH);
+            sign(request);
+            var called = new boolean[1];
+            filter.doFilter(request, new MockHttpServletResponse(), (wrapped, response) -> {
+                called[0] = true;
+                assertEquals(BODY, new String(wrapped.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+                assertEquals(BODY, new String(wrapped.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+                assertEquals(BODY, wrapped.getReader().readLine());
+            });
+            assertTrue(called[0]);
+        }
+    }
+
+    @Test
+    void nonTargetPathsAndGetBypassOnlyThisFilter() throws Exception {
+        for (String[] target : new String[][] {{"GET", XianyuReplyRequestSignatureFilter.PATH},
+                {"POST", "/internal/other"}, {"POST", XianyuReplyRequestSignatureFilter.PATH + "/"}}) {
+            var request = request();
+            request.setMethod(target[0]);
+            request.setRequestURI(target[1]);
+            var called = new boolean[1];
+            new XianyuReplyRequestSignatureFilter("MYSHOP", "", CLOCK)
+                    .doFilter(request, new MockHttpServletResponse(), (req, res) -> called[0] = true);
+            assertTrue(called[0]);
+        }
+    }
+
+    @Test
+    void rawBodyTamperingAndMissingSignatureAreRejected() throws Exception {
+        var request = request();
+        sign(request);
+        request.setContent((BODY + " ").getBytes(StandardCharsets.UTF_8));
+        assertRejected(request, "phase-one-secret", 401);
+        request = request();
+        sign(request);
+        request.removeHeader("X-MyShop-Signature");
+        assertRejected(request, "phase-one-secret", 401);
+    }
+
+    @Test
+    void clockSkewInclusiveBoundariesAreAccepted() throws Exception {
+        for (long delta : new long[] {-300, 300}) {
+            var request = request();
+            sign(request, BODY.getBytes(StandardCharsets.UTF_8), "nonce-1", CLOCK.instant().getEpochSecond() + delta);
+            var called = new boolean[1];
+            new XianyuReplyRequestSignatureFilter("MYSHOP", "phase-one-secret", CLOCK)
+                    .doFilter(request, new MockHttpServletResponse(), (req, res) -> called[0] = true);
+            assertTrue(called[0]);
+        }
+    }
+
+    private void assertRejected(MockHttpServletRequest request, String secret, int status) throws Exception {
+        var response = new MockHttpServletResponse();
+        new XianyuReplyRequestSignatureFilter("MYSHOP", secret, CLOCK)
+                .doFilter(request, response, (req, res) -> { throw new AssertionError("must reject"); });
+        assertEquals(status, response.getStatus());
+    }
+
+    private void sign(MockHttpServletRequest request, byte[] body, String nonce, long seconds) {
+        String timestamp = Long.toString(seconds);
+        request.addHeader("X-MyShop-Key-Id", "MYSHOP");
+        request.addHeader("X-MyShop-Timestamp", timestamp);
+        request.addHeader("X-MyShop-Nonce", nonce);
+        request.addHeader("X-MyShop-Signature", XianyuRequestSigner.signature("phase-one-secret",
+                XianyuRequestSigner.canonicalString("POST", XianyuReplyRequestSignatureFilter.PATH,
+                        timestamp, nonce, body)));
+    }
+
+
+    @Test
+    void encodedTargetPathsCannotBypassSignatureAuthentication() throws Exception {
+        var request = request();
+        request.setRequestURI("/internal/xianyu/reply/%72esolve");
+        assertRejected(request, "phase-one-secret", 401);
+        request.setServletPath(XianyuReplyRequestSignatureFilter.PATH);
+        assertRejected(request, "phase-one-secret", 401);
+        request = request();
+        request.setRequestURI("/internal/xianyu/reply/%72esolve");
+        request.setServletPath(XianyuReplyRequestSignatureFilter.PATH);
+        sign(request);
+        var called = new boolean[1];
+        new XianyuReplyRequestSignatureFilter("MYSHOP", "phase-one-secret", CLOCK)
+                .doFilter(request, new MockHttpServletResponse(), (req, res) -> called[0] = true);
+        assertTrue(called[0]);
+    }
+
     private MockHttpServletRequest request() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRequestURI(XianyuReplyRequestSignatureFilter.PATH);
