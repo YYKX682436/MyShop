@@ -1,0 +1,57 @@
+{
+  "request_id": "myshop-command-20261005-0001",
+  "listing_key": "listing-1",
+  "account_id": "account-123",
+  "revision": 7,
+  "desired_state": "ONLINE",
+  "desired_snapshot": {
+    "schema_version": 1,
+    "listing_key": "listing-1",
+    "title": "Desk Lamp",
+    "description": "Adjustable desk lamp with a weighted base.",
+    "price": "10.00",
+    "stock": 5,
+    "images": [
+      {
+        "asset_key": "asset-1",
+        "source_url": "https://example.invalid/desk-lamp.png",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "category": {
+      "category_id": "cat-1",
+      "category_name": "Lighting",
+      "channel_category_id": "xianyu-cat-1",
+      "channel_category_name": "Desk lamps",
+      "leaf_id": "leaf-1",
+      "tb_category_id": "tb-cat-1"
+    },
+    "address": {
+      "id": "address-1",
+      "name": "Pickup point",
+      "district": "Pudong",
+      "adcode": "310115",
+      "location": "121.5,31.2",
+      "address": "1 Example Road, Shanghai",
+      "city": "Shanghai",
+      "expected_text": "Pickup at Example Road"
+    },
+    "platform_attributes": [
+      {
+        "property_id": "material",
+        "property_name": "Material",
+        "value_id": "metal",
+        "value_name": "Metal",
+        "text": null,
+        "properties": null
+      }
+    ],
+    "specifications": [
+      {"name": "Color", "values": ["Black", "White"]}
+    ],
+    "skus": [
+      {"sku_key": "sku-black", "spec_values": {"Color": "Black"}, "price": "10.00", "stock": 2},
+      {"sku_key": "sku-white", "spec_values": {"Color": "White"}, "price": "10.00", "stock": 3}
+    ]
+  }
+}

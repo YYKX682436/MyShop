@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.io.InputStream;
 
 class XianyuConvergenceContractsTest {
 
@@ -52,18 +53,39 @@ class XianyuConvergenceContractsTest {
     }
 
     @Test
-    void listingSnapshotUsesSnakeCaseFieldsAndDecimalStrings() throws Exception {
-        ListingSnapshot snapshot = new ListingSnapshot("Item", null, "12345678.99", 1,
-                java.util.List.of(new ListingImage("asset-1", "https://example.invalid/image", "a".repeat(64))),
-                new ListingCategory("cat", null, null, null, null),
-                new ListingAddress(null, null, null, null, null, null, null, null),
-                java.util.List.of(new PlatformAttribute("p", "Property", "v", "Value", null, null)),
-                java.util.List.of(new ListingSpecification("Type", java.util.List.of("A"))),
-                java.util.List.of(new ListingSku("sku-1", java.util.Map.of("Type", "A"), "12345678.99", 1)));
+    void sharedAgentV1FixtureRoundTripsAsTheExactWireContract() throws Exception {
+        byte[] fixture;
+        try (InputStream input = getClass().getResourceAsStream("/contracts/ensure_listing_v2.json")) {
+            fixture = input.readAllBytes();
+        }
+        EnsureListingRequest request = objectMapper.readValue(fixture, EnsureListingRequest.class);
+        var expected = objectMapper.readTree(fixture);
+        var serialized = objectMapper.readTree(objectMapper.writeValueAsBytes(request));
 
-        var json = objectMapper.readTree(objectMapper.writeValueAsString(snapshot));
-        assertTrue(json.has("platform_attributes"));
-        assertEquals("12345678.99", json.get("price").asText());
+        assertEquals(expected, serialized);
+        assertTrue(valid(request));
+        assertEquals(1, request.desiredSnapshot().schemaVersion());
+        assertEquals(request.listingKey(), request.desiredSnapshot().listingKey());
+        assertEquals("tb-cat-1", request.desiredSnapshot().category().tbCategoryId());
+        assertEquals("sku-black", request.desiredSnapshot().skus().getFirst().skuKey());
+        assertEquals(5, request.desiredSnapshot().skus().stream().mapToInt(ListingSku::stock).sum());
+    }
+
+    @Test
+    void sharedAgentOperationResponseFixtureDeserializesWithoutExtraFields() throws Exception {
+        byte[] fixture;
+        try (InputStream input = getClass().getResourceAsStream("/contracts/operation_observation_v2.json")) {
+            fixture = input.readAllBytes();
+        }
+        var response = objectMapper.readValue(fixture, EnsureListingOperationObservation.class);
+        assertEquals("myshop-command-20261005-0001", response.requestId());
+        assertEquals(OperationState.SUCCEEDED, response.state());
+        assertEquals(objectMapper.readTree(fixture), objectMapper.readTree(objectMapper.writeValueAsBytes(response)));
+
+        var withUnknown = (com.fasterxml.jackson.databind.node.ObjectNode) objectMapper.readTree(fixture);
+        withUnknown.put("provider_action", "PUBLISH");
+        assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> objectMapper.treeToValue(withUnknown, EnsureListingOperationObservation.class));
     }
 
     private boolean valid(Object value) {
@@ -73,27 +95,85 @@ class XianyuConvergenceContractsTest {
     }
 
     @Test
-    void moneyStockRevisionImagesSkuAndDeliveryConstraintsRejectInvalidInputs() {
-        for (String price : java.util.List.of("1.001", "123456789.00", "-1", "1e2", "NaN", "1\n")) {
-            assertTrue(!valid(new ListingSku("sku", java.util.Map.of("Type", "A"), price, 0)));
-        }
-        assertTrue(valid(new ListingSku("opaque:key", java.util.Map.of("Type", "A"), "12345678.99", 0)));
-        assertTrue(!valid(new ListingSku("sku", java.util.Map.of("Type", "A"), "1", -1)));
-        assertTrue(!valid(new ListingSku("sku", java.util.Map.of(), "1", 0)));
-        var snapshot = new ListingSnapshot("T", null, "1", 0,
-                java.util.List.of(new ListingImage("asset", "https://example.invalid/i", "a".repeat(64))),
-                new ListingCategory(null, null, null, null, null),
-                new ListingAddress(null, null, null, null, null, null, null, null),
-                java.util.List.of(), java.util.List.of(), java.util.List.of());
-        assertTrue(valid(new EnsureListingRequest("r", "l", "a", 0L, DesiredListingState.ONLINE, snapshot)));
-        assertTrue(!valid(new EnsureListingRequest("r", "l", "a", -1L, DesiredListingState.ONLINE, snapshot)));
-        assertTrue(!valid(new ListingSnapshot("T", null, "1", 0, java.util.List.of(),
-                new ListingCategory(null, null, null, null, null),
-                new ListingAddress(null, null, null, null, null, null, null, null),
-                java.util.List.of(), java.util.List.of(), java.util.List.of())));
+    void v1SnapshotConstraintsRejectUnknownFieldsAndUnsafeValues() throws Exception {
+        var fixture = objectMapper.readTree(getClass().getResourceAsStream("/contracts/ensure_listing_v2.json"));
+        var unknownNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) unknownNode.path("desired_snapshot")).put("unknown", true);
+        assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> objectMapper.treeToValue(unknownNode, EnsureListingRequest.class));
+
+        var unsafeImageNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) unsafeImageNode.path("desired_snapshot").path("images").get(0))
+                .put("source_url", "file:///tmp/image.png");
+        assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> objectMapper.treeToValue(unsafeImageNode, EnsureListingRequest.class));
+
+        var requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot")).put("stock", 1_000_000);
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot")).put("description", " ");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("skus").get(0))
+                .put("price", "0");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        requestNode.put("listing_key", "different-listing");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot")).put("schema_version", 2);
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        var attributes = (com.fasterxml.jackson.databind.node.ArrayNode) requestNode.path("desired_snapshot").path("platform_attributes");
+        attributes.add(attributes.get(0).deepCopy());
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("platform_attributes").get(0))
+                .put("property_name", "分类");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("skus").get(0))
+                .put("sku_key", " ");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
         assertTrue(!valid(new SendDeliveryRequest("r", "l", "a", "i", "o", 0, java.util.List.of())));
-        assertTrue(!valid(new OperationObservation(null, "l", OperationState.APPLYING, null, null, null, -1, null)));
+        assertTrue(!valid(new EnsureListingOperationObservation(null, "l", -1L, OperationState.APPLYING, null, null)));
+        assertTrue(valid(new OperationObservation("r", "l", OperationState.APPLYING,
+                null, null, null, null, null)));
         assertTrue(!valid(new OperationError("", "error")));
+    }
+
+    @Test
+    void requestAndListingIdentitiesAreExactAndCanonical() throws Exception {
+        var fixture = objectMapper.readTree(getClass().getResourceAsStream("/contracts/ensure_listing_v2.json"));
+        for (String invalid : java.util.List.of(" leading", "trailing ", "a/b", "a:b", "a%b", "商品", "x".repeat(256))) {
+            var node = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+            node.put("request_id", invalid);
+            assertTrue(!valid(objectMapper.treeToValue(node, EnsureListingRequest.class)), invalid);
+        }
+        for (String validId : java.util.List.of("0f684102-e1f7-4df3-b03c-0acfc9f052f1", "Az09", "a.b_c~d-e")) {
+            var node = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+            node.put("request_id", validId);
+            assertTrue(valid(objectMapper.treeToValue(node, EnsureListingRequest.class)), validId);
+        }
+
+        for (String invalidKey : java.util.List.of(" listing ", "e\u0301", "x".repeat(129))) {
+            var node = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+            node.put("listing_key", invalidKey);
+            ((com.fasterxml.jackson.databind.node.ObjectNode) node.path("desired_snapshot")).put("listing_key", invalidKey);
+            assertTrue(!valid(objectMapper.treeToValue(node, EnsureListingRequest.class)), invalidKey);
+        }
+        var nfc = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        nfc.put("listing_key", "é");
+        ((com.fasterxml.jackson.databind.node.ObjectNode) nfc.path("desired_snapshot")).put("listing_key", "é");
+        assertTrue(valid(objectMapper.treeToValue(nfc, EnsureListingRequest.class)));
     }
 
     @Test

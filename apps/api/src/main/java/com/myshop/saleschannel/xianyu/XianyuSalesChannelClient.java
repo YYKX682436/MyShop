@@ -59,19 +59,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.net.ConnectException;
-import java.net.URI;
 import java.net.URLEncoder;
-import java.net.UnknownHostException;
-import java.nio.channels.UnresolvedAddressException;
-import java.net.http.HttpClient;
-import java.net.http.HttpConnectTimeoutException;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.time.Clock;
-import java.time.Duration;
 import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -99,9 +90,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
     private final String configuredBaseUrl;
     private final String keyId;
     private final String secret;
-    private final Duration requestTimeout;
-    private final HttpClient httpClient;
-    private final Clock clock;
+    private final XianyuSignedHttpTransport signedTransport;
     private final Supplier<String> nonceSupplier;
 
     @Autowired
@@ -122,15 +111,10 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         this.configuredBaseUrl = configuredBaseUrl;
         this.keyId = keyId;
         this.secret = secret;
-        long boundedTimeout = Math.max(250, Math.min(timeoutMillis, 60_000));
-        this.requestTimeout = Duration.ofMillis(boundedTimeout);
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(requestTimeout)
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .version(HttpClient.Version.HTTP_1_1)
-                .build();
-        this.clock = clock;
         this.nonceSupplier = nonceSupplier;
+        long boundedTimeout = Math.max(250, Math.min(timeoutMillis, 60_000));
+        this.signedTransport = new XianyuSignedHttpTransport(
+                configuredBaseUrl, API_ROOT, keyId, secret, boundedTimeout, clock, nonceSupplier);
     }
 
     @Override
@@ -481,54 +465,29 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
                                                  String contentType, JavaType responseType,
                                                  RequestSemantics semantics, String correlationId,
                                                  String expectedRequestId) {
-        URI uri = configuredUri(endpoint);
         String actualCorrelationId = correlationId == null ? UUID.randomUUID().toString() : correlationId;
-        final String timestamp;
-        final String nonce;
-        final String signature;
-        final HttpRequest request;
+        final XianyuSignedHttpTransport.Response response;
         try {
-            timestamp = Long.toString(clock.instant().getEpochSecond());
-            nonce = nonceSupplier.get();
-            String canonical = XianyuRequestSigner.canonicalString(
-                    method, uri.getRawPath(), timestamp, nonce, rawBody);
-            signature = XianyuRequestSigner.signature(secret, canonical);
-            HttpRequest.BodyPublisher publisher = method.equals("GET")
-                    ? HttpRequest.BodyPublishers.noBody()
-                    : HttpRequest.BodyPublishers.ofByteArray(rawBody);
-            request = HttpRequest.newBuilder(uri)
-                    .timeout(requestTimeout)
-                    .header("Accept", "application/json")
-                    .header("Content-Type", contentType)
-                    .header("X-MyShop-Key-Id", keyId)
-                    .header("X-MyShop-Timestamp", timestamp)
-                    .header("X-MyShop-Nonce", nonce)
-                    .header("X-MyShop-Signature", signature)
-                    .method(method, publisher)
-                    .build();
-        } catch (RuntimeException e) {
-            throw permanentFailure("REQUEST_BUILD_FAILED", "Unable to construct Xianyu Agent request");
-        }
-
-        final HttpResponse<byte[]> response;
-        try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            if (semantics == RequestSemantics.SIDE_EFFECTING) {
-                return unknown(actualCorrelationId, "AGENT_OUTCOME_UNKNOWN");
+            response = signedTransport.send(method, endpoint, rawBody, contentType);
+        } catch (XianyuSignedHttpTransport.TransportException failure) {
+            if ("AGENT_CONFIGURATION_MISSING".equals(failure.code())) {
+                throw safeFailure(failure.code(), "Xianyu Agent credentials or base URL are not configured");
             }
-            throw retryableFailure("AGENT_REQUEST_INTERRUPTED", "Xianyu Agent request was interrupted");
-        } catch (IOException | RuntimeException e) {
-            if (definitelyBeforeConnection(e)) {
-                throw retryableFailure("AGENT_UNREACHABLE", "Xianyu Agent connection could not be established");
+            if ("AGENT_CONFIGURATION_INVALID".equals(failure.code())
+                    || "REQUEST_BUILD_FAILED".equals(failure.code())) {
+                throw permanentFailure(failure.code(), "Unable to construct Xianyu Agent request");
+            }
+            if (failure.boundary() == XianyuSignedHttpTransport.FailureBoundary.DEFINITE_PRE_SEND) {
+                throw retryableFailure(failure.code(), "Xianyu Agent connection could not be established");
             }
             if (semantics == RequestSemantics.SIDE_EFFECTING) {
                 return unknown(actualCorrelationId, "AGENT_OUTCOME_UNKNOWN");
             }
-            throw retryableFailure("AGENT_UNAVAILABLE", "Xianyu Agent request failed before a usable response");
+            throw retryableFailure(failure.code(), "Xianyu Agent request failed before a usable response");
         }
 
+        String signature = response.signature();
+        int statusCode = response.statusCode();
         byte[] responseBody = response.body() == null ? new byte[0] : response.body();
         if (responseBody.length > MAX_JSON_RESPONSE_BYTES) {
             if (semantics == RequestSemantics.SIDE_EFFECTING) {
@@ -552,10 +511,10 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             }
             throw retryableFailure("AGENT_RESPONSE_INVALID", "Xianyu Agent returned an invalid response envelope");
         }
-        if (semantics == RequestSemantics.SIDE_EFFECTING && response.statusCode() >= 500) {
+        if (semantics == RequestSemantics.SIDE_EFFECTING && statusCode >= 500) {
             return unknown(actualCorrelationId, "AGENT_HTTP_OUTCOME_UNKNOWN");
         }
-        if (response.statusCode() >= 400 && response.statusCode() < 500
+        if (statusCode >= 400 && statusCode < 500
                 && envelope.outcome() == Outcome.FAILED) {
             // Agent authentication/validation failures happen before an operation log is reserved,
             // so their null request_id is still a definite safe failure for this local request.
@@ -573,34 +532,13 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             }
             throw permanentFailure("AGENT_REQUEST_ID_MISMATCH", "Xianyu Agent response request_id did not match");
         }
-        if (envelope.outcome() == Outcome.SUCCEEDED && (response.statusCode() < 200 || response.statusCode() >= 300)) {
+        if (envelope.outcome() == Outcome.SUCCEEDED && (statusCode < 200 || statusCode >= 300)) {
             if (semantics == RequestSemantics.SIDE_EFFECTING) {
                 return unknown(actualCorrelationId, "AGENT_HTTP_OUTCOME_MISMATCH");
             }
             throw retryableFailure("AGENT_HTTP_OUTCOME_MISMATCH", "Xianyu Agent HTTP status conflicts with its outcome");
         }
         return redactSensitiveResponse(envelope, signature);
-    }
-
-    private URI configuredUri(String endpoint) {
-        if (keyId == null || keyId.isBlank() || secret == null || secret.isBlank()) {
-            throw safeFailure("AGENT_CONFIGURATION_MISSING", "Xianyu Agent credentials are not configured");
-        }
-        if (configuredBaseUrl == null || configuredBaseUrl.isBlank()) {
-            throw safeFailure("AGENT_CONFIGURATION_MISSING", "Xianyu Agent base URL is not configured");
-        }
-        try {
-            URI base = URI.create(configuredBaseUrl.trim());
-            if (!("http".equalsIgnoreCase(base.getScheme()) || "https".equalsIgnoreCase(base.getScheme()))
-                    || base.getHost() == null || base.getUserInfo() != null
-                    || base.getQuery() != null || base.getFragment() != null) {
-                throw new IllegalArgumentException("invalid agent base URL");
-            }
-            String prefix = base.getRawPath() == null ? "" : base.getRawPath().replaceAll("/+$", "");
-            return URI.create(base.getScheme() + "://" + base.getRawAuthority() + prefix + API_ROOT + endpoint);
-        } catch (RuntimeException e) {
-            throw permanentFailure("AGENT_CONFIGURATION_INVALID", "Xianyu Agent base URL is invalid");
-        }
     }
 
     private <T> IntegrationEnvelope<T> redactSensitiveResponse(IntegrationEnvelope<T> envelope, String signature) {
@@ -770,16 +708,6 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
         return value.chars().anyMatch(character -> character < 0x20 || character == 0x7f);
     }
 
-    private static boolean definitelyBeforeConnection(Throwable failure) {
-        for (Throwable current = failure; current != null; current = current.getCause()) {
-            if (current instanceof HttpConnectTimeoutException
-                    || current instanceof ConnectException
-                    || current instanceof UnknownHostException
-                    || current instanceof UnresolvedAddressException) return true;
-        }
-        return false;
-    }
-
     private static SalesChannelProviderClientException safeFailure(String code, String message) {
         return permanentFailure(code, message);
     }
@@ -796,7 +724,7 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
 
     private enum RequestSemantics { READ_ONLY, SAFE_REPEATABLE, SIDE_EFFECTING }
 
-    private static Supplier<String> secureNonceSupplier() {
+    static Supplier<String> secureNonceSupplier() {
         SecureRandom random = new SecureRandom();
         return () -> {
             byte[] nonce = new byte[16];

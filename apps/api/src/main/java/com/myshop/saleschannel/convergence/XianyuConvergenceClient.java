@@ -1,20 +1,18 @@
 package com.myshop.saleschannel.convergence;
 
-import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.AdoptExistingItemRequest;
-import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.ConfirmDeliveryRequest;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.EnsureListingRequest;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationObservation;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.EnsureListingOperationObservation;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.AdoptExistingItemRequest;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.SendDeliveryRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.ConfirmDeliveryRequest;
 
-/**
- * Target Agent port. Deliberately has no implementation until the Agent v2
- * ledger and ownership bindings are deployed and proven in staging.
- */
+/** Exact S2.1 port to the Agent-owned v2 durable listing command boundary. */
 public interface XianyuConvergenceClient {
 
-    OperationObservation ensureListing(EnsureListingRequest request);
+    EnsureListingOperationObservation ensureListing(EnsureListingRequest request);
 
-    OperationObservation observeOperation(String requestId);
+    EnsureListingOperationObservation observeOperation(String requestId);
 
     OperationObservation adoptExistingItem(AdoptExistingItemRequest request);
 

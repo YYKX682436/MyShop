@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myshop.invalid/contracts/xianyu-agent-v2.schema.json",
   "title": "MyShop and Xianyu Agent convergence API v2",
-  "description": "Provider-gateway contracts. UNKNOWN and provider action names are intentionally absent from MyShop-visible responses.",
+  "description": "For S2.1, the Agent DesiredListingSnapshot v1 validator is canonical; the shared fixture is validated by both runtimes. Java and JSON Schema are checked mirrors. UNKNOWN and provider action names are absent from MyShop-visible operation states.",
   "x-idempotency": {
     "fingerprint": "SHA-256 of canonical UTF-8 JSON with request_id excluded; canonicalization sorts object keys and uses stable decimal strings.",
     "same_request_id_same_fingerprint": "Return the stored APPLYING, SUCCEEDED, or FAILED observation without creating another provider write.",
     "same_request_id_different_fingerprint": "Return HTTP 409 IDEMPOTENCY_CONFLICT.",
-    "ensure_listing_request_id": "Stable for the same listing_key and revision, for example ensure:{listing_key}:{revision}.",
+    "ensure_listing_request_id": "Supplied by MyShop and is the durable ENSURE_LISTING command identity. Exact replay returns its durable outcome; changed command content conflicts.",
     "delivery_request_id": "Stable for the same external_order_id and unit_index; confirmation uses one stable request_id per external_order_id."
   },
   "x-revision-fencing": {
@@ -26,8 +26,8 @@
     "orderWatermark": "POST /api/integration/v2/orders/watermark"
   },
   "x-operation-contracts": {
-    "ensureListing": { "request": "#/$defs/ensureListingRequest", "response": "#/$defs/operationObservation", "providerActionsVisibleToMyShop": false },
-    "observeOperation": { "response": "#/$defs/operationObservation", "terminalStates": ["SUCCEEDED", "FAILED"] },
+    "ensureListing": { "request": "#/$defs/ensureListingRequest", "response": "#/$defs/listingOperationObservation", "providerActionsVisibleToMyShop": false },
+    "observeOperation": { "response": "#/$defs/listingOperationObservation", "terminalStates": ["SUCCEEDED", "FAILED"] },
     "adoptExistingItem": { "request": "#/$defs/adoptExistingItemRequest", "response": "#/$defs/operationObservation" },
     "sendDelivery": { "request": "#/$defs/sendDeliveryRequest", "response": "#/$defs/operationObservation" },
     "confirmDelivery": { "request": "#/$defs/confirmDeliveryRequest", "response": "#/$defs/operationObservation" },
@@ -38,8 +38,8 @@
   "$defs": {
     "money": {
       "type": "string",
-      "pattern": "^[0-9]{1,8}(\\.[0-9]{1,2})?(?![\\s\\S])",
-      "description": "Decimal price string to avoid binary floating-point rounding; precision matches MyShop products.base_price and product_specs.price numeric(10,2)."
+      "pattern": "^[0-9]+(\\.[0-9]{1,2})?(?![\\s\\S])",
+      "description": "Agent snapshot v1 decimal price string, normalized to cents by the canonical Python validator. SKU price must be greater than zero."
     },
     "orderAmount": {
       "type": "string",
@@ -60,31 +60,36 @@
       "required": ["asset_key", "source_url", "sha256"],
       "properties": {
         "asset_key": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "source_url": { "type": "string", "format": "uri" },
+        "source_url": { "type": "string", "format": "uri", "pattern": "^https?://" },
         "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}(?![\\s\\S])" }
       }
     },
     "platformAttribute": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["property_id", "property_name"],
       "properties": {
-        "property_id": { "type": ["string", "null"], "maxLength": 64 },
-        "property_name": { "type": ["string", "null"], "maxLength": 100 },
-        "value_id": { "type": ["string", "null"], "maxLength": 64 },
-        "value_name": { "type": ["string", "null"], "maxLength": 200 },
-        "text": { "type": ["string", "null"], "maxLength": 200 },
-        "properties": { "type": ["object", "null"], "additionalProperties": true }
-      }
+        "property_id": { "type": "string", "minLength": 1 },
+        "property_name": { "type": "string", "minLength": 1 },
+        "value_id": { "type": ["string", "null"] },
+        "value_name": { "type": ["string", "null"] },
+        "text": { "type": ["string", "null"] },
+        "properties": { "type": "null" }
+      },
+      "anyOf": [{ "required": ["value_name"] }, { "required": ["text"] }],
+      "description": "Opaque properties must be null or omitted; one of value_name or text must be non-empty."
     },
     "category": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["category_id", "channel_category_id", "channel_category_name", "tb_category_id"],
       "properties": {
-        "category_id": { "type": ["string", "null"], "maxLength": 64 },
-        "category_name": { "type": ["string", "null"], "maxLength": 100 },
-        "channel_category_id": { "type": ["string", "null"], "maxLength": 64 },
-        "channel_category_name": { "type": ["string", "null"], "maxLength": 100 },
-        "leaf_id": { "type": ["string", "null"], "maxLength": 64 }
+        "category_id": { "type": "string", "minLength": 1 },
+        "category_name": { "type": ["string", "null"] },
+        "channel_category_id": { "type": "string", "minLength": 1 },
+        "channel_category_name": { "type": "string", "minLength": 1 },
+        "leaf_id": { "type": ["string", "null"] },
+        "tb_category_id": { "type": "string", "minLength": 1 }
       }
     },
     "address": {
@@ -96,18 +101,19 @@
         "district": { "type": ["string", "null"], "maxLength": 200 },
         "adcode": { "type": ["string", "null"], "maxLength": 32 },
         "location": { "type": ["string", "null"], "maxLength": 128 },
-        "address": { "type": ["string", "null"], "maxLength": 500 },
-        "city": { "type": ["string", "null"], "maxLength": 100 },
-        "expected_text": { "type": ["string", "null"], "maxLength": 200 }
-      }
+        "address": { "type": "string", "minLength": 1 },
+        "city": { "type": ["string", "null"] },
+        "expected_text": { "type": "string", "minLength": 1 }
+      },
+      "required": ["address", "expected_text"]
     },
     "specification": {
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "values"],
       "properties": {
-        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
-        "values": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "string", "minLength": 1, "maxLength": 100 } }
+        "name": { "type": "string", "minLength": 1 },
+        "values": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
       }
     },
     "sku": {
@@ -116,25 +122,27 @@
       "required": ["sku_key", "spec_values", "price", "stock"],
       "properties": {
         "sku_key": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Opaque MyShop SKU reference. Agent stores and returns it without interpreting business meaning." },
-        "spec_values": { "type": "object", "minProperties": 1, "propertyNames": { "minLength": 1 }, "additionalProperties": { "type": "string", "minLength": 1 } },
-        "price": { "$ref": "#/$defs/money" },
-        "stock": { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+        "spec_values": { "type": "object", "propertyNames": { "minLength": 1 }, "additionalProperties": { "type": "string", "minLength": 1 } },
+        "price": { "type": "string", "pattern": "^(?!0+(?:\\.0{1,2})?$)[0-9]+(\\.[0-9]{1,2})?(?![\\s\\S])" },
+        "stock": { "type": "integer", "minimum": 0, "maximum": 999999 }
       }
     },
     "listingSnapshot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["title", "description", "price", "stock", "images", "category", "address", "platform_attributes", "specifications", "skus"],
+      "required": ["schema_version", "listing_key", "title", "description", "price", "stock", "images", "category", "address", "platform_attributes", "specifications", "skus"],
       "properties": {
+        "schema_version": { "const": 1 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Must equal the command listing_key." },
         "title": { "type": "string", "minLength": 1 },
-        "description": { "type": ["string", "null"] },
+        "description": { "type": "string", "minLength": 1 },
         "price": { "$ref": "#/$defs/money" },
-        "stock": { "type": "integer", "minimum": 0, "maximum": 2147483647, "description": "Aggregate stock. When SKUs exist this equals the sum of sku stock values." },
+        "stock": { "type": "integer", "minimum": 0, "maximum": 999999, "description": "Aggregate stock. This equals the sum of SKU stock values." },
         "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
         "category": { "$ref": "#/$defs/category" },
         "address": { "$ref": "#/$defs/address" },
         "platform_attributes": { "type": "array", "items": { "$ref": "#/$defs/platformAttribute" } },
-        "specifications": { "type": "array", "items": { "$ref": "#/$defs/specification" } },
+        "specifications": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/specification" } },
         "skus": { "type": "array", "items": { "$ref": "#/$defs/sku" } }
       }
     },
@@ -162,6 +170,19 @@
         "error": { "oneOf": [{ "$ref": "#/$defs/operationError" }, { "type": "null" }] }
       }
     },
+    "listingOperationObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_id", "listing_key", "revision", "state", "external_item_id", "error"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "revision": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
+        "state": { "$ref": "#/$defs/operationState" },
+        "external_item_id": { "type": ["string", "null"], "maxLength": 128 },
+        "error": { "oneOf": [{ "$ref": "#/$defs/operationError" }, { "type": "null" }] }
+      }
+    },
     "ensureListingRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -169,7 +190,7 @@
       "properties": {
         "request_id": { "type": "string", "minLength": 1, "maxLength": 255 },
         "listing_key": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "account_id": { "type": "string", "minLength": 1, "maxLength": 80 },
         "revision": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
         "desired_state": { "$ref": "#/$defs/desiredState" },
         "desired_snapshot": { "$ref": "#/$defs/listingSnapshot" }

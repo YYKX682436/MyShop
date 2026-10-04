@@ -24,21 +24,11 @@ def digest(value: Any) -> str:
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
 
 
-SNAPSHOT = {
-    "title": "Test listing",
-    "description": "Contract fixture",
-    "price": "10.00",
-    "stock": 2,
-    "images": [{"asset_key": "asset-1", "source_url": "https://assets.invalid/1", "sha256": "a" * 64}],
-    "category": {"category_id": "cat-1"},
-    "address": {"address": "Test"},
-    "platform_attributes": [],
-    "specifications": [{"name": "Type", "values": ["Monthly", "Yearly"]}],
-    "skus": [
-        {"sku_key": "sku-month", "spec_values": {"Type": "Monthly"}, "price": "10.00", "stock": 1},
-        {"sku_key": "sku-year", "spec_values": {"Type": "Yearly"}, "price": "20.00", "stock": 1},
-    ],
-}
+CONTRACT_FIXTURE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "apps/api/src/test/resources/contracts/ensure_listing_v2.json"
+)
+SNAPSHOT = json.loads(CONTRACT_FIXTURE_PATH.read_text(encoding="utf-8"))["desired_snapshot"]
 
 
 class IdempotencyConflict(Exception):
@@ -687,6 +677,29 @@ class GoldenFlowTests(unittest.TestCase):
         self.assertEqual("ONLINE", self.myshop.listing(self.listing_key)["status"])
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
 
+    def test_07b_noop_success_with_lost_http_result_is_recovered_by_observe(self):
+        self.online_item(revision=1)
+        applying = self.ensure(revision=2, lose_response=True)
+        self.assertEqual("APPLYING", applying["state"])
+        self.assertEqual("NOOP", self.agent.count(
+            "SELECT internal_action FROM listing_ops WHERE revision=2"
+        ))
+
+        observation = self.myshop.observe(self.agent, self.listing_key, 2)
+        self.assertEqual("SUCCEEDED", observation["state"])
+        self.assertEqual("ONLINE", self.myshop.listing(self.listing_key)["status"])
+        self.assertEqual(1, self.agent.write_count("PUBLISH"))
+        self.assertEqual(0, self.agent.write_count("UPDATE"))
+
+    def test_07c_same_revision_changed_snapshot_conflicts(self):
+        self.ensure(revision=1)
+        changed = json.loads(canonical(SNAPSHOT))
+        changed["price"] = "11.00"
+        with self.assertRaises(IdempotencyConflict):
+            self.ensure(revision=1, snapshot=changed)
+        self.assertEqual(1, self.agent.write_count("PUBLISH"))
+        self.assertEqual(0, self.agent.write_count("UPDATE"))
+
     def test_08_paid_agent_order_imports_with_listing_and_item_identity(self):
         event = self.create_order()
         self.assertEqual(self.listing_key, event["listing_key"])
@@ -698,7 +711,7 @@ class GoldenFlowTests(unittest.TestCase):
     def test_09_sku_mapping_is_exact(self):
         event = self.create_order(sku_index=0)
         accepted = self.myshop.import_order(event)
-        self.assertEqual("sku-month", accepted["sku_key"])
+        self.assertEqual("sku-black", accepted["sku_key"])
         fuzzy = dict(event)
         fuzzy["external_order_id"] = "order-fuzzy"
         fuzzy["sku_key"] = None
