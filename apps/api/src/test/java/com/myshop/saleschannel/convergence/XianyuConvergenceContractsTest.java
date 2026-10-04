@@ -72,6 +72,34 @@ class XianyuConvergenceContractsTest {
     }
 
     @Test
+    void onlineAndOfflineFingerprintsMatchTheSharedCrossLanguageFixture() throws Exception {
+        var fixture = objectMapper.readTree(getClass().getResourceAsStream(
+                "/contracts/desired_listing_v1_fingerprints.json"));
+        ListingSnapshot online = objectMapper.treeToValue(fixture.path("online_snapshot"), ListingSnapshot.class);
+        assertEquals(fixture.path("online_fingerprint").asText(),
+                DesiredListingSnapshotFingerprints.online(objectMapper, online));
+        assertEquals(fixture.path("offline_fingerprint").asText(),
+                DesiredListingSnapshotFingerprints.offline(objectMapper, fixture.path("listing_key").asText()));
+
+        var offlineNode = objectMapper.readTree(getClass().getResourceAsStream(
+                "/contracts/ensure_listing_v2_offline.json"));
+        EnsureListingRequest offline = objectMapper.treeToValue(offlineNode, EnsureListingRequest.class);
+        var serialized = objectMapper.readTree(objectMapper.writeValueAsBytes(offline));
+        assertTrue(serialized.has("desired_snapshot"));
+        assertTrue(serialized.get("desired_snapshot").isNull());
+        assertEquals(offlineNode, serialized);
+        assertTrue(valid(offline));
+
+        var invalidOnline = objectMapper.readTree(getClass().getResourceAsStream(
+                "/contracts/ensure_listing_v2.json"));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) invalidOnline).putNull("desired_snapshot");
+        assertTrue(!valid(objectMapper.treeToValue(invalidOnline, EnsureListingRequest.class)));
+        var invalidOffline = (com.fasterxml.jackson.databind.node.ObjectNode) offlineNode.deepCopy();
+        invalidOffline.set("desired_snapshot", fixture.path("online_snapshot").deepCopy());
+        assertTrue(!valid(objectMapper.treeToValue(invalidOffline, EnsureListingRequest.class)));
+    }
+
+    @Test
     void sharedAgentOperationResponseFixtureDeserializesWithoutExtraFields() throws Exception {
         byte[] fixture;
         try (InputStream input = getClass().getResourceAsStream("/contracts/operation_observation_v2.json")) {
@@ -117,8 +145,29 @@ class XianyuConvergenceContractsTest {
         assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
 
         requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot")).put("title", " Desk Lamp");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot")).put("description", "one\r\ntwo");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot")).put("title", "😀".repeat(201));
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
         ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("skus").get(0))
                 .put("price", "0");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot")).put("price", "10.00");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("images").get(0))
+                .put("sha256", "A".repeat(64));
         assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
 
         requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
@@ -135,6 +184,16 @@ class XianyuConvergenceContractsTest {
         assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
 
         requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("platform_attributes").get(1))
+                .put("property_name", "Maker");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("platform_attributes").get(0))
+                .set("properties", objectMapper.createObjectNode().put("opaque", true));
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
         ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("platform_attributes").get(0))
                 .put("property_name", "分类");
         assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
@@ -142,6 +201,15 @@ class XianyuConvergenceContractsTest {
         requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
         ((com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("skus").get(0))
                 .put("sku_key", " ");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+
+        requestNode = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        var shipping = (com.fasterxml.jackson.databind.node.ObjectNode) requestNode.path("desired_snapshot").path("shipping");
+        shipping.put("method", "free");
+        assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+        shipping.putNull("postage");
+        assertTrue(valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
+        shipping.put("method", "fixed").put("postage", "1000.01");
         assertTrue(!valid(objectMapper.treeToValue(requestNode, EnsureListingRequest.class)));
         assertTrue(!valid(new SendDeliveryRequest("r", "l", "a", "i", "o", 0, java.util.List.of())));
         assertTrue(!valid(new EnsureListingOperationObservation(null, "l", -1L, OperationState.APPLYING, null, null)));
@@ -226,8 +294,8 @@ class XianyuConvergenceContractsTest {
     void stringLimitsCountUnicodeCodePointsAndUnknownPropertiesStayClosed() throws Exception {
         var image = new ReplyImage("https://example.invalid/i", "image/png", "a".repeat(64));
         assertTrue(valid(new ReplyResolution("m", MessageAction.SEND_TEXT, "😀".repeat(2000), null)));
-        assertTrue(valid(new ListingSku("😀".repeat(128), java.util.Map.of("Type", "A"), "1", 0)));
-        assertTrue(!valid(new ListingSku("😀".repeat(129), java.util.Map.of("Type", "A"), "1", 0)));
+        assertTrue(valid(new ListingSku("😀".repeat(128), java.util.Map.of("Type", "A"), "1.00", 0)));
+        assertTrue(!valid(new ListingSku("😀".repeat(129), java.util.Map.of("Type", "A"), "1.00", 0)));
         var permissive = objectMapper.copy().disable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
                 () -> permissive.readValue("{\"message_id\":\"m\",\"action\":\"NO_REPLY\",\"extra\":true}", ReplyResolution.class));

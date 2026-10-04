@@ -61,7 +61,8 @@ public record XianyuProviderConfig(
         deliveryMethod = deliveryMethod == null || deliveryMethod.isBlank() ? "express" : deliveryMethod;
         shippingMethod = shippingMethod == null || shippingMethod.isBlank() ? "free" : shippingMethod;
         supportPickup = supportPickup == null ? false : supportPickup;
-        postage = postage == null ? BigDecimal.ZERO : postage;
+        postage = postage == null && "fixed".equals(shippingMethod)
+                ? null : postage == null ? BigDecimal.ZERO : postage;
         unlimitedStockQuantity = unlimitedStockQuantity == null ? 999 : unlimitedStockQuantity;
     }
 
@@ -74,6 +75,9 @@ public record XianyuProviderConfig(
         }
         if (priceMode == PriceMode.MARKUP_PERCENT && markupPercent == null) {
             throw new IllegalArgumentException("markupPercent is required for MARKUP_PERCENT price mode");
+        }
+        if ("fixed".equals(shippingMethod) && postage == null) {
+            throw new IllegalArgumentException("postage is required for fixed shipping");
         }
     }
 }

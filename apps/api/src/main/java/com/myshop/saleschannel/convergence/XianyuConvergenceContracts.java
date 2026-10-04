@@ -71,7 +71,8 @@ public final class XianyuConvergenceContracts {
             @JsonProperty(value = "account_id", required = true) @NotNull @CodePointLength(min = 1, max = 80) String accountId,
             @JsonProperty(value = "revision", required = true) @NotNull @Min(0) Long revision,
             @JsonProperty(value = "desired_state", required = true) @NotNull DesiredListingState desiredState,
-            @JsonProperty(value = "desired_snapshot", required = true) @NotNull @Valid ListingSnapshot desiredSnapshot) implements ClosedContract {
+            @JsonProperty(value = "desired_snapshot", required = true)
+            @JsonInclude(JsonInclude.Include.ALWAYS) @Valid ListingSnapshot desiredSnapshot) implements ClosedContract {
         @AssertTrue
         @com.fasterxml.jackson.annotation.JsonIgnore
         public boolean isAccountIdExact() {
@@ -89,24 +90,44 @@ public final class XianyuConvergenceContracts {
         public boolean isListingKeyCanonical() {
             return listingKey == null || canonicalListingKey(listingKey);
         }
+
+        @AssertTrue
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isDesiredSnapshotConsistentWithState() {
+            if (desiredState == null) return true;
+            return desiredState == DesiredListingState.ONLINE
+                    ? desiredSnapshot != null
+                    : desiredSnapshot == null;
+        }
     }
 
     public record ListingSnapshot(
             @JsonProperty(value = "schema_version", required = true) @NotNull @Min(1) Integer schemaVersion,
             @JsonProperty(value = "listing_key", required = true) @NotNull @NotBlank @CodePointLength(min = 1, max = 128) String listingKey,
-            @JsonProperty(value = "title", required = true) @NotNull @NotBlank @CodePointLength(min = 1) String title,
-            @JsonProperty(value = "description", required = true) @NotNull @NotBlank @CodePointLength(min = 1) String description,
-            @JsonProperty(value = "price", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+(\\.[0-9]{1,2})?(?![\\s\\S])") @DecimalMin("0") String price,
+            @JsonProperty(value = "title", required = true) @NotNull @NotBlank @CodePointLength(min = 1, max = 200) String title,
+            @JsonProperty(value = "description", required = true) @NotNull @NotBlank @CodePointLength(min = 1, max = 1500) String description,
+            @JsonProperty(value = "price", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+\\.[0-9]{2}(?![\\s\\S])") @DecimalMin(value = "0", inclusive = false) String price,
             @JsonProperty(value = "stock", required = true) @NotNull @Min(0) @Max(999999) Integer stock,
             @JsonProperty(value = "images", required = true) @NotEmpty List<@NotNull @Valid ListingImage> images,
             @JsonProperty(value = "category", required = true) @NotNull @Valid ListingCategory category,
             @JsonProperty(value = "address", required = true) @NotNull @Valid ListingAddress address,
             @NotNull @JsonProperty(value = "platform_attributes", required = true) List<@NotNull @Valid PlatformAttribute> platformAttributes,
+            @NotNull @JsonProperty(value = "shipping", required = true) @Valid ListingShipping shipping,
             @JsonProperty(value = "specifications", required = true) @NotNull List<@NotNull @Valid ListingSpecification> specifications,
             @JsonProperty(value = "skus", required = true) @NotNull List<@NotNull @Valid ListingSku> skus) implements ClosedContract {
         @AssertTrue
         @com.fasterxml.jackson.annotation.JsonIgnore
         public boolean isSchemaVersionSupported() { return schemaVersion == null || schemaVersion == 1; }
+
+        @AssertTrue
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isTextCanonical() {
+            if (title != null && (!title.equals(title.strip())
+                    || !java.text.Normalizer.isNormalized(title, java.text.Normalizer.Form.NFC))) return false;
+            return description == null || (description.equals(description.strip())
+                    && !description.contains("\r")
+                    && java.text.Normalizer.isNormalized(description, java.text.Normalizer.Form.NFC));
+        }
 
         @AssertTrue
         @com.fasterxml.jackson.annotation.JsonIgnore
@@ -148,29 +169,72 @@ public final class XianyuConvergenceContracts {
                 if (!combinations.add(combination)) return false;
                 aggregate += sku.stock() == null ? 0 : sku.stock();
             }
-            return aggregate == (stock == null ? -1 : stock);
+            if (aggregate != (stock == null ? -1 : stock) || aggregate > 999_999) return false;
+            if (skus.isEmpty()) return true;
+            try {
+                java.math.BigDecimal minimum = skus.stream()
+                        .map(sku -> new java.math.BigDecimal(sku.price()))
+                        .min(java.math.BigDecimal::compareTo).orElseThrow();
+                return new java.math.BigDecimal(price).compareTo(minimum) == 0;
+            } catch (RuntimeException invalidPrice) {
+                return false;
+            }
         }
 
         @AssertTrue
         @com.fasterxml.jackson.annotation.JsonIgnore
         public boolean isPlatformAttributesValid() {
             if (platformAttributes == null) return true;
-            java.util.Set<String> propertyIds = new java.util.HashSet<>();
+            java.util.Map<String, String> propertyNames = new java.util.HashMap<>();
+            java.util.Set<java.util.List<String>> selections = new java.util.HashSet<>();
             for (PlatformAttribute attribute : platformAttributes) {
-                if (attribute == null || attribute.propertyId() == null
-                        || !propertyIds.add(attribute.propertyId())
+                if (attribute == null || attribute.propertyId() == null || attribute.propertyName() == null
                         || "分类".equals(attribute.propertyName())) return false;
+                String priorName = propertyNames.putIfAbsent(attribute.propertyId(), attribute.propertyName());
+                if (priorName != null && !priorName.equals(attribute.propertyName())) return false;
+                java.util.List<String> identity = java.util.List.of(
+                        attribute.propertyId(), nullToEmpty(attribute.valueId()),
+                        nullToEmpty(attribute.valueName()), nullToEmpty(attribute.text()));
+                if (!selections.add(identity)) return false;
             }
             return true;
         }
+
+        private static String nullToEmpty(String value) { return value == null ? "" : value; }
     }
 
     /** Agent fetches the image and handles provider media preparation. */
     public record ListingImage(
-            @NotNull @NotBlank @CodePointLength(min = 1) @JsonProperty(value = "asset_key", required = true) @CodePointLength(max = 128) String assetKey,
+            @NotNull @NotBlank @CodePointLength(min = 1) @JsonProperty(value = "asset_key", required = true) @Pattern(regexp = "^sha256:[0-9a-f]{64}(?![\\s\\S])") String assetKey,
             @NotNull @NotBlank @CodePointLength(min = 1) @JsonProperty(value = "source_url", required = true) String sourceUrl,
-            @JsonProperty(value = "sha256", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[a-fA-F0-9]{64}(?![\\s\\S])") String sha256) implements ClosedContract {
+            @JsonProperty(value = "sha256", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9a-f]{64}(?![\\s\\S])") String sha256) implements ClosedContract {
         public ListingImage { requireHttpUri(sourceUrl); }
+
+        @AssertTrue
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isAssetKeyBoundToDigest() {
+            return assetKey == null || sha256 == null || assetKey.equals("sha256:" + sha256);
+        }
+    }
+
+    public record ListingShipping(
+            @JsonProperty(value = "method", required = true) @NotNull @Pattern(regexp = "free|distance|fixed|template|none") String method,
+            @JsonProperty(value = "support_pickup", required = true) @NotNull Boolean supportPickup,
+            @JsonProperty(value = "postage", required = true) @JsonInclude(JsonInclude.Include.ALWAYS) String postage) implements ClosedContract {
+        @AssertTrue
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isPostageConsistentWithMethod() {
+            if (method == null) return true;
+            if (!"fixed".equals(method)) return postage == null;
+            if (postage == null || !postage.matches("^[0-9]+\\.[0-9]{2}$")) return false;
+            try {
+                java.math.BigDecimal value = new java.math.BigDecimal(postage);
+                return value.compareTo(java.math.BigDecimal.ZERO) >= 0
+                        && value.compareTo(new java.math.BigDecimal("1000.00")) <= 0;
+            } catch (NumberFormatException invalid) {
+                return false;
+            }
+        }
     }
 
     public record ListingCategory(
@@ -215,7 +279,7 @@ public final class XianyuConvergenceContracts {
     public record ListingSku(
             @NotNull @NotBlank @CodePointLength(min = 1) @JsonProperty(value = "sku_key", required = true) @CodePointLength(max = 128) String skuKey,
             @NotEmpty @JsonProperty(value = "spec_values", required = true) Map<@NotNull @NotBlank @CodePointLength(min = 1) String, @NotNull @NotBlank @CodePointLength(min = 1) String> specValues,
-            @JsonProperty(value = "price", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+(\\.[0-9]{1,2})?(?![\\s\\S])") @DecimalMin(value = "0", inclusive = false) String price,
+            @JsonProperty(value = "price", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+\\.[0-9]{2}(?![\\s\\S])") @DecimalMin(value = "0", inclusive = false) String price,
             @JsonProperty(value = "stock", required = true) @NotNull @Min(0) @Max(999999) Integer stock) implements ClosedContract { }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)

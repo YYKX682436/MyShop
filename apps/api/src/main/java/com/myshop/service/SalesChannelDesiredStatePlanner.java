@@ -64,6 +64,7 @@ public class SalesChannelDesiredStatePlanner {
     private final SalesChannelListingGenerationRepository generationRepository;
     private final SalesChannelOperationRepository operationRepository;
     private final ProductInventoryBatchService inventoryBatchService;
+    private final XianyuDesiredListingAssembler desiredListingAssembler;
     private final SalesChannelOperationServiceImpl operationService;
 
     @Transactional
@@ -101,6 +102,15 @@ public class SalesChannelDesiredStatePlanner {
     private void preflightForEnable(SalesChannelListing listing) {
         SalesChannelAccount account = loadAccount(listing);
         Product product = loadProduct(listing);
+        // S2.2 exact-intent validation is read-only. Legacy planning below
+        // remains the only execution planner until the separately gated cutover.
+        try {
+            desiredListingAssembler.assemble(listing, product);
+        } catch (IllegalArgumentException exception) {
+            BusinessException failure = new BusinessException(ErrorCode.BAD_REQUEST, exception.getMessage());
+            failure.initCause(exception);
+            throw failure;
+        }
         DesiredListingSnapshot snapshot = buildSnapshot(listing, account, product,
                 SalesChannelListingDesiredState.ONLINE);
         List<String> missing = new ArrayList<>();

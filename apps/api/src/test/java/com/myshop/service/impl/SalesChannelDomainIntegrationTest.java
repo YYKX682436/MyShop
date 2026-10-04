@@ -34,8 +34,11 @@ import com.myshop.service.ManualStockService;
 import com.myshop.service.SalesChannelAdminService;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
 import com.myshop.service.SalesChannelGenerationActivationService;
+import com.myshop.service.UploadStorage;
+import com.myshop.saleschannel.xianyu.XianyuMediaMaterializer;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +55,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
@@ -100,6 +105,11 @@ class SalesChannelDomainIntegrationTest {
     @Autowired private ManualStockService manualStockService;
     @Autowired private SalesChannelAdminService salesChannelAdminService;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UploadStorage uploadStorage;
+    @Autowired private XianyuMediaMaterializer mediaMaterializer;
+
+    private static final String PREFLIGHT_IMAGE_KEY = "sales-channel-test/preflight.jpg";
+    private static final String PREFLIGHT_IMAGE_URL = "/api/uploads/" + PREFLIGHT_IMAGE_KEY;
 
     @DynamicPropertySource
     static void postgresProperties(DynamicPropertyRegistry registry) {
@@ -119,7 +129,7 @@ class SalesChannelDomainIntegrationTest {
     }
 
     @BeforeEach
-    void resetSalesChannelFixtures() {
+    void resetSalesChannelFixtures() throws IOException {
         jdbcTemplate.update("DELETE FROM sales_channel_operations");
         jdbcTemplate.update("DELETE FROM sales_channel_listing_generation_specs");
         jdbcTemplate.update("DELETE FROM sales_channel_listing_generations");
@@ -133,7 +143,15 @@ class SalesChannelDomainIntegrationTest {
                 + "(SELECT id FROM products WHERE title LIKE 'sales-channel-test-%')");
         jdbcTemplate.update("DELETE FROM products WHERE title LIKE 'sales-channel-test-%'");
         jdbcTemplate.update("DELETE FROM product_categories WHERE name LIKE 'sales-channel-test-%'");
+        Files.write(uploadStorage.prepareManagedFile(PREFLIGHT_IMAGE_KEY),
+                new byte[]{(byte) 0xff, (byte) 0xd8, (byte) 0xff, 0x01, 0x02});
+        mediaMaterializer.readImage(PREFLIGHT_IMAGE_URL);
         entityManager.clear();
+    }
+
+    @AfterEach
+    void removePreflightImage() {
+        uploadStorage.deleteManagedFile(PREFLIGHT_IMAGE_KEY);
     }
 
     @Test
@@ -219,7 +237,7 @@ class SalesChannelDomainIntegrationTest {
     }
 
     @Test
-    void completePreflightAllowsPublishAndAddressExpectedTextFallsBackToAddress() {
+    void completePreflightAllowsPublishWithExplicitSelectedAddressText() {
         Fixture fixture = fixture(false);
         verifiedAccount(fixture, "FISH_SHOP");
         savePublishConfig(fixture, true, true);
@@ -234,7 +252,7 @@ class SalesChannelDomainIntegrationTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> snapshot = (Map<String, Object>) operations.getFirst().getPayload().get("desired_snapshot");
         assertEquals("East Lake", snapshot.get("address"));
-        assertEquals("East Lake", snapshot.get("addressExpectedText"));
+        assertEquals("East Lake POI", snapshot.get("addressExpectedText"));
     }
 
     @Test
@@ -1263,9 +1281,10 @@ class SalesChannelDomainIntegrationTest {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("descriptionOverride", "Test listing description");
         config.put("titleOverride", fixture.product().getTitle());
-        config.put("imageUrls", List.of("https://images.example.invalid/source.jpg"));
+        config.put("imageUrls", List.of(PREFLIGHT_IMAGE_URL));
         config.put("priceMode", "PRODUCT_RETAIL");
         config.put("address", "East Lake");
+        config.put("addressExpectedText", "East Lake POI");
         config.put("platformCategoryId", "category-test-id");
         config.put("platformCategoryName", "Software service");
         config.put("platformChannelCategoryId", "channel-category-test-id");
@@ -1353,9 +1372,12 @@ class SalesChannelDomainIntegrationTest {
             Fixture fixture, boolean includeAddress, boolean includeCategory) {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("descriptionOverride", "Test listing description");
-        config.put("imageUrls", List.of("https://images.example.invalid/source.jpg"));
+        config.put("imageUrls", List.of(PREFLIGHT_IMAGE_URL));
         config.put("priceMode", "PRODUCT_RETAIL");
-        if (includeAddress) config.put("address", "East Lake");
+        if (includeAddress) {
+            config.put("address", "East Lake");
+            config.put("addressExpectedText", "East Lake POI");
+        }
         if (includeCategory) {
             config.put("platformCategoryId", "category-test-id");
             config.put("platformCategoryName", "Software service");

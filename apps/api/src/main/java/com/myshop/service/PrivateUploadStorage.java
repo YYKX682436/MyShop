@@ -185,7 +185,9 @@ public class PrivateUploadStorage {
     }
 
     private void verifyInsideRoot(Path target) throws IOException {
-        Path realRoot = privateDirectory.toRealPath(LinkOption.NOFOLLOW_LINKS);
+        // Compare canonical paths consistently; on macOS /var can resolve to
+        // /private/var even though both names address the same temporary root.
+        Path realRoot = privateDirectory.toRealPath();
         Path realTarget = target.toRealPath();
         if (!realTarget.startsWith(realRoot)) {
             throw new IllegalArgumentException("private attachment path escapes storage");

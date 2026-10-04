@@ -1,0 +1,94 @@
+{
+  "schema": "desired-listing-v1-fingerprint-fixture",
+  "listing_key": "listing-1",
+  "online_snapshot": {
+    "schema_version": 1,
+    "listing_key": "listing-1",
+    "title": "Desk Lamp",
+    "description": "Adjustable desk lamp with a weighted base.",
+    "price": "9.50",
+    "stock": 5,
+    "images": [
+      {
+        "asset_key": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_url": "https://example.invalid/desk-lamp.png",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "category": {
+      "category_id": "cat-1",
+      "channel_category_id": "xianyu-cat-1",
+      "channel_category_name": "Desk lamps",
+      "tb_category_id": "tb-cat-1",
+      "category_name": "Lighting",
+      "leaf_id": "leaf-1"
+    },
+    "address": {
+      "address": "1 Example Road, Shanghai",
+      "expected_text": "Pickup at Example Road",
+      "id": "address-1",
+      "name": "Pickup point",
+      "district": "Pudong",
+      "adcode": "310115",
+      "location": "121.5,31.2",
+      "city": "Shanghai"
+    },
+    "platform_attributes": [
+      {
+        "property_id": "brand",
+        "property_name": "Brand",
+        "value_id": "brand-a",
+        "value_name": "Brand A",
+        "text": null,
+        "properties": null
+      },
+      {
+        "property_id": "brand",
+        "property_name": "Brand",
+        "value_id": "brand-b",
+        "value_name": "Brand B",
+        "text": null,
+        "properties": null
+      }
+    ],
+    "shipping": {
+      "method": "fixed",
+      "support_pickup": true,
+      "postage": "12.34"
+    },
+    "specifications": [
+      {
+        "name": "Color",
+        "values": [
+          "Black",
+          "White"
+        ]
+      }
+    ],
+    "skus": [
+      {
+        "sku_key": "sku-black",
+        "spec_values": {
+          "Color": "Black"
+        },
+        "price": "9.50",
+        "stock": 2
+      },
+      {
+        "sku_key": "sku-white",
+        "spec_values": {
+          "Color": "White"
+        },
+        "price": "10.00",
+        "stock": 3
+      }
+    ]
+  },
+  "online_fingerprint": "3439d782c578831b1f6e6d5939d6e0bb219851404f72038207ccb80eb746944d",
+  "offline_payload": {
+    "schema": "desired-listing-v1",
+    "listing_key": "listing-1",
+    "desired_state": "OFFLINE"
+  },
+  "offline_fingerprint": "c269ac0bed8e4ad91a540afdf76284c4374b08e52bce82cece4a752305d914a4"
+}

@@ -9,11 +9,11 @@
     "listing_key": "listing-1",
     "title": "Desk Lamp",
     "description": "Adjustable desk lamp with a weighted base.",
-    "price": "10.00",
+    "price": "9.50",
     "stock": 5,
     "images": [
       {
-        "asset_key": "asset-1",
+        "asset_key": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "source_url": "https://example.invalid/desk-lamp.png",
         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       }
@@ -38,19 +38,32 @@
     },
     "platform_attributes": [
       {
-        "property_id": "material",
-        "property_name": "Material",
-        "value_id": "metal",
-        "value_name": "Metal",
+        "property_id": "brand",
+        "property_name": "Brand",
+        "value_id": "brand-a",
+        "value_name": "Brand A",
+        "text": null,
+        "properties": null
+      },
+      {
+        "property_id": "brand",
+        "property_name": "Brand",
+        "value_id": "brand-b",
+        "value_name": "Brand B",
         "text": null,
         "properties": null
       }
     ],
+    "shipping": {
+      "method": "fixed",
+      "support_pickup": true,
+      "postage": "12.34"
+    },
     "specifications": [
       {"name": "Color", "values": ["Black", "White"]}
     ],
     "skus": [
-      {"sku_key": "sku-black", "spec_values": {"Color": "Black"}, "price": "10.00", "stock": 2},
+      {"sku_key": "sku-black", "spec_values": {"Color": "Black"}, "price": "9.50", "stock": 2},
       {"sku_key": "sku-white", "spec_values": {"Color": "White"}, "price": "10.00", "stock": 3}
     ]
   }

@@ -47,7 +47,7 @@ class FakeAgent:
                     request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
                     account_id TEXT NOT NULL, listing_key TEXT NOT NULL,
                     revision INTEGER NOT NULL, desired_state TEXT NOT NULL,
-                    snapshot_json TEXT NOT NULL, state TEXT NOT NULL,
+                    snapshot_json TEXT, state TEXT NOT NULL,
                     external_item_id TEXT, error_code TEXT, internal_action TEXT
                 );
                 CREATE TABLE IF NOT EXISTS provider_items(
@@ -111,7 +111,8 @@ class FakeAgent:
 
     def ensure_listing(self, command: dict[str, Any], *, lose_response: bool = False) -> dict[str, Any]:
         fingerprint = digest({key: value for key, value in command.items() if key != "request_id"})
-        snapshot_json = canonical(command["desired_snapshot"])
+        snapshot = command["desired_snapshot"]
+        snapshot_json = canonical(snapshot) if snapshot is not None else None
         with self.db() as db:
             prior = db.execute("SELECT * FROM listing_ops WHERE request_id=?", (command["request_id"],)).fetchone()
             if prior:
@@ -181,7 +182,7 @@ class FakeAgent:
                 db.execute("INSERT OR IGNORE INTO provider_effects(request_id, action, target_id) VALUES (?, 'PUBLISH', ?)",
                            (command["request_id"], item_id))
                 db.execute(
-                    "INSERT INTO provider_items VALUES (?, ?, ?, 'CURRENT', ?, ?, ?)",
+                "INSERT INTO provider_items VALUES (?, ?, ?, 'CURRENT', ?, ?, ?)",
                     (item_id, command["account_id"], command["listing_key"], snapshot_json,
                      command["request_id"], command["request_id"]),
                 )
@@ -201,7 +202,8 @@ class FakeAgent:
                                                 (command["request_id"],)).fetchone())
 
     def _save_item_skus(self, db: sqlite3.Connection, command: dict[str, Any], item_id: str) -> None:
-        for index, sku in enumerate(command["desired_snapshot"].get("skus", [])):
+        snapshot = command["desired_snapshot"]
+        for index, sku in enumerate(snapshot.get("skus", []) if snapshot is not None else []):
             external_sku_id = f"{item_id}-sku-{index + 1}"
             db.execute(
                 "INSERT OR REPLACE INTO item_skus VALUES (?, ?, ?, ?, ?)",
@@ -358,7 +360,7 @@ class FakeMyShop:
                 CREATE TABLE IF NOT EXISTS listings(
                     listing_key TEXT PRIMARY KEY, account_id TEXT NOT NULL,
                     revision INTEGER NOT NULL, desired_state TEXT NOT NULL,
-                    snapshot_json TEXT NOT NULL, status TEXT NOT NULL,
+                    snapshot_json TEXT, status TEXT NOT NULL,
                     external_item_id TEXT
                 );
                 CREATE TABLE IF NOT EXISTS sku_mappings(
@@ -411,7 +413,7 @@ class FakeMyShop:
         return f"ensure:{listing_key}:{revision}"
 
     def ensure_listing(self, agent: FakeAgent, listing_key: str, account_id: str,
-                       revision: int, desired_state: str, snapshot: dict[str, Any],
+                       revision: int, desired_state: str, snapshot: dict[str, Any] | None,
                        *, lose_response: bool = False) -> dict[str, Any]:
         with self.db() as db:
             current = db.execute("SELECT revision FROM listings WHERE listing_key=?", (listing_key,)).fetchone()
@@ -421,9 +423,10 @@ class FakeMyShop:
                 "INSERT INTO listings VALUES (?, ?, ?, ?, ?, 'APPLYING', NULL) "
                 "ON CONFLICT(listing_key) DO UPDATE SET account_id=excluded.account_id, revision=excluded.revision, "
                 "desired_state=excluded.desired_state, snapshot_json=excluded.snapshot_json, status='APPLYING'",
-                (listing_key, account_id, revision, desired_state, canonical(snapshot)),
+                (listing_key, account_id, revision, desired_state,
+                 canonical(snapshot) if snapshot is not None else None),
             )
-            for sku in snapshot.get("skus", []):
+            for sku in snapshot.get("skus", []) if snapshot is not None else []:
                 db.execute("INSERT OR REPLACE INTO sku_mappings VALUES (?, ?, ?)",
                            (listing_key, sku["sku_key"], canonical(sku["spec_values"])))
         command = {"request_id": self.request_id(listing_key, revision), "listing_key": listing_key,
@@ -586,8 +589,9 @@ class GoldenFlowTests(unittest.TestCase):
 
     def ensure(self, revision: int = 1, state: str = "ONLINE", snapshot: dict[str, Any] | None = None,
                *, lose_response: bool = False) -> dict[str, Any]:
+        desired_snapshot = None if state == "OFFLINE" else (snapshot if snapshot is not None else SNAPSHOT)
         return self.myshop.ensure_listing(self.agent, self.listing_key, self.account, revision, state,
-                                          snapshot or SNAPSHOT, lose_response=lose_response)
+                                          desired_snapshot, lose_response=lose_response)
 
     def online_item(self, revision: int = 1) -> str:
         result = self.ensure(revision)
@@ -621,6 +625,8 @@ class GoldenFlowTests(unittest.TestCase):
         self.online_item()
         changed = json.loads(canonical(SNAPSHOT))
         changed["price"] = "12.50"
+        changed["skus"][0]["price"] = "12.50"
+        changed["skus"][1]["price"] = "13.00"
         result = self.ensure(2, snapshot=changed)
         provider = self.agent.current_item(self.account, self.listing_key)
         self.assertEqual("SUCCEEDED", result["state"])
@@ -644,8 +650,12 @@ class GoldenFlowTests(unittest.TestCase):
         result = self.ensure(2, state="OFFLINE")
         with self.agent.db() as db:
             provider_state = db.execute("SELECT state FROM provider_items WHERE external_item_id=?", (item_id,)).fetchone()[0]
+            offline_command = db.execute(
+                "SELECT snapshot_json FROM listing_ops WHERE request_id=?", (result["request_id"],)
+            ).fetchone()
         self.assertEqual("OFFLINE", provider_state)
         self.assertEqual("OFFLINE", self.myshop.listing(self.listing_key)["status"])
+        self.assertIsNone(offline_command["snapshot_json"])
         self.assertEqual("SUCCEEDED", result["state"])
 
     def test_05_expired_provider_item_is_replaced_inside_agent(self):
@@ -695,6 +705,8 @@ class GoldenFlowTests(unittest.TestCase):
         self.ensure(revision=1)
         changed = json.loads(canonical(SNAPSHOT))
         changed["price"] = "11.00"
+        changed["skus"][0]["price"] = "11.00"
+        changed["skus"][1]["price"] = "11.50"
         with self.assertRaises(IdempotencyConflict):
             self.ensure(revision=1, snapshot=changed)
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
@@ -791,6 +803,8 @@ class GoldenFlowTests(unittest.TestCase):
         self.ensure()
         changed = json.loads(canonical(SNAPSHOT))
         changed["price"] = "11.00"
+        changed["skus"][0]["price"] = "11.00"
+        changed["skus"][1]["price"] = "11.50"
         before = self.agent.write_count()
         with self.assertRaises(IdempotencyConflict):
             self.ensure(snapshot=changed)
@@ -813,10 +827,12 @@ class GoldenFlowTests(unittest.TestCase):
         self.ensure(revision=2)
         changed = json.loads(canonical(SNAPSHOT))
         changed["price"] = "12.00"
+        changed["skus"][0]["price"] = "12.00"
+        changed["skus"][1]["price"] = "12.50"
         self.ensure(revision=3, snapshot=changed)
         before = self.agent.write_count()
         stale = self.agent.ensure_listing({"request_id": "ensure:listing-1:1", "listing_key": self.listing_key,
-                "account_id": self.account, "revision": 1, "desired_state": "OFFLINE", "desired_snapshot": SNAPSHOT})
+                "account_id": self.account, "revision": 1, "desired_state": "OFFLINE", "desired_snapshot": None})
         self.assertEqual("FAILED", stale["state"])
         self.assertEqual("STALE_REVISION", stale["error"]["code"])
         self.assertEqual(before, self.agent.write_count())

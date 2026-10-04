@@ -29,7 +29,7 @@ jwt:
 
 upload:
   path: ./test-uploads
-  url-prefix: /uploads
+  url-prefix: /api/uploads
 
 logging:
   level:

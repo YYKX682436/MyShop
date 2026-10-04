@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://myshop.invalid/contracts/xianyu-agent-v2.schema.json",
   "title": "MyShop and Xianyu Agent convergence API v2",
-  "description": "For S2.1, the Agent DesiredListingSnapshot v1 validator is canonical; the shared fixture is validated by both runtimes. Java and JSON Schema are checked mirrors. UNKNOWN and provider action names are absent from MyShop-visible operation states.",
+  "description": "For S2.2, DesiredListingSnapshot v1 closes over provider write intent. ONLINE requires the complete snapshot; OFFLINE requires explicit null. Java and Python share canonical fingerprint fixtures. UNKNOWN and provider action names are absent from MyShop-visible operation states.",
   "x-idempotency": {
     "fingerprint": "SHA-256 of canonical UTF-8 JSON with request_id excluded; canonicalization sorts object keys and uses stable decimal strings.",
     "same_request_id_same_fingerprint": "Return the stored APPLYING, SUCCEEDED, or FAILED observation without creating another provider write.",
@@ -59,10 +59,11 @@
       "additionalProperties": false,
       "required": ["asset_key", "source_url", "sha256"],
       "properties": {
-        "asset_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "asset_key": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])" },
         "source_url": { "type": "string", "format": "uri", "pattern": "^https?://" },
-        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}(?![\\s\\S])" }
-      }
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}(?![\\s\\S])" }
+      },
+      "description": "asset_key must equal sha256:<sha256>; both lowercase digests identify the fetched image bytes."
     },
     "platformAttribute": {
       "type": "object",
@@ -77,7 +78,7 @@
         "properties": { "type": "null" }
       },
       "anyOf": [{ "required": ["value_name"] }, { "required": ["text"] }],
-      "description": "Opaque properties must be null or omitted; one of value_name or text must be non-empty."
+      "description": "Distinct multi-select values may share property_id; values sort by property_id/value_id/value_name/text. One property_id has one property_name. Opaque properties must be null or omitted."
     },
     "category": {
       "type": "object",
@@ -107,6 +108,26 @@
       },
       "required": ["address", "expected_text"]
     },
+    "shipping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "support_pickup", "postage"],
+      "properties": {
+        "method": { "type": "string", "enum": ["free", "distance", "fixed", "template", "none"] },
+        "support_pickup": { "type": "boolean" },
+        "postage": { "type": ["string", "null"], "pattern": "^[0-9]+\\.[0-9]{2}(?![\\s\\S])" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "method": { "const": "fixed" } }, "required": ["method"] },
+          "then": { "properties": { "postage": { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,2}|1000)\\.[0-9]{2}(?![\\s\\S])" } } }
+        },
+        {
+          "if": { "properties": { "method": { "enum": ["free", "distance", "template", "none"] } }, "required": ["method"] },
+          "then": { "properties": { "postage": { "type": "null" } } }
+        }
+      ]
+    },
     "specification": {
       "type": "object",
       "additionalProperties": false,
@@ -130,21 +151,23 @@
     "listingSnapshot": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "listing_key", "title", "description", "price", "stock", "images", "category", "address", "platform_attributes", "specifications", "skus"],
+      "required": ["schema_version", "listing_key", "title", "description", "price", "stock", "images", "category", "address", "platform_attributes", "shipping", "specifications", "skus"],
       "properties": {
         "schema_version": { "const": 1 },
         "listing_key": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Must equal the command listing_key." },
-        "title": { "type": "string", "minLength": 1 },
-        "description": { "type": "string", "minLength": 1 },
-        "price": { "$ref": "#/$defs/money" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 1500 },
+        "price": { "$ref": "#/$defs/money", "not": { "const": "0.00" } },
         "stock": { "type": "integer", "minimum": 0, "maximum": 999999, "description": "Aggregate stock. This equals the sum of SKU stock values." },
         "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
         "category": { "$ref": "#/$defs/category" },
         "address": { "$ref": "#/$defs/address" },
-        "platform_attributes": { "type": "array", "items": { "$ref": "#/$defs/platformAttribute" } },
+        "platform_attributes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/platformAttribute" } },
+        "shipping": { "$ref": "#/$defs/shipping" },
         "specifications": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/specification" } },
         "skus": { "type": "array", "items": { "$ref": "#/$defs/sku" } }
-      }
+      },
+      "description": "Aggregate stock equals the SKU stock sum, and top-level price equals the minimum SKU price."
     },
     "operationError": {
       "type": "object",
@@ -193,8 +216,12 @@
         "account_id": { "type": "string", "minLength": 1, "maxLength": 80 },
         "revision": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
         "desired_state": { "$ref": "#/$defs/desiredState" },
-        "desired_snapshot": { "$ref": "#/$defs/listingSnapshot" }
-      }
+        "desired_snapshot": { "oneOf": [{ "$ref": "#/$defs/listingSnapshot" }, { "type": "null" }] }
+      },
+      "allOf": [
+        { "if": { "properties": { "desired_state": { "const": "ONLINE" } }, "required": ["desired_state"] }, "then": { "properties": { "desired_snapshot": { "$ref": "#/$defs/listingSnapshot" } } } },
+        { "if": { "properties": { "desired_state": { "const": "OFFLINE" } }, "required": ["desired_state"] }, "then": { "properties": { "desired_snapshot": { "type": "null" } } } }
+      ]
     },
     "adoptExistingItemRequest": {
       "type": "object",

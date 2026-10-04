@@ -68,7 +68,10 @@ public class XianyuMediaMaterializer {
                 throw permanent("IMAGE_NOT_FOUND", "Managed image is not a regular file");
             }
             Path realRoot = uploadStorage.directory().toRealPath();
-            Path realFile = path.toRealPath(LinkOption.NOFOLLOW_LINKS);
+            // Resolve the same ancestor aliases as realRoot (macOS commonly
+            // exposes /var as a symlink to /private/var). The final component
+            // was already checked with NOFOLLOW_LINKS above.
+            Path realFile = path.toRealPath();
             if (!realFile.startsWith(realRoot)) throw permanent("INVALID_IMAGE_PATH", "Managed image path is outside storage");
             long size = Files.size(realFile);
             if (size <= 0 || size > MAX_IMAGE_BYTES) throw permanent("INVALID_IMAGE_SIZE", "Image size is out of range");
