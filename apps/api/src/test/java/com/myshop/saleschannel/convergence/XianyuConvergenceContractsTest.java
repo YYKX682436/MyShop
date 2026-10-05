@@ -219,6 +219,59 @@ class XianyuConvergenceContractsTest {
     }
 
     @Test
+    void desiredListingMoneyWireRequiresCanonicalPositivePriceAndBoundedPostage() throws Exception {
+        var fixture = objectMapper.readTree(getClass().getResourceAsStream("/contracts/ensure_listing_v2.json"));
+        for (String value : java.util.List.of("10", "10.0", "10.001", "0.00")) {
+            var node = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+            ((com.fasterxml.jackson.databind.node.ObjectNode) node.path("desired_snapshot")).put("price", value);
+            assertTrue(!valid(objectMapper.treeToValue(node, EnsureListingRequest.class)), value);
+        }
+        for (String value : java.util.List.of("10", "10.0", "10.001", "0.00")) {
+            var node = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+            var snapshot = (com.fasterxml.jackson.databind.node.ObjectNode) node.path("desired_snapshot");
+            ((com.fasterxml.jackson.databind.node.ObjectNode) snapshot.path("skus").get(0)).put("price", value);
+            snapshot.put("price", value);
+            assertTrue(!valid(objectMapper.treeToValue(node, EnsureListingRequest.class)), value);
+        }
+        var canonical = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        var canonicalSnapshot = (com.fasterxml.jackson.databind.node.ObjectNode) canonical.path("desired_snapshot");
+        canonicalSnapshot.put("price", "10.00");
+        for (var sku : canonicalSnapshot.path("skus")) ((com.fasterxml.jackson.databind.node.ObjectNode) sku).put("price", "10.00");
+        assertTrue(valid(objectMapper.treeToValue(canonical, EnsureListingRequest.class)));
+
+        var numericPrice = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) numericPrice.path("desired_snapshot")).put("price", 10);
+        assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> objectMapper.treeToValue(numericPrice, EnsureListingRequest.class));
+        var numericSkuPrice = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) numericSkuPrice.path("desired_snapshot").path("skus").get(0)).put("price", 10);
+        assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> objectMapper.treeToValue(numericSkuPrice, EnsureListingRequest.class));
+
+        for (String value : java.util.List.of("12", "12.3", "12.345", "1000.01", "1000.99")) {
+            var node = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+            var shipping = (com.fasterxml.jackson.databind.node.ObjectNode) node.path("desired_snapshot").path("shipping");
+            shipping.put("method", "fixed").put("postage", value);
+            assertTrue(!valid(objectMapper.treeToValue(node, EnsureListingRequest.class)), value);
+        }
+        for (String value : java.util.List.of("12.30", "1000.00")) {
+            var node = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+            ((com.fasterxml.jackson.databind.node.ObjectNode) node.path("desired_snapshot").path("shipping"))
+                    .put("method", "fixed").put("postage", value);
+            assertTrue(valid(objectMapper.treeToValue(node, EnsureListingRequest.class)), value);
+        }
+        var numericPostage = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) numericPostage.path("desired_snapshot").path("shipping"))
+                .put("method", "fixed").put("postage", 12);
+        assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> objectMapper.treeToValue(numericPostage, EnsureListingRequest.class));
+        var missingPostage = (com.fasterxml.jackson.databind.node.ObjectNode) fixture.deepCopy();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) missingPostage.path("desired_snapshot").path("shipping")).remove("postage");
+        assertThrows(com.fasterxml.jackson.databind.JsonMappingException.class,
+                () -> objectMapper.treeToValue(missingPostage, EnsureListingRequest.class));
+    }
+
+    @Test
     void requestAndListingIdentitiesAreExactAndCanonical() throws Exception {
         var fixture = objectMapper.readTree(getClass().getResourceAsStream("/contracts/ensure_listing_v2.json"));
         for (String invalid : java.util.List.of(" leading", "trailing ", "a/b", "a:b", "a%b", "商品", "x".repeat(256))) {

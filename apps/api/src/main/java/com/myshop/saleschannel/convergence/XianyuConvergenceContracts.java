@@ -4,6 +4,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
@@ -26,6 +32,17 @@ import java.time.Instant;
 public final class XianyuConvergenceContracts {
 
     private XianyuConvergenceContracts() { }
+
+    /** Money on this wire is a canonical JSON string; reject Jackson's numeric coercion. */
+    public static final class StrictMoneyWireDeserializer extends JsonDeserializer<String> {
+        @Override
+        public String deserialize(JsonParser parser, DeserializationContext context) throws java.io.IOException {
+            if (parser.currentToken() != JsonToken.VALUE_STRING) {
+                throw JsonMappingException.from(parser, "money must be a canonical two-decimal JSON string");
+            }
+            return parser.getText();
+        }
+    }
 
     private static void requireHttpUri(String value) {
         if (value == null) return; // Bean validation rejects null required fields.
@@ -106,7 +123,7 @@ public final class XianyuConvergenceContracts {
             @JsonProperty(value = "listing_key", required = true) @NotNull @NotBlank @CodePointLength(min = 1, max = 128) String listingKey,
             @JsonProperty(value = "title", required = true) @NotNull @NotBlank @CodePointLength(min = 1, max = 200) String title,
             @JsonProperty(value = "description", required = true) @NotNull @NotBlank @CodePointLength(min = 1, max = 1500) String description,
-            @JsonProperty(value = "price", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+\\.[0-9]{2}(?![\\s\\S])") @DecimalMin(value = "0", inclusive = false) String price,
+            @JsonProperty(value = "price", required = true) @JsonDeserialize(using = StrictMoneyWireDeserializer.class) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+\\.[0-9]{2}(?![\\s\\S])") @DecimalMin(value = "0", inclusive = false) String price,
             @JsonProperty(value = "stock", required = true) @NotNull @Min(0) @Max(999999) Integer stock,
             @JsonProperty(value = "images", required = true) @NotEmpty List<@NotNull @Valid ListingImage> images,
             @JsonProperty(value = "category", required = true) @NotNull @Valid ListingCategory category,
@@ -220,7 +237,7 @@ public final class XianyuConvergenceContracts {
     public record ListingShipping(
             @JsonProperty(value = "method", required = true) @NotNull @Pattern(regexp = "free|distance|fixed|template|none") String method,
             @JsonProperty(value = "support_pickup", required = true) @NotNull Boolean supportPickup,
-            @JsonProperty(value = "postage", required = true) @JsonInclude(JsonInclude.Include.ALWAYS) String postage) implements ClosedContract {
+            @JsonProperty(value = "postage", required = true) @JsonInclude(JsonInclude.Include.ALWAYS) @JsonDeserialize(using = StrictMoneyWireDeserializer.class) String postage) implements ClosedContract {
         @AssertTrue
         @com.fasterxml.jackson.annotation.JsonIgnore
         public boolean isPostageConsistentWithMethod() {
@@ -279,7 +296,7 @@ public final class XianyuConvergenceContracts {
     public record ListingSku(
             @NotNull @NotBlank @CodePointLength(min = 1) @JsonProperty(value = "sku_key", required = true) @CodePointLength(max = 128) String skuKey,
             @NotEmpty @JsonProperty(value = "spec_values", required = true) Map<@NotNull @NotBlank @CodePointLength(min = 1) String, @NotNull @NotBlank @CodePointLength(min = 1) String> specValues,
-            @JsonProperty(value = "price", required = true) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+\\.[0-9]{2}(?![\\s\\S])") @DecimalMin(value = "0", inclusive = false) String price,
+            @JsonProperty(value = "price", required = true) @JsonDeserialize(using = StrictMoneyWireDeserializer.class) @NotNull @CodePointLength(min = 1) @Pattern(regexp = "^[0-9]+\\.[0-9]{2}(?![\\s\\S])") @DecimalMin(value = "0", inclusive = false) String price,
             @JsonProperty(value = "stock", required = true) @NotNull @Min(0) @Max(999999) Integer stock) implements ClosedContract { }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
