@@ -136,9 +136,12 @@ class SalesChannelCutoverServiceTest {
     }
 
     @Test
-    void exactCurrentBindingNeedsNoAdoptionAndExactLifecycleNeedsNoBootstrap() {
+    void exactCurrentBindingNeedsNoAdoptionButInitialCutoverStillRequiresBootstrap() {
         currentItem("item-1");
         CutoverBinding exact = binding(LISTING_ID.toString(), "item-1", AgentBindingState.CURRENT);
+        // The desired local intent in this fixture is OFFLINE while the exact
+        // provider observation remains ACTIVE. A matching lifecycle head is
+        // only intent history; the bootstrap ENSURE must observe convergence.
         CutoverLifecycleHead head = new CutoverLifecycleHead(1L, FINGERPRINT, false);
         CutoverProviderObservation provider = provider(AgentProviderStatus.ACTIVE, true);
         inspection(request -> inspection(request, new CutoverManagedItem("item-1", "MYSHOP"),
@@ -147,7 +150,7 @@ class SalesChannelCutoverServiceTest {
         var report = service.preflight(LISTING_ID);
         assertTrue(report.eligible(), report.blockers().toString());
         assertFalse(report.needsAdoption());
-        assertFalse(report.bootstrapEnsureRequired());
+        assertTrue(report.bootstrapEnsureRequired());
     }
 
     @Test

@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /** Immutable evidence captured by one successful read-only cutover certification. */
@@ -48,7 +49,7 @@ public class SalesChannelCutoverCertification {
     @Column(name = "requires_adoption", nullable = false)
     private boolean requiresAdoption;
 
-    @Column(name = "bootstrap_operation_id")
+    @Column(name = "bootstrap_operation_id", nullable = false)
     private UUID bootstrapOperationId;
 
     @JdbcTypeCode(SqlTypes.JSON)
@@ -71,7 +72,8 @@ public class SalesChannelCutoverCertification {
         this.currentExternalItemId = currentExternalItemId;
         this.agentStateDigest = agentStateDigest;
         this.requiresAdoption = requiresAdoption;
-        this.bootstrapOperationId = bootstrapOperationId;
+        this.bootstrapOperationId = Objects.requireNonNull(bootstrapOperationId,
+                "A cutover certification requires its exact bootstrap ENSURE operation");
         this.evidence = evidence == null ? new LinkedHashMap<>() : new LinkedHashMap<>(evidence);
         this.createdAt = createdAt;
     }

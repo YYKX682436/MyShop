@@ -151,8 +151,8 @@ public class SalesChannelCutoverService {
         if (!localCertificateMatches(candidate, certificate)) {
             return invalidateStaleAndReport(listingId, certificate.getId());
         }
-        if (certificate.getBootstrapOperationId() != null
-                && !bootstrapStillExact(candidate, certificate.getBootstrapOperationId(), false)) {
+        if (certificate.getBootstrapOperationId() == null
+                || !bootstrapStillExact(candidate, certificate.getBootstrapOperationId(), false)) {
             return invalidateStaleAndReport(listingId, certificate.getId());
         }
         if (!candidate.report().eligible()) return candidate.report();
@@ -422,8 +422,6 @@ public class SalesChannelCutoverService {
                 if (!Objects.equals(head.desiredFingerprint(), listing.getDesiredFingerprint())
                         || head.desiredActive() != active) {
                     issue(blockers, "AGENT_LIFECYCLE_CONFLICT", "Equal lifecycle revisions contain different desired intent");
-                } else {
-                    bootstrapEnsure = false;
                 }
             } else if (head != null) {
                 issue(warnings, "AGENT_LIFECYCLE_BEHIND", "Agent lifecycle revision is behind MyShop and needs a fenced ENSURE");
@@ -455,17 +453,18 @@ public class SalesChannelCutoverService {
             return new Finalization(null, "CUTOVER_SNAPSHOT_CHANGED");
         }
 
-        SalesChannelOperation bootstrap = null;
-        if (candidate.report().bootstrapEnsureRequired()) {
-            bootstrap = operationService.prepareCertifiedEnsure(locked.getId(), candidate.ensurePayload());
-        }
+        // Lifecycle-head equality proves accepted intent history only. Every
+        // first certification must freeze one ENSURE so Agent re-observes the
+        // provider through its single authoritative convergence path.
+        SalesChannelOperation bootstrap = operationService.prepareCertifiedEnsure(
+                locked.getId(), candidate.ensurePayload());
         UUID certificationId = UUID.randomUUID();
         Map<String, Object> evidence = safeEvidence(candidate);
         SalesChannelCutoverCertification certificate = new SalesChannelCutoverCertification(
                 certificationId, locked.getId(), locked.getDesiredRevision(), locked.getDesiredState().name(),
                 locked.getDesiredFingerprint(), itemId,
                 candidate.inspection().inspectionDigest(), candidate.report().needsAdoption(),
-                bootstrap == null ? null : bootstrap.getId(), evidence, LocalDateTime.now());
+                bootstrap.getId(), evidence, LocalDateTime.now());
         certificationRepository.saveAndFlush(certificate);
         locked.certifyConvergence(certificationId);
         if (itemId != null && hasExactCurrentBinding(candidate.inspection(), locked.getId(), itemId)) {
@@ -496,8 +495,8 @@ public class SalesChannelCutoverService {
         if (!Objects.equals(current == null ? null : current.getExternalItemId(), certificate.getCurrentExternalItemId())) {
             return new Finalization(null, "CUTOVER_CERTIFICATION_STALE");
         }
-        if (certificate.getBootstrapOperationId() != null
-                && !bootstrapStillExact(candidate, certificate.getBootstrapOperationId(), true)) {
+        if (certificate.getBootstrapOperationId() == null
+                || !bootstrapStillExact(candidate, certificate.getBootstrapOperationId(), true)) {
             return new Finalization(null, "CUTOVER_CERTIFICATION_STALE");
         }
         locked.activateConvergence(LocalDateTime.now());

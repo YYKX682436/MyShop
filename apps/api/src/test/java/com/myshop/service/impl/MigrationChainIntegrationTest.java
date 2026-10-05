@@ -55,8 +55,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("39", flyway.info().current().getVersion().getVersion());
-        assertEquals(39, flyway.info().all().length);
+        assertEquals("40", flyway.info().current().getVersion().getVersion());
+        assertEquals(40, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -539,7 +539,19 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
+        assertEquals("NO", jdbcTemplate.queryForObject("""
+                SELECT is_nullable FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'sales_channel_cutover_certifications'
+                    AND column_name = 'bootstrap_operation_id'
+                """, String.class));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO sales_channel_cutover_certifications(
+                    id, sales_channel_listing_id, desired_revision, desired_state,
+                    desired_fingerprint, agent_state_digest, requires_adoption,
+                    bootstrap_operation_id, evidence, created_at)
+                VALUES (?, ?, 5, 'ONLINE', ?, ?, false, NULL, '{}'::jsonb, CURRENT_TIMESTAMP)
+                """, UUID.randomUUID(), listingId, "a".repeat(64), "b".repeat(64)));
         assertEquals("UNCERTIFIED", jdbcTemplate.queryForObject(
                 "SELECT convergence_cutover_state FROM sales_channel_listings WHERE id = ?",
                 String.class, listingId));
@@ -556,13 +568,20 @@ class MigrationChainIntegrationTest {
         UUID first = UUID.randomUUID();
         UUID second = UUID.randomUUID();
         for (UUID id : List.of(first, second)) {
+            UUID bootstrapOperationId = UUID.randomUUID();
+            jdbcTemplate.update("""
+                    INSERT INTO sales_channel_operations(
+                        id, sales_channel_listing_id, operation_type, status, desired_revision,
+                        idempotency_key, payload, attempt_count)
+                    VALUES (?, ?, 'ENSURE_LISTING', 'PENDING', 5, ?, '{}'::jsonb, 0)
+                    """, bootstrapOperationId, listingId, "bootstrap-" + bootstrapOperationId);
             jdbcTemplate.update("""
                     INSERT INTO sales_channel_cutover_certifications(
                         id, sales_channel_listing_id, desired_revision, desired_state,
                         desired_fingerprint, current_external_item_id, agent_state_digest,
-                        requires_adoption, evidence, created_at)
-                    VALUES (?, ?, 5, 'ONLINE', ?, 'item-1', ?, false, '{}'::jsonb, CURRENT_TIMESTAMP)
-                    """, id, listingId, "a".repeat(64), "b".repeat(64));
+                        requires_adoption, bootstrap_operation_id, evidence, created_at)
+                    VALUES (?, ?, 5, 'ONLINE', ?, 'item-1', ?, false, ?, '{}'::jsonb, CURRENT_TIMESTAMP)
+                    """, id, listingId, "a".repeat(64), "b".repeat(64), bootstrapOperationId);
         }
         jdbcTemplate.update("""
                 UPDATE sales_channel_listings SET convergence_cutover_state = 'CERTIFIED',
@@ -756,7 +775,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("after_sale_requests", "admin_reply"));
         assertEquals("历史管理员说明", jdbcTemplate.queryForObject(
                 "SELECT rejection_reason FROM after_sale_requests WHERE id = ?", String.class,
@@ -829,7 +848,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
                 "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
         assertNull(jdbcTemplate.queryForObject(
@@ -859,7 +878,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -953,7 +972,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -1154,7 +1173,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -1224,7 +1243,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -1273,7 +1292,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -1473,7 +1492,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1519,7 +1538,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("39", flyway().info().current().getVersion().getVersion());
+        assertEquals("40", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));
