@@ -357,7 +357,8 @@ class XianyuItemBindingPostgresIntegrationTest {
         int operationCount = count("SELECT count(*) FROM sales_channel_operations");
 
         desiredStatePlanner.refresh(before.getId());
-        listingService.updateProviderConfig(before.getId(), Map.of("local", "config-only"));
+        before.setProviderConfig(Map.of("local", "config-only"));
+        listingRepository.saveAndFlush(before);
         assertThrows(BusinessException.class, () -> desiredStatePlanner.setEnabled(before.getId(), true));
         BusinessException retryError = assertThrows(BusinessException.class,
                 () -> desiredStatePlanner.retry(before.getId()));

@@ -626,13 +626,16 @@ public class SalesChannelAdminService {
                 throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
                         "该闲鱼商品尚未完成 MyShop 接管，不能开启自动发货", HttpStatus.CONFLICT);
             }
-            SalesChannelListingGeneration current = generationRepository
-                    .findCurrentByListingId(listing.getId()).orElse(null);
-            if (current == null || current.getExternalItemId() == null || current.getExternalItemId().isBlank()) {
-                throw new IllegalStateException("Only a MyShop-managed listing with an external item can enable auto fulfillment");
+            if (listing.getStatus() != com.myshop.constant.SalesChannelListingStatus.ONLINE
+                    || listing.getAppliedRevision() != listing.getDesiredRevision()) {
+                throw new IllegalStateException("Auto fulfillment requires an applied ONLINE desired listing revision");
             }
-            if (!"FISH_SHOP".equals(accountType(account))) {
+            if (account.getStatus() != com.myshop.constant.SalesChannelAccountStatus.CONNECTED
+                    || account.getLastVerifiedAt() == null || !"FISH_SHOP".equals(accountType(account))) {
                 throw new IllegalStateException("Auto fulfillment requires a verified FISH_SHOP account");
+            }
+            if (!product.isEnabled() || !Integer.valueOf(0).equals(product.getIsDeleted())) {
+                throw new IllegalStateException("Auto fulfillment requires an enabled, non-deleted product");
             }
             if (!"AUTO".equalsIgnoreCase(product.getDeliveryType()) || product.getStockMode() != StockMode.CARD_KEY) {
                 throw new IllegalStateException("Phase 4 auto fulfillment requires deliveryType=AUTO and stockMode=CARD_KEY");
@@ -644,14 +647,9 @@ public class SalesChannelAdminService {
             if (product.isSpecEnabled()) {
                 List<ProductSpec> activeSpecs = productSpecRepository
                         .findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
-                if (current == null) {
-                    throw new IllegalStateException("Current provider generation is required for specification mappings");
+                if (activeSpecs.isEmpty() || activeSpecs.stream().anyMatch(spec -> spec.getCostPrice() == null)) {
+                    throw new IllegalStateException("Auto fulfillment requires a cost price for every active product specification");
                 }
-                List<SalesChannelListingGenerationSpec> mappingRows = generationSpecRepository
-                        .findBySalesChannelListingGenerationIdForUpdate(current.getId());
-                specMappingValidator.assertCompleteForAutoFulfillment(
-                        activeSpecs.stream().map(SalesChannelSpecMappingValidator::snapshot).toList(),
-                        mappingRows.stream().map(SalesChannelSpecMappingValidator::snapshot).toList());
             }
         }
         listing.setAutoFulfillmentEnabled(enabled);

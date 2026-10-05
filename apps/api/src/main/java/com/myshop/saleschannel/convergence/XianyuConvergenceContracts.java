@@ -330,10 +330,22 @@ public final class XianyuConvergenceContracts {
             @JsonProperty(value = "message", required = true) @NotNull @CodePointLength(min = 1, max = 1000) String message) implements ClosedContract { }
 
     public record AdoptExistingItemRequest(
-            @JsonProperty(value = "request_id", required = true) @NotNull @CodePointLength(min = 1, max = 255) String requestId,
+            @JsonProperty(value = "request_id", required = true) @NotNull @CodePointLength(min = 1, max = 255) @Pattern(regexp = "^[A-Za-z0-9._~-]{1,255}$") String requestId,
             @JsonProperty(value = "listing_key", required = true) @NotNull @CodePointLength(min = 1, max = 128) String listingKey,
-            @JsonProperty(value = "account_id", required = true) @NotNull @CodePointLength(min = 1, max = 128) String accountId,
-            @JsonProperty(value = "external_item_id", required = true) @NotNull @CodePointLength(min = 1, max = 128) String externalItemId) implements ClosedContract { }
+            @JsonProperty(value = "account_id", required = true) @NotNull @CodePointLength(min = 1, max = 80) String accountId,
+            @JsonProperty(value = "external_item_id", required = true) @NotNull @CodePointLength(min = 1, max = 64) String externalItemId) implements ClosedContract {
+        @AssertTrue
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isAccountIdExact() {
+            return accountId == null || (!accountId.isBlank() && accountId.equals(accountId.strip()));
+        }
+
+        @AssertTrue
+        @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isListingKeyCanonical() {
+            return listingKey == null || canonicalListingKey(listingKey);
+        }
+    }
 
     public record SendDeliveryRequest(
             @JsonProperty(value = "request_id", required = true) @NotNull @CodePointLength(min = 1, max = 255) String requestId,

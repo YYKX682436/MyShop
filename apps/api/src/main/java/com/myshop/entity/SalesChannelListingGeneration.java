@@ -55,6 +55,17 @@ public class SalesChannelListingGeneration extends BaseEntity {
     @Column(name = "retired_at")
     private LocalDateTime retiredAt;
 
+    public void makeCurrent(LocalDateTime at) {
+        this.generationState = SalesChannelGenerationState.CURRENT;
+        this.activatedAt = at;
+        this.retiredAt = null;
+    }
+
+    public void retire(LocalDateTime at) {
+        this.generationState = SalesChannelGenerationState.RETIRED;
+        this.retiredAt = at;
+    }
+
     public SalesChannelListingGeneration(UUID listingId, UUID accountId, long generationNo,
                                          String externalItemId, SalesChannelGenerationState state, String origin) {
         this.salesChannelListingId = listingId;

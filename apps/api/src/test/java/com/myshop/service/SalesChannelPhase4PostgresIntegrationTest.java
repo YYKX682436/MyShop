@@ -82,6 +82,7 @@ import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -657,6 +658,102 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(1, operations.stream().filter(operation -> specId != null && operation.getCardKeyId() != null).count());
         assertEquals(0, operations.stream().filter(operation -> operation.getResultJson() != null
                 && operation.getResultJson().containsKey("content")).count());
+    }
+
+    @Test
+    void stableListingAndSkuKeysImportWithoutAnyGenerationProjection() {
+        UUID productId = insertProduct(true);
+        UUID specId = insertProductSpec(productId, "stable sku");
+        SalesChannelAccount account = account("stable-keys");
+        SalesChannelListing listing = listingWithoutGeneration(account, productId);
+        AgentOrder external = new AgentOrder(account.getProviderAccountId(), "xy-stable-keys",
+                "pending_ship", "agent-owned-item", null, null, null, 1, "10.00", "CNY",
+                "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z",
+                listing.getId().toString().toLowerCase(), specId.toString().toLowerCase());
+
+        SalesChannelOrder imported = importService.importOrder(account, external);
+
+        assertEquals(SalesChannelOrderIngestStatus.IMPORTED, imported.getIngestStatus());
+        assertEquals(listing.getId(), imported.getSalesChannelListingId());
+        assertNull(imported.getSalesChannelListingGenerationId());
+        assertEquals(specId, orderItemRepository.findByOrderId(imported.getOrderId()).getFirst().getSpecId());
+    }
+
+    @Test
+    void stableListingKeyAccountAndLegacyItemConflictsFailClosed() {
+        UUID productId = insertProduct(false);
+        UUID secondProductId = insertProduct(false);
+        SalesChannelAccount account = account("stable-key-conflict");
+        SalesChannelListing first = listing(account, productId, "legacy-item-a", false);
+        SalesChannelListing second = listing(account, secondProductId, "legacy-item-b", false);
+        AgentOrder conflictingItem = new AgentOrder(account.getProviderAccountId(), "xy-stable-item-conflict",
+                "pending_ship", "legacy-item-a", null, null, null, 1, "10.00", "CNY",
+                "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z",
+                second.getId().toString().toLowerCase(), null);
+
+        SalesChannelOrder itemConflict = importService.importOrder(account, conflictingItem);
+
+        assertEquals(SalesChannelOrderIngestStatus.MAPPING_ERROR, itemConflict.getIngestStatus());
+        assertEquals("LISTING_IDENTITY_CONFLICT", itemConflict.getLastErrorCode());
+        assertNull(itemConflict.getOrderId());
+
+        SalesChannelAccount otherAccount = account("stable-key-other-account");
+        SalesChannelListing otherListing = listingWithoutGeneration(otherAccount, productId);
+        AgentOrder accountConflict = new AgentOrder(account.getProviderAccountId(), "xy-stable-account-conflict",
+                "pending_ship", "unprojected-item", null, null, null, 1, "10.00", "CNY",
+                "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z",
+                otherListing.getId().toString().toLowerCase(), null);
+
+        SalesChannelOrder accountMismatch = importService.importOrder(account, accountConflict);
+
+        assertEquals(SalesChannelOrderIngestStatus.MAPPING_ERROR, accountMismatch.getIngestStatus());
+        assertEquals("LISTING_ACCOUNT_MISMATCH", accountMismatch.getLastErrorCode());
+        assertNull(accountMismatch.getOrderId());
+        assertNotEquals(first.getId(), second.getId());
+    }
+
+    @Test
+    void stableSkuKeyConflictWithLegacyExternalSkuProjectionFailsClosed() {
+        UUID productId = insertProduct(true);
+        UUID stableSpecId = insertProductSpec(productId, "stable mapping target");
+        UUID legacySpecId = insertProductSpec(productId, "legacy mapping target");
+        SalesChannelAccount account = account("stable-sku-conflict");
+        SalesChannelListing listing = listing(account, productId, "stable-sku-item", false);
+        SalesChannelListingGeneration generation = generationRepository
+                .findCurrentByListingId(listing.getId()).orElseThrow();
+        SalesChannelListingGenerationSpec legacyMapping = new SalesChannelListingGenerationSpec();
+        legacyMapping.setSalesChannelListingGenerationId(generation.getId());
+        legacyMapping.setProductSpecId(legacySpecId);
+        legacyMapping.setExternalSkuId("provider-sku-legacy");
+        generationSpecRepository.saveAndFlush(legacyMapping);
+        AgentOrder external = new AgentOrder(account.getProviderAccountId(), "xy-stable-sku-conflict",
+                "pending_ship", "stable-sku-item", "provider-sku-legacy", null, null, 1, "10.00", "CNY",
+                "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z",
+                listing.getId().toString().toLowerCase(), stableSpecId.toString().toLowerCase());
+
+        SalesChannelOrder conflict = importService.importOrder(account, external);
+
+        assertEquals(SalesChannelOrderIngestStatus.MAPPING_ERROR, conflict.getIngestStatus());
+        assertEquals("SKU_IDENTITY_CONFLICT", conflict.getLastErrorCode());
+        assertNull(conflict.getOrderId());
+
+        UUID legacyNameValueSpecId = insertProductSpec(productId, "legacy name value mapping target");
+        SalesChannelListingGenerationSpec legacyNameValueMapping = new SalesChannelListingGenerationSpec();
+        legacyNameValueMapping.setSalesChannelListingGenerationId(generation.getId());
+        legacyNameValueMapping.setProductSpecId(legacyNameValueSpecId);
+        legacyNameValueMapping.setProviderMapping(Map.of(
+                "provider_spec_name", "Provider color", "provider_spec_value", "Legacy blue"));
+        generationSpecRepository.saveAndFlush(legacyNameValueMapping);
+        AgentOrder nameValueConflict = new AgentOrder(account.getProviderAccountId(), "xy-stable-sku-name-conflict",
+                "pending_ship", "stable-sku-item", null, "Provider color", "Legacy blue", 1,
+                "10.00", "CNY", "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z",
+                listing.getId().toString().toLowerCase(), stableSpecId.toString().toLowerCase());
+
+        SalesChannelOrder legacyNameConflict = importService.importOrder(account, nameValueConflict);
+
+        assertEquals(SalesChannelOrderIngestStatus.MAPPING_ERROR, legacyNameConflict.getIngestStatus());
+        assertEquals("SKU_IDENTITY_CONFLICT", legacyNameConflict.getLastErrorCode());
+        assertNull(legacyNameConflict.getOrderId());
     }
 
     @Test
@@ -1494,6 +1591,18 @@ class SalesChannelPhase4PostgresIntegrationTest {
         listing.setAutoFulfillmentEnabled(false);
         listing.setDesiredState(SalesChannelListingDesiredState.OFFLINE);
         listing.setStatus(SalesChannelListingStatus.DRAFT);
+        return listingRepository.saveAndFlush(listing);
+    }
+
+    private SalesChannelListing listingWithoutGeneration(SalesChannelAccount account, UUID productId) {
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setSalesChannelAccountId(account.getId());
+        listing.setProductId(productId);
+        listing.setEnabled(false);
+        listing.setAutoFulfillmentEnabled(false);
+        listing.setDesiredState(SalesChannelListingDesiredState.OFFLINE);
+        listing.setStatus(SalesChannelListingStatus.DRAFT);
+        listing.setProviderConfig(Map.of());
         return listingRepository.saveAndFlush(listing);
     }
 

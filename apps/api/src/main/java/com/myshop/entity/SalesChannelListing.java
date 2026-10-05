@@ -72,6 +72,14 @@ public class SalesChannelListing extends BaseEntity {
     @Column(name = "desired_fingerprint", length = 64)
     private String desiredFingerprint;
 
+    @Column(name = "convergence_adopted_external_item_id", length = 128)
+    @Setter
+    private String convergenceAdoptedExternalItemId;
+
+    @Column(name = "convergence_adopted_at")
+    @Setter
+    private LocalDateTime convergenceAdoptedAt;
+
     @Column(name = "last_synced_at")
     @Setter
     private LocalDateTime lastSyncedAt;

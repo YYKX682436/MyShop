@@ -6,5 +6,6 @@ public enum SalesChannelOperationType {
     SYNC,
     OFFLINE,
     DELETE,
-    RECONCILE
+    RECONCILE,
+    ENSURE_LISTING
 }

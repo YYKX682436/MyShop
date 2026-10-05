@@ -101,14 +101,12 @@ class SalesChannelAdminServiceTest {
         listing.setId(listingId);
         listing.setSalesChannelAccountId(accountId);
         listing.setProductId(productId);
-        SalesChannelListingGeneration generation = generation(listing, "external-item");
-        when(generationRepository.findCurrentByListingId(listingId))
-                .thenReturn(Optional.of(generation));
-
         SalesChannelAccount account = new SalesChannelAccount();
         account.setId(accountId);
         account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId("verified-account");
         account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        account.setLastVerifiedAt(java.time.LocalDateTime.now());
         account.setCapabilities(Map.of("account_type", "FISH_SHOP"));
 
         Product product = new Product();
@@ -118,6 +116,8 @@ class SalesChannelAdminServiceTest {
         product.setStockMode(StockMode.CARD_KEY);
         product.setRetailPrice(new BigDecimal("20.00"));
         product.setCostPrice(null);
+        product.setEnabled(true);
+        product.setIsDeleted(0);
 
         when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
@@ -129,7 +129,7 @@ class SalesChannelAdminServiceTest {
     }
 
     @Test
-    void autoFulfillmentPreflightRejectsSpecEnabledProductWithoutCompleteMapping() {
+    void autoFulfillmentUsesStableSkuIdentityWithoutRequiringLegacyGenerationMapping() {
         UUID listingId = UUID.randomUUID();
         UUID accountId = UUID.randomUUID();
         UUID productId = UUID.randomUUID();
@@ -139,14 +139,14 @@ class SalesChannelAdminServiceTest {
         listing.setId(listingId);
         listing.setSalesChannelAccountId(accountId);
         listing.setProductId(productId);
-        SalesChannelListingGeneration generation = generation(listing, "external-item");
-        when(generationRepository.findCurrentByListingId(listingId))
-                .thenReturn(Optional.of(generation));
-
+        listing.setDesiredState(com.myshop.constant.SalesChannelListingDesiredState.ONLINE);
+        listing.setStatus(com.myshop.constant.SalesChannelListingStatus.ONLINE);
         SalesChannelAccount account = new SalesChannelAccount();
         account.setId(accountId);
         account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId("verified-account");
         account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        account.setLastVerifiedAt(java.time.LocalDateTime.now());
         account.setCapabilities(Map.of("account_type", "FISH_SHOP"));
 
         Product product = new Product();
@@ -154,26 +154,26 @@ class SalesChannelAdminServiceTest {
         product.setSpecEnabled(true);
         product.setDeliveryType("AUTO");
         product.setStockMode(StockMode.CARD_KEY);
+        product.setEnabled(true);
+        product.setIsDeleted(0);
 
         ProductSpec spec = new ProductSpec();
         spec.setId(specId);
         spec.setProductId(productId);
         spec.setName("月卡");
+        spec.setCostPrice(new BigDecimal("5.00"));
 
         when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
         when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
         when(productRepository.findById(productId)).thenReturn(Optional.of(product));
         when(productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(productId, 0))
                 .thenReturn(java.util.List.of(spec));
-        when(generationSpecRepository.findBySalesChannelListingGenerationIdForUpdate(generation.getId()))
-                .thenReturn(java.util.List.of());
-        doThrow(new SalesChannelSpecMappingException("SPEC_MAPPING_INCOMPLETE", "mapping required"))
-                .when(specMappingValidator).assertCompleteForAutoFulfillment(any(), any());
+        when(listingRepository.save(listing)).thenReturn(listing);
+        service.setAutoFulfillmentEnabled(listingId, true);
 
-        assertThrows(SalesChannelSpecMappingException.class,
-                () -> service.setAutoFulfillmentEnabled(listingId, true));
-        verify(specMappingValidator).assertCompleteForAutoFulfillment(any(), any());
-        verify(listingRepository, never()).save(any(SalesChannelListing.class));
+        verify(specMappingValidator, never()).assertCompleteForAutoFulfillment(any(), any());
+        verify(generationSpecRepository, never()).findBySalesChannelListingGenerationIdForUpdate(any());
+        verify(listingRepository).save(listing);
     }
 
     @Test

@@ -49,6 +49,51 @@ class XianyuConvergenceHttpClientTest {
     }
 
     @Test
+    void offlineEnsureSerializesAnExplicitNullDesiredSnapshot() throws Exception {
+        EnsureListingRequest online = request();
+        EnsureListingRequest offline = new EnsureListingRequest(online.requestId(), online.listingKey(),
+                online.accountId(), online.revision(), DesiredListingState.OFFLINE, null);
+        var reply = new AtomicReference<>(new Reply(202, observation("APPLYING", offline.requestId(), null)));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var result = client(fixture.baseUrl(), 2_000).ensureListing(offline);
+            assertEquals(OperationState.APPLYING, result.state());
+            Captured sent = fixture.requests().getFirst();
+            JsonNode body = objectMapper.readTree(sent.body());
+            assertEquals("OFFLINE", body.path("desired_state").asText());
+            assertTrue(body.has("desired_snapshot"));
+            assertTrue(body.path("desired_snapshot").isNull());
+            assertSigned(sent);
+        }
+    }
+
+    @Test
+    void adoptionUsesExactV2PathAndSharedHmacSigner() throws Exception {
+        var adoption = new com.myshop.saleschannel.convergence.XianyuConvergenceContracts.AdoptExistingItemRequest(
+                "adopt-listing-1-digest", "listing-1", "account-123", "item-123");
+        var response = objectMapper.createObjectNode();
+        response.put("request_id", adoption.requestId());
+        response.put("listing_key", adoption.listingKey());
+        response.put("state", "SUCCEEDED");
+        response.put("external_item_id", adoption.externalItemId());
+        response.putNull("error");
+        var reply = new AtomicReference<>(new Reply(200, objectMapper.writeValueAsBytes(response)));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var result = client(fixture.baseUrl(), 2_000).adoptExistingItem(adoption);
+            assertEquals(OperationState.SUCCEEDED, result.state());
+            assertEquals(adoption.externalItemId(), result.externalItemId());
+            Captured sent = fixture.requests().getFirst();
+            assertEquals("POST", sent.method());
+            assertEquals("/api/integration/v2/listings/adopt", sent.path());
+            JsonNode body = objectMapper.readTree(sent.body());
+            assertEquals(adoption.requestId(), body.path("request_id").asText());
+            assertEquals(adoption.listingKey(), body.path("listing_key").asText());
+            assertEquals(adoption.accountId(), body.path("account_id").asText());
+            assertEquals(adoption.externalItemId(), body.path("external_item_id").asText());
+            assertSigned(sent);
+        }
+    }
+
+    @Test
     void observeSignsGetWithTheHashOfEmptyBytes() throws Exception {
         String requestId = "a.b_c~d-e";
         var reply = new AtomicReference<>(new Reply(200, observation("SUCCEEDED", requestId, "item-1")));

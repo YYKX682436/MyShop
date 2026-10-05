@@ -52,7 +52,11 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
     @Override
     public EnsureListingOperationObservation ensureListing(EnsureListingRequest request) {
         if (request == null || request.requestId() == null || request.listingKey() == null
-                || request.desiredSnapshot() == null) {
+                || request.desiredState() == null
+                || request.desiredState() == com.myshop.saleschannel.convergence.XianyuConvergenceContracts.DesiredListingState.ONLINE
+                && request.desiredSnapshot() == null
+                || request.desiredState() == com.myshop.saleschannel.convergence.XianyuConvergenceContracts.DesiredListingState.OFFLINE
+                && request.desiredSnapshot() != null) {
             throw permanent("INVALID_ENSURE_LISTING", "The listing command is incomplete");
         }
         if (!CONTRACT_VALIDATOR.validate(request).isEmpty()) {
@@ -104,6 +108,11 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
             return observation;
         }
 
+        String rejectionCode = errorCode(root, "");
+        if ("V2_WRITES_DISABLED".equals(rejectionCode)) {
+            return failedFromRejection(root, request.requestId(), request.listingKey(), request.revision());
+        }
+
         if (response.statusCode() >= 400 && response.statusCode() < 500) {
             return failedFromRejection(root, request.requestId(), request.listingKey(), request.revision());
         }
@@ -150,7 +159,53 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
 
     @Override
     public OperationObservation adoptExistingItem(AdoptExistingItemRequest request) {
-        throw new UnsupportedOperationException("Adoption is not wired in S2.1");
+        if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
+            throw permanent("INVALID_ADOPTION_REQUEST", "The exact listing adoption request is invalid");
+        }
+        final byte[] body;
+        try {
+            body = objectMapper.writeValueAsBytes(request);
+        } catch (IOException | RuntimeException failure) {
+            throw permanent("INVALID_ADOPTION_REQUEST", "The exact listing adoption request cannot be serialized");
+        }
+
+        final XianyuSignedHttpTransport.Response response;
+        try {
+            response = transport.send("POST", "/listings/adopt", body, "application/json");
+        } catch (XianyuSignedHttpTransport.TransportException failure) {
+            if ("AGENT_CONFIGURATION_MISSING".equals(failure.code())
+                    || "AGENT_CONFIGURATION_INVALID".equals(failure.code())
+                    || "REQUEST_BUILD_FAILED".equals(failure.code())) {
+                throw permanent(failure.code(), "Xianyu Agent client configuration is incomplete");
+            }
+            // Adoption has no provider-side effect. Even an uncertain HTTP
+            // outcome can be retried with the same exact request_id.
+            throw retryable(failure.code(), "The exact identity adoption can be safely replayed");
+        }
+        if (response.body().length > MAX_JSON_RESPONSE_BYTES) {
+            throw retryable("AGENT_ADOPTION_RESPONSE_TOO_LARGE", "Xianyu Agent adoption response was unreadable");
+        }
+        JsonNode root = parseTree(response.body());
+        if (root != null && hasRequiredAdoptionObservationFields(root)) {
+            OperationObservation observation = parseAdoptionObservation(root);
+            if (observation == null) {
+                throw retryable("AGENT_ADOPTION_RESPONSE_INVALID", "Xianyu Agent returned an invalid adoption response");
+            }
+            verifyAdoptionIdentity(observation, request);
+            return observation;
+        }
+
+        String code = errorCode(root, "AGENT_ADOPTION_RESPONSE_UNCONFIRMED");
+        String message = errorMessage(root, "Xianyu Agent adoption response could not be confirmed");
+        if ("V2_ADOPTION_DISABLED".equals(code)) {
+            return failedAdoption(request, code, message);
+        }
+        if (response.statusCode() >= 400 && response.statusCode() < 500) {
+            return failedAdoption(request, code, message);
+        }
+        // No provider action is involved, so unknown 5xx/timeout responses
+        // remain safe exact replays instead of becoming UNKNOWN.
+        throw retryable(code, message);
     }
 
     @Override
@@ -172,6 +227,49 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         } catch (IOException | RuntimeException failure) {
             return null;
         }
+    }
+
+    private OperationObservation parseAdoptionObservation(JsonNode root) {
+        try {
+            OperationObservation observation = objectMapper.treeToValue(root, OperationObservation.class);
+            return CONTRACT_VALIDATOR.validate(observation).isEmpty() ? observation : null;
+        } catch (IOException | RuntimeException failure) {
+            return null;
+        }
+    }
+
+    private static boolean hasRequiredAdoptionObservationFields(JsonNode root) {
+        if (root == null || !root.isObject()
+                || !root.path("request_id").isTextual() || !root.path("listing_key").isTextual()
+                || !root.path("state").isTextual() || !root.has("external_item_id") || !root.has("error")) {
+            return false;
+        }
+        String state = root.path("state").asText();
+        if (!state.equals("APPLYING") && !state.equals("SUCCEEDED") && !state.equals("FAILED")) return false;
+        JsonNode itemId = root.get("external_item_id");
+        if (!itemId.isNull() && !itemId.isTextual()) return false;
+        JsonNode error = root.get("error");
+        if (state.equals("FAILED")) {
+            return error.isObject() && error.path("code").isTextual() && !error.path("code").asText().isBlank()
+                    && error.path("message").isTextual() && !error.path("message").asText().isBlank();
+        }
+        return error.isNull();
+    }
+
+    private static void verifyAdoptionIdentity(OperationObservation observation, AdoptExistingItemRequest request) {
+        if (!request.requestId().equals(observation.requestId())
+                || !request.listingKey().equals(observation.listingKey())) {
+            throw permanent("AGENT_ADOPTION_IDENTITY_MISMATCH", "Xianyu Agent returned another adoption identity");
+        }
+        if (observation.state() == OperationState.SUCCEEDED
+                && !request.externalItemId().equals(observation.externalItemId())) {
+            throw permanent("AGENT_ADOPTION_RESULT_MISMATCH", "Xianyu Agent adopted another provider item");
+        }
+    }
+
+    private static OperationObservation failedAdoption(AdoptExistingItemRequest request, String code, String message) {
+        return new OperationObservation(request.requestId(), request.listingKey(), OperationState.FAILED,
+                null, null, null, null, new OperationError(code, message));
     }
 
     private static boolean hasRequiredObservationFields(JsonNode root) {

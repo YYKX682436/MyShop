@@ -2,7 +2,6 @@ package com.myshop.service;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.SalesChannelListingManagementMode;
-import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.exception.BusinessException;
 import org.springframework.http.HttpStatus;
@@ -41,10 +40,6 @@ public final class SalesChannelListingManagementPolicy {
     public static boolean orderImportAllowed(SalesChannelListingManagementMode mode) {
         return mode == SalesChannelListingManagementMode.MANAGED
                 || mode == SalesChannelListingManagementMode.TAKEOVER_PENDING;
-    }
-
-    public static boolean providerSideEffect(SalesChannelOperationType operationType) {
-        return operationType != null && operationType != SalesChannelOperationType.RECONCILE;
     }
 
     public static void requireProviderWritesAllowed(SalesChannelListing listing) {

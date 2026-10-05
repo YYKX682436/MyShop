@@ -72,6 +72,24 @@ class FakeAgent:
                 CREATE TABLE IF NOT EXISTS account_state(
                     account_id TEXT PRIMARY KEY, auth_state TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS managed_items(
+                    account_id TEXT NOT NULL, external_item_id TEXT NOT NULL,
+                    managed_by TEXT NOT NULL,
+                    PRIMARY KEY(account_id, external_item_id)
+                );
+                CREATE TABLE IF NOT EXISTS listing_bindings(
+                    account_id TEXT NOT NULL, listing_key TEXT NOT NULL,
+                    external_item_id TEXT NOT NULL, state TEXT NOT NULL,
+                    PRIMARY KEY(account_id, external_item_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_current_listing_binding
+                    ON listing_bindings(account_id, listing_key) WHERE state = 'CURRENT';
+                CREATE TABLE IF NOT EXISTS adoption_ops(
+                    request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
+                    account_id TEXT NOT NULL, listing_key TEXT NOT NULL,
+                    external_item_id TEXT NOT NULL, state TEXT NOT NULL,
+                    error_code TEXT
+                );
                 CREATE TABLE IF NOT EXISTS agent_orders(
                     account_id TEXT NOT NULL, external_order_id TEXT NOT NULL,
                     external_item_id TEXT NOT NULL, status TEXT NOT NULL,
@@ -108,6 +126,66 @@ class FakeAgent:
                 "INSERT INTO account_state VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET auth_state=excluded.auth_state",
                 (account_id, state),
             )
+
+    def adopt_existing_item(self, command: dict[str, Any], *, lose_response: bool = False) -> dict[str, Any]:
+        fingerprint = digest({key: value for key, value in command.items() if key != "request_id"})
+        with self.db() as db:
+            prior = db.execute("SELECT * FROM adoption_ops WHERE request_id=?", (command["request_id"],)).fetchone()
+            if prior:
+                if prior["fingerprint"] != fingerprint:
+                    raise IdempotencyConflict(command["request_id"])
+                row = prior
+            else:
+                managed = db.execute(
+                    "SELECT managed_by FROM managed_items WHERE account_id=? AND external_item_id=?",
+                    (command["account_id"], command["external_item_id"]),
+                ).fetchone()
+                error_code = None
+                if managed is None or managed["managed_by"] != "MYSHOP":
+                    error_code = "ITEM_NOT_MANAGED_BY_MYSHOP"
+                existing = db.execute(
+                    "SELECT * FROM listing_bindings WHERE account_id=? AND external_item_id=?",
+                    (command["account_id"], command["external_item_id"]),
+                ).fetchone()
+                current = db.execute(
+                    "SELECT * FROM listing_bindings WHERE account_id=? AND listing_key=? AND state='CURRENT'",
+                    (command["account_id"], command["listing_key"]),
+                ).fetchone()
+                if error_code is None and existing is not None and (
+                    existing["listing_key"] != command["listing_key"] or existing["state"] != "CURRENT"
+                ):
+                    error_code = "LISTING_BINDING_CONFLICT"
+                if error_code is None and current is not None and (
+                    current["external_item_id"] != command["external_item_id"]
+                ):
+                    error_code = "LISTING_BINDING_CONFLICT"
+                state = "FAILED" if error_code else "SUCCEEDED"
+                if error_code is None and existing is None:
+                    db.execute(
+                        "INSERT INTO listing_bindings VALUES (?, ?, ?, 'CURRENT')",
+                        (command["account_id"], command["listing_key"], command["external_item_id"]),
+                    )
+                    db.execute(
+                        "UPDATE provider_items SET listing_key=? "
+                        "WHERE account_id=? AND external_item_id=? AND state='CURRENT'",
+                        (command["listing_key"], command["account_id"], command["external_item_id"]),
+                    )
+                db.execute(
+                    "INSERT INTO adoption_ops VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (command["request_id"], fingerprint, command["account_id"], command["listing_key"],
+                     command["external_item_id"], state, error_code),
+                )
+                row = db.execute("SELECT * FROM adoption_ops WHERE request_id=?", (command["request_id"],)).fetchone()
+
+            response = {
+                "request_id": row["request_id"], "listing_key": row["listing_key"],
+                "state": row["state"], "external_item_id": row["external_item_id"],
+                "error": {"code": row["error_code"]} if row["error_code"] else None,
+            }
+            # The durable adoption is already terminal; only its HTTP response was lost.
+            if lose_response and row["state"] == "SUCCEEDED":
+                response["state"] = "APPLYING"
+            return response
 
     def ensure_listing(self, command: dict[str, Any], *, lose_response: bool = False) -> dict[str, Any]:
         fingerprint = digest({key: value for key, value in command.items() if key != "request_id"})
@@ -363,6 +441,14 @@ class FakeMyShop:
                     snapshot_json TEXT, status TEXT NOT NULL,
                     external_item_id TEXT
                 );
+                CREATE TABLE IF NOT EXISTS adoption_markers(
+                    listing_key TEXT PRIMARY KEY, external_item_id TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS listing_generations(
+                    listing_key TEXT NOT NULL, external_item_id TEXT NOT NULL,
+                    state TEXT NOT NULL, origin TEXT NOT NULL,
+                    PRIMARY KEY(listing_key, external_item_id)
+                );
                 CREATE TABLE IF NOT EXISTS sku_mappings(
                     listing_key TEXT NOT NULL, sku_key TEXT NOT NULL,
                     spec_values_json TEXT NOT NULL,
@@ -410,7 +496,25 @@ class FakeMyShop:
 
     @staticmethod
     def request_id(listing_key: str, revision: int) -> str:
-        return f"ensure:{listing_key}:{revision}"
+        return f"ensure-{digest([listing_key, revision])[:32]}"
+
+    def ensure_legacy_current_item(self, agent: FakeAgent, listing_key: str, account_id: str,
+                                   revision: int, snapshot: dict[str, Any], external_item_id: str,
+                                   *, lose_adoption_response: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+        adoption_request_id = f"adopt-{digest([listing_key, external_item_id])[:40]}"
+        adoption_command = {
+            "request_id": adoption_request_id, "listing_key": listing_key,
+            "account_id": account_id, "external_item_id": external_item_id,
+        }
+        adoption = agent.adopt_existing_item(adoption_command, lose_response=lose_adoption_response)
+        if adoption["state"] == "APPLYING":
+            adoption = agent.adopt_existing_item(adoption_command)
+        if adoption["state"] != "SUCCEEDED":
+            return adoption, adoption
+        with self.db() as db:
+            db.execute("INSERT OR REPLACE INTO adoption_markers VALUES (?, ?)", (listing_key, external_item_id))
+        ensure = self.ensure_listing(agent, listing_key, account_id, revision, "ONLINE", snapshot)
+        return adoption, ensure
 
     def ensure_listing(self, agent: FakeAgent, listing_key: str, account_id: str,
                        revision: int, desired_state: str, snapshot: dict[str, Any] | None,
@@ -450,6 +554,19 @@ class FakeMyShop:
             if observation["state"] == "SUCCEEDED":
                 current = db.execute("SELECT desired_state FROM listings WHERE listing_key=?", (listing_key,)).fetchone()
                 status = "OFFLINE" if current and current["desired_state"] == "OFFLINE" else "ONLINE"
+                external_item_id = observation.get("external_item_id")
+                if external_item_id is not None:
+                    projected = db.execute(
+                        "SELECT external_item_id FROM listing_generations WHERE listing_key=? AND state='CURRENT'",
+                        (listing_key,),
+                    ).fetchone()
+                    if projected is None or projected["external_item_id"] != external_item_id:
+                        db.execute("UPDATE listing_generations SET state='RETIRED' WHERE listing_key=? AND state='CURRENT'",
+                                   (listing_key,))
+                        db.execute("""INSERT INTO listing_generations VALUES (?, ?, 'CURRENT', 'CONVERGENCE')
+                                      ON CONFLICT(listing_key, external_item_id) DO UPDATE
+                                      SET state='CURRENT', origin='CONVERGENCE'""",
+                                   (listing_key, external_item_id))
             db.execute("UPDATE listings SET status=?, external_item_id=COALESCE(?, external_item_id) WHERE listing_key=?",
                        (status, observation.get("external_item_id"), listing_key))
 
@@ -464,11 +581,28 @@ class FakeMyShop:
                            (sku_key, f"{sku_key}-card-{n + 1}"))
 
     def import_order(self, event: dict[str, Any]) -> sqlite3.Row:
-        listing = self.listing(event["listing_key"])
-        if listing is None or listing["account_id"] != event["account_id"]:
-            raise ValueError("listing key/account mismatch")
-        if not event["external_item_id"] or not event["listing_key"]:
-            raise ValueError("Agent order event must carry both provider identity fields")
+        if not event["external_item_id"]:
+            raise ValueError("Agent order event must carry provider item identity")
+        with self.db() as db:
+            legacy = db.execute(
+                """SELECT g.listing_key FROM listing_generations g
+                   JOIN listings l ON l.listing_key=g.listing_key
+                   WHERE l.account_id=? AND g.external_item_id=?
+                   LIMIT 1""",
+                (event["account_id"], event["external_item_id"]),
+            ).fetchone()
+        listing_key = event.get("listing_key")
+        if listing_key:
+            listing = self.listing(listing_key)
+            if listing is None or listing["account_id"] != event["account_id"]:
+                raise ValueError("listing key/account mismatch")
+            if legacy is not None and legacy["listing_key"] != listing_key:
+                raise ValueError("LISTING_MAPPING_CONFLICT")
+        else:
+            if legacy is None:
+                raise ValueError("legacy external item identity is not linked")
+            listing_key = legacy["listing_key"]
+            listing = self.listing(listing_key)
         event_fp = digest(event)
         with self.db() as db:
             prior = db.execute("SELECT * FROM sales_orders WHERE account_id=? AND external_order_id=?",
@@ -481,15 +615,15 @@ class FakeMyShop:
                                   (event["account_id"], event["external_order_id"])).fetchone()
 
             exact_mapping = db.execute("SELECT sku_key FROM sku_mappings WHERE listing_key=? AND spec_values_json=?",
-                                       (event["listing_key"], canonical(event.get("spec_values") or {}))).fetchone()
+                                       (listing_key, canonical(event.get("spec_values") or {}))).fetchone()
             by_key = db.execute("SELECT sku_key FROM sku_mappings WHERE listing_key=? AND sku_key=?",
-                                (event["listing_key"], event.get("sku_key"))).fetchone() if event.get("sku_key") else None
+                                (listing_key, event.get("sku_key"))).fetchone() if event.get("sku_key") else None
             mapped = by_key or exact_mapping
             if event.get("sku_key") and by_key is None:
                 mapped = None
             if mapped is None:
                 db.execute("INSERT INTO sales_orders VALUES (?, ?, ?, ?, ?, NULL, 'MAPPING_ERROR', NULL, ?)",
-                           (event["account_id"], event["external_order_id"], event["listing_key"],
+                           (event["account_id"], event["external_order_id"], listing_key,
                             event["external_item_id"], event_fp, event["quantity"]))
                 return db.execute("SELECT * FROM sales_orders WHERE account_id=? AND external_order_id=?",
                                   (event["account_id"], event["external_order_id"])).fetchone()
@@ -498,7 +632,7 @@ class FakeMyShop:
             db.execute("INSERT INTO myshop_orders VALUES (?, ?, ?, ?, 'PAID', ?)",
                        (order_id, event["account_id"], event["external_order_id"], mapped["sku_key"], event["quantity"]))
             db.execute("INSERT INTO sales_orders VALUES (?, ?, ?, ?, ?, ?, 'IMPORTED', ?, ?)",
-                       (event["account_id"], event["external_order_id"], event["listing_key"],
+                       (event["account_id"], event["external_order_id"], listing_key,
                         event["external_item_id"], event_fp, mapped["sku_key"], order_id, event["quantity"]))
             return db.execute("SELECT * FROM sales_orders WHERE account_id=? AND external_order_id=?",
                               (event["account_id"], event["external_order_id"])).fetchone()
@@ -613,12 +747,18 @@ class GoldenFlowTests(unittest.TestCase):
         self.assertTrue(self.myshop.fulfill_order(row["myshop_order_id"]))
         return row["myshop_order_id"]
 
-    def test_01_new_listing_online_is_published(self):
+    def test_01_new_listing_online_is_projected_from_agent_success(self):
         result = self.ensure()
         item = self.agent.current_item(self.account, self.listing_key)
         self.assertEqual("ONLINE", self.myshop.listing(self.listing_key)["status"])
         self.assertEqual("SUCCEEDED", result["state"])
         self.assertEqual(result["external_item_id"], item["external_item_id"])
+        generation = self.myshop.counts(
+            "SELECT COUNT(*) FROM listing_generations WHERE listing_key=? "
+            "AND external_item_id=? AND state='CURRENT' AND origin='CONVERGENCE'",
+            (self.listing_key, result["external_item_id"]),
+        )
+        self.assertEqual(1, generation)
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
 
     def test_02_price_change_converges_to_provider_snapshot(self):
@@ -668,6 +808,50 @@ class GoldenFlowTests(unittest.TestCase):
         self.assertEqual(2, self.agent.write_count("PUBLISH"))
         with self.agent.db() as db:
             self.assertEqual("INVALID", db.execute("SELECT state FROM provider_items WHERE external_item_id=?", (old_id,)).fetchone()[0])
+        with self.myshop.db() as db:
+            generations = db.execute(
+                "SELECT external_item_id, state, origin FROM listing_generations WHERE listing_key=?",
+                (self.listing_key,),
+            ).fetchall()
+        self.assertEqual({(old_id, "RETIRED", "CONVERGENCE"),
+                          (result["external_item_id"], "CURRENT", "CONVERGENCE")},
+                         {(row["external_item_id"], row["state"], row["origin"]) for row in generations})
+        self.assertNotIn("CANDIDATE", {row["state"] for row in generations})
+
+    def test_05b_legacy_current_item_is_adopted_before_ensure_without_provider_write(self):
+        item_id = "legacy-item-A"
+        legacy_listing_key = "pre-convergence-listing"
+        with self.agent.db() as db:
+            db.execute("INSERT INTO managed_items VALUES (?, ?, 'MYSHOP')", (self.account, item_id))
+            db.execute("INSERT INTO provider_items VALUES (?, ?, ?, 'CURRENT', ?, 'legacy-request', 'legacy-request')",
+                       (item_id, self.account, legacy_listing_key, canonical(SNAPSHOT)))
+        with self.myshop.db() as db:
+            db.execute("INSERT INTO listings VALUES (?, ?, 1, 'ONLINE', ?, 'ONLINE', ?)",
+                       (self.listing_key, self.account, canonical(SNAPSHOT), item_id))
+            db.execute("INSERT INTO listing_generations VALUES (?, ?, 'CURRENT', 'LEGACY')",
+                       (self.listing_key, item_id))
+
+        adoption, ensure = self.myshop.ensure_legacy_current_item(
+            self.agent, self.listing_key, self.account, 1, SNAPSHOT, item_id,
+            lose_adoption_response=True,
+        )
+
+        self.assertEqual("SUCCEEDED", adoption["state"])
+        self.assertEqual(item_id, adoption["external_item_id"])
+        self.assertEqual("SUCCEEDED", ensure["state"])
+        self.assertEqual(item_id, ensure["external_item_id"])
+        self.assertEqual(0, self.agent.write_count())
+        with self.myshop.db() as db:
+            marker = db.execute(
+                "SELECT external_item_id FROM adoption_markers WHERE listing_key=?", (self.listing_key,)
+            ).fetchone()
+        self.assertEqual(item_id, marker["external_item_id"])
+        with self.agent.db() as db:
+            self.assertEqual(1, db.execute("SELECT COUNT(*) FROM adoption_ops").fetchone()[0])
+            self.assertEqual("CURRENT", db.execute(
+                "SELECT state FROM listing_bindings WHERE account_id=? AND listing_key=? AND external_item_id=?",
+                (self.account, self.listing_key, item_id),
+            ).fetchone()[0])
 
     def test_06_same_revision_is_idempotent(self):
         first = self.ensure()
@@ -676,18 +860,19 @@ class GoldenFlowTests(unittest.TestCase):
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
         self.assertEqual(1, self.agent.count("SELECT COUNT(*) FROM listing_ops"))
 
-    def test_07_provider_success_with_lost_http_result_is_reconciled_without_republish(self):
+    def test_07_provider_success_with_lost_http_result_recovers_by_same_post_replay(self):
         first = self.ensure(lose_response=True)
         self.assertEqual("APPLYING", first["state"])
+        request_id = first["request_id"]
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
         self.agent = FakeAgent(self.agent_db)
-        observation = self.agent.observe_operation(self.myshop.request_id(self.listing_key, 1))
-        self.myshop._apply_observation(self.listing_key, observation)
-        self.assertEqual("SUCCEEDED", observation["state"])
+        replay = self.ensure()
+        self.assertEqual(request_id, replay["request_id"])
+        self.assertEqual("SUCCEEDED", replay["state"])
         self.assertEqual("ONLINE", self.myshop.listing(self.listing_key)["status"])
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
 
-    def test_07b_noop_success_with_lost_http_result_is_recovered_by_observe(self):
+    def test_07b_noop_success_with_lost_http_result_recovers_by_same_post_replay(self):
         self.online_item(revision=1)
         applying = self.ensure(revision=2, lose_response=True)
         self.assertEqual("APPLYING", applying["state"])
@@ -695,8 +880,9 @@ class GoldenFlowTests(unittest.TestCase):
             "SELECT internal_action FROM listing_ops WHERE revision=2"
         ))
 
-        observation = self.myshop.observe(self.agent, self.listing_key, 2)
-        self.assertEqual("SUCCEEDED", observation["state"])
+        replay = self.ensure(revision=2)
+        self.assertEqual(applying["request_id"], replay["request_id"])
+        self.assertEqual("SUCCEEDED", replay["state"])
         self.assertEqual("ONLINE", self.myshop.listing(self.listing_key)["status"])
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
         self.assertEqual(0, self.agent.write_count("UPDATE"))
@@ -716,6 +902,8 @@ class GoldenFlowTests(unittest.TestCase):
         event = self.create_order()
         self.assertEqual(self.listing_key, event["listing_key"])
         self.assertTrue(event["external_item_id"])
+        with self.myshop.db() as db:
+            db.execute("DELETE FROM listing_generations WHERE listing_key=?", (self.listing_key,))
         imported = self.myshop.import_order(event)
         self.assertEqual("IMPORTED", imported["status"])
         self.assertEqual(event["external_item_id"], imported["external_item_id"])
@@ -724,6 +912,13 @@ class GoldenFlowTests(unittest.TestCase):
         event = self.create_order(sku_index=0)
         accepted = self.myshop.import_order(event)
         self.assertEqual("sku-black", accepted["sku_key"])
+        legacy = dict(event)
+        legacy["external_order_id"] = "order-legacy-sku"
+        legacy.pop("listing_key")
+        legacy["sku_key"] = None
+        accepted_legacy = self.myshop.import_order(legacy)
+        self.assertEqual("IMPORTED", accepted_legacy["status"])
+        self.assertEqual("sku-black", accepted_legacy["sku_key"])
         fuzzy = dict(event)
         fuzzy["external_order_id"] = "order-fuzzy"
         fuzzy["sku_key"] = None
@@ -784,7 +979,8 @@ class GoldenFlowTests(unittest.TestCase):
         self.ensure(lose_response=True)
         self.agent = FakeAgent(self.agent_db)
         self.myshop = FakeMyShop(self.myshop_db)
-        observation = self.myshop.observe(self.agent, self.listing_key, 1)
+        observation = self.myshop.ensure_listing(self.agent, self.listing_key, self.account,
+                                                 1, "ONLINE", SNAPSHOT)
         self.assertEqual("SUCCEEDED", observation["state"])
         self.assertEqual(1, self.agent.write_count("PUBLISH"))
 

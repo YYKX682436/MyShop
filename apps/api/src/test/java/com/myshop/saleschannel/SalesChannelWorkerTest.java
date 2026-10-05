@@ -10,17 +10,16 @@ import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.repository.SalesChannelAccountRepository;
-import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingGenerationRepository;
+import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
-import com.myshop.saleschannel.model.DesiredListingSnapshot;
-import com.myshop.saleschannel.model.SalesChannelDtos.IntegrationEnvelope;
-import com.myshop.saleschannel.model.SalesChannelDtos.ListingOperationData;
-import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
-import com.myshop.saleschannel.model.SalesChannelDtos.MediaType;
-import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
-import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
-import com.myshop.saleschannel.xianyu.XianyuMediaMaterializer;
+import com.myshop.saleschannel.convergence.XianyuConvergenceClient;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.AdoptExistingItemRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.DesiredListingState;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.EnsureListingOperationObservation;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.EnsureListingRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationObservation;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationState;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
 import com.myshop.service.SalesChannelOperationClaimService;
 import com.myshop.service.impl.SalesChannelOperationServiceImpl;
@@ -29,20 +28,21 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
-import java.math.BigDecimal;
+import java.io.InputStream;
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -64,342 +64,365 @@ class SalesChannelWorkerTest {
     }
 
     @Test
-    void mediaUploadTimeoutIsSafelyRescheduledWithoutMakingListingUnknown() {
-        SalesChannelOperation operation = publishOperation("media timeout");
-        WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.CONNECTED);
-        fixture.mediaMaterializerReturnsImage();
-        when(fixture.providerClient.uploadMedia(any())).thenThrow(new SalesChannelProviderClientException(
+    void offlineCommandPostsExplicitNullSnapshotAndProjectsAgentSuccess() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> {
+            EnsureListingRequest request = invocation.getArgument(0);
+            return observation(request, OperationState.SUCCEEDED, null, null);
+        });
+
+        fixture.worker.runBatch();
+
+        var request = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
+        verify(fixture.client).ensureListing(request.capture());
+        assertEquals(fixture.operation.getIdempotencyKey(), request.getValue().requestId());
+        assertEquals(fixture.listingId.toString(), request.getValue().listingKey());
+        assertEquals("agent-account", request.getValue().accountId());
+        assertEquals(7L, request.getValue().revision());
+        assertEquals(DesiredListingState.OFFLINE, request.getValue().desiredState());
+        assertNull(request.getValue().desiredSnapshot());
+        verify(fixture.operationService).markSucceeded(eq(fixture.operation.getId()), anyMap(), eq(FINGERPRINT));
+        verify(fixture.planner).refresh(fixture.listingId);
+    }
+
+    @Test
+    void onlineCommandCarriesFrozenSnapshotAndRequiresTheReturnedProviderIdentity() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "ONLINE", null);
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+                invocation.getArgument(0), OperationState.SUCCEEDED, "provider-item-1", null));
+
+        fixture.worker.runBatch();
+
+        var request = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
+        verify(fixture.client).ensureListing(request.capture());
+        assertEquals(DesiredListingState.ONLINE, request.getValue().desiredState());
+        assertEquals(fixture.listingId.toString(), request.getValue().desiredSnapshot().listingKey());
+        verify(fixture.operationService).markSucceeded(eq(fixture.operation.getId()), anyMap(), eq(FINGERPRINT));
+    }
+
+    @Test
+    void applyingObservationReschedulesTheSameDurableCommand() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+                invocation.getArgument(0), OperationState.APPLYING, null, null));
+
+        fixture.worker.runBatch();
+        for (int retry = 1; retry < 12; retry++) {
+            fixture.operation.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
+            fixture.worker.runBatch();
+        }
+
+        assertEquals(SalesChannelOperationStatus.PENDING, fixture.operation.getStatus());
+        assertEquals(12, fixture.operation.getAttemptCount());
+        assertEquals("AGENT_APPLYING", fixture.operation.getLastErrorCode());
+        assertEquals("myshop-ensure-command", fixture.operation.getIdempotencyKey());
+        var requests = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
+        verify(fixture.client, org.mockito.Mockito.times(12)).ensureListing(requests.capture());
+        assertTrue(requests.getAllValues().stream().allMatch(request ->
+                requests.getAllValues().getFirst().requestId().equals(request.requestId())
+                        && java.util.Objects.equals(requests.getAllValues().getFirst().desiredSnapshot(),
+                                request.desiredSnapshot())));
+        verify(fixture.operationService, org.mockito.Mockito.times(12)).reschedule(
+                eq(fixture.operation.getId()), eq("AGENT_APPLYING"),
+                any(), any());
+    }
+
+    @Test
+    void agentFailureIsProjectedAsTerminalFailure() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "ONLINE", null);
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+                invocation.getArgument(0), OperationState.FAILED, null,
+                new com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationError(
+                        "SKU_IDENTITY_CONFLICT", "Agent found a conflicting stable SKU identity")));
+
+        fixture.worker.runBatch();
+
+        assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
+        assertEquals("SKU_IDENTITY_CONFLICT", fixture.operation.getLastErrorCode());
+        verify(fixture.operationService).markFailed(fixture.operation.getId(),
+                "SKU_IDENTITY_CONFLICT", "Agent found a conflicting stable SKU identity");
+        verify(fixture.planner).refresh(fixture.listingId);
+    }
+
+    @Test
+    void onlineSuccessWithoutExactProviderIdentityFailsClosed() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "ONLINE", null);
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+                invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
+
+        fixture.worker.runBatch();
+
+        assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
+        assertEquals("AGENT_RESULT_INCOMPLETE", fixture.operation.getLastErrorCode());
+        verify(fixture.operationService).markFailed(fixture.operation.getId(),
+                "AGENT_RESULT_INCOMPLETE", "ONLINE success must include the exact external_item_id");
+        verify(fixture.planner).refresh(fixture.listingId);
+    }
+
+    @Test
+    void uncertainHttpFailureReplaysTheSameRequestWithoutCreatingUnknownOrReconcile() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        when(fixture.client.ensureListing(any())).thenThrow(new SalesChannelProviderClientException(
                 SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE,
-                "MEDIA_UPLOAD_TIMEOUT", "Media upload timed out"));
+                "AGENT_REPLAY_REQUIRED", "Agent response was lost"));
 
         fixture.worker.runBatch();
 
-        assertEquals(SalesChannelOperationStatus.PENDING, operation.getStatus());
-        assertEquals(1, operation.getAttemptCount());
-        assertEquals("MEDIA_UPLOAD_TIMEOUT", operation.getLastErrorCode());
-        verify(fixture.operationService, never()).markUnknown(any(), any(), any());
-        verify(fixture.operationService, never()).requestReconciliation(any());
-        verify(fixture.providerClient, never()).publish(any());
-        verify(fixture.providerClient, never()).update(any(), any());
+        assertEquals(SalesChannelOperationStatus.PENDING, fixture.operation.getStatus());
+        assertEquals(1, fixture.operation.getAttemptCount());
+        assertEquals("myshop-ensure-command", fixture.operation.getIdempotencyKey());
+        assertEquals("AGENT_REPLAY_REQUIRED", fixture.operation.getLastErrorCode());
     }
 
     @Test
-    void publishUnknownCreatesReconciliationBarrierAndDoesNotRepeatPublish() {
-        SalesChannelOperation operation = publishOperation("publish unknown");
-        WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.CONNECTED);
-        fixture.stubSuccessfulMediaUpload();
-        fixture.mediaMaterializerReturnsImage();
-        when(fixture.providerClient.publish(any())).thenReturn(new IntegrationEnvelope<>(
-                operation.getIdempotencyKey(), Outcome.UNKNOWN, null,
-                new com.myshop.saleschannel.model.SalesChannelDtos.IntegrationError(
-                        "RESPONSE_LOST", "Publish response could not be confirmed", false)));
+    void historicalProviderMechanicsAreNeverDispatchedByTheWorker() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.PUBLISH, "ONLINE", null);
 
         fixture.worker.runBatch();
-        fixture.worker.runBatch();
 
-        assertEquals(SalesChannelOperationStatus.UNKNOWN, operation.getStatus());
-        verify(fixture.operationService).requestReconciliation(operation.getId());
-        verify(fixture.providerClient).publish(any());
-        verify(fixture.providerClient, never()).update(any(), any());
+        verifyNoInteractions(fixture.client);
+        verify(fixture.operationService, never()).markRunning(any());
     }
 
     @Test
-    void republishSuccessWithoutItemIdentityBecomesUnknownAndQueuesOnlyReconciliation() {
-        UUID listingId = UUID.randomUUID();
-        UUID generationId = UUID.randomUUID();
-        SalesChannelOperation operation = new SalesChannelOperation(listingId, generationId,
-                SalesChannelOperationType.REPUBLISH, 9, "republish-incomplete-item-id",
-                Map.of("desired_snapshot", snapshot(), "desired_fingerprint", FINGERPRINT,
-                        "replacement_of_item_id", "source-item-1"));
-        operation.setId(UUID.randomUUID());
-        WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.CONNECTED);
-        fixture.mediaMaterializerReturnsImage();
-        fixture.stubSuccessfulMediaUpload();
-        SalesChannelListingGeneration source = new SalesChannelListingGeneration(
-                listingId, fixture.account.getId(), 1L, "source-item-1",
+    void staleEnsureLeaseUsesLocalRecoveryAndKeepsItsCommandIdentity() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        fixture.operation.start(LocalDateTime.now().minusMinutes(10));
+        when(fixture.operationRepository.findStaleEnsureRunningBefore(any(), eq(10)))
+                .thenReturn(List.of(fixture.operation));
+        when(fixture.claimService.selectReadyIds(any(), anyInt()))
+                .thenReturn(List.of());
+
+        fixture.worker.runBatch();
+
+        verify(fixture.operationService).recoverStaleEnsureAsReplay(
+                eq(fixture.operation.getId()), any());
+        assertEquals("myshop-ensure-command", fixture.operation.getIdempotencyKey());
+        verifyNoInteractions(fixture.client);
+    }
+
+    @Test
+    void adoptionUsesStableIdentityAndMustCompleteBeforeEnsureIsPosted() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        SalesChannelListingGeneration current = new SalesChannelListingGeneration(
+                fixture.listingId, fixture.accountId, 1L, "legacy-item-123",
                 SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
-        source.setId(generationId);
-        when(fixture.generationRepository.findById(generationId)).thenReturn(Optional.of(source));
-        when(fixture.providerClient.republish(any())).thenReturn(new IntegrationEnvelope<>(
-                operation.getIdempotencyKey(), Outcome.SUCCEEDED,
-                new ListingOperationData("  ", null, null, false, 9L, List.of()), null));
+        when(fixture.generationRepository.findCurrentByListingId(fixture.listingId))
+                .thenReturn(Optional.of(current));
+        when(fixture.operationService.markConvergenceAdopted(fixture.listingId, "legacy-item-123"))
+                .thenReturn(true);
+        when(fixture.client.adoptExistingItem(any())).thenAnswer(invocation -> {
+            AdoptExistingItemRequest request = invocation.getArgument(0);
+            return new OperationObservation(request.requestId(), request.listingKey(), OperationState.SUCCEEDED,
+                    null, "legacy-item-123", null, null, null);
+        });
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+                invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
 
         fixture.worker.runBatch();
-        fixture.worker.runBatch();
 
-        assertEquals(SalesChannelOperationStatus.UNKNOWN, operation.getStatus());
-        assertEquals("AGENT_RESULT_INCOMPLETE", operation.getLastErrorCode());
-        assertEquals(null, operation.getResultGenerationId());
-        List<SalesChannelOperation> reconciliations = fixture.operations.values().stream()
-                .filter(candidate -> candidate.getOperationType() == SalesChannelOperationType.RECONCILE)
-                .toList();
-        assertEquals(1, reconciliations.size());
-        assertEquals(SalesChannelOperationStatus.PENDING, reconciliations.getFirst().getStatus());
-        assertEquals(generationId, reconciliations.getFirst().getTargetGenerationId());
-        assertEquals(operation.getId().toString(), reconciliations.getFirst().getPayload().get("target_operation_id"));
-        verify(fixture.operationService).requestReconciliation(operation.getId());
-        verify(fixture.providerClient).republish(any());
-        verify(fixture.providerClient, never()).publish(any());
-        verify(fixture.providerClient, never()).offline(any(), any());
-        verify(fixture.providerClient, never()).delete(any(), any());
-        verify(fixture.operationService, never()).markSucceeded(eq(operation.getId()), any(), any());
+        var adoption = org.mockito.ArgumentCaptor.forClass(AdoptExistingItemRequest.class);
+        verify(fixture.client).adoptExistingItem(adoption.capture());
+        assertEquals("adopt-" + fixture.listingId + "-"
+                        + "" + sha256("legacy-item-123"), adoption.getValue().requestId());
+        assertEquals(fixture.listingId.toString(), adoption.getValue().listingKey());
+        assertEquals("agent-account", adoption.getValue().accountId());
+        assertEquals("legacy-item-123", adoption.getValue().externalItemId());
+        verify(fixture.operationService).markConvergenceAdopted(fixture.listingId, "legacy-item-123");
+        verify(fixture.client).ensureListing(any());
     }
 
     @Test
-    void unknownReconciliationOnlyRetriesReadOnlyReconcile() {
-        SalesChannelOperation target = publishOperation("reconcile target");
-        target.start(LocalDateTime.now());
-        target.markUnknown("RESPONSE_LOST", "unconfirmed", LocalDateTime.now());
-        UUID reconciliationId = UUID.randomUUID();
-        SalesChannelOperation reconciliation = new SalesChannelOperation(target.getSalesChannelListingId(),
-                SalesChannelOperationType.RECONCILE, target.getDesiredRevision(), "reconcile-unknown-test",
-                Map.of("target_operation_id", target.getId().toString(),
-                        "target_request_id", target.getIdempotencyKey()));
-        reconciliation.setId(reconciliationId);
-        WorkerFixture fixture = new WorkerFixture(reconciliation, SalesChannelAccountStatus.CONNECTED);
-        fixture.operations.put(target.getId(), target);
-        when(fixture.providerClient.reconcile(any())).thenReturn(new IntegrationEnvelope<>(
-                reconciliation.getIdempotencyKey(), Outcome.SUCCEEDED,
-                new ReconcileData(target.getIdempotencyKey(), Outcome.UNKNOWN, "PUBLISH", null,
-                        target.getDesiredRevision(), null, null), null));
+    void applyingAdoptionReplaysTheSameExactRequestBeforeEnsure() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        SalesChannelListingGeneration current = new SalesChannelListingGeneration(
+                fixture.listingId, fixture.accountId, 1L, "legacy-item-123",
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
+        when(fixture.generationRepository.findCurrentByListingId(fixture.listingId))
+                .thenReturn(Optional.of(current));
+        when(fixture.operationService.markConvergenceAdopted(fixture.listingId, "legacy-item-123"))
+                .thenReturn(true);
+        AtomicInteger attempt = new AtomicInteger();
+        when(fixture.client.adoptExistingItem(any())).thenAnswer(invocation -> {
+            AdoptExistingItemRequest request = invocation.getArgument(0);
+            OperationState state = attempt.getAndIncrement() == 0 ? OperationState.APPLYING : OperationState.SUCCEEDED;
+            return new OperationObservation(request.requestId(), request.listingKey(), state,
+                    null, state == OperationState.SUCCEEDED ? "legacy-item-123" : null,
+                    null, null, null);
+        });
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+                invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
 
         fixture.worker.runBatch();
+        assertEquals(SalesChannelOperationStatus.PENDING, fixture.operation.getStatus());
+        fixture.operation.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
+        fixture.worker.runBatch();
 
-        assertEquals(SalesChannelOperationStatus.UNKNOWN, target.getStatus());
-        assertEquals(SalesChannelOperationStatus.PENDING, reconciliation.getStatus());
-        verify(fixture.providerClient).reconcile(any());
-        verify(fixture.providerClient, never()).publish(any());
-        verify(fixture.providerClient, never()).update(any(), any());
-        verify(fixture.providerClient, never()).offline(any(), any());
-        verify(fixture.providerClient, never()).delete(any(), any());
+        var requests = org.mockito.ArgumentCaptor.forClass(AdoptExistingItemRequest.class);
+        verify(fixture.client, org.mockito.Mockito.times(2)).adoptExistingItem(requests.capture());
+        assertEquals(requests.getAllValues().get(0).requestId(), requests.getAllValues().get(1).requestId());
+        assertEquals(requests.getAllValues().get(0), requests.getAllValues().get(1));
+        verify(fixture.client).ensureListing(any());
     }
 
     @Test
-    void successfulReconciliationResolvesUnknownPublishWithoutPublishingAgain() {
-        SalesChannelOperation target = publishOperation("reconcile success");
-        target.start(LocalDateTime.now());
-        target.markUnknown("RESPONSE_LOST", "unconfirmed", LocalDateTime.now());
-        SalesChannelOperation reconciliation = reconciliationOperation(target, "reconcile-success-test");
-        WorkerFixture fixture = new WorkerFixture(reconciliation, SalesChannelAccountStatus.CONNECTED);
-        fixture.operations.put(target.getId(), target);
-        when(fixture.providerClient.reconcile(any())).thenReturn(new IntegrationEnvelope<>(
-                reconciliation.getIdempotencyKey(), Outcome.SUCCEEDED,
-                new ReconcileData(target.getIdempotencyKey(), Outcome.SUCCEEDED, "PUBLISH", "item-123",
-                        target.getDesiredRevision(), Map.of("item_id", "item-123"), null), null));
-        doAnswer(invocation -> {
-            Map<String, Object> targetResult = invocation.getArgument(2);
-            Map<String, Object> reconciliationResult = invocation.getArgument(3);
-            target.resolveUnknownAsSucceeded(targetResult, LocalDateTime.now());
-            reconciliation.succeed(reconciliationResult, LocalDateTime.now());
-            return true;
-        }).when(fixture.operationService).resolveUnknownAsSucceeded(
-                eq(reconciliation.getId()), eq(target.getId()), any(), any(), any());
+    void adoptedMarkerSkipsDuplicateAdoptionForTheSameCurrentIdentity() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        SalesChannelListingGeneration current = new SalesChannelListingGeneration(
+                fixture.listingId, fixture.accountId, 1L, "already-adopted-item",
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
+        fixture.listing.setConvergenceAdoptedExternalItemId("already-adopted-item");
+        when(fixture.generationRepository.findCurrentByListingId(fixture.listingId))
+                .thenReturn(Optional.of(current));
+        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+                invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
 
         fixture.worker.runBatch();
 
-        assertEquals(SalesChannelOperationStatus.SUCCEEDED, target.getStatus());
-        assertEquals("item-123", target.getResult().get("item_id"));
-        assertEquals(SalesChannelOperationStatus.SUCCEEDED, reconciliation.getStatus());
-        verify(fixture.providerClient, never()).publish(any());
-        verify(fixture.providerClient, never()).update(any(), any());
+        verify(fixture.client, never()).adoptExistingItem(any());
+        verify(fixture.client).ensureListing(any());
     }
 
     @Test
-    void failedReconciliationReopensSameTargetOperationOnlyWhenAgentConfirmsNoEffect() {
-        SalesChannelOperation target = publishOperation("reconcile retryable");
-        target.start(LocalDateTime.now());
-        target.markUnknown("RESPONSE_LOST", "unconfirmed", LocalDateTime.now());
-        String originalIdempotencyKey = target.getIdempotencyKey();
-        int originalAttempts = target.getAttemptCount();
-        SalesChannelOperation reconciliation = reconciliationOperation(target, "reconcile-failed-test");
-        WorkerFixture fixture = new WorkerFixture(reconciliation, SalesChannelAccountStatus.CONNECTED);
-        fixture.operations.put(target.getId(), target);
-        when(fixture.providerClient.reconcile(any())).thenReturn(new IntegrationEnvelope<>(
-                reconciliation.getIdempotencyKey(), Outcome.SUCCEEDED,
-                new ReconcileData(target.getIdempotencyKey(), Outcome.FAILED, "PUBLISH", null,
-                        target.getDesiredRevision(), Map.of(), true), null));
-        doAnswer(invocation -> {
-            Map<String, Object> reconciliationResult = invocation.getArgument(2);
-            LocalDateTime nextAttempt = invocation.getArgument(5);
-            target.resolveUnknownAsRetryable("RECONCILED_NO_SIDE_EFFECT",
-                    "Agent proved that publish did not execute", nextAttempt);
-            reconciliation.succeed(reconciliationResult, LocalDateTime.now());
-            return true;
-        }).when(fixture.operationService).resolveUnknownAsRetryable(
-                eq(reconciliation.getId()), eq(target.getId()), any(), any(), any(), any());
+    void adoptionResultIsRejectedIfTheLegacyCurrentIdentityChangedBeforeLocalMarkerCommit() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        SalesChannelListingGeneration current = new SalesChannelListingGeneration(
+                fixture.listingId, fixture.accountId, 1L, "stale-legacy-item",
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
+        when(fixture.generationRepository.findCurrentByListingId(fixture.listingId))
+                .thenReturn(Optional.of(current));
+        when(fixture.client.adoptExistingItem(any())).thenAnswer(invocation -> {
+            AdoptExistingItemRequest request = invocation.getArgument(0);
+            return new OperationObservation(request.requestId(), request.listingKey(), OperationState.SUCCEEDED,
+                    null, "stale-legacy-item", null, null, null);
+        });
+        when(fixture.operationService.markConvergenceAdopted(fixture.listingId, "stale-legacy-item"))
+                .thenReturn(false);
 
         fixture.worker.runBatch();
 
-        assertEquals(SalesChannelOperationStatus.PENDING, target.getStatus());
-        assertEquals(originalIdempotencyKey, target.getIdempotencyKey());
-        assertEquals(originalAttempts, target.getAttemptCount());
-        assertNotNull(target.getNextAttemptAt());
-        assertEquals(SalesChannelOperationStatus.SUCCEEDED, reconciliation.getStatus());
-        verify(fixture.providerClient, never()).publish(any());
-        verify(fixture.providerClient, never()).update(any(), any());
+        assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
+        assertEquals("ADOPTION_CURRENT_IDENTITY_CHANGED", fixture.operation.getLastErrorCode());
+        verify(fixture.client, never()).ensureListing(any());
     }
 
     @Test
-    void authRequiredAccountFailsOperationWithoutRepeatedAgentCalls() {
-        SalesChannelOperation operation = new SalesChannelOperation(UUID.randomUUID(),
-                SalesChannelOperationType.OFFLINE, 1, "offline-auth-test", Map.of());
-        operation.setId(UUID.randomUUID());
-        WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.AUTH_REQUIRED);
-
-        fixture.worker.runBatch();
-        fixture.worker.runBatch();
-
-        assertEquals(SalesChannelOperationStatus.FAILED, operation.getStatus());
-        assertEquals("ACCOUNT_AUTH_REQUIRED", operation.getLastErrorCode());
-        verifyNoInteractions(fixture.providerClient);
-    }
-
-    @Test
-    void existingItemWorkerUsesFrozenGenerationAfterCurrentGenerationChanges() {
-        UUID listingId = UUID.randomUUID();
-        UUID generationId = UUID.randomUUID();
-        SalesChannelOperation operation = new SalesChannelOperation(listingId, generationId,
-                SalesChannelOperationType.OFFLINE, 1, "offline-generation-a", Map.of());
-        operation.setPayload(Map.of("desired_snapshot", snapshot(), "desired_fingerprint", FINGERPRINT));
-        operation.setId(UUID.randomUUID());
-        WorkerFixture fixture = new WorkerFixture(operation, SalesChannelAccountStatus.CONNECTED);
-        fixture.listing.incrementDesiredRevision();
-        SalesChannelListingGeneration frozen = new SalesChannelListingGeneration(
-                listingId, fixture.account.getId(), 1L, "item-generation-a",
-                SalesChannelGenerationState.RETIRED, "LEGACY_MIGRATION");
-        frozen.setId(generationId);
-        when(fixture.generationRepository.findById(generationId)).thenReturn(Optional.of(frozen));
-        when(fixture.providerClient.offline(eq("item-generation-a"), any())).thenReturn(
-                new IntegrationEnvelope<>(operation.getIdempotencyKey(), Outcome.SUCCEEDED,
-                        new ListingOperationData("item-generation-a", null, null, false, 1L, List.of()), null));
+    void failedAdoptionBlocksEnsureUntilIdentityConflictIsResolved() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
+        SalesChannelListingGeneration current = new SalesChannelListingGeneration(
+                fixture.listingId, fixture.accountId, 1L, "legacy-item-123",
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
+        when(fixture.generationRepository.findCurrentByListingId(fixture.listingId))
+                .thenReturn(Optional.of(current));
+        when(fixture.client.adoptExistingItem(any())).thenAnswer(invocation -> {
+            AdoptExistingItemRequest request = invocation.getArgument(0);
+            return new OperationObservation(request.requestId(), request.listingKey(), OperationState.FAILED,
+                    null, null, null, null,
+                    new com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationError(
+                            "ITEM_ALREADY_BOUND", "Identity belongs to another listing"));
+        });
 
         fixture.worker.runBatch();
 
-        verify(fixture.providerClient).offline(eq("item-generation-a"), any());
-        verify(fixture.providerClient, never()).delete(any(), any());
-        verify(fixture.providerClient, never()).publish(any());
-        verify(fixture.providerClient, never()).update(any(), any());
+        assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
+        assertEquals("ITEM_ALREADY_BOUND", fixture.operation.getLastErrorCode());
+        verify(fixture.client, never()).ensureListing(any());
+        verify(fixture.planner).refresh(fixture.listingId);
     }
 
-    private static SalesChannelOperation publishOperation(String suffix) {
-        UUID listingId = UUID.randomUUID();
-        SalesChannelOperation operation = new SalesChannelOperation(listingId, SalesChannelOperationType.PUBLISH,
-                1, "publish-" + suffix.replace(' ', '-'),
-                Map.of("desired_snapshot", snapshot(), "desired_fingerprint", FINGERPRINT));
-        operation.setId(UUID.randomUUID());
-        return operation;
+    private static EnsureListingOperationObservation observation(EnsureListingRequest request,
+                                                                  OperationState state,
+                                                                  String externalItemId,
+                                                                  com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationError error) {
+        return new EnsureListingOperationObservation(request.requestId(), request.listingKey(),
+                request.revision(), state, externalItemId, error);
     }
 
-    private static DesiredListingSnapshot snapshot() {
-        return new DesiredListingSnapshot("account-123", "FISH_SHOP", "ONLINE",
-                "Test listing", "Description", new BigDecimal("12.50"), new BigDecimal("15.00"),
-                List.of("https://images.example.test/cover.jpg"), "cat-1", "Category", null, null,
-                "leaf-1", null, List.of(), 3, List.of(), List.of(), "Address", "Address check",
-                "delivery", "shipping", false, BigDecimal.ZERO);
+    private static String sha256(String value) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(digest);
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 
-    private static SalesChannelOperation reconciliationOperation(SalesChannelOperation target, String key) {
-        SalesChannelOperation reconciliation = new SalesChannelOperation(target.getSalesChannelListingId(),
-                SalesChannelOperationType.RECONCILE, target.getDesiredRevision(), key,
-                Map.of("target_operation_id", target.getId().toString(),
-                        "target_request_id", target.getIdempotencyKey()));
-        reconciliation.setId(UUID.randomUUID());
-        return reconciliation;
+    private static Map<String, Object> onlineSnapshot(UUID listingId) {
+        try (InputStream stream = SalesChannelWorkerTest.class.getResourceAsStream(
+                "/contracts/ensure_listing_v2.json")) {
+            if (stream == null) throw new IllegalStateException("Missing shared ensure listing fixture");
+            ObjectMapper mapper = new ObjectMapper();
+            var root = (com.fasterxml.jackson.databind.node.ObjectNode) mapper.readTree(stream);
+            root.put("listing_key", listingId.toString());
+            ((com.fasterxml.jackson.databind.node.ObjectNode) root.get("desired_snapshot"))
+                    .put("listing_key", listingId.toString());
+            return mapper.convertValue(root.get("desired_snapshot"), Map.class);
+        } catch (Exception exception) {
+            throw new IllegalStateException("Unable to load the shared desired listing fixture", exception);
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
     @Import(SalesChannelWorker.class)
     static class WorkerConfiguration { }
 
-    private static final class WorkerFixture {
-        private final Map<UUID, SalesChannelOperation> operations = new HashMap<>();
-        private final SalesChannelOperationClaimService claimService = mock(SalesChannelOperationClaimService.class);
-        private final SalesChannelOperationRepository operationRepository = mock(SalesChannelOperationRepository.class);
-        private final SalesChannelListingRepository listingRepository = mock(SalesChannelListingRepository.class);
-        private final SalesChannelListingGenerationRepository generationRepository = mock(SalesChannelListingGenerationRepository.class);
-        private final SalesChannelAccountRepository accountRepository = mock(SalesChannelAccountRepository.class);
-        private final SalesChannelOperationServiceImpl operationService = mock(SalesChannelOperationServiceImpl.class);
-        private final SalesChannelProviderClient providerClient = mock(SalesChannelProviderClient.class);
-        private final SalesChannelDesiredStatePlanner planner = mock(SalesChannelDesiredStatePlanner.class);
-        private final XianyuMediaMaterializer mediaMaterializer = mock(XianyuMediaMaterializer.class);
-        private final SalesChannelListing listing = new SalesChannelListing();
-        private final SalesChannelAccount account = new SalesChannelAccount();
-        private final SalesChannelWorker worker;
+    private static final class Fixture {
+        final UUID listingId = UUID.randomUUID();
+        final UUID accountId = UUID.randomUUID();
+        final SalesChannelOperation operation;
+        final SalesChannelOperationClaimService claimService = mock(SalesChannelOperationClaimService.class);
+        final SalesChannelOperationRepository operationRepository = mock(SalesChannelOperationRepository.class);
+        final SalesChannelListingRepository listingRepository = mock(SalesChannelListingRepository.class);
+        final SalesChannelListingGenerationRepository generationRepository = mock(SalesChannelListingGenerationRepository.class);
+        final SalesChannelAccountRepository accountRepository = mock(SalesChannelAccountRepository.class);
+        final SalesChannelOperationServiceImpl operationService = mock(SalesChannelOperationServiceImpl.class);
+        final XianyuConvergenceClient client = mock(XianyuConvergenceClient.class);
+        final SalesChannelDesiredStatePlanner planner = mock(SalesChannelDesiredStatePlanner.class);
+        final ObjectMapper objectMapper = new ObjectMapper();
+        final SalesChannelListing listing = new SalesChannelListing();
+        final SalesChannelAccount account = new SalesChannelAccount();
+        final SalesChannelWorker worker;
 
-        private WorkerFixture(SalesChannelOperation queuedOperation, SalesChannelAccountStatus accountStatus) {
-            UUID accountId = UUID.randomUUID();
-            UUID listingId = queuedOperation.getSalesChannelListingId();
+        Fixture(SalesChannelOperationType operationType, String desiredState, Map<String, Object> snapshot) {
+            Object payloadSnapshot = snapshot;
+            if ("ONLINE".equals(desiredState) && payloadSnapshot == null) payloadSnapshot = onlineSnapshot(listingId);
+            Map<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("listing_key", listingId.toString());
+            payload.put("account_id", "agent-account");
+            payload.put("revision", 7L);
+            payload.put("desired_state", desiredState);
+            payload.put("desired_snapshot", payloadSnapshot);
+            payload.put("desired_fingerprint", FINGERPRINT);
+            operation = new SalesChannelOperation(listingId, operationType, 7,
+                    "myshop-ensure-command", payload);
+            operation.setId(UUID.randomUUID());
             listing.setId(listingId);
             listing.setSalesChannelAccountId(accountId);
-            listing.setProductId(UUID.randomUUID());
             account.setId(accountId);
-            account.setProvider(com.myshop.constant.SalesChannelProvider.XIANYU);
-            account.setProviderAccountId("account-123");
-            account.setStatus(accountStatus);
-            operations.put(queuedOperation.getId(), queuedOperation);
+            account.setProviderAccountId("agent-account");
+            account.setStatus(SalesChannelAccountStatus.CONNECTED);
+            account.setLastVerifiedAt(LocalDateTime.now());
 
-            when(operationRepository.findStaleRunningBefore(any(), anyInt())).thenReturn(List.of());
-            when(claimService.selectReadyIds(any(), anyInt())).thenReturn(List.of(queuedOperation.getId()));
-            when(operationRepository.findById(any())).thenAnswer(invocation ->
-                    Optional.ofNullable(operations.get(invocation.getArgument(0))));
+            when(claimService.selectReadyIds(any(), anyInt())).thenReturn(List.of(operation.getId()));
+            when(operationRepository.findById(operation.getId())).thenReturn(Optional.of(operation));
             when(listingRepository.findById(listingId)).thenReturn(Optional.of(listing));
             when(accountRepository.findById(accountId)).thenReturn(Optional.of(account));
-            doAnswer(invocation -> {
-                SalesChannelOperation operation = operations.get(invocation.getArgument(0));
-                return operation != null && operation.start(LocalDateTime.now());
-            }).when(operationService).markRunning(any());
-            doAnswer(invocation -> {
-                SalesChannelOperation operation = operations.get(invocation.getArgument(0));
-                return operation != null && operation.fail(invocation.getArgument(1), invocation.getArgument(2),
-                        LocalDateTime.now());
-            }).when(operationService).markFailed(any(), any(), any());
-            doAnswer(invocation -> {
-                SalesChannelOperation operation = operations.get(invocation.getArgument(0));
-                return operation != null && operation.markUnknown(invocation.getArgument(1),
-                        invocation.getArgument(2), LocalDateTime.now());
-            }).when(operationService).markUnknown(any(), any(), any());
-            doAnswer(invocation -> {
-                SalesChannelOperation operation = operations.get(invocation.getArgument(0));
-                return operation != null && operation.reschedule(invocation.getArgument(1),
-                        invocation.getArgument(2), invocation.getArgument(3));
-            }).when(operationService).reschedule(any(), any(), any(), any());
-            doAnswer(invocation -> {
-                UUID targetId = invocation.getArgument(0);
-                SalesChannelOperation target = operations.get(targetId);
-                SalesChannelOperation existing = operations.values().stream()
-                        .filter(candidate -> candidate.getOperationType() == SalesChannelOperationType.RECONCILE)
-                        .filter(candidate -> targetId.toString().equals(
-                                candidate.getPayload().get("target_operation_id")))
-                        .filter(candidate -> candidate.getStatus() == SalesChannelOperationStatus.PENDING
-                                || candidate.getStatus() == SalesChannelOperationStatus.RUNNING)
-                        .findFirst().orElse(null);
-                if (existing != null) return existing;
-                SalesChannelOperation reconcile = new SalesChannelOperation(target.getSalesChannelListingId(),
-                        target.getTargetGenerationId(), SalesChannelOperationType.RECONCILE,
-                        target.getDesiredRevision(), "reconcile-" + target.getIdempotencyKey(),
-                        Map.of("target_operation_id", targetId.toString(),
-                                "target_request_id", target.getIdempotencyKey()));
-                reconcile.setId(UUID.randomUUID());
-                operations.put(reconcile.getId(), reconcile);
-                return reconcile;
-            }).when(operationService).requestReconciliation(any());
+            when(operationRepository.findStaleEnsureRunningBefore(any(), anyInt())).thenReturn(List.of());
+            doAnswer(invocation -> operation.start(LocalDateTime.now()))
+                    .when(operationService).markRunning(operation.getId());
+            doAnswer(invocation -> operation.succeed(invocation.getArgument(1), LocalDateTime.now()))
+                    .when(operationService).markSucceeded(eq(operation.getId()), anyMap(), any());
+            doAnswer(invocation -> operation.fail(invocation.getArgument(1), invocation.getArgument(2),
+                    LocalDateTime.now()))
+                    .when(operationService).markFailed(eq(operation.getId()), any(), any());
+            doAnswer(invocation -> operation.reschedule(invocation.getArgument(1), invocation.getArgument(2),
+                    invocation.getArgument(3)))
+                    .when(operationService).reschedule(eq(operation.getId()), any(), any(), any());
 
-            worker = new SalesChannelWorker(claimService, operationRepository, listingRepository, generationRepository, accountRepository,
-                    operationService, providerClient, planner, mediaMaterializer, new ObjectMapper(), 10, 8, 300_000);
-        }
-
-        private void mediaMaterializerReturnsImage() {
-            when(mediaMaterializer.readImage(any())).thenReturn(
-                    new XianyuMediaMaterializer.MaterializedImage("cover.png", "image/png", new byte[]{1, 2, 3}));
-        }
-
-        private void stubSuccessfulMediaUpload() {
-            when(providerClient.uploadMedia(any())).thenAnswer(invocation -> {
-                com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadCommand command = invocation.getArgument(0);
-                assertEquals(MediaType.IMAGE, command.mediaType());
-                return new IntegrationEnvelope<>(command.requestId(), Outcome.SUCCEEDED,
-                        new MediaUploadData("media-123", "image"), null);
-            });
+            worker = new SalesChannelWorker(claimService, operationRepository, listingRepository,
+                    generationRepository, accountRepository, operationService, client, planner,
+                    objectMapper, 10, 300_000L);
         }
     }
 }

@@ -75,9 +75,9 @@ public class SalesChannelOrderImportService {
         if (external == null || external.externalOrderNo() == null || external.externalOrderNo().isBlank()) {
             throw new IllegalArgumentException("External order number is required");
         }
-        SalesChannelListingGeneration generation = resolveGeneration(account, external);
-        SalesChannelListing listing = generation == null ? null : listingRepository.findById(
-                generation.getSalesChannelListingId()).orElse(null);
+        IdentityResolution identity = resolveListingIdentity(account, external);
+        SalesChannelListingGeneration generation = identity.generation();
+        SalesChannelListing listing = identity.listing();
         rejectUnmanagedItem(account, external, listing);
         String fingerprint = fingerprint(account.getProvider(), null, external);
         SalesChannelOrder row = channelOrderRepository
@@ -117,7 +117,7 @@ public class SalesChannelOrderImportService {
             row.setLastErrorMessage("Phase 4 only imports pending_ship as an automatic fulfillment entry point");
             return row;
         }
-        return mapAndCreate(account, external, row, listing, generation);
+        return mapAndCreate(account, external, row, identity);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -126,9 +126,9 @@ public class SalesChannelOrderImportService {
         if (external == null || external.externalOrderNo() == null || external.externalOrderNo().isBlank()) return;
         account = accountRepository.findByIdForUpdate(account.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Sales-channel account does not exist"));
-        SalesChannelListingGeneration generation = resolveGeneration(account, external);
-        SalesChannelListing listing = generation == null ? null : listingRepository.findById(
-                generation.getSalesChannelListingId()).orElse(null);
+        IdentityResolution identity = resolveListingIdentity(account, external);
+        SalesChannelListingGeneration generation = identity.generation();
+        SalesChannelListing listing = identity.listing();
         if (isUnmanagedItem(listing)) {
             logIgnoredUnmanagedItem(account, external);
             return;
@@ -175,8 +175,12 @@ public class SalesChannelOrderImportService {
     }
 
     private SalesChannelOrder mapAndCreate(SalesChannelAccount account, AgentOrder external,
-                                           SalesChannelOrder row, SalesChannelListing listing,
-                                           SalesChannelListingGeneration generation) {
+                                           SalesChannelOrder row, IdentityResolution identity) {
+        if (identity.errorCode() != null) {
+            return mappingError(row, identity.errorCode(), identity.errorMessage());
+        }
+        SalesChannelListing listing = identity.listing();
+        SalesChannelListingGeneration generation = identity.generation();
         if (listing == null) {
             return mappingError(row, "LISTING_NOT_FOUND", "No MyShop listing matches the provider item");
         }
@@ -185,7 +189,7 @@ public class SalesChannelOrderImportService {
             return mappingError(row, "PRODUCT_NOT_FOUND", "The provider item is not mapped to an active product");
         }
         row.setSalesChannelListingId(listing.getId());
-        row.setSalesChannelListingGenerationId(generation.getId());
+        row.setSalesChannelListingGenerationId(generation == null ? null : generation.getId());
         boolean autoRequested = SalesChannelListingManagementPolicy.autoFulfillmentAllowed(listing)
                 && listing.isAutoFulfillmentEnabled();
         row.setAutoFulfillmentRequested(autoRequested);
@@ -194,7 +198,11 @@ public class SalesChannelOrderImportService {
             return mappingError(row, "AUTO_FULFILLMENT_GATE", "Listing auto fulfillment requires AUTO + CARD_KEY");
         }
 
-        ProductSpec spec = resolveSpec(product, generation, external);
+        SpecResolution specResolution = resolveSpec(product, generation, external);
+        if (specResolution.errorCode() != null) {
+            return mappingError(row, specResolution.errorCode(), specResolution.errorMessage());
+        }
+        ProductSpec spec = specResolution.spec();
         if (product.isSpecEnabled() && spec == null && hasExternalSpec(external)) {
             return mappingError(row, "SPEC_MAPPING_ERROR", "The provider SKU/spec has no unique exact mapping");
         }
@@ -229,6 +237,40 @@ public class SalesChannelOrderImportService {
         return generationRepository
                 .findBySalesChannelAccountIdAndExternalItemId(account.getId(), externalItemId)
                 .orElse(null);
+    }
+
+    private IdentityResolution resolveListingIdentity(SalesChannelAccount account, AgentOrder external) {
+        String stableListingKey = external == null ? null : external.listingKey();
+        SalesChannelListingGeneration legacyGeneration = resolveGeneration(account, external);
+        if (stableListingKey == null) {
+            SalesChannelListing legacyListing = legacyGeneration == null ? null
+                    : listingRepository.findById(legacyGeneration.getSalesChannelListingId()).orElse(null);
+            return legacyListing == null
+                    ? new IdentityResolution(null, legacyGeneration, "LISTING_NOT_FOUND",
+                    "No exact provider item generation maps to a MyShop listing")
+                    : new IdentityResolution(legacyListing, legacyGeneration, null, null);
+        }
+
+        UUID listingId = canonicalUuid(stableListingKey);
+        if (listingId == null) {
+            return new IdentityResolution(null, null, "LISTING_KEY_INVALID",
+                    "listing_key must be a canonical MyShop listing UUID");
+        }
+        SalesChannelListing listing = listingRepository.findById(listingId).orElse(null);
+        if (listing == null) {
+            return new IdentityResolution(null, null, "LISTING_NOT_FOUND",
+                    "listing_key does not identify a local MyShop listing");
+        }
+        if (!account.getId().equals(listing.getSalesChannelAccountId())) {
+            return new IdentityResolution(null, null, "LISTING_ACCOUNT_MISMATCH",
+                    "listing_key belongs to another sales-channel account");
+        }
+        if (legacyGeneration != null
+                && !listingId.equals(legacyGeneration.getSalesChannelListingId())) {
+            return new IdentityResolution(listing, null, "LISTING_IDENTITY_CONFLICT",
+                    "Stable listing_key conflicts with the legacy external item projection");
+        }
+        return new IdentityResolution(listing, legacyGeneration, null, null);
     }
 
     private void rejectUnmanagedItem(SalesChannelAccount account, AgentOrder external,
@@ -292,8 +334,42 @@ public class SalesChannelOrderImportService {
         return item;
     }
 
-    private ProductSpec resolveSpec(Product product, SalesChannelListingGeneration generation, AgentOrder external) {
-        if (!product.isSpecEnabled()) return null;
+    private SpecResolution resolveSpec(Product product, SalesChannelListingGeneration generation, AgentOrder external) {
+        if (!product.isSpecEnabled()) return new SpecResolution(null, null, null);
+        String stableSkuKey = external == null ? null : external.skuKey();
+        if (stableSkuKey != null) {
+            UUID specId = canonicalUuid(stableSkuKey);
+            if (specId == null) {
+                return new SpecResolution(null, "SKU_KEY_INVALID", "sku_key must be a canonical ProductSpec UUID");
+            }
+            ProductSpec stableSpec = productSpecRepository.findById(specId)
+                    .filter(candidate -> candidate.getProductId().equals(product.getId())
+                            && candidate.getIsDeleted() == 0)
+                    .orElse(null);
+            if (stableSpec == null) {
+                return new SpecResolution(null, "SKU_KEY_NOT_FOUND",
+                        "sku_key does not identify a non-deleted specification for this product");
+            }
+            String externalSkuId = blankToNull(external.externalSkuId());
+            if (generation != null) {
+                List<SalesChannelListingGenerationSpec> legacyMatches = generationSpecRepository
+                        .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(generation.getId()).stream()
+                        .filter(mapping -> externalSkuId != null
+                                ? externalSkuId.equals(mapping.getExternalSkuId())
+                                : Objects.equals(blankToNull(external.specName()),
+                                        stringValue(mapping.getProviderMapping().get("provider_spec_name")))
+                                && Objects.equals(blankToNull(external.specValue()),
+                                        stringValue(mapping.getProviderMapping().get("provider_spec_value"))))
+                        .toList();
+                if (!legacyMatches.isEmpty() && (legacyMatches.size() != 1
+                        || !specId.equals(legacyMatches.getFirst().getProductSpecId()))) {
+                    return new SpecResolution(null, "SKU_IDENTITY_CONFLICT",
+                            "Stable sku_key conflicts with the legacy external SKU projection");
+                }
+            }
+            return new SpecResolution(stableSpec, null, null);
+        }
+        if (generation == null) return new SpecResolution(null, null, null);
         List<SalesChannelListingGenerationSpec> mappings = generationSpecRepository
                 .findBySalesChannelListingGenerationIdOrderByCreatedAtAsc(generation.getId());
         List<SalesChannelListingGenerationSpec> matches;
@@ -309,10 +385,11 @@ public class SalesChannelOrderImportService {
                         && Objects.equals(value, stringValue(provider.get("provider_spec_value")));
             }).toList();
         }
-        if (matches.size() != 1) return null;
-        return productSpecRepository.findById(matches.get(0).getProductSpecId())
+        if (matches.size() != 1) return new SpecResolution(null, null, null);
+        ProductSpec legacySpec = productSpecRepository.findById(matches.get(0).getProductSpecId())
                 .filter(candidate -> candidate.getProductId().equals(product.getId()) && candidate.getIsDeleted() == 0)
                 .orElse(null);
+        return new SpecResolution(legacySpec, null, null);
     }
 
     private boolean hasActiveSpecs(UUID productId) {
@@ -344,6 +421,8 @@ public class SalesChannelOrderImportService {
         facts.put("account_id", accountId == null ? external.accountId() : accountId.toString());
         facts.put("external_order_no", external.externalOrderNo());
         facts.put("item_id", external.itemId());
+        facts.put("listing_key", external.listingKey());
+        facts.put("sku_key", external.skuKey());
         facts.put("external_sku_id", external.externalSkuId());
         facts.put("spec_name", external.specName());
         facts.put("spec_value", external.specValue());
@@ -366,8 +445,25 @@ public class SalesChannelOrderImportService {
 
     private boolean alreadyFulfilled(String status) { return "shipped".equals(status) || "completed".equals(status); }
     private boolean hasExternalSpec(AgentOrder external) {
-        return blankToNull(external.externalSkuId()) != null || blankToNull(external.specName()) != null || blankToNull(external.specValue()) != null;
+        return (external.skuKey() != null && !external.skuKey().isBlank())
+                || blankToNull(external.externalSkuId()) != null
+                || blankToNull(external.specName()) != null || blankToNull(external.specValue()) != null;
     }
+
+    private UUID canonicalUuid(String value) {
+        if (value == null || value.isBlank() || !value.equals(value.strip())) return null;
+        try {
+            UUID parsed = UUID.fromString(value);
+            return parsed.toString().equals(value) ? parsed : null;
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
+    private record IdentityResolution(SalesChannelListing listing, SalesChannelListingGeneration generation,
+                                      String errorCode, String errorMessage) { }
+
+    private record SpecResolution(ProductSpec spec, String errorCode, String errorMessage) { }
     private int normalizeQuantity(Integer quantity) { return quantity == null || quantity < 1 ? 1 : quantity; }
     private BigDecimal parseAmount(String value) {
         try { return new BigDecimal(value == null ? "0" : value).setScale(2, RoundingMode.HALF_UP); }

@@ -347,7 +347,16 @@ public final class SalesChannelDtos {
             @JsonProperty("amount") String amount,
             @JsonProperty("currency") String currency,
             @JsonProperty("placed_at") String placedAt,
-            @JsonProperty("updated_at") String updatedAt) { }
+            @JsonProperty("updated_at") String updatedAt,
+            @JsonProperty("listing_key") String listingKey,
+            @JsonProperty("sku_key") String skuKey) {
+        public AgentOrder(String accountId, String externalOrderNo, String status, String itemId,
+                          String externalSkuId, String specName, String specValue, Integer quantity,
+                          String amount, String currency, String placedAt, String updatedAt) {
+            this(accountId, externalOrderNo, status, itemId, externalSkuId, specName, specValue,
+                    quantity, amount, currency, placedAt, updatedAt, null, null);
+        }
+    }
 
     public record OrderChangesData(
             @JsonProperty("orders") List<AgentOrder> orders,

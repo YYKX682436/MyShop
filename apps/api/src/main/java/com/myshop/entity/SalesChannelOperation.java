@@ -200,50 +200,6 @@ public class SalesChannelOperation extends BaseEntity {
         return true;
     }
 
-    public boolean markUnknown(String errorCode, String errorMessage, LocalDateTime now) {
-        if (status != SalesChannelOperationStatus.RUNNING) return false;
-        status = SalesChannelOperationStatus.UNKNOWN;
-        lastErrorCode = errorCode;
-        lastErrorMessage = errorMessage;
-        finishedAt = now;
-        return true;
-    }
-
-    public boolean resolveUnknownAsSucceeded(Map<String, Object> result, LocalDateTime now) {
-        if (status != SalesChannelOperationStatus.UNKNOWN) return false;
-        setResult(result);
-        status = SalesChannelOperationStatus.SUCCEEDED;
-        finishedAt = now;
-        lastErrorCode = null;
-        lastErrorMessage = null;
-        return true;
-    }
-
-    public boolean resolveUnknownAsFailed(Map<String, Object> result, String errorCode,
-                                          String errorMessage, LocalDateTime now) {
-        if (status != SalesChannelOperationStatus.UNKNOWN) return false;
-        setResult(result);
-        status = SalesChannelOperationStatus.FAILED;
-        lastErrorCode = errorCode;
-        lastErrorMessage = errorMessage;
-        finishedAt = now;
-        return true;
-    }
-
-    /** The only permitted UNKNOWN -> PENDING transition; used after reconciliation proves no side effect occurred. */
-    public boolean resolveUnknownAsRetryable(String errorCode, String errorMessage,
-                                             LocalDateTime nextAttemptAt) {
-        Objects.requireNonNull(nextAttemptAt, "nextAttemptAt is required");
-        if (status != SalesChannelOperationStatus.UNKNOWN) return false;
-        status = SalesChannelOperationStatus.PENDING;
-        this.nextAttemptAt = nextAttemptAt;
-        startedAt = null;
-        finishedAt = null;
-        lastErrorCode = errorCode;
-        lastErrorMessage = errorMessage;
-        return true;
-    }
-
     public boolean supersede(LocalDateTime now) {
         if (status != SalesChannelOperationStatus.PENDING) return false;
         status = SalesChannelOperationStatus.SUPERSEDED;
