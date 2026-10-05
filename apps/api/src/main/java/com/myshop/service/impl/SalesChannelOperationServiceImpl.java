@@ -75,15 +75,26 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation operation = lockOperation(operationId);
         LocalDateTime now = LocalDateTime.now();
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return false;
+        boolean neverSent = operation.getStatus() == SalesChannelOperationStatus.PENDING
+                && operation.getAttemptCount() == 0 && operation.getStartedAt() == null;
+        boolean attempted = operation.getAttemptCount() > 0;
         if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
-            operation.supersede(now);
-            return false;
+            if (neverSent) {
+                operation.supersede(now);
+                return false;
+            }
+            // An attempted command retains its recovery privilege. Replaying
+            // its frozen request_id resolves uncertainty; it is not a new intent.
+            if (!attempted) return false;
         }
         if (operation.getStatus() != SalesChannelOperationStatus.PENDING
                 || operation.getNextAttemptAt() != null && operation.getNextAttemptAt().isAfter(now)) return false;
         if ("EXTERNAL_ITEM_ID_CONFLICT".equals(listing.getLastErrorCode())) return false;
-        boolean replayPreviouslyAttemptedEnsure = operation.getAttemptCount() > 0;
-        if (operation.getDesiredRevision() != listing.getDesiredRevision() && !replayPreviouslyAttemptedEnsure) {
+        if ("DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode()) && !attempted) {
+            if (neverSent) operation.supersede(now);
+            return false;
+        }
+        if (operation.getDesiredRevision() != listing.getDesiredRevision() && !attempted) {
             operation.supersede(now);
             return false;
         }
@@ -94,7 +105,10 @@ public class SalesChannelOperationServiceImpl {
         if (operationRepository.existsBySalesChannelListingIdAndStatus(
                 listing.getId(), SalesChannelOperationStatus.RUNNING)) return false;
         if (!operation.start(now)) return false;
-        listing.setStatus(SalesChannelListingStatus.APPLYING);
+        if (SalesChannelListingManagementPolicy.providerWritesAllowed(listing)
+                && !"DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode())) {
+            listing.setStatus(SalesChannelListingStatus.APPLYING);
+        }
         return true;
     }
 
@@ -119,7 +133,8 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelListing listing = lockListing(snapshot.getSalesChannelListingId());
         SalesChannelOperation operation = lockOperation(operationId);
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING
-                || !SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) return false;
+                || !SalesChannelListingManagementPolicy.providerWritesAllowed(listing)
+                && operation.getAttemptCount() == 0) return false;
 
         String desiredState = Objects.toString(operation.getPayload().get("desired_state"), "");
         String externalItemId = extractExternalItemId(result);
@@ -144,7 +159,9 @@ public class SalesChannelOperationServiceImpl {
             listing.setConvergenceAdoptedExternalItemId(externalItemId);
             listing.setConvergenceAdoptedAt(now);
         }
-        if (operation.getDesiredRevision() == listing.getDesiredRevision()) {
+        if (operation.getDesiredRevision() == listing.getDesiredRevision()
+                && SalesChannelListingManagementPolicy.providerWritesAllowed(listing)
+                && !"DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode())) {
             listing.advanceAppliedRevision(operation.getDesiredRevision());
             listing.setStatus("OFFLINE".equals(desiredState)
                     ? SalesChannelListingStatus.OFFLINE : SalesChannelListingStatus.ONLINE);
@@ -175,7 +192,8 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation operation = lockOperation(operationId);
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING
                 || !operation.fail(errorCode, errorMessage, LocalDateTime.now())) return false;
-        if (operation.getDesiredRevision() == listing.getDesiredRevision()) {
+        if (operation.getDesiredRevision() == listing.getDesiredRevision()
+                && !"DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode())) {
             listing.setStatus(SalesChannelListingStatus.ERROR);
             listing.setLastErrorCode(errorCode);
             listing.setLastErrorMessage(errorMessage);

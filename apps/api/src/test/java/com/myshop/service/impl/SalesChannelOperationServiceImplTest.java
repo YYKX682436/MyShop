@@ -2,6 +2,8 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
+import com.myshop.constant.SalesChannelListingManagementMode;
+import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.repository.SalesChannelListingGenerationRepository;
@@ -17,6 +19,7 @@ import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -99,5 +102,77 @@ class SalesChannelOperationServiceImplTest {
         assertFalse(service.markRunning(operationId));
         assertEquals(SalesChannelOperationStatus.PENDING, legacy.getStatus());
         assertEquals(0, legacy.getAttemptCount());
+    }
+
+    @Test
+    void possiblySentEnsureRetainsRecoveryPrivilegeAfterManagementModeChanges() {
+        UUID listingId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
+        listing.setStatus(SalesChannelListingStatus.ONLINE);
+        SalesChannelOperation operation = new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, 0, "same-request", Map.of());
+        operation.setId(operationId);
+        operation.start(LocalDateTime.now().minusMinutes(1));
+        operation.reschedule("AGENT_APPLYING", "replay", LocalDateTime.now().minusSeconds(1));
+        when(operationRepository.findById(operationId)).thenReturn(Optional.of(operation));
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(operationRepository.findByIdForUpdate(operationId)).thenReturn(Optional.of(operation));
+        when(generationRepository.findCandidateByListingId(listingId)).thenReturn(Optional.empty());
+        when(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listingId))
+                .thenReturn(java.util.List.of(operation));
+        when(operationRepository.existsBySalesChannelListingIdAndStatus(listingId, SalesChannelOperationStatus.RUNNING))
+                .thenReturn(false);
+
+        assertTrue(service.markRunning(operationId));
+        assertEquals(SalesChannelOperationStatus.RUNNING, operation.getStatus());
+        assertEquals(2, operation.getAttemptCount());
+        assertEquals(SalesChannelListingStatus.ONLINE, listing.getStatus());
+    }
+
+    @Test
+    void neverSentEnsureIsSupersededWhenManagementModeNoLongerAllowsWrites() {
+        UUID listingId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
+        SalesChannelOperation operation = new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, 0, "never-sent", Map.of());
+        operation.setId(operationId);
+        when(operationRepository.findById(operationId)).thenReturn(Optional.of(operation));
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(operationRepository.findByIdForUpdate(operationId)).thenReturn(Optional.of(operation));
+
+        assertFalse(service.markRunning(operationId));
+        assertEquals(SalesChannelOperationStatus.SUPERSEDED, operation.getStatus());
+        assertEquals(0, operation.getAttemptCount());
+    }
+
+    @Test
+    void oldEnsureTerminalSuccessCannotClearCurrentInvalidIntent() {
+        UUID listingId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        listing.setLastErrorCode("DESIRED_LISTING_INVALID");
+        listing.setLastErrorMessage("invalid current source");
+        listing.setStatus(SalesChannelListingStatus.ERROR);
+        SalesChannelOperation operation = new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, 0, "old-request",
+                Map.of("desired_state", "OFFLINE", "desired_fingerprint", "a".repeat(64)));
+        operation.setId(operationId);
+        operation.start(LocalDateTime.now().minusMinutes(1));
+        when(operationRepository.findById(operationId)).thenReturn(Optional.of(operation));
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(operationRepository.findByIdForUpdate(operationId)).thenReturn(Optional.of(operation));
+
+        assertTrue(service.markSucceeded(operationId, Map.of("state", "SUCCEEDED"), "a".repeat(64)));
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED, operation.getStatus());
+        assertEquals(SalesChannelListingStatus.ERROR, listing.getStatus());
+        assertEquals("DESIRED_LISTING_INVALID", listing.getLastErrorCode());
+        assertEquals(0, listing.getAppliedRevision());
     }
 }

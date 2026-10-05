@@ -81,4 +81,5 @@ public final class ErrorCode {
     public static final int TAKEOVER_NOT_ALLOWED = 71007;
     public static final int TAKEOVER_NOT_ORDER_READY = 71008;
     public static final int OWNERSHIP_CONFLICT = 71009;
+    public static final int CONVERGENCE_OPERATION_IN_FLIGHT = 71010;
 }

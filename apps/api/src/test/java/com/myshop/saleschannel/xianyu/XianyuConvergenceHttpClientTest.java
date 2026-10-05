@@ -94,6 +94,34 @@ class XianyuConvergenceHttpClientTest {
     }
 
     @Test
+    void adoptionApplyingAndLegacyReplayRequiredFailureRemainReplayable() throws Exception {
+        var adoption = new com.myshop.saleschannel.convergence.XianyuConvergenceContracts.AdoptExistingItemRequest(
+                "adopt-replayable-1", "listing-1", "account-123", "item-123");
+        var applying = objectMapper.createObjectNode();
+        applying.put("request_id", adoption.requestId());
+        applying.put("listing_key", adoption.listingKey());
+        applying.put("state", "APPLYING");
+        applying.putNull("external_item_id");
+        applying.putNull("error");
+        var reply = new AtomicReference<>(new Reply(202, objectMapper.writeValueAsBytes(applying)));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var client = client(fixture.baseUrl(), 2_000);
+            assertEquals(OperationState.APPLYING, client.adoptExistingItem(adoption).state());
+
+            var legacy = objectMapper.createObjectNode();
+            legacy.put("request_id", adoption.requestId());
+            legacy.put("listing_key", adoption.listingKey());
+            legacy.put("state", "FAILED");
+            legacy.putNull("external_item_id");
+            legacy.putObject("error").put("code", "ADOPTION_STATE_REPLAY_REQUIRED")
+                    .put("message", "replay exact DB state");
+            reply.set(new Reply(503, objectMapper.writeValueAsBytes(legacy)));
+            assertEquals(OperationState.APPLYING, client.adoptExistingItem(adoption).state());
+            assertEquals(2, fixture.requests().size());
+        }
+    }
+
+    @Test
     void observeSignsGetWithTheHashOfEmptyBytes() throws Exception {
         String requestId = "a.b_c~d-e";
         var reply = new AtomicReference<>(new Reply(200, observation("SUCCEEDED", requestId, "item-1")));

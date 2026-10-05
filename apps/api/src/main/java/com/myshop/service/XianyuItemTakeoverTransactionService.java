@@ -6,6 +6,8 @@ import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.SalesChannelOperationStatus;
+import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
@@ -61,6 +63,9 @@ public class XianyuItemTakeoverTransactionService {
         Product product = lockProduct(preflight.productId());
         requireProduct(product, preflight);
         SalesChannelListing listing = lockListing(preflight.listingId());
+        if (listing.getManagementMode() != SalesChannelListingManagementMode.MANAGED) {
+            requireNoConvergenceOperationInFlight(listing);
+        }
         SalesChannelListingGeneration generation = lockCurrentGeneration(preflight.listingId());
         List<SalesChannelListingGenerationSpec> mappings = generationSpecRepository
                 .findBySalesChannelListingGenerationIdForUpdate(generation.getId());
@@ -98,6 +103,9 @@ public class XianyuItemTakeoverTransactionService {
         Product product = lockProduct(preflight.productId());
         requireProduct(product, preflight);
         SalesChannelListing listing = lockListing(preflight.listingId());
+        if (listing.getManagementMode() != SalesChannelListingManagementMode.MANAGED) {
+            requireNoConvergenceOperationInFlight(listing);
+        }
         SalesChannelListingGeneration generation = lockCurrentGeneration(preflight.listingId());
         List<SalesChannelListingGenerationSpec> mappings = generationSpecRepository
                 .findBySalesChannelListingGenerationIdForUpdate(generation.getId());
@@ -154,6 +162,18 @@ public class XianyuItemTakeoverTransactionService {
     private SalesChannelListing lockListing(UUID listingId) {
         return listingRepository.findByIdForUpdate(listingId)
                 .orElseThrow(() -> failure(ErrorCode.TAKEOVER_NOT_ALLOWED, "闲鱼 listing 不存在"));
+    }
+
+    private void requireNoConvergenceOperationInFlight(SalesChannelListing listing) {
+        boolean inFlight = operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING)
+                .anyMatch(operation -> operation.getStatus() == SalesChannelOperationStatus.RUNNING
+                        || operation.getStatus() == SalesChannelOperationStatus.PENDING
+                        && operation.getAttemptCount() > 0);
+        if (inFlight) {
+            throw failure(ErrorCode.CONVERGENCE_OPERATION_IN_FLIGHT,
+                    "CONVERGENCE_OPERATION_IN_FLIGHT");
+        }
     }
 
     private SalesChannelListingGeneration lockCurrentGeneration(UUID listingId) {

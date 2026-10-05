@@ -1,5 +1,6 @@
 package com.myshop.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
@@ -12,6 +13,7 @@ import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOrderDeliveryStatus;
 import com.myshop.constant.SalesChannelOrderIngestStatus;
+import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelDeliveryOperation;
@@ -20,6 +22,7 @@ import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.entity.SalesChannelOrderCursor;
+import com.myshop.entity.SalesChannelOperation;
 import com.myshop.exception.BusinessException;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.exception.UnmanagedSalesChannelItemException;
@@ -71,6 +74,10 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.security.MessageDigest;
+import java.util.TreeMap;
 import java.time.LocalDateTime;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -138,6 +145,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelSpecMappingSyncService specMappingSyncService;
+
+    @Autowired
+    private XianyuItemBindingTransactionService itemBindingTransactionService;
 
     @Autowired
     private XianyuItemTakeoverService takeoverService;
@@ -1331,6 +1341,187 @@ class SalesChannelPhase4PostgresIntegrationTest {
     }
 
     @Test
+    void preS23ImportedOrderKeepsFingerprintAcrossStableIdentityEnrichment() throws Exception {
+        UUID productId = insertProduct(true);
+        UUID specId = insertProductSpec(productId, "legacy spec");
+        SalesChannelAccount account = account("historical-fingerprint-enrichment");
+        SalesChannelListing listing = listing(account, productId, "historical-enrichment-item", false);
+        SalesChannelListingGeneration generation = generationRepository
+                .findCurrentByListingId(listing.getId()).orElseThrow();
+        SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
+        mapping.setSalesChannelListingGenerationId(generation.getId());
+        mapping.setProductSpecId(specId);
+        mapping.setExternalSkuId("provider-sku");
+        mapping.setProviderMapping(Map.of("provider_spec_name", "规格", "provider_spec_value", "Blue"));
+        generationSpecRepository.saveAndFlush(mapping);
+        AgentOrder original = order(account, "xy-historical-enrichment", "historical-enrichment-item",
+                "provider-sku", "Blue", 1, "20.00");
+        SalesChannelOrder imported = importService.importOrder(account, original);
+        String storedHistoricalFingerprint = historicalFingerprint(original, null, null);
+        imported.setSourceFingerprint(storedHistoricalFingerprint);
+        channelOrderRepository.saveAndFlush(imported);
+        AgentOrder enriched = new AgentOrder(original.accountId(), original.externalOrderNo(), "refunded",
+                original.itemId(), original.externalSkuId(), original.specName(), original.specValue(),
+                original.quantity(), original.amount(), original.currency(), original.placedAt(),
+                "2026-09-22T00:00:02Z", listing.getId().toString().toLowerCase(),
+                specId.toString().toLowerCase());
+
+        SalesChannelOrder updated = importService.importOrder(account, enriched);
+
+        assertEquals(storedHistoricalFingerprint, updated.getSourceFingerprint());
+        assertEquals(imported.getId(), updated.getId());
+        assertEquals(imported.getOrderId(), updated.getOrderId());
+        assertEquals(SalesChannelOrderIngestStatus.IMPORTED, updated.getIngestStatus());
+        assertEquals("refunded", updated.getExternalStatus());
+        assertNotEquals("SOURCE_FINGERPRINT_CHANGED", updated.getLastErrorCode());
+        assertEquals(1, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-historical-enrichment"));
+    }
+
+    @Test
+    void historicalMappingErrorRecoversInPlaceFromExactStableKeysExactlyOnce() {
+        UUID productId = insertProduct(true);
+        UUID specId = insertProductSpec(productId, "recoverable spec");
+        SalesChannelAccount account = account("mapping-error-enrichment");
+        SalesChannelListing listing = listing(account, productId, "mapping-error-item", false);
+        SalesChannelListingGeneration generation = generationRepository
+                .findCurrentByListingId(listing.getId()).orElseThrow();
+        AgentOrder oldEvent = order(account, "xy-mapping-error-enrichment", "mapping-error-item",
+                "provider-sku-recover", "Blue", 1, "20.00");
+        SalesChannelOrder failed = importService.importOrder(account, oldEvent);
+        assertEquals(SalesChannelOrderIngestStatus.MAPPING_ERROR, failed.getIngestStatus());
+        assertNull(failed.getOrderId());
+
+        SalesChannelListingGenerationSpec mapping = new SalesChannelListingGenerationSpec();
+        mapping.setSalesChannelListingGenerationId(generation.getId());
+        mapping.setProductSpecId(specId);
+        mapping.setExternalSkuId("provider-sku-recover");
+        mapping.setProviderMapping(Map.of("provider_spec_name", "规格", "provider_spec_value", "Blue"));
+        generationSpecRepository.saveAndFlush(mapping);
+        AgentOrder enriched = new AgentOrder(oldEvent.accountId(), oldEvent.externalOrderNo(), oldEvent.status(),
+                oldEvent.itemId(), oldEvent.externalSkuId(), oldEvent.specName(), oldEvent.specValue(),
+                oldEvent.quantity(), oldEvent.amount(), oldEvent.currency(), oldEvent.placedAt(), oldEvent.updatedAt(),
+                listing.getId().toString().toLowerCase(), specId.toString().toLowerCase());
+
+        SalesChannelOrder recovered = importService.importOrder(account, enriched);
+        SalesChannelOrder replay = importService.importOrder(account, enriched);
+
+        assertEquals(failed.getId(), recovered.getId());
+        assertEquals(failed.getId(), replay.getId());
+        assertEquals(SalesChannelOrderIngestStatus.IMPORTED, recovered.getIngestStatus());
+        assertNotNull(recovered.getOrderId());
+        assertEquals(recovered.getOrderId(), replay.getOrderId());
+        assertEquals(specId, orderItemRepository.findByOrderId(recovered.getOrderId()).getFirst().getSpecId());
+        assertEquals(1, count("select count(*) from sales_channel_orders where external_order_no = ?",
+                "xy-mapping-error-enrichment"));
+        assertEquals(1, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-mapping-error-enrichment"));
+    }
+
+    @Test
+    void stableListingIdentityConflictOnImportedOrderFailsClosedWithoutDuplicate() {
+        UUID productId = insertProduct(false);
+        UUID otherProductId = insertProduct(false);
+        SalesChannelAccount account = account("imported-listing-conflict");
+        SalesChannelListing listing = listing(account, productId, "imported-listing-conflict-item", false);
+        SalesChannelListing other = listingWithoutGeneration(account, otherProductId);
+        AgentOrder original = order(account, "xy-imported-listing-conflict",
+                "imported-listing-conflict-item", null, null, 1, "10.00");
+        SalesChannelOrder imported = importService.importOrder(account, original);
+        AgentOrder enriched = new AgentOrder(original.accountId(), original.externalOrderNo(), original.status(),
+                original.itemId(), original.externalSkuId(), original.specName(), original.specValue(),
+                original.quantity(), original.amount(), original.currency(), original.placedAt(), original.updatedAt(),
+                other.getId().toString().toLowerCase(), null);
+
+        SalesChannelOrder conflict = importService.importOrder(account, enriched);
+
+        assertEquals(imported.getId(), conflict.getId());
+        assertEquals(imported.getOrderId(), conflict.getOrderId());
+        assertEquals(SalesChannelOrderIngestStatus.MAPPING_ERROR, conflict.getIngestStatus());
+        assertEquals("LISTING_IDENTITY_CONFLICT", conflict.getLastErrorCode());
+        assertEquals(listing.getId(), conflict.getSalesChannelListingId());
+        assertEquals(1, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-imported-listing-conflict"));
+    }
+
+    @Test
+    void stableSkuIdentityConflictOnImportedSpecOrderFailsClosedWithoutDuplicate() {
+        UUID productId = insertProduct(true);
+        UUID originalSpecId = insertProductSpec(productId, "persisted spec");
+        UUID changedSpecId = insertProductSpec(productId, "enriched wrong spec");
+        SalesChannelAccount account = account("imported-sku-conflict");
+        SalesChannelListing listing = listingWithoutGeneration(account, productId);
+        AgentOrder original = new AgentOrder(account.getProviderAccountId(), "xy-imported-sku-conflict",
+                "pending_ship", "stable-provider-item", null, null, null, 1, "10.00", "CNY",
+                "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z",
+                listing.getId().toString().toLowerCase(), originalSpecId.toString().toLowerCase());
+        SalesChannelOrder imported = importService.importOrder(account, original);
+        AgentOrder enriched = new AgentOrder(original.accountId(), original.externalOrderNo(), original.status(),
+                original.itemId(), original.externalSkuId(), original.specName(), original.specValue(),
+                original.quantity(), original.amount(), original.currency(), original.placedAt(), original.updatedAt(),
+                listing.getId().toString().toLowerCase(), changedSpecId.toString().toLowerCase());
+
+        SalesChannelOrder conflict = importService.importOrder(account, enriched);
+
+        assertEquals(imported.getId(), conflict.getId());
+        assertEquals(imported.getOrderId(), conflict.getOrderId());
+        assertEquals(SalesChannelOrderIngestStatus.MAPPING_ERROR, conflict.getIngestStatus());
+        assertEquals("SKU_IDENTITY_CONFLICT", conflict.getLastErrorCode());
+        assertEquals(originalSpecId, orderItemRepository.findByOrderId(imported.getOrderId()).getFirst().getSpecId());
+        assertEquals(1, count("select count(*) from orders where idempotency_key = ?",
+                "XIANYU_ORDER:" + account.getProviderAccountId() + ":xy-imported-sku-conflict"));
+    }
+
+    @Test
+    void itemAndExternalSkuChangesRemainImmutableSourceFingerprintConflicts() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("immutable-source-facts");
+        listing(account, productId, "immutable-source-item", false);
+        AgentOrder original = order(account, "xy-immutable-item-change", "immutable-source-item",
+                null, null, 1, "10.00");
+        SalesChannelOrder first = importService.importOrder(account, original);
+        AgentOrder changedItem = new AgentOrder(original.accountId(), original.externalOrderNo(), original.status(),
+                "changed-provider-item", original.externalSkuId(), original.specName(), original.specValue(),
+                original.quantity(), original.amount(), original.currency(), original.placedAt(), original.updatedAt());
+        assertEquals("SOURCE_FINGERPRINT_CHANGED", importService.importOrder(account, changedItem).getLastErrorCode());
+
+        AgentOrder skuOriginal = order(account, "xy-immutable-sku-change", "immutable-source-item",
+                "provider-sku-old", "Blue", 1, "10.00");
+        SalesChannelOrder second = importService.importOrder(account, skuOriginal);
+        AgentOrder changedSku = new AgentOrder(skuOriginal.accountId(), skuOriginal.externalOrderNo(),
+                skuOriginal.status(), skuOriginal.itemId(), "provider-sku-new", skuOriginal.specName(),
+                skuOriginal.specValue(), skuOriginal.quantity(), skuOriginal.amount(), skuOriginal.currency(),
+                skuOriginal.placedAt(), skuOriginal.updatedAt());
+        assertEquals("SOURCE_FINGERPRINT_CHANGED", importService.importOrder(account, changedSku).getLastErrorCode());
+        assertEquals(first.getId(), channelOrderRepository.findByProviderAndSalesChannelAccountIdAndExternalOrderNo(
+                SalesChannelProvider.XIANYU, account.getId(), original.externalOrderNo()).orElseThrow().getId());
+        assertEquals(second.getId(), channelOrderRepository.findByProviderAndSalesChannelAccountIdAndExternalOrderNo(
+                SalesChannelProvider.XIANYU, account.getId(), skuOriginal.externalOrderNo()).orElseThrow().getId());
+    }
+
+    @Test
+    void managementTransitionIsBlockedWhilePossiblySentEnsureIsInFlight() {
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("mode-transition-in-flight");
+        SalesChannelListing listing = listingWithoutGeneration(account, productId);
+        SalesChannelOperation ensure = new SalesChannelOperation(listing.getId(),
+                com.myshop.constant.SalesChannelOperationType.ENSURE_LISTING, 0,
+                "mode-transition-in-flight-" + UUID.randomUUID(), Map.of());
+        assertTrue(ensure.start(LocalDateTime.now().minusMinutes(1)));
+        assertTrue(ensure.reschedule("AGENT_APPLYING", "retry exact command", LocalDateTime.now().minusSeconds(1)));
+        operationRepository.saveAndFlush(ensure);
+
+        BusinessException rejected = assertThrows(BusinessException.class,
+                () -> itemBindingTransactionService.link(account.getId(), "transition-item", productId));
+
+        assertEquals(ErrorCode.CONVERGENCE_OPERATION_IN_FLIGHT, rejected.getCode());
+        assertEquals(SalesChannelListingManagementMode.MANAGED,
+                listingRepository.findById(listing.getId()).orElseThrow().getManagementMode());
+        assertEquals(SalesChannelOperationStatus.PENDING,
+                operationRepository.findById(ensure.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
     void terminalRefundAndFulfillmentConcurrencyNeverProducesRefundedSold() throws Exception {
         UUID productId = insertProduct(false);
         SalesChannelAccount account = account("refund-race");
@@ -1632,6 +1823,25 @@ class SalesChannelPhase4PostgresIntegrationTest {
         return new AgentOrder(account.getProviderAccountId(), externalOrderNo, "pending_ship", itemId,
                 sku, specValue == null ? null : "规格", specValue, quantity, amount, "CNY",
                 "2026-09-22T00:00:00Z", "2026-09-22T00:00:01Z");
+    }
+
+    private String historicalFingerprint(AgentOrder external, String listingKey, String skuKey) throws Exception {
+        Map<String, Object> facts = new TreeMap<>();
+        facts.put("provider", SalesChannelProvider.XIANYU.name());
+        facts.put("account_id", external.accountId());
+        facts.put("external_order_no", external.externalOrderNo());
+        facts.put("item_id", external.itemId());
+        facts.put("listing_key", listingKey);
+        facts.put("sku_key", skuKey);
+        facts.put("external_sku_id", external.externalSkuId());
+        facts.put("spec_name", external.specName());
+        facts.put("spec_value", external.specValue());
+        facts.put("quantity", external.quantity() == null || external.quantity() < 1 ? 1 : external.quantity());
+        facts.put("amount", new BigDecimal(external.amount()).setScale(2, RoundingMode.HALF_UP).toPlainString());
+        facts.put("currency", external.currency() == null || external.currency().isBlank()
+                ? "CNY" : external.currency().trim().toUpperCase());
+        byte[] bytes = new ObjectMapper().writeValueAsBytes(facts);
+        return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
 
     private UUID insertProduct(boolean specEnabled) {

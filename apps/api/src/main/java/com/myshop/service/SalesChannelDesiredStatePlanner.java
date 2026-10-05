@@ -114,6 +114,7 @@ public class SalesChannelDesiredStatePlanner {
                 listing.setStatus(SalesChannelListingStatus.ERROR);
                 listing.setLastErrorCode("DESIRED_LISTING_INVALID");
                 listing.setLastErrorMessage(safeMessage(exception));
+                supersedeNeverSentEnsures(listing);
                 return listingRepository.saveAndFlush(listing);
             }
         } else {
@@ -209,6 +210,15 @@ public class SalesChannelDesiredStatePlanner {
         operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
                 .filter(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING)
                 .filter(operation -> operation.getDesiredRevision() < listing.getDesiredRevision())
+                .filter(operation -> operation.getStatus() == SalesChannelOperationStatus.PENDING)
+                .filter(operation -> operation.getAttemptCount() == 0 && operation.getStartedAt() == null)
+                .forEach(operation -> operation.supersede(now));
+    }
+
+    private void supersedeNeverSentEnsures(SalesChannelListing listing) {
+        LocalDateTime now = LocalDateTime.now();
+        operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING)
                 .filter(operation -> operation.getStatus() == SalesChannelOperationStatus.PENDING)
                 .filter(operation -> operation.getAttemptCount() == 0 && operation.getStartedAt() == null)
                 .forEach(operation -> operation.supersede(now));

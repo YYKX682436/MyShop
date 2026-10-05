@@ -85,7 +85,7 @@ public class SalesChannelOrderImportService {
                         account.getProvider(), account.getId(), external.externalOrderNo())
                 .orElse(null);
         if (row != null) {
-            return updateExisting(row, external, fingerprint);
+            return updateExisting(account, row, external, fingerprint, identity);
         }
 
         row = new SalesChannelOrder();
@@ -161,17 +161,139 @@ public class SalesChannelOrderImportService {
         channelOrderRepository.save(row);
     }
 
-    private SalesChannelOrder updateExisting(SalesChannelOrder row, AgentOrder external, String fingerprint) {
-        if (!Objects.equals(row.getSourceFingerprint(), fingerprint)) {
+    private SalesChannelOrder updateExisting(SalesChannelAccount account, SalesChannelOrder row,
+                                             AgentOrder external, String fingerprint,
+                                             IdentityResolution identity) {
+        if (!sourceFingerprintMatches(row, external, fingerprint)) {
             row.setIngestStatus(SalesChannelOrderIngestStatus.SOURCE_CONFLICT);
             row.setLastErrorCode("SOURCE_FINGERPRINT_CHANGED");
             row.setLastErrorMessage("The same external order number changed immutable source facts");
             return channelOrderRepository.save(row);
         }
+        if (row.getOrderId() != null) {
+            String listingConflict = importedListingIdentityConflict(row, external, identity);
+            if (listingConflict != null) {
+                return mappingError(row, "LISTING_IDENTITY_CONFLICT", listingConflict);
+            }
+            String skuConflict = importedSkuIdentityConflict(row, external, identity);
+            if (skuConflict != null) {
+                return mappingError(row, "SKU_IDENTITY_CONFLICT", skuConflict);
+            }
+            row.setExternalStatus(normalizeStatus(external.status()));
+            row.setSourceUpdatedAt(sourceTime(external.updatedAt()));
+            row.setIngestStatus(SalesChannelOrderIngestStatus.IMPORTED);
+            row.setLastErrorCode(null);
+            row.setLastErrorMessage(null);
+            terminalStatusService.handle(row.getId(), row.getOrderId(), row.getExternalStatus());
+            return channelOrderRepository.save(row);
+        }
+
+        // A mapping error is recoverable in place once exact identity is
+        // available. The account row lock and external-order unique key keep
+        // concurrent replays from creating more than one local order.
+        boolean recoverable = row.getIngestStatus() == SalesChannelOrderIngestStatus.MAPPING_ERROR
+                || row.getIngestStatus() == SalesChannelOrderIngestStatus.DISCOVERED;
+        if (!recoverable) {
+            row.setExternalStatus(normalizeStatus(external.status()));
+            row.setSourceUpdatedAt(sourceTime(external.updatedAt()));
+            return channelOrderRepository.save(row);
+        }
+        if (external.listingKey() != null && row.getSalesChannelListingId() != null
+                && (identity.listing() == null || !row.getSalesChannelListingId().equals(identity.listing().getId()))) {
+            return mappingError(row, "LISTING_IDENTITY_CONFLICT",
+                    "Stable listing_key conflicts with the channel order's existing exact listing projection");
+        }
+        if (external.listingKey() != null && identity.errorCode() != null) {
+            return mappingError(row, "LISTING_IDENTITY_CONFLICT", identity.errorMessage());
+        }
+        if (identity.listing() == null || identity.errorCode() != null) {
+            return mapAndCreate(account, external, row, identity);
+        }
+        if (external.skuKey() != null) {
+            Product product = productRepository.findById(identity.listing().getProductId()).orElse(null);
+            SpecResolution resolution = product == null || product.getIsDeleted() != 0
+                    ? new SpecResolution(null, "SKU_IDENTITY_CONFLICT",
+                    "Stable sku_key cannot be validated against an active mapped product")
+                    : resolveSpec(product, identity.generation(), external);
+            if (resolution.errorCode() != null || resolution.spec() == null) {
+                return mappingError(row, "SKU_IDENTITY_CONFLICT",
+                        resolution.errorMessage() == null
+                                ? "Stable sku_key does not identify an exact specification for this listing"
+                                : resolution.errorMessage());
+            }
+        }
         row.setExternalStatus(normalizeStatus(external.status()));
         row.setSourceUpdatedAt(sourceTime(external.updatedAt()));
-        terminalStatusService.handle(row.getId(), row.getOrderId(), row.getExternalStatus());
-        return channelOrderRepository.save(row);
+        if (!"pending_ship".equals(row.getExternalStatus())) {
+            row.setIngestStatus(SalesChannelOrderIngestStatus.UNSUPPORTED);
+            row.setLastErrorCode(alreadyFulfilled(row.getExternalStatus())
+                    ? "EXTERNAL_ALREADY_FULFILLED" : "EXTERNAL_ORDER_NOT_PENDING_SHIP");
+            row.setLastErrorMessage("Only pending_ship orders can be mapped into MyShop");
+            return channelOrderRepository.save(row);
+        }
+        return mapAndCreate(account, external, row, identity);
+    }
+
+    private String importedListingIdentityConflict(SalesChannelOrder row, AgentOrder external,
+                                                   IdentityResolution identity) {
+        if (external.listingKey() == null) return null;
+        if (identity.errorCode() != null || identity.listing() == null
+                || row.getSalesChannelListingId() == null
+                || !row.getSalesChannelListingId().equals(identity.listing().getId())) {
+            return "Stable listing_key conflicts with the imported order's persisted listing identity";
+        }
+        return null;
+    }
+
+    private String importedSkuIdentityConflict(SalesChannelOrder row, AgentOrder external,
+                                                IdentityResolution identity) {
+        if (external.skuKey() == null) return null;
+        if (identity.listing() == null || identity.errorCode() != null) {
+            return "Stable sku_key cannot be validated against the imported order's listing";
+        }
+        Product product = productRepository.findById(identity.listing().getProductId()).orElse(null);
+        if (product == null || product.getIsDeleted() != 0) {
+            return "Stable sku_key cannot be validated against the imported order's product";
+        }
+        SpecResolution resolution = resolveSpec(product, identity.generation(), external);
+        if (resolution.errorCode() != null || resolution.spec() == null) {
+            return resolution.errorMessage() == null
+                    ? "Stable sku_key does not resolve to the imported order's specification"
+                    : resolution.errorMessage();
+        }
+        List<OrderItem> items = orderItemRepository.findByOrderId(row.getOrderId());
+        if (items.size() != 1 || items.getFirst().getSpecId() == null
+                || !items.getFirst().getSpecId().equals(resolution.spec().getId())) {
+            return "Stable sku_key conflicts with the imported order's persisted specification identity";
+        }
+        return null;
+    }
+
+    private boolean sourceFingerprintMatches(SalesChannelOrder row, AgentOrder external, String sourceFingerprint) {
+        String stored = row.getSourceFingerprint();
+        if (Objects.equals(stored, sourceFingerprint)
+                // Pre-S2.3 persisted keys included null enrichment fields.
+                || Objects.equals(stored, historicalFingerprint(external, null, null))
+                // Rows written during S2.3 included whichever exact keys were known then.
+                || Objects.equals(stored, historicalFingerprint(external, external.listingKey(), external.skuKey()))) {
+            return true;
+        }
+        String persistedListingKey = row.getSalesChannelListingId() == null ? null
+                : row.getSalesChannelListingId().toString().toLowerCase();
+        String persistedSkuKey = null;
+        if (row.getOrderId() != null) {
+            List<OrderItem> items = orderItemRepository.findByOrderId(row.getOrderId());
+            if (items.size() == 1 && items.getFirst().getSpecId() != null) {
+                persistedSkuKey = items.getFirst().getSpecId().toString().toLowerCase();
+            }
+        }
+        return Objects.equals(stored, historicalFingerprint(external, persistedListingKey, persistedSkuKey))
+                || Objects.equals(stored, historicalFingerprint(external, persistedListingKey, null))
+                || Objects.equals(stored, historicalFingerprint(external, null, persistedSkuKey));
+    }
+
+    private String historicalFingerprint(AgentOrder external, String listingKey, String skuKey) {
+        return fingerprint(SalesChannelProvider.XIANYU, null, external, listingKey, skuKey, true);
     }
 
     private SalesChannelOrder mapAndCreate(SalesChannelAccount account, AgentOrder external,
@@ -221,6 +343,8 @@ public class SalesChannelOrderImportService {
         row.setDeliveryStatus(autoRequested
                 ? SalesChannelOrderDeliveryStatus.FULFILLMENT_PENDING
                 : SalesChannelOrderDeliveryStatus.NOT_READY);
+        row.setLastErrorCode(null);
+        row.setLastErrorMessage(null);
         Order order = createOrder(external, product, spec);
         orderRepository.saveAndFlush(order);
         OrderItem item = createOrderItem(order, external, product, spec, costPriceSnapshot);
@@ -416,13 +540,20 @@ public class SalesChannelOrderImportService {
     }
 
     private String fingerprint(SalesChannelProvider provider, UUID accountId, AgentOrder external) {
+        return fingerprint(provider, accountId, external, null, null, false);
+    }
+
+    private String fingerprint(SalesChannelProvider provider, UUID accountId, AgentOrder external,
+                               String legacyListingKey, String legacySkuKey, boolean includeStableKeys) {
         Map<String, Object> facts = new TreeMap<>();
         facts.put("provider", provider == null ? null : provider.name());
         facts.put("account_id", accountId == null ? external.accountId() : accountId.toString());
         facts.put("external_order_no", external.externalOrderNo());
         facts.put("item_id", external.itemId());
-        facts.put("listing_key", external.listingKey());
-        facts.put("sku_key", external.skuKey());
+        if (includeStableKeys) {
+            facts.put("listing_key", legacyListingKey);
+            facts.put("sku_key", legacySkuKey);
+        }
         facts.put("external_sku_id", external.externalSkuId());
         facts.put("spec_name", external.specName());
         facts.put("spec_value", external.specValue());

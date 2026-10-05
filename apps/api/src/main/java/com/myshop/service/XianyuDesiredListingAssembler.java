@@ -56,7 +56,7 @@ public class XianyuDesiredListingAssembler {
     private final PaymentUrlService paymentUrlService;
 
     /** Assemble only. This component has no account, operation, or Agent client dependency. */
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, noRollbackFor = IllegalArgumentException.class)
     public ListingSnapshot assemble(SalesChannelListing listing, Product product) {
         Objects.requireNonNull(listing, "sales channel listing is required");
         Objects.requireNonNull(product, "product is required");

@@ -192,6 +192,14 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
                 throw retryable("AGENT_ADOPTION_RESPONSE_INVALID", "Xianyu Agent returned an invalid adoption response");
             }
             verifyAdoptionIdentity(observation, request);
+            if (observation.state() == OperationState.FAILED
+                    && observation.error() != null
+                    && "ADOPTION_STATE_REPLAY_REQUIRED".equals(observation.error().code())) {
+                // Compatibility with the short-lived S2.3 wire shape: this
+                // code represented an uncertain DB transaction, not a
+                // terminal business conflict.
+                return replayableAdoption(request);
+            }
             return observation;
         }
 
@@ -270,6 +278,11 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
     private static OperationObservation failedAdoption(AdoptExistingItemRequest request, String code, String message) {
         return new OperationObservation(request.requestId(), request.listingKey(), OperationState.FAILED,
                 null, null, null, null, new OperationError(code, message));
+    }
+
+    private static OperationObservation replayableAdoption(AdoptExistingItemRequest request) {
+        return new OperationObservation(request.requestId(), request.listingKey(), OperationState.APPLYING,
+                null, null, null, null, null);
     }
 
     private static boolean hasRequiredObservationFields(JsonNode root) {

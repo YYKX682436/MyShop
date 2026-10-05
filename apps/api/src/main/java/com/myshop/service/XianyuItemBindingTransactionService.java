@@ -6,6 +6,8 @@ import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelProvider;
+import com.myshop.constant.SalesChannelOperationStatus;
+import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.Product;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelListing;
@@ -77,6 +79,9 @@ public class XianyuItemBindingTransactionService {
         }
 
         if (productListing != null) {
+            if (productListing.getManagementMode() != SalesChannelListingManagementMode.LINKED_ONLY) {
+                requireNoConvergenceOperationInFlight(productListing);
+            }
             if (generationRepository.findCurrentByListingId(productListing.getId()).isPresent()) {
                 throw conflict(ErrorCode.PRODUCT_ALREADY_LINKED,
                         "该 MyShop 商品已关联其它闲鱼商品");
@@ -85,13 +90,18 @@ public class XianyuItemBindingTransactionService {
                 throw conflict(ErrorCode.LISTING_NOT_LINKABLE,
                         "该 MyShop 渠道 listing 当前不可复用作人工关联");
             }
-            productListing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
+            if (productListing.getManagementMode() != SalesChannelListingManagementMode.LINKED_ONLY) {
+                productListing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
+            }
             SalesChannelListing saved = listingRepository.saveAndFlush(productListing);
             createGeneration(saved, itemId, product);
             return response(itemId, saved, product, "LINKED");
         }
 
         SalesChannelListing created = listingService.ensureDraft(accountId, productId);
+        if (created.getManagementMode() != SalesChannelListingManagementMode.LINKED_ONLY) {
+            requireNoConvergenceOperationInFlight(created);
+        }
         created.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
         SalesChannelListing saved = listingRepository.saveAndFlush(created);
         createGeneration(saved, itemId, product);
@@ -114,6 +124,18 @@ public class XianyuItemBindingTransactionService {
         });
         generationSpecRepository.flush();
         return saved;
+    }
+
+    private void requireNoConvergenceOperationInFlight(SalesChannelListing listing) {
+        boolean inFlight = operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listing.getId()).stream()
+                .filter(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING)
+                .anyMatch(operation -> operation.getStatus() == SalesChannelOperationStatus.RUNNING
+                        || operation.getStatus() == SalesChannelOperationStatus.PENDING
+                        && operation.getAttemptCount() > 0);
+        if (inFlight) {
+            throw new BusinessException(ErrorCode.CONVERGENCE_OPERATION_IN_FLIGHT,
+                    "CONVERGENCE_OPERATION_IN_FLIGHT", HttpStatus.CONFLICT);
+        }
     }
 
     private boolean isSafeNullIdentityListing(SalesChannelListing listing) {

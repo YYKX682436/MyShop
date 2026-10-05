@@ -784,6 +784,58 @@ class SalesChannelDomainIntegrationTest {
     }
 
     @Test
+    void invalidCurrentOnlineIntentCancelsOnlyNeverSentEnsureAndPreservesSentRecovery() {
+        Fixture neverSentFixture = fixture(false);
+        verifiedAccount(neverSentFixture, "FISH_SHOP");
+        savePublishConfigWithoutPlanning(neverSentFixture, true, true);
+        desiredStatePlanner.setEnabled(neverSentFixture.listing().getId(), true);
+        SalesChannelOperation neverSent = operationAtRevision(
+                neverSentFixture, 1, SalesChannelOperationType.ENSURE_LISTING);
+        savePublishConfigWithoutPlanning(neverSentFixture, false, false);
+
+        SalesChannelListing invalidNeverSent = desiredStatePlanner.refresh(neverSentFixture.listing().getId());
+
+        assertEquals(SalesChannelOperationStatus.SUPERSEDED,
+                operationRepository.findById(neverSent.getId()).orElseThrow().getStatus());
+        assertEquals("DESIRED_LISTING_INVALID", invalidNeverSent.getLastErrorCode());
+        assertEquals(SalesChannelListingStatus.ERROR, invalidNeverSent.getStatus());
+        assertEquals(1, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                neverSentFixture.listing().getId()).size());
+
+        Fixture attemptedFixture = fixture(false);
+        verifiedAccount(attemptedFixture, "FISH_SHOP");
+        savePublishConfigWithoutPlanning(attemptedFixture, true, true);
+        desiredStatePlanner.setEnabled(attemptedFixture.listing().getId(), true);
+        SalesChannelOperation attempted = operationAtRevision(
+                attemptedFixture, 1, SalesChannelOperationType.ENSURE_LISTING);
+        assertTrue(operationService.markRunning(attempted.getId()));
+        assertTrue(operationService.reschedule(attempted.getId(), "AGENT_APPLYING", "same request replays",
+                LocalDateTime.now().minusSeconds(1)));
+        savePublishConfigWithoutPlanning(attemptedFixture, false, false);
+
+        SalesChannelListing invalidAttempted = desiredStatePlanner.refresh(attemptedFixture.listing().getId());
+        assertEquals("DESIRED_LISTING_INVALID", invalidAttempted.getLastErrorCode());
+        assertEquals(SalesChannelOperationStatus.PENDING,
+                operationRepository.findById(attempted.getId()).orElseThrow().getStatus());
+        assertEquals(1, operationRepository.findById(attempted.getId()).orElseThrow().getAttemptCount());
+        assertEquals(1, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                attemptedFixture.listing().getId()).size());
+
+        assertTrue(operationService.markRunning(attempted.getId()));
+        assertTrue(operationService.markSucceeded(attempted.getId(),
+                Map.of("state", "SUCCEEDED", "external_item_id", "stale-valid-snapshot-item"),
+                Objects.toString(attempted.getPayload().get("desired_fingerprint"), null)));
+        SalesChannelListing afterStaleTerminal = desiredStatePlanner.refresh(attemptedFixture.listing().getId());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(attempted.getId()).orElseThrow().getStatus());
+        assertEquals(1, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                attemptedFixture.listing().getId()).size());
+        assertEquals(0, afterStaleTerminal.getAppliedRevision());
+        assertEquals("DESIRED_LISTING_INVALID", afterStaleTerminal.getLastErrorCode());
+        assertEquals(SalesChannelListingStatus.ERROR, afterStaleTerminal.getStatus());
+    }
+
+    @Test
     void cutoverSupersedesOnlyUnstartedLegacyPendingCommands() {
         Fixture fixture = fixture(false);
         verifiedAccount(fixture, "FISH_SHOP");

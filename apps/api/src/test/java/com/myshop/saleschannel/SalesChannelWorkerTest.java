@@ -255,6 +255,7 @@ class SalesChannelWorkerTest {
 
         fixture.worker.runBatch();
         assertEquals(SalesChannelOperationStatus.PENDING, fixture.operation.getStatus());
+        verify(fixture.client, never()).ensureListing(any());
         fixture.operation.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
         fixture.worker.runBatch();
 
@@ -262,7 +263,10 @@ class SalesChannelWorkerTest {
         verify(fixture.client, org.mockito.Mockito.times(2)).adoptExistingItem(requests.capture());
         assertEquals(requests.getAllValues().get(0).requestId(), requests.getAllValues().get(1).requestId());
         assertEquals(requests.getAllValues().get(0), requests.getAllValues().get(1));
-        verify(fixture.client).ensureListing(any());
+        var ensure = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
+        verify(fixture.client).ensureListing(ensure.capture());
+        assertEquals(fixture.operation.getIdempotencyKey(), ensure.getValue().requestId());
+        assertEquals(fixture.operation.getDesiredRevision(), ensure.getValue().revision());
     }
 
     @Test
