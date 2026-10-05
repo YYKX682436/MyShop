@@ -555,7 +555,10 @@ public class SalesChannelAdminService {
                 specMappingSummaries(listing, current),
                 current == null ? null : current.getExternalItemId(),
                 current == null ? null : current.getId().toString(),
-                current == null ? null : current.getGenerationNo(), generations.size(), listing.getAppliedRevision());
+                current == null ? null : current.getGenerationNo(), generations.size(), listing.getAppliedRevision(),
+                listing.getConvergenceCutoverState(),
+                listing.getConvergenceCertificationId() == null ? null : listing.getConvergenceCertificationId().toString(),
+                listing.getConvergenceActivatedAt(), listing.getConvergencePausedAt());
     }
 
     private List<ListingSpecMappingSummary> specMappingSummaries(SalesChannelListing listing,

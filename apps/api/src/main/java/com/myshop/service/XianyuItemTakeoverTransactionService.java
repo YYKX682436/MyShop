@@ -91,9 +91,17 @@ public class XianyuItemTakeoverTransactionService {
             throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                     "初次接管要求 LINKED_ONLY listing 没有历史渠道操作或订单");
         }
+        SalesChannelListingManagementPolicy.requireLegacyIdentityMutationAllowed(listing);
         listing.setManagementMode(SalesChannelListingManagementMode.TAKEOVER_PENDING);
         listingRepository.saveAndFlush(listing);
         return new BeginResult(SalesChannelListingManagementMode.TAKEOVER_PENDING, true);
+    }
+
+    /** Invalidate a pre-activation certificate before a legacy ownership claim is sent. */
+    @Transactional
+    public void authorizeIdentityMutation(UUID listingId) {
+        SalesChannelListing listing = lockListing(listingId);
+        SalesChannelListingManagementPolicy.requireLegacyIdentityMutationAllowed(listing);
     }
 
     @Transactional
@@ -118,6 +126,7 @@ public class XianyuItemTakeoverTransactionService {
             throw failure(ErrorCode.TAKEOVER_NOT_ALLOWED,
                     "只有 TAKEOVER_PENDING listing 才能完成接管");
         }
+        SalesChannelListingManagementPolicy.requireLegacyIdentityMutationAllowed(listing);
         listing.setManagementMode(SalesChannelListingManagementMode.MANAGED);
         listing.setStatus(SalesChannelListingStatus.DRAFT);
         listing.setDesiredState(SalesChannelListingDesiredState.OFFLINE);

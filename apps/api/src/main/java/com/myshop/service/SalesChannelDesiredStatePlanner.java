@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.Product;
@@ -24,6 +25,7 @@ import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.DesiredListingState;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -35,6 +37,10 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class SalesChannelDesiredStatePlanner {
+
+    public record ComputedDesiredIntent(SalesChannelAccount account, Product product,
+                                        SalesChannelListingDesiredState desiredState,
+                                        ListingSnapshot snapshot, String fingerprint) { }
 
     private final ObjectMapper objectMapper;
     private final ProductRepository productRepository;
@@ -76,6 +82,26 @@ public class SalesChannelDesiredStatePlanner {
         return planLocked(listing, false);
     }
 
+    /** Recompute exact local intent without changing the listing or operation queue. */
+    @Transactional(readOnly = true)
+    public ComputedDesiredIntent computeCurrentIntent(UUID listingId) {
+        SalesChannelListing listing = listingRepository.findById(listingId).orElse(null);
+        if (listing == null) return null;
+        SalesChannelAccount account = accountRepository.findById(listing.getSalesChannelAccountId()).orElse(null);
+        Product product = productRepository.findById(listing.getProductId()).orElse(null);
+        SalesChannelListingDesiredState desiredState = effectiveDesiredState(listing, account, product);
+        ListingSnapshot snapshot = null;
+        String fingerprint;
+        if (desiredState == SalesChannelListingDesiredState.ONLINE) {
+            snapshot = desiredListingAssembler.assemble(listing, product);
+            fingerprint = DesiredListingSnapshotFingerprints.online(objectMapper, snapshot);
+        } else {
+            fingerprint = DesiredListingSnapshotFingerprints.offline(
+                    objectMapper, listing.getId().toString().toLowerCase());
+        }
+        return new ComputedDesiredIntent(account, product, desiredState, snapshot, fingerprint);
+    }
+
     /** A retry reuses the desired revision but gives a terminal failure a new command identity. */
     @Transactional
     public void retry(UUID listingId) {
@@ -110,6 +136,9 @@ public class SalesChannelDesiredStatePlanner {
                 snapshot = desiredListingAssembler.assemble(listing, product);
                 nextFingerprint = DesiredListingSnapshotFingerprints.online(objectMapper, snapshot);
             } catch (IllegalArgumentException exception) {
+                if (listing.getConvergenceCutoverState() == SalesChannelConvergenceCutoverState.CERTIFIED) {
+                    listing.invalidateConvergenceCertification();
+                }
                 listing.setDesiredState(desiredState);
                 listing.setStatus(SalesChannelListingStatus.ERROR);
                 listing.setLastErrorCode("DESIRED_LISTING_INVALID");
@@ -129,10 +158,14 @@ public class SalesChannelDesiredStatePlanner {
             listing.setDesiredFingerprint(nextFingerprint);
             listing.incrementDesiredRevision();
             supersedeUnstartedOlderEnsures(listing);
+            if (listing.getConvergenceCutoverState() == SalesChannelConvergenceCutoverState.CERTIFIED) {
+                listing.invalidateConvergenceCertification();
+            }
         }
         listingRepository.saveAndFlush(listing);
 
         if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) return listing;
+        if (listing.getConvergenceCutoverState() != SalesChannelConvergenceCutoverState.ACTIVE) return listing;
         String blocker = quarantineLegacyExecution(listing);
         if (blocker != null) {
             setCutoverBlocker(listing, blocker);

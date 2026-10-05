@@ -3,6 +3,7 @@ package com.myshop.service;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.SalesChannelAccountStatus;
 import com.myshop.constant.SalesChannelListingManagementMode;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductSpec;
@@ -79,8 +80,14 @@ public class XianyuItemTakeoverService {
         SalesChannelListing listing = listingRepository.findById(generation.getSalesChannelListingId())
                 .orElseThrow(() -> failure(ErrorCode.ITEM_NOT_LINKED,
                         "该闲鱼商品关联的 listing 不存在", HttpStatus.CONFLICT));
+        if (listing.getConvergenceCutoverState() == SalesChannelConvergenceCutoverState.ACTIVE
+                || listing.getConvergenceCutoverState() == SalesChannelConvergenceCutoverState.PAUSED) {
+            throw failure(ErrorCode.CONVERGENCE_CUTOVER_ACTIVE, "CONVERGENCE_CUTOVER_ACTIVE", HttpStatus.CONFLICT);
+        }
         Product product = productRepository.findById(listing.getProductId())
                 .orElseThrow(() -> failure(ErrorCode.TAKEOVER_NOT_ALLOWED, "关联商品不存在"));
+
+        transactionService.authorizeIdentityMutation(listing.getId());
 
         String requestId = deterministicClaimRequestId(accountId, listing.getId(), itemId);
         if (listing.getManagementMode() == SalesChannelListingManagementMode.MANAGED) {

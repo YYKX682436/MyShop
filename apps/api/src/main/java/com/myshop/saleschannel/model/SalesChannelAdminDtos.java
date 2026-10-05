@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 import com.myshop.saleschannel.xianyu.model.XianyuProviderConfig;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -146,7 +147,11 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("currentGenerationId") String currentGenerationId,
             @JsonProperty("currentGenerationNo") Long currentGenerationNo,
             @JsonProperty("generationCount") Integer generationCount,
-            @JsonProperty("appliedRevision") Long appliedRevision) {
+            @JsonProperty("appliedRevision") Long appliedRevision,
+            @JsonProperty("convergenceCutoverState") SalesChannelConvergenceCutoverState convergenceCutoverState,
+            @JsonProperty("convergenceCertificationId") String convergenceCertificationId,
+            @JsonProperty("convergenceActivatedAt") LocalDateTime convergenceActivatedAt,
+            @JsonProperty("convergencePausedAt") LocalDateTime convergencePausedAt) {
         public ListingSummary(String id, String providerAccountId, String displayName, String accountType,
                               String managementMode, Boolean isEnabled, Boolean autoFulfillmentEnabled,
                               String status, String externalItemId, Long desiredRevision,
@@ -155,9 +160,45 @@ public final class SalesChannelAdminDtos {
             this(id, providerAccountId, displayName, accountType, managementMode, isEnabled,
                     autoFulfillmentEnabled, status, externalItemId, desiredRevision, lastSyncedAt,
                     lastErrorCode, lastErrorMessage, providerConfig, specMappings,
-                    externalItemId, null, null, 0, null);
+                    externalItemId, null, null, 0, null,
+                    SalesChannelConvergenceCutoverState.UNCERTIFIED, null, null, null);
         }
     }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record CutoverIssue(String code, String message) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record CutoverPreflight(
+            String listingId,
+            SalesChannelConvergenceCutoverState currentCutoverState,
+            boolean eligible,
+            boolean retryable,
+            List<CutoverIssue> blockers,
+            List<CutoverIssue> warnings,
+            String desiredState,
+            Long desiredRevision,
+            String desiredFingerprint,
+            String currentExternalItemId,
+            boolean needsAdoption,
+            boolean bootstrapEnsureRequired,
+            String agentInspectionDigest,
+            String providerStatus,
+            boolean agentWritesEnabled,
+            boolean agentAdoptionEnabled) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record CutoverCertificationResult(CutoverPreflight preflight, String certificationId) { }
+
+    @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
+    public record CutoverReadinessSummary(
+            boolean workerEnabled,
+            boolean agentV2WritesEnabled,
+            boolean agentV2AdoptionEnabled,
+            Map<String, Long> listingCounts,
+            long pendingNeverSentEnsureCount,
+            long attemptedRecoveryEnsureCount,
+            long legacyUnresolvedCount) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record ListingSpecMappingSummary(

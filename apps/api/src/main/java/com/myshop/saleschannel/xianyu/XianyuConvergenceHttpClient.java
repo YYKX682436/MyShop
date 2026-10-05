@@ -12,6 +12,9 @@ import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationE
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.EnsureListingOperationObservation;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationObservation;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationState;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverReadiness;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspection;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspectionRequest;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +22,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.Set;
 import java.time.Clock;
 import java.util.function.Supplier;
 
@@ -28,6 +32,8 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
 
     private static final String API_ROOT = "/api/integration/v2";
     private static final int MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+    private static final int MAX_CUTOVER_RESPONSE_BYTES = 512 * 1024;
+    private static final int MAX_CUTOVER_REQUEST_BYTES = 8 * 1024;
     private static final Validator CONTRACT_VALIDATOR = Validation.buildDefaultValidatorFactory().getValidator();
 
     private final ObjectMapper objectMapper;
@@ -224,6 +230,111 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
     @Override
     public OperationObservation confirmDelivery(ConfirmDeliveryRequest request) {
         throw new UnsupportedOperationException("Delivery is not wired in S2.1");
+    }
+
+    @Override
+    public CutoverReadiness agentReadiness() {
+        final XianyuSignedHttpTransport.Response response;
+        try {
+            response = transport.send("GET", "/readiness", new byte[0], "application/json");
+        } catch (XianyuSignedHttpTransport.TransportException failure) {
+            throw readOnlyRetryable("AGENT_READINESS_UNAVAILABLE");
+        }
+        if (response.body().length > MAX_CUTOVER_RESPONSE_BYTES || response.statusCode() < 200
+                || response.statusCode() >= 300) {
+            throw readOnlyRetryable("AGENT_READINESS_UNAVAILABLE");
+        }
+        JsonNode root = parseTree(response.body());
+        if (!hasExactFields(root, "schema_version", "v2_writes_enabled", "v2_adoption_enabled")) {
+            throw readOnlyRetryable("AGENT_READINESS_RESPONSE_INVALID");
+        }
+        try {
+            CutoverReadiness readiness = objectMapper.treeToValue(root, CutoverReadiness.class);
+            if (!CONTRACT_VALIDATOR.validate(readiness).isEmpty()) {
+                throw readOnlyRetryable("AGENT_READINESS_RESPONSE_INVALID");
+            }
+            return readiness;
+        } catch (IOException | RuntimeException invalid) {
+            throw readOnlyRetryable("AGENT_READINESS_RESPONSE_INVALID");
+        }
+    }
+
+    @Override
+    public CutoverInspection inspectListing(CutoverInspectionRequest request) {
+        if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()
+                || !validRequestId(request.requestId()) || !validListingKey(request.listingKey())
+                || !validExactIdentity(request.accountId())
+                || request.expectedExternalItemId() != null
+                && !validExactIdentity(request.expectedExternalItemId(), 64)) {
+            throw readOnlyRetryable("AGENT_INSPECTION_REQUEST_INVALID");
+        }
+        final byte[] body;
+        try {
+            body = objectMapper.writeValueAsBytes(request);
+        } catch (IOException | RuntimeException invalid) {
+            throw readOnlyRetryable("AGENT_INSPECTION_REQUEST_INVALID");
+        }
+        if (body.length > MAX_CUTOVER_REQUEST_BYTES) {
+            throw readOnlyRetryable("AGENT_INSPECTION_REQUEST_TOO_LARGE");
+        }
+        final XianyuSignedHttpTransport.Response response;
+        try {
+            response = transport.send("POST", "/listings/inspect", body, "application/json");
+        } catch (XianyuSignedHttpTransport.TransportException failure) {
+            throw readOnlyRetryable("AGENT_INSPECTION_UNAVAILABLE");
+        }
+        if (response.body().length > MAX_CUTOVER_RESPONSE_BYTES || response.statusCode() < 200
+                || response.statusCode() >= 300) {
+            throw readOnlyRetryable("AGENT_INSPECTION_UNAVAILABLE");
+        }
+        JsonNode root = parseTree(response.body());
+        if (!hasExactFields(root, "schema_version", "request_id", "account_id", "listing_key",
+                "expected_external_item_id", "v2_writes_enabled", "v2_adoption_enabled", "managed_item",
+                "bindings", "lifecycle_head", "nonterminal_operations", "provider_observation",
+                "provider_observation_error_code", "inspection_digest")) {
+            throw readOnlyRetryable("AGENT_INSPECTION_RESPONSE_INVALID");
+        }
+        try {
+            CutoverInspection inspection = objectMapper.treeToValue(root, CutoverInspection.class);
+            if (!CONTRACT_VALIDATOR.validate(inspection).isEmpty()
+                    || !request.requestId().equals(inspection.requestId())
+                    || !request.accountId().equals(inspection.accountId())
+                    || !request.listingKey().equals(inspection.listingKey())
+                    || !java.util.Objects.equals(request.expectedExternalItemId(), inspection.expectedExternalItemId())
+                    || inspection.providerObservationErrorCode() != null
+                    && !"PROVIDER_OBSERVATION_UNAVAILABLE".equals(inspection.providerObservationErrorCode())) {
+                throw readOnlyRetryable("AGENT_INSPECTION_RESPONSE_INVALID");
+            }
+            return inspection;
+        } catch (IOException | RuntimeException invalid) {
+            throw readOnlyRetryable("AGENT_INSPECTION_RESPONSE_INVALID");
+        }
+    }
+
+    private static boolean hasExactFields(JsonNode object, String... required) {
+        if (object == null || !object.isObject()) return false;
+        Set<String> expected = Set.of(required);
+        java.util.Set<String> actual = new java.util.HashSet<>();
+        object.fieldNames().forEachRemaining(actual::add);
+        return expected.equals(actual);
+    }
+
+    private static boolean validListingKey(String value) {
+        return value != null && !value.isBlank() && value.length() <= 128
+                && value.equals(value.strip())
+                && java.text.Normalizer.isNormalized(value, java.text.Normalizer.Form.NFC);
+    }
+
+    private static boolean validExactIdentity(String value) {
+        return validExactIdentity(value, 80);
+    }
+
+    private static boolean validExactIdentity(String value, int maxLength) {
+        return value != null && !value.isBlank() && value.length() <= maxLength && value.equals(value.strip());
+    }
+
+    private static SalesChannelProviderClientException readOnlyRetryable(String code) {
+        return retryable(code, "Xianyu Agent read-only inspection could not be completed");
     }
 
     private EnsureListingOperationObservation parseObservation(JsonNode root) {

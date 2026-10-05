@@ -80,6 +80,10 @@ public final class XianyuConvergenceContracts {
     /** The only state vocabulary MyShop observes from Agent commands. */
     public enum OperationState { APPLYING, SUCCEEDED, FAILED }
 
+    public enum AgentBindingState { CURRENT, TRANSITION_PENDING, RETIRED }
+
+    public enum AgentProviderStatus { ACTIVE, OFFLINE, MISSING, UNAVAILABLE }
+
     public enum MessageAction { NO_REPLY, SEND_TEXT, SEND_IMAGE, SEND_TEXT_AND_IMAGE }
 
     public record EnsureListingRequest(
@@ -345,6 +349,105 @@ public final class XianyuConvergenceContracts {
         public boolean isListingKeyCanonical() {
             return listingKey == null || canonicalListingKey(listingKey);
         }
+    }
+
+    /** Agent runtime gate report. No credentials or environment values cross this contract. */
+    public record CutoverReadiness(
+            @JsonProperty(value = "schema_version", required = true) @NotNull Integer schemaVersion,
+            @JsonProperty(value = "v2_writes_enabled", required = true) @NotNull Boolean v2WritesEnabled,
+            @JsonProperty(value = "v2_adoption_enabled", required = true) @NotNull Boolean v2AdoptionEnabled)
+            implements ClosedContract {
+        @AssertTrue @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isSupportedSchema() { return schemaVersion == null || schemaVersion == 1; }
+    }
+
+    public record CutoverInspectionRequest(
+            @JsonProperty(value = "request_id", required = true) @NotNull
+            @Pattern(regexp = "^[A-Za-z0-9._~-]{1,255}$") String requestId,
+            @JsonProperty(value = "account_id", required = true) @NotNull
+            @CodePointLength(min = 1, max = 80) String accountId,
+            @JsonProperty(value = "listing_key", required = true) @NotNull
+            @CodePointLength(min = 1, max = 128) String listingKey,
+            @JsonProperty(value = "expected_external_item_id", required = true)
+            @JsonInclude(JsonInclude.Include.ALWAYS) @CodePointLength(max = 64) String expectedExternalItemId)
+            implements ClosedContract {
+        @AssertTrue @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isIdentityExact() {
+            return exact(accountId) && canonicalListingKey(listingKey)
+                    && (expectedExternalItemId == null || exact(expectedExternalItemId));
+        }
+    }
+
+    public record CutoverManagedItem(
+            @JsonProperty(value = "external_item_id", required = true) @NotNull @NotBlank
+            @CodePointLength(min = 1, max = 64) String externalItemId,
+            @JsonProperty(value = "managed_by", required = true) @NotNull @NotBlank
+            @CodePointLength(min = 1, max = 32) String managedBy) implements ClosedContract { }
+
+    public record CutoverBinding(
+            @JsonProperty(value = "listing_key", required = true) @NotNull @NotBlank
+            @CodePointLength(min = 1, max = 128) String listingKey,
+            @JsonProperty(value = "external_item_id", required = true) @NotNull @NotBlank
+            @CodePointLength(min = 1, max = 64) String externalItemId,
+            @JsonProperty(value = "state", required = true) @NotNull AgentBindingState state,
+            @JsonProperty(value = "desired_revision", required = true) @NotNull @Min(0) Long desiredRevision,
+            @JsonProperty(value = "desired_fingerprint", required = true)
+            @JsonInclude(JsonInclude.Include.ALWAYS) @Pattern(regexp = "^[a-f0-9]{64}$") String desiredFingerprint,
+            @JsonProperty(value = "lifecycle_revision", required = true) @NotNull @Min(0) Integer lifecycleRevision)
+            implements ClosedContract { }
+
+    public record CutoverLifecycleHead(
+            @JsonProperty(value = "desired_revision", required = true) @NotNull @Min(0) Long desiredRevision,
+            @JsonProperty(value = "desired_fingerprint", required = true) @NotNull
+            @Pattern(regexp = "^[a-f0-9]{64}$") String desiredFingerprint,
+            @JsonProperty(value = "desired_active", required = true) @NotNull Boolean desiredActive)
+            implements ClosedContract { }
+
+    public record CutoverNonterminalOperation(
+            @JsonProperty(value = "request_id", required = true) @NotNull
+            @Pattern(regexp = "^[A-Za-z0-9._~-]{1,255}$") String requestId,
+            @JsonProperty(value = "operation_type", required = true) @NotNull @NotBlank String operationType,
+            @JsonProperty(value = "status", required = true) @NotNull
+            @Pattern(regexp = "PENDING|RUNNING|UNKNOWN") String status,
+            @JsonProperty(value = "desired_revision", required = true) Long desiredRevision,
+            @JsonProperty(value = "external_item_id", required = true)
+            @JsonInclude(JsonInclude.Include.ALWAYS) String externalItemId,
+            @JsonProperty(value = "external_call_started", required = true) @NotNull Boolean externalCallStarted)
+            implements ClosedContract { }
+
+    public record CutoverProviderObservation(
+            @JsonProperty(value = "external_item_id", required = true)
+            @JsonInclude(JsonInclude.Include.ALWAYS) String externalItemId,
+            @JsonProperty(value = "status", required = true) @NotNull AgentProviderStatus status,
+            @JsonProperty(value = "complete", required = true) @NotNull Boolean complete,
+            @JsonProperty("observed_at") String observedAt) implements ClosedContract { }
+
+    public record CutoverInspection(
+            @JsonProperty(value = "schema_version", required = true) @NotNull Integer schemaVersion,
+            @JsonProperty(value = "request_id", required = true) @NotNull
+            @Pattern(regexp = "^[A-Za-z0-9._~-]{1,255}$") String requestId,
+            @JsonProperty(value = "account_id", required = true) @NotNull @CodePointLength(min = 1, max = 80) String accountId,
+            @JsonProperty(value = "listing_key", required = true) @NotNull @CodePointLength(min = 1, max = 128) String listingKey,
+            @JsonProperty(value = "expected_external_item_id", required = true)
+            @JsonInclude(JsonInclude.Include.ALWAYS) String expectedExternalItemId,
+            @JsonProperty(value = "v2_writes_enabled", required = true) @NotNull Boolean v2WritesEnabled,
+            @JsonProperty(value = "v2_adoption_enabled", required = true) @NotNull Boolean v2AdoptionEnabled,
+            @JsonProperty(value = "managed_item", required = true) @JsonInclude(JsonInclude.Include.ALWAYS) @Valid CutoverManagedItem managedItem,
+            @JsonProperty(value = "bindings", required = true) @NotNull List<@NotNull @Valid CutoverBinding> bindings,
+            @JsonProperty(value = "lifecycle_head", required = true) @JsonInclude(JsonInclude.Include.ALWAYS) @Valid CutoverLifecycleHead lifecycleHead,
+            @JsonProperty(value = "nonterminal_operations", required = true) @NotNull List<@NotNull @Valid CutoverNonterminalOperation> nonterminalOperations,
+            @JsonProperty(value = "provider_observation", required = true) @JsonInclude(JsonInclude.Include.ALWAYS) @Valid CutoverProviderObservation providerObservation,
+            @JsonProperty(value = "provider_observation_error_code", required = true) @JsonInclude(JsonInclude.Include.ALWAYS) String providerObservationErrorCode,
+            @JsonProperty(value = "inspection_digest", required = true) @NotNull @Pattern(regexp = "^[a-f0-9]{64}$") String inspectionDigest)
+            implements ClosedContract {
+        @AssertTrue @com.fasterxml.jackson.annotation.JsonIgnore
+        public boolean isExactRequestIdentity() {
+            return schemaVersion == null || schemaVersion == 1;
+        }
+    }
+
+    private static boolean exact(String value) {
+        return value != null && !value.isBlank() && value.equals(value.strip());
     }
 
     public record SendDeliveryRequest(

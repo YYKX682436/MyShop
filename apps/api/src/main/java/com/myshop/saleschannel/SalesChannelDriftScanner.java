@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 
 @Slf4j
 @Component
@@ -19,7 +20,8 @@ public class SalesChannelDriftScanner {
 
     @Scheduled(fixedDelayString = "${sales-channel.sync.scan-interval-ms:15000}")
     public void scanEnabledListings() {
-        for (var listing : listingRepository.findByEnabledTrueOrderByUpdatedAtAsc()) {
+        for (var listing : listingRepository.findByEnabledTrueAndConvergenceCutoverStateOrderByUpdatedAtAsc(
+                SalesChannelConvergenceCutoverState.ACTIVE)) {
             try {
                 planner.refresh(listing.getId());
             } catch (RuntimeException exception) {

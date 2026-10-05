@@ -706,6 +706,174 @@ class FakeMyShop:
         return self.counts(sql, params)
 
 
+class CutoverCanary:
+    """Small local control-plane oracle for per-listing authorization cases."""
+
+    def __init__(self, agent: FakeAgent):
+        self.agent = agent
+        self.listings: dict[str, dict[str, Any]] = {}
+        self.certifications: list[dict[str, Any]] = []
+        self.commands: list[dict[str, Any]] = []
+
+    def add_listing(self, listing_key: str, account_id: str, revision: int = 1,
+                    desired_state: str = "ONLINE", snapshot: dict[str, Any] | None = None,
+                    current_external_item_id: str | None = None) -> None:
+        self.listings[listing_key] = {
+            "account_id": account_id, "revision": revision, "desired_state": desired_state,
+            "desired_fingerprint": digest(snapshot) if snapshot is not None else digest([listing_key, "OFFLINE"]),
+            "snapshot": snapshot, "current_external_item_id": current_external_item_id,
+            "state": "UNCERTIFIED", "certification_id": None,
+        }
+
+    def preflight(self, listing_key: str, evidence: dict[str, Any]) -> dict[str, Any]:
+        listing = self.listings[listing_key]
+        blockers: list[str] = []
+        warnings: list[str] = []
+        current_item = listing["current_external_item_id"]
+        bindings = evidence.get("bindings", [])
+        listing_bindings = [row for row in bindings if row["listing_key"] == listing_key]
+        item_bindings = [row for row in bindings if current_item is not None
+                         and row["external_item_id"] == current_item]
+        if any(row["state"] == "TRANSITION_PENDING" for row in bindings):
+            blockers.append("AGENT_TRANSITION_PENDING")
+        if evidence.get("nonterminal_operations"):
+            blockers.append("AGENT_OPERATION_IN_FLIGHT")
+
+        needs_adoption = False
+        if current_item is None:
+            if any(row["state"] == "CURRENT" for row in listing_bindings):
+                blockers.append("AGENT_UNEXPECTED_CURRENT_BINDING")
+        else:
+            managed = evidence.get("managed_item")
+            if managed is None or managed.get("external_item_id") != current_item:
+                blockers.append("AGENT_OWNERSHIP_NOT_CLAIMED")
+            elif managed.get("managed_by") != "MYSHOP":
+                blockers.append("AGENT_OWNERSHIP_CONFLICT")
+            if any(row["state"] == "RETIRED" for row in item_bindings):
+                blockers.append("AGENT_RETIRED_IDENTITY_CONFLICT")
+            if any(row["state"] == "CURRENT" and row["external_item_id"] != current_item
+                   for row in listing_bindings):
+                blockers.append("AGENT_LISTING_IDENTITY_CONFLICT")
+            if any(row["state"] == "CURRENT" and row["listing_key"] != listing_key
+                   for row in item_bindings):
+                blockers.append("AGENT_ITEM_IDENTITY_CONFLICT")
+            exact_current = any(row["state"] == "CURRENT" and row["listing_key"] == listing_key
+                                and row["external_item_id"] == current_item for row in item_bindings)
+            needs_adoption = not exact_current
+            if needs_adoption and managed is not None and managed.get("managed_by") == "MYSHOP" \
+                    and not item_bindings and not any(row["state"] == "CURRENT" for row in listing_bindings):
+                warnings.append("ADOPTION_REQUIRED")
+            observed = evidence.get("provider_observation")
+            if evidence.get("provider_observation_error_code") or observed is None or not observed.get("complete"):
+                blockers.append("PROVIDER_OBSERVATION_UNAVAILABLE")
+            elif observed.get("external_item_id") != current_item:
+                blockers.append("PROVIDER_ITEM_IDENTITY_MISMATCH")
+            elif observed.get("status") == "MISSING":
+                blockers.append("PROVIDER_ITEM_MISSING")
+            elif observed.get("status") == "UNAVAILABLE":
+                blockers.append("PROVIDER_OBSERVATION_UNAVAILABLE")
+
+        bootstrap = True
+        head = evidence.get("lifecycle_head")
+        if head is not None:
+            if head["desired_revision"] > listing["revision"]:
+                blockers.append("AGENT_LIFECYCLE_AHEAD")
+            elif head["desired_revision"] == listing["revision"]:
+                active = listing["desired_state"] == "ONLINE"
+                if head["desired_fingerprint"] != listing["desired_fingerprint"] \
+                        or head["desired_active"] != active:
+                    blockers.append("AGENT_LIFECYCLE_CONFLICT")
+                else:
+                    bootstrap = False
+            else:
+                warnings.append("AGENT_LIFECYCLE_BEHIND")
+
+        return {
+            "eligible": not blockers, "blockers": blockers, "warnings": warnings,
+            "needs_adoption": needs_adoption, "bootstrap_ensure_required": bootstrap,
+            "inspection_digest": evidence.get("inspection_digest", digest(evidence)),
+        }
+
+    def certify(self, listing_key: str, evidence: dict[str, Any]) -> dict[str, Any] | None:
+        listing = self.listings[listing_key]
+        report = self.preflight(listing_key, evidence)
+        if not report["eligible"]:
+            return None
+        bootstrap_id = None
+        if report["bootstrap_ensure_required"]:
+            exact = next((row for row in self.commands
+                          if row["listing_key"] == listing_key and row["revision"] == listing["revision"]
+                          and row["status"] == "PENDING" and row["attempts"] == 0), None)
+            if exact is None:
+                bootstrap_id = f"bootstrap-{listing_key}-{listing['revision']}-{len(self.commands) + 1}"
+                payload = {
+                    "request_id": f"ensure-{listing_key}-{listing['revision']}",
+                    "listing_key": listing_key, "account_id": listing["account_id"],
+                    "revision": listing["revision"], "desired_state": listing["desired_state"],
+                    "desired_snapshot": listing["snapshot"],
+                    "desired_fingerprint": listing["desired_fingerprint"],
+                }
+                self.commands.append({"id": bootstrap_id, "listing_key": listing_key,
+                                      "revision": listing["revision"], "status": "PENDING",
+                                      "attempts": 0, "payload": payload})
+            else:
+                bootstrap_id = exact["id"]
+        certificate = {
+            "id": f"certificate-{len(self.certifications) + 1}",
+            "listing_key": listing_key, "revision": listing["revision"],
+            "desired_fingerprint": listing["desired_fingerprint"],
+            "current_external_item_id": listing["current_external_item_id"],
+            "agent_state_digest": report["inspection_digest"],
+            "requires_adoption": report["needs_adoption"], "bootstrap_operation_id": bootstrap_id,
+        }
+        self.certifications.append(certificate.copy())
+        listing["state"] = "CERTIFIED"
+        listing["certification_id"] = certificate["id"]
+        return certificate
+
+    def activate(self, listing_key: str, evidence: dict[str, Any], *, writes_enabled: bool,
+                 adoption_enabled: bool, revision: int | None = None,
+                 fingerprint: str | None = None, current_external_item_id: str | None = None) -> str | None:
+        listing = self.listings[listing_key]
+        if listing["state"] != "CERTIFIED":
+            return "CUTOVER_NOT_CERTIFIED"
+        certificate = next(row for row in self.certifications
+                           if row["id"] == listing["certification_id"])
+        local_matches = (revision is None or revision == certificate["revision"]) \
+            and (fingerprint is None or fingerprint == certificate["desired_fingerprint"]) \
+            and (current_external_item_id is None
+                 or current_external_item_id == certificate["current_external_item_id"])
+        if not local_matches:
+            listing.update(state="UNCERTIFIED", certification_id=None)
+            return "CUTOVER_CERTIFICATION_STALE"
+        report = self.preflight(listing_key, evidence)
+        if not report["eligible"]:
+            return report["blockers"][0]
+        if report["inspection_digest"] != certificate["agent_state_digest"]:
+            return "CUTOVER_CERTIFICATION_STALE"
+        if not writes_enabled:
+            return "AGENT_V2_WRITES_DISABLED"
+        if certificate["requires_adoption"] and not adoption_enabled:
+            return "AGENT_V2_ADOPTION_DISABLED"
+        if certificate["bootstrap_operation_id"] is not None:
+            command = next((row for row in self.commands
+                            if row["id"] == certificate["bootstrap_operation_id"]), None)
+            if command is None or command["status"] != "PENDING" or command["attempts"] != 0:
+                listing.update(state="UNCERTIFIED", certification_id=None)
+                return "CUTOVER_CERTIFICATION_STALE"
+        listing["state"] = "ACTIVE"
+        return None
+
+    def pause(self, listing_key: str) -> None:
+        if self.listings[listing_key]["state"] != "ACTIVE":
+            raise ValueError("CUTOVER_NOT_ACTIVE")
+        self.listings[listing_key]["state"] = "PAUSED"
+
+    def claimable(self) -> list[dict[str, Any]]:
+        return [row for row in self.commands if row["status"] == "PENDING"
+                and (row["attempts"] > 0 or self.listings[row["listing_key"]]["state"] == "ACTIVE")]
+
+
 class GoldenFlowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="myshop-xianyu-golden-")
@@ -1037,6 +1205,130 @@ class GoldenFlowTests(unittest.TestCase):
         self.assertEqual("12.00", json.loads(self.agent.current_item(self.account, self.listing_key)["snapshot_json"])["price"])
         with self.assertRaisesRegex(ValueError, "STALE_REVISION"):
             self.ensure(revision=1)
+
+    def cutover_evidence(self, **overrides: Any) -> dict[str, Any]:
+        evidence = {
+            "managed_item": None, "bindings": [], "lifecycle_head": None,
+            "nonterminal_operations": [], "provider_observation": None,
+            "provider_observation_error_code": None,
+        }
+        evidence.update(overrides)
+        evidence["inspection_digest"] = digest(evidence)
+        return evidence
+
+    def test_20_uncertified_and_certified_bootstrap_commands_are_isolated(self):
+        flow = CutoverCanary(self.agent)
+        flow.add_listing(self.listing_key, self.account, snapshot=SNAPSHOT)
+        self.assertEqual([], flow.claimable())
+
+        certificate = flow.certify(self.listing_key, self.cutover_evidence())
+        self.assertIsNotNone(certificate)
+        self.assertEqual("CERTIFIED", flow.listings[self.listing_key]["state"])
+        self.assertEqual(1, len(flow.commands))
+        self.assertEqual([], flow.claimable())
+        self.assertEqual(0, self.agent.write_count())
+
+    def test_21_new_listing_activation_only_authorizes_later_worker_execution(self):
+        flow = CutoverCanary(self.agent)
+        flow.add_listing(self.listing_key, self.account, snapshot=SNAPSHOT)
+        evidence = self.cutover_evidence()
+        preflight = flow.preflight(self.listing_key, evidence)
+        self.assertTrue(preflight["eligible"], preflight["blockers"])
+        self.assertIsNotNone(flow.certify(self.listing_key, evidence))
+        self.assertEqual(0, self.agent.write_count(), "certification must stay read-only")
+        self.assertEqual("AGENT_V2_WRITES_DISABLED", flow.activate(
+            self.listing_key, evidence, writes_enabled=False, adoption_enabled=False))
+        self.assertEqual("CERTIFIED", flow.listings[self.listing_key]["state"])
+        self.assertIsNone(flow.activate(self.listing_key, evidence, writes_enabled=True, adoption_enabled=False))
+        command = flow.claimable()[0]
+        result = self.agent.ensure_listing(command["payload"])
+        self.assertEqual("SUCCEEDED", result["state"])
+        self.assertEqual(1, self.agent.write_count("PUBLISH"))
+
+    def test_22_legacy_adoption_canary_requires_adoption_gate_and_never_publishes(self):
+        item_id = "legacy-cutover-item"
+        with self.agent.db() as db:
+            db.execute("INSERT INTO managed_items VALUES (?, ?, 'MYSHOP')", (self.account, item_id))
+            db.execute("INSERT INTO provider_items VALUES (?, ?, ?, 'CURRENT', ?, 'legacy-request', 'legacy-request')",
+                       (item_id, self.account, "old-listing", canonical(SNAPSHOT)))
+        flow = CutoverCanary(self.agent)
+        flow.add_listing(self.listing_key, self.account, snapshot=SNAPSHOT,
+                         current_external_item_id=item_id)
+        evidence = self.cutover_evidence(
+            managed_item={"external_item_id": item_id, "managed_by": "MYSHOP"},
+            provider_observation={"external_item_id": item_id, "status": "ACTIVE", "complete": True},
+        )
+        preflight = flow.preflight(self.listing_key, evidence)
+        self.assertTrue(preflight["eligible"], preflight["blockers"])
+        self.assertTrue(preflight["needs_adoption"])
+        certificate = flow.certify(self.listing_key, evidence)
+        self.assertTrue(certificate["requires_adoption"])
+        self.assertEqual(0, self.agent.write_count())
+        self.assertEqual("AGENT_V2_ADOPTION_DISABLED", flow.activate(
+            self.listing_key, evidence, writes_enabled=True, adoption_enabled=False))
+        self.assertIsNone(flow.activate(self.listing_key, evidence, writes_enabled=True, adoption_enabled=True))
+
+        command = flow.claimable()[0]
+        adopted = self.agent.adopt_existing_item({
+            "request_id": "adopt-cutover-item", "listing_key": self.listing_key,
+            "account_id": self.account, "external_item_id": item_id,
+        })
+        self.assertEqual("SUCCEEDED", adopted["state"])
+        ensured = self.agent.ensure_listing(command["payload"])
+        self.assertEqual("SUCCEEDED", ensured["state"])
+        self.assertEqual(0, self.agent.write_count(), "adoption and exact no-op ENSURE make no provider write")
+
+    def test_23_exact_current_binding_does_not_require_adoption(self):
+        flow = CutoverCanary(self.agent)
+        flow.add_listing(self.listing_key, self.account, snapshot=SNAPSHOT, current_external_item_id="item-bound")
+        evidence = self.cutover_evidence(
+            managed_item={"external_item_id": "item-bound", "managed_by": "MYSHOP"},
+            bindings=[{"listing_key": self.listing_key, "external_item_id": "item-bound", "state": "CURRENT"}],
+            provider_observation={"external_item_id": "item-bound", "status": "OFFLINE", "complete": True},
+        )
+        report = flow.preflight(self.listing_key, evidence)
+        self.assertTrue(report["eligible"], report["blockers"])
+        self.assertFalse(report["needs_adoption"])
+
+    def test_24_agent_binding_conflict_blocks_certification(self):
+        flow = CutoverCanary(self.agent)
+        flow.add_listing(self.listing_key, self.account, snapshot=SNAPSHOT, current_external_item_id="shared-item")
+        evidence = self.cutover_evidence(
+            managed_item={"external_item_id": "shared-item", "managed_by": "MYSHOP"},
+            bindings=[{"listing_key": "another-listing", "external_item_id": "shared-item", "state": "CURRENT"}],
+            provider_observation={"external_item_id": "shared-item", "status": "ACTIVE", "complete": True},
+        )
+        report = flow.preflight(self.listing_key, evidence)
+        self.assertIn("AGENT_ITEM_IDENTITY_CONFLICT", report["blockers"])
+        self.assertIsNone(flow.certify(self.listing_key, evidence))
+        self.assertEqual("UNCERTIFIED", flow.listings[self.listing_key]["state"])
+
+    def test_25_stale_certificate_is_invalidated_and_history_is_retained(self):
+        flow = CutoverCanary(self.agent)
+        flow.add_listing(self.listing_key, self.account, snapshot=SNAPSHOT)
+        evidence = self.cutover_evidence()
+        certificate = flow.certify(self.listing_key, evidence)
+        self.assertEqual("CUTOVER_CERTIFICATION_STALE", flow.activate(
+            self.listing_key, evidence, writes_enabled=True, adoption_enabled=True,
+            revision=2, fingerprint=certificate["desired_fingerprint"],
+        ))
+        self.assertEqual("UNCERTIFIED", flow.listings[self.listing_key]["state"])
+        self.assertEqual(certificate["id"], flow.certifications[0]["id"])
+        self.assertEqual(1, len(flow.certifications))
+
+    def test_26_paused_stops_never_sent_commands_but_keeps_attempted_recovery(self):
+        flow = CutoverCanary(self.agent)
+        flow.add_listing(self.listing_key, self.account, snapshot=SNAPSHOT)
+        evidence = self.cutover_evidence()
+        flow.certify(self.listing_key, evidence)
+        self.assertIsNone(flow.activate(self.listing_key, evidence, writes_enabled=True, adoption_enabled=True))
+        first = flow.commands[0]
+        first["attempts"] = 1
+        flow.commands.append({"id": "new-revision", "listing_key": self.listing_key, "revision": 2,
+                              "status": "PENDING", "attempts": 0, "payload": {"revision": 2}})
+        flow.pause(self.listing_key)
+        self.assertEqual([first], flow.claimable())
+        self.assertEqual("PAUSED", flow.listings[self.listing_key]["state"])
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ package com.myshop.service.impl;
 import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelListing;
@@ -16,9 +17,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 
 /** MyShop-side persistence boundary for ENSURE_LISTING only. */
@@ -34,7 +39,97 @@ public class SalesChannelOperationServiceImpl {
     @Transactional
     public SalesChannelOperation requestEnsureListing(UUID listingId, Map<String, Object> payload) {
         SalesChannelListing listing = lockListing(listingId);
+        // Validate the frozen wire payload before authorization checks. This
+        // keeps malformed requests deterministic without allowing persistence.
+        validateEnsurePayload(listingId, listing, payload);
         SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
+        if (listing.getConvergenceCutoverState() != SalesChannelConvergenceCutoverState.ACTIVE) {
+            throw new IllegalStateException("CUTOVER_NOT_ACTIVE");
+        }
+        if (generationRepository.findCandidateByListingId(listingId).isPresent()) {
+            throw new IllegalStateException("LEGACY_CANDIDATE_UNRESOLVED");
+        }
+        String requestId = UUID.randomUUID().toString().toLowerCase();
+        return operationRepository.saveAndFlush(new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, listing.getDesiredRevision(), requestId, payload));
+    }
+
+    /**
+     * Deduplicate the exact, frozen first ENSURE created by certification.
+     * This deliberately bypasses ACTIVE authorization: the command remains
+     * unclaimable until activation.
+     */
+    @Transactional
+    public SalesChannelOperation prepareCertifiedEnsure(UUID listingId, Map<String, Object> payload) {
+        SalesChannelListing listing = lockListing(listingId);
+        SalesChannelListingManagementPolicy.requireProviderWritesAllowed(listing);
+        if (listing.getConvergenceCutoverState() != SalesChannelConvergenceCutoverState.UNCERTIFIED
+                && listing.getConvergenceCutoverState() != SalesChannelConvergenceCutoverState.CERTIFIED) {
+            throw new IllegalStateException("CUTOVER_NOT_UNCERTIFIED");
+        }
+        validateEnsurePayload(listingId, listing, payload);
+        if (generationRepository.findCandidateByListingId(listingId).isPresent()) {
+            throw new IllegalStateException("LEGACY_CANDIDATE_UNRESOLVED");
+        }
+
+        var operations = operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(listingId);
+        LocalDateTime now = LocalDateTime.now();
+        SalesChannelOperation exact = null;
+        for (SalesChannelOperation operation : operations) {
+            if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) continue;
+            boolean live = operation.getStatus() == SalesChannelOperationStatus.PENDING
+                    || operation.getStatus() == SalesChannelOperationStatus.RUNNING
+                    || operation.getStatus() == SalesChannelOperationStatus.UNKNOWN;
+            boolean neverSent = operation.getStatus() == SalesChannelOperationStatus.PENDING
+                    && operation.getAttemptCount() == 0 && operation.getStartedAt() == null;
+            if (live && !neverSent && operation.getAttemptCount() > 0) {
+                throw new IllegalStateException("CONVERGENCE_OPERATION_IN_FLIGHT");
+            }
+            if (operation.getDesiredRevision() < listing.getDesiredRevision() && live) {
+                if (!neverSent) throw new IllegalStateException("CONVERGENCE_OPERATION_IN_FLIGHT");
+                operation.supersede(now);
+                continue;
+            }
+            if (operation.getDesiredRevision() != listing.getDesiredRevision() || !neverSent) continue;
+            if (exact == null && isSameFrozenPayload(operation.getPayload(), payload)) {
+                exact = operation;
+            } else {
+                operation.supersede(now);
+            }
+        }
+        if (exact != null) return exact;
+        String requestId = UUID.randomUUID().toString().toLowerCase();
+        return operationRepository.saveAndFlush(new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, listing.getDesiredRevision(), requestId, payload));
+    }
+
+    public boolean isSameFrozenPayload(Map<String, Object> left, Map<String, Object> right) {
+        return Objects.equals(normalizeJsonValue(left), normalizeJsonValue(right));
+    }
+
+    private Object normalizeJsonValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> normalized = new TreeMap<>();
+            map.forEach((key, nested) -> normalized.put(Objects.toString(key), normalizeJsonValue(nested)));
+            return normalized;
+        }
+        if (value instanceof Collection<?> collection) {
+            ArrayList<Object> normalized = new ArrayList<>(collection.size());
+            collection.forEach(nested -> normalized.add(normalizeJsonValue(nested)));
+            return normalized;
+        }
+        if (value instanceof Number number) {
+            try {
+                return new BigDecimal(number.toString()).stripTrailingZeros();
+            } catch (NumberFormatException ignored) {
+                return number;
+            }
+        }
+        return value;
+    }
+
+    private void validateEnsurePayload(UUID listingId, SalesChannelListing listing,
+                                       Map<String, Object> payload) {
         Object desiredState = payload == null ? null : payload.get("desired_state");
         if (payload == null
                 || !listingId.toString().equalsIgnoreCase(Objects.toString(payload.get("listing_key"), ""))
@@ -47,12 +142,6 @@ public class SalesChannelOperationServiceImpl {
                 || Objects.toString(payload.get("desired_fingerprint"), "").isBlank()) {
             throw new IllegalArgumentException("ENSURE_LISTING requires a complete frozen desired-state payload");
         }
-        if (generationRepository.findCandidateByListingId(listingId).isPresent()) {
-            throw new IllegalStateException("LEGACY_CANDIDATE_UNRESOLVED");
-        }
-        String requestId = UUID.randomUUID().toString().toLowerCase();
-        return operationRepository.saveAndFlush(new SalesChannelOperation(
-                listingId, SalesChannelOperationType.ENSURE_LISTING, listing.getDesiredRevision(), requestId, payload));
     }
 
     /** Persist the exact legacy identity only while it remains the current local projection. */
@@ -75,9 +164,15 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation operation = lockOperation(operationId);
         LocalDateTime now = LocalDateTime.now();
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return false;
+        boolean neverAttempted = operation.getStatus() == SalesChannelOperationStatus.PENDING
+                && operation.getAttemptCount() == 0;
         boolean neverSent = operation.getStatus() == SalesChannelOperationStatus.PENDING
                 && operation.getAttemptCount() == 0 && operation.getStartedAt() == null;
         boolean attempted = operation.getAttemptCount() > 0;
+        if (neverAttempted && listing.getConvergenceCutoverState() != SalesChannelConvergenceCutoverState.ACTIVE) {
+            // A certification bootstrap command waits intact for activation.
+            return false;
+        }
         if (!SalesChannelListingManagementPolicy.providerWritesAllowed(listing)) {
             if (neverSent) {
                 operation.supersede(now);

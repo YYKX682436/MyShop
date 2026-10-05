@@ -90,6 +90,7 @@ public class XianyuItemBindingTransactionService {
                 throw conflict(ErrorCode.LISTING_NOT_LINKABLE,
                         "该 MyShop 渠道 listing 当前不可复用作人工关联");
             }
+            SalesChannelListingManagementPolicy.requireLegacyIdentityMutationAllowed(productListing);
             if (productListing.getManagementMode() != SalesChannelListingManagementMode.LINKED_ONLY) {
                 productListing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
             }
@@ -102,6 +103,7 @@ public class XianyuItemBindingTransactionService {
         if (created.getManagementMode() != SalesChannelListingManagementMode.LINKED_ONLY) {
             requireNoConvergenceOperationInFlight(created);
         }
+        SalesChannelListingManagementPolicy.requireLegacyIdentityMutationAllowed(created);
         created.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
         SalesChannelListing saved = listingRepository.saveAndFlush(created);
         createGeneration(saved, itemId, product);

@@ -6,6 +6,9 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.AccountSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.AddressSearchRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.CategoryRecommendRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.ListingSummary;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.CutoverPreflight;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.CutoverCertificationResult;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.CutoverReadinessSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SpecMappingSyncResult;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.UpdateXianyuListingRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderSummary;
@@ -21,6 +24,7 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuItemBindingResp
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuTakeoverResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuLinkCandidatesPage;
 import com.myshop.service.SalesChannelAdminService;
+import com.myshop.service.SalesChannelCutoverService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,6 +45,7 @@ import java.time.LocalDateTime;
 public class AdminSalesChannelController {
 
     private final SalesChannelAdminService salesChannelAdminService;
+    private final SalesChannelCutoverService salesChannelCutoverService;
 
     @GetMapping("/admin/sales-channels/accounts")
     public ApiResponse<List<AccountSummary>> accounts() {
@@ -197,6 +202,40 @@ public class AdminSalesChannelController {
     @PostMapping("/admin/sales-channel-listings/{listingId}/retry")
     public ApiResponse<ListingSummary> retryListing(@PathVariable UUID listingId) {
         return ApiResponse.success(salesChannelAdminService.retryListing(listingId));
+    }
+
+    @PostMapping("/admin/sales-channel-listings/{listingId}/cutover/preflight")
+    public ApiResponse<CutoverPreflight> cutoverPreflight(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelCutoverService.preflight(listingId));
+    }
+
+    @LogOperation(action = "sales_channel.cutover_certify", targetType = "SALES_CHANNEL_LISTING", targetId = "#listingId", detail = "'闲鱼 convergence 只读认证'")
+    @PostMapping("/admin/sales-channel-listings/{listingId}/cutover/certify")
+    public ApiResponse<CutoverCertificationResult> certifyCutover(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelCutoverService.certify(listingId));
+    }
+
+    @LogOperation(action = "sales_channel.cutover_activate", targetType = "SALES_CHANNEL_LISTING", targetId = "#listingId", detail = "'激活闲鱼 convergence listing gate'")
+    @PostMapping("/admin/sales-channel-listings/{listingId}/cutover/activate")
+    public ApiResponse<CutoverPreflight> activateCutover(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelCutoverService.activate(listingId));
+    }
+
+    @LogOperation(action = "sales_channel.cutover_pause", targetType = "SALES_CHANNEL_LISTING", targetId = "#listingId", detail = "'暂停闲鱼 convergence listing gate'")
+    @PostMapping("/admin/sales-channel-listings/{listingId}/cutover/pause")
+    public ApiResponse<CutoverPreflight> pauseCutover(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelCutoverService.pause(listingId));
+    }
+
+    @LogOperation(action = "sales_channel.cutover_resume", targetType = "SALES_CHANNEL_LISTING", targetId = "#listingId", detail = "'恢复闲鱼 convergence listing gate'")
+    @PostMapping("/admin/sales-channel-listings/{listingId}/cutover/resume")
+    public ApiResponse<CutoverPreflight> resumeCutover(@PathVariable UUID listingId) {
+        return ApiResponse.success(salesChannelCutoverService.resume(listingId));
+    }
+
+    @GetMapping("/admin/sales-channels/xianyu/cutover/readiness")
+    public ApiResponse<CutoverReadinessSummary> xianyuCutoverReadiness() {
+        return ApiResponse.success(salesChannelCutoverService.readinessSummary());
     }
 
     @PostMapping("/admin/sales-channel-listings/{listingId}/spec-mappings/sync")

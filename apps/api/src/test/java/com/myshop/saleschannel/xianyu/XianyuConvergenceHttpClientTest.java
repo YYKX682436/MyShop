@@ -258,6 +258,83 @@ class XianyuConvergenceHttpClientTest {
         }
     }
 
+    @Test
+    void readinessUsesSignedGetAndClosedGateOnlyContract() throws Exception {
+        var reply = new AtomicReference<>(new Reply(200,
+                "{\"schema_version\":1,\"v2_writes_enabled\":false,\"v2_adoption_enabled\":true}"));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var readiness = client(fixture.baseUrl(), 2_000).agentReadiness();
+            assertEquals(1, readiness.schemaVersion());
+            assertFalse(readiness.v2WritesEnabled());
+            assertTrue(readiness.v2AdoptionEnabled());
+            Captured sent = fixture.requests().getFirst();
+            assertEquals("GET", sent.method());
+            assertEquals("/api/integration/v2/readiness", sent.path());
+            assertArrayEquals(new byte[0], sent.body());
+            assertSigned(sent);
+        }
+        reply.set(new Reply(200,
+                "{\"schema_version\":1,\"v2_writes_enabled\":false,\"v2_adoption_enabled\":false,\"secret\":\"no\"}"));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var failure = assertThrows(SalesChannelProviderClientException.class,
+                    () -> client(fixture.baseUrl(), 2_000).agentReadiness());
+            assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE, failure.getDisposition());
+        }
+    }
+
+    @Test
+    void listingInspectionUsesSignedStructuredPostAndRejectsUnknownOrChangedIdentity() throws Exception {
+        var request = new com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspectionRequest(
+                "inspection-1", "account-1", "listing-1", "item-1");
+        var root = objectMapper.createObjectNode();
+        root.put("schema_version", 1);
+        root.put("request_id", request.requestId());
+        root.put("account_id", request.accountId());
+        root.put("listing_key", request.listingKey());
+        root.put("expected_external_item_id", request.expectedExternalItemId());
+        root.put("v2_writes_enabled", false);
+        root.put("v2_adoption_enabled", false);
+        root.putNull("managed_item");
+        root.putArray("bindings");
+        root.putNull("lifecycle_head");
+        root.putArray("nonterminal_operations");
+        root.putObject("provider_observation").put("external_item_id", "item-1")
+                .put("status", "ACTIVE").put("complete", true).put("observed_at", "2026-10-05T00:00:00Z");
+        root.putNull("provider_observation_error_code");
+        root.put("inspection_digest", "a".repeat(64));
+        var reply = new AtomicReference<>(new Reply(200, objectMapper.writeValueAsBytes(root)));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var inspection = client(fixture.baseUrl(), 2_000).inspectListing(request);
+            assertEquals(request.requestId(), inspection.requestId());
+            assertEquals("item-1", inspection.providerObservation().externalItemId());
+            Captured sent = fixture.requests().getFirst();
+            assertEquals("POST", sent.method());
+            assertEquals("/api/integration/v2/listings/inspect", sent.path());
+            JsonNode body = objectMapper.readTree(sent.body());
+            assertEquals("account-1", body.path("account_id").asText());
+            assertEquals("listing-1", body.path("listing_key").asText());
+            assertEquals("item-1", body.path("expected_external_item_id").asText());
+            assertSigned(sent);
+        }
+
+        root.put("extra", true);
+        reply.set(new Reply(200, objectMapper.writeValueAsBytes(root)));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var failure = assertThrows(SalesChannelProviderClientException.class,
+                    () -> client(fixture.baseUrl(), 2_000).inspectListing(request));
+            assertEquals(SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE, failure.getDisposition());
+        }
+
+        root.remove("extra");
+        root.put("listing_key", "another-listing");
+        reply.set(new Reply(200, objectMapper.writeValueAsBytes(root)));
+        try (Fixture fixture = new Fixture(reply, 0)) {
+            var failure = assertThrows(SalesChannelProviderClientException.class,
+                    () -> client(fixture.baseUrl(), 2_000).inspectListing(request));
+            assertEquals("AGENT_INSPECTION_RESPONSE_INVALID", failure.getErrorCode());
+        }
+    }
+
     private XianyuConvergenceHttpClient client(String baseUrl, long timeoutMillis) {
         var transport = new XianyuSignedHttpTransport(baseUrl, "/api/integration/v2", "test-key", SECRET,
                 timeoutMillis, CLOCK, () -> "nonce-v2-test-00000001");

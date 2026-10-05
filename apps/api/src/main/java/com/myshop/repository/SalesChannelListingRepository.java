@@ -1,6 +1,7 @@
 package com.myshop.repository;
 
 import com.myshop.entity.SalesChannelListing;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -20,6 +21,11 @@ public interface SalesChannelListingRepository extends JpaRepository<SalesChanne
             UUID accountId, Collection<UUID> productIds);
 
     List<SalesChannelListing> findByEnabledTrueOrderByUpdatedAtAsc();
+
+    List<SalesChannelListing> findByEnabledTrueAndConvergenceCutoverStateOrderByUpdatedAtAsc(
+            SalesChannelConvergenceCutoverState convergenceCutoverState);
+
+    long countByConvergenceCutoverState(SalesChannelConvergenceCutoverState convergenceCutoverState);
 
     List<SalesChannelListing> findByProductIdOrderByCreatedAtAsc(UUID productId);
 

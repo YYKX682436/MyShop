@@ -2,6 +2,7 @@ package com.myshop.service;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.SalesChannelListingManagementMode;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.exception.BusinessException;
 import org.springframework.http.HttpStatus;
@@ -46,6 +47,20 @@ public final class SalesChannelListingManagementPolicy {
         if (!providerWritesAllowed(listing)) {
             throw new BusinessException(ErrorCode.LINKED_ITEM_NOT_MANAGED,
                     "该闲鱼商品尚未进入 MyShop 管理，禁止平台写操作", HttpStatus.CONFLICT);
+        }
+    }
+
+    /** Legacy binding/takeover may not compete with Agent identity after cutover. */
+    public static void requireLegacyIdentityMutationAllowed(SalesChannelListing listing) {
+        if (listing == null) return;
+        SalesChannelConvergenceCutoverState state = listing.getConvergenceCutoverState();
+        if (state == SalesChannelConvergenceCutoverState.ACTIVE
+                || state == SalesChannelConvergenceCutoverState.PAUSED) {
+            throw new BusinessException(ErrorCode.CONVERGENCE_CUTOVER_ACTIVE,
+                    "CONVERGENCE_CUTOVER_ACTIVE", HttpStatus.CONFLICT);
+        }
+        if (state == SalesChannelConvergenceCutoverState.CERTIFIED) {
+            listing.invalidateConvergenceCertification();
         }
     }
 }

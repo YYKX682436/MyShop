@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import com.myshop.constant.SalesChannelGenerationState;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingStatus;
@@ -15,6 +16,7 @@ import com.myshop.entity.Product;
 import com.myshop.entity.ProductCategory;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.SalesChannelAccount;
+import com.myshop.entity.SalesChannelCutoverCertification;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelListingGenerationSpec;
@@ -29,11 +31,19 @@ import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.repository.SalesChannelCutoverCertificationRepository;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.SalesChannelAdminService;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
 import com.myshop.service.UploadStorage;
 import com.myshop.saleschannel.xianyu.XianyuMediaMaterializer;
+import com.myshop.saleschannel.convergence.XianyuConvergenceClient;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspection;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspectionRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverReadiness;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.CutoverCertificationResult;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.CutoverPreflight;
+import com.myshop.service.SalesChannelCutoverService;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
@@ -44,7 +54,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
@@ -75,6 +87,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @Testcontainers(disabledWithoutDocker = true)
 @ExtendWith(SpringExtension.class)
@@ -96,15 +112,20 @@ class SalesChannelDomainIntegrationTest {
     @Autowired private SalesChannelListingGenerationRepository generationRepository;
     @Autowired private SalesChannelListingGenerationSpecRepository generationSpecRepository;
     @Autowired private SalesChannelOperationRepository operationRepository;
+    @Autowired private SalesChannelCutoverCertificationRepository cutoverCertificationRepository;
     @Autowired private SalesChannelAccountServiceImpl accountService;
     @Autowired private SalesChannelListingServiceImpl listingService;
     @Autowired private SalesChannelOperationServiceImpl operationService;
+    @Autowired private SalesChannelCutoverService cutoverService;
     @Autowired private SalesChannelDesiredStatePlanner desiredStatePlanner;
     @Autowired private ManualStockService manualStockService;
     @Autowired private SalesChannelAdminService salesChannelAdminService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UploadStorage uploadStorage;
     @Autowired private XianyuMediaMaterializer mediaMaterializer;
+
+    @MockitoBean
+    private XianyuConvergenceClient convergenceClient;
 
     private static final String PREFLIGHT_IMAGE_KEY = "sales-channel-test/preflight.jpg";
     private static final String PREFLIGHT_IMAGE_URL = "/api/uploads/" + PREFLIGHT_IMAGE_KEY;
@@ -128,10 +149,9 @@ class SalesChannelDomainIntegrationTest {
 
     @BeforeEach
     void resetSalesChannelFixtures() throws IOException {
-        jdbcTemplate.update("DELETE FROM sales_channel_operations");
-        jdbcTemplate.update("DELETE FROM sales_channel_listing_generation_specs");
-        jdbcTemplate.update("DELETE FROM sales_channel_listing_generations");
-        jdbcTemplate.update("DELETE FROM sales_channel_listings");
+        // Certification evidence is immutable and cyclically references its
+        // listing. TRUNCATE CASCADE is the test-only cleanup for this isolated DB.
+        jdbcTemplate.execute("TRUNCATE TABLE sales_channel_listings CASCADE");
         jdbcTemplate.update("DELETE FROM sales_channel_accounts");
         jdbcTemplate.update("DELETE FROM card_keys WHERE product_id IN "
                 + "(SELECT id FROM products WHERE title LIKE 'sales-channel-test-%')");
@@ -190,7 +210,7 @@ class SalesChannelDomainIntegrationTest {
 
     @Test
     void incompleteDraftConfigCanBeSavedWithoutCreatingAnOperation() {
-        Fixture fixture = fixture(false);
+        Fixture fixture = uncertifiedFixture(false);
         Map<String, Object> partial = Map.of("titleOverride", "Draft title");
         var config = objectMapper.convertValue(partial, com.myshop.saleschannel.xianyu.model.XianyuProviderConfig.class);
 
@@ -201,13 +221,7 @@ class SalesChannelDomainIntegrationTest {
         assertEquals("Draft title", saved.providerConfig().titleOverride());
         List<SalesChannelOperation> operations = operationRepository
                 .findBySalesChannelListingIdOrderByCreatedAtAsc(UUID.fromString(saved.id()));
-        assertEquals(1, operations.size());
-        assertEquals(SalesChannelOperationType.ENSURE_LISTING, operations.getFirst().getOperationType());
-        assertEquals("OFFLINE", operations.getFirst().getPayload().get("desired_state"));
-        assertNull(operations.getFirst().getPayload().get("desired_snapshot"));
-        assertEquals(com.myshop.saleschannel.convergence.DesiredListingSnapshotFingerprints.offline(
-                        objectMapper, UUID.fromString(saved.id()).toString().toLowerCase()),
-                operations.getFirst().getPayload().get("desired_fingerprint"));
+        assertTrue(operations.isEmpty(), "uncertified listings do not create worker commands");
     }
 
     @Test
@@ -397,6 +411,106 @@ class SalesChannelDomainIntegrationTest {
         assertEquals(3, listingRepository.findById(fixture.listing().getId()).orElseThrow().getDesiredRevision());
         assertEquals(1, operationRepository
                 .findBySalesChannelListingIdAndDesiredRevisionOrderByCreatedAtAsc(fixture.listing().getId(), 3).size());
+    }
+
+    @Test
+    @Transactional
+    void neverSentEnsureClaimRequiresActiveWhileAttemptedRecoveryIgnoresCutoverState() {
+        Fixture active = fixture(false);
+        Fixture uncertified = uncertifiedFixture(false);
+        SalesChannelOperation activeEnsure = queuedEnsure(active, "active-never-sent-" + UUID.randomUUID());
+        SalesChannelOperation uncertifiedEnsure = queuedEnsure(uncertified, "uncertified-never-sent-" + UUID.randomUUID());
+
+        assertEquals(List.of(activeEnsure.getId()), operationRepository.findReadyPendingForUpdate(
+                LocalDateTime.now().plusSeconds(1), 10).stream().map(SalesChannelOperation::getId).toList());
+
+        SalesChannelListing activeListing = listingRepository.findById(active.listing().getId()).orElseThrow();
+        activeListing.pauseConvergence(LocalDateTime.now());
+        listingRepository.saveAndFlush(activeListing);
+        assertTrue(operationRepository.findReadyPendingForUpdate(LocalDateTime.now().plusSeconds(1), 10).isEmpty());
+
+        SalesChannelOperation recovery = operationRepository.findById(activeEnsure.getId()).orElseThrow();
+        assertTrue(recovery.start(LocalDateTime.now().minusMinutes(1)));
+        assertTrue(recovery.reschedule("ENSURE_REPLAY_REQUIRED", "replay", LocalDateTime.now().minusSeconds(1)));
+        operationRepository.saveAndFlush(recovery);
+        assertEquals(List.of(activeEnsure.getId()), operationRepository.findReadyPendingForUpdate(
+                LocalDateTime.now().plusSeconds(1), 10).stream().map(SalesChannelOperation::getId).toList());
+
+        SalesChannelListing uncertifiedListing = listingRepository.findById(uncertified.listing().getId()).orElseThrow();
+        assertEquals(SalesChannelConvergenceCutoverState.UNCERTIFIED, uncertifiedListing.getConvergenceCutoverState());
+        assertEquals(SalesChannelOperationStatus.PENDING,
+                operationRepository.findById(uncertifiedEnsure.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void readOnlyCertificationCreatesOneBootstrapAndActivationOnlyOpensTheGate() {
+        Fixture fixture = uncertifiedFixture(false);
+        desiredStatePlanner.refresh(fixture.listing().getId());
+        when(convergenceClient.inspectListing(any(CutoverInspectionRequest.class)))
+                .thenAnswer(invocation -> emptyInspection(invocation.getArgument(0)));
+        when(convergenceClient.agentReadiness()).thenReturn(
+                new CutoverReadiness(1, false, false), new CutoverReadiness(1, true, false));
+
+        CutoverPreflight preflight = cutoverService.preflight(fixture.listing().getId());
+        assertTrue(preflight.eligible(), preflight.blockers().toString());
+        assertTrue(preflight.bootstrapEnsureRequired());
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                fixture.listing().getId()).size());
+
+        CutoverCertificationResult first = cutoverService.certify(fixture.listing().getId());
+        assertNotNull(first.certificationId());
+        assertEquals(SalesChannelConvergenceCutoverState.CERTIFIED, first.preflight().currentCutoverState());
+        UUID firstId = UUID.fromString(first.certificationId());
+        assertEquals(SalesChannelConvergenceCutoverState.CERTIFIED,
+                listingRepository.findById(fixture.listing().getId()).orElseThrow().getConvergenceCutoverState());
+        SalesChannelCutoverCertification firstCertificate = cutoverCertificationRepository.findById(firstId).orElseThrow();
+        assertNotNull(firstCertificate.getBootstrapOperationId());
+        SalesChannelOperation bootstrap = operationRepository.findById(firstCertificate.getBootstrapOperationId()).orElseThrow();
+        assertEquals(SalesChannelOperationType.ENSURE_LISTING, bootstrap.getOperationType());
+        assertEquals(SalesChannelOperationStatus.PENDING, bootstrap.getStatus());
+        assertEquals(0, bootstrap.getAttemptCount());
+        assertNull(bootstrap.getStartedAt());
+
+        CutoverCertificationResult second = cutoverService.certify(fixture.listing().getId());
+        assertNotNull(second.certificationId());
+        assertNotEquals(first.certificationId(), second.certificationId());
+        assertEquals(2, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM sales_channel_cutover_certifications WHERE sales_channel_listing_id = ?",
+                Integer.class, fixture.listing().getId()));
+        assertEquals(firstCertificate.getBootstrapOperationId(), cutoverCertificationRepository
+                .findById(UUID.fromString(second.certificationId())).orElseThrow().getBootstrapOperationId());
+
+        CutoverPreflight closed = cutoverService.activate(fixture.listing().getId());
+        assertFalse(closed.eligible());
+        assertTrue(closed.blockers().stream().anyMatch(issue -> issue.code().equals("AGENT_V2_WRITES_DISABLED")),
+                closed.blockers().toString());
+        assertEquals(SalesChannelConvergenceCutoverState.CERTIFIED,
+                listingRepository.findById(fixture.listing().getId()).orElseThrow().getConvergenceCutoverState());
+
+        CutoverPreflight active = cutoverService.activate(fixture.listing().getId());
+        assertTrue(active.eligible(), active.blockers().toString());
+        assertEquals(SalesChannelConvergenceCutoverState.ACTIVE, active.currentCutoverState());
+        assertEquals(SalesChannelConvergenceCutoverState.ACTIVE,
+                listingRepository.findById(fixture.listing().getId()).orElseThrow().getConvergenceCutoverState());
+        verify(convergenceClient, never()).ensureListing(any());
+        verify(convergenceClient, never()).adoptExistingItem(any());
+    }
+
+    @Test
+    void preflightReportsStaleLocalIntentWithoutRefreshingOrEnqueueing() {
+        Fixture fixture = uncertifiedFixture(false);
+        when(convergenceClient.inspectListing(any(CutoverInspectionRequest.class)))
+                .thenAnswer(invocation -> emptyInspection(invocation.getArgument(0)));
+
+        CutoverPreflight report = cutoverService.preflight(fixture.listing().getId());
+
+        assertFalse(report.eligible());
+        assertTrue(report.blockers().stream().anyMatch(issue -> issue.code().equals("LOCAL_DESIRED_INTENT_STALE")));
+        SalesChannelListing unchanged = listingRepository.findById(fixture.listing().getId()).orElseThrow();
+        assertEquals(0, unchanged.getDesiredRevision());
+        assertNull(unchanged.getDesiredFingerprint());
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+                fixture.listing().getId()).size());
     }
 
     @Test
@@ -836,8 +950,8 @@ class SalesChannelDomainIntegrationTest {
     }
 
     @Test
-    void cutoverSupersedesOnlyUnstartedLegacyPendingCommands() {
-        Fixture fixture = fixture(false);
+    void uncertifiedPlannerDoesNotSupersedeLegacyRowsOrEnqueueNewCommands() {
+        Fixture fixture = uncertifiedFixture(false);
         verifiedAccount(fixture, "FISH_SHOP");
         saveConfigWithoutPlanning(fixture, publishConfig(fixture, true, true));
         setOnlineIntentWithoutPlanning(fixture);
@@ -848,16 +962,16 @@ class SalesChannelDomainIntegrationTest {
 
         desiredStatePlanner.refresh(fixture.listing().getId());
 
-        assertEquals(SalesChannelOperationStatus.SUPERSEDED,
+        assertEquals(SalesChannelOperationStatus.PENDING,
                 operationRepository.findById(legacyPending.getId()).orElseThrow().getStatus());
-        assertEquals(1, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(
                 fixture.listing().getId()).stream()
                 .filter(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING).count());
     }
 
     @Test
     void cutoverBlocksLegacyRunningReconcileAndCandidateHistory() {
-        Fixture runningFixture = fixture(false);
+        Fixture runningFixture = uncertifiedFixture(false);
         verifiedAccount(runningFixture, "FISH_SHOP");
         saveConfigWithoutPlanning(runningFixture, publishConfig(runningFixture, true, true));
         setOnlineIntentWithoutPlanning(runningFixture);
@@ -868,11 +982,13 @@ class SalesChannelDomainIntegrationTest {
         operationRepository.saveAndFlush(running);
         desiredStatePlanner.refresh(runningFixture.listing().getId());
         SalesChannelListing blockedRunning = listingRepository.findById(runningFixture.listing().getId()).orElseThrow();
-        assertEquals("LEGACY_OPERATION_UNRESOLVED", blockedRunning.getLastErrorCode());
+        assertNull(blockedRunning.getLastErrorCode(), "uncertified planning does not mutate execution diagnostics");
+        assertEquals(0, operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(runningFixture.listing().getId())
+                .stream().filter(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING).count());
         assertTrue(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(runningFixture.listing().getId())
                 .stream().noneMatch(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING));
 
-        Fixture reconcileFixture = fixture(false);
+        Fixture reconcileFixture = uncertifiedFixture(false);
         verifiedAccount(reconcileFixture, "FISH_SHOP");
         saveConfigWithoutPlanning(reconcileFixture, publishConfig(reconcileFixture, true, true));
         setOnlineIntentWithoutPlanning(reconcileFixture);
@@ -880,12 +996,11 @@ class SalesChannelDomainIntegrationTest {
                 SalesChannelOperationType.RECONCILE, reconcileFixture.listing().getDesiredRevision(),
                 "legacy-reconcile-pending", Map.of()));
         desiredStatePlanner.refresh(reconcileFixture.listing().getId());
-        assertEquals("LEGACY_OPERATION_UNRESOLVED",
-                listingRepository.findById(reconcileFixture.listing().getId()).orElseThrow().getLastErrorCode());
+        assertNull(listingRepository.findById(reconcileFixture.listing().getId()).orElseThrow().getLastErrorCode());
         assertTrue(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(reconcileFixture.listing().getId())
                 .stream().noneMatch(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING));
 
-        Fixture unknownFixture = fixture(false);
+        Fixture unknownFixture = uncertifiedFixture(false);
         verifiedAccount(unknownFixture, "FISH_SHOP");
         saveConfigWithoutPlanning(unknownFixture, publishConfig(unknownFixture, true, true));
         setOnlineIntentWithoutPlanning(unknownFixture);
@@ -896,12 +1011,11 @@ class SalesChannelDomainIntegrationTest {
         jdbcTemplate.update("UPDATE sales_channel_operations SET status = 'UNKNOWN' WHERE id = ?", unknown.getId());
         entityManager.clear();
         desiredStatePlanner.refresh(unknownFixture.listing().getId());
-        assertEquals("LEGACY_OPERATION_UNRESOLVED",
-                listingRepository.findById(unknownFixture.listing().getId()).orElseThrow().getLastErrorCode());
+        assertNull(listingRepository.findById(unknownFixture.listing().getId()).orElseThrow().getLastErrorCode());
         assertTrue(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(unknownFixture.listing().getId())
                 .stream().noneMatch(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING));
 
-        Fixture candidateFixture = fixture(false);
+        Fixture candidateFixture = uncertifiedFixture(false);
         verifiedAccount(candidateFixture, "FISH_SHOP");
         saveConfigWithoutPlanning(candidateFixture, publishConfig(candidateFixture, true, true));
         setOnlineIntentWithoutPlanning(candidateFixture);
@@ -912,8 +1026,7 @@ class SalesChannelDomainIntegrationTest {
         candidate.setReplacesGenerationId(source.getId());
         generationRepository.saveAndFlush(candidate);
         desiredStatePlanner.refresh(candidateFixture.listing().getId());
-        assertEquals("LEGACY_CANDIDATE_UNRESOLVED",
-                listingRepository.findById(candidateFixture.listing().getId()).orElseThrow().getLastErrorCode());
+        assertNull(listingRepository.findById(candidateFixture.listing().getId()).orElseThrow().getLastErrorCode());
         assertTrue(operationRepository.findBySalesChannelListingIdOrderByCreatedAtAsc(candidateFixture.listing().getId())
                 .stream().noneMatch(operation -> operation.getOperationType() == SalesChannelOperationType.ENSURE_LISTING));
     }
@@ -1121,6 +1234,12 @@ class SalesChannelDomainIntegrationTest {
                 fixture.listing().getDesiredRevision(), requestId, payload));
     }
 
+    private CutoverInspection emptyInspection(CutoverInspectionRequest request) {
+        return new CutoverInspection(1, request.requestId(), request.accountId(), request.listingKey(),
+                request.expectedExternalItemId(), false, false, null, List.of(), null, List.of(),
+                null, null, "c".repeat(64));
+    }
+
     @SuppressWarnings("unchecked")
     private void assertSkuSnapshot(SalesChannelOperation operation, List<Integer> expectedStocks, int expectedTotal) {
         Map<String, Object> snapshot = (Map<String, Object>) operation.getPayload().get("desired_snapshot");
@@ -1271,6 +1390,14 @@ class SalesChannelDomainIntegrationTest {
     }
 
     private Fixture fixture(boolean withSpecs) {
+        return fixture(withSpecs, true);
+    }
+
+    private Fixture uncertifiedFixture(boolean withSpecs) {
+        return fixture(withSpecs, false);
+    }
+
+    private Fixture fixture(boolean withSpecs, boolean activate) {
         ProductCategory category = new ProductCategory();
         category.setName("sales-channel-test-" + UUID.randomUUID());
         category = categoryRepository.saveAndFlush(category);
@@ -1289,6 +1416,16 @@ class SalesChannelDomainIntegrationTest {
                 "account-" + UUID.randomUUID(), "test account", SalesChannelAccountStatus.CONNECTED,
                 Map.of(), LocalDateTime.now());
         SalesChannelListing listing = listingService.ensureDraft(account.getId(), product.getId());
+        if (activate) {
+            UUID certificationId = UUID.randomUUID();
+            cutoverCertificationRepository.saveAndFlush(new SalesChannelCutoverCertification(
+                    certificationId, listing.getId(), listing.getDesiredRevision(),
+                    listing.getDesiredState().name(), "a".repeat(64), null, "b".repeat(64),
+                    false, null, Map.of("test_fixture", true), LocalDateTime.now()));
+            listing.certifyConvergence(certificationId);
+            listing.activateConvergence(LocalDateTime.now());
+            listing = listingRepository.saveAndFlush(listing);
+        }
         return new Fixture(account, product, listing);
     }
 

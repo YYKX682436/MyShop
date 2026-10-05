@@ -43,8 +43,11 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
      * while acquiring a listing lock would invert the domain lock order.
      */
     @Query(value = "SELECT operation.* FROM sales_channel_operations operation "
+            + "JOIN sales_channel_listings listing "
+            + "  ON listing.id = operation.sales_channel_listing_id "
             + "WHERE operation.status = 'PENDING' "
             + "AND operation.operation_type = 'ENSURE_LISTING' "
+            + "AND (operation.attempt_count > 0 OR listing.convergence_cutover_state = 'ACTIVE') "
             + "AND (operation.next_attempt_at IS NULL OR operation.next_attempt_at <= :now) "
             + "AND NOT EXISTS (SELECT 1 FROM sales_channel_operations running_operation "
             + "  WHERE running_operation.sales_channel_listing_id = operation.sales_channel_listing_id "
@@ -70,5 +73,21 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
             + "ORDER BY operation.started_at, operation.id LIMIT :limit", nativeQuery = true)
     List<SalesChannelOperation> findStaleEnsureRunningBefore(@Param("cutoff") LocalDateTime cutoff,
                                                               @Param("limit") int limit);
+
+    @Query(value = "SELECT count(*) FROM sales_channel_operations "
+            + "WHERE operation_type = 'ENSURE_LISTING' AND status = 'PENDING' "
+            + "AND attempt_count = 0 AND started_at IS NULL", nativeQuery = true)
+    long countPendingNeverSentEnsure();
+
+    @Query(value = "SELECT count(*) FROM sales_channel_operations "
+            + "WHERE operation_type = 'ENSURE_LISTING' AND status IN ('PENDING', 'RUNNING', 'UNKNOWN') "
+            + "AND attempt_count > 0", nativeQuery = true)
+    long countAttemptedRecoveryEnsure();
+
+    @Query(value = "SELECT count(*) FROM sales_channel_operations "
+            + "WHERE operation_type <> 'ENSURE_LISTING' AND (status IN ('RUNNING', 'UNKNOWN') "
+            + "OR (status = 'PENDING' AND (attempt_count > 0 OR operation_type = 'RECONCILE')))",
+            nativeQuery = true)
+    long countLegacyUnresolved();
 
 }

@@ -45,6 +45,8 @@ class SalesChannelOperationServiceImplTest {
         SalesChannelListing listing = new SalesChannelListing();
         listing.setId(listingId);
         listing.setDesiredFingerprint("a".repeat(64));
+        listing.certifyConvergence(UUID.randomUUID());
+        listing.activateConvergence(LocalDateTime.now());
         when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
         when(generationRepository.findCandidateByListingId(listingId)).thenReturn(Optional.empty());
         when(operationRepository.saveAndFlush(any(SalesChannelOperation.class)))
@@ -139,6 +141,8 @@ class SalesChannelOperationServiceImplTest {
         SalesChannelListing listing = new SalesChannelListing();
         listing.setId(listingId);
         listing.setManagementMode(SalesChannelListingManagementMode.LINKED_ONLY);
+        listing.certifyConvergence(UUID.randomUUID());
+        listing.activateConvergence(LocalDateTime.now());
         SalesChannelOperation operation = new SalesChannelOperation(
                 listingId, SalesChannelOperationType.ENSURE_LISTING, 0, "never-sent", Map.of());
         operation.setId(operationId);
@@ -149,6 +153,25 @@ class SalesChannelOperationServiceImplTest {
         assertFalse(service.markRunning(operationId));
         assertEquals(SalesChannelOperationStatus.SUPERSEDED, operation.getStatus());
         assertEquals(0, operation.getAttemptCount());
+    }
+
+    @Test
+    void neverSentBootstrapEnsureWaitsIntactUntilListingIsActive() {
+        UUID listingId = UUID.randomUUID();
+        UUID operationId = UUID.randomUUID();
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setId(listingId);
+        SalesChannelOperation operation = new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, 0, "bootstrap-request", Map.of());
+        operation.setId(operationId);
+        when(operationRepository.findById(operationId)).thenReturn(Optional.of(operation));
+        when(listingRepository.findByIdForUpdate(listingId)).thenReturn(Optional.of(listing));
+        when(operationRepository.findByIdForUpdate(operationId)).thenReturn(Optional.of(operation));
+
+        assertFalse(service.markRunning(operationId));
+        assertEquals(SalesChannelOperationStatus.PENDING, operation.getStatus());
+        assertEquals(0, operation.getAttemptCount());
+        assertNull(operation.getStartedAt());
     }
 
     @Test

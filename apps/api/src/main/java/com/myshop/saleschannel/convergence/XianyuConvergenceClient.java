@@ -6,6 +6,9 @@ import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.EnsureList
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.AdoptExistingItemRequest;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.SendDeliveryRequest;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.ConfirmDeliveryRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverReadiness;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspection;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspectionRequest;
 
 /** Exact S2.1 port to the Agent-owned v2 durable listing command boundary. */
 public interface XianyuConvergenceClient {
@@ -19,4 +22,8 @@ public interface XianyuConvergenceClient {
     OperationObservation sendDelivery(SendDeliveryRequest request);
 
     OperationObservation confirmDelivery(ConfirmDeliveryRequest request);
+
+    CutoverReadiness agentReadiness();
+
+    CutoverInspection inspectListing(CutoverInspectionRequest request);
 }

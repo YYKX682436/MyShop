@@ -3,6 +3,7 @@ package com.myshop.entity;
 import com.myshop.constant.SalesChannelListingDesiredState;
 import com.myshop.constant.SalesChannelListingManagementMode;
 import com.myshop.constant.SalesChannelListingStatus;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -76,6 +77,19 @@ public class SalesChannelListing extends BaseEntity {
     @Setter
     private String convergenceAdoptedExternalItemId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "convergence_cutover_state", nullable = false, length = 16)
+    private SalesChannelConvergenceCutoverState convergenceCutoverState = SalesChannelConvergenceCutoverState.UNCERTIFIED;
+
+    @Column(name = "convergence_certification_id")
+    private UUID convergenceCertificationId;
+
+    @Column(name = "convergence_activated_at")
+    private LocalDateTime convergenceActivatedAt;
+
+    @Column(name = "convergence_paused_at")
+    private LocalDateTime convergencePausedAt;
+
     @Column(name = "convergence_adopted_at")
     @Setter
     private LocalDateTime convergenceAdoptedAt;
@@ -110,6 +124,47 @@ public class SalesChannelListing extends BaseEntity {
 
     public String getDesiredFingerprint() {
         return desiredFingerprint;
+    }
+
+    public SalesChannelConvergenceCutoverState getConvergenceCutoverState() {
+        return convergenceCutoverState;
+    }
+
+    public UUID getConvergenceCertificationId() {
+        return convergenceCertificationId;
+    }
+
+    public LocalDateTime getConvergenceActivatedAt() {
+        return convergenceActivatedAt;
+    }
+
+    public LocalDateTime getConvergencePausedAt() {
+        return convergencePausedAt;
+    }
+
+    public void certifyConvergence(UUID certificationId) {
+        this.convergenceCertificationId = certificationId;
+        this.convergenceCutoverState = SalesChannelConvergenceCutoverState.CERTIFIED;
+        this.convergenceActivatedAt = null;
+        this.convergencePausedAt = null;
+    }
+
+    public void activateConvergence(LocalDateTime activatedAt) {
+        this.convergenceCutoverState = SalesChannelConvergenceCutoverState.ACTIVE;
+        this.convergenceActivatedAt = activatedAt;
+        this.convergencePausedAt = null;
+    }
+
+    public void pauseConvergence(LocalDateTime pausedAt) {
+        this.convergenceCutoverState = SalesChannelConvergenceCutoverState.PAUSED;
+        this.convergencePausedAt = pausedAt;
+    }
+
+    public void invalidateConvergenceCertification() {
+        this.convergenceCutoverState = SalesChannelConvergenceCutoverState.UNCERTIFIED;
+        this.convergenceCertificationId = null;
+        this.convergenceActivatedAt = null;
+        this.convergencePausedAt = null;
     }
 
     public void setDesiredFingerprint(String desiredFingerprint) {
