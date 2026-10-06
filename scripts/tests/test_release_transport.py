@@ -95,6 +95,7 @@ else:
         self.assertEqual(output.stat().st_mode & 0o777, 0o600)
         log = self.docker_log.read_text(encoding="utf-8")
         self.assertIn(f"ghcr.io/yykx682436/myshop-release-manifest:{SOURCE_SHA}", log)
+        self.assertIn("create --entrypoint /release-manifest.json", log)
         self.assertIn("cp fake-container-id:/release-manifest.json", log)
         self.assertIn("rm -f fake-container-id", log)
 

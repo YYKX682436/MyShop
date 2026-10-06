@@ -31,7 +31,7 @@ revision=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{inde
 [[ "$revision" == "$source_sha" ]] || die 'manifest carrier revision label does not match the requested source SHA'
 source_label=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.source"}}{{end}}' "$carrier_ref") || die 'cannot inspect manifest carrier source label'
 [[ "$source_label" == "$source_url" ]] || die 'manifest carrier source label does not match the MyShop repository'
-container_id=$("$docker_command" create "$carrier_ref") || die 'cannot create manifest carrier extraction container'
+container_id=$("$docker_command" create --entrypoint /release-manifest.json "$carrier_ref") || die 'cannot create manifest carrier extraction container'
 [[ -n "$container_id" ]] || die 'Docker returned an empty manifest carrier container id'
 "$docker_command" cp "$container_id:/release-manifest.json" "$tmp_dir/release-manifest.json" >/dev/null || die 'manifest carrier does not contain /release-manifest.json'
 
