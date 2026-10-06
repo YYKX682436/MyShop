@@ -232,9 +232,18 @@ jobs:
             --label "org.opencontainers.image.source=$source_url" \
             --label "org.opencontainers.image.revision=$SOURCE_SHA" \
             --tag "$carrier_ref" "$CARRIER_CONTEXT"
-          docker push "$carrier_ref"
+          if ! push_log=$(docker push "$carrier_ref" 2>&1); then
+            printf '%s\n' "$push_log"
+            exit 1
+          fi
+          printf '%s\n' "$push_log"
+          carrier_digest=$(printf '%s\n' "$push_log" | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' | tail -n 1)
+          [[ "$carrier_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'could not parse manifest carrier registry digest\n' >&2; exit 1; }
           docker image rm "$carrier_ref" >/dev/null
-          bash scripts/fetch-release-manifest.sh "$SOURCE_SHA" "$FETCHED_MANIFEST"
+          bash scripts/fetch-release-manifest.sh "$SOURCE_SHA" "$carrier_digest" "$FETCHED_MANIFEST"
           cmp release-manifest.json "$FETCHED_MANIFEST"
           python3 scripts/validate-release-manifest.py "$FETCHED_MANIFEST" ghcr.io/yykx682436 myshop >/dev/null
-          printf 'manifest_carrier=%s\nsource_sha=%s\n' "$carrier_ref" "$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          {
+            printf 'source_sha=%s\nmanifest_carrier_ref=%s\nmanifest_carrier_digest=%s\n' \
+              "$SOURCE_SHA" "$carrier_ref" "$carrier_digest"
+          } >> "$GITHUB_STEP_SUMMARY"

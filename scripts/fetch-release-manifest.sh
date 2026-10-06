@@ -2,10 +2,12 @@
 set -Eeuo pipefail
 
 die() { printf '[myshop-manifest-fetch] ERROR: %s\n' "$*" >&2; exit 1; }
-(( $# == 2 )) || die 'usage: fetch-release-manifest.sh <source_sha> <output-path>'
+(( $# == 3 )) || die 'usage: fetch-release-manifest.sh <source_sha> <carrier_registry_digest> <output-path>'
 source_sha=$1
-output=$2
+carrier_digest=$2
+output=$3
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || die 'source SHA must be exactly 40 lowercase hexadecimal characters'
+[[ "$carrier_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'carrier registry digest must be exactly sha256:<64 lowercase hexadecimal characters>'
 [[ -n "$output" ]] || die 'output path is empty'
 docker_command=${MYSHOP_DOCKER_COMMAND:-docker}
 command -v "$docker_command" >/dev/null 2>&1 || die 'docker is unavailable'
@@ -14,7 +16,9 @@ command -v python3 >/dev/null 2>&1 || die 'python3 is required'
 script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 registry=ghcr.io/yykx682436
 source_url=https://github.com/YYKX682436/MyShop
-carrier_ref="$registry/myshop-release-manifest:$source_sha"
+carrier_repository="$registry/myshop-release-manifest"
+carrier_tag="$carrier_repository:$source_sha"
+pinned_ref="$carrier_repository@$carrier_digest"
 output_dir=$(dirname -- "$output")
 mkdir -p -- "$output_dir"
 [[ ! -d "$output" ]] || die 'output path is a directory'
@@ -26,12 +30,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$docker_command" pull "$carrier_ref" >/dev/null || die "manifest carrier could not be pulled for source $source_sha"
-revision=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.revision"}}{{end}}' "$carrier_ref") || die 'cannot inspect manifest carrier revision label'
+"$docker_command" pull "$pinned_ref" >/dev/null || die "manifest carrier digest could not be pulled for source $source_sha"
+"$docker_command" pull "$carrier_tag" >/dev/null || die "manifest carrier tag could not be pulled for source $source_sha"
+tag_repo_digests=$("$docker_command" image inspect --format '{{json .RepoDigests}}' "$carrier_tag") || die 'cannot inspect manifest carrier tag RepoDigests'
+if ! python3 - "$tag_repo_digests" "$pinned_ref" <<'PY'
+import json, sys
+try:
+    repo_digests = json.loads(sys.argv[1])
+except Exception:
+    raise SystemExit(1)
+if not isinstance(repo_digests, list) or sys.argv[2] not in repo_digests:
+    raise SystemExit(1)
+PY
+then
+    die 'CARRIER_TAG_DIGEST_MISMATCH'
+fi
+revision=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.revision"}}{{end}}' "$pinned_ref") || die 'cannot inspect pinned manifest carrier revision label'
 [[ "$revision" == "$source_sha" ]] || die 'manifest carrier revision label does not match the requested source SHA'
-source_label=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.source"}}{{end}}' "$carrier_ref") || die 'cannot inspect manifest carrier source label'
+source_label=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.source"}}{{end}}' "$pinned_ref") || die 'cannot inspect pinned manifest carrier source label'
 [[ "$source_label" == "$source_url" ]] || die 'manifest carrier source label does not match the MyShop repository'
-container_id=$("$docker_command" create --entrypoint /release-manifest.json "$carrier_ref") || die 'cannot create manifest carrier extraction container'
+container_id=$("$docker_command" create --entrypoint /release-manifest.json "$pinned_ref") || die 'cannot create pinned manifest carrier extraction container'
 [[ -n "$container_id" ]] || die 'Docker returned an empty manifest carrier container id'
 "$docker_command" cp "$container_id:/release-manifest.json" "$tmp_dir/release-manifest.json" >/dev/null || die 'manifest carrier does not contain /release-manifest.json'
 

@@ -39,15 +39,19 @@ class MyShopReleaseManifestTests(unittest.TestCase):
         self.manifest_file = self.root / "carrier-manifest.json"
         self.fake_docker = self.bin_dir / "docker"
         self.fake_docker.write_text("""#!/usr/bin/env python3
-import os, shutil, sys
+import json, os, shutil, sys
 args = sys.argv[1:]
 with open(os.environ['FAKE_DOCKER_LOG'], 'a', encoding='utf-8') as log:
     log.write(' '.join(args) + '\\n')
 if args[0] == 'pull':
-    raise SystemExit(1 if os.environ.get('FAKE_PULL_FAIL') == '1' else 0)
+    raise SystemExit(1 if args[1] == os.environ.get('FAKE_PULL_FAIL_REF') else 0)
 if args[:2] == ['image', 'inspect']:
     fmt = args[3]
-    if 'org.opencontainers.image.revision' in fmt:
+    if '.RepoDigests' in fmt:
+        print(os.environ.get('FAKE_REPO_DIGESTS', json.dumps([
+            'ghcr.io/yykx682436/myshop-release-manifest@' + os.environ['FAKE_CARRIER_DIGEST']
+        ])))
+    elif 'org.opencontainers.image.revision' in fmt:
         print(os.environ.get('FAKE_REVISION', os.environ['FAKE_SHA']))
     elif 'org.opencontainers.image.source' in fmt:
         print(os.environ.get('FAKE_SOURCE', 'https://github.com/YYKX682436/MyShop'))
@@ -71,7 +75,7 @@ else:
     def write_manifest(self, value: dict | str):
         self.manifest_file.write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
 
-    def run_fetch(self, sha: str = SOURCE_SHA, output: Path | None = None, **extra_env):
+    def run_fetch(self, sha: str = SOURCE_SHA, digest: str = DIGEST, output: Path | None = None, **extra_env):
         output = output or self.root / "release-manifest.json"
         env = {
             **os.environ,
@@ -80,9 +84,10 @@ else:
             "FAKE_DOCKER_LOG": str(self.docker_log),
             "FAKE_CARRIER_MANIFEST": str(self.manifest_file),
             "FAKE_SHA": SOURCE_SHA,
+            "FAKE_CARRIER_DIGEST": DIGEST,
             **extra_env,
         }
-        result = subprocess.run(["bash", str(FETCHER), sha, str(output)], env=env, text=True, capture_output=True)
+        result = subprocess.run(["bash", str(FETCHER), sha, digest, str(output)], env=env, text=True, capture_output=True)
         return result, output
 
     def test_valid_exact_sha_fetch_writes_atomic_private_output(self):
@@ -94,8 +99,17 @@ else:
         self.assertEqual(json.loads(output.read_text(encoding="utf-8")), valid_manifest())
         self.assertEqual(output.stat().st_mode & 0o777, 0o600)
         log = self.docker_log.read_text(encoding="utf-8")
-        self.assertIn(f"ghcr.io/yykx682436/myshop-release-manifest:{SOURCE_SHA}", log)
-        self.assertIn("create --entrypoint /release-manifest.json", log)
+        pinned = f"ghcr.io/yykx682436/myshop-release-manifest@{DIGEST}"
+        tag = f"ghcr.io/yykx682436/myshop-release-manifest:{SOURCE_SHA}"
+        self.assertIn(f"pull {pinned}", log)
+        self.assertIn(f"pull {tag}", log)
+        self.assertIn("image inspect --format {{json .RepoDigests}} " + tag, log)
+        self.assertIn(f"create --entrypoint /release-manifest.json {pinned}", log)
+        inspect_lines = [line for line in log.splitlines() if line.startswith("image inspect --format ")]
+        self.assertTrue(any("org.opencontainers.image.revision" in line and line.endswith(pinned)
+                            for line in inspect_lines))
+        self.assertTrue(any("org.opencontainers.image.source" in line and line.endswith(pinned)
+                            for line in inspect_lines))
         self.assertIn("cp fake-container-id:/release-manifest.json", log)
         self.assertIn("rm -f fake-container-id", log)
 
@@ -107,9 +121,42 @@ else:
     def test_missing_carrier_preserves_existing_file(self):
         output = self.root / "manifest.json"
         output.write_text("preserve", encoding="utf-8")
-        result, _ = self.run_fetch(output=output, FAKE_PULL_FAIL="1")
+        pinned = f"ghcr.io/yykx682436/myshop-release-manifest@{DIGEST}"
+        result, _ = self.run_fetch(output=output, FAKE_PULL_FAIL_REF=pinned)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(output.read_text(encoding="utf-8"), "preserve")
+
+    def test_malformed_digest_is_rejected_before_docker(self):
+        result, _ = self.run_fetch(digest="sha256:bad")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("carrier registry digest", result.stderr)
+        self.assertFalse(self.docker_log.exists())
+
+    def test_unavailable_pinned_digest_is_rejected(self):
+        pinned = f"ghcr.io/yykx682436/myshop-release-manifest@{DIGEST}"
+        result, _ = self.run_fetch(FAKE_PULL_FAIL_REF=pinned)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("digest could not be pulled", result.stderr)
+
+    def test_tag_digest_mismatch_fails_closed(self):
+        wrong = "ghcr.io/yykx682436/myshop-release-manifest@sha256:" + "c" * 64
+        result, _ = self.run_fetch(FAKE_REPO_DIGESTS=json.dumps([wrong]))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CARRIER_TAG_DIGEST_MISMATCH", result.stderr)
+        self.assertNotIn("create --entrypoint", self.docker_log.read_text(encoding="utf-8"))
+
+    def test_old_two_argument_interface_is_rejected(self):
+        env = {
+            **os.environ,
+            "PATH": f"{self.bin_dir}:{os.environ['PATH']}",
+            "MYSHOP_DOCKER_COMMAND": str(self.fake_docker),
+            "FAKE_DOCKER_LOG": str(self.docker_log),
+        }
+        result = subprocess.run(["bash", str(FETCHER), SOURCE_SHA, str(self.root / "out.json")],
+                                env=env, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("<carrier_registry_digest>", result.stderr)
+        self.assertFalse(self.docker_log.exists())
 
     def test_wrong_revision_or_source_label_fails(self):
         result, _ = self.run_fetch(FAKE_REVISION="c" * 40)
@@ -159,6 +206,11 @@ else:
         self.assertIn('DOCKER_BUILD_RECORD_UPLOAD: "false"', workflow)
         self.assertIn("myshop-release-manifest:${SOURCE_SHA}", workflow)
         self.assertIn("bash scripts/fetch-release-manifest.sh", workflow)
+        self.assertIn('carrier_digest=$(printf', workflow)
+        self.assertIn('[[ "$carrier_digest" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
+        self.assertIn('bash scripts/fetch-release-manifest.sh "$SOURCE_SHA" "$carrier_digest" "$FETCHED_MANIFEST"', workflow)
+        self.assertIn('manifest_carrier_digest=%s', workflow)
+        self.assertIn('manifest_carrier_ref=%s', workflow)
         self.assertIn("ghcr.io/yykx682436/myshop-api:${{ github.sha }}", workflow)
         self.assertIn("ghcr.io/yykx682436/myshop-web:${{ github.sha }}", workflow)
 
