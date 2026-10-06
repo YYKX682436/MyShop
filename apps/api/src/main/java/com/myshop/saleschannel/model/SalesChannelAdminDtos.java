@@ -29,7 +29,21 @@ public final class SalesChannelAdminDtos {
             @JsonProperty("orderSyncEnabled") Boolean orderSyncEnabled,
             @JsonProperty("capabilities") Map<String, Object> capabilities,
             @JsonProperty("lastVerifiedAt") LocalDateTime lastVerifiedAt,
-            @JsonProperty("lastLoginAt") LocalDateTime lastLoginAt) { }
+            @JsonProperty("lastLoginAt") LocalDateTime lastLoginAt,
+            @JsonProperty("lastRefreshAt") LocalDateTime lastRefreshAt,
+            @JsonProperty("agentOperationalStatus") String agentOperationalStatus,
+            @JsonProperty("statusSource") String statusSource,
+            @JsonProperty("authState") String authState,
+            @JsonProperty("authStateSource") String authStateSource,
+            @JsonProperty("authStateObservedAt") LocalDateTime authStateObservedAt) {
+        public AccountSummary(String id, String providerAccountId, String displayName, String accountType,
+                             String status, Boolean enabled, Boolean orderSyncEnabled,
+                             Map<String, Object> capabilities, LocalDateTime lastVerifiedAt,
+                             LocalDateTime lastLoginAt) {
+            this(id, providerAccountId, displayName, accountType, status, enabled, orderSyncEnabled,
+                    capabilities, lastVerifiedAt, lastLoginAt, null, null, null, "UNKNOWN", null, null);
+        }
+    }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuItemsPage(

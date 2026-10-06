@@ -545,6 +545,12 @@ export interface SalesChannelAccountSummary {
   capabilities?: Record<string, boolean | string | null> | null
   lastVerifiedAt?: string | null
   lastLoginAt?: string | null
+  lastRefreshAt?: string | null
+  agentOperationalStatus?: string | null
+  statusSource?: string | null
+  authState?: "VALID" | "AUTH_REQUIRED" | "VERIFICATION_REQUIRED" | "UNKNOWN" | string | null
+  authStateSource?: string | null
+  authStateObservedAt?: string | null
   orderSyncEnabled?: boolean
 }
 

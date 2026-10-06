@@ -388,6 +388,24 @@ class XianyuSalesChannelClientTest {
     }
 
     @Test
+    void deserializesSeparateAgentOperationalAndAuthenticationState() throws Exception {
+        SalesChannelAccount account = objectMapper.readValue("""
+                {"provider_account_id":"acct-1","status":"active","enabled":true,
+                 "operational_status":"active","status_source":"AUTH_RECOVERY",
+                 "auth_state":"AUTH_REQUIRED","auth_state_source":"SESSION_EXPIRED",
+                 "auth_state_observed_at":"2026-10-06T14:40:30Z",
+                 "last_login_at":"2026-10-06T14:40:29Z","last_refresh_at":"2026-10-06T14:40:30Z"}
+                """, SalesChannelAccount.class);
+
+        assertEquals("active", account.operationalStatus());
+        assertEquals("AUTH_RECOVERY", account.statusSource());
+        assertEquals("AUTH_REQUIRED", account.authState());
+        assertEquals("SESSION_EXPIRED", account.authStateSource());
+        assertEquals("2026-10-06T14:40:30Z", account.authStateObservedAt());
+        assertEquals("2026-10-06T14:40:30Z", account.lastRefreshAt());
+    }
+
+    @Test
     void ignoresSensitiveUnknownAccountFieldsAndDoesNotExposeSecretInErrorEnvelope() throws Exception {
         try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SENSITIVE_RESPONSE)) {
             XianyuSalesChannelClient client = client(fixture.baseUrl());

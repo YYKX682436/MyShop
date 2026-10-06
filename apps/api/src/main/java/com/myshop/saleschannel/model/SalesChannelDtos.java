@@ -70,7 +70,18 @@ public final class SalesChannelDtos {
             @JsonProperty("enabled") Boolean enabled,
             @JsonProperty("last_login_at") String lastLoginAt,
             @JsonProperty("last_refresh_at") String lastRefreshAt,
-            @JsonProperty("capabilities") AccountCapabilities capabilities) { }
+            @JsonProperty("capabilities") AccountCapabilities capabilities,
+            @JsonProperty("operational_status") String operationalStatus,
+            @JsonProperty("status_source") String statusSource,
+            @JsonProperty("auth_state") String authState,
+            @JsonProperty("auth_state_source") String authStateSource,
+            @JsonProperty("auth_state_observed_at") String authStateObservedAt) {
+        public SalesChannelAccount(String providerAccountId, String displayName, String status, Boolean enabled,
+                                   String lastLoginAt, String lastRefreshAt, AccountCapabilities capabilities) {
+            this(providerAccountId, displayName, status, enabled, lastLoginAt, lastRefreshAt, capabilities,
+                    null, null, null, null, null);
+        }
+    }
 
     public record AccountsData(
             @JsonProperty("accounts") List<SalesChannelAccount> accounts) { }

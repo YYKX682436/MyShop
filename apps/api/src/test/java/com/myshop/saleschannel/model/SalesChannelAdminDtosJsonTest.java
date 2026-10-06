@@ -29,7 +29,8 @@ class SalesChannelAdminDtosJsonTest {
     void accountSummaryUsesTheCamelCaseContractExpectedByTheAdminUi() {
         AccountSummary summary = new AccountSummary("local-id", "provider-id", "Test shop",
                 "FISH_SHOP", "CONNECTED", true, false, Map.of("account_type", "FISH_SHOP"),
-                LocalDateTime.of(2026, 9, 21, 12, 0), null);
+                LocalDateTime.of(2026, 9, 21, 12, 0), null, null, "active", "AUTH_RECOVERY",
+                "AUTH_REQUIRED", "SESSION_EXPIRED", LocalDateTime.of(2026, 10, 6, 14, 40, 30));
 
         JsonNode json = objectMapper.valueToTree(summary);
 
@@ -37,6 +38,10 @@ class SalesChannelAdminDtosJsonTest {
         assertEquals("FISH_SHOP", json.path("accountType").asText());
         assertEquals("Test shop", json.path("displayName").asText());
         assertTrue(json.has("lastVerifiedAt"));
+        assertEquals("CONNECTED", json.path("status").asText());
+        assertEquals("active", json.path("agentOperationalStatus").asText());
+        assertEquals("AUTH_REQUIRED", json.path("authState").asText());
+        assertEquals("SESSION_EXPIRED", json.path("authStateSource").asText());
         assertFalse(json.has("provider_account_id"));
         assertFalse(json.has("account_type"));
     }

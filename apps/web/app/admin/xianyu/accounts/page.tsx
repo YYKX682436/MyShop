@@ -51,6 +51,19 @@ function accountTypeLabel(accountType?: string | null) {
   return "待验证"
 }
 
+function authStateLabel(state?: string | null) {
+  if (state === "VALID") return "登录正常"
+  if (state === "AUTH_REQUIRED") return "需要重新登录"
+  if (state === "VERIFICATION_REQUIRED") return "需要安全验证"
+  return "认证状态未知"
+}
+
+function authStateTone(state?: string | null): "success" | "warning" | "info" {
+  if (state === "VALID") return "success"
+  if (state === "AUTH_REQUIRED" || state === "VERIFICATION_REQUIRED") return "warning"
+  return "info"
+}
+
 function capabilityLabels(capabilities?: SalesChannelAccountSummary["capabilities"]) {
   if (!capabilities) return []
   const labels: Record<string, string> = {
@@ -182,6 +195,7 @@ export default function XianyuAccountsPage() {
               <th className="px-4 py-3 text-left">账号 ID</th>
               <th className="px-4 py-3 text-left">显示名称 / 备注</th>
               <th className="px-4 py-3 text-left">连接状态</th>
+              <th className="px-4 py-3 text-left">登录状态</th>
               <th className="px-4 py-3 text-left">账号类型</th>
               <th className="px-4 py-3 text-left">最近登录</th>
               <th className="px-4 py-3 text-left">最近验证</th>
@@ -190,19 +204,32 @@ export default function XianyuAccountsPage() {
             </tr>
           </thead>
           <tbody>
-            {loading && <TableLoadingState colSpan={8} />}
-            {!loading && loadError && <TableErrorState colSpan={8} onRetry={() => void loadAccounts()} />}
-            {!loading && !loadError && accounts.length === 0 && <TableEmptyState colSpan={8}>还没有添加闲鱼账号</TableEmptyState>}
+            {loading && <TableLoadingState colSpan={9} />}
+            {!loading && loadError && <TableErrorState colSpan={9} onRetry={() => void loadAccounts()} />}
+            {!loading && !loadError && accounts.length === 0 && <TableEmptyState colSpan={9}>还没有添加闲鱼账号</TableEmptyState>}
             {!loading && !loadError && accounts.map((account) => {
               const capabilities = capabilityLabels(account.capabilities)
               return (
                 <tr key={account.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                   <td className="px-4 py-3 font-mono text-xs">{account.providerAccountId}</td>
                   <td className="px-4 py-3">{account.displayName || "—"}</td>
-                  <td className="px-4 py-3"><StatusBadge label={account.status} tone={statusTone(account.status)} /></td>
+                  <td className="px-4 py-3">
+                    <StatusBadge label={account.status} tone={statusTone(account.status)} />
+                    {account.agentOperationalStatus && <div className="mt-1 text-xs text-muted-foreground">
+                      Agent：{account.agentOperationalStatus}{account.statusSource ? ` · ${account.statusSource}` : ""}
+                    </div>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge label={authStateLabel(account.authState)} tone={authStateTone(account.authState)} />
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {account.authStateSource || "来源未知"}
+                      {account.authStateObservedAt ? ` · ${formatDateTime(account.authStateObservedAt, locale)}` : ""}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">{accountTypeLabel(account.accountType)}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
-                    {account.lastLoginAt ? formatDateTime(account.lastLoginAt, locale) : "—"}
+                    <div>{account.lastLoginAt ? formatDateTime(account.lastLoginAt, locale) : "—"}</div>
+                    <div className="mt-1 text-xs">最近刷新：{account.lastRefreshAt ? formatDateTime(account.lastRefreshAt, locale) : "—"}</div>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
                     {account.lastVerifiedAt ? formatDateTime(account.lastVerifiedAt, locale) : "—"}

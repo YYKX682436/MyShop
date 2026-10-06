@@ -92,6 +92,36 @@ class SalesChannelAdminServiceTest {
     @InjectMocks private SalesChannelAdminService service;
 
     @Test
+    void accountReadKeepsOperationalStatusSeparateFromLiveAgentAuthenticationState() {
+        UUID localId = UUID.randomUUID();
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setId(localId);
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId("2215747465381");
+        account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        account.setCapabilities(Map.of("account_type", "FISH_SHOP"));
+        var agentAccount = new com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount(
+                "2215747465381", "existing account", "active", true,
+                "2026-10-06T14:40:29Z", "2026-10-06T14:40:30Z", null,
+                "active", "AUTH_RECOVERY", "AUTH_REQUIRED", "SESSION_EXPIRED",
+                "2026-10-06T14:40:30Z");
+        when(accountRepository.findAll()).thenReturn(List.of(account));
+        when(providerClient.listAccounts()).thenReturn(new IntegrationEnvelope<>(null, Outcome.SUCCEEDED,
+                new AccountsData(List.of(agentAccount)), null));
+
+        var summary = service.accounts().getFirst();
+
+        assertEquals("CONNECTED", summary.status());
+        assertEquals("active", summary.agentOperationalStatus());
+        assertEquals("AUTH_RECOVERY", summary.statusSource());
+        assertEquals("AUTH_REQUIRED", summary.authState());
+        assertEquals("SESSION_EXPIRED", summary.authStateSource());
+        assertEquals("2026-10-06T14:40:30", summary.authStateObservedAt().toString());
+        assertEquals("2026-10-06T14:40:30", summary.lastRefreshAt().toString());
+        verify(accountService, never()).upsert(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void autoFulfillmentPreflightRejectsSpecDisabledProductWithoutCostPrice() {
         UUID listingId = UUID.randomUUID();
         UUID accountId = UUID.randomUUID();

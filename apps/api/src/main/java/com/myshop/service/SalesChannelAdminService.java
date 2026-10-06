@@ -119,8 +119,9 @@ public class SalesChannelAdminService {
     private final XianyuItemTakeoverService itemTakeoverService;
 
     public List<AccountSummary> accounts() {
-        return accountRepository.findAll().stream().filter(account -> account.getProvider() == SalesChannelProvider.XIANYU)
-                .map(this::accountSummary).toList();
+        List<SalesChannelAccount> localAccounts = accountRepository.findAll().stream()
+                .filter(account -> account.getProvider() == SalesChannelProvider.XIANYU).toList();
+        return accountSummariesWithAgentState(localAccounts, readAgentAccountsForAdminView());
     }
 
     public XianyuItemsPage queryXianyuItems(UUID accountId, int page, int pageSize, String keyword) {
@@ -413,7 +414,9 @@ public class SalesChannelAdminService {
             accountService.upsert(SalesChannelProvider.XIANYU, account.providerAccountId(),
                     account.displayName(), status, capabilities, parseProviderTimestamp(account.lastLoginAt()), null);
         }
-        return accounts();
+        List<SalesChannelAccount> localAccounts = accountRepository.findAll().stream()
+                .filter(local -> local.getProvider() == SalesChannelProvider.XIANYU).toList();
+        return accountSummariesWithAgentState(localAccounts, remote);
     }
 
     public AccountSummary verifyAccount(UUID accountId) {
@@ -519,10 +522,60 @@ public class SalesChannelAdminService {
     }
 
     private AccountSummary accountSummary(SalesChannelAccount account) {
+        return accountSummary(account, null);
+    }
+
+    private AccountSummary accountSummary(SalesChannelAccount account,
+            com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount agentAccount) {
         return new AccountSummary(account.getId().toString(), account.getProviderAccountId(),
                 account.getDisplayName(), accountType(account), account.getStatus().name(), account.isEnabled(),
                 account.isOrderSyncEnabled(),
-                account.getCapabilities(), account.getLastVerifiedAt(), account.getLastLoginAt());
+                account.getCapabilities(), account.getLastVerifiedAt(),
+                agentAccount == null || blank(agentAccount.lastLoginAt())
+                        ? account.getLastLoginAt() : parseProviderTimestamp(agentAccount.lastLoginAt()),
+                agentAccount == null ? null : parseProviderTimestamp(agentAccount.lastRefreshAt()),
+                agentAccount == null ? null : agentAccount.operationalStatus(),
+                agentAccount == null ? null : agentAccount.statusSource(),
+                normalizeAuthState(agentAccount == null ? null : agentAccount.authState()),
+                agentAccount == null ? null : agentAccount.authStateSource(),
+                agentAccount == null ? null : parseProviderTimestamp(agentAccount.authStateObservedAt()));
+    }
+
+    private List<AccountSummary> accountSummariesWithAgentState(
+            List<SalesChannelAccount> localAccounts,
+            List<com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount> agentAccounts) {
+        Map<String, com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount> byProviderId =
+                new HashMap<>();
+        for (var agentAccount : agentAccounts) {
+            if (agentAccount != null && !blank(agentAccount.providerAccountId())) {
+                byProviderId.put(agentAccount.providerAccountId(), agentAccount);
+            }
+        }
+        return localAccounts.stream()
+                .map(account -> accountSummary(account, byProviderId.get(account.getProviderAccountId())))
+                .toList();
+    }
+
+    private List<com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount>
+            readAgentAccountsForAdminView() {
+        try {
+            IntegrationEnvelope<AccountsData> response = providerClient.listAccounts();
+            if (response == null || response.outcome() != Outcome.SUCCEEDED
+                    || response.data() == null || response.data().accounts() == null) {
+                return List.of();
+            }
+            return response.data().accounts();
+        } catch (RuntimeException unavailable) {
+            return List.of();
+        }
+    }
+
+    private String normalizeAuthState(String value) {
+        if ("VALID".equals(value) || "AUTH_REQUIRED".equals(value)
+                || "VERIFICATION_REQUIRED".equals(value)) {
+            return value;
+        }
+        return "UNKNOWN";
     }
 
     private LocalDateTime parseProviderTimestamp(String value) {
