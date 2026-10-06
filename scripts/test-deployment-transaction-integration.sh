@@ -6,7 +6,7 @@ deploy_script="$repo_dir/scripts/deploy-production.sh"
 state_writer="$repo_dir/scripts/write-deploy-state.sh"
 retention_script="$repo_dir/scripts/cleanup-docker-retention.sh"
 tmp_dir=$(mktemp -d)
-trap 'rm -rf -- "$tmp_dir"' EXIT
+trap 'rm -rf "$tmp_dir"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf 'PASS: %s\n' "$*"; }
@@ -15,7 +15,7 @@ old_sha=$(printf 'a%.0s' {1..40})
 rollback1_sha=$(printf 'b%.0s' {1..40})
 rollback2_sha=$(printf 'c%.0s' {1..40})
 candidate_sha=$(printf 'd%.0s' {1..40})
-registry=registry.test
+registry=ghcr.io/yykx682436
 
 base_state="$tmp_dir/base-state.json"
 manifest="$tmp_dir/candidate-manifest.json"
@@ -66,7 +66,13 @@ Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + 
 PY
 
 fake_bin="$tmp_dir/fake-bin"
-mkdir -p -- "$fake_bin"
+mkdir -p "$fake_bin"
+
+cat >"$fake_bin/flock" <<'FLOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exit 0
+FLOCK
 
 cat >"$fake_bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
@@ -311,14 +317,14 @@ printf '%s\n' "$((count + 1))" >"$count_file"
 exit 0
 CURL
 
-chmod +x -- "$fake_bin/docker" "$tmp_dir/compose.sh" "$tmp_dir/backup.sh" "$tmp_dir/schema.sh" "$tmp_dir/health.sh" "$tmp_dir/retention.sh" "$fake_bin/curl"
+chmod +x "$fake_bin/docker" "$fake_bin/flock" "$tmp_dir/compose.sh" "$tmp_dir/backup.sh" "$tmp_dir/schema.sh" "$tmp_dir/health.sh" "$tmp_dir/retention.sh" "$fake_bin/curl"
 
 case_root="$tmp_dir/case"
 reset_case() {
-  rm -rf -- "$case_root"
-  mkdir -p -- "$case_root/candidates" "$case_root/maintenance"
-  cp -- "$base_state" "$case_root/deploy-state.json"
-  rm -f -- "$case_root/accepted-images.env"
+  rm -rf "$case_root"
+  mkdir -p "$case_root/candidates" "$case_root/maintenance"
+  cp "$base_state" "$case_root/deploy-state.json"
+  rm -f "$case_root/accepted-images.env"
   printf 'old\n' >"$case_root/running"
   printf 'PUBLIC_SITE_URL=http://myshop.test\n' >"$case_root/.env"
   : >"$case_root/pull.log"
@@ -327,7 +333,7 @@ reset_case() {
   : >"$case_root/schema.log"
   : >"$case_root/health.log"
   : >"$case_root/retention.log"
-  rm -f -- "$case_root/health-count" "$case_root/curl-count"
+  rm -f "$case_root/health-count" "$case_root/curl-count"
 }
 
 run_deploy() {
@@ -367,7 +373,10 @@ assert_pre_commit_failure() {
   status=$?
   set -e
   (( status != 0 )) || fail "$hook unexpectedly succeeded"
-  grep -Fq 'DEPLOYMENT FAILED / ROLLED BACK' <<<"$output" || fail "$hook did not roll back"
+  if ! grep -Fq 'DEPLOYMENT FAILED / ROLLED BACK' <<<"$output"; then
+    printf '%s\n' "$output" >&2
+    fail "$hook did not roll back"
+  fi
   cmp -s "$base_state" "$case_root/deploy-state.json" || fail "$hook changed accepted state"
   [[ ! -e "$case_root/accepted-images.env" ]] || fail "$hook recreated a second accepted image state"
   [[ "$(<"$case_root/running")" == old ]] || fail "$hook did not restore old stack"
@@ -456,10 +465,10 @@ assert_post_commit_failure post-storage
 pass 'post-commit failures remain accepted and never restore the previous application'
 
 invariant_root="$tmp_dir/invariant"
-mkdir -p -- "$invariant_root"
-cp -- "$base_state" "$invariant_root/deploy-state.json"
+mkdir -p "$invariant_root"
+cp "$base_state" "$invariant_root/deploy-state.json"
 bash "$state_writer" "$invariant_root/deploy-state.json" "$manifest" >/dev/null
-cp -- "$invariant_root/deploy-state.json" "$invariant_root/promoted-state.json"
+cp "$invariant_root/deploy-state.json" "$invariant_root/promoted-state.json"
 python3 - "$base_state" "$invariant_root/promoted-state.json" "$old_sha" "$rollback1_sha" "$rollback2_sha" "$candidate_sha" <<'PY'
 import json, sys
 before = json.load(open(sys.argv[1], encoding='utf-8'))

@@ -6,13 +6,14 @@ grep -Fq 'health-after-start' "$(dirname -- "$0")/deploy-production.sh"
 grep -Fq 'COMMIT POINT' "$(dirname -- "$0")/deploy-production.sh"
 python3 - <<'PY'
 from copy import deepcopy
+from typing import Optional
 
 old_state = {"version": 1, "active": {"source_sha": "a" * 40}, "rollback": []}
-old_running = {"api": "registry/myshop-api:" + "a" * 40, "web": "registry/myshop-web:" + "a" * 40}
+old_running = {"api": "ghcr.io/yykx682436/myshop-api:" + "a" * 40, "web": "ghcr.io/yykx682436/myshop-web:" + "a" * 40}
 candidate = {"source_sha": "b" * 40}
 
 
-def transaction(failure: str | None, rollback_failure: bool = False):
+def transaction(failure: Optional[str], rollback_failure: bool = False):
     state = deepcopy(old_state)
     running = dict(old_running)
     promoted = False
@@ -23,7 +24,7 @@ def transaction(failure: str | None, rollback_failure: bool = False):
             return "DEPLOYMENT FAILED / ROLLED BACK", deepcopy(old_state), dict(old_running), promoted
     state["active"] = candidate
     state["rollback"] = [old_state["active"]]
-    running = {"api": "registry/myshop-api:" + candidate["source_sha"], "web": "registry/myshop-web:" + candidate["source_sha"]}
+    running = {"api": "ghcr.io/yykx682436/myshop-api:" + candidate["source_sha"], "web": "ghcr.io/yykx682436/myshop-web:" + candidate["source_sha"]}
     promoted = True
     return "DEPLOYMENT ACCEPTED", state, running, promoted
 

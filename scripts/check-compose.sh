@@ -28,8 +28,8 @@ JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123
 UPLOAD_HOST_PATH=/data/myshop/uploads
 PRIVATE_UPLOAD_HOST_PATH=/data/myshop/private-uploads
 IP_GEO_HOST_PATH=/data/myshop/ipdb
-MYSHOP_API_IMAGE=ghcr.io/example/myshop-api:0000000000000000000000000000000000000001
-MYSHOP_WEB_IMAGE=ghcr.io/example/myshop-web:0000000000000000000000000000000000000001
+MYSHOP_API_IMAGE=ghcr.io/yykx682436/myshop-api:0000000000000000000000000000000000000001
+MYSHOP_WEB_IMAGE=ghcr.io/yykx682436/myshop-web:0000000000000000000000000000000000000001
 EOF
 
 cat >"$missing_env" <<'EOF'
@@ -107,7 +107,7 @@ if [[ "$(grep -Fc 'driver: local' "$repo_dir/docker-compose.prod.yml")" -lt 1 ]]
 fi
 
 wrapper_path="$repo_dir/scripts/myshop-compose.sh"
-wrapper_config="$(MYSHOP_APPROVED_REGISTRY=ghcr.io/example "$wrapper_path" --env-file "$production_env" config)"
+wrapper_config="$(MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436 "$wrapper_path" --env-file "$production_env" config)"
 assert_project_name "$wrapper_config" "production wrapper"
 
 wrapper_must_reject() {
@@ -167,8 +167,8 @@ if ! grep -Fq 'source: /data/myshop/uploads' <<<"$production_config"; then
   exit 1
 fi
 
-if ! grep -Fq 'ghcr.io/example/myshop-api:0000000000000000000000000000000000000001' <<<"$production_config" \
-  || ! grep -Fq 'ghcr.io/example/myshop-web:0000000000000000000000000000000000000001' <<<"$production_config"; then
+if ! grep -Fq 'ghcr.io/yykx682436/myshop-api:0000000000000000000000000000000000000001' <<<"$production_config" \
+  || ! grep -Fq 'ghcr.io/yykx682436/myshop-web:0000000000000000000000000000000000000001' <<<"$production_config"; then
   echo "production Compose did not resolve immutable full-SHA application images" >&2
   exit 1
 fi

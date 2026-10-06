@@ -22,6 +22,7 @@ grep -Eq '(:latest|:local)([[:space:]]|$)' "$COMPOSE_FILE" && die 'production Co
 [[ -f "$env_file" ]] || die "production env file is missing: $env_file"
 approved_registry=${MYSHOP_APPROVED_REGISTRY:-}
 [[ -n "$approved_registry" ]] || die 'MYSHOP_APPROVED_REGISTRY must be supplied by host deployment configuration'
+[[ "$approved_registry" == ghcr.io/yykx682436 ]] || die 'MYSHOP_APPROVED_REGISTRY must be ghcr.io/yykx682436'
 
 read_env_value() { local key=$1 value source_file=${2:-$env_file}; value=$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$source_file"); value=${value#\"}; value=${value%\"}; value=${value#\'}; value=${value%\'}; printf '%s' "$value"; }
 state_file=${MYSHOP_DEPLOY_STATE:-$PROJECT_ROOT/deploy-state.json}

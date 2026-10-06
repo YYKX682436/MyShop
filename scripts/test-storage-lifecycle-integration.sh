@@ -20,6 +20,16 @@ set -Eeuo pipefail
 printf '/data\n'
 FINDMNT
 
+cat >"$fake_bin/flock" <<'FLOCK'
+#!/usr/bin/env python3
+import fcntl, sys
+try:
+    descriptor = int(sys.argv[-1])
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB if "-n" in sys.argv else fcntl.LOCK_EX)
+except (BlockingIOError, OSError):
+    raise SystemExit(1)
+FLOCK
+
 cat >"$tmp_dir/health.sh" <<'HEALTH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -52,7 +62,7 @@ set -Eeuo pipefail
 printf 'maintenance held=%s lock=%s\n' "${HOST_DEPLOY_LOCK_HELD:-}" "${HOST_DEPLOY_LOCK_FILE:-}" >>"${EVENT_LOG:?}"
 MAINTENANCE
 
-chmod +x -- "$fake_bin/findmnt" "$tmp_dir/health.sh" "$tmp_dir/myshop-retention.sh" "$tmp_dir/agent-retention.sh" "$tmp_dir/maintenance.sh"
+chmod +x "$fake_bin/findmnt" "$fake_bin/flock" "$tmp_dir/health.sh" "$tmp_dir/myshop-retention.sh" "$tmp_dir/agent-retention.sh" "$tmp_dir/maintenance.sh"
 
 run_orchestrator() {
   : >"$tmp_dir/health-count"
@@ -114,7 +124,7 @@ contention_log="$tmp_dir/contention-events.log"
 ready_file="$tmp_dir/lock-holder.ready"
 (
   exec 8>"$lock_file"
-  flock -n 8
+  PATH="$fake_bin:$PATH" flock -n 8
   : >"$ready_file"
   sleep 5
 ) &

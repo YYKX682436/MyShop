@@ -41,8 +41,8 @@ python3 - "$manifest" "$sha1" "$digest" <<'PY'
 import json, sys
 path, sha, digest = sys.argv[1:]
 json.dump({"version": 1, "project": "myshop", "source_sha": sha, "created_at": "builder", "images": {
-    "api": {"ref": f"registry.example:5000/team/myshop-api:{sha}", "digest": digest},
-    "web": {"ref": f"registry.example:5000/team/myshop-web:{sha}", "digest": digest},
+    "api": {"ref": f"ghcr.io/yykx682436/myshop-api:{sha}", "digest": digest},
+    "web": {"ref": f"ghcr.io/yykx682436/myshop-web:{sha}", "digest": digest},
 }}, open(path, "w", encoding="utf-8"))
 PY
 bash "$state_writer" "$state" "$manifest" >/dev/null
@@ -97,10 +97,10 @@ PATH="$wrapper_bin:$PATH" \
   MYSHOP_RUNTIME_ROOT="$wrapper_runtime" \
   MYSHOP_DEPLOY_STATE="$state" \
   MYSHOP_ENV_FILE="$wrapper_env" \
-  MYSHOP_APPROVED_REGISTRY='registry.example:5000/team' \
+  MYSHOP_APPROVED_REGISTRY='ghcr.io/yykx682436' \
   WRAPPER_LOG="$wrapper_log" \
   bash "$wrapper" config --quiet
-grep -Fq "registry.example:5000/team/myshop-api:$sha3|registry.example:5000/team/myshop-web:$sha3" "$wrapper_log" || fail 'wrapper did not read active refs from deploy-state.json'
+grep -Fq "ghcr.io/yykx682436/myshop-api:$sha3|ghcr.io/yykx682436/myshop-web:$sha3" "$wrapper_log" || fail 'wrapper did not read active refs from deploy-state.json'
 pass 'production wrapper reads active refs from deploy-state.json without a second state file'
 
 rm -f -- "$state"
@@ -109,13 +109,13 @@ PATH="$wrapper_bin:$PATH" \
   MYSHOP_RUNTIME_ROOT="$wrapper_runtime" \
   MYSHOP_DEPLOY_STATE="$state" \
   MYSHOP_ENV_FILE="$wrapper_env" \
-  MYSHOP_APPROVED_REGISTRY='registry.example:5000/team' \
+  MYSHOP_APPROVED_REGISTRY='ghcr.io/yykx682436' \
   WRAPPER_LOG="$wrapper_log" \
   bash "$wrapper" config --quiet
 pass 'bootstrap without deploy-state uses only the legacy baseline env path'
 
 printf '{"version":1,"active":{"source_sha":"broken"}}\n' >"$state"
-if PATH="$wrapper_bin:$PATH" MYSHOP_RUNTIME_ROOT="$wrapper_runtime" MYSHOP_DEPLOY_STATE="$state" MYSHOP_ENV_FILE="$wrapper_env" MYSHOP_APPROVED_REGISTRY='registry.example:5000/team' WRAPPER_LOG="$wrapper_log" bash "$wrapper" config --quiet >/dev/null 2>&1; then
+if PATH="$wrapper_bin:$PATH" MYSHOP_RUNTIME_ROOT="$wrapper_runtime" MYSHOP_DEPLOY_STATE="$state" MYSHOP_ENV_FILE="$wrapper_env" MYSHOP_APPROVED_REGISTRY='ghcr.io/yykx682436' WRAPPER_LOG="$wrapper_log" bash "$wrapper" config --quiet >/dev/null 2>&1; then
   fail 'malformed deploy-state did not fail closed in production wrapper'
 fi
 pass 'malformed deploy-state fails closed in production wrapper'
@@ -133,8 +133,8 @@ python3 - "$manifest" "$sha3" "$digest" <<'PY'
 import json, sys
 path, sha, digest = sys.argv[1:]
 json.dump({"version": 1, "project": "myshop", "source_sha": sha, "created_at": "builder", "images": {
-    "api": {"ref": f"registry.example:5000/team/myshop-api:{sha}", "digest": digest},
-    "web": {"ref": f"registry.example:5000/team/myshop-web:{sha}", "digest": digest},
+    "api": {"ref": f"ghcr.io/yykx682436/myshop-api:{sha}", "digest": digest},
+    "web": {"ref": f"ghcr.io/yykx682436/myshop-web:{sha}", "digest": digest},
 }}, open(path, "w", encoding="utf-8"))
 PY
 bash "$state_writer" "$state" "$manifest" >/dev/null
@@ -145,18 +145,18 @@ cat >"$fake_bin/docker" <<'DOCKER'
 set -Eeuo pipefail
 log=${FAKE_DOCKER_LOG:?}; active=${FAKE_ACTIVE_SHA:?}; digest=${FAKE_DIGEST:?}
 if [[ "$1" == ps && "$*" == *"--format"* ]]; then
-  [[ "$*" == *"service=api"* ]] && printf 'api-container|registry.example:5000/team/myshop-api:%s\n' "$active"
-  [[ "$*" == *"service=web"* ]] && printf 'web-container|registry.example:5000/team/myshop-web:%s\n' "$active"
+  [[ "$*" == *"service=api"* ]] && printf 'api-container|ghcr.io/yykx682436/myshop-api:%s\n' "$active"
+  [[ "$*" == *"service=web"* ]] && printf 'web-container|ghcr.io/yykx682436/myshop-web:%s\n' "$active"
 elif [[ "$1" == ps && "$2" == -aq ]]; then printf 'api-container\nweb-container\nstopped-container\n'
 elif [[ "$1" == inspect ]]; then case "${4:-}" in api-container|web-container) printf 'sha256:accepted\n';; stopped-container) printf 'sha256:stopped\n';; esac
 elif [[ "$1" == image && "$2" == inspect ]]; then
   target=${5:-}
-  [[ "${4:-}" == "{{.Id}}" ]] && printf 'sha256:accepted\n' || printf 'registry.example:5000/team/%s@%s\n' "$(basename "${target%:*}")" "$digest"
+  [[ "${4:-}" == "{{.Id}}" ]] && printf 'sha256:accepted\n' || printf 'ghcr.io/yykx682436/%s@%s\n' "$(basename "${target%:*}")" "$digest"
 elif [[ "$1" == image && "$2" == ls ]]; then
-  printf 'registry.example:5000/team/myshop-api|%s|sha256:accepted\n' "$active"
-  printf 'registry.example:5000/team/myshop-api|candidate|sha256:candidate\n'
-  printf 'registry.example:5000/team/myshop-web|%s|sha256:accepted\n' "$active"
-  printf 'registry.example:5000/team/myshop-web|candidate|sha256:candidate-web\n'
+  printf 'ghcr.io/yykx682436/myshop-api|%s|sha256:accepted\n' "$active"
+  printf 'ghcr.io/yykx682436/myshop-api|candidate|sha256:candidate\n'
+  printf 'ghcr.io/yykx682436/myshop-web|%s|sha256:accepted\n' "$active"
+  printf 'ghcr.io/yykx682436/myshop-web|candidate|sha256:candidate-web\n'
 elif [[ "$1" == image && "$2" == rm ]]; then printf '%s\n' "$3" >>"$log"
 elif [[ "$1" == system && "$2" == df ]]; then printf 'fake docker system df\n'
 else exit 99; fi
@@ -164,7 +164,7 @@ exit 0
 DOCKER
 chmod +x "$fake_bin/docker"
 PATH="$fake_bin:$PATH" FAKE_DOCKER_LOG="$fake_log" FAKE_ACTIVE_SHA="$sha3" FAKE_DIGEST="$digest" MYSHOP_RUNTIME_ROOT="$tmp_dir/runtime" MYSHOP_DEPLOY_STATE="$state" HOST_DEPLOY_LOCK_FILE="$tmp_dir/retention.lock" "$retention" >/dev/null
-grep -Fq 'registry.example:5000/team/myshop-api:candidate' "$fake_log" || fail 'candidate was not selected'
+grep -Fq 'ghcr.io/yykx682436/myshop-api:candidate' "$fake_log" || fail 'candidate was not selected'
 ! grep -Fq "$sha3" "$fake_log" || fail 'active image was selected'
 pass 'retention selects only own non-accepted image refs'
 bash "$repo_dir/scripts/test-storage-lifecycle-integration.sh"
