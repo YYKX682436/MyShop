@@ -43,3 +43,4 @@ assert result == "CRITICAL_ROLLBACK_FAILED" and state == old_state and running =
 print("deployment transaction failure-injection regression passed: pull health smoke schema post-storage")
 PY
 bash "$(dirname -- "$0")/test-deployment-transaction-integration.sh"
+bash "$(dirname -- "$0")/tests/test-runtime-config-transaction.sh"

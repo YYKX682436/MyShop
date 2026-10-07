@@ -183,3 +183,73 @@ active plus valid rollback set
 
 Missing any item means `DEPLOYMENT NOT ACCEPTED`. A healthy container by itself
 is not a successful deployment.
+
+## Runtime-config-only transaction
+
+Runtime configuration is a separate control plane from release state. The
+accepted file is `/opt/myshop/runtime/runtime-config-state.json`; it contains
+the accepted non-secret values, a monotonic revision, a canonical config
+digest, acceptance time, the source SHA under which the change was accepted,
+and prior accepted runtime revisions. It never changes
+`/opt/myshop/runtime/deploy-state.json`.
+
+Create a reviewable JSON manifest and pass it as the only argument:
+
+```bash
+bash /opt/myshop/scripts/deploy-runtime-config.sh /path/to/runtime-config-manifest.json
+```
+
+Manifest v1 uses `project: "myshop"`, `expected_active_source_sha`, an
+ISO-8601 `created_at`, and a `changes` object whose entries contain string
+`from` and `to` values. The allowlist is limited to
+`SALES_CHANNEL_WORKER_ENABLED` (`true` or `false`),
+`SALES_CHANNEL_WORKER_BATCH_SIZE` (integer `1..100`), and
+`SALES_CHANNEL_WORKER_INTERVAL_MS` (integer `100..60000`). Secrets and
+unknown keys are rejected. Use `changes: {}` for the first baseline
+registration; the baseline must match the accepted release, production env,
+and running API container exactly.
+
+```json
+{
+  "version": 1,
+  "project": "myshop",
+  "expected_active_source_sha": "<full-40-character-sha>",
+  "created_at": "2026-10-07T00:00:00Z",
+  "changes": {
+    "SALES_CHANNEL_WORKER_BATCH_SIZE": {"from": "10", "to": "1"}
+  }
+}
+```
+
+The accepted file is version 1 with `project`, `active`, and `history`.
+`active` and every history record contain `revision`, `accepted_at`,
+`changed_under_source_sha`, `config_digest`, and the full normalized
+allowlisted `values` object. The digest is `sha256:` plus SHA-256 of compact
+UTF-8 JSON with sorted keys. The initial baseline is revision 1; every
+different accepted configuration increments the revision once. A same-value
+manifest leaves both revision and file bytes unchanged.
+
+The transaction holds `/run/myshop-xianyu-deploy.lock`, renders candidate
+Compose through `myshop-compose.sh`, preserves env-file owner/group/mode while
+atomically replacing it, and recreates only `api` with the accepted image and
+`--pull never`. It verifies health, accepted image identity, and managed
+container values before promoting runtime-config state. A same-value no-op
+does not recreate the service. The temporary full env copy is mode `0600`,
+never logged, and removed on exit.
+
+Every API recreation is blocked by a running or stale-running `ENSURE_LISTING`.
+Enabling the worker also requires zero ACTIVE listings, zero ready work, zero
+attempted recovery ENSURE, zero unresolved legacy work, and both Agent writes
+and adoption gates false. If new ENSURE attempts, a running ENSURE, or a new
+Agent integration operation appears after a worker-enable candidate starts,
+the transaction records safe count-only evidence and stops with
+`RUNTIME_CONFIG_SIDE_EFFECT_BOUNDARY_CROSSED`; it leaves the running command
+alone. Other pre-commit failures atomically restore the original env and
+recreate/verify the accepted API image. An incomplete restore returns
+`CRITICAL_RUNTIME_CONFIG_ROLLBACK_FAILED`.
+
+Once the runtime-config state exists, `deploy-production.sh` checks that the
+production env and running API managed values still equal the accepted runtime
+state before starting a release candidate. Drift stops the release with
+`RUNTIME_CONFIG_DRIFT`. This guard is read-only and never promotes runtime
+state.

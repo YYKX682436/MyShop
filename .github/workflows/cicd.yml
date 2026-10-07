@@ -133,6 +133,8 @@ jobs:
         run: bash scripts/test-storage-lifecycle.sh
       - name: Run deployment transaction regression tests
         run: bash scripts/test-deployment-transaction.sh
+      - name: Check production shell entry syntax
+        run: bash -n scripts/deploy-production.sh scripts/deploy-runtime-config.sh scripts/read-runtime-config-safety.sh scripts/myshop-compose.sh
       - name: Run production schema contract regression tests
         run: bash scripts/test-production-schema-contract.sh
       - name: Validate required Compose variables
