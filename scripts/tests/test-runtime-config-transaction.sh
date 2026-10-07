@@ -63,8 +63,12 @@ env_path = Path(args[args.index("--env-file") + 1])
 action = next((item for item in args if item in ("config", "up")), "")
 data = env_path.read_text()
 mode = env_path.stat().st_mode & 0o777
+approved_registry = os.environ.get("MYSHOP_APPROVED_REGISTRY")
 with (root / "compose.log").open("a") as log:
-    log.write(json.dumps({"action": action, "args": args, "mode": mode}) + "\n")
+    log.write(json.dumps({"action": action, "args": args, "mode": mode,
+                          "approved_registry": approved_registry}) + "\n")
+if approved_registry != "ghcr.io/yykx682436":
+    raise SystemExit("runtime config did not supply the approved MyShop registry")
 worker = re.search(r"^SALES_CHANNEL_WORKER_ENABLED=(.*)$", data, re.M).group(1)
 if action == "config":
     if os.environ.get("DEPLOY_TEST_FAIL") == "compose" and worker == "true":
@@ -169,8 +173,10 @@ PY
 }
 
 run_case() {
-  local name=$1 change=$2 state_mode=$3 injected=${4:-} block=${5:-} side=${6:-}
+  local name=$1 change=$2 state_mode=$3 injected=${4:-} block=${5:-} side=${6:-} registry=${7:-unset}
   local case_root="$tmp_dir/$name" output status
+  local -a registry_env=(-u MYSHOP_APPROVED_REGISTRY)
+  [[ "$registry" == unset ]] || registry_env+=("MYSHOP_APPROVED_REGISTRY=$registry")
   mkdir -p "$case_root"
   write_fixture "$case_root" "$change" "$state_mode"
   local release_hash state_hash env_hash id_before
@@ -180,7 +186,7 @@ run_case() {
   env_hash=$(sha256sum "$case_root/env" | awk '{print $1}')
   id_before=$(cat "$case_root/container-id")
   set +e
-  output=$(env PATH="$fake_bin:$PATH" FAKE_ROOT="$case_root" DEPLOY_TEST_FAIL="$injected" \
+  output=$(env "${registry_env[@]}" PATH="$fake_bin:$PATH" FAKE_ROOT="$case_root" DEPLOY_TEST_FAIL="$injected" \
     FAKE_BLOCK="$block" FAKE_SIDE_EFFECT="$side" MYSHOP_RUNTIME_ROOT="$case_root/runtime" \
     MYSHOP_DEPLOY_STATE="$case_root/runtime/deploy-state.json" \
     MYSHOP_RUNTIME_CONFIG_STATE="$case_root/runtime/runtime-config-state.json" \
@@ -250,11 +256,26 @@ PY
     ! grep -q '"action": "up"' "$case_root/compose.log"
     [[ "$(sha256sum "$case_root/env" | awk '{print $1}')" == "$env_hash" ]]
   fi
+  if [[ "$name" == conflict-registry ]]; then
+    [[ $status == 1 ]] || { cat "$case_root/output"; exit 1; }
+    grep -q 'RUNTIME_CONFIG_APPROVED_REGISTRY_CONFLICT' "$case_root/output"
+    [[ ! -s "$case_root/compose.log" ]]
+    [[ "$(sha256sum "$case_root/env" | awk '{print $1}')" == "$env_hash" ]]
+    [[ "$(cat "$case_root/container-id")" == "$id_before" ]]
+    [[ "$state_hash" == "$(sha256sum "$case_root/runtime/runtime-config-state.json" | awk '{print $1}')" ]]
+  fi
+  python3 - "$case_root/compose.log" <<'PY'
+import json,sys
+from pathlib import Path
+events=[json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+assert all(event["approved_registry"] == "ghcr.io/yykx682436" for event in events)
+PY
   [[ "$(sha256sum "$case_root/runtime/deploy-state.json" | awk '{print $1}')" == "$release_hash" ]]
   ! grep -q 'do-not-print-this-secret' "$case_root/output"
 }
 
 run_case noop-bootstrap noop absent
+run_case noop-correct-registry noop absent "" "" "" ghcr.io/yykx682436
 run_case noop-existing noop present
 run_case worker-enable-success change present
 run_case fail-health change present health
@@ -272,4 +293,5 @@ run_case side-effect-attempt change present "" "" attempt
 run_case side-effect-running change present "" "" running
 run_case side-effect-agent-operation change present "" "" agent-operation
 run_case fail-compose change present compose
+run_case conflict-registry change present "" "" "" evil.invalid
 printf 'MyShop runtime-config transaction integration regression passed\n'

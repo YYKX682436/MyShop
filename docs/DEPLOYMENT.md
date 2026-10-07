@@ -199,6 +199,12 @@ Create a reviewable JSON manifest and pass it as the only argument:
 bash /opt/myshop/scripts/deploy-runtime-config.sh /path/to/runtime-config-manifest.json
 ```
 
+The manifest is the only required operator input. The runtime-config deployer
+supplies its fixed production registry policy (`ghcr.io/yykx682436`) to every
+Compose validation, API recreation, and rollback call; callers do not need to
+set `MYSHOP_APPROVED_REGISTRY`. An explicitly inherited conflicting value
+fails closed with `RUNTIME_CONFIG_APPROVED_REGISTRY_CONFLICT`.
+
 Manifest v1 uses `project: "myshop"`, `expected_active_source_sha`, an
 ISO-8601 `created_at`, and a `changes` object whose entries contain string
 `from` and `to` values. The allowlist is limited to

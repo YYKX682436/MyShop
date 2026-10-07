@@ -7,6 +7,7 @@ manifest=$1
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 PROJECT=myshop
+readonly APPROVED_REGISTRY="ghcr.io/yykx682436"
 PROJECT_ROOT=${MYSHOP_RUNTIME_ROOT:-/opt/myshop/runtime}
 RELEASE_STATE=${MYSHOP_DEPLOY_STATE:-$PROJECT_ROOT/deploy-state.json}
 RUNTIME_STATE=${MYSHOP_RUNTIME_CONFIG_STATE:-$PROJECT_ROOT/runtime-config-state.json}
@@ -21,6 +22,17 @@ HEALTH_DEADLINE_SECONDS=180
 [[ -f "$manifest" && -f "$ENV_FILE" && -f "$RELEASE_STATE" ]] || die 'manifest, production env, or accepted release state is missing'
 [[ -x "$COMPOSE_WRAPPER" && -x "$SAFETY_READER" && -f "$CONFIG_TOOL" ]] || die 'runtime-config deployment helper is missing'
 command -v python3 >/dev/null && command -v flock >/dev/null || die 'python3 and flock are required'
+inherited_registry=${MYSHOP_APPROVED_REGISTRY:-}
+[[ -z "$inherited_registry" || "$inherited_registry" == "$APPROVED_REGISTRY" ]] || \
+  die 'RUNTIME_CONFIG_APPROVED_REGISTRY_CONFLICT'
+
+runtime_compose() {
+  local env_file=$1
+  shift
+  MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$env_file" \
+    MYSHOP_APPROVED_REGISTRY="$APPROVED_REGISTRY" \
+    "$COMPOSE_WRAPPER" --env-file "$env_file" "$@"
+}
 
 one_container() {
   local project=$1 service=$2 ids count
@@ -136,8 +148,7 @@ fi
 
 env_for_compose=$ENV_FILE
 if [[ "$no_op" != true ]]; then env_for_compose=$candidate_env; fi
-MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$env_for_compose" "$COMPOSE_WRAPPER" \
-  --env-file "$env_for_compose" config --quiet || die 'RUNTIME_CONFIG_CANDIDATE_COMPOSE_INVALID'
+runtime_compose "$env_for_compose" config --quiet || die 'RUNTIME_CONFIG_CANDIDATE_COMPOSE_INVALID'
 [[ "$(sha256sum "$RELEASE_STATE" | awk '{print $1}')" == "$release_state_hash" ]] || die 'ACTIVE_RELEASE_MISMATCH: release state changed during preflight'
 
 assert_release_state_unchanged() {
@@ -185,10 +196,8 @@ PY
     python3 "$CONFIG_TOOL" install-env --candidate "$original_env" --target "$ENV_FILE" || return 1
   fi
   if (( candidate_start_attempted )); then
-    MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" "$COMPOSE_WRAPPER" \
-      --env-file "$ENV_FILE" config --quiet || return 1
-    MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" "$COMPOSE_WRAPPER" \
-      --env-file "$ENV_FILE" up -d --no-deps --force-recreate --pull never api || return 1
+    runtime_compose "$ENV_FILE" config --quiet || return 1
+    runtime_compose "$ENV_FILE" up -d --no-deps --force-recreate --pull never api || return 1
     wait_target_healthy || return 1
   fi
   current_id=$(one_container myshop api) || return 1
@@ -216,12 +225,10 @@ if [[ "$no_op" != true ]]; then
   python3 "$CONFIG_TOOL" backup-env --source "$ENV_FILE" --target "$original_env" || fail_transaction env-backup
   env_install_attempted=1
   python3 "$CONFIG_TOOL" install-env --candidate "$candidate_env" --target "$ENV_FILE" || fail_transaction env-install
-  MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" "$COMPOSE_WRAPPER" \
-    --env-file "$ENV_FILE" config --quiet || fail_transaction compose-after-install
+  runtime_compose "$ENV_FILE" config --quiet || fail_transaction compose-after-install
   candidate_start_attempted=1
   [[ "${DEPLOY_TEST_FAIL:-}" != start ]] || fail_transaction start
-  MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" "$COMPOSE_WRAPPER" \
-    --env-file "$ENV_FILE" up -d --no-deps --force-recreate --pull never api || fail_transaction start
+  runtime_compose "$ENV_FILE" up -d --no-deps --force-recreate --pull never api || fail_transaction start
   [[ "${DEPLOY_TEST_FAIL:-}" != rollback-start ]] || fail_transaction health
   [[ "${DEPLOY_TEST_FAIL:-}" != health ]] || fail_transaction health
   wait_target_healthy || fail_transaction health
