@@ -58,8 +58,8 @@ SQL
 
 agent_runtime_root=${AGENT_RUNTIME_ROOT:-/opt/xianyu-agent/runtime}
 agent_env_file=${AGENT_ENV_FILE:-/opt/xianyu-agent/.env.production}
-agent_config_tool=${AGENT_RUNTIME_CONFIG_TOOL:-/opt/xianyu-agent/ops/runtime_config_state.py}
-agent_safety_reader=${AGENT_RUNTIME_CONFIG_SAFETY_READER:-/opt/xianyu-agent/ops/read-runtime-config-safety.sh}
+agent_config_tool=${AGENT_RUNTIME_CONFIG_TOOL:-$agent_runtime_root/ops/runtime_config_state.py}
+agent_safety_reader=${AGENT_RUNTIME_CONFIG_SAFETY_READER:-$agent_runtime_root/ops/read-runtime-config-safety.sh}
 agent_state=${AGENT_RUNTIME_CONFIG_STATE:-$agent_runtime_root/runtime-config-state.json}
 agent_container=$(one_container xianyu-agent backend-web) || die 'Agent backend-web container selection failed'
 [[ -f "$agent_config_tool" && -x "$agent_safety_reader" ]] || die 'Agent runtime-config safety helpers are missing'

@@ -264,6 +264,11 @@ class RuntimeConfigStateTests(unittest.TestCase):
         self.assertIn('verify-baseline --runtime-state "$RUNTIME_CONFIG_STATE"', deploy_source)
         self.assertLess(deploy_source.index("RUNTIME_CONFIG_DRIFT"), deploy_source.index('run_compose up -d'))
 
+    def test_worker_safety_reader_uses_the_installed_agent_runtime_ops_directory(self) -> None:
+        reader = (SCRIPTS / "read-runtime-config-safety.sh").read_text(encoding="utf-8")
+        self.assertIn("${AGENT_RUNTIME_CONFIG_TOOL:-$agent_runtime_root/ops/runtime_config_state.py}", reader)
+        self.assertIn("${AGENT_RUNTIME_CONFIG_SAFETY_READER:-$agent_runtime_root/ops/read-runtime-config-safety.sh}", reader)
+
     def test_side_effect_evidence_is_atomic_and_contains_only_safe_counts(self) -> None:
         state_path = self.root / "runtime-config-state.json"
         self.write_state(state_path)
