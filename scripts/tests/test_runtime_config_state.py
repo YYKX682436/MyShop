@@ -260,6 +260,7 @@ class RuntimeConfigStateTests(unittest.TestCase):
                 runtime.verify_state_baseline(state_path, env, "api-1", "docker")
         self.assertEqual("RUNTIME_CONFIG_DRIFT", raised.exception.code)
         deploy_source = (SCRIPTS / "deploy-production.sh").read_text(encoding="utf-8")
+        self.assertIn('RUNTIME_CONFIG_TOOL=${MYSHOP_RUNTIME_CONFIG_TOOL:-$SCRIPT_DIR/runtime_config_state.py}', deploy_source)
         self.assertIn('verify-baseline --runtime-state "$RUNTIME_CONFIG_STATE"', deploy_source)
         self.assertLess(deploy_source.index("RUNTIME_CONFIG_DRIFT"), deploy_source.index('run_compose up -d'))
 

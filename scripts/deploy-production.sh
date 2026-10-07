@@ -18,7 +18,7 @@ HOST_MAINTENANCE=${HOST_MAINTENANCE_SCRIPT:-/opt/host-ops/docker-maintenance.sh}
 HOST_LOCK=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-xianyu-deploy.lock}
 RUNTIME_CANDIDATES="$PROJECT_ROOT/candidates"
 RUNTIME_CONFIG_STATE=${MYSHOP_RUNTIME_CONFIG_STATE:-$PROJECT_ROOT/runtime-config-state.json}
-RUNTIME_CONFIG_TOOL=${MYSHOP_RUNTIME_CONFIG_TOOL:-$SCRIPT_DIR/scripts/runtime_config_state.py}
+RUNTIME_CONFIG_TOOL=${MYSHOP_RUNTIME_CONFIG_TOOL:-$SCRIPT_DIR/runtime_config_state.py}
 MAINTENANCE_DIR=${MYSHOP_MAINTENANCE_DIR:-$PROJECT_ROOT/maintenance}
 
 [[ -f "$manifest" ]] || die "release manifest is missing: $manifest"
