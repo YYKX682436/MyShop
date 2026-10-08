@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 40,
-  "latest_migration_version": "40",
+  "migration_count": 41,
+  "latest_migration_version": "41",
   "tables": {
     "users": ["id", "username", "role"],
     "products": ["id", "title", "retail_price"],

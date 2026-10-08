@@ -13,9 +13,29 @@ fi
 
 python3 - "$(CDPATH= cd -- "$(dirname -- "$script")/../apps/api/src/main/resources/db" && pwd -P)/production-schema-contract.json" <<'PY'
 import json
+import pathlib
+import re
 import sys
 
-contract = json.load(open(sys.argv[1], encoding="utf-8"))
+contract_path = pathlib.Path(sys.argv[1])
+contract = json.load(open(contract_path, encoding="utf-8"))
+versions = []
+for migration in (contract_path.parent / "migration").glob("V*__*.sql"):
+    match = re.fullmatch(r"V(\d+)__.+\.sql", migration.name)
+    assert match, f"invalid Flyway migration filename: {migration.name}"
+    versions.append(int(match.group(1)))
+assert versions, "no Flyway SQL migrations found"
+assert len(versions) == len(set(versions)), "duplicate Flyway migration versions"
+assert contract["migration_count"] == len(versions), (
+    f"contract migration_count={contract['migration_count']} does not match source={len(versions)}"
+)
+assert contract["latest_migration_version"] == str(max(versions)), (
+    "contract latest_migration_version does not match source migrations"
+)
+print(
+    "production schema migration contract matches source "
+    f"(count={len(versions)}, latest={max(versions)})"
+)
 assert contract["tables"]["products"] == ["id", "title", "retail_price"]
 assert contract["tables"]["sales_channel_accounts"] == ["id", "provider", "status"]
 assert contract["tables"]["sales_channel_orders"] == [
