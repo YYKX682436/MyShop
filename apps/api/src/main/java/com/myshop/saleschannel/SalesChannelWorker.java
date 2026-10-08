@@ -20,6 +20,7 @@ import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.EnsureList
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.ListingSnapshot;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationObservation;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationState;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPermitProof;
 import com.myshop.service.SalesChannelDesiredStatePlanner;
 import com.myshop.service.SalesChannelOperationClaimService;
 import com.myshop.service.impl.SalesChannelOperationServiceImpl;
@@ -103,22 +104,23 @@ public class SalesChannelWorker {
         if (snapshot == null || snapshot.getStatus() != SalesChannelOperationStatus.PENDING
                 || snapshot.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return;
         if (!operationService.markRunning(operationId)) return;
+        RecoveryPermitProof recoveryProof = operationService.recoveryProofForOperation(operationId);
 
         SalesChannelOperation operation = operationRepository.findById(operationId).orElse(null);
         if (operation == null || operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return;
         SalesChannelListing listing = listingRepository.findById(operation.getSalesChannelListingId()).orElse(null);
         if (listing == null) {
-            fail(operation, "LISTING_NOT_FOUND", "The desired listing no longer exists");
+            fail(operation, "LISTING_NOT_FOUND", "The desired listing no longer exists", recoveryProof);
             return;
         }
         SalesChannelAccount account = accountRepository.findById(listing.getSalesChannelAccountId()).orElse(null);
         if (account == null) {
-            fail(operation, "ACCOUNT_NOT_FOUND", "The desired listing account no longer exists");
+            fail(operation, "ACCOUNT_NOT_FOUND", "The desired listing account no longer exists", recoveryProof);
             return;
         }
 
         if (blank(account.getProviderAccountId())) {
-            fail(operation, "ACCOUNT_NOT_READY", "The Agent account identity is missing");
+            fail(operation, "ACCOUNT_NOT_READY", "The Agent account identity is missing", recoveryProof);
             refreshAfterTerminal(operation.getSalesChannelListingId());
             return;
         }
@@ -127,40 +129,41 @@ public class SalesChannelWorker {
         try {
             frozen = frozenCommand(operation, listing, account);
         } catch (RuntimeException exception) {
-            fail(operation, "ENSURE_COMMAND_INVALID", safeMessage(exception));
+            fail(operation, "ENSURE_COMMAND_INVALID", safeMessage(exception), recoveryProof);
             refreshAfterTerminal(operation.getSalesChannelListingId());
             return;
         }
         if (account.getStatus() != SalesChannelAccountStatus.CONNECTED
                 || account.getLastVerifiedAt() == null || blank(account.getProviderAccountId())) {
             fail(operation, "ACCOUNT_AUTH_REQUIRED",
-                    "The sales-channel account must be verified before Agent convergence can run");
+                    "The sales-channel account must be verified before Agent convergence can run", recoveryProof);
             refreshAfterTerminal(operation.getSalesChannelListingId());
             return;
         }
 
         try {
-            if (!adoptCurrentLegacyIdentity(operation, listing, account)) return;
+            if (recoveryProof == null && !adoptCurrentLegacyIdentity(operation, listing, account)) return;
         } catch (SalesChannelProviderClientException exception) {
-            handleReplayableFailure(operation, exception);
+            handleReplayableFailure(operation, exception, recoveryProof);
             return;
         } catch (RuntimeException exception) {
             // Adoption is a database-only Agent operation. If its response or
             // local marker cannot be recorded, the same deterministic request
             // is safe to POST again.
-            reschedule(operation, "ADOPTION_REPLAY_REQUIRED", safeMessage(exception));
+            reschedule(operation, "ADOPTION_REPLAY_REQUIRED", safeMessage(exception), recoveryProof);
             return;
         }
 
         try {
-            EnsureListingOperationObservation observation = convergenceClient.ensureListing(frozen.request());
+            EnsureListingOperationObservation observation = convergenceClient.ensureListing(
+                    frozen.request(), recoveryProof);
             if (observation == null) {
-                reschedule(operation, "AGENT_RESPONSE_UNCONFIRMED", "Agent returned no operation observation");
+                reschedule(operation, "AGENT_RESPONSE_UNCONFIRMED", "Agent returned no operation observation", recoveryProof);
                 return;
             }
             if (!matchesCommand(observation, frozen.request())) {
                 fail(operation, "AGENT_COMMAND_IDENTITY_MISMATCH",
-                        "Agent returned a different listing command identity");
+                        "Agent returned a different listing command identity", recoveryProof);
                 refreshAfterTerminal(operation.getSalesChannelListingId());
                 return;
             }
@@ -168,27 +171,27 @@ public class SalesChannelWorker {
                 reschedule(operation,
                         observation.error() == null ? "AGENT_APPLYING" : observation.error().code(),
                         observation.error() == null ? "Agent is still applying the frozen desired state"
-                                : observation.error().message());
+                                : observation.error().message(), recoveryProof);
                 return;
             }
             if (observation.state() == OperationState.FAILED) {
                 String code = observation.error() == null ? "AGENT_OPERATION_FAILED" : observation.error().code();
                 String message = observation.error() == null ? "Agent failed the desired listing command"
                         : observation.error().message();
-                fail(operation, code, message);
+                fail(operation, code, message, recoveryProof);
                 refreshAfterTerminal(operation.getSalesChannelListingId());
                 return;
             }
             if (frozen.request().desiredState() == DesiredListingState.ONLINE
                     && blank(observation.externalItemId())) {
                 fail(operation, "AGENT_RESULT_INCOMPLETE",
-                        "ONLINE success must include the exact external_item_id");
+                        "ONLINE success must include the exact external_item_id", recoveryProof);
                 refreshAfterTerminal(operation.getSalesChannelListingId());
                 return;
             }
             if (observation.externalItemId() != null && observation.externalItemId().length() > 64) {
                 fail(operation, "AGENT_RESULT_INVALID",
-                        "external_item_id exceeds the Agent provider identity contract");
+                        "external_item_id exceeds the Agent provider identity contract", recoveryProof);
                 refreshAfterTerminal(operation.getSalesChannelListingId());
                 return;
             }
@@ -196,24 +199,25 @@ public class SalesChannelWorker {
             result.put("external_item_id", observation.externalItemId());
             result.put("state", observation.state().name());
             try {
-                boolean projected = operationService.markSucceeded(operationId, result, frozen.fingerprint());
+                boolean projected = operationService.markSucceeded(operationId, result, frozen.fingerprint(),
+                        recoveryProof == null ? null : recoveryProof.executionFence());
                 if (!projected) {
                     fail(operation, "CONVERGENCE_PROJECTION_CONFLICT",
-                            "The listing could not accept the confirmed Agent result");
+                            "The listing could not accept the confirmed Agent result", recoveryProof);
                 }
             } catch (RuntimeException exception) {
                 // The provider command is already terminal in Agent. Fail
                 // closed locally; an explicit retry reuses desired intent and
                 // the identity projection conflict remains visible.
-                fail(operation, "CONVERGENCE_PROJECTION_CONFLICT", safeMessage(exception));
+                fail(operation, "CONVERGENCE_PROJECTION_CONFLICT", safeMessage(exception), recoveryProof);
             }
             refreshAfterTerminal(operation.getSalesChannelListingId());
         } catch (SalesChannelProviderClientException exception) {
-            handleReplayableFailure(operation, exception);
+            handleReplayableFailure(operation, exception, recoveryProof);
         } catch (RuntimeException exception) {
             // Once POST may have started, the only safe recovery is to replay
             // the same local command and request_id.
-            reschedule(operation, "AGENT_REPLAY_REQUIRED", safeMessage(exception));
+            reschedule(operation, "AGENT_REPLAY_REQUIRED", safeMessage(exception), recoveryProof);
         }
     }
 
@@ -292,23 +296,36 @@ public class SalesChannelWorker {
     }
 
     private void handleReplayableFailure(SalesChannelOperation operation,
-                                         SalesChannelProviderClientException exception) {
+                                         SalesChannelProviderClientException exception,
+                                         RecoveryPermitProof recoveryProof) {
         if (exception.getDisposition() == SalesChannelProviderClientException.Disposition.SAFE_PERMANENT) {
-            fail(operation, exception.getErrorCode(), exception.getMessage());
+            fail(operation, exception.getErrorCode(), exception.getMessage(), recoveryProof);
             refreshAfterTerminal(operation.getSalesChannelListingId());
         } else {
-            reschedule(operation, exception.getErrorCode(), exception.getMessage());
+            reschedule(operation, exception.getErrorCode(), exception.getMessage(), recoveryProof);
         }
     }
 
     private void fail(SalesChannelOperation operation, String code, String message) {
-        operationService.markFailed(operation.getId(), code, message);
+        fail(operation, code, message, null);
+    }
+
+    private void fail(SalesChannelOperation operation, String code, String message,
+                      RecoveryPermitProof recoveryProof) {
+        operationService.markFailed(operation.getId(), code, message,
+                recoveryProof == null ? null : recoveryProof.executionFence());
     }
 
     private void reschedule(SalesChannelOperation operation, String code, String message) {
+        reschedule(operation, code, message, null);
+    }
+
+    private void reschedule(SalesChannelOperation operation, String code, String message,
+                            RecoveryPermitProof recoveryProof) {
         int attempt = Math.max(1, operation.getAttemptCount());
         operationService.reschedule(operation.getId(), code, message,
-                LocalDateTime.now().plus(backoff(attempt)));
+                LocalDateTime.now().plus(backoff(attempt)),
+                recoveryProof == null ? null : recoveryProof.executionFence());
     }
 
     private void refreshAfterTerminal(UUID listingId) {

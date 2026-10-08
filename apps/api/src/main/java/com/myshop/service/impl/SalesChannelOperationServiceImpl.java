@@ -9,9 +9,14 @@ import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
+import com.myshop.entity.SalesChannelRecoveryPermit;
+import com.myshop.entity.SalesChannelAccount;
 import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.repository.SalesChannelRecoveryPermitRepository;
+import com.myshop.repository.SalesChannelAccountRepository;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPermitProof;
 import com.myshop.service.SalesChannelListingManagementPolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -34,6 +39,8 @@ public class SalesChannelOperationServiceImpl {
     private final SalesChannelListingRepository listingRepository;
     private final SalesChannelListingGenerationRepository generationRepository;
     private final SalesChannelOperationRepository operationRepository;
+    private final SalesChannelRecoveryPermitRepository recoveryPermitRepository;
+    private final SalesChannelAccountRepository accountRepository;
 
     /** Persists one frozen desired-state command with a stable, path-safe Agent request id. */
     @Transactional
@@ -164,6 +171,18 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation operation = lockOperation(operationId);
         LocalDateTime now = LocalDateTime.now();
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return false;
+        SalesChannelRecoveryPermit recoveryPermit = recoveryPermitRepository
+                .findByOperationIdForUpdate(operationId).orElse(null);
+        if (recoveryPermit != null) {
+            if (!matchesActiveRecoveryScope(recoveryPermit, listing, operation)) return false;
+        } else if (!recoveryPermitRepository.findByStateInForUpdate(
+                SalesChannelRecoveryPermitRepository.SCOPED_STATES).isEmpty()
+                && operation.getAttemptCount() == 0) {
+            // Candidate selection is not the fence: once scoped mode exists,
+            // no unattempted A/C (or other) operation may be claimed even if
+            // another scheduler selected it before the GO transaction.
+            return false;
+        }
         boolean neverAttempted = operation.getStatus() == SalesChannelOperationStatus.PENDING
                 && operation.getAttemptCount() == 0;
         boolean neverSent = operation.getStatus() == SalesChannelOperationStatus.PENDING
@@ -200,6 +219,7 @@ public class SalesChannelOperationServiceImpl {
         if (operationRepository.existsBySalesChannelListingIdAndStatus(
                 listing.getId(), SalesChannelOperationStatus.RUNNING)) return false;
         if (!operation.start(now)) return false;
+        if (recoveryPermit != null) recoveryPermit.beginExecution(now);
         if (SalesChannelListingManagementPolicy.providerWritesAllowed(listing)
                 && !"DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode())) {
             listing.setStatus(SalesChannelListingStatus.APPLYING);
@@ -216,17 +236,32 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelOperation operation = lockOperation(operationId);
         if (operation.getStatus() != SalesChannelOperationStatus.RUNNING
                 || operation.getStartedAt() == null || !operation.getStartedAt().isBefore(staleBefore)) return false;
-        return operation.reschedule("ENSURE_REPLAY_REQUIRED",
+        boolean rescheduled = operation.reschedule("ENSURE_REPLAY_REQUIRED",
                 "The Agent owns recovery for this possibly-applied command; replay its frozen request id",
                 nextReplayAt(operation.getAttemptCount()));
+        SalesChannelRecoveryPermit permit = recoveryPermitRepository
+                .findByOperationIdForUpdate(operationId).orElse(null);
+        if (rescheduled && permit != null && "EXECUTING".equals(permit.getState())) {
+            permit.recoveryRequired("STALE_LOCAL_LEASE_REPLAY");
+        }
+        return rescheduled;
     }
 
     /** Applies an Agent terminal result and its identity compatibility projection atomically. */
     @Transactional
     public boolean markSucceeded(UUID operationId, Map<String, Object> result, String appliedFingerprint) {
+        return markSucceeded(operationId, result, appliedFingerprint, null);
+    }
+
+    @Transactional
+    public boolean markSucceeded(UUID operationId, Map<String, Object> result, String appliedFingerprint,
+                                 Long expectedRecoveryFence) {
         SalesChannelOperation snapshot = findOperation(operationId);
         SalesChannelListing listing = lockListing(snapshot.getSalesChannelListingId());
         SalesChannelOperation operation = lockOperation(operationId);
+        SalesChannelRecoveryPermit recoveryPermit = recoveryPermitRepository
+                .findByOperationIdForUpdate(operationId).orElse(null);
+        if (!matchesRecoveryFence(recoveryPermit, expectedRecoveryFence)) return false;
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING
                 || !SalesChannelListingManagementPolicy.providerWritesAllowed(listing)
                 && operation.getAttemptCount() == 0) return false;
@@ -248,6 +283,7 @@ public class SalesChannelOperationServiceImpl {
         if (!operation.succeed(result, LocalDateTime.now())) return false;
 
         LocalDateTime now = LocalDateTime.now();
+        if (recoveryPermit != null) recoveryPermit.terminal("SUCCEEDED", now);
         if (externalItemId != null) projectConvergenceIdentity(listing, externalItemId, now);
         String frozenFingerprint = Objects.toString(operation.getPayload().get("desired_fingerprint"), null);
         if (externalItemId != null) {
@@ -272,21 +308,45 @@ public class SalesChannelOperationServiceImpl {
     @Transactional
     public boolean reschedule(UUID operationId, String errorCode, String errorMessage,
                               LocalDateTime nextAttemptAt) {
+        return reschedule(operationId, errorCode, errorMessage, nextAttemptAt, null);
+    }
+
+    @Transactional
+    public boolean reschedule(UUID operationId, String errorCode, String errorMessage,
+                              LocalDateTime nextAttemptAt, Long expectedRecoveryFence) {
         Objects.requireNonNull(nextAttemptAt, "nextAttemptAt is required");
         SalesChannelOperation snapshot = findOperation(operationId);
         lockListing(snapshot.getSalesChannelListingId());
         SalesChannelOperation operation = lockOperation(operationId);
+        SalesChannelRecoveryPermit permit = recoveryPermitRepository
+                .findByOperationIdForUpdate(operationId).orElse(null);
+        if (!matchesRecoveryFence(permit, expectedRecoveryFence)) return false;
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return false;
-        return operation.reschedule(errorCode, errorMessage, nextAttemptAt);
+        boolean rescheduled = operation.reschedule(errorCode, errorMessage, nextAttemptAt);
+        if (rescheduled && permit != null && "EXECUTING".equals(permit.getState())) {
+            permit.recoveryRequired(errorCode);
+        }
+        return rescheduled;
     }
 
     @Transactional
     public boolean markFailed(UUID operationId, String errorCode, String errorMessage) {
+        return markFailed(operationId, errorCode, errorMessage, null);
+    }
+
+    @Transactional
+    public boolean markFailed(UUID operationId, String errorCode, String errorMessage,
+                              Long expectedRecoveryFence) {
         SalesChannelOperation snapshot = findOperation(operationId);
         SalesChannelListing listing = lockListing(snapshot.getSalesChannelListingId());
         SalesChannelOperation operation = lockOperation(operationId);
+        SalesChannelRecoveryPermit permit = recoveryPermitRepository
+                .findByOperationIdForUpdate(operationId).orElse(null);
+        if (!matchesRecoveryFence(permit, expectedRecoveryFence)) return false;
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING
                 || !operation.fail(errorCode, errorMessage, LocalDateTime.now())) return false;
+        LocalDateTime now = LocalDateTime.now();
+        if (permit != null) permit.terminal("FAILED_NO_AUTOMATIC_RETRY:" + errorCode, now);
         if (operation.getDesiredRevision() == listing.getDesiredRevision()
                 && !"DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode())) {
             listing.setStatus(SalesChannelListingStatus.ERROR);
@@ -294,6 +354,64 @@ public class SalesChannelOperationServiceImpl {
             listing.setLastErrorMessage(errorMessage);
         }
         return true;
+    }
+
+    private boolean matchesRecoveryFence(SalesChannelRecoveryPermit permit, Long expectedFence) {
+        if (permit == null) return expectedFence == null;
+        return expectedFence != null && "EXECUTING".equals(permit.getState())
+                && permit.getExecutionFence() == expectedFence;
+    }
+
+    @Transactional(readOnly = true)
+    public RecoveryPermitProof recoveryProofForOperation(UUID operationId) {
+        SalesChannelRecoveryPermit permit = recoveryPermitRepository.findByMyshopOperationId(operationId).orElse(null);
+        if (permit == null || !"EXECUTING".equals(permit.getState())) return null;
+        return new RecoveryPermitProof(
+                permit.getId().toString().toLowerCase(), permit.getGeneration(), permit.getAccountId(),
+                permit.getSalesChannelListingId().toString().toLowerCase(),
+                permit.getMyshopOperationId().toString().toLowerCase(), permit.getAgentOperationId(),
+                permit.getRequestId(), permit.getDesiredRevision(), permit.getDesiredFingerprint(),
+                permit.getExpectedOldItemId(), permit.getExecutionFence());
+    }
+
+    private boolean matchesActiveRecoveryScope(SalesChannelRecoveryPermit permit,
+                                               SalesChannelListing listing,
+                                               SalesChannelOperation operation) {
+        if (!("ACTIVE".equals(permit.getState()) || "RECOVERY_REQUIRED".equals(permit.getState()))
+                || !permit.getSalesChannelListingId().equals(listing.getId())
+                || !permit.getMyshopOperationId().equals(operation.getId())
+                || !permit.getRequestId().equals(operation.getIdempotencyKey())
+                || permit.getDesiredRevision() != operation.getDesiredRevision()
+                || permit.getDesiredRevision() != listing.getDesiredRevision()
+                || !Objects.equals(permit.getDesiredFingerprint(), listing.getDesiredFingerprint())
+                || listing.getConvergenceCutoverState() != SalesChannelConvergenceCutoverState.PAUSED) {
+            return false;
+        }
+        Map<String, Object> payload = operation.getPayload();
+        if (!permit.getRequestId().equals(Objects.toString(payload.get("request_id"), ""))
+                || !permit.getAccountId().equals(Objects.toString(payload.get("account_id"), ""))
+                || !permit.getDesiredFingerprint().equals(Objects.toString(payload.get("desired_fingerprint"), ""))
+                || !listing.getId().toString().equalsIgnoreCase(Objects.toString(payload.get("listing_key"), ""))
+                || !Objects.equals("ONLINE", payload.get("desired_state"))
+                || payload.get("desired_snapshot") == null
+                || !Objects.equals(asLong(payload.get("revision")), permit.getDesiredRevision())) return false;
+        SalesChannelAccount account = accountRepository.findById(listing.getSalesChannelAccountId()).orElse(null);
+        if (account == null || !permit.getAccountId().equals(account.getProviderAccountId())) return false;
+        SalesChannelListingGeneration current = generationRepository.lockCurrentGeneration(listing.getId()).orElse(null);
+        return current != null && permit.getExpectedOldItemId().equals(current.getExternalItemId())
+                && generationRepository.findCandidateByListingId(listing.getId()).isEmpty();
+    }
+
+    private Long asLong(Object value) {
+        if (value instanceof Number number) return number.longValue();
+        if (value instanceof String string) {
+            try {
+                return Long.parseLong(string);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private boolean quarantineLegacyRows(UUID listingId, LocalDateTime now) {

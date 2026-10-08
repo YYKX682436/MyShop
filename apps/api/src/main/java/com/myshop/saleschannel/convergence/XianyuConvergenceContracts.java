@@ -122,6 +122,81 @@ public final class XianyuConvergenceContracts {
         }
     }
 
+    public record RecoveryValidationRequest(
+            @JsonProperty("account_id") @NotNull String accountId,
+            @JsonProperty("listing_key") @NotNull String listingKey,
+            @JsonProperty("myshop_operation_id") @NotNull String myshopOperationId,
+            @JsonProperty("request_id") @NotNull String requestId,
+            @JsonProperty("desired_revision") @NotNull @Min(0) Long desiredRevision,
+            @JsonProperty("desired_fingerprint") @NotNull @Pattern(regexp = "^[a-f0-9]{64}$") String desiredFingerprint,
+            @JsonProperty("expected_old_item_id") @NotNull String expectedOldItemId) implements ClosedContract { }
+
+    public record RecoveryScope(
+            @JsonProperty("account_id") @NotNull String accountId,
+            @JsonProperty("listing_key") @NotNull String listingKey,
+            @JsonProperty("myshop_operation_id") @NotNull String myshopOperationId,
+            @JsonProperty("request_id") @NotNull String requestId,
+            @JsonProperty("desired_revision") @NotNull @Min(0) Long desiredRevision,
+            @JsonProperty("desired_fingerprint") @NotNull @Pattern(regexp = "^[a-f0-9]{64}$") String desiredFingerprint,
+            @JsonProperty("expected_old_item_id") @NotNull String expectedOldItemId,
+            @JsonProperty("agent_operation_id") @NotNull @Min(1) Long agentOperationId) implements ClosedContract { }
+
+    public record RecoveryValidationResponse(
+            @JsonProperty("eligible") boolean eligible,
+            @JsonProperty("agent_operation_id") Long agentOperationId,
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("command_fingerprint") String commandFingerprint,
+            @JsonProperty("preconditions") Map<String, Object> preconditions) implements ClosedContract { }
+
+    public record RecoveryPrepareRequest(
+            @JsonProperty("permit_id") @NotNull String permitId,
+            @JsonProperty("generation") @NotNull @Min(1) Long generation,
+            @JsonProperty("account_id") @NotNull String accountId,
+            @JsonProperty("listing_key") @NotNull String listingKey,
+            @JsonProperty("myshop_operation_id") @NotNull String myshopOperationId,
+            @JsonProperty("request_id") @NotNull String requestId,
+            @JsonProperty("desired_revision") @NotNull @Min(0) Long desiredRevision,
+            @JsonProperty("desired_fingerprint") @NotNull @Pattern(regexp = "^[a-f0-9]{64}$") String desiredFingerprint,
+            @JsonProperty("expected_old_item_id") @NotNull String expectedOldItemId,
+            @JsonProperty("agent_operation_id") @NotNull @Min(1) Long agentOperationId,
+            @JsonProperty("operator") @NotNull String operator,
+            @JsonProperty("reason") @NotNull String reason) implements ClosedContract { }
+
+    public record RecoveryArmRequest(
+            @JsonProperty("permit_id") @NotNull String permitId,
+            @JsonProperty("generation") @NotNull @Min(1) Long generation,
+            @JsonProperty("account_id") @NotNull String accountId,
+            @JsonProperty("listing_key") @NotNull String listingKey,
+            @JsonProperty("myshop_operation_id") @NotNull String myshopOperationId,
+            @JsonProperty("request_id") @NotNull String requestId,
+            @JsonProperty("desired_revision") @NotNull @Min(0) Long desiredRevision,
+            @JsonProperty("desired_fingerprint") @NotNull @Pattern(regexp = "^[a-f0-9]{64}$") String desiredFingerprint,
+            @JsonProperty("expected_old_item_id") @NotNull String expectedOldItemId,
+            @JsonProperty("agent_operation_id") @NotNull @Min(1) Long agentOperationId) implements ClosedContract { }
+
+    public record RecoveryPermitObservation(
+            @JsonProperty("permit_id") String permitId,
+            @JsonProperty("generation") Long generation,
+            @JsonProperty("state") String state,
+            @JsonProperty("account_id") String accountId,
+            @JsonProperty("listing_key") String listingKey,
+            @JsonProperty("myshop_operation_id") String myshopOperationId,
+            @JsonProperty("agent_operation_id") Long agentOperationId,
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("desired_revision") Long desiredRevision,
+            @JsonProperty("desired_fingerprint") String desiredFingerprint,
+            @JsonProperty("expected_old_item_id") String expectedOldItemId,
+            @JsonProperty("operator") String operator,
+            @JsonProperty("reason") String reason,
+            @JsonProperty("preconditions") Map<String, Object> preconditions,
+            @JsonProperty("execution_outcome") String executionOutcome) implements ClosedContract { }
+
+    public record RecoveryPermitProof(
+            String permitId, long generation, String accountId, String listingKey,
+            String myshopOperationId, long agentOperationId, String requestId,
+            long desiredRevision, String desiredFingerprint, String expectedOldItemId,
+            long executionFence) { }
+
     public record ListingSnapshot(
             @JsonProperty(value = "schema_version", required = true) @NotNull @Min(1) Integer schemaVersion,
             @JsonProperty(value = "listing_key", required = true) @NotNull @NotBlank @CodePointLength(min = 1, max = 128) String listingKey,

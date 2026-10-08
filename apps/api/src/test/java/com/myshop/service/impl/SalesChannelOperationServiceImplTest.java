@@ -9,6 +9,8 @@ import com.myshop.entity.SalesChannelOperation;
 import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.repository.SalesChannelRecoveryPermitRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -16,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,6 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,7 +41,14 @@ class SalesChannelOperationServiceImplTest {
     @Mock private SalesChannelListingRepository listingRepository;
     @Mock private SalesChannelListingGenerationRepository generationRepository;
     @Mock private SalesChannelOperationRepository operationRepository;
+    @Mock private SalesChannelRecoveryPermitRepository recoveryPermitRepository;
     @InjectMocks private SalesChannelOperationServiceImpl service;
+
+    @BeforeEach
+    void defaultToNoScopedRecoveryPermit() {
+        lenient().when(recoveryPermitRepository.findByOperationIdForUpdate(any())).thenReturn(Optional.empty());
+        lenient().when(recoveryPermitRepository.findByStateInForUpdate(any())).thenReturn(List.of());
+    }
 
     @Test
     void requestCreatesOnlyFrozenOfflineEnsureWithPathSafeStableIdentity() {

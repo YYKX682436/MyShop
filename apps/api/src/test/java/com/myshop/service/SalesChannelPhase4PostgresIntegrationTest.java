@@ -14,6 +14,7 @@ import com.myshop.constant.SalesChannelListingStatus;
 import com.myshop.constant.SalesChannelOrderDeliveryStatus;
 import com.myshop.constant.SalesChannelOrderIngestStatus;
 import com.myshop.constant.SalesChannelOperationStatus;
+import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.constant.SalesChannelProvider;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.entity.SalesChannelDeliveryOperation;
@@ -23,6 +24,7 @@ import com.myshop.entity.SalesChannelListingGenerationSpec;
 import com.myshop.entity.SalesChannelOrder;
 import com.myshop.entity.SalesChannelOrderCursor;
 import com.myshop.entity.SalesChannelOperation;
+import com.myshop.entity.SalesChannelRecoveryPermit;
 import com.myshop.exception.BusinessException;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.exception.UnmanagedSalesChannelItemException;
@@ -34,6 +36,7 @@ import com.myshop.repository.SalesChannelListingGenerationSpecRepository;
 import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
+import com.myshop.repository.SalesChannelRecoveryPermitRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -41,6 +44,8 @@ import com.myshop.service.impl.AutoFulfillmentServiceImpl;
 import com.myshop.service.impl.FulfillmentTransactionService;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.SalesChannelProviderClientException;
+import com.myshop.saleschannel.convergence.XianyuConvergenceClient;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import com.myshop.saleschannel.model.SalesChannelDtos.CatalogItem;
 import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
@@ -63,9 +68,11 @@ import jakarta.persistence.PersistenceContext;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.myshop.service.impl.SalesChannelOperationServiceImpl;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -85,6 +92,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -117,6 +126,12 @@ class SalesChannelPhase4PostgresIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
     private SalesChannelAccountRepository accountRepository;
 
     @Autowired
@@ -136,6 +151,15 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelOperationRepository operationRepository;
+
+    @Autowired
+    private SalesChannelRecoveryPermitRepository recoveryPermitRepository;
+
+    @Autowired
+    private SalesChannelOperationClaimService operationClaimService;
+
+    @Autowired
+    private SalesChannelOperationServiceImpl salesChannelOperationService;
 
     @Autowired
     private SalesChannelDeliveryOperationRepository deliveryOperationRepository;
@@ -178,6 +202,363 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private OrderItemRepository orderItemRepository;
+
+    @Test
+    void scopedFailedEnsureClaimWaitsForGoAndFencesConcurrentWorkersWithoutBlockingLegacyRecovery() throws Exception {
+        LocalDateTime now = LocalDateTime.now();
+        String fingerprint = "d".repeat(64);
+        String oldItem = "phase4-recovery-old-" + UUID.randomUUID();
+        UUID productId = insertProduct(false);
+        SalesChannelAccount account = account("scoped-recovery");
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setSalesChannelAccountId(account.getId());
+        listing.setProductId(productId);
+        listing.setEnabled(true);
+        listing.setAutoFulfillmentEnabled(false);
+        listing.setDesiredState(SalesChannelListingDesiredState.ONLINE);
+        listing.setStatus(SalesChannelListingStatus.ERROR);
+        listing.setManagementMode(SalesChannelListingManagementMode.MANAGED);
+        listing.setProviderConfig(Map.of());
+        for (int index = 0; index < 10; index++) listing.incrementDesiredRevision();
+        listing.setDesiredFingerprint(fingerprint);
+        listing = listingRepository.saveAndFlush(listing);
+        UUID listingId = listing.getId();
+        String requestId = "phase4-scoped-recovery-" + UUID.randomUUID();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("request_id", requestId);
+        payload.put("account_id", account.getProviderAccountId());
+        payload.put("listing_key", listingId.toString().toLowerCase());
+        payload.put("revision", 10L);
+        payload.put("desired_state", "ONLINE");
+        payload.put("desired_fingerprint", fingerprint);
+        payload.put("desired_snapshot", Map.of("schema_version", 1));
+        SalesChannelOperation failed = new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, 10L, requestId, payload);
+        failed.start(now.minusMinutes(1));
+        failed.fail("PROVIDER_PRECALL_FAILURE", "No provider attempt started", now);
+        operationRepository.saveAndFlush(failed);
+
+        UUID certificationId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into sales_channel_cutover_certifications
+                    (id, sales_channel_listing_id, desired_revision, desired_state, desired_fingerprint,
+                     current_external_item_id, agent_state_digest, requires_adoption, bootstrap_operation_id,
+                     evidence, created_at)
+                values (?, ?, 10, 'ONLINE', ?, ?, ?, false, ?, '{}'::jsonb, ?)
+                """, certificationId, listing.getId(), fingerprint, oldItem, "e".repeat(64), failed.getId(), now);
+        listing.certifyConvergence(certificationId);
+        listing.activateConvergence(now.minusMinutes(1));
+        listing.pauseConvergence(now);
+        listing = listingRepository.saveAndFlush(listing);
+        SalesChannelListingGeneration current = new SalesChannelListingGeneration(
+                listing.getId(), account.getId(), 9L, oldItem,
+                SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
+        current.makeCurrent(now.minusDays(1));
+        generationRepository.saveAndFlush(current);
+        SalesChannelRecoveryPermit permit = new SalesChannelRecoveryPermit(
+                1L, listingId, failed.getId(), 15L, account.getProviderAccountId(),
+                requestId, 10L, fingerprint, oldItem, "operator-a", "prove scoped worker fencing",
+                Map.of("operation_status", "FAILED", "provider_attempt_count", 0), now);
+        permit.arm(Map.of("operation_status", "FAILED"), now);
+
+        UUID listingA = createRecoveryQueueListing(account, insertProduct(false), "A");
+        UUID listingC = createRecoveryQueueListing(account, insertProduct(false), "C");
+        UUID listingUnknown = createRecoveryQueueListing(account, insertProduct(false), "UNKNOWN");
+        SalesChannelOperation untouchedA = pendingEnsure(listingA, "phase4-a-" + UUID.randomUUID(), 0, now);
+        SalesChannelOperation untouchedC = pendingEnsure(listingC, "phase4-c-" + UUID.randomUUID(), 0, now);
+        SalesChannelOperation attemptedUnknown = pendingEnsure(
+                listingUnknown, "phase4-unknown-" + UUID.randomUUID(), 1, now);
+
+        failed.reopenFailedForRecovery(now);
+        operationRepository.saveAndFlush(failed);
+        permit.activate("operator-a", now, Map.of("GO", "pending"));
+        permit = recoveryPermitRepository.saveAndFlush(permit);
+        UUID permitId = permit.getId();
+        operationRepository.saveAllAndFlush(List.of(untouchedA, untouchedC, attemptedUnknown));
+
+        List<UUID> beforeGoCandidates = operationClaimService.selectReadyIds(now.plusSeconds(1), 100);
+        assertTrue(beforeGoCandidates.contains(attemptedUnknown.getId()),
+                "ordinary attempted UNKNOWN recovery remains claimable before scoped GO");
+        assertFalse(beforeGoCandidates.contains(failed.getId()),
+                "before the Agent GO acknowledgement, the failed command is not claimable");
+        assertFalse(beforeGoCandidates.contains(untouchedA.getId()));
+        assertFalse(beforeGoCandidates.contains(untouchedC.getId()));
+        assertEquals(SalesChannelOperationStatus.PENDING,
+                operationRepository.findById(failed.getId()).orElseThrow().getStatus());
+        assertEquals("GO_PENDING", recoveryPermitRepository.findById(permitId).orElseThrow().getState());
+
+        permit = recoveryPermitRepository.findById(permitId).orElseThrow();
+        permit.completeGo(now.plusSeconds(2));
+        recoveryPermitRepository.saveAndFlush(permit);
+        assertEquals(List.of(failed.getId()), operationClaimService.selectReadyIds(now.plusSeconds(3), 1),
+                "batch_size=1 still selects only the permit-bound command");
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> first = workers.submit(() -> {
+                ready.countDown();
+                if (!start.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("claim race did not start");
+                return salesChannelOperationService.markRunning(failed.getId());
+            });
+            Future<Boolean> second = workers.submit(() -> {
+                ready.countDown();
+                if (!start.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("claim race did not start");
+                return salesChannelOperationService.markRunning(failed.getId());
+            });
+            assertTrue(ready.await(20, TimeUnit.SECONDS));
+            start.countDown();
+            List<Boolean> claims = List.of(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
+            assertEquals(1, claims.stream().filter(Boolean::booleanValue).count());
+        } finally {
+            workers.shutdownNow();
+        }
+        SalesChannelOperation running = operationRepository.findById(failed.getId()).orElseThrow();
+        assertEquals(SalesChannelOperationStatus.RUNNING, running.getStatus());
+        assertEquals(2, running.getAttemptCount());
+        assertEquals("EXECUTING", recoveryPermitRepository.findById(permitId).orElseThrow().getState());
+        assertTrue(operationClaimService.selectReadyIds(now.plusSeconds(4), 100).contains(attemptedUnknown.getId()),
+                "ordinary attempted UNKNOWN recovery remains claimable while the scoped operation is running");
+        assertFalse(salesChannelOperationService.markRunning(untouchedA.getId()),
+                "markRunning independently fences an unattempted A command");
+        assertFalse(salesChannelOperationService.markRunning(untouchedC.getId()),
+                "markRunning independently fences an unattempted C command");
+        assertTrue(salesChannelOperationService.markRunning(attemptedUnknown.getId()),
+                "the pre-existing attempted UNKNOWN command keeps its recovery path");
+        SalesChannelOperation unknownRunning = operationRepository.findById(attemptedUnknown.getId()).orElseThrow();
+        assertTrue(unknownRunning.reschedule("AGENT_REPLAY_REQUIRED", "retain the original uncertain request",
+                now.plusSeconds(5)));
+        operationRepository.saveAndFlush(unknownRunning);
+
+        running = operationRepository.findById(failed.getId()).orElseThrow();
+        assertTrue(running.succeed(Map.of("external_item_id", "mock-recovery-item"), now.plusSeconds(5)));
+        operationRepository.saveAndFlush(running);
+        SalesChannelRecoveryPermit terminalPermit = recoveryPermitRepository.findById(permitId).orElseThrow();
+        terminalPermit.terminal("SUCCEEDED", now.plusSeconds(5));
+        recoveryPermitRepository.saveAndFlush(terminalPermit);
+        List<UUID> afterTerminalCandidates = operationClaimService.selectReadyIds(now.plusSeconds(6), 100);
+        assertTrue(afterTerminalCandidates.contains(attemptedUnknown.getId()),
+                "terminal scoped mode still permits prior attempted UNKNOWN reconciliation");
+        assertFalse(afterTerminalCandidates.contains(untouchedA.getId()));
+        assertFalse(afterTerminalCandidates.contains(untouchedC.getId()));
+        assertEquals(SalesChannelOperationStatus.PENDING, operationRepository.findById(untouchedA.getId()).orElseThrow().getStatus());
+        assertEquals(SalesChannelOperationStatus.PENDING, operationRepository.findById(untouchedC.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void exactFailedEnsureGoIsIdempotentAndRecoversAfterAgentCommitResponseLoss() throws Exception {
+        UUID listingId = UUID.fromString("c827bfa4-abfe-47f9-8d60-f2d1c6972fcd");
+        UUID operationId = UUID.fromString("7369460a-45a7-49d0-9cf5-85d98eff4199");
+        String accountId = "2215747465381";
+        String requestId = "0153b2a7-fbd7-48b8-b52c-0ea2379ddf26";
+        String fingerprint = "def5d3cbd69714b2cd8b3e87e5fc472631e46150b7bcd2c778a23f59b7989446";
+        String oldItem = "1084013851108";
+        LocalDateTime now = LocalDateTime.now();
+        UUID productId = insertProduct(false);
+
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId(accountId);
+        account.setDisplayName("Frozen B account");
+        account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        account.setEnabled(true);
+        account.setCapabilities(Map.of("publish", true));
+        account.setLastVerifiedAt(now);
+        account = accountRepository.saveAndFlush(account);
+
+        XianyuConvergenceContracts.ListingSnapshot snapshot = new XianyuConvergenceContracts.ListingSnapshot(
+                1, listingId.toString().toLowerCase(), "Frozen B item", "recovery acceptance",
+                "1.00", 0,
+                List.of(new XianyuConvergenceContracts.ListingImage(
+                        "sha256:" + "0".repeat(64), "https://example.invalid/b-cover.jpg", "0".repeat(64))),
+                new XianyuConvergenceContracts.ListingCategory("category", "Category", "channel", "Channel",
+                        "leaf", "tb-category"),
+                new XianyuConvergenceContracts.ListingAddress(null, null, null, null, null,
+                        "Shanghai", null, "Shanghai"),
+                List.of(), new XianyuConvergenceContracts.ListingShipping("free", false, null),
+                List.of(), List.of());
+        Map<String, Object> snapshotPayload = objectMapper.convertValue(snapshot, Map.class);
+        Map<String, Object> frozenPayload = new LinkedHashMap<>();
+        frozenPayload.put("request_id", requestId);
+        frozenPayload.put("account_id", accountId);
+        frozenPayload.put("listing_key", listingId.toString().toLowerCase());
+        frozenPayload.put("revision", 10L);
+        frozenPayload.put("desired_state", "ONLINE");
+        frozenPayload.put("desired_fingerprint", fingerprint);
+        frozenPayload.put("desired_snapshot", snapshotPayload);
+
+        jdbcTemplate.update("""
+                insert into sales_channel_listings
+                    (id, created_at, updated_at, sales_channel_account_id, product_id, management_mode,
+                     is_enabled, auto_fulfillment_enabled, desired_state, status, desired_revision,
+                     applied_revision, provider_config, desired_fingerprint, convergence_cutover_state)
+                values (?, ?, ?, ?, ?, 'MANAGED', true, false, 'ONLINE', 'ERROR', 10, 0,
+                        '{}'::jsonb, ?, 'UNCERTIFIED')
+                """, listingId, now, now, account.getId(), productId, fingerprint);
+        jdbcTemplate.update("""
+                insert into sales_channel_operations
+                    (id, created_at, updated_at, sales_channel_listing_id, operation_type, status,
+                     desired_revision, idempotency_key, payload, attempt_count, started_at, finished_at,
+                     last_error_code, last_error_message)
+                values (?, ?, ?, ?, 'ENSURE_LISTING', 'FAILED', 10, ?, ?::jsonb, 1, ?, ?,
+                        'PROVIDER_PRECALL_FAILURE', 'No provider attempt started')
+                """, operationId, now, now, listingId, requestId,
+                objectMapper.writeValueAsString(frozenPayload), now.minusMinutes(1), now);
+        UUID certificationId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                insert into sales_channel_cutover_certifications
+                    (id, sales_channel_listing_id, desired_revision, desired_state, desired_fingerprint,
+                     current_external_item_id, agent_state_digest, requires_adoption, bootstrap_operation_id,
+                     evidence, created_at)
+                values (?, ?, 10, 'ONLINE', ?, ?, ?, false, ?, '{}'::jsonb, ?)
+                """, certificationId, listingId, fingerprint, oldItem, "e".repeat(64), operationId, now);
+        jdbcTemplate.update("""
+                update sales_channel_listings
+                set convergence_certification_id = ?, convergence_cutover_state = 'PAUSED',
+                    convergence_activated_at = ?, convergence_paused_at = ?,
+                    convergence_adopted_external_item_id = ?, convergence_adopted_at = ?
+                where id = ?
+                """, certificationId, now.minusMinutes(5), now, oldItem, now.minusMinutes(4), listingId);
+        SalesChannelListingGeneration current = new SalesChannelListingGeneration(
+                listingId, account.getId(), 9L, oldItem, SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
+        current.setActivatedAt(now.minusDays(1));
+        generationRepository.saveAndFlush(current);
+
+        SalesChannelDesiredStatePlanner planner = org.mockito.Mockito.mock(SalesChannelDesiredStatePlanner.class);
+        when(planner.computeCurrentIntent(listingId)).thenReturn(new SalesChannelDesiredStatePlanner.ComputedDesiredIntent(
+                account, null, SalesChannelListingDesiredState.ONLINE, snapshot, fingerprint));
+        XianyuConvergenceClient agent = org.mockito.Mockito.mock(XianyuConvergenceClient.class);
+        AtomicReference<XianyuConvergenceContracts.RecoveryPermitObservation> remotePermit = new AtomicReference<>();
+        AtomicBoolean loseFirstActivationResponse = new AtomicBoolean(true);
+        when(agent.validateRecovery(any())).thenReturn(new XianyuConvergenceContracts.RecoveryValidationResponse(
+                true, 15L, requestId, "a".repeat(64), Map.of("provider_attempt_count", 0)));
+        when(agent.prepareRecovery(any())).thenAnswer(invocation -> {
+            XianyuConvergenceContracts.RecoveryPrepareRequest request = invocation.getArgument(0);
+            var prepared = recoveryObservation(request.permitId(), request.generation(), "PREPARED",
+                    request.accountId(), request.listingKey(), request.myshopOperationId(), 15L,
+                    request.requestId(), request.desiredRevision(), request.desiredFingerprint(),
+                    request.expectedOldItemId());
+            remotePermit.set(prepared);
+            return prepared;
+        });
+        when(agent.armRecovery(any())).thenAnswer(invocation -> {
+            XianyuConvergenceContracts.RecoveryArmRequest request = invocation.getArgument(0);
+            var armed = recoveryObservation(request.permitId(), request.generation(), "ARMED",
+                    request.accountId(), request.listingKey(), request.myshopOperationId(), 15L,
+                    request.requestId(), request.desiredRevision(), request.desiredFingerprint(),
+                    request.expectedOldItemId());
+            remotePermit.set(armed);
+            return armed;
+        });
+        when(agent.observeRecovery(any())).thenAnswer(invocation -> remotePermit.get());
+        when(agent.activateRecovery(any())).thenAnswer(invocation -> {
+            XianyuConvergenceContracts.RecoveryArmRequest request = invocation.getArgument(0);
+            var active = recoveryObservation(request.permitId(), request.generation(), "ACTIVE",
+                    request.accountId(), request.listingKey(), request.myshopOperationId(), 15L,
+                    request.requestId(), request.desiredRevision(), request.desiredFingerprint(),
+                    request.expectedOldItemId());
+            remotePermit.set(active); // Simulate Agent's DB commit before its response is lost.
+            if (loseFirstActivationResponse.getAndSet(false)) {
+                throw new IllegalStateException("simulated response loss after Agent commit");
+            }
+            return active;
+        });
+
+        SalesChannelFailedEnsureRecoveryService service = new SalesChannelFailedEnsureRecoveryService(
+                listingRepository, accountRepository, generationRepository, operationRepository,
+                recoveryPermitRepository, planner, agent, objectMapper, transactionManager);
+        assertTrue(service.plan(listingId, operationId).eligible());
+        assertEquals(SalesChannelOperationStatus.FAILED,
+                operationRepository.findById(operationId).orElseThrow().getStatus());
+        assertFalse(operationClaimService.selectReadyIds(now.plusSeconds(1), 100).contains(operationId));
+
+        var prepared = service.prepare(listingId, operationId, "operator-r2", "recover only frozen B command");
+        assertEquals("PREPARED", prepared.state());
+        var armed = service.arm(prepared.permitId());
+        assertEquals("ARMED", armed.state());
+        assertFalse(operationClaimService.selectReadyIds(now.plusSeconds(1), 100).contains(operationId));
+
+        var wrongRemote = recoveryObservation(prepared.permitId().toString(), prepared.generation(), "ARMED",
+                "wrong-account", listingId.toString(), operationId.toString(), 15L,
+                requestId, 10L, fingerprint, oldItem);
+        remotePermit.set(wrongRemote);
+        assertThrows(IllegalStateException.class, () -> service.go(prepared.permitId(), "operator-r2"));
+        assertEquals("ARMED", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState());
+        assertEquals(SalesChannelOperationStatus.FAILED,
+                operationRepository.findById(operationId).orElseThrow().getStatus());
+
+        remotePermit.set(recoveryObservation(prepared.permitId().toString(), prepared.generation(), "ARMED",
+                accountId, listingId.toString(), operationId.toString(), 15L,
+                requestId, 10L, fingerprint, oldItem));
+        assertThrows(IllegalStateException.class, () -> service.go(prepared.permitId(), "operator-r2"));
+        assertEquals("GO_PENDING", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState());
+        SalesChannelOperation goPendingOperation = operationRepository.findById(operationId).orElseThrow();
+        assertEquals(SalesChannelOperationStatus.PENDING, goPendingOperation.getStatus());
+        assertEquals(1, goPendingOperation.getAttemptCount());
+        assertEquals(requestId, goPendingOperation.getIdempotencyKey());
+        assertFalse(operationClaimService.selectReadyIds(LocalDateTime.now().plusSeconds(1), 100).contains(operationId));
+
+        var active = service.go(prepared.permitId(), "operator-r2");
+        assertEquals("ACTIVE", active.state());
+        assertEquals(List.of(operationId), operationClaimService.selectReadyIds(LocalDateTime.now().plusSeconds(1), 1));
+        assertTrue(salesChannelOperationService.markRunning(operationId));
+        var duplicateGo = service.go(prepared.permitId(), "operator-r2");
+        assertEquals("EXECUTING", duplicateGo.state());
+        assertEquals(2, operationRepository.findById(operationId).orElseThrow().getAttemptCount(),
+                "claim increments the original durable command's attempt counter once");
+        verify(agent, org.mockito.Mockito.times(1)).activateRecovery(any());
+        verify(agent, never()).ensureListing(any());
+
+        SalesChannelOperation completed = operationRepository.findById(operationId).orElseThrow();
+        assertTrue(completed.succeed(Map.of("external_item_id", "mock-terminal-item"), LocalDateTime.now()));
+        operationRepository.saveAndFlush(completed);
+        SalesChannelRecoveryPermit terminal = recoveryPermitRepository.findById(prepared.permitId()).orElseThrow();
+        terminal.terminal("SUCCEEDED", LocalDateTime.now());
+        recoveryPermitRepository.saveAndFlush(terminal);
+
+        when(agent.agentReadiness()).thenReturn(new XianyuConvergenceContracts.CutoverReadiness(1, true, false));
+        assertThrows(IllegalStateException.class,
+                () -> service.cancel(prepared.permitId(), "operator-close", "close after gates are disabled"));
+        verify(agent, never()).cancelRecovery(any());
+
+        when(agent.agentReadiness()).thenReturn(new XianyuConvergenceContracts.CutoverReadiness(1, false, false));
+        AtomicBoolean loseFirstCancelResponse = new AtomicBoolean(true);
+        when(agent.cancelRecovery(any())).thenAnswer(invocation -> {
+            XianyuConvergenceContracts.RecoveryArmRequest request = invocation.getArgument(0);
+            var cancelled = recoveryObservation(request.permitId(), request.generation(), "CANCELLED",
+                    request.accountId(), request.listingKey(), request.myshopOperationId(), 15L,
+                    request.requestId(), request.desiredRevision(), request.desiredFingerprint(),
+                    request.expectedOldItemId());
+            remotePermit.set(cancelled);
+            if (loseFirstCancelResponse.getAndSet(false)) {
+                throw new IllegalStateException("simulated response loss after Agent cancellation commit");
+            }
+            return cancelled;
+        });
+        assertThrows(IllegalStateException.class,
+                () -> service.cancel(prepared.permitId(), "operator-close", "close after gates are disabled"));
+        assertEquals("CANCEL_PENDING", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState(),
+                "Agent cancellation response loss leaves MyShop scoped and fail closed");
+        assertTrue(recoveryPermitRepository.existsByStateIn(SalesChannelRecoveryPermitRepository.SCOPED_STATES));
+        var cancelled = service.cancel(prepared.permitId(), "operator-close", "close after gates are disabled");
+        assertEquals("CANCELLED", cancelled.state());
+        assertEquals("operator-close", ((Map<?, ?>) cancelled.preconditions().get("cancellation")).get("operator"));
+        assertEquals("close after gates are disabled",
+                ((Map<?, ?>) cancelled.preconditions().get("cancellation")).get("reason"));
+        verify(agent, org.mockito.Mockito.times(2)).cancelRecovery(any());
+        assertFalse(recoveryPermitRepository.existsByStateIn(SalesChannelRecoveryPermitRepository.SCOPED_STATES));
+    }
+
+    private XianyuConvergenceContracts.RecoveryPermitObservation recoveryObservation(
+            String permitId, long generation, String state, String accountId, String listingKey,
+            String operationId, long agentOperationId, String requestId, long revision,
+            String fingerprint, String oldItem) {
+        return new XianyuConvergenceContracts.RecoveryPermitObservation(
+                permitId, generation, state, accountId, listingKey, operationId, agentOperationId,
+                requestId, revision, fingerprint, oldItem, "operator-r2", "recover only frozen B command",
+                Map.of("provider_attempt_count", 0), state);
+    }
 
     @MockitoBean
     private SalesChannelProviderClient providerClient;
@@ -1772,6 +2153,30 @@ class SalesChannelPhase4PostgresIntegrationTest {
         generation.setActivatedAt(LocalDateTime.now());
         generationRepository.saveAndFlush(generation);
         return saved;
+    }
+
+    private UUID createRecoveryQueueListing(SalesChannelAccount account, UUID productId, String suffix) {
+        SalesChannelListing listing = new SalesChannelListing();
+        listing.setSalesChannelAccountId(account.getId());
+        listing.setProductId(productId);
+        listing.setEnabled(true);
+        listing.setDesiredState(SalesChannelListingDesiredState.ONLINE);
+        listing.setStatus(SalesChannelListingStatus.ONLINE);
+        listing.setProviderConfig(Map.of());
+        listing.setDesiredFingerprint("a".repeat(64));
+        return listingRepository.saveAndFlush(listing).getId();
+    }
+
+    private SalesChannelOperation pendingEnsure(UUID listingId, String requestId,
+                                                int attemptedCount, LocalDateTime now) {
+        SalesChannelOperation operation = new SalesChannelOperation(
+                listingId, SalesChannelOperationType.ENSURE_LISTING, 1L, requestId,
+                Map.of("revision", 1L, "listing_key", listingId.toString(), "desired_state", "ONLINE"));
+        if (attemptedCount > 0) {
+            assertTrue(operation.start(now.minusMinutes(1)));
+            assertTrue(operation.reschedule("ENSURE_REPLAY_REQUIRED", "replay exact command", now.minusSeconds(1)));
+        }
+        return operation;
     }
 
     private SalesChannelListing linkedOnlyListing(SalesChannelAccount account, UUID productId,

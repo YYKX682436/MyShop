@@ -15,6 +15,12 @@ import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationS
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverReadiness;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspection;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverInspectionRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryValidationRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryValidationResponse;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPrepareRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryArmRequest;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPermitObservation;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPermitProof;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,6 +63,12 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
 
     @Override
     public EnsureListingOperationObservation ensureListing(EnsureListingRequest request) {
+        return ensureListing(request, null);
+    }
+
+    @Override
+    public EnsureListingOperationObservation ensureListing(EnsureListingRequest request,
+                                                            RecoveryPermitProof recoveryProof) {
         if (request == null || request.requestId() == null || request.listingKey() == null
                 || request.desiredState() == null
                 || request.desiredState() == com.myshop.saleschannel.convergence.XianyuConvergenceContracts.DesiredListingState.ONLINE
@@ -77,7 +89,7 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
 
         XianyuSignedHttpTransport.Response response;
         try {
-            response = transport.send("POST", "/listings/ensure", body, "application/json");
+            response = transport.send("POST", "/listings/ensure", body, "application/json", recoveryProof);
         } catch (XianyuSignedHttpTransport.TransportException failure) {
             if ("AGENT_CONFIGURATION_MISSING".equals(failure.code())
                     || "AGENT_CONFIGURATION_INVALID".equals(failure.code())
@@ -309,6 +321,131 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         } catch (IOException | RuntimeException invalid) {
             throw readOnlyRetryable("AGENT_INSPECTION_RESPONSE_INVALID");
         }
+    }
+
+    @Override
+    public RecoveryValidationResponse validateRecovery(RecoveryValidationRequest request) {
+        if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
+            throw permanent("RECOVERY_PLAN_INVALID", "The exact recovery scope is invalid");
+        }
+        JsonNode root = postRecovery("/recovery/validate", request, 16 * 1024);
+        if (!hasExactFields(root, "eligible", "agent_operation_id", "request_id",
+                "command_fingerprint", "preconditions")) {
+            throw recoveryRejection(root, "RECOVERY_PLAN_UNAVAILABLE");
+        }
+        try {
+            RecoveryValidationResponse response = objectMapper.treeToValue(root, RecoveryValidationResponse.class);
+            if (!response.eligible() || response.agentOperationId() == null
+                    || !request.requestId().equals(response.requestId())
+                    || response.commandFingerprint() == null
+                    || !response.commandFingerprint().matches("^[a-f0-9]{64}$")) {
+                throw permanent("RECOVERY_PLAN_INVALID", "Agent returned a different recovery scope");
+            }
+            return response;
+        } catch (IOException | RuntimeException failure) {
+            if (failure instanceof SalesChannelProviderClientException providerFailure) throw providerFailure;
+            throw permanent("RECOVERY_PLAN_INVALID", "Agent recovery plan did not match its contract");
+        }
+    }
+
+    @Override
+    public RecoveryPermitObservation prepareRecovery(RecoveryPrepareRequest request) {
+        if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
+            throw permanent("RECOVERY_PREPARE_INVALID", "The exact recovery permit is invalid");
+        }
+        return parseRecoveryPermit(postRecovery("/recovery/permits/prepare", request, 16 * 1024), request.permitId());
+    }
+
+    @Override
+    public RecoveryPermitObservation armRecovery(RecoveryArmRequest request) {
+        if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
+            throw permanent("RECOVERY_ARM_INVALID", "The exact recovery permit is invalid");
+        }
+        return parseRecoveryPermit(postRecovery("/recovery/permits/arm", request, 16 * 1024), request.permitId());
+    }
+
+    @Override
+    public RecoveryPermitObservation activateRecovery(RecoveryArmRequest request) {
+        if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
+            throw permanent("RECOVERY_GO_INVALID", "The exact recovery permit is invalid");
+        }
+        return parseRecoveryPermit(postRecovery("/recovery/permits/activate", request, 16 * 1024), request.permitId());
+    }
+
+    @Override
+    public RecoveryPermitObservation cancelRecovery(RecoveryArmRequest request) {
+        if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
+            throw permanent("RECOVERY_CANCEL_INVALID", "The exact recovery permit is invalid");
+        }
+        return parseRecoveryPermit(postRecovery("/recovery/permits/cancel", request, 16 * 1024), request.permitId());
+    }
+
+    @Override
+    public RecoveryPermitObservation observeRecovery(String permitId) {
+        if (permitId == null || !permitId.matches("^[0-9a-f-]{36}$")) {
+            throw permanent("RECOVERY_PERMIT_ID_INVALID", "The recovery permit id is invalid");
+        }
+        final XianyuSignedHttpTransport.Response response;
+        try {
+            response = transport.send("GET", "/recovery/permits/" + permitId,
+                    new byte[0], "application/json");
+        } catch (XianyuSignedHttpTransport.TransportException failure) {
+            throw retryable(failure.code(), "Agent recovery permit state could not be observed");
+        }
+        JsonNode root = parseTree(response.body());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw recoveryRejection(root, "RECOVERY_PERMIT_UNAVAILABLE");
+        }
+        return parseRecoveryPermit(root, permitId);
+    }
+
+    private JsonNode postRecovery(String endpoint, Object request, int maxRequestBytes) {
+        final byte[] body;
+        try {
+            body = objectMapper.writeValueAsBytes(request);
+        } catch (IOException | RuntimeException invalid) {
+            throw permanent("RECOVERY_REQUEST_INVALID", "The exact recovery request cannot be serialized");
+        }
+        if (body.length > maxRequestBytes) {
+            throw permanent("RECOVERY_REQUEST_TOO_LARGE", "The exact recovery request exceeds its size limit");
+        }
+        final XianyuSignedHttpTransport.Response response;
+        try {
+            response = transport.send("POST", endpoint, body, "application/json");
+        } catch (XianyuSignedHttpTransport.TransportException failure) {
+            throw retryable(failure.code(), "Agent recovery control plane could not be reached");
+        }
+        JsonNode root = parseTree(response.body());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw recoveryRejection(root, "RECOVERY_REQUEST_REJECTED");
+        }
+        return root;
+    }
+
+    private RecoveryPermitObservation parseRecoveryPermit(JsonNode root, String expectedPermitId) {
+        if (!hasExactFields(root, "permit_id", "generation", "state", "account_id", "listing_key",
+                "myshop_operation_id", "agent_operation_id", "request_id", "desired_revision",
+                "desired_fingerprint", "expected_old_item_id", "operator", "reason", "preconditions",
+                "execution_outcome")) {
+            throw recoveryRejection(root, "RECOVERY_PERMIT_RESPONSE_INVALID");
+        }
+        try {
+            RecoveryPermitObservation observation = objectMapper.treeToValue(root, RecoveryPermitObservation.class);
+            if (!expectedPermitId.equals(observation.permitId()) || observation.generation() == null
+                    || observation.agentOperationId() == null || observation.requestId() == null) {
+                throw permanent("RECOVERY_PERMIT_IDENTITY_MISMATCH", "Agent returned a different recovery permit");
+            }
+            return observation;
+        } catch (IOException | RuntimeException invalid) {
+            if (invalid instanceof SalesChannelProviderClientException providerFailure) throw providerFailure;
+            throw permanent("RECOVERY_PERMIT_RESPONSE_INVALID", "Agent returned an invalid recovery permit");
+        }
+    }
+
+    private SalesChannelProviderClientException recoveryRejection(JsonNode root, String fallback) {
+        String code = errorCode(root, fallback);
+        String message = errorMessage(root, "Agent rejected the exact recovery command");
+        return permanent(code, message);
     }
 
     private static boolean hasExactFields(JsonNode object, String... required) {

@@ -13,6 +13,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPermitProof;
 
 /** Shared HMAC-authenticated HTTP transport for the Agent v1 and v2 clients. */
 public final class XianyuSignedHttpTransport {
@@ -62,6 +63,11 @@ public final class XianyuSignedHttpTransport {
 
     public Response send(String method, String endpoint, byte[] rawBody, String contentType)
             throws TransportException {
+        return send(method, endpoint, rawBody, contentType, null);
+    }
+
+    public Response send(String method, String endpoint, byte[] rawBody, String contentType,
+                         RecoveryPermitProof recoveryProof) throws TransportException {
         final URI uri;
         final String signature;
         final HttpRequest request;
@@ -70,22 +76,32 @@ public final class XianyuSignedHttpTransport {
             byte[] body = rawBody == null ? new byte[0] : rawBody;
             String timestamp = Long.toString(clock.instant().getEpochSecond());
             String nonce = nonceSupplier.get();
-            String canonical = XianyuRequestSigner.canonicalString(
-                    method, uri.getRawPath(), timestamp, nonce, body);
+            String ticket = recoveryProof == null ? null : recoveryTicket(recoveryProof);
+            String generation = recoveryProof == null ? null : Long.toString(recoveryProof.generation());
+            String executionFence = recoveryProof == null ? null : Long.toString(recoveryProof.executionFence());
+            String canonical = recoveryProof == null
+                    ? XianyuRequestSigner.canonicalString(method, uri.getRawPath(), timestamp, nonce, body)
+                    : XianyuRequestSigner.canonicalString(method, uri.getRawPath(), timestamp, nonce, body,
+                            recoveryProof.permitId(), generation, executionFence, ticket);
             signature = XianyuRequestSigner.signature(secret, canonical);
             HttpRequest.BodyPublisher publisher = method.equalsIgnoreCase("GET")
                     ? HttpRequest.BodyPublishers.noBody()
                     : HttpRequest.BodyPublishers.ofByteArray(body);
-            request = HttpRequest.newBuilder(uri)
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(uri)
                     .timeout(timeout)
                     .header("Accept", "application/json")
                     .header("Content-Type", contentType == null ? "application/json" : contentType)
                     .header("X-MyShop-Key-Id", keyId)
                     .header("X-MyShop-Timestamp", timestamp)
                     .header("X-MyShop-Nonce", nonce)
-                    .header("X-MyShop-Signature", signature)
-                    .method(method.toUpperCase(java.util.Locale.ROOT), publisher)
-                    .build();
+                    .header("X-MyShop-Signature", signature);
+            if (recoveryProof != null) {
+                requestBuilder.header("X-MyShop-Recovery-Permit", recoveryProof.permitId())
+                        .header("X-MyShop-Recovery-Generation", generation)
+                        .header("X-MyShop-Recovery-Fence", executionFence)
+                        .header("X-MyShop-Recovery-Ticket", ticket);
+            }
+            request = requestBuilder.method(method.toUpperCase(java.util.Locale.ROOT), publisher).build();
         } catch (RuntimeException failure) {
             throw new TransportException(FailureBoundary.DEFINITE_PRE_SEND,
                     "REQUEST_BUILD_FAILED", "Unable to construct Xianyu Agent request");
@@ -108,6 +124,13 @@ public final class XianyuSignedHttpTransport {
                             ? "Xianyu Agent connection could not be established"
                             : "Xianyu Agent response could not be received");
         }
+    }
+
+    private String recoveryTicket(RecoveryPermitProof proof) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("Agent integration secret is unavailable");
+        }
+        return XianyuRequestSigner.signature(secret, XianyuRequestSigner.recoveryTicketMessage(proof));
     }
 
     private URI configuredUri(String endpoint) throws TransportException {

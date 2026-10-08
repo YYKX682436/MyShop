@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPermitProof;
 
 /** HMAC-SHA256 signing contract shared with the Xianyu Agent integration API. */
 final class XianyuRequestSigner {
@@ -18,6 +19,28 @@ final class XianyuRequestSigner {
                 + timestamp + "\n"
                 + nonce + "\n"
                 + sha256Hex(rawBody);
+    }
+
+    static String canonicalString(String method, String path, String timestamp, String nonce,
+                                  byte[] rawBody, String permitId, String generation,
+                                  String executionFence, String ticket) {
+        return canonicalString(method, path, timestamp, nonce, rawBody) + "\n"
+                + permitId + "\n" + generation + "\n" + executionFence + "\n" + ticket;
+    }
+
+    static String recoveryTicketMessage(RecoveryPermitProof proof) {
+        return String.join("\n",
+                "myshop-scoped-recovery-v1",
+                proof.permitId(),
+                Long.toString(proof.generation()),
+                proof.accountId(),
+                proof.listingKey(),
+                proof.myshopOperationId(),
+                Long.toString(proof.agentOperationId()),
+                proof.requestId(),
+                Long.toString(proof.desiredRevision()),
+                proof.desiredFingerprint(),
+                proof.expectedOldItemId());
     }
 
     static String signature(String secret, String canonicalString) {

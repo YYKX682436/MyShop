@@ -200,6 +200,20 @@ public class SalesChannelOperation extends BaseEntity {
         return true;
     }
 
+    /** Reopens this exact terminal ENSURE only from the scoped recovery GO transaction. */
+    public boolean reopenFailedForRecovery(LocalDateTime now) {
+        if (status != SalesChannelOperationStatus.FAILED
+                || operationType != SalesChannelOperationType.ENSURE_LISTING
+                || attemptCount < 1) return false;
+        status = SalesChannelOperationStatus.PENDING;
+        nextAttemptAt = now;
+        startedAt = null;
+        finishedAt = null;
+        // Preserve the original terminal error fields; the permit snapshot
+        // also records them before GO for an immutable audit trail.
+        return true;
+    }
+
     public boolean supersede(LocalDateTime now) {
         if (status != SalesChannelOperationStatus.PENDING) return false;
         status = SalesChannelOperationStatus.SUPERSEDED;

@@ -67,6 +67,29 @@ public interface SalesChannelOperationRepository extends JpaRepository<SalesChan
                                                            @Param("limit") int limit);
 
     @Query(value = "SELECT operation.* FROM sales_channel_operations operation "
+            + "JOIN sales_channel_listings listing ON listing.id = operation.sales_channel_listing_id "
+            + "WHERE operation.status = 'PENDING' AND operation.operation_type = 'ENSURE_LISTING' "
+            + "AND operation.attempt_count > 0 "
+            + "AND NOT EXISTS (SELECT 1 FROM sales_channel_recovery_permits recovery_permit "
+            + "  WHERE recovery_permit.myshop_operation_id = operation.id "
+            + "  AND recovery_permit.state NOT IN ('ACTIVE', 'RECOVERY_REQUIRED')) "
+            + "AND (operation.next_attempt_at IS NULL OR operation.next_attempt_at <= :now) "
+            + "AND NOT EXISTS (SELECT 1 FROM sales_channel_operations running_operation "
+            + "  WHERE running_operation.sales_channel_listing_id = operation.sales_channel_listing_id "
+            + "  AND running_operation.status = 'RUNNING') "
+            + "AND NOT EXISTS (SELECT 1 FROM sales_channel_operations legacy_unknown "
+            + "  WHERE legacy_unknown.sales_channel_listing_id = operation.sales_channel_listing_id "
+            + "  AND legacy_unknown.operation_type <> 'ENSURE_LISTING' AND legacy_unknown.status = 'UNKNOWN') "
+            + "AND NOT EXISTS (SELECT 1 FROM sales_channel_operations older "
+            + "  WHERE older.sales_channel_listing_id = operation.sales_channel_listing_id "
+            + "  AND older.operation_type = 'ENSURE_LISTING' AND older.desired_revision < operation.desired_revision "
+            + "  AND older.status IN ('PENDING', 'RUNNING', 'UNKNOWN')) "
+            + "ORDER BY COALESCE(operation.next_attempt_at, operation.created_at), operation.created_at, operation.id "
+            + "LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<SalesChannelOperation> findAttemptedRecoveryPendingForUpdate(@Param("now") LocalDateTime now,
+                                                                      @Param("limit") int limit);
+
+    @Query(value = "SELECT operation.* FROM sales_channel_operations operation "
             + "WHERE operation.operation_type = 'ENSURE_LISTING' "
             + "AND operation.status = 'RUNNING' AND operation.started_at IS NOT NULL "
             + "AND operation.started_at < :cutoff "

@@ -43,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -66,7 +67,7 @@ class SalesChannelWorkerTest {
     @Test
     void offlineCommandPostsExplicitNullSnapshotAndProjectsAgentSuccess() {
         Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> {
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> {
             EnsureListingRequest request = invocation.getArgument(0);
             return observation(request, OperationState.SUCCEEDED, null, null);
         });
@@ -74,36 +75,36 @@ class SalesChannelWorkerTest {
         fixture.worker.runBatch();
 
         var request = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
-        verify(fixture.client).ensureListing(request.capture());
+        verify(fixture.client).ensureListing(request.capture(), isNull());
         assertEquals(fixture.operation.getIdempotencyKey(), request.getValue().requestId());
         assertEquals(fixture.listingId.toString(), request.getValue().listingKey());
         assertEquals("agent-account", request.getValue().accountId());
         assertEquals(7L, request.getValue().revision());
         assertEquals(DesiredListingState.OFFLINE, request.getValue().desiredState());
         assertNull(request.getValue().desiredSnapshot());
-        verify(fixture.operationService).markSucceeded(eq(fixture.operation.getId()), anyMap(), eq(FINGERPRINT));
+        verify(fixture.operationService).markSucceeded(eq(fixture.operation.getId()), anyMap(), eq(FINGERPRINT), isNull());
         verify(fixture.planner).refresh(fixture.listingId);
     }
 
     @Test
     void onlineCommandCarriesFrozenSnapshotAndRequiresTheReturnedProviderIdentity() {
         Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "ONLINE", null);
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
                 invocation.getArgument(0), OperationState.SUCCEEDED, "provider-item-1", null));
 
         fixture.worker.runBatch();
 
         var request = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
-        verify(fixture.client).ensureListing(request.capture());
+        verify(fixture.client).ensureListing(request.capture(), isNull());
         assertEquals(DesiredListingState.ONLINE, request.getValue().desiredState());
         assertEquals(fixture.listingId.toString(), request.getValue().desiredSnapshot().listingKey());
-        verify(fixture.operationService).markSucceeded(eq(fixture.operation.getId()), anyMap(), eq(FINGERPRINT));
+        verify(fixture.operationService).markSucceeded(eq(fixture.operation.getId()), anyMap(), eq(FINGERPRINT), isNull());
     }
 
     @Test
     void applyingObservationReschedulesTheSameDurableCommand() {
         Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
                 invocation.getArgument(0), OperationState.APPLYING, null, null));
 
         fixture.worker.runBatch();
@@ -117,20 +118,20 @@ class SalesChannelWorkerTest {
         assertEquals("AGENT_APPLYING", fixture.operation.getLastErrorCode());
         assertEquals("myshop-ensure-command", fixture.operation.getIdempotencyKey());
         var requests = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
-        verify(fixture.client, org.mockito.Mockito.times(12)).ensureListing(requests.capture());
+        verify(fixture.client, org.mockito.Mockito.times(12)).ensureListing(requests.capture(), isNull());
         assertTrue(requests.getAllValues().stream().allMatch(request ->
                 requests.getAllValues().getFirst().requestId().equals(request.requestId())
                         && java.util.Objects.equals(requests.getAllValues().getFirst().desiredSnapshot(),
                                 request.desiredSnapshot())));
         verify(fixture.operationService, org.mockito.Mockito.times(12)).reschedule(
                 eq(fixture.operation.getId()), eq("AGENT_APPLYING"),
-                any(), any());
+                any(), any(), isNull());
     }
 
     @Test
     void agentFailureIsProjectedAsTerminalFailure() {
         Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "ONLINE", null);
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
                 invocation.getArgument(0), OperationState.FAILED, null,
                 new com.myshop.saleschannel.convergence.XianyuConvergenceContracts.OperationError(
                         "SKU_IDENTITY_CONFLICT", "Agent found a conflicting stable SKU identity")));
@@ -140,14 +141,14 @@ class SalesChannelWorkerTest {
         assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
         assertEquals("SKU_IDENTITY_CONFLICT", fixture.operation.getLastErrorCode());
         verify(fixture.operationService).markFailed(fixture.operation.getId(),
-                "SKU_IDENTITY_CONFLICT", "Agent found a conflicting stable SKU identity");
+                "SKU_IDENTITY_CONFLICT", "Agent found a conflicting stable SKU identity", null);
         verify(fixture.planner).refresh(fixture.listingId);
     }
 
     @Test
     void onlineSuccessWithoutExactProviderIdentityFailsClosed() {
         Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "ONLINE", null);
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
                 invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
 
         fixture.worker.runBatch();
@@ -155,14 +156,14 @@ class SalesChannelWorkerTest {
         assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
         assertEquals("AGENT_RESULT_INCOMPLETE", fixture.operation.getLastErrorCode());
         verify(fixture.operationService).markFailed(fixture.operation.getId(),
-                "AGENT_RESULT_INCOMPLETE", "ONLINE success must include the exact external_item_id");
+                "AGENT_RESULT_INCOMPLETE", "ONLINE success must include the exact external_item_id", null);
         verify(fixture.planner).refresh(fixture.listingId);
     }
 
     @Test
     void uncertainHttpFailureReplaysTheSameRequestWithoutCreatingUnknownOrReconcile() {
         Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
-        when(fixture.client.ensureListing(any())).thenThrow(new SalesChannelProviderClientException(
+        when(fixture.client.ensureListing(any(), isNull())).thenThrow(new SalesChannelProviderClientException(
                 SalesChannelProviderClientException.Disposition.SAFE_RETRYABLE,
                 "AGENT_REPLAY_REQUIRED", "Agent response was lost"));
 
@@ -216,7 +217,7 @@ class SalesChannelWorkerTest {
             return new OperationObservation(request.requestId(), request.listingKey(), OperationState.SUCCEEDED,
                     null, "legacy-item-123", null, null, null);
         });
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
                 invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
 
         fixture.worker.runBatch();
@@ -229,7 +230,7 @@ class SalesChannelWorkerTest {
         assertEquals("agent-account", adoption.getValue().accountId());
         assertEquals("legacy-item-123", adoption.getValue().externalItemId());
         verify(fixture.operationService).markConvergenceAdopted(fixture.listingId, "legacy-item-123");
-        verify(fixture.client).ensureListing(any());
+        verify(fixture.client).ensureListing(any(), isNull());
     }
 
     @Test
@@ -250,12 +251,12 @@ class SalesChannelWorkerTest {
                     null, state == OperationState.SUCCEEDED ? "legacy-item-123" : null,
                     null, null, null);
         });
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
                 invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
 
         fixture.worker.runBatch();
         assertEquals(SalesChannelOperationStatus.PENDING, fixture.operation.getStatus());
-        verify(fixture.client, never()).ensureListing(any());
+        verify(fixture.client, never()).ensureListing(any(), isNull());
         fixture.operation.setNextAttemptAt(LocalDateTime.now().minusSeconds(1));
         fixture.worker.runBatch();
 
@@ -264,7 +265,7 @@ class SalesChannelWorkerTest {
         assertEquals(requests.getAllValues().get(0).requestId(), requests.getAllValues().get(1).requestId());
         assertEquals(requests.getAllValues().get(0), requests.getAllValues().get(1));
         var ensure = org.mockito.ArgumentCaptor.forClass(EnsureListingRequest.class);
-        verify(fixture.client).ensureListing(ensure.capture());
+        verify(fixture.client).ensureListing(ensure.capture(), isNull());
         assertEquals(fixture.operation.getIdempotencyKey(), ensure.getValue().requestId());
         assertEquals(fixture.operation.getDesiredRevision(), ensure.getValue().revision());
     }
@@ -278,13 +279,13 @@ class SalesChannelWorkerTest {
         fixture.listing.setConvergenceAdoptedExternalItemId("already-adopted-item");
         when(fixture.generationRepository.findCurrentByListingId(fixture.listingId))
                 .thenReturn(Optional.of(current));
-        when(fixture.client.ensureListing(any())).thenAnswer(invocation -> observation(
+        when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
                 invocation.getArgument(0), OperationState.SUCCEEDED, null, null));
 
         fixture.worker.runBatch();
 
         verify(fixture.client, never()).adoptExistingItem(any());
-        verify(fixture.client).ensureListing(any());
+        verify(fixture.client).ensureListing(any(), isNull());
     }
 
     @Test
@@ -307,7 +308,7 @@ class SalesChannelWorkerTest {
 
         assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
         assertEquals("ADOPTION_CURRENT_IDENTITY_CHANGED", fixture.operation.getLastErrorCode());
-        verify(fixture.client, never()).ensureListing(any());
+        verify(fixture.client, never()).ensureListing(any(), isNull());
     }
 
     @Test
@@ -330,7 +331,7 @@ class SalesChannelWorkerTest {
 
         assertEquals(SalesChannelOperationStatus.FAILED, fixture.operation.getStatus());
         assertEquals("ITEM_ALREADY_BOUND", fixture.operation.getLastErrorCode());
-        verify(fixture.client, never()).ensureListing(any());
+        verify(fixture.client, never()).ensureListing(any(), isNull());
         verify(fixture.planner).refresh(fixture.listingId);
     }
 
@@ -416,13 +417,13 @@ class SalesChannelWorkerTest {
             doAnswer(invocation -> operation.start(LocalDateTime.now()))
                     .when(operationService).markRunning(operation.getId());
             doAnswer(invocation -> operation.succeed(invocation.getArgument(1), LocalDateTime.now()))
-                    .when(operationService).markSucceeded(eq(operation.getId()), anyMap(), any());
+                    .when(operationService).markSucceeded(eq(operation.getId()), anyMap(), any(), isNull());
             doAnswer(invocation -> operation.fail(invocation.getArgument(1), invocation.getArgument(2),
                     LocalDateTime.now()))
-                    .when(operationService).markFailed(eq(operation.getId()), any(), any());
+                    .when(operationService).markFailed(eq(operation.getId()), any(), any(), isNull());
             doAnswer(invocation -> operation.reschedule(invocation.getArgument(1), invocation.getArgument(2),
                     invocation.getArgument(3)))
-                    .when(operationService).reschedule(eq(operation.getId()), any(), any(), any());
+                    .when(operationService).reschedule(eq(operation.getId()), any(), any(), any(), isNull());
 
             worker = new SalesChannelWorker(claimService, operationRepository, listingRepository,
                     generationRepository, accountRepository, operationService, client, planner,
