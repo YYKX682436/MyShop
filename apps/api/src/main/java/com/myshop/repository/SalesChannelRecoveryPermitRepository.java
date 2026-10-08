@@ -19,6 +19,8 @@ public interface SalesChannelRecoveryPermitRepository extends JpaRepository<Sale
 
     Optional<SalesChannelRecoveryPermit> findByMyshopOperationId(UUID operationId);
 
+    boolean existsBySalesChannelListingIdAndStateIn(UUID listingId, List<String> states);
+
     Optional<SalesChannelRecoveryPermit> findByRequestId(String requestId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

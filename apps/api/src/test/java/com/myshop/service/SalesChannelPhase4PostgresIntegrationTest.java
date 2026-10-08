@@ -44,6 +44,7 @@ import com.myshop.service.impl.AutoFulfillmentServiceImpl;
 import com.myshop.service.impl.FulfillmentTransactionService;
 import com.myshop.saleschannel.SalesChannelProviderClient;
 import com.myshop.saleschannel.SalesChannelProviderClientException;
+import com.myshop.saleschannel.SalesChannelWorker;
 import com.myshop.saleschannel.convergence.XianyuConvergenceClient;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
@@ -225,7 +226,6 @@ class SalesChannelPhase4PostgresIntegrationTest {
         UUID listingId = listing.getId();
         String requestId = "phase4-scoped-recovery-" + UUID.randomUUID();
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("request_id", requestId);
         payload.put("account_id", account.getProviderAccountId());
         payload.put("listing_key", listingId.toString().toLowerCase());
         payload.put("revision", 10L);
@@ -292,6 +292,17 @@ class SalesChannelPhase4PostgresIntegrationTest {
         recoveryPermitRepository.saveAndFlush(permit);
         assertEquals(List.of(failed.getId()), operationClaimService.selectReadyIds(now.plusSeconds(3), 1),
                 "batch_size=1 still selects only the permit-bound command");
+
+        assertPermitMutationRejected(permitId, failed.getId(), "request_id", "wrong-request-id", requestId);
+        assertPermitMutationRejected(permitId, failed.getId(), "myshop_operation_id",
+                attemptedUnknown.getId(), failed.getId());
+        assertPermitMutationRejected(permitId, failed.getId(), "sales_channel_listing_id", listingA, listingId);
+        assertPermitMutationRejected(permitId, failed.getId(), "account_id", "wrong-account", account.getProviderAccountId());
+        assertPermitMutationRejected(permitId, failed.getId(), "desired_revision", 9L, 10L);
+        assertPermitMutationRejected(permitId, failed.getId(), "desired_fingerprint", "f".repeat(64), fingerprint);
+        assertPermitMutationRejected(permitId, failed.getId(), "expected_old_item_id", "wrong-item", oldItem);
+        assertPermitMutationRejected(permitId, failed.getId(), "generation", 0L, 1L);
+        assertPermitMutationRejected(permitId, failed.getId(), "execution_fence", 1L, 0L);
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
@@ -380,7 +391,6 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 List.of(), List.of());
         Map<String, Object> snapshotPayload = objectMapper.convertValue(snapshot, Map.class);
         Map<String, Object> frozenPayload = new LinkedHashMap<>();
-        frozenPayload.put("request_id", requestId);
         frozenPayload.put("account_id", accountId);
         frozenPayload.put("listing_key", listingId.toString().toLowerCase());
         frozenPayload.put("revision", 10L);
@@ -424,6 +434,12 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 listingId, account.getId(), 9L, oldItem, SalesChannelGenerationState.CURRENT, "LEGACY_MIGRATION");
         current.setActivatedAt(now.minusDays(1));
         generationRepository.saveAndFlush(current);
+
+        SalesChannelOperation historical = operationRepository.findById(operationId).orElseThrow();
+        assertEquals(requestId, historical.getIdempotencyKey());
+        assertEquals(java.util.Set.of("account_id", "listing_key", "revision", "desired_state",
+                        "desired_fingerprint", "desired_snapshot"), historical.getPayload().keySet());
+        assertFalse(historical.getPayload().containsKey("request_id"));
 
         SalesChannelDesiredStatePlanner planner = org.mockito.Mockito.mock(SalesChannelDesiredStatePlanner.class);
         when(planner.computeCurrentIntent(listingId)).thenReturn(new SalesChannelDesiredStatePlanner.ComputedDesiredIntent(
@@ -472,6 +488,8 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(SalesChannelOperationStatus.FAILED,
                 operationRepository.findById(operationId).orElseThrow().getStatus());
         assertFalse(operationClaimService.selectReadyIds(now.plusSeconds(1), 100).contains(operationId));
+        assertFalse(salesChannelOperationService.markRunning(operationId),
+                "a FAILED historical command cannot be recovered without its permit");
 
         var prepared = service.prepare(listingId, operationId, "operator-r2", "recover only frozen B command");
         assertEquals("PREPARED", prepared.state());
@@ -498,24 +516,68 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(1, goPendingOperation.getAttemptCount());
         assertEquals(requestId, goPendingOperation.getIdempotencyKey());
         assertFalse(operationClaimService.selectReadyIds(LocalDateTime.now().plusSeconds(1), 100).contains(operationId));
+        assertFalse(salesChannelOperationService.markRunning(operationId),
+                "the local command stays unclaimable until Agent confirms GO");
 
         var active = service.go(prepared.permitId(), "operator-r2");
         assertEquals("ACTIVE", active.state());
         assertEquals(List.of(operationId), operationClaimService.selectReadyIds(LocalDateTime.now().plusSeconds(1), 1));
-        assertTrue(salesChannelOperationService.markRunning(operationId));
         var duplicateGo = service.go(prepared.permitId(), "operator-r2");
-        assertEquals("EXECUTING", duplicateGo.state());
-        assertEquals(2, operationRepository.findById(operationId).orElseThrow().getAttemptCount(),
-                "claim increments the original durable command's attempt counter once");
+        assertEquals("ACTIVE", duplicateGo.state());
+        assertEquals(1, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
+                listingId), "duplicate GO retains the original operation instead of creating a successor");
         verify(agent, org.mockito.Mockito.times(1)).activateRecovery(any());
         verify(agent, never()).ensureListing(any());
 
+        AtomicInteger ensureCalls = new AtomicInteger();
+        when(agent.ensureListing(any(), any())).thenAnswer(invocation -> {
+            XianyuConvergenceContracts.EnsureListingRequest request = invocation.getArgument(0);
+            // APPLYING preserves the durable request while Agent resolves its unknown provider outcome.
+            return new XianyuConvergenceContracts.EnsureListingOperationObservation(
+                    request.requestId(), request.listingKey(), request.revision(),
+                    ensureCalls.getAndIncrement() == 0
+                            ? XianyuConvergenceContracts.OperationState.APPLYING
+                            : XianyuConvergenceContracts.OperationState.SUCCEEDED,
+                    ensureCalls.get() == 1 ? null : "mock-recovered-item", null);
+        });
+        SalesChannelWorker worker = new SalesChannelWorker(operationClaimService, operationRepository,
+                listingRepository, generationRepository, accountRepository, salesChannelOperationService,
+                agent, planner, objectMapper, 10, 300_000L);
+        worker.runBatch();
+        SalesChannelOperation replayPending = operationRepository.findById(operationId).orElseThrow();
+        assertEquals(SalesChannelOperationStatus.PENDING, replayPending.getStatus());
+        assertEquals(requestId, replayPending.getIdempotencyKey());
+        assertEquals("RECOVERY_REQUIRED", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState());
+        assertEquals(1L, recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getExecutionFence());
+        jdbcTemplate.update("update sales_channel_operations set next_attempt_at = ? where id = ?",
+                LocalDateTime.now().minusSeconds(1), operationId);
+        worker.runBatch();
+
+        var ensureRequests = org.mockito.ArgumentCaptor.forClass(XianyuConvergenceContracts.EnsureListingRequest.class);
+        var recoveryProofs = org.mockito.ArgumentCaptor.forClass(XianyuConvergenceContracts.RecoveryPermitProof.class);
+        verify(agent, org.mockito.Mockito.times(2)).ensureListing(ensureRequests.capture(), recoveryProofs.capture());
+        assertEquals(List.of(requestId, requestId), ensureRequests.getAllValues().stream()
+                .map(XianyuConvergenceContracts.EnsureListingRequest::requestId).toList());
+        assertEquals(prepared.permitId().toString().toLowerCase(),
+                recoveryProofs.getAllValues().get(0).permitId());
+        assertEquals(prepared.generation(), recoveryProofs.getAllValues().get(0).generation());
+        assertEquals(1L, recoveryProofs.getAllValues().get(0).executionFence());
+        assertEquals(prepared.permitId().toString().toLowerCase(),
+                recoveryProofs.getAllValues().get(1).permitId());
+        assertEquals(prepared.generation(), recoveryProofs.getAllValues().get(1).generation());
+        assertEquals(2L, recoveryProofs.getAllValues().get(1).executionFence());
+        assertEquals(SalesChannelOperationStatus.SUCCEEDED,
+                operationRepository.findById(operationId).orElseThrow().getStatus());
+        assertEquals("TERMINAL", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState());
+        worker.runBatch();
+        verify(agent, org.mockito.Mockito.times(2)).ensureListing(any(), any());
+        assertEquals(1, count("select count(*) from sales_channel_operations where sales_channel_listing_id = ?",
+                listingId), "terminal success does not create or execute another ENSURE");
+
         SalesChannelOperation completed = operationRepository.findById(operationId).orElseThrow();
-        assertTrue(completed.succeed(Map.of("external_item_id", "mock-terminal-item"), LocalDateTime.now()));
-        operationRepository.saveAndFlush(completed);
         SalesChannelRecoveryPermit terminal = recoveryPermitRepository.findById(prepared.permitId()).orElseThrow();
-        terminal.terminal("SUCCEEDED", LocalDateTime.now());
-        recoveryPermitRepository.saveAndFlush(terminal);
+        assertEquals(requestId, completed.getIdempotencyKey());
+        assertEquals("TERMINAL", terminal.getState());
 
         when(agent.agentReadiness()).thenReturn(new XianyuConvergenceContracts.CutoverReadiness(1, true, false));
         assertThrows(IllegalStateException.class,
@@ -2308,6 +2370,21 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     private int count(String sql, Object... args) {
         return jdbcTemplate.queryForObject(sql, Integer.class, args);
+    }
+
+    private void assertPermitMutationRejected(UUID permitId, UUID operationId, String column,
+                                              Object invalidValue, Object originalValue) {
+        assertEquals(1, jdbcTemplate.update("update sales_channel_recovery_permits set " + column + " = ? where id = ?",
+                invalidValue, permitId));
+        entityManager.clear();
+        try {
+            assertFalse(salesChannelOperationService.markRunning(operationId),
+                    "recovery claim must reject mismatched permit " + column);
+        } finally {
+            assertEquals(1, jdbcTemplate.update("update sales_channel_recovery_permits set " + column + " = ? where id = ?",
+                    originalValue, permitId));
+            entityManager.clear();
+        }
     }
 
     private <T> T scalar(String sql, Class<T> type, Object... args) {

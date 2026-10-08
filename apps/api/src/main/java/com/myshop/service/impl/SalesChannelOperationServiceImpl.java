@@ -175,6 +175,11 @@ public class SalesChannelOperationServiceImpl {
                 .findByOperationIdForUpdate(operationId).orElse(null);
         if (recoveryPermit != null) {
             if (!matchesActiveRecoveryScope(recoveryPermit, listing, operation)) return false;
+        } else if (recoveryPermitRepository.existsBySalesChannelListingIdAndStateIn(
+                listing.getId(), SalesChannelRecoveryPermitRepository.SCOPED_STATES)) {
+            // A scoped permit for this listing is exclusive to its exact
+            // operation identity, including already-attempted commands.
+            return false;
         } else if (!recoveryPermitRepository.findByStateInForUpdate(
                 SalesChannelRecoveryPermitRepository.SCOPED_STATES).isEmpty()
                 && operation.getAttemptCount() == 0) {
@@ -377,7 +382,12 @@ public class SalesChannelOperationServiceImpl {
     private boolean matchesActiveRecoveryScope(SalesChannelRecoveryPermit permit,
                                                SalesChannelListing listing,
                                                SalesChannelOperation operation) {
-        if (!("ACTIVE".equals(permit.getState()) || "RECOVERY_REQUIRED".equals(permit.getState()))
+        boolean active = "ACTIVE".equals(permit.getState());
+        boolean recoveryRequired = "RECOVERY_REQUIRED".equals(permit.getState());
+        boolean validExecutionFence = permit.getGeneration() > 0
+                && (active && permit.getExecutionFence() == 0
+                || recoveryRequired && permit.getExecutionFence() > 0);
+        if ((!active && !recoveryRequired) || !validExecutionFence
                 || !permit.getSalesChannelListingId().equals(listing.getId())
                 || !permit.getMyshopOperationId().equals(operation.getId())
                 || !permit.getRequestId().equals(operation.getIdempotencyKey())
@@ -388,8 +398,7 @@ public class SalesChannelOperationServiceImpl {
             return false;
         }
         Map<String, Object> payload = operation.getPayload();
-        if (!permit.getRequestId().equals(Objects.toString(payload.get("request_id"), ""))
-                || !permit.getAccountId().equals(Objects.toString(payload.get("account_id"), ""))
+        if (!permit.getAccountId().equals(Objects.toString(payload.get("account_id"), ""))
                 || !permit.getDesiredFingerprint().equals(Objects.toString(payload.get("desired_fingerprint"), ""))
                 || !listing.getId().toString().equalsIgnoreCase(Objects.toString(payload.get("listing_key"), ""))
                 || !Objects.equals("ONLINE", payload.get("desired_state"))
