@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import { RefreshCw, ShieldCheck, X } from "lucide-react"
 import { toast } from "sonner"
@@ -19,23 +19,19 @@ import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
 import { formatDateTime } from "@/lib/utils"
 import {
+  applyQrLoginStatus,
+  buildQrLoginPollCommand,
+  isQrLoginComplete,
+  isQrLoginTerminal,
+  type XianyuQrLoginUiState,
+} from "@/lib/xianyu-qr-login"
+import {
   adminSalesChannelApi,
   requestOrThrow,
   type SalesChannelAccountSummary,
   type XianyuQrLoginStatusResponse,
 } from "@/services/api"
 
-type LoginStatus = "INITIALIZING" | XianyuQrLoginStatusResponse["status"]
-
-interface LoginSession {
-  status: LoginStatus
-  sessionId?: string
-  qrCodeDataUrl?: string
-  verificationMessage?: string
-  verificationQrCodeDataUrl?: string
-}
-
-const terminalStatuses = new Set<LoginStatus>(["SUCCESS", "EXPIRED", "CANCELLED", "FAILED"])
 const defaultVerificationMessage = "闲鱼要求进行安全验证，请按手机端提示完成验证。"
 
 function statusTone(status: string): "success" | "warning" | "danger" | "info" | "neutral" {
@@ -84,8 +80,14 @@ export default function XianyuAccountsPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
+  const [reauthenticatingId, setReauthenticatingId] = useState<string | null>(null)
   const [loginOpen, setLoginOpen] = useState(false)
-  const [login, setLogin] = useState<LoginSession | null>(null)
+  const [login, setLogin] = useState<XianyuQrLoginUiState | null>(null)
+  const loginRef = useRef(login)
+
+  useEffect(() => {
+    loginRef.current = login
+  }, [login])
 
   const loadAccounts = useCallback(async () => {
     setLoading(true)
@@ -106,17 +108,54 @@ export default function XianyuAccountsPage() {
 
   const startLogin = async () => {
     setLoginOpen(true)
-    setLogin({ status: "INITIALIZING" })
+    const loginIntentId = crypto.randomUUID()
+    setLogin({ status: "INITIALIZING", mode: "ADD_ACCOUNT", loginIntentId })
     try {
-      const started = await requestOrThrow(() => adminSalesChannelApi.startXianyuQrLogin(crypto.randomUUID()))
+      const started = await requestOrThrow(() =>
+        adminSalesChannelApi.startXianyuQrLogin(loginIntentId, crypto.randomUUID()),
+      )
       setLogin({
         status: "WAITING",
+        mode: "ADD_ACCOUNT",
+        loginIntentId,
         sessionId: started.loginSessionId,
         qrCodeDataUrl: started.qrCodeDataUrl,
       })
     } catch (error) {
-      setLogin({ status: "FAILED" })
+      setLogin({ status: "FAILED", mode: "ADD_ACCOUNT", loginIntentId })
       toast.error(error instanceof Error ? error.message : "生成闲鱼登录二维码失败")
+    }
+  }
+
+  const startReauthentication = async (account: SalesChannelAccountSummary) => {
+    setReauthenticatingId(account.id)
+    setLoginOpen(true)
+    const loginIntentId = crypto.randomUUID()
+    setLogin({
+      status: "INITIALIZING",
+      mode: "REAUTHENTICATE_EXISTING_ACCOUNT",
+      loginIntentId,
+      targetAccountRowId: account.id,
+      targetProviderAccountId: account.providerAccountId,
+    })
+    try {
+      const started = await requestOrThrow(() =>
+        adminSalesChannelApi.startXianyuQrReauthentication(account.id, loginIntentId, crypto.randomUUID()),
+      )
+      setLogin({
+        status: "WAITING",
+        mode: "REAUTHENTICATE_EXISTING_ACCOUNT",
+        loginIntentId,
+        targetAccountRowId: account.id,
+        targetProviderAccountId: account.providerAccountId,
+        sessionId: started.loginSessionId,
+        qrCodeDataUrl: started.qrCodeDataUrl,
+      })
+    } catch (error) {
+      setLogin((current) => current ? { ...current, status: "FAILED" } : current)
+      toast.error(error instanceof Error ? error.message : "生成账号重新登录二维码失败")
+    } finally {
+      setReauthenticatingId(null)
     }
   }
 
@@ -126,27 +165,33 @@ export default function XianyuAccountsPage() {
   }
 
   useEffect(() => {
-    if (!loginOpen || !login?.sessionId) return
+    const initialLogin = loginRef.current
+    if (!loginOpen || !initialLogin?.sessionId || !initialLogin.loginIntentId) return
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
 
     const poll = async () => {
       try {
-        const status = await requestOrThrow(() =>
-          adminSalesChannelApi.getXianyuQrLoginStatus(login.sessionId!, crypto.randomUUID()),
-        )
+        const currentLogin = loginRef.current
+        if (!currentLogin || currentLogin.loginIntentId !== initialLogin.loginIntentId) return
+        const command = buildQrLoginPollCommand(currentLogin, crypto.randomUUID())
+        const status = await requestOrThrow(() => command.mode === "REAUTHENTICATE_EXISTING_ACCOUNT"
+          ? adminSalesChannelApi.getXianyuQrReauthenticationStatus(
+              command.targetAccountRowId!, command.loginSessionId, command.loginIntentId, command.requestId,
+            )
+          : adminSalesChannelApi.getXianyuQrLoginStatus(
+              command.loginSessionId, command.loginIntentId, command.requestId,
+            ))
         if (stopped) return
-        setLogin((current) => current ? {
-          ...current,
-          status: status.status,
-          verificationMessage: status.verificationMessage || undefined,
-          verificationQrCodeDataUrl: status.verificationQrCodeDataUrl || current.verificationQrCodeDataUrl,
-        } : current)
-        if (status.status === "SUCCESS") {
+        const next = applyQrLoginStatus(currentLogin, status)
+        setLogin((current) => current ? applyQrLoginStatus(current, status) : current)
+        if (isQrLoginComplete(next.status as XianyuQrLoginStatusResponse["status"])) {
           await loadAccounts()
           return
         }
-        if (!terminalStatuses.has(status.status)) timer = setTimeout(() => void poll(), 2000)
+        if (!isQrLoginTerminal(next.status as XianyuQrLoginStatusResponse["status"])) {
+          timer = setTimeout(() => void poll(), 2000)
+        }
       } catch {
         if (stopped) return
         setLogin((current) => current ? { ...current, status: "FAILED" } : current)
@@ -158,7 +203,7 @@ export default function XianyuAccountsPage() {
       stopped = true
       if (timer) clearTimeout(timer)
     }
-  }, [loginOpen, login?.sessionId, loadAccounts])
+  }, [loginOpen, login?.sessionId, login?.loginIntentId, login?.mode, login?.targetAccountRowId, loadAccounts])
 
   const verifyAccount = async (account: SalesChannelAccountSummary) => {
     setVerifyingId(account.id)
@@ -238,10 +283,17 @@ export default function XianyuAccountsPage() {
                     {capabilities.length > 0 ? capabilities.join(" · ") : <span className="text-muted-foreground">未验证</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <Button type="button" variant="outline" size="sm" disabled={verifyingId === account.id} onClick={() => void verifyAccount(account)}>
-                      <ShieldCheck className="size-4" />
-                      {verifyingId === account.id ? "验证中" : "验证能力"}
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm"
+                        disabled={reauthenticatingId === account.id}
+                        onClick={() => void startReauthentication(account)}>
+                        {reauthenticatingId === account.id ? "生成中" : "重新登录"}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" disabled={verifyingId === account.id} onClick={() => void verifyAccount(account)}>
+                        <ShieldCheck className="size-4" />
+                        {verifyingId === account.id ? "验证中" : "验证能力"}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               )
@@ -257,8 +309,14 @@ export default function XianyuAccountsPage() {
           <section className="w-full max-w-md rounded-surface border border-border-subtle bg-surface p-5 shadow-xl" role="dialog" aria-modal="true" aria-labelledby="xianyu-login-title">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 id="xianyu-login-title" className="text-lg font-semibold">添加闲鱼账号</h2>
-                <p className="mt-1 text-sm text-muted-foreground">使用闲鱼手机客户端扫码并确认登录。</p>
+                <h2 id="xianyu-login-title" className="text-lg font-semibold">
+                  {login.mode === "ADD_ACCOUNT" ? "添加闲鱼账号" : "重新登录闲鱼账号"}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {login.mode === "ADD_ACCOUNT"
+                    ? "使用闲鱼手机客户端扫码并确认登录。"
+                    : `目标账号 ${login.targetProviderAccountId} 固定；请使用该账号的闲鱼 App 扫码确认。`}
+                </p>
               </div>
               <Button type="button" variant="ghost" size="icon" aria-label="关闭" onClick={closeLogin}><X className="size-4" /></Button>
             </div>
@@ -279,15 +337,24 @@ export default function XianyuAccountsPage() {
                   <p className="text-xs text-muted-foreground">正在获取人脸验证二维码…</p>
                 </>}
               </>}
-              {login.status === "SUCCESS" && <div><StatusBadge label="登录成功" tone="success" /><p className="mt-3 text-sm text-muted-foreground">账号列表已刷新。</p>{login.verificationMessage && <p className="mt-2 text-xs text-muted-foreground">{login.verificationMessage}</p>}</div>}
+              {login.status === "QR_SCAN_CONFIRMED" && <p className="text-sm font-medium">扫码已确认，正在核对目标账号身份…</p>}
+              {login.status === "COOKIE_PERSISTED" && <div><StatusBadge label="Cookie 已保存" tone="warning" /><p className="mt-3 text-sm text-muted-foreground">正在通过只读账号能力接口验证登录状态…</p></div>}
+              {login.status === "PROVIDER_AUTH_VERIFIED" && <div><StatusBadge label="登录与能力验证通过" tone="success" /><p className="mt-3 text-sm text-muted-foreground">账号列表已刷新。</p></div>}
+              {login.status === "PROVIDER_AUTH_VERIFICATION_FAILED" && <div><StatusBadge label="能力验证失败" tone="danger" /><p className="mt-3 text-sm text-destructive">扫码确认且 Cookie 已保存，但账号认证尚未验证通过。</p>{login.errorCode && <p className="mt-2 text-xs font-mono text-destructive">{login.errorCode}</p>}</div>}
               {login.status === "EXPIRED" && <p className="text-sm">二维码已过期，请重新生成。</p>}
               {login.status === "CANCELLED" && <p className="text-sm">本次登录已取消。</p>}
-              {login.status === "FAILED" && <p className="text-sm text-destructive">登录未完成，请重试。</p>}
+              {login.status === "FAILED" && <div><p className="text-sm text-destructive">登录未完成，账号 Cookie 未被确认更新。</p>{login.errorCode && <p className="mt-2 text-xs font-mono text-destructive">{login.errorCode}</p>}</div>}
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
-              {(login.status === "EXPIRED" || login.status === "FAILED") && <Button type="button" variant="outline" onClick={() => void startLogin()}>重新生成二维码</Button>}
-              <Button type="button" variant="outline" onClick={closeLogin}>{login.status === "SUCCESS" ? "完成" : "关闭"}</Button>
+              {(login.status === "EXPIRED" || login.status === "FAILED") && <Button type="button" variant="outline" onClick={() => {
+                if (login.mode === "ADD_ACCOUNT") void startLogin()
+                else {
+                  const account = accounts.find((item) => item.id === login.targetAccountRowId)
+                  if (account) void startReauthentication(account)
+                }
+              }}>重新生成二维码</Button>}
+              <Button type="button" variant="outline" onClick={closeLogin}>{login.status === "PROVIDER_AUTH_VERIFIED" ? "完成" : "关闭"}</Button>
             </div>
           </section>
         </div>

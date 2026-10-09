@@ -126,14 +126,33 @@ public final class SalesChannelDtos {
             @JsonProperty("skipped") Boolean skipped) { }
 
     public record QrLoginStartCommand(
-            @JsonProperty("request_id") String requestId) { }
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("login_intent_id") String loginIntentId,
+            @JsonProperty("operator_identity") String operatorIdentity) { }
+
+    public record QrLoginReauthenticationStartCommand(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("login_intent_id") String loginIntentId,
+            @JsonProperty("target_account_id") String targetAccountId,
+            @JsonProperty("operator_identity") String operatorIdentity) { }
 
     public record QrLoginStatusCommand(
             @JsonProperty("request_id") String requestId,
-            @JsonProperty("login_session_id") String loginSessionId) { }
+            @JsonProperty("login_session_id") String loginSessionId,
+            @JsonProperty("login_intent_id") String loginIntentId,
+            @JsonProperty("operator_identity") String operatorIdentity) { }
+
+    public record QrLoginVerificationCommand(
+            @JsonProperty("request_id") String requestId,
+            @JsonProperty("login_session_id") String loginSessionId,
+            @JsonProperty("login_intent_id") String loginIntentId,
+            @JsonProperty("operator_identity") String operatorIdentity,
+            @JsonProperty("verified") boolean verified,
+            @JsonProperty("error_code") String errorCode) { }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record QrLoginStartData(
+            @JsonProperty("login_intent_id") String loginIntentId,
             @JsonProperty("login_session_id") String loginSessionId,
             @JsonProperty("qr_code_data_url") String qrCodeDataUrl,
             @JsonProperty("expires_in_seconds") Integer expiresInSeconds) { }
@@ -141,8 +160,11 @@ public final class SalesChannelDtos {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record QrLoginStatusData(
             @JsonProperty("status") String status,
+            @JsonProperty("login_intent_id") String loginIntentId,
+            @JsonProperty("login_session_id") String loginSessionId,
             @JsonProperty("account_id") String accountId,
             @JsonProperty("is_new_account") Boolean isNewAccount,
+            @JsonProperty("error_code") String errorCode,
             @JsonProperty("verification_message") String verificationMessage,
             @JsonProperty("verification_qr_code_data_url") String verificationQrCodeDataUrl) { }
 

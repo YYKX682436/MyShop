@@ -57,6 +57,27 @@ public class SalesChannelAccountServiceImpl {
     }
 
     @Transactional
+    public SalesChannelAccount markExistingXianyuQrReauthenticationVerified(
+            UUID accountRowId, String expectedProviderAccountId, Map<String, Object> capabilities,
+            LocalDateTime verifiedAt) {
+        if (accountRowId == null || expectedProviderAccountId == null || expectedProviderAccountId.isBlank()) {
+            throw new IllegalArgumentException("MYSHOP_REAUTHENTICATION_TARGET_INVALID");
+        }
+        SalesChannelAccount account = accountRepository.findByIdForUpdate(accountRowId)
+                .orElseThrow(() -> new IllegalStateException("MYSHOP_REAUTHENTICATION_TARGET_CHANGED"));
+        if (account.getProvider() != SalesChannelProvider.XIANYU
+                || !expectedProviderAccountId.equals(account.getProviderAccountId())) {
+            throw new IllegalStateException("MYSHOP_REAUTHENTICATION_TARGET_CHANGED");
+        }
+        LocalDateTime observedAt = Objects.requireNonNull(verifiedAt, "verifiedAt is required");
+        account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        account.setCapabilities(capabilities);
+        account.setLastLoginAt(observedAt);
+        account.setLastVerifiedAt(observedAt);
+        return accountRepository.save(account);
+    }
+
+    @Transactional
     public SalesChannelAccount setEnabled(UUID accountId, boolean enabled) {
         SalesChannelAccount account = accountRepository.findByIdForUpdate(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("Sales channel account does not exist"));

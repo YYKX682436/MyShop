@@ -17,6 +17,8 @@ import com.myshop.saleschannel.model.SalesChannelDtos.MediaUploadData;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.RepublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginReauthenticationStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginVerificationCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
@@ -49,7 +51,11 @@ public interface SalesChannelProviderClient {
 
     IntegrationEnvelope<QrLoginStartData> startQrLogin(QrLoginStartCommand command);
 
+    IntegrationEnvelope<QrLoginStartData> startQrReauthentication(QrLoginReauthenticationStartCommand command);
+
     IntegrationEnvelope<QrLoginStatusData> getQrLoginStatus(QrLoginStatusCommand command);
+
+    IntegrationEnvelope<QrLoginStatusData> completeQrLoginVerification(QrLoginVerificationCommand command);
 
     IntegrationEnvelope<MediaUploadData> uploadMedia(MediaUploadCommand command);
 

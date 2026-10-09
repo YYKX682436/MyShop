@@ -36,6 +36,7 @@ import com.myshop.saleschannel.model.SalesChannelDtos.ItemsQueryData;
 import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ItemsSyncData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginVerificationCommand;
 import com.myshop.service.impl.SalesChannelAccountServiceImpl;
 import com.myshop.service.impl.SalesChannelListingServiceImpl;
 import com.myshop.service.XianyuItemBindingService;
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
@@ -53,9 +55,11 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
@@ -207,8 +211,10 @@ class SalesChannelAdminServiceTest {
     }
 
     @Test
-    void successfulQrStatusSynchronizesAndVerifiesTheSameAccountOnRepeatedSuccess() {
+    void qrLoginReportsVerifiedOnlyAfterCookiePersistenceAndReadOnlyCapabilityProbe() {
         String providerAccountId = "2215747465381";
+        String loginIntentId = UUID.randomUUID().toString();
+        String loginSessionId = UUID.randomUUID().toString();
         UUID localAccountId = UUID.randomUUID();
         SalesChannelAccount account = new SalesChannelAccount();
         account.setId(localAccountId);
@@ -218,9 +224,13 @@ class SalesChannelAdminServiceTest {
         account.setStatus(SalesChannelAccountStatus.CONNECTED);
         account.setCapabilities(Map.of("account_type", "FISH_SHOP"));
 
-        var qrStatus = new QrLoginStatusData("SUCCESS", providerAccountId, false, null, null);
-        when(providerClient.getQrLoginStatus(any())).thenReturn(new IntegrationEnvelope<>(
-                "status-request", Outcome.SUCCEEDED, qrStatus, null));
+        var cookiePersisted = new QrLoginStatusData(
+                "COOKIE_PERSISTED", loginIntentId, loginSessionId, providerAccountId, true, null, null, null);
+        var providerVerified = new QrLoginStatusData(
+                "PROVIDER_AUTH_VERIFIED", loginIntentId, loginSessionId, providerAccountId, true, null, null, null);
+        when(providerClient.getQrLoginStatus(any()))
+                .thenReturn(new IntegrationEnvelope<>("status-request", Outcome.SUCCEEDED, cookiePersisted, null))
+                .thenReturn(new IntegrationEnvelope<>("status-request-2", Outcome.SUCCEEDED, providerVerified, null));
         var remoteAccount = new com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount(
                 providerAccountId, "现有闲鱼账号", "active", true,
                 "2026-09-23T12:30:00+08:00", null, null);
@@ -233,17 +243,61 @@ class SalesChannelAdminServiceTest {
         when(providerClient.verifyAccount(providerAccountId)).thenReturn(new IntegrationEnvelope<>(
                 "verify-request", Outcome.SUCCEEDED, new CapabilityData(capabilities), null));
         when(accountService.upsert(any(), any(), any(), any(), any(), any(), any())).thenReturn(account);
+        when(providerClient.completeQrLoginVerification(any())).thenReturn(new IntegrationEnvelope<>(
+                "verify-result-request", Outcome.SUCCEEDED, providerVerified, null));
 
-        var first = service.getQrLoginStatus("status-request", UUID.randomUUID().toString());
-        var repeated = service.getQrLoginStatus("status-request-2", UUID.randomUUID().toString());
+        var first = service.getQrLoginStatus("status-request", loginSessionId, loginIntentId, "admin-1");
+        var repeated = service.getQrLoginStatus("status-request-2", loginSessionId, loginIntentId, "admin-1");
 
-        assertEquals("SUCCESS", first.status());
+        assertEquals("PROVIDER_AUTH_VERIFIED", first.status());
         assertEquals(providerAccountId, first.accountId());
         assertEquals(first.accountId(), repeated.accountId());
-        verify(accountService, times(4)).upsert(any(), any(), any(), any(), any(), any(), any());
-        verify(providerClient, times(2)).verifyAccount(providerAccountId);
-        verify(accountRepository, times(4)).findByProviderAndProviderAccountId(
+        verify(accountService, times(2)).upsert(any(), any(), any(), any(), any(), any(), any());
+        verify(providerClient).verifyAccount(providerAccountId);
+        verify(providerClient).completeQrLoginVerification(any());
+        verify(accountRepository, times(2)).findByProviderAndProviderAccountId(
                 SalesChannelProvider.XIANYU, providerAccountId);
+    }
+
+    @Test
+    void reauthenticationKeepsCookiePersistedDistinctWhenReadOnlyProviderVerificationFails() {
+        String providerAccountId = "2215747465381";
+        String loginIntentId = UUID.randomUUID().toString();
+        String loginSessionId = UUID.randomUUID().toString();
+        UUID localAccountId = UUID.randomUUID();
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setId(localAccountId);
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId(providerAccountId);
+        account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        when(accountRepository.findById(localAccountId)).thenReturn(Optional.of(account));
+
+        var cookiePersisted = new QrLoginStatusData(
+                "COOKIE_PERSISTED", loginIntentId, loginSessionId, providerAccountId, false, null, null, null);
+        when(providerClient.getQrLoginStatus(any())).thenReturn(new IntegrationEnvelope<>(
+                "status-request", Outcome.SUCCEEDED, cookiePersisted, null));
+        when(providerClient.verifyAccount(providerAccountId)).thenReturn(new IntegrationEnvelope<>(
+                "verify-request", Outcome.FAILED, null,
+                new com.myshop.saleschannel.model.SalesChannelDtos.IntegrationError(
+                        "AUTH_REQUIRED", "Provider authentication is still required", false)));
+        var verificationFailed = new QrLoginStatusData(
+                "PROVIDER_AUTH_VERIFICATION_FAILED", loginIntentId, loginSessionId,
+                providerAccountId, false, "AUTH_REQUIRED", null, null);
+        when(providerClient.completeQrLoginVerification(any())).thenReturn(new IntegrationEnvelope<>(
+                "verification-result-request", Outcome.SUCCEEDED, verificationFailed, null));
+
+        var result = service.getQrReauthenticationStatus(
+                localAccountId, "status-request", loginSessionId, loginIntentId, "admin-operator");
+
+        assertEquals("PROVIDER_AUTH_VERIFICATION_FAILED", result.status());
+        assertEquals("AUTH_REQUIRED", result.errorCode());
+        verify(accountService, never()).upsert(any(), any(), any(), any(), any(), any(), any());
+        verify(accountService, never()).markExistingXianyuQrReauthenticationVerified(
+                any(), anyString(), any(), any());
+        ArgumentCaptor<QrLoginVerificationCommand> command = ArgumentCaptor.forClass(QrLoginVerificationCommand.class);
+        verify(providerClient).completeQrLoginVerification(command.capture());
+        assertFalse(command.getValue().verified());
+        assertEquals("AUTH_REQUIRED", command.getValue().errorCode());
     }
 
     @Test

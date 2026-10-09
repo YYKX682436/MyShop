@@ -51,9 +51,11 @@ import com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData;
 import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.CategoryRecommendResult;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginReauthenticationStartCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginVerificationCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.OrderCursor;
 import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.WatermarkData;
@@ -343,42 +345,176 @@ public class SalesChannelAdminService {
 
     private long safeLong(Long value) { return value == null ? 0 : value; }
 
-    public QrLoginStartData startQrLogin(String requestId) {
+    public QrLoginStartData startQrLogin(String requestId, String loginIntentId, String operatorIdentity) {
         IntegrationEnvelope<QrLoginStartData> response = providerClient.startQrLogin(
-                new QrLoginStartCommand(requestId));
+                new QrLoginStartCommand(requestId, loginIntentId, operatorIdentity));
         requireSuccess(response.outcome(), response.error() == null ? null : response.error().code());
-        if (response.data() == null || blank(response.data().loginSessionId())
-                || blank(response.data().qrCodeDataUrl()) || response.data().expiresInSeconds() == null) {
-            throw new IllegalStateException("Xianyu Agent returned an incomplete QR login response");
-        }
-        return response.data();
+        return validateQrLoginStart(response.data(), loginIntentId);
     }
 
-    public QrLoginStatusData getQrLoginStatus(String requestId, String loginSessionId) {
-        IntegrationEnvelope<QrLoginStatusData> response = providerClient.getQrLoginStatus(
-                new QrLoginStatusCommand(requestId, loginSessionId));
+    public QrLoginStartData startQrReauthentication(
+            UUID accountRowId, String requestId, String loginIntentId, String operatorIdentity) {
+        SalesChannelAccount account = findAccount(accountRowId);
+        if (account.getProvider() != SalesChannelProvider.XIANYU || blank(account.getProviderAccountId())) {
+            throw new IllegalArgumentException("QR_REAUTHENTICATION_TARGET_INVALID");
+        }
+        IntegrationEnvelope<QrLoginStartData> response = providerClient.startQrReauthentication(
+                new QrLoginReauthenticationStartCommand(
+                        requestId, loginIntentId, account.getProviderAccountId(), operatorIdentity));
         requireSuccess(response.outcome(), response.error() == null ? null : response.error().code());
+        return validateQrLoginStart(response.data(), loginIntentId);
+    }
+
+    public QrLoginStatusData getQrLoginStatus(
+            String requestId, String loginSessionId, String loginIntentId, String operatorIdentity) {
+        return advanceQrLoginStatus(requestId, loginSessionId, loginIntentId, operatorIdentity, null);
+    }
+
+    public QrLoginStatusData getQrReauthenticationStatus(
+            UUID accountRowId, String requestId, String loginSessionId,
+            String loginIntentId, String operatorIdentity) {
+        SalesChannelAccount target = findAccount(accountRowId);
+        if (target.getProvider() != SalesChannelProvider.XIANYU || blank(target.getProviderAccountId())) {
+            return qrLoginFailure(loginIntentId, loginSessionId, "REAUTHENTICATION_TARGET_INVALID");
+        }
+        return advanceQrLoginStatus(requestId, loginSessionId, loginIntentId, operatorIdentity, target);
+    }
+
+    private QrLoginStatusData advanceQrLoginStatus(
+            String requestId, String loginSessionId, String loginIntentId,
+            String operatorIdentity, SalesChannelAccount reauthenticationTarget) {
+        IntegrationEnvelope<QrLoginStatusData> response = providerClient.getQrLoginStatus(
+                new QrLoginStatusCommand(requestId, loginSessionId, loginIntentId, operatorIdentity));
+        if (response == null || response.outcome() != Outcome.SUCCEEDED || response.data() == null) {
+            String code = response == null || response.error() == null ? "QR_LOGIN_STATUS_UNAVAILABLE"
+                    : response.error().code();
+            return qrLoginFailure(loginIntentId, loginSessionId, code);
+        }
         QrLoginStatusData status = response.data();
-        if (status == null || blank(status.status())) {
-            throw new IllegalStateException("Xianyu Agent returned no QR login status");
+        if (!loginIntentId.equals(status.loginIntentId())
+                || !loginSessionId.equals(status.loginSessionId())) {
+            return qrLoginFailure(loginIntentId, loginSessionId, "LOGIN_INTENT_IDENTITY_CONFLICT");
         }
-        if ("SUCCESS".equalsIgnoreCase(status.status())) {
-            if (blank(status.accountId())) {
-                throw new IllegalStateException("Xianyu Agent returned no account identifier after QR login");
-            }
-            syncXianyuAccounts();
-            SalesChannelAccount account = accountRepository
-                    .findByProviderAndProviderAccountId(SalesChannelProvider.XIANYU, status.accountId())
-                    .orElseThrow(() -> new IllegalStateException("The QR login account was not synchronized"));
+        if (blank(status.status())) return qrLoginFailure(loginIntentId, loginSessionId, "QR_LOGIN_STATUS_UNAVAILABLE");
+        if ("FAILED".equals(status.status()) || "EXPIRED".equals(status.status())
+                || "CANCELLED".equals(status.status())
+                || "PROVIDER_AUTH_VERIFICATION_FAILED".equals(status.status())
+                || "PROVIDER_AUTH_VERIFIED".equals(status.status())) {
+            return status;
+        }
+        if (!"COOKIE_PERSISTED".equals(status.status())) return status;
+        if (blank(status.accountId())) {
+            return finishQrVerification(status, loginSessionId, loginIntentId, operatorIdentity,
+                    "COOKIE_PERSISTED_ACCOUNT_ID_MISSING", false);
+        }
+
+        SalesChannelAccount target;
+        if (reauthenticationTarget == null) {
             try {
-                verifyAccount(account.getId());
-            } catch (RuntimeException verificationFailure) {
-                return new QrLoginStatusData(status.status(), status.accountId(), status.isNewAccount(),
-                        "账号已登录，能力校验暂不可用。可稍后在账号页重试校验。",
-                        status.verificationQrCodeDataUrl());
+                syncXianyuAccounts();
+                target = accountRepository.findByProviderAndProviderAccountId(
+                                SalesChannelProvider.XIANYU, status.accountId())
+                        .orElse(null);
+            } catch (RuntimeException syncFailure) {
+                target = null;
+            }
+            if (target == null) {
+                return finishQrVerification(status, loginSessionId, loginIntentId, operatorIdentity,
+                        "MYSHOP_ACCOUNT_SYNC_FAILED", false);
+            }
+        } else {
+            target = reauthenticationTarget;
+            if (!status.accountId().equals(target.getProviderAccountId())) {
+                return finishQrVerification(status, loginSessionId, loginIntentId, operatorIdentity,
+                        "LOGIN_INTENT_TARGET_MISMATCH", false);
             }
         }
-        return status;
+
+        try {
+            AccountSummary verified = reauthenticationTarget == null
+                    ? verifyAccount(target.getId())
+                    : verifyExistingQrReauthenticationTarget(target, status.accountId());
+            if (verified == null || !status.accountId().equals(verified.providerAccountId())) {
+                return finishQrVerification(status, loginSessionId, loginIntentId, operatorIdentity,
+                        "MYSHOP_PROVIDER_ACCOUNT_ID_CHANGED", false);
+            }
+        } catch (RuntimeException verificationFailure) {
+            return finishQrVerification(status, loginSessionId, loginIntentId, operatorIdentity,
+                    verificationErrorCode(verificationFailure), false);
+        }
+        return finishQrVerification(status, loginSessionId, loginIntentId, operatorIdentity, null, true);
+    }
+
+    private AccountSummary verifyExistingQrReauthenticationTarget(
+            SalesChannelAccount target, String expectedProviderAccountId) {
+        IntegrationEnvelope<CapabilityData> response = providerClient.verifyAccount(expectedProviderAccountId);
+        if (response == null) {
+            throw new IllegalStateException("PROVIDER_AUTH_VERIFICATION_FAILED");
+        }
+        requireSuccess(response.outcome(), response.error() == null ? null : response.error().code());
+        if (response.data() == null || response.data().capabilities() == null) {
+            throw new IllegalStateException("PROVIDER_AUTH_VERIFICATION_FAILED");
+        }
+        Map<String, Object> capabilities = objectMapper.convertValue(response.data().capabilities(),
+                new TypeReference<>() { });
+        SalesChannelAccount updated = accountService.markExistingXianyuQrReauthenticationVerified(
+                target.getId(), expectedProviderAccountId, capabilities, LocalDateTime.now());
+        return accountSummary(updated);
+    }
+
+    private QrLoginStatusData finishQrVerification(
+            QrLoginStatusData persisted, String loginSessionId, String loginIntentId,
+            String operatorIdentity, String errorCode, boolean verified) {
+        String requestId = UUID.randomUUID().toString();
+        IntegrationEnvelope<QrLoginStatusData> response = providerClient.completeQrLoginVerification(
+                new QrLoginVerificationCommand(
+                        requestId, loginSessionId, loginIntentId, operatorIdentity, verified, errorCode));
+        if (response == null || response.outcome() != Outcome.SUCCEEDED || response.data() == null) {
+            return verified
+                    ? new QrLoginStatusData("COOKIE_PERSISTED", loginIntentId, loginSessionId,
+                        persisted.accountId(), persisted.isNewAccount(), "PROVIDER_AUTH_RESULT_NOT_RECORDED", null, null)
+                    : new QrLoginStatusData("PROVIDER_AUTH_VERIFICATION_FAILED", loginIntentId, loginSessionId,
+                        persisted.accountId(), persisted.isNewAccount(), errorCode, null, null);
+        }
+        QrLoginStatusData result = response.data();
+        String expectedStatus = verified ? "PROVIDER_AUTH_VERIFIED" : "PROVIDER_AUTH_VERIFICATION_FAILED";
+        if (!loginIntentId.equals(result.loginIntentId()) || !loginSessionId.equals(result.loginSessionId())
+                || !expectedStatus.equals(result.status())
+                || !java.util.Objects.equals(persisted.accountId(), result.accountId())) {
+            return qrLoginFailure(loginIntentId, loginSessionId, "LOGIN_INTENT_IDENTITY_CONFLICT");
+        }
+        return result;
+    }
+
+    private String verificationErrorCode(RuntimeException error) {
+        if (error instanceof SalesChannelProviderClientException providerError
+                && !blank(providerError.getErrorCode())) {
+            return safeVerificationCode(providerError.getErrorCode());
+        }
+        String message = error.getMessage();
+        if (message != null && message.matches(".*: [A-Z][A-Z0-9_]{2,127}$")) {
+            return safeVerificationCode(message.substring(message.lastIndexOf(": ") + 2));
+        }
+        return "PROVIDER_AUTH_VERIFICATION_FAILED";
+    }
+
+    private String safeVerificationCode(String code) {
+        return code != null && code.matches("[A-Z][A-Z0-9_]{2,127}")
+                ? code : "PROVIDER_AUTH_VERIFICATION_FAILED";
+    }
+
+    private QrLoginStartData validateQrLoginStart(QrLoginStartData data, String loginIntentId) {
+        if (data == null || !loginIntentId.equals(data.loginIntentId()) || blank(data.loginSessionId())
+                || blank(data.qrCodeDataUrl()) || !data.qrCodeDataUrl().startsWith("data:image/png;base64,")
+                || data.expiresInSeconds() == null || data.expiresInSeconds() <= 0) {
+            throw new IllegalStateException("Xianyu Agent returned an incomplete or mismatched QR login response");
+        }
+        return data;
+    }
+
+    private QrLoginStatusData qrLoginFailure(String loginIntentId, String loginSessionId, String errorCode) {
+        return new QrLoginStatusData("FAILED", loginIntentId, loginSessionId, null, null,
+                blank(errorCode) ? "QR_LOGIN_FAILED" : errorCode, null, null);
     }
 
     public AddressMetadataResult searchAddress(String keywords, String city) {

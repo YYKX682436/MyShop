@@ -555,15 +555,19 @@ export interface SalesChannelAccountSummary {
 }
 
 export interface XianyuQrLoginStartResponse {
+  loginIntentId: string
   loginSessionId: string
   qrCodeDataUrl: string
   expiresInSeconds: number
 }
 
 export interface XianyuQrLoginStatusResponse {
-  status: "WAITING" | "SCANNED" | "VERIFICATION_REQUIRED" | "SUCCESS" | "EXPIRED" | "CANCELLED" | "FAILED"
+  status: "WAITING" | "SCANNED" | "VERIFICATION_REQUIRED" | "QR_SCAN_CONFIRMED" | "COOKIE_PERSISTED" | "PROVIDER_AUTH_VERIFIED" | "PROVIDER_AUTH_VERIFICATION_FAILED" | "EXPIRED" | "CANCELLED" | "FAILED"
+  loginIntentId?: string | null
+  loginSessionId?: string | null
   accountId?: string | null
   isNewAccount?: boolean | null
+  errorCode?: string | null
   verificationMessage?: string | null
   verificationQrCodeDataUrl?: string | null
 }
@@ -821,18 +825,28 @@ export const adminSalesChannelApi = {
     request<XianyuItemSyncSummary>(`/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/sync`, {
       method: "POST",
     }),
-  startXianyuQrLogin: (requestId: string) =>
+  startXianyuQrLogin: (loginIntentId: string, requestId: string) =>
     request<XianyuQrLoginStartResponse>("/admin/xianyu/accounts/login/qr", {
       method: "POST",
-      body: JSON.stringify({ request_id: requestId }),
+      body: JSON.stringify({ request_id: requestId, login_intent_id: loginIntentId }),
     }),
-  getXianyuQrLoginStatus: (sessionId: string, requestId: string) =>
+  startXianyuQrReauthentication: (accountRowId: string, loginIntentId: string, requestId: string) =>
+    request<XianyuQrLoginStartResponse>(
+      `/admin/sales-channels/accounts/${encodeURIComponent(accountRowId)}/reauthenticate/qr/start`,
+      { method: "POST", body: JSON.stringify({ request_id: requestId, login_intent_id: loginIntentId }) },
+    ),
+  getXianyuQrLoginStatus: (sessionId: string, loginIntentId: string, requestId: string) =>
     request<XianyuQrLoginStatusResponse>(
       `/admin/xianyu/accounts/login/qr/${encodeURIComponent(sessionId)}/status`,
       {
         method: "POST",
-        body: JSON.stringify({ request_id: requestId, login_session_id: sessionId }),
+        body: JSON.stringify({ request_id: requestId, login_session_id: sessionId, login_intent_id: loginIntentId }),
       },
+    ),
+  getXianyuQrReauthenticationStatus: (accountRowId: string, sessionId: string, loginIntentId: string, requestId: string) =>
+    request<XianyuQrLoginStatusResponse>(
+      `/admin/sales-channels/accounts/${encodeURIComponent(accountRowId)}/reauthenticate/qr/${encodeURIComponent(sessionId)}/status`,
+      { method: "POST", body: JSON.stringify({ request_id: requestId, login_session_id: sessionId, login_intent_id: loginIntentId }) },
     ),
   syncXianyuAccounts: () =>
     request<unknown>("/admin/sales-channels/xianyu/accounts/sync", { method: "POST" }),

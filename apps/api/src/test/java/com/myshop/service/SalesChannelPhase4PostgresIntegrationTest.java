@@ -163,6 +163,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
     private SalesChannelOperationServiceImpl salesChannelOperationService;
 
     @Autowired
+    private SalesChannelAdminService salesChannelAdminService;
+
+    @Autowired
     private SalesChannelDeliveryOperationRepository deliveryOperationRepository;
 
     @Autowired
@@ -355,6 +358,92 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertFalse(afterTerminalCandidates.contains(untouchedC.getId()));
         assertEquals(SalesChannelOperationStatus.PENDING, operationRepository.findById(untouchedA.getId()).orElseThrow().getStatus());
         assertEquals(SalesChannelOperationStatus.PENDING, operationRepository.findById(untouchedC.getId()).orElseThrow().getStatus());
+    }
+
+    @Test
+    void verifiedQrReauthenticationPreservesPostgresAccountRowAndCurrentItemBinding() {
+        String providerAccountId = "pg-qr-reauth-" + UUID.randomUUID();
+        UUID loginIntentId = UUID.randomUUID();
+        UUID loginSessionId = UUID.randomUUID();
+        String itemId = "qr-reauth-current-item";
+        UUID productId = insertProduct(false);
+        LocalDateTime beforeVerified = LocalDateTime.now().minusMinutes(2);
+
+        SalesChannelAccount account = new SalesChannelAccount();
+        account.setProvider(SalesChannelProvider.XIANYU);
+        account.setProviderAccountId(providerAccountId);
+        account.setDisplayName("Existing QR account");
+        account.setStatus(SalesChannelAccountStatus.CONNECTED);
+        account.setEnabled(true);
+        account.setCapabilities(Map.of("account_type", "PERSONAL"));
+        account.setLastLoginAt(beforeVerified);
+        account = accountRepository.saveAndFlush(account);
+        UUID accountRowId = account.getId();
+        SalesChannelListing listing = listing(account, productId, itemId, false);
+        SalesChannelListingGeneration originalGeneration = generationRepository
+                .findCurrentByListingId(listing.getId()).orElseThrow();
+        UUID originalGenerationId = originalGeneration.getId();
+
+        var startedData = new com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData(
+                loginIntentId.toString(), loginSessionId.toString(), "data:image/png;base64,AA==", 300);
+        when(providerClient.startQrReauthentication(any())).thenReturn(new IntegrationEnvelope<>(
+                "start-request", Outcome.SUCCEEDED, startedData, null));
+        var cookiePersisted = new com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData(
+                "COOKIE_PERSISTED", loginIntentId.toString(), loginSessionId.toString(),
+                providerAccountId, false, null, null, null);
+        when(providerClient.getQrLoginStatus(any())).thenReturn(new IntegrationEnvelope<>(
+                "poll-request", Outcome.SUCCEEDED, cookiePersisted, null));
+        var capabilities = new com.myshop.saleschannel.model.SalesChannelDtos.AccountCapabilities(
+                "PERSONAL", true, true, false, true, false);
+        when(providerClient.verifyAccount(providerAccountId)).thenReturn(new IntegrationEnvelope<>(
+                "capability-request", Outcome.SUCCEEDED,
+                new com.myshop.saleschannel.model.SalesChannelDtos.CapabilityData(capabilities), null));
+        var providerVerified = new com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData(
+                "PROVIDER_AUTH_VERIFIED", loginIntentId.toString(), loginSessionId.toString(),
+                providerAccountId, false, null, null, null);
+        when(providerClient.completeQrLoginVerification(any())).thenReturn(new IntegrationEnvelope<>(
+                "verification-request", Outcome.SUCCEEDED, providerVerified, null));
+
+        var started = salesChannelAdminService.startQrReauthentication(
+                accountRowId, UUID.randomUUID().toString(), loginIntentId.toString(), "pg-admin");
+        var completed = salesChannelAdminService.getQrReauthenticationStatus(
+                accountRowId, UUID.randomUUID().toString(), loginSessionId.toString(),
+                loginIntentId.toString(), "pg-admin");
+
+        assertEquals(loginIntentId.toString(), started.loginIntentId());
+        assertEquals(loginSessionId.toString(), started.loginSessionId());
+        assertEquals("PROVIDER_AUTH_VERIFIED", completed.status());
+        assertEquals(providerAccountId, completed.accountId());
+
+        SalesChannelAccount persistedAccount = accountRepository.findById(accountRowId).orElseThrow();
+        SalesChannelListing persistedListing = listingRepository.findById(listing.getId()).orElseThrow();
+        SalesChannelListingGeneration persistedGeneration = generationRepository
+                .findCurrentByListingId(listing.getId()).orElseThrow();
+        assertEquals(accountRowId, persistedAccount.getId());
+        assertEquals(providerAccountId, persistedAccount.getProviderAccountId());
+        assertTrue(persistedAccount.getLastLoginAt().isAfter(beforeVerified));
+        assertTrue(persistedAccount.getLastVerifiedAt().isAfter(beforeVerified));
+        assertEquals(listing.getId(), persistedListing.getId());
+        assertEquals(originalGenerationId, persistedGeneration.getId());
+        assertEquals(itemId, persistedGeneration.getExternalItemId());
+        assertEquals(SalesChannelGenerationState.CURRENT, persistedGeneration.getGenerationState());
+
+        org.mockito.ArgumentCaptor<com.myshop.saleschannel.model.SalesChannelDtos.QrLoginReauthenticationStartCommand>
+                startCommand = org.mockito.ArgumentCaptor.forClass(
+                        com.myshop.saleschannel.model.SalesChannelDtos.QrLoginReauthenticationStartCommand.class);
+        org.mockito.ArgumentCaptor<com.myshop.saleschannel.model.SalesChannelDtos.QrLoginVerificationCommand>
+                verificationCommand = org.mockito.ArgumentCaptor.forClass(
+                        com.myshop.saleschannel.model.SalesChannelDtos.QrLoginVerificationCommand.class);
+        verify(providerClient).startQrReauthentication(startCommand.capture());
+        verify(providerClient).getQrLoginStatus(any());
+        verify(providerClient).verifyAccount(providerAccountId);
+        verify(providerClient).completeQrLoginVerification(verificationCommand.capture());
+        assertEquals(providerAccountId, startCommand.getValue().targetAccountId());
+        assertEquals(loginIntentId.toString(), startCommand.getValue().loginIntentId());
+        assertEquals("pg-admin", startCommand.getValue().operatorIdentity());
+        assertTrue(verificationCommand.getValue().verified());
+        assertEquals(loginIntentId.toString(), verificationCommand.getValue().loginIntentId());
+        org.mockito.Mockito.verifyNoMoreInteractions(providerClient);
     }
 
     @Test

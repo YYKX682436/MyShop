@@ -252,14 +252,21 @@ public final class SalesChannelAdminDtos {
     }
 
     public record XianyuQrLoginStartRequest(
-            @JsonProperty("request_id") @NotBlank @Size(max = 36) String requestId) { }
+            @JsonProperty("request_id") @NotBlank @Size(max = 36) String requestId,
+            @JsonProperty("login_intent_id") @NotBlank @Size(max = 36) String loginIntentId) { }
+
+    public record XianyuQrLoginReauthenticationStartRequest(
+            @JsonProperty("request_id") @NotBlank @Size(max = 36) String requestId,
+            @JsonProperty("login_intent_id") @NotBlank @Size(max = 36) String loginIntentId) { }
 
     public record XianyuQrLoginStatusRequest(
             @JsonProperty("request_id") @NotBlank @Size(max = 36) String requestId,
-            @JsonProperty("login_session_id") @NotBlank @Size(max = 80) String loginSessionId) { }
+            @JsonProperty("login_session_id") @NotBlank @Size(max = 80) String loginSessionId,
+            @JsonProperty("login_intent_id") @NotBlank @Size(max = 36) String loginIntentId) { }
 
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuQrLoginStartResponse(
+            @JsonProperty("loginIntentId") String loginIntentId,
             @JsonProperty("loginSessionId") String loginSessionId,
             @JsonProperty("qrCodeDataUrl") String qrCodeDataUrl,
             @JsonProperty("expiresInSeconds") Integer expiresInSeconds) { }
@@ -267,8 +274,11 @@ public final class SalesChannelAdminDtos {
     @JsonNaming(PropertyNamingStrategies.LowerCamelCaseStrategy.class)
     public record XianyuQrLoginStatusResponse(
             @JsonProperty("status") String status,
+            @JsonProperty("loginIntentId") String loginIntentId,
+            @JsonProperty("loginSessionId") String loginSessionId,
             @JsonProperty("accountId") String accountId,
             @JsonProperty("isNewAccount") Boolean isNewAccount,
+            @JsonProperty("errorCode") String errorCode,
             @JsonProperty("verificationMessage") String verificationMessage,
             @JsonProperty("verificationQrCodeDataUrl") String verificationQrCodeDataUrl) { }
 

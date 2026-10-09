@@ -66,15 +66,21 @@ class SalesChannelAdminDtosJsonTest {
     @Test
     void xianyuQrLoginResponsesUseCamelCaseForTheBrowserContract() {
         JsonNode start = objectMapper.valueToTree(new XianyuQrLoginStartResponse(
-                "session-1", "data:image/png;base64,AA==", 300));
+                "intent-1", "session-1", "data:image/png;base64,AA==", 300));
+        assertEquals("intent-1", start.path("loginIntentId").asText());
         assertEquals("session-1", start.path("loginSessionId").asText());
         assertEquals("data:image/png;base64,AA==", start.path("qrCodeDataUrl").asText());
         assertEquals(300, start.path("expiresInSeconds").asInt());
         assertFalse(start.has("login_session_id"));
 
         JsonNode status = objectMapper.valueToTree(new XianyuQrLoginStatusResponse(
-                "VERIFICATION_REQUIRED", null, null, "安全验证", "data:image/png;base64,AA=="));
-        assertEquals("VERIFICATION_REQUIRED", status.path("status").asText());
+                "COOKIE_PERSISTED", "intent-1", "session-1", "2215747465381", false,
+                null, "安全验证", "data:image/png;base64,AA=="));
+        assertEquals("COOKIE_PERSISTED", status.path("status").asText());
+        assertEquals("intent-1", status.path("loginIntentId").asText());
+        assertEquals("session-1", status.path("loginSessionId").asText());
+        assertEquals("2215747465381", status.path("accountId").asText());
+        assertFalse(status.path("isNewAccount").asBoolean());
         assertEquals("data:image/png;base64,AA==", status.path("verificationQrCodeDataUrl").asText());
         assertTrue(status.has("verificationMessage"));
         assertTrue(status.has("verificationQrCodeDataUrl"));

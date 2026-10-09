@@ -69,11 +69,15 @@ class SecurityAuthorizationIntegrationTest {
         when(operationLogService.listLogs(any(), anyString(), anyString(), anyString(), anyString(), anyInt(), anyInt()))
                 .thenReturn(PageResult.of(java.util.List.of(), 1, 20, 0));
         when(salesChannelAdminService.accounts()).thenReturn(java.util.List.of());
-        when(salesChannelAdminService.startQrLogin(anyString()))
-                .thenReturn(new QrLoginStartData("11111111-1111-1111-1111-111111111111",
-                        "data:image/png;base64,AA==", 300));
-        when(salesChannelAdminService.getQrLoginStatus(anyString(), anyString()))
-                .thenReturn(new QrLoginStatusData("WAITING", null, null, null, null));
+        when(salesChannelAdminService.startQrLogin(anyString(), anyString(), anyString()))
+                .thenReturn(new QrLoginStartData("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "11111111-1111-1111-1111-111111111111", "data:image/png;base64,AA==", 300));
+        when(salesChannelAdminService.startQrReauthentication(any(), anyString(), anyString(), anyString()))
+                .thenReturn(new QrLoginStartData("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "11111111-1111-1111-1111-111111111111", "data:image/png;base64,AA==", 300));
+        when(salesChannelAdminService.getQrLoginStatus(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(new QrLoginStatusData("WAITING", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "11111111-1111-1111-1111-111111111111", null, null, null, null, null));
     }
 
     @Test
@@ -115,7 +119,12 @@ class SecurityAuthorizationIntegrationTest {
         mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr")
                         .contextPath("/api")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\"}"))
+                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\",\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/admin/sales-channels/accounts/22222222-2222-2222-2222-222222222222/reauthenticate/qr/start")
+                        .contextPath("/api")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\",\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
                 .andExpect(status().isUnauthorized());
 
         mockMvc.perform(post("/api/auth/login")
@@ -157,6 +166,14 @@ class SecurityAuthorizationIntegrationTest {
                         .contextPath("/api")
                         .with(user("ordinary-admin").roles("ADMIN")))
                 .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/admin/sales-channels/accounts/22222222-2222-2222-2222-222222222222/reauthenticate/qr/start")
+                        .contextPath("/api")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\",\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}")
+                        .with(user("authorized-operator").roles("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.loginIntentId").value("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
         mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
                         .contextPath("/api")
                         .with(user("muchen-admin").roles("SUPER_ADMIN")))
@@ -165,7 +182,8 @@ class SecurityAuthorizationIntegrationTest {
                         .contextPath("/api")
                         .with(user("ordinary-admin").roles("ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\"}"))
+                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\","
+                                + "\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.loginSessionId").value("11111111-1111-1111-1111-111111111111"))
                 .andExpect(jsonPath("$.data.qrCodeDataUrl").value("data:image/png;base64,AA=="))
@@ -177,7 +195,8 @@ class SecurityAuthorizationIntegrationTest {
                         .with(user("ordinary-admin").roles("ADMIN"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"request_id\":\"22222222-2222-2222-2222-222222222222\","
-                                + "\"login_session_id\":\"11111111-1111-1111-1111-111111111111\"}"))
+                                + "\"login_session_id\":\"11111111-1111-1111-1111-111111111111\","
+                                + "\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("WAITING"))
                 .andExpect(jsonPath("$.data.accountId").doesNotExist())

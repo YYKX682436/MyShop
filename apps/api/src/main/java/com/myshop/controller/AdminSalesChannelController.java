@@ -14,6 +14,7 @@ import com.myshop.saleschannel.model.SalesChannelAdminDtos.UpdateXianyuListingRe
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderSummary;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.SalesChannelOrderDetail;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartRequest;
+import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginReauthenticationStartRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusRequest;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStartResponse;
 import com.myshop.saleschannel.model.SalesChannelAdminDtos.XianyuQrLoginStatusResponse;
@@ -35,6 +36,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.util.List;
 import java.util.UUID;
@@ -107,9 +110,20 @@ public class AdminSalesChannelController {
     @PostMapping("/admin/xianyu/accounts/login/qr")
     public ApiResponse<XianyuQrLoginStartResponse> startXianyuQrLogin(
             @Valid @RequestBody XianyuQrLoginStartRequest request) {
-        var data = salesChannelAdminService.startQrLogin(canonicalUuid(request.requestId()));
+        var data = salesChannelAdminService.startQrLogin(
+                canonicalUuid(request.requestId()), canonicalUuid(request.loginIntentId()), currentOperator());
         return ApiResponse.success(new XianyuQrLoginStartResponse(
-                data.loginSessionId(), data.qrCodeDataUrl(), data.expiresInSeconds()));
+                data.loginIntentId(), data.loginSessionId(), data.qrCodeDataUrl(), data.expiresInSeconds()));
+    }
+
+    @PostMapping("/admin/sales-channels/accounts/{accountId}/reauthenticate/qr/start")
+    public ApiResponse<XianyuQrLoginStartResponse> startXianyuQrReauthentication(
+            @PathVariable UUID accountId,
+            @Valid @RequestBody XianyuQrLoginReauthenticationStartRequest request) {
+        var data = salesChannelAdminService.startQrReauthentication(
+                accountId, canonicalUuid(request.requestId()), canonicalUuid(request.loginIntentId()), currentOperator());
+        return ApiResponse.success(new XianyuQrLoginStartResponse(
+                data.loginIntentId(), data.loginSessionId(), data.qrCodeDataUrl(), data.expiresInSeconds()));
     }
 
     @PostMapping("/admin/xianyu/accounts/login/qr/{sessionId}/status")
@@ -118,13 +132,44 @@ public class AdminSalesChannelController {
             @Valid @RequestBody XianyuQrLoginStatusRequest request) {
         UUID requestId = UUID.fromString(request.requestId());
         UUID bodySessionId = UUID.fromString(request.loginSessionId());
+        UUID loginIntentId = UUID.fromString(request.loginIntentId());
         if (!sessionId.equals(bodySessionId)) {
             throw new IllegalArgumentException("QR login session path and body do not match");
         }
-        var data = salesChannelAdminService.getQrLoginStatus(requestId.toString(), sessionId.toString());
+        var data = salesChannelAdminService.getQrLoginStatus(
+                requestId.toString(), sessionId.toString(), loginIntentId.toString(), currentOperator());
         return ApiResponse.success(new XianyuQrLoginStatusResponse(
-                data.status(), data.accountId(), data.isNewAccount(), data.verificationMessage(),
+                data.status(), data.loginIntentId(), data.loginSessionId(), data.accountId(), data.isNewAccount(),
+                data.errorCode(), data.verificationMessage(),
                 data.verificationQrCodeDataUrl()));
+    }
+
+    @PostMapping("/admin/sales-channels/accounts/{accountId}/reauthenticate/qr/{sessionId}/status")
+    public ApiResponse<XianyuQrLoginStatusResponse> xianyuQrReauthenticationStatus(
+            @PathVariable UUID accountId,
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody XianyuQrLoginStatusRequest request) {
+        UUID requestId = UUID.fromString(request.requestId());
+        UUID bodySessionId = UUID.fromString(request.loginSessionId());
+        UUID loginIntentId = UUID.fromString(request.loginIntentId());
+        if (!sessionId.equals(bodySessionId)) {
+            throw new IllegalArgumentException("QR login session path and body do not match");
+        }
+        var data = salesChannelAdminService.getQrReauthenticationStatus(
+                accountId, requestId.toString(), sessionId.toString(), loginIntentId.toString(), currentOperator());
+        return ApiResponse.success(new XianyuQrLoginStatusResponse(
+                data.status(), data.loginIntentId(), data.loginSessionId(), data.accountId(), data.isNewAccount(),
+                data.errorCode(), data.verificationMessage(), data.verificationQrCodeDataUrl()));
+    }
+
+    private static String currentOperator() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || authentication.getName() == null || authentication.getName().isBlank()
+                || "anonymousUser".equals(authentication.getName())) {
+            throw new IllegalStateException("QR_LOGIN_OPERATOR_AUTHENTICATION_REQUIRED");
+        }
+        return authentication.getName();
     }
 
     private static String canonicalUuid(String value) {

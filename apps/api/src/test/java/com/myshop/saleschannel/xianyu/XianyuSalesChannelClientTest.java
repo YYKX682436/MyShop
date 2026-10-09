@@ -23,7 +23,9 @@ import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimData;
 import com.myshop.saleschannel.model.SalesChannelDtos.PlatformAttribute;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginReauthenticationStartCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginVerificationCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.ReconcileData;
 import com.myshop.saleschannel.model.SalesChannelDtos.SalesChannelAccount;
@@ -79,31 +81,58 @@ class XianyuSalesChannelClientTest {
     void qrLoginUsesTheExistingSignedIntegrationClientAndMapsVerificationStatus() throws Exception {
         try (Fixture fixture = new Fixture(objectMapper, FixtureMode.SUCCESS)) {
             XianyuSalesChannelClient client = client(fixture.baseUrl());
+            String loginIntentId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+            String loginSessionId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+            String operator = "codex-admin";
             String startRequestId = UUID.randomUUID().toString();
-            var started = client.startQrLogin(new QrLoginStartCommand(startRequestId));
+            var started = client.startQrLogin(new QrLoginStartCommand(startRequestId, loginIntentId, operator));
             assertEquals(Outcome.SUCCEEDED, started.outcome());
-            assertEquals("qr-session-1", started.data().loginSessionId());
+            assertEquals(loginIntentId, started.data().loginIntentId());
+            assertEquals(loginSessionId, started.data().loginSessionId());
             assertEquals("data:image/png;base64,AA==", started.data().qrCodeDataUrl());
 
             String statusRequestId = UUID.randomUUID().toString();
-            var status = client.getQrLoginStatus(new QrLoginStatusCommand(statusRequestId, "qr-session-1"));
+            var status = client.getQrLoginStatus(
+                    new QrLoginStatusCommand(statusRequestId, loginSessionId, loginIntentId, operator));
             assertEquals(Outcome.SUCCEEDED, status.outcome());
             assertEquals("VERIFICATION_REQUIRED", status.data().status());
+            assertEquals(loginIntentId, status.data().loginIntentId());
+            assertEquals(loginSessionId, status.data().loginSessionId());
             assertEquals("闲鱼要求进行安全验证，请按手机端提示完成验证。",
                     status.data().verificationMessage());
             assertEquals("data:image/png;base64,iVBORw0KGgo=",
                     status.data().verificationQrCodeDataUrl());
 
+            String reauthRequestId = UUID.randomUUID().toString();
+            var reauthStarted = client.startQrReauthentication(new QrLoginReauthenticationStartCommand(
+                    reauthRequestId, loginIntentId, "2215747465381", operator));
+            assertEquals(loginIntentId, reauthStarted.data().loginIntentId());
+
+            String verificationRequestId = UUID.randomUUID().toString();
+            var completed = client.completeQrLoginVerification(new QrLoginVerificationCommand(
+                    verificationRequestId, loginSessionId, loginIntentId, operator, true, null));
+            assertEquals("PROVIDER_AUTH_VERIFIED", completed.data().status());
+
             List<CapturedRequest> requests = fixture.requests();
             assertEquals(List.of(
                     "POST /api/integration/v1/accounts/login/qr/start",
-                    "POST /api/integration/v1/accounts/login/qr/status"),
+                    "POST /api/integration/v1/accounts/login/qr/status",
+                    "POST /api/integration/v1/accounts/login/qr/reauthenticate/start",
+                    "POST /api/integration/v1/accounts/login/qr/verification"),
                     requests.stream().map(r -> r.method() + " " + r.path()).toList());
             JsonNode startBody = objectMapper.readTree(requests.get(0).body());
             assertEquals(startRequestId, startBody.path("request_id").asText());
+            assertEquals(loginIntentId, startBody.path("login_intent_id").asText());
+            assertEquals(operator, startBody.path("operator_identity").asText());
             JsonNode statusBody = objectMapper.readTree(requests.get(1).body());
             assertEquals(statusRequestId, statusBody.path("request_id").asText());
-            assertEquals("qr-session-1", statusBody.path("login_session_id").asText());
+            assertEquals(loginSessionId, statusBody.path("login_session_id").asText());
+            assertEquals(loginIntentId, statusBody.path("login_intent_id").asText());
+            JsonNode reauthBody = objectMapper.readTree(requests.get(2).body());
+            assertEquals("2215747465381", reauthBody.path("target_account_id").asText());
+            JsonNode verificationBody = objectMapper.readTree(requests.get(3).body());
+            assertEquals(true, verificationBody.path("verified").asBoolean());
+            assertEquals(loginIntentId, verificationBody.path("login_intent_id").asText());
             for (CapturedRequest request : requests) {
                 String canonical = XianyuRequestSigner.canonicalString(request.method(), request.path(),
                         request.header("X-MyShop-Timestamp"), request.header("X-MyShop-Nonce"), request.body());
@@ -661,13 +690,25 @@ class XianyuSalesChannelClientTest {
             }
             Object data = switch (exchange.getRequestURI().getRawPath()) {
                 case "/api/integration/v1/accounts/login/qr/start" -> Map.of(
-                        "login_session_id", "qr-session-1",
+                        "login_intent_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "login_session_id", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                         "qr_code_data_url", "data:image/png;base64,AA==",
                         "expires_in_seconds", 300);
                 case "/api/integration/v1/accounts/login/qr/status" -> Map.of(
                         "status", "VERIFICATION_REQUIRED",
+                        "login_intent_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "login_session_id", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                         "verification_message", "闲鱼要求进行安全验证，请按手机端提示完成验证。",
                         "verification_qr_code_data_url", "data:image/png;base64,iVBORw0KGgo=");
+                case "/api/integration/v1/accounts/login/qr/reauthenticate/start" -> Map.of(
+                        "login_intent_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "login_session_id", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                        "qr_code_data_url", "data:image/png;base64,AA==", "expires_in_seconds", 300);
+                case "/api/integration/v1/accounts/login/qr/verification" -> Map.of(
+                        "status", "PROVIDER_AUTH_VERIFIED",
+                        "login_intent_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                        "login_session_id", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                        "account_id", "2215747465381", "is_new_account", false);
                 case "/api/integration/v1/accounts" -> Map.of("accounts", List.of(Map.of(
                         "provider_account_id", "acct-1", "display_name", "Fixture account",
                         "status", "ACTIVE", "enabled", true,

@@ -30,9 +30,11 @@ import com.myshop.saleschannel.model.SalesChannelDtos.Outcome;
 import com.myshop.saleschannel.model.SalesChannelDtos.PublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.RepublishCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartCommand;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginReauthenticationStartCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
+import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginVerificationCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.SpecMappingsCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimCommand;
 import com.myshop.saleschannel.model.SalesChannelDtos.OwnershipClaimData;
@@ -156,7 +158,9 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
 
     @Override
     public IntegrationEnvelope<QrLoginStartData> startQrLogin(QrLoginStartCommand command) {
-        validateQrLoginRequest(command == null ? null : command.requestId());
+        validateQrLoginRequest(command == null ? null : command.requestId(),
+                command == null ? null : command.loginIntentId(),
+                command == null ? null : command.operatorIdentity());
         byte[] body = serialize(command);
         return exchange("POST", "/accounts/login/qr/start", body, "application/json",
                 responseType(QrLoginStartData.class), RequestSemantics.SAFE_REPEATABLE,
@@ -164,14 +168,47 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
     }
 
     @Override
+    public IntegrationEnvelope<QrLoginStartData> startQrReauthentication(
+            QrLoginReauthenticationStartCommand command) {
+        validateQrLoginRequest(command == null ? null : command.requestId(),
+                command == null ? null : command.loginIntentId(),
+                command == null ? null : command.operatorIdentity());
+        if (command == null || blank(command.targetAccountId()) || command.targetAccountId().length() > 80) {
+            throw safeFailure("INVALID_QR_LOGIN_TARGET", "An exact target account identifier is required");
+        }
+        byte[] body = serialize(command);
+        return exchange("POST", "/accounts/login/qr/reauthenticate/start", body, "application/json",
+                responseType(QrLoginStartData.class), RequestSemantics.SAFE_REPEATABLE,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
     public IntegrationEnvelope<QrLoginStatusData> getQrLoginStatus(QrLoginStatusCommand command) {
-        validateQrLoginRequest(command == null ? null : command.requestId());
+        validateQrLoginRequest(command == null ? null : command.requestId(),
+                command == null ? null : command.loginIntentId(),
+                command == null ? null : command.operatorIdentity());
         if (command == null || blank(command.loginSessionId()) || command.loginSessionId().length() > 80) {
             throw safeFailure("INVALID_QR_LOGIN_SESSION", "A QR login session identifier is required");
         }
         byte[] body = serialize(command);
         return exchange("POST", "/accounts/login/qr/status", body, "application/json",
                 responseType(QrLoginStatusData.class), RequestSemantics.READ_ONLY,
+                command.requestId(), command.requestId());
+    }
+
+    @Override
+    public IntegrationEnvelope<QrLoginStatusData> completeQrLoginVerification(
+            QrLoginVerificationCommand command) {
+        validateQrLoginRequest(command == null ? null : command.requestId(),
+                command == null ? null : command.loginIntentId(),
+                command == null ? null : command.operatorIdentity());
+        if (command == null || blank(command.loginSessionId()) || command.loginSessionId().length() > 80
+                || (!command.verified() && blank(command.errorCode()))) {
+            throw safeFailure("INVALID_QR_LOGIN_VERIFICATION", "QR login verification result is incomplete");
+        }
+        byte[] body = serialize(command);
+        return exchange("POST", "/accounts/login/qr/verification", body, "application/json",
+                responseType(QrLoginStatusData.class), RequestSemantics.SAFE_REPEATABLE,
                 command.requestId(), command.requestId());
     }
 
@@ -662,6 +699,19 @@ public final class XianyuSalesChannelClient implements SalesChannelProviderClien
             UUID.fromString(requestId);
         } catch (IllegalArgumentException e) {
             throw safeFailure("INVALID_REQUEST_ID", "A UUID request_id is required for QR login");
+        }
+    }
+
+    private static void validateQrLoginRequest(String requestId, String loginIntentId, String operatorIdentity) {
+        validateQrLoginRequest(requestId);
+        try {
+            if (loginIntentId == null || loginIntentId.length() > 36) throw new IllegalArgumentException();
+            UUID.fromString(loginIntentId);
+        } catch (IllegalArgumentException e) {
+            throw safeFailure("INVALID_LOGIN_INTENT_ID", "A UUID login_intent_id is required for QR login");
+        }
+        if (blank(operatorIdentity) || operatorIdentity.length() > 128 || hasHeaderControls(operatorIdentity)) {
+            throw safeFailure("INVALID_LOGIN_OPERATOR", "An authenticated QR login operator is required");
         }
     }
 

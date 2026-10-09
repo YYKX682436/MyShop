@@ -85,9 +85,16 @@ test("Xianyu account onboarding stays inside MyShop and cleans up QR polling", (
   assert.match(salesChannelApi, /\/admin\/xianyu\/accounts\/login\/qr/)
   assert.match(xianyuAccounts, /setTimeout\(\(\) => void poll\(\), 2000\)/)
   assert.match(xianyuAccounts, /clearTimeout\(timer\)/)
-  for (const state of ["WAITING", "SCANNED", "VERIFICATION_REQUIRED", "SUCCESS", "EXPIRED", "CANCELLED", "FAILED"]) {
+  for (const state of ["WAITING", "SCANNED", "VERIFICATION_REQUIRED", "QR_SCAN_CONFIRMED",
+    "COOKIE_PERSISTED", "PROVIDER_AUTH_VERIFIED", "PROVIDER_AUTH_VERIFICATION_FAILED",
+    "EXPIRED", "CANCELLED", "FAILED"]) {
     assert.match(xianyuAccounts, new RegExp(state))
   }
+  assert.match(xianyuAccounts, /buildQrLoginPollCommand\(currentLogin, crypto\.randomUUID\(\)\)/)
+  assert.match(xianyuAccounts, /applyQrLoginStatus\(currentLogin, status\)/)
+  assert.match(salesChannelApi, /login_intent_id: loginIntentId/)
+  assert.match(salesChannelApi, /login_session_id: sessionId/)
+  assert.match(xianyuAccounts, /targetProviderAccountId: account\.providerAccountId/)
   assert.match(xianyuAccounts, /闲鱼要求进行安全验证，请按手机端提示完成验证。/)
   assert.match(xianyuAccounts, /verificationQrCodeDataUrl/)
   assert.match(xianyuAccounts, /闲鱼 App 再次扫码/)
