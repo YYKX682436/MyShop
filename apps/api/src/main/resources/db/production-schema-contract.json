@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 41,
-  "latest_migration_version": "41",
+  "migration_count": 42,
+  "latest_migration_version": "42",
   "tables": {
     "users": ["id", "username", "role"],
     "products": ["id", "title", "retail_price"],
@@ -14,6 +14,8 @@
     "sales_channel_listing_generations": ["id", "sales_channel_listing_id", "sales_channel_account_id", "generation_no", "external_item_id", "generation_state", "replaces_generation_id", "origin"],
     "sales_channel_listing_generation_specs": ["id", "sales_channel_listing_generation_id", "product_spec_id", "external_sku_id"],
     "sales_channel_operations": ["id", "sales_channel_listing_id", "target_generation_id", "result_generation_id", "status", "operation_type"],
+    "sales_channel_recovery_permits": ["id", "generation", "sales_channel_listing_id", "myshop_operation_id", "agent_operation_id", "account_id", "request_id", "desired_revision", "desired_fingerprint", "expected_old_item_id", "state", "operator", "reason", "preconditions_json", "agent_preconditions_json", "execution_outcome", "execution_fence", "prepared_at", "armed_at", "go_operator", "go_at", "execution_started_at", "terminal_at", "created_at", "updated_at"],
+    "sales_channel_recovery_permit_events": ["event_id", "permit_id", "generation", "event_type", "previous_generation", "previous_state", "new_state", "operator", "reason", "event_at", "recorded_at", "execution_fence", "identity_fingerprint", "evidence_json"],
     "sales_channel_orders": ["id", "sales_channel_account_id", "sales_channel_listing_id", "sales_channel_listing_generation_id", "order_id", "ingest_status", "delivery_status"],
     "sales_channel_delivery_operations": ["id", "sales_channel_order_id", "card_key_id", "status"]
   },
@@ -25,6 +27,7 @@
     "idx_sales_channel_cutover_cert_listing_created",
     "uq_sales_channel_delivery_unit",
     "idx_sales_channel_orders_status",
-    "idx_sales_channel_delivery_worker"
+    "idx_sales_channel_delivery_worker",
+    "idx_sales_channel_recovery_event_generation"
   ]
 }

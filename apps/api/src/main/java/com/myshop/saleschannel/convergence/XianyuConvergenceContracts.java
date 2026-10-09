@@ -172,7 +172,9 @@ public final class XianyuConvergenceContracts {
             @JsonProperty("desired_revision") @NotNull @Min(0) Long desiredRevision,
             @JsonProperty("desired_fingerprint") @NotNull @Pattern(regexp = "^[a-f0-9]{64}$") String desiredFingerprint,
             @JsonProperty("expected_old_item_id") @NotNull String expectedOldItemId,
-            @JsonProperty("agent_operation_id") @NotNull @Min(1) Long agentOperationId) implements ClosedContract { }
+            @JsonProperty("agent_operation_id") @NotNull @Min(1) Long agentOperationId,
+            @JsonProperty("operator") @NotNull @NotBlank String operator,
+            @JsonProperty("reason") @NotNull @NotBlank String reason) implements ClosedContract { }
 
     public record RecoveryPermitObservation(
             @JsonProperty("permit_id") String permitId,
@@ -189,7 +191,14 @@ public final class XianyuConvergenceContracts {
             @JsonProperty("operator") String operator,
             @JsonProperty("reason") String reason,
             @JsonProperty("preconditions") Map<String, Object> preconditions,
-            @JsonProperty("execution_outcome") String executionOutcome) implements ClosedContract { }
+            @JsonProperty("execution_outcome") String executionOutcome,
+            @JsonProperty("prepared_at") String preparedAt,
+            @JsonProperty("armed_at") String armedAt,
+            @JsonProperty("activated_at") String activatedAt,
+            @JsonProperty("execution_started_at") String executionStartedAt,
+            @JsonProperty("terminal_at") String terminalAt,
+            @JsonProperty("execution_fence") Long executionFence,
+            @JsonProperty("myshop_execution_fence") Long myshopExecutionFence) implements ClosedContract { }
 
     public record RecoveryPermitProof(
             String permitId, long generation, String accountId, String listingKey,

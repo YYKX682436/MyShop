@@ -10,11 +10,13 @@ import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.entity.SalesChannelRecoveryPermit;
+import com.myshop.entity.SalesChannelRecoveryPermitEvent;
 import com.myshop.entity.SalesChannelAccount;
 import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.SalesChannelRecoveryPermitRepository;
+import com.myshop.repository.SalesChannelRecoveryPermitEventRepository;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryPermitProof;
 import com.myshop.service.SalesChannelListingManagementPolicy;
@@ -23,6 +25,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.time.LocalDateTime;
@@ -40,6 +46,7 @@ public class SalesChannelOperationServiceImpl {
     private final SalesChannelListingGenerationRepository generationRepository;
     private final SalesChannelOperationRepository operationRepository;
     private final SalesChannelRecoveryPermitRepository recoveryPermitRepository;
+    private final SalesChannelRecoveryPermitEventRepository recoveryPermitEventRepository;
     private final SalesChannelAccountRepository accountRepository;
 
     /** Persists one frozen desired-state command with a stable, path-safe Agent request id. */
@@ -224,7 +231,12 @@ public class SalesChannelOperationServiceImpl {
         if (operationRepository.existsBySalesChannelListingIdAndStatus(
                 listing.getId(), SalesChannelOperationStatus.RUNNING)) return false;
         if (!operation.start(now)) return false;
-        if (recoveryPermit != null) recoveryPermit.beginExecution(now);
+        if (recoveryPermit != null) {
+            String previousState = recoveryPermit.getState();
+            recoveryPermit.beginExecution(now);
+            recordRecoveryEvent(recoveryPermit, "EXECUTION_FENCE", previousState, "EXECUTING", now,
+                    Map.of("execution_outcome", recoveryPermit.getExecutionOutcome()));
+        }
         if (SalesChannelListingManagementPolicy.providerWritesAllowed(listing)
                 && !"DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode())) {
             listing.setStatus(SalesChannelListingStatus.APPLYING);
@@ -247,7 +259,10 @@ public class SalesChannelOperationServiceImpl {
         SalesChannelRecoveryPermit permit = recoveryPermitRepository
                 .findByOperationIdForUpdate(operationId).orElse(null);
         if (rescheduled && permit != null && "EXECUTING".equals(permit.getState())) {
+            String previousState = permit.getState();
             permit.recoveryRequired("STALE_LOCAL_LEASE_REPLAY");
+            recordRecoveryEvent(permit, "RECOVERY_REQUIRED", previousState, "RECOVERY_REQUIRED",
+                    LocalDateTime.now(), Map.of("execution_outcome", permit.getExecutionOutcome()));
         }
         return rescheduled;
     }
@@ -288,7 +303,12 @@ public class SalesChannelOperationServiceImpl {
         if (!operation.succeed(result, LocalDateTime.now())) return false;
 
         LocalDateTime now = LocalDateTime.now();
-        if (recoveryPermit != null) recoveryPermit.terminal("SUCCEEDED", now);
+        if (recoveryPermit != null) {
+            String previousState = recoveryPermit.getState();
+            recoveryPermit.terminal("SUCCEEDED", now);
+            recordRecoveryEvent(recoveryPermit, "TERMINAL", previousState, "TERMINAL", now,
+                    Map.of("terminal_outcome", recoveryPermit.getExecutionOutcome()));
+        }
         if (externalItemId != null) projectConvergenceIdentity(listing, externalItemId, now);
         String frozenFingerprint = Objects.toString(operation.getPayload().get("desired_fingerprint"), null);
         if (externalItemId != null) {
@@ -329,7 +349,10 @@ public class SalesChannelOperationServiceImpl {
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return false;
         boolean rescheduled = operation.reschedule(errorCode, errorMessage, nextAttemptAt);
         if (rescheduled && permit != null && "EXECUTING".equals(permit.getState())) {
+            String previousState = permit.getState();
             permit.recoveryRequired(errorCode);
+            recordRecoveryEvent(permit, "RECOVERY_REQUIRED", previousState, "RECOVERY_REQUIRED",
+                    LocalDateTime.now(), Map.of("execution_outcome", permit.getExecutionOutcome()));
         }
         return rescheduled;
     }
@@ -351,7 +374,12 @@ public class SalesChannelOperationServiceImpl {
         if (operation.getOperationType() != SalesChannelOperationType.ENSURE_LISTING
                 || !operation.fail(errorCode, errorMessage, LocalDateTime.now())) return false;
         LocalDateTime now = LocalDateTime.now();
-        if (permit != null) permit.terminal("FAILED_NO_AUTOMATIC_RETRY:" + errorCode, now);
+        if (permit != null) {
+            String previousState = permit.getState();
+            permit.terminal("FAILED_NO_AUTOMATIC_RETRY:" + errorCode, now);
+            recordRecoveryEvent(permit, "TERMINAL", previousState, "TERMINAL", now,
+                    Map.of("terminal_outcome", permit.getExecutionOutcome()));
+        }
         if (operation.getDesiredRevision() == listing.getDesiredRevision()
                 && !"DESIRED_LISTING_INVALID".equals(listing.getLastErrorCode())) {
             listing.setStatus(SalesChannelListingStatus.ERROR);
@@ -365,6 +393,29 @@ public class SalesChannelOperationServiceImpl {
         if (permit == null) return expectedFence == null;
         return expectedFence != null && "EXECUTING".equals(permit.getState())
                 && permit.getExecutionFence() == expectedFence;
+    }
+
+    private void recordRecoveryEvent(SalesChannelRecoveryPermit permit, String eventType,
+                                     String previousState, String newState, LocalDateTime eventAt,
+                                     Map<String, Object> evidence) {
+        String canonical = String.join("\n",
+                permit.getId().toString().toLowerCase(), Long.toString(permit.getGeneration()),
+                permit.getAccountId(), permit.getSalesChannelListingId().toString().toLowerCase(),
+                permit.getMyshopOperationId().toString().toLowerCase(),
+                Long.toString(permit.getAgentOperationId()), permit.getRequestId(),
+                Long.toString(permit.getDesiredRevision()), permit.getDesiredFingerprint(),
+                permit.getExpectedOldItemId());
+        String fingerprint;
+        try {
+            fingerprint = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+        String actor = permit.getGoOperator() == null ? permit.getOperator() : permit.getGoOperator();
+        recoveryPermitEventRepository.save(new SalesChannelRecoveryPermitEvent(
+                permit.getId(), permit.getGeneration(), eventType, null, previousState, newState,
+                actor, permit.getReason(), eventAt, permit.getExecutionFence(), fingerprint, evidence));
     }
 
     @Transactional(readOnly = true)

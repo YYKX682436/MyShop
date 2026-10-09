@@ -125,6 +125,28 @@ public class SalesChannelRecoveryPermit extends BaseEntity {
         this.armedAt = now;
     }
 
+    /** Advance only this logical permit after the previous pre-GO generation was proven cancelled. */
+    public void prepareNextGeneration(long nextGeneration, String nextOperator, String nextReason,
+                                      Map<String, Object> nextPreconditions, LocalDateTime now) {
+        if (!"CANCELLED".equals(state) || nextGeneration != generation + 1) {
+            throw new IllegalStateException("Only the exact next generation of a cancelled permit can be prepared");
+        }
+        generation = nextGeneration;
+        state = "PREPARED";
+        operator = nextOperator;
+        reason = nextReason;
+        preconditions = new LinkedHashMap<>(nextPreconditions == null ? Map.of() : nextPreconditions);
+        agentPreconditions = new LinkedHashMap<>();
+        executionOutcome = null;
+        executionFence = 0;
+        preparedAt = now;
+        armedAt = null;
+        goOperator = null;
+        goAt = null;
+        executionStartedAt = null;
+        terminalAt = null;
+    }
+
     public void activate(String operator, LocalDateTime now, Map<String, Object> goPreconditions) {
         if (!"ARMED".equals(state)) throw new IllegalStateException("Only ARMED recovery permits can be activated");
         this.state = "GO_PENDING";

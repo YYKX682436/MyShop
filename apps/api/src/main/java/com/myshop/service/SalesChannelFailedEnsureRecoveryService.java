@@ -15,11 +15,13 @@ import com.myshop.entity.SalesChannelListing;
 import com.myshop.entity.SalesChannelListingGeneration;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.entity.SalesChannelRecoveryPermit;
+import com.myshop.entity.SalesChannelRecoveryPermitEvent;
 import com.myshop.repository.SalesChannelAccountRepository;
 import com.myshop.repository.SalesChannelListingGenerationRepository;
 import com.myshop.repository.SalesChannelListingRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.SalesChannelRecoveryPermitRepository;
+import com.myshop.repository.SalesChannelRecoveryPermitEventRepository;
 import com.myshop.saleschannel.convergence.XianyuConvergenceClient;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.RecoveryArmRequest;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts.CutoverReadiness;
@@ -38,6 +40,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -64,6 +70,7 @@ public class SalesChannelFailedEnsureRecoveryService {
     private final SalesChannelListingGenerationRepository generationRepository;
     private final SalesChannelOperationRepository operationRepository;
     private final SalesChannelRecoveryPermitRepository permitRepository;
+    private final SalesChannelRecoveryPermitEventRepository permitEventRepository;
     private final SalesChannelDesiredStatePlanner planner;
     private final XianyuConvergenceClient convergenceClient;
     private final ObjectMapper objectMapper;
@@ -74,45 +81,120 @@ public class SalesChannelFailedEnsureRecoveryService {
 
     /** Read-only local and Agent validation. It does not create or mutate a permit. */
     public RecoveryPlan plan(UUID listingId, UUID operationId) {
+        assertRecoveryGatesClosed();
         LocalSnapshot local = validateLocal(listingId, operationId, false);
         RecoveryValidationResponse agent = validateAgent(local.validationRequest());
         if (agent.agentOperationId() != B_AGENT_OPERATION_ID
                 || !B_REQUEST_ID.equals(agent.requestId())) {
             throw rejected("AGENT_RECOVERY_COMMAND_IDENTITY_MISMATCH");
         }
+        SalesChannelRecoveryPermit permit = permitRepository.findByMyshopOperationId(operationId).orElse(null);
+        if (permit != null) {
+            if (!matchesPermit(permit, listingId, operationId)) {
+                throw rejected("RECOVERY_PERMIT_IDENTITY_CONFLICT");
+            }
+            RecoveryPermitObservation remote = convergenceClient.observeRecovery(
+                    permit.getId().toString().toLowerCase());
+            verifyRemoteIdentity(permit, remote);
+            if ("CANCELLED".equals(permit.getState())) {
+                assertLocalGenerationReissuable(permit);
+                assertRemoteGenerationReissuable(permit, remote);
+            } else if (!("PREPARED".equals(permit.getState()) || "ARMED".equals(permit.getState()))
+                    || !permit.getState().equals(remote.state())) {
+                throw rejected("RECOVERY_PERMIT_STATE_MISMATCH");
+            }
+        }
         return recoveryPlan(local, agent);
     }
 
     /** Persist PREPARED on MyShop, then idempotently prepare Agent; no state here can claim the FAILED row. */
     public RecoveryPermitSummary prepare(UUID listingId, UUID operationId, String operator, String reason) {
-        if (operator == null || operator.isBlank() || reason == null || reason.isBlank()) {
+        assertRecoveryGatesClosed();
+        if (operator == null || operator.isBlank() || operator.length() > 128
+                || reason == null || reason.isBlank() || reason.length() > 2000) {
             throw rejected("RECOVERY_OPERATOR_AND_REASON_REQUIRED");
         }
-        RecoveryPlan validated = plan(listingId, operationId);
+        LocalSnapshot planLocal = validateLocal(listingId, operationId, false);
+        RecoveryValidationResponse agentValidation = validateAgent(planLocal.validationRequest());
+        if (agentValidation.agentOperationId() != B_AGENT_OPERATION_ID
+                || !B_REQUEST_ID.equals(agentValidation.requestId())) {
+            throw rejected("AGENT_RECOVERY_COMMAND_IDENTITY_MISMATCH");
+        }
+        RecoveryPlan validated = recoveryPlan(planLocal, agentValidation);
         SalesChannelRecoveryPermit existing = permitRepository.findByMyshopOperationId(operationId).orElse(null);
-        SalesChannelRecoveryPermit permit = existing;
-        if (permit == null) {
-            Map<String, Object> preconditions = new LinkedHashMap<>(validated.myshopPreconditions());
-            preconditions.put("agent", validated.agentPreconditions());
-            try {
-                permit = new TransactionTemplate(transactionManager).execute(status -> {
-                    LocalSnapshot current = validateLocal(listingId, operationId, true);
-                    if (permitRepository.findByOperationIdForUpdate(operationId).isPresent()) {
-                        return permitRepository.findByOperationIdForUpdate(operationId).orElseThrow();
+        if (existing != null && !matchesPermit(existing, listingId, operationId)) {
+            throw rejected("RECOVERY_PERMIT_IDENTITY_CONFLICT");
+        }
+
+        RecoveryPermitObservation remoteBeforeRenewal = null;
+        if (existing != null && "CANCELLED".equals(existing.getState())) {
+            assertLocalGenerationReissuable(existing);
+            remoteBeforeRenewal = convergenceClient.observeRecovery(existing.getId().toString().toLowerCase());
+            verifyRemoteIdentity(existing, remoteBeforeRenewal);
+            assertRemoteGenerationReissuable(existing, remoteBeforeRenewal);
+        }
+
+        Map<String, Object> preconditions = new LinkedHashMap<>(validated.myshopPreconditions());
+        preconditions.put("agent", validated.agentPreconditions());
+        final RecoveryPermitObservation observedRemote = remoteBeforeRenewal;
+        SalesChannelRecoveryPermit permit;
+        try {
+            permit = new TransactionTemplate(transactionManager).execute(status -> {
+                LocalSnapshot current = validateLocal(listingId, operationId, true);
+                SalesChannelRecoveryPermit locked = permitRepository.findByOperationIdForUpdate(operationId)
+                        .orElse(null);
+                if (locked == null) {
+                    if (permitRepository.findByRequestId(B_REQUEST_ID).isPresent()) {
+                        throw rejected("RECOVERY_PERMIT_IDENTITY_CONFLICT");
                     }
                     SalesChannelRecoveryPermit created = new SalesChannelRecoveryPermit(
                             1L, listingId, operationId, validated.agentOperationId(),
                             current.account().getProviderAccountId(), B_REQUEST_ID, B_REVISION,
                             B_FINGERPRINT, B_OLD_ITEM_ID, operator.strip(), reason.strip(), preconditions,
                             LocalDateTime.now());
-                    return permitRepository.saveAndFlush(created);
-                });
-            } catch (DataIntegrityViolationException concurrentPrepare) {
-                permit = permitRepository.findByMyshopOperationId(operationId).orElseThrow(
-                        () -> rejected("RECOVERY_PREPARE_CONFLICT"));
+                    SalesChannelRecoveryPermit saved = permitRepository.saveAndFlush(created);
+                    recordEvent(saved, "PREPARE", null, null, "PREPARED",
+                            operator.strip(), reason.strip(), LocalDateTime.now(),
+                            Map.of("preconditions", preconditions));
+                    return saved;
+                }
+                if (!matchesPermit(locked, listingId, operationId)) {
+                    throw rejected("RECOVERY_PERMIT_IDENTITY_CONFLICT");
+                }
+                if ("PREPARED".equals(locked.getState()) || "ARMED".equals(locked.getState())) {
+                    return locked;
+                }
+                if (!"CANCELLED".equals(locked.getState())) {
+                    throw rejected("RECOVERY_PERMIT_NOT_REPREPAREABLE");
+                }
+                assertLocalGenerationReissuable(locked);
+                if (observedRemote == null || observedRemote.generation() == null
+                        || observedRemote.generation() != locked.getGeneration()
+                        || !"CANCELLED".equals(observedRemote.state())) {
+                    throw rejected("RECOVERY_PERMIT_STATE_MISMATCH");
+                }
+                long previousGeneration = locked.getGeneration();
+                LocalDateTime preparedAt = LocalDateTime.now();
+                long nextGeneration;
+                try {
+                    nextGeneration = Math.addExact(previousGeneration, 1L);
+                } catch (ArithmeticException overflow) {
+                    throw rejected("RECOVERY_GENERATION_EXHAUSTED");
+                }
+                locked.prepareNextGeneration(nextGeneration, operator.strip(), reason.strip(), preconditions,
+                        preparedAt);
+                recordEvent(locked, "PREPARE", previousGeneration, "CANCELLED", "PREPARED",
+                        operator.strip(), reason.strip(), preparedAt,
+                        Map.of("preconditions", preconditions, "previous_generation_cancelled", true));
+                return locked;
+            });
+        } catch (DataIntegrityViolationException concurrentPrepare) {
+            if (existing != null) throw concurrentPrepare;
+            permit = permitRepository.findByMyshopOperationId(operationId).orElseThrow(
+                    () -> rejected("RECOVERY_PREPARE_CONFLICT"));
+            if (!matchesPermit(permit, listingId, operationId)) {
+                throw rejected("RECOVERY_PERMIT_IDENTITY_CONFLICT");
             }
-        } else if (!matchesPermit(existing, listingId, operationId)) {
-            throw rejected("RECOVERY_PERMIT_IDENTITY_CONFLICT");
         }
 
         RecoveryPermitObservation remote = convergenceClient.prepareRecovery(prepareRequest(permit));
@@ -124,11 +206,16 @@ public class SalesChannelFailedEnsureRecoveryService {
     }
 
     /** Agent ARMED is durable first; MyShop ARMED is committed only after its exact preconditions still hold. */
-    public RecoveryPermitSummary arm(UUID permitId) {
+    public RecoveryPermitSummary arm(UUID permitId, String operator) {
+        assertRecoveryGatesClosed();
+        if (operator == null || operator.isBlank() || operator.length() > 128) {
+            throw rejected("RECOVERY_OPERATOR_AND_REASON_REQUIRED");
+        }
         SalesChannelRecoveryPermit permit = requirePermit(permitId);
         LocalSnapshot local = validateLocal(permit.getSalesChannelListingId(), permit.getMyshopOperationId(), false);
         verifyScopeAgainstPermit(permit, local);
-        RecoveryPermitObservation remote = convergenceClient.armRecovery(armRequest(permit));
+        RecoveryPermitObservation remote = convergenceClient.armRecovery(
+                armRequest(permit, operator.strip(), permit.getReason()));
         verifyRemoteIdentity(permit, remote);
         if (!("ARMED".equals(remote.state()) || "EXECUTING".equals(remote.state())
                 || "RECOVERY_REQUIRED".equals(remote.state()))) {
@@ -142,7 +229,10 @@ public class SalesChannelFailedEnsureRecoveryService {
                     .orElseThrow(() -> rejected("RECOVERY_PERMIT_NOT_FOUND"));
             if ("ARMED".equals(locked.getState())) return locked;
             if (!"PREPARED".equals(locked.getState())) throw rejected("RECOVERY_PERMIT_NOT_PREPARED");
-            locked.arm(remote.preconditions(), LocalDateTime.now());
+            LocalDateTime armedAt = LocalDateTime.now();
+            locked.arm(remote.preconditions(), armedAt);
+            recordEvent(locked, "ARM", null, "PREPARED", "ARMED", operator.strip(),
+                    locked.getReason(), armedAt, Map.of("preconditions", remote.preconditions()));
             return locked;
         });
         return summary(armed);
@@ -182,7 +272,11 @@ public class SalesChannelFailedEnsureRecoveryService {
                 if (!operation.reopenFailedForRecovery(LocalDateTime.now())) {
                     throw rejected("MYSHOP_FAILED_OPERATION_NOT_REOPENABLE");
                 }
-                lockedPermit.activate(operator, LocalDateTime.now(), current.preconditions());
+                LocalDateTime goAt = LocalDateTime.now();
+                lockedPermit.activate(operator, goAt, current.preconditions());
+                recordEvent(lockedPermit, "GO_PENDING", null, "ARMED", "GO_PENDING",
+                        operator, lockedPermit.getReason(), goAt,
+                        Map.of("preconditions", current.preconditions()));
                 return lockedPermit;
             });
         }
@@ -192,10 +286,11 @@ public class SalesChannelFailedEnsureRecoveryService {
         RecoveryPermitObservation remote = convergenceClient.observeRecovery(permitId.toString().toLowerCase());
         verifyRemoteIdentity(permit, remote);
         if ("ARMED".equals(remote.state())) {
-            remote = convergenceClient.activateRecovery(armRequest(permit));
+            remote = convergenceClient.activateRecovery(armRequest(permit, operator, permit.getReason()));
             verifyRemoteIdentity(permit, remote);
         }
         if (!"ACTIVE".equals(remote.state())) throw rejected("AGENT_RECOVERY_GO_NOT_ACTIVE");
+        final String agentState = remote.state();
 
         SalesChannelRecoveryPermit activated = new TransactionTemplate(transactionManager).execute(status -> {
             LocalSnapshot current = validateLocal(goPendingPermit.getSalesChannelListingId(), goPendingPermit.getMyshopOperationId(), true, true);
@@ -206,7 +301,12 @@ public class SalesChannelFailedEnsureRecoveryService {
                     || "RECOVERY_REQUIRED".equals(lockedPermit.getState())
                     || "TERMINAL".equals(lockedPermit.getState())) return lockedPermit;
             if (!"GO_PENDING".equals(lockedPermit.getState())) throw rejected("RECOVERY_PERMIT_NOT_GO_PENDING");
-            lockedPermit.completeGo(LocalDateTime.now());
+            String previousState = lockedPermit.getState();
+            LocalDateTime activeAt = LocalDateTime.now();
+            lockedPermit.completeGo(activeAt);
+            recordEvent(lockedPermit, "ACTIVE", null, previousState, "ACTIVE",
+                    lockedPermit.getGoOperator(), lockedPermit.getReason(), activeAt,
+                    Map.of("agent_state", agentState));
             return lockedPermit;
         });
         return summary(activated);
@@ -246,12 +346,20 @@ public class SalesChannelFailedEnsureRecoveryService {
                     throw rejected("MYSHOP_TERMINAL_OPERATION_REQUIRED");
                 }
             }
-            locked.beginCancel(operator.strip(), reason.strip(), LocalDateTime.now());
+            String previousState = locked.getState();
+            LocalDateTime cancelAt = LocalDateTime.now();
+            locked.beginCancel(operator.strip(), reason.strip(), cancelAt);
+            if (!"CANCEL_PENDING".equals(previousState)) {
+                recordEvent(locked, "CANCEL_PENDING", null, previousState, "CANCEL_PENDING",
+                        operator.strip(), reason.strip(), cancelAt,
+                        Map.of("execution_fence", locked.getExecutionFence()));
+            }
             return locked;
         });
         if ("CANCELLED".equals(staged.getState())) return summary(staged);
 
-        RecoveryPermitObservation remote = convergenceClient.cancelRecovery(armRequest(staged));
+        RecoveryPermitObservation remote = convergenceClient.cancelRecovery(
+                armRequest(staged, operator.strip(), reason.strip()));
         verifyRemoteIdentity(staged, remote);
         if (!"CANCELLED".equals(remote.state())) throw rejected("AGENT_RECOVERY_CANCEL_INCOMPLETE");
 
@@ -260,7 +368,11 @@ public class SalesChannelFailedEnsureRecoveryService {
                     .orElseThrow(() -> rejected("RECOVERY_PERMIT_NOT_FOUND"));
             if ("CANCELLED".equals(locked.getState())) return locked;
             if (!"CANCEL_PENDING".equals(locked.getState())) throw rejected("RECOVERY_CANCEL_STATE_MISMATCH");
+            LocalDateTime cancelledAt = LocalDateTime.now();
             locked.finishCancel();
+            recordEvent(locked, "CANCELLED", null, "CANCEL_PENDING", "CANCELLED",
+                    operator.strip(), reason.strip(), cancelledAt,
+                    Map.of("execution_outcome", locked.getExecutionOutcome()));
             return locked;
         });
         return summary(cancelled);
@@ -274,6 +386,72 @@ public class SalesChannelFailedEnsureRecoveryService {
             throw rejected("AGENT_RECOVERY_VALIDATION_FAILED");
         }
         return response;
+    }
+
+    private void assertRecoveryGatesClosed() {
+        if (workerEnabled) throw rejected("RECOVERY_REQUIRES_MYSHOP_WORKER_DISABLED");
+        CutoverReadiness readiness = convergenceClient.agentReadiness();
+        if (readiness == null || !Boolean.FALSE.equals(readiness.v2WritesEnabled())
+                || !Boolean.FALSE.equals(readiness.v2AdoptionEnabled())) {
+            throw rejected("RECOVERY_REQUIRES_AGENT_GATES_DISABLED");
+        }
+    }
+
+    private void assertLocalGenerationReissuable(SalesChannelRecoveryPermit permit) {
+        if (!"CANCELLED".equals(permit.getState()) || permit.getGoAt() != null
+                || permit.getExecutionStartedAt() != null || permit.getTerminalAt() != null
+                || permit.getExecutionFence() != 0
+                || permitEventRepository.existsByPermitIdAndGenerationAndEventTypeIn(
+                    permit.getId(), permit.getGeneration(), List.of(
+                            "GO_PENDING", "ACTIVE", "EXECUTING", "RECOVERY_REQUIRED",
+                            "TERMINAL", "EXECUTION_FENCE", "GO_ACCEPTED"))) {
+            throw rejected("RECOVERY_PREVIOUS_GENERATION_NOT_PRE_GO");
+        }
+    }
+
+    private void assertRemoteGenerationReissuable(
+            SalesChannelRecoveryPermit permit, RecoveryPermitObservation remote) {
+        if (remote == null || remote.generation() == null
+                || remote.generation() != permit.getGeneration()
+                || !"CANCELLED".equals(remote.state())
+                || !"CANCELLED".equals(remote.executionOutcome())
+                || remote.activatedAt() != null || remote.executionStartedAt() != null
+                || remote.terminalAt() != null
+                || remote.executionFence() == null || remote.executionFence() != 0
+                || remote.myshopExecutionFence() == null || remote.myshopExecutionFence() != 0) {
+            throw rejected("AGENT_PREVIOUS_GENERATION_NOT_PRE_GO");
+        }
+    }
+
+    private void recordEvent(SalesChannelRecoveryPermit permit, String eventType,
+                             Long previousGeneration, String previousState, String newState,
+                             String operator, String reason, LocalDateTime eventAt,
+                             Map<String, Object> evidence) {
+        permitEventRepository.save(new SalesChannelRecoveryPermitEvent(
+                permit.getId(), permit.getGeneration(), eventType, previousGeneration,
+                previousState, newState, operator, reason, eventAt,
+                permit.getExecutionFence(), identityFingerprint(permit), evidence));
+    }
+
+    private String identityFingerprint(SalesChannelRecoveryPermit permit) {
+        String canonical = String.join("\n",
+                permit.getId().toString().toLowerCase(),
+                Long.toString(permit.getGeneration()),
+                permit.getAccountId(),
+                permit.getSalesChannelListingId().toString().toLowerCase(),
+                permit.getMyshopOperationId().toString().toLowerCase(),
+                Long.toString(permit.getAgentOperationId()),
+                permit.getRequestId(),
+                Long.toString(permit.getDesiredRevision()),
+                permit.getDesiredFingerprint(),
+                permit.getExpectedOldItemId());
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
     }
 
     private RecoveryPlan recoveryPlan(LocalSnapshot local, RecoveryValidationResponse agent) {
@@ -412,12 +590,12 @@ public class SalesChannelFailedEnsureRecoveryService {
                 scope.agentOperationId(), permit.getOperator(), permit.getReason());
     }
 
-    private RecoveryArmRequest armRequest(SalesChannelRecoveryPermit permit) {
+    private RecoveryArmRequest armRequest(SalesChannelRecoveryPermit permit, String operator, String reason) {
         RecoveryScope scope = scope(permit);
         return new RecoveryArmRequest(permit.getId().toString().toLowerCase(), permit.getGeneration(),
                 scope.accountId(), scope.listingKey(), scope.myshopOperationId(), scope.requestId(),
                 scope.desiredRevision(), scope.desiredFingerprint(), scope.expectedOldItemId(),
-                scope.agentOperationId());
+                scope.agentOperationId(), operator, reason);
     }
 
     private void verifyRemoteIdentity(SalesChannelRecoveryPermit permit, RecoveryPermitObservation remote) {

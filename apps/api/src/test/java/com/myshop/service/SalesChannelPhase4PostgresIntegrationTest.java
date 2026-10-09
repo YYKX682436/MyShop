@@ -25,6 +25,7 @@ import com.myshop.entity.SalesChannelOrder;
 import com.myshop.entity.SalesChannelOrderCursor;
 import com.myshop.entity.SalesChannelOperation;
 import com.myshop.entity.SalesChannelRecoveryPermit;
+import com.myshop.entity.SalesChannelRecoveryPermitEvent;
 import com.myshop.exception.BusinessException;
 import com.myshop.exception.SalesChannelSpecMappingException;
 import com.myshop.exception.UnmanagedSalesChannelItemException;
@@ -37,6 +38,7 @@ import com.myshop.repository.SalesChannelOrderRepository;
 import com.myshop.repository.SalesChannelOrderCursorRepository;
 import com.myshop.repository.SalesChannelOperationRepository;
 import com.myshop.repository.SalesChannelRecoveryPermitRepository;
+import com.myshop.repository.SalesChannelRecoveryPermitEventRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -70,6 +72,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -155,6 +158,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     @Autowired
     private SalesChannelRecoveryPermitRepository recoveryPermitRepository;
+
+    @Autowired
+    private SalesChannelRecoveryPermitEventRepository recoveryPermitEventRepository;
 
     @Autowired
     private SalesChannelOperationClaimService operationClaimService;
@@ -534,8 +540,10 @@ class SalesChannelPhase4PostgresIntegrationTest {
         when(planner.computeCurrentIntent(listingId)).thenReturn(new SalesChannelDesiredStatePlanner.ComputedDesiredIntent(
                 account, null, SalesChannelListingDesiredState.ONLINE, snapshot, fingerprint));
         XianyuConvergenceClient agent = org.mockito.Mockito.mock(XianyuConvergenceClient.class);
+        when(agent.agentReadiness()).thenReturn(new XianyuConvergenceContracts.CutoverReadiness(1, false, false));
         AtomicReference<XianyuConvergenceContracts.RecoveryPermitObservation> remotePermit = new AtomicReference<>();
         AtomicBoolean loseFirstActivationResponse = new AtomicBoolean(true);
+        AtomicInteger prepareLossMode = new AtomicInteger();
         when(agent.validateRecovery(any())).thenReturn(new XianyuConvergenceContracts.RecoveryValidationResponse(
                 true, 15L, requestId, "a".repeat(64), Map.of("provider_attempt_count", 0)));
         when(agent.prepareRecovery(any())).thenAnswer(invocation -> {
@@ -544,7 +552,13 @@ class SalesChannelPhase4PostgresIntegrationTest {
                     request.accountId(), request.listingKey(), request.myshopOperationId(), 15L,
                     request.requestId(), request.desiredRevision(), request.desiredFingerprint(),
                     request.expectedOldItemId());
+            if (prepareLossMode.compareAndSet(1, 0)) {
+                throw new IllegalStateException("simulated response loss before Agent prepare commit");
+            }
             remotePermit.set(prepared);
+            if (prepareLossMode.compareAndSet(2, 0)) {
+                throw new IllegalStateException("simulated response loss after Agent prepare commit");
+            }
             return prepared;
         });
         when(agent.armRecovery(any())).thenAnswer(invocation -> {
@@ -557,6 +571,15 @@ class SalesChannelPhase4PostgresIntegrationTest {
             return armed;
         });
         when(agent.observeRecovery(any())).thenAnswer(invocation -> remotePermit.get());
+        when(agent.cancelRecovery(any())).thenAnswer(invocation -> {
+            XianyuConvergenceContracts.RecoveryArmRequest request = invocation.getArgument(0);
+            var cancelled = recoveryObservation(request.permitId(), request.generation(), "CANCELLED",
+                    request.accountId(), request.listingKey(), request.myshopOperationId(), 15L,
+                    request.requestId(), request.desiredRevision(), request.desiredFingerprint(),
+                    request.expectedOldItemId());
+            remotePermit.set(cancelled);
+            return cancelled;
+        });
         when(agent.activateRecovery(any())).thenAnswer(invocation -> {
             XianyuConvergenceContracts.RecoveryArmRequest request = invocation.getArgument(0);
             var active = recoveryObservation(request.permitId(), request.generation(), "ACTIVE",
@@ -572,7 +595,8 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
         SalesChannelFailedEnsureRecoveryService service = new SalesChannelFailedEnsureRecoveryService(
                 listingRepository, accountRepository, generationRepository, operationRepository,
-                recoveryPermitRepository, planner, agent, objectMapper, transactionManager);
+                recoveryPermitRepository, recoveryPermitEventRepository, planner, agent,
+                objectMapper, transactionManager);
         assertTrue(service.plan(listingId, operationId).eligible());
         assertEquals(SalesChannelOperationStatus.FAILED,
                 operationRepository.findById(operationId).orElseThrow().getStatus());
@@ -582,15 +606,127 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
         var prepared = service.prepare(listingId, operationId, "operator-r2", "recover only frozen B command");
         assertEquals("PREPARED", prepared.state());
-        var armed = service.arm(prepared.permitId());
+        var armed = service.arm(prepared.permitId(), "operator-r2");
         assertEquals("ARMED", armed.state());
         assertFalse(operationClaimService.selectReadyIds(now.plusSeconds(1), 100).contains(operationId));
+
+        UUID logicalPermitId = prepared.permitId();
+        var generationOneCancelled = service.cancel(
+                logicalPermitId, "operator-r2", "cancel before GO for generation test");
+        assertEquals(1L, generationOneCancelled.generation());
+        assertEquals("CANCELLED", generationOneCancelled.state());
+        assertTrue(service.plan(listingId, operationId).eligible());
+
+        SalesChannelRecoveryPermitEventRepository failingEvents = org.mockito.Mockito.mock(
+                SalesChannelRecoveryPermitEventRepository.class);
+        when(failingEvents.existsByPermitIdAndGenerationAndEventTypeIn(any(), any(Long.class), any()))
+                .thenReturn(false);
+        when(failingEvents.save(any())).thenAnswer(invocation -> {
+            SalesChannelRecoveryPermitEvent event = invocation.getArgument(0);
+            recoveryPermitEventRepository.save(event);
+            recoveryPermitEventRepository.flush();
+            throw new DataIntegrityViolationException("simulated audit insert failure");
+        });
+        SalesChannelFailedEnsureRecoveryService rollbackService = new SalesChannelFailedEnsureRecoveryService(
+                listingRepository, accountRepository, generationRepository, operationRepository,
+                recoveryPermitRepository, failingEvents, planner, agent, objectMapper, transactionManager);
+        assertThrows(DataIntegrityViolationException.class, () -> rollbackService.prepare(
+                listingId, operationId, "operator-r2", "rollback generation 2 on audit failure"));
+        assertEquals(1L, recoveryPermitRepository.findById(logicalPermitId).orElseThrow().getGeneration());
+        assertEquals("CANCELLED", recoveryPermitRepository.findById(logicalPermitId).orElseThrow().getState());
+        assertEquals(0, jdbcTemplate.queryForObject(
+                "select count(*) from sales_channel_recovery_permit_events "
+                        + "where permit_id = ? and generation = 2",
+                Integer.class, logicalPermitId));
+
+        // MyShop commits generation 2 before calling Agent. Exercise both sides
+        // of the response-loss boundary, then retry the same generation.
+        prepareLossMode.set(1);
+        assertThrows(IllegalStateException.class, () -> service.prepare(
+                listingId, operationId, "operator-r2", "reissue same frozen command"));
+        var localGenerationTwo = recoveryPermitRepository.findById(logicalPermitId).orElseThrow();
+        assertEquals(2L, localGenerationTwo.getGeneration());
+        assertEquals("PREPARED", localGenerationTwo.getState());
+        assertEquals(1L, remotePermit.get().generation());
+        assertEquals("CANCELLED", remotePermit.get().state());
+
+        prepareLossMode.set(2);
+        assertThrows(IllegalStateException.class, () -> service.prepare(
+                listingId, operationId, "operator-r2", "reissue same frozen command"));
+        assertEquals(2L, remotePermit.get().generation());
+        assertEquals("PREPARED", remotePermit.get().state());
+
+        CountDownLatch prepareReady = new CountDownLatch(2);
+        CountDownLatch releasePrepare = new CountDownLatch(1);
+        ExecutorService preparePool = Executors.newFixedThreadPool(2);
+        Future<com.myshop.saleschannel.model.SalesChannelRecoveryDtos.RecoveryPermitSummary> prepareA =
+                preparePool.submit(() -> {
+                    prepareReady.countDown();
+                    releasePrepare.await();
+                    return service.prepare(listingId, operationId, "operator-a", "concurrent same generation");
+                });
+        Future<com.myshop.saleschannel.model.SalesChannelRecoveryDtos.RecoveryPermitSummary> prepareB =
+                preparePool.submit(() -> {
+                    prepareReady.countDown();
+                    releasePrepare.await();
+                    return service.prepare(listingId, operationId, "operator-b", "concurrent same generation");
+                });
+        assertTrue(prepareReady.await(10, TimeUnit.SECONDS));
+        releasePrepare.countDown();
+        var prepared2a = prepareA.get(30, TimeUnit.SECONDS);
+        var prepared2b = prepareB.get(30, TimeUnit.SECONDS);
+        preparePool.shutdownNow();
+        assertEquals(logicalPermitId, prepared2a.permitId());
+        assertEquals(logicalPermitId, prepared2b.permitId());
+        assertEquals(2L, prepared2a.generation());
+        assertEquals(2L, prepared2b.generation());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "select count(*) from sales_channel_recovery_permit_events "
+                        + "where permit_id = ? and generation = 2 and event_type = 'PREPARE'",
+                Integer.class, logicalPermitId));
+
+        var armed2 = service.arm(logicalPermitId, "operator-r2");
+        assertEquals(2L, armed2.generation());
+        assertEquals("ARMED", armed2.state());
+        var generationTwoCancelled = service.cancel(
+                logicalPermitId, "operator-r2", "cancel generation 2 before GO");
+        assertEquals(2L, generationTwoCancelled.generation());
+        assertEquals("CANCELLED", generationTwoCancelled.state());
+        assertTrue(service.plan(listingId, operationId).eligible(),
+                "the recovery plan proves generation 3 can be prepared without issuing it");
+
+        List<String> generationOneEvents = jdbcTemplate.queryForList(
+                "select event_type from sales_channel_recovery_permit_events "
+                        + "where permit_id = ? and generation = 1 order by event_id",
+                String.class, logicalPermitId);
+        List<String> generationTwoEvents = jdbcTemplate.queryForList(
+                "select event_type from sales_channel_recovery_permit_events "
+                        + "where permit_id = ? and generation = 2 order by event_id",
+                String.class, logicalPermitId);
+        assertEquals(List.of("PREPARE", "ARM", "CANCEL_PENDING", "CANCELLED"), generationOneEvents);
+        assertEquals(List.of("PREPARE", "ARM", "CANCEL_PENDING", "CANCELLED"), generationTwoEvents);
+        String generationOneFingerprint = jdbcTemplate.queryForObject(
+                "select identity_fingerprint from sales_channel_recovery_permit_events "
+                        + "where permit_id = ? and generation = 1 order by event_id limit 1",
+                String.class, logicalPermitId);
+        String generationTwoFingerprint = jdbcTemplate.queryForObject(
+                "select identity_fingerprint from sales_channel_recovery_permit_events "
+                        + "where permit_id = ? and generation = 2 order by event_id limit 1",
+                String.class, logicalPermitId);
+        assertNotEquals(generationOneFingerprint, generationTwoFingerprint);
+
+        prepared = service.prepare(listingId, operationId, "operator-r2", "prepare generation 3 test GO");
+        assertEquals(logicalPermitId, prepared.permitId());
+        assertEquals(3L, prepared.generation());
+        UUID generationThreePermitId = prepared.permitId();
+        armed = service.arm(prepared.permitId(), "operator-r2");
+        assertEquals(3L, armed.generation());
 
         var wrongRemote = recoveryObservation(prepared.permitId().toString(), prepared.generation(), "ARMED",
                 "wrong-account", listingId.toString(), operationId.toString(), 15L,
                 requestId, 10L, fingerprint, oldItem);
         remotePermit.set(wrongRemote);
-        assertThrows(IllegalStateException.class, () -> service.go(prepared.permitId(), "operator-r2"));
+        assertThrows(IllegalStateException.class, () -> service.go(generationThreePermitId, "operator-r2"));
         assertEquals("ARMED", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState());
         assertEquals(SalesChannelOperationStatus.FAILED,
                 operationRepository.findById(operationId).orElseThrow().getStatus());
@@ -598,8 +734,11 @@ class SalesChannelPhase4PostgresIntegrationTest {
         remotePermit.set(recoveryObservation(prepared.permitId().toString(), prepared.generation(), "ARMED",
                 accountId, listingId.toString(), operationId.toString(), 15L,
                 requestId, 10L, fingerprint, oldItem));
-        assertThrows(IllegalStateException.class, () -> service.go(prepared.permitId(), "operator-r2"));
+        assertThrows(IllegalStateException.class, () -> service.go(generationThreePermitId, "operator-r2"));
         assertEquals("GO_PENDING", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState());
+        assertThrows(IllegalStateException.class, () -> service.prepare(
+                listingId, operationId, "operator-r2", "must not renew GO_PENDING"));
+        assertEquals(3L, recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getGeneration());
         SalesChannelOperation goPendingOperation = operationRepository.findById(operationId).orElseThrow();
         assertEquals(SalesChannelOperationStatus.PENDING, goPendingOperation.getStatus());
         assertEquals(1, goPendingOperation.getAttemptCount());
@@ -668,14 +807,15 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(requestId, completed.getIdempotencyKey());
         assertEquals("TERMINAL", terminal.getState());
 
+        org.mockito.Mockito.clearInvocations(agent);
         when(agent.agentReadiness()).thenReturn(new XianyuConvergenceContracts.CutoverReadiness(1, true, false));
         assertThrows(IllegalStateException.class,
-                () -> service.cancel(prepared.permitId(), "operator-close", "close after gates are disabled"));
+                () -> service.cancel(generationThreePermitId, "operator-close", "close after gates are disabled"));
         verify(agent, never()).cancelRecovery(any());
 
         when(agent.agentReadiness()).thenReturn(new XianyuConvergenceContracts.CutoverReadiness(1, false, false));
         AtomicBoolean loseFirstCancelResponse = new AtomicBoolean(true);
-        when(agent.cancelRecovery(any())).thenAnswer(invocation -> {
+        org.mockito.Mockito.doAnswer(invocation -> {
             XianyuConvergenceContracts.RecoveryArmRequest request = invocation.getArgument(0);
             var cancelled = recoveryObservation(request.permitId(), request.generation(), "CANCELLED",
                     request.accountId(), request.listingKey(), request.myshopOperationId(), 15L,
@@ -686,9 +826,9 @@ class SalesChannelPhase4PostgresIntegrationTest {
                 throw new IllegalStateException("simulated response loss after Agent cancellation commit");
             }
             return cancelled;
-        });
+        }).when(agent).cancelRecovery(any());
         assertThrows(IllegalStateException.class,
-                () -> service.cancel(prepared.permitId(), "operator-close", "close after gates are disabled"));
+                () -> service.cancel(generationThreePermitId, "operator-close", "close after gates are disabled"));
         assertEquals("CANCEL_PENDING", recoveryPermitRepository.findById(prepared.permitId()).orElseThrow().getState(),
                 "Agent cancellation response loss leaves MyShop scoped and fail closed");
         assertTrue(recoveryPermitRepository.existsByStateIn(SalesChannelRecoveryPermitRepository.SCOPED_STATES));
@@ -708,7 +848,7 @@ class SalesChannelPhase4PostgresIntegrationTest {
         return new XianyuConvergenceContracts.RecoveryPermitObservation(
                 permitId, generation, state, accountId, listingKey, operationId, agentOperationId,
                 requestId, revision, fingerprint, oldItem, "operator-r2", "recover only frozen B command",
-                Map.of("provider_attempt_count", 0), state);
+                Map.of("provider_attempt_count", 0), state, null, null, null, null, null, 0L, 0L);
     }
 
     @MockitoBean

@@ -44,7 +44,7 @@ public class AdminSalesChannelRecoveryController {
             targetType = "SALES_CHANNEL_RECOVERY", targetId = "#permitId", detail = "'arm exact failed ENSURE permit'")
     @PostMapping("/admin/sales-channel-recovery/{permitId}/arm")
     public ApiResponse<RecoveryPermitSummary> arm(@PathVariable UUID permitId) {
-        return ApiResponse.success(recoveryService.arm(permitId));
+        return ApiResponse.success(recoveryService.arm(permitId, currentOperator()));
     }
 
     @LogOperation(action = "sales_channel.failed_ensure_recovery_go",
