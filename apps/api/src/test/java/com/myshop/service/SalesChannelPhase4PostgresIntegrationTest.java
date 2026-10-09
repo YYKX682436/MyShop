@@ -49,6 +49,7 @@ import com.myshop.saleschannel.SalesChannelProviderClientException;
 import com.myshop.saleschannel.SalesChannelWorker;
 import com.myshop.saleschannel.convergence.XianyuConvergenceClient;
 import com.myshop.saleschannel.convergence.XianyuConvergenceContracts;
+import com.myshop.saleschannel.xianyu.XianyuConvergenceHttpClient;
 import com.myshop.saleschannel.model.SalesChannelDtos.AgentOrder;
 import com.myshop.saleschannel.model.SalesChannelDtos.CatalogItem;
 import com.myshop.saleschannel.model.SalesChannelDtos.DeliveryReconcileData;
@@ -80,7 +81,12 @@ import com.myshop.service.impl.SalesChannelOperationServiceImpl;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -98,6 +104,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -616,6 +623,87 @@ class SalesChannelPhase4PostgresIntegrationTest {
         assertEquals(1L, generationOneCancelled.generation());
         assertEquals("CANCELLED", generationOneCancelled.state());
         assertTrue(service.plan(listingId, operationId).eligible());
+
+        SalesChannelRecoveryPermit permitBeforeHttpPlan = recoveryPermitRepository.findById(logicalPermitId)
+                .orElseThrow();
+        int eventsBeforeHttpPlan = count("select count(*) from sales_channel_recovery_permit_events where permit_id = ?",
+                logicalPermitId);
+        try (RecoveryPlanAgentHttpFixture httpFixture = new RecoveryPlanAgentHttpFixture(
+                objectMapper, logicalPermitId.toString().toLowerCase(), true)) {
+            XianyuConvergenceClient realHttpAgent = new XianyuConvergenceHttpClient(objectMapper,
+                    httpFixture.baseUrl(), "postgres-contract-test-key", "postgres-contract-test-secret", 2_000);
+            SalesChannelFailedEnsureRecoveryService realHttpPlanService = new SalesChannelFailedEnsureRecoveryService(
+                    listingRepository, accountRepository, generationRepository, operationRepository,
+                    recoveryPermitRepository, recoveryPermitEventRepository, planner, realHttpAgent,
+                    objectMapper, transactionManager);
+            var failure = assertThrows(SalesChannelProviderClientException.class,
+                    () -> realHttpPlanService.plan(listingId, operationId));
+            assertEquals("RECOVERY_PERMIT_RESPONSE_INVALID", failure.getErrorCode());
+            assertEquals(SalesChannelProviderClientException.Disposition.SAFE_PERMANENT,
+                    failure.getDisposition());
+            assertEquals(3, httpFixture.requests().size());
+        }
+        entityManager.clear();
+        assertEquals(1L, recoveryPermitRepository.findById(logicalPermitId).orElseThrow().getGeneration());
+        assertEquals("CANCELLED", recoveryPermitRepository.findById(logicalPermitId).orElseThrow().getState());
+        assertEquals(SalesChannelOperationStatus.FAILED,
+                operationRepository.findById(operationId).orElseThrow().getStatus());
+        assertEquals(eventsBeforeHttpPlan,
+                count("select count(*) from sales_channel_recovery_permit_events where permit_id = ?", logicalPermitId));
+
+        try (RecoveryPlanAgentHttpFixture httpFixture = new RecoveryPlanAgentHttpFixture(
+                objectMapper, logicalPermitId.toString().toLowerCase(), false)) {
+            XianyuConvergenceClient realHttpAgent = new XianyuConvergenceHttpClient(objectMapper,
+                    httpFixture.baseUrl(), "postgres-contract-test-key", "postgres-contract-test-secret", 2_000);
+            SalesChannelFailedEnsureRecoveryService realHttpPlanService = new SalesChannelFailedEnsureRecoveryService(
+                    listingRepository, accountRepository, generationRepository, operationRepository,
+                    recoveryPermitRepository, recoveryPermitEventRepository, planner, realHttpAgent,
+                    objectMapper, transactionManager);
+
+            var plan = realHttpPlanService.plan(listingId, operationId);
+            assertTrue(plan.eligible());
+            assertEquals(listingId, plan.listingId());
+            assertEquals(operationId, plan.myshopOperationId());
+            assertEquals(15L, plan.agentOperationId());
+            assertEquals(accountId, plan.accountId());
+            assertEquals(requestId, plan.requestId());
+            assertEquals(10L, plan.desiredRevision());
+            assertEquals(fingerprint, plan.desiredFingerprint());
+            assertEquals(oldItem, plan.expectedOldItemId());
+            assertEquals(List.of(
+                    "GET /api/integration/v2/readiness",
+                    "POST /api/integration/v2/recovery/validate",
+                    "GET /api/integration/v2/recovery/permits/" + logicalPermitId.toString().toLowerCase()),
+                    httpFixture.requests());
+            var validationRequest = httpFixture.validationRequest();
+            assertEquals(accountId, validationRequest.path("account_id").asText());
+            assertEquals(listingId.toString().toLowerCase(), validationRequest.path("listing_key").asText());
+            assertEquals(operationId.toString().toLowerCase(),
+                    validationRequest.path("myshop_operation_id").asText());
+            assertEquals(requestId, validationRequest.path("request_id").asText());
+            assertEquals(10L, validationRequest.path("desired_revision").asLong());
+            assertEquals(fingerprint, validationRequest.path("desired_fingerprint").asText());
+            assertEquals(oldItem, validationRequest.path("expected_old_item_id").asText());
+        }
+        entityManager.clear();
+        SalesChannelRecoveryPermit permitAfterHttpPlan = recoveryPermitRepository.findById(logicalPermitId)
+                .orElseThrow();
+        assertEquals(permitBeforeHttpPlan.getGeneration(), permitAfterHttpPlan.getGeneration());
+        assertEquals("CANCELLED", permitAfterHttpPlan.getState());
+        assertEquals("CANCELLED", permitAfterHttpPlan.getExecutionOutcome());
+        assertEquals(eventsBeforeHttpPlan,
+                count("select count(*) from sales_channel_recovery_permit_events where permit_id = ?", logicalPermitId));
+        SalesChannelOperation operationAfterHttpPlan = operationRepository.findById(operationId).orElseThrow();
+        assertEquals(SalesChannelOperationStatus.FAILED, operationAfterHttpPlan.getStatus());
+        assertEquals(1, operationAfterHttpPlan.getAttemptCount());
+        assertEquals(requestId, operationAfterHttpPlan.getIdempotencyKey());
+        assertEquals("PROVIDER_PRECALL_FAILURE", operationAfterHttpPlan.getLastErrorCode());
+        assertEquals(SalesChannelListingStatus.ERROR,
+                listingRepository.findById(listingId).orElseThrow().getStatus());
+        assertEquals("PAUSED", listingRepository.findById(listingId).orElseThrow()
+                .getConvergenceCutoverState().name());
+        assertEquals(oldItem, generationRepository.findCurrentByListingId(listingId).orElseThrow()
+                .getExternalItemId());
 
         SalesChannelRecoveryPermitEventRepository failingEvents = org.mockito.Mockito.mock(
                 SalesChannelRecoveryPermitEventRepository.class);
@@ -2618,5 +2706,100 @@ class SalesChannelPhase4PostgresIntegrationTest {
 
     private <T> T scalar(String sql, Class<T> type, Object... args) {
         return jdbcTemplate.queryForObject(sql, type, args);
+    }
+
+    private static final class RecoveryPlanAgentHttpFixture implements AutoCloseable {
+        private final ObjectMapper objectMapper;
+        private final String permitId;
+        private final boolean omitPermitFence;
+        private final HttpServer server;
+        private final List<String> requests = new CopyOnWriteArrayList<>();
+        private final AtomicReference<com.fasterxml.jackson.databind.JsonNode> validationRequest =
+                new AtomicReference<>();
+
+        private RecoveryPlanAgentHttpFixture(
+                ObjectMapper objectMapper, String permitId, boolean omitPermitFence) throws IOException {
+            this.objectMapper = objectMapper;
+            this.permitId = permitId;
+            this.omitPermitFence = omitPermitFence;
+            this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            this.server.createContext("/", this::handle);
+            this.server.start();
+        }
+
+        private String baseUrl() {
+            return "http://127.0.0.1:" + server.getAddress().getPort();
+        }
+
+        private List<String> requests() {
+            return List.copyOf(requests);
+        }
+
+        private com.fasterxml.jackson.databind.JsonNode validationRequest() {
+            return validationRequest.get();
+        }
+
+        private void handle(HttpExchange exchange) throws IOException {
+            String path = exchange.getRequestURI().getRawPath();
+            requests.add(exchange.getRequestMethod() + " " + path);
+            byte[] requestBody = exchange.getRequestBody().readAllBytes();
+            byte[] response;
+            if ("GET".equals(exchange.getRequestMethod())
+                    && "/api/integration/v2/readiness".equals(path)) {
+                response = "{\"schema_version\":1,\"v2_writes_enabled\":false,"
+                        .concat("\"v2_adoption_enabled\":false}").getBytes(StandardCharsets.UTF_8);
+            } else if ("POST".equals(exchange.getRequestMethod())
+                    && "/api/integration/v2/recovery/validate".equals(path)) {
+                validationRequest.set(objectMapper.readTree(requestBody));
+                var validation = objectMapper.createObjectNode();
+                validation.put("eligible", true);
+                validation.put("agent_operation_id", 15);
+                validation.put("request_id", "0153b2a7-fbd7-48b8-b52c-0ea2379ddf26");
+                validation.put("command_fingerprint",
+                        "def5d3cbd69714b2cd8b3e87e5fc472631e46150b7bcd2c778a23f59b7989446");
+                validation.putObject("preconditions").put("provider_attempt_count", 0);
+                response = objectMapper.writeValueAsBytes(validation);
+            } else if ("GET".equals(exchange.getRequestMethod())
+                    && ("/api/integration/v2/recovery/permits/" + permitId).equals(path)) {
+                var permit = objectMapper.createObjectNode();
+                permit.put("permit_id", permitId);
+                permit.put("generation", 1);
+                permit.put("state", "CANCELLED");
+                permit.put("account_id", "2215747465381");
+                permit.put("listing_key", "c827bfa4-abfe-47f9-8d60-f2d1c6972fcd");
+                permit.put("myshop_operation_id", "7369460a-45a7-49d0-9cf5-85d98eff4199");
+                permit.put("agent_operation_id", 15);
+                permit.put("request_id", "0153b2a7-fbd7-48b8-b52c-0ea2379ddf26");
+                permit.put("desired_revision", 10);
+                permit.put("desired_fingerprint",
+                        "def5d3cbd69714b2cd8b3e87e5fc472631e46150b7bcd2c778a23f59b7989446");
+                permit.put("expected_old_item_id", "1084013851108");
+                permit.put("operator", "operator-r2");
+                permit.put("reason", "cancel before GO for generation test");
+                permit.putObject("preconditions").put("provider_attempt_count", 0);
+                permit.put("execution_outcome", "CANCELLED");
+                permit.put("prepared_at", "2026-10-09T12:00:00");
+                permit.putNull("armed_at");
+                permit.putNull("activated_at");
+                permit.putNull("execution_started_at");
+                permit.putNull("terminal_at");
+                permit.put("execution_fence", 0);
+                if (!omitPermitFence) permit.put("myshop_execution_fence", 0);
+                response = objectMapper.writeValueAsBytes(permit);
+            } else {
+                exchange.sendResponseHeaders(404, -1);
+                exchange.close();
+                return;
+            }
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
+        }
     }
 }

@@ -28,6 +28,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Set;
 import java.time.Clock;
 import java.util.function.Supplier;
@@ -353,7 +355,8 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
             throw permanent("RECOVERY_PREPARE_INVALID", "The exact recovery permit is invalid");
         }
-        return parseRecoveryPermit(postRecovery("/recovery/permits/prepare", request, 16 * 1024), request.permitId());
+        return parseRecoveryPermit(postRecovery("/recovery/permits/prepare", request, 16 * 1024),
+                RecoveryPermitExpectedIdentity.from(request));
     }
 
     @Override
@@ -361,7 +364,8 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
             throw permanent("RECOVERY_ARM_INVALID", "The exact recovery permit is invalid");
         }
-        return parseRecoveryPermit(postRecovery("/recovery/permits/arm", request, 16 * 1024), request.permitId());
+        return parseRecoveryPermit(postRecovery("/recovery/permits/arm", request, 16 * 1024),
+                RecoveryPermitExpectedIdentity.from(request));
     }
 
     @Override
@@ -369,7 +373,8 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
             throw permanent("RECOVERY_GO_INVALID", "The exact recovery permit is invalid");
         }
-        return parseRecoveryPermit(postRecovery("/recovery/permits/activate", request, 16 * 1024), request.permitId());
+        return parseRecoveryPermit(postRecovery("/recovery/permits/activate", request, 16 * 1024),
+                RecoveryPermitExpectedIdentity.from(request));
     }
 
     @Override
@@ -377,7 +382,8 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         if (request == null || !CONTRACT_VALIDATOR.validate(request).isEmpty()) {
             throw permanent("RECOVERY_CANCEL_INVALID", "The exact recovery permit is invalid");
         }
-        return parseRecoveryPermit(postRecovery("/recovery/permits/cancel", request, 16 * 1024), request.permitId());
+        return parseRecoveryPermit(postRecovery("/recovery/permits/cancel", request, 16 * 1024),
+                RecoveryPermitExpectedIdentity.from(request));
     }
 
     @Override
@@ -426,8 +432,10 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         if (!hasExactFields(root, "permit_id", "generation", "state", "account_id", "listing_key",
                 "myshop_operation_id", "agent_operation_id", "request_id", "desired_revision",
                 "desired_fingerprint", "expected_old_item_id", "operator", "reason", "preconditions",
-                "execution_outcome")) {
-            throw recoveryRejection(root, "RECOVERY_PERMIT_RESPONSE_INVALID");
+                "execution_outcome", "prepared_at", "armed_at", "activated_at", "execution_started_at",
+                "terminal_at", "execution_fence", "myshop_execution_fence")
+                || !hasValidRecoveryPermitTypes(root)) {
+            throw permanent("RECOVERY_PERMIT_RESPONSE_INVALID", "Agent returned an invalid recovery permit");
         }
         try {
             RecoveryPermitObservation observation = objectMapper.treeToValue(root, RecoveryPermitObservation.class);
@@ -439,6 +447,89 @@ public final class XianyuConvergenceHttpClient implements XianyuConvergenceClien
         } catch (IOException | RuntimeException invalid) {
             if (invalid instanceof SalesChannelProviderClientException providerFailure) throw providerFailure;
             throw permanent("RECOVERY_PERMIT_RESPONSE_INVALID", "Agent returned an invalid recovery permit");
+        }
+    }
+
+    private RecoveryPermitObservation parseRecoveryPermit(
+            JsonNode root, RecoveryPermitExpectedIdentity expected) {
+        RecoveryPermitObservation observation = parseRecoveryPermit(root, expected.permitId());
+        if (observation.generation() != expected.generation()
+                || !expected.accountId().equals(observation.accountId())
+                || !expected.listingKey().equals(observation.listingKey())
+                || !expected.myshopOperationId().equals(observation.myshopOperationId())
+                || !expected.requestId().equals(observation.requestId())
+                || observation.desiredRevision() == null
+                || observation.desiredRevision() != expected.desiredRevision()
+                || !expected.desiredFingerprint().equals(observation.desiredFingerprint())
+                || !expected.expectedOldItemId().equals(observation.expectedOldItemId())
+                || observation.agentOperationId() != expected.agentOperationId()) {
+            throw permanent("AGENT_RECOVERY_PERMIT_IDENTITY_MISMATCH",
+                    "Agent returned a recovery permit for a different command");
+        }
+        return observation;
+    }
+
+    private static boolean hasValidRecoveryPermitTypes(JsonNode root) {
+        if (!textual(root, "permit_id") || !integerAtLeast(root, "generation", 1)
+                || !textual(root, "state") || !textual(root, "account_id")
+                || !textual(root, "listing_key") || !textual(root, "myshop_operation_id")
+                || !integerAtLeast(root, "agent_operation_id", 1) || !textual(root, "request_id")
+                || !integerAtLeast(root, "desired_revision", 0) || !textual(root, "desired_fingerprint")
+                || !textual(root, "expected_old_item_id") || !textual(root, "operator")
+                || !textual(root, "reason") || !root.path("preconditions").isObject()
+                || !nullableText(root, "execution_outcome")
+                || !nullableTimestamp(root, "prepared_at") || !nullableTimestamp(root, "armed_at")
+                || !nullableTimestamp(root, "activated_at") || !nullableTimestamp(root, "execution_started_at")
+                || !nullableTimestamp(root, "terminal_at") || !integerAtLeast(root, "execution_fence", 0)
+                || !integerAtLeast(root, "myshop_execution_fence", 0)) {
+            return false;
+        }
+        return Set.of("PREPARED", "ARMED", "ACTIVE", "EXECUTING", "RECOVERY_REQUIRED", "TERMINAL", "CANCELLED")
+                .contains(root.path("state").asText());
+    }
+
+    private static boolean textual(JsonNode root, String field) {
+        return root.path(field).isTextual();
+    }
+
+    private static boolean nullableText(JsonNode root, String field) {
+        JsonNode value = root.path(field);
+        return value.isNull() || value.isTextual();
+    }
+
+    private static boolean nullableTimestamp(JsonNode root, String field) {
+        JsonNode value = root.path(field);
+        if (value.isNull()) return true;
+        if (!value.isTextual()) return false;
+        try {
+            DateTimeFormatter.ISO_DATE_TIME.parse(value.asText());
+            return true;
+        } catch (DateTimeParseException invalid) {
+            return false;
+        }
+    }
+
+    private static boolean integerAtLeast(JsonNode root, String field, long minimum) {
+        JsonNode value = root.path(field);
+        return value.isIntegralNumber() && value.canConvertToLong() && value.longValue() >= minimum;
+    }
+
+    private record RecoveryPermitExpectedIdentity(
+            String permitId, long generation, String accountId, String listingKey,
+            String myshopOperationId, long agentOperationId, String requestId,
+            long desiredRevision, String desiredFingerprint, String expectedOldItemId) {
+        static RecoveryPermitExpectedIdentity from(RecoveryPrepareRequest request) {
+            return new RecoveryPermitExpectedIdentity(request.permitId(), request.generation(),
+                    request.accountId(), request.listingKey(), request.myshopOperationId(),
+                    request.agentOperationId(), request.requestId(), request.desiredRevision(),
+                    request.desiredFingerprint(), request.expectedOldItemId());
+        }
+
+        static RecoveryPermitExpectedIdentity from(RecoveryArmRequest request) {
+            return new RecoveryPermitExpectedIdentity(request.permitId(), request.generation(),
+                    request.accountId(), request.listingKey(), request.myshopOperationId(),
+                    request.agentOperationId(), request.requestId(), request.desiredRevision(),
+                    request.desiredFingerprint(), request.expectedOldItemId());
         }
     }
 
