@@ -65,6 +65,20 @@ test("Xianyu per-SKU stock cap is optional, bounded, and explicitly channel-only
   assert.match(salesChannelEditor, /stockCapPerSku,/)
 })
 
+test("sales-channel status refreshes while the editor is open without replacing saved config", () => {
+  const polling = salesChannelEditor.match(/const pollStatus = async \(\) => \{[\s\S]*?\}, \[productId\]\)/)?.[0]
+  assert.ok(polling, "the listing status poll is scoped to the current product")
+  assert.match(polling, /adminSalesChannelApi\.getProductListings\(productId\)/)
+  assert.match(polling, /document\.visibilityState === "hidden"/)
+  assert.match(polling, /requestInFlight/)
+  assert.match(polling, /preserveSavedProviderConfigs\(current, nextListings\)/)
+  assert.match(salesChannelEditor, /window\.setInterval\(\(\) => \{ void pollStatus\(\) \}, 5000\)/)
+  assert.match(salesChannelEditor, /window\.clearInterval\(timer\)/)
+  assert.match(salesChannelEditor, /providerConfig: previous\.providerConfig/)
+  assert.match(salesChannelEditor, /目标版本 \/ 已应用版本[\s\S]*?desiredRevision[\s\S]*?appliedRevision/)
+  assert.match(salesChannelEditor, /case "APPLYING":\s*return "处理中"/)
+})
+
 test("Xianyu address and category configuration use MyShop metadata pickers", () => {
   assert.match(salesChannelEditor, /宝贝所在地/)
   assert.match(salesChannelEditor, /智能推荐分类/)

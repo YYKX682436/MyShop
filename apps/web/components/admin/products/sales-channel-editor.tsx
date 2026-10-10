@@ -53,14 +53,17 @@ const EMPTY_CONFIG: XianyuProviderConfig = {
 
 type BusyAction = "load" | "sync" | "verify" | "save" | "enable" | "disable" | "retry" | "mapping" | "auto" | null
 
-function configFromListing(listing?: SalesChannelListingSummary): XianyuProviderConfig {
-  const config = listing?.providerConfig
+function configFromProviderConfig(config?: XianyuProviderConfig | null): XianyuProviderConfig {
   return {
     ...EMPTY_CONFIG,
     ...(config || {}),
     imageUrls: Array.isArray(config?.imageUrls) ? config.imageUrls : [],
     platformAttributes: Array.isArray(config?.platformAttributes) ? config.platformAttributes : [],
   }
+}
+
+function configFromListing(listing?: SalesChannelListingSummary): XianyuProviderConfig {
+  return configFromProviderConfig(listing?.providerConfig)
 }
 
 function optionalNumber(value: string): number | null {
@@ -92,6 +95,8 @@ function listingStatusLabel(status?: string | null) {
       return "发布中"
     case "SYNCING":
       return "同步中"
+    case "APPLYING":
+      return "处理中"
     case "OFFLINING":
       return "下架中"
     case "ONLINE":
@@ -113,6 +118,17 @@ function updateById<T extends { id: string }>(items: T[], updated: T) {
   const index = items.findIndex((item) => item.id === updated.id)
   if (index < 0) return [...items, updated]
   return items.map((item) => item.id === updated.id ? updated : item)
+}
+
+function preserveSavedProviderConfigs(
+  current: SalesChannelListingSummary[],
+  next: SalesChannelListingSummary[],
+) {
+  const currentById = new Map(current.map((listing) => [listing.id, listing]))
+  return next.map((listing) => {
+    const previous = currentById.get(listing.id)
+    return previous ? { ...listing, providerConfig: previous.providerConfig } : listing
+  })
 }
 
 function ReadOnlyCategoryValue({ label, value }: { label: string; value?: string | null }) {
@@ -157,6 +173,10 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   const selectedListing = useMemo(
     () => listings.find((listing) => listing.providerAccountId === selectedAccount?.providerAccountId),
     [listings, selectedAccount?.providerAccountId],
+  )
+  const selectedListingConfig = useMemo(
+    () => configFromProviderConfig(selectedListing?.providerConfig),
+    [selectedListing?.providerConfig],
   )
   const type = accountType(selectedAccount)
   const needsVerification = Boolean(selectedAccount && type === "UNKNOWN")
@@ -203,8 +223,31 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
   }, [refresh])
 
   useEffect(() => {
-    const nextConfig = configFromListing(selectedListing)
-    setConfig(nextConfig)
+    let active = true
+    let requestInFlight = false
+    const pollStatus = async () => {
+      if (!active || requestInFlight || document.visibilityState === "hidden") return
+      requestInFlight = true
+      try {
+        const nextListings = await adminSalesChannelApi.getProductListings(productId)
+        if (active) {
+          setListings((current) => preserveSavedProviderConfigs(current, nextListings))
+        }
+      } catch {
+        // Keep the last fetched status; explicit loads and user actions surface errors.
+      } finally {
+        requestInFlight = false
+      }
+    }
+    const timer = window.setInterval(() => { void pollStatus() }, 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [productId])
+
+  useEffect(() => {
+    setConfig(selectedListingConfig)
     setSelectedAddressTip(null)
     setAddressTips([])
     setAddressError("")
@@ -214,7 +257,7 @@ export function SalesChannelEditor({ productId, productTitle, productDescription
     setSelectedCategoryKey("")
     setHighlightedCategoryKey("")
     setCategoryError("")
-  }, [selectedAccountId, selectedListing])
+  }, [selectedAccountId, selectedListing?.id, selectedListingConfig])
 
   const patchConfig = <K extends keyof XianyuProviderConfig>(key: K, value: XianyuProviderConfig[K]) => {
     setConfig((current) => ({ ...current, [key]: value }))

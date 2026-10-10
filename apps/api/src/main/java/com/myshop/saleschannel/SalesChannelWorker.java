@@ -2,6 +2,7 @@ package com.myshop.saleschannel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.SalesChannelAccountStatus;
+import com.myshop.constant.SalesChannelConvergenceCutoverState;
 import com.myshop.constant.SalesChannelOperationStatus;
 import com.myshop.constant.SalesChannelOperationType;
 import com.myshop.entity.SalesChannelAccount;
@@ -103,6 +104,28 @@ public class SalesChannelWorker {
         SalesChannelOperation snapshot = operationRepository.findById(operationId).orElse(null);
         if (snapshot == null || snapshot.getStatus() != SalesChannelOperationStatus.PENDING
                 || snapshot.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return;
+
+        // Recompute the latest local intent before claiming an unstarted
+        // command. Product, price, spec, and inventory writes are discovered
+        // by the planner's drift scan; this claim-time refresh closes the race
+        // where the worker could send an old frozen payload before that scan.
+        // PAUSED rows are recovery-scoped and must retain their exact frozen
+        // identity and permit evidence.
+        SalesChannelListing currentListing = listingRepository.findById(
+                snapshot.getSalesChannelListingId()).orElse(null);
+        if (currentListing != null
+                && currentListing.getConvergenceCutoverState() == SalesChannelConvergenceCutoverState.ACTIVE) {
+            try {
+                planner.refresh(currentListing.getId());
+            } catch (RuntimeException exception) {
+                log.warn("Desired-state pre-claim refresh failed for listing {}: {}",
+                        currentListing.getId(), safeMessage(exception));
+                return;
+            }
+            snapshot = operationRepository.findById(operationId).orElse(null);
+            if (snapshot == null || snapshot.getStatus() != SalesChannelOperationStatus.PENDING
+                    || snapshot.getOperationType() != SalesChannelOperationType.ENSURE_LISTING) return;
+        }
         if (!operationService.markRunning(operationId)) return;
         RecoveryPermitProof recoveryProof = operationService.recoveryProofForOperation(operationId);
 

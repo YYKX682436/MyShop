@@ -102,6 +102,22 @@ class SalesChannelWorkerTest {
     }
 
     @Test
+    void workerReplansBeforeClaimSoAStaleUnstartedCommandIsNeverSent() {
+        Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "ONLINE", null);
+        fixture.listing.activateConvergence(LocalDateTime.now());
+        doAnswer(invocation -> {
+            fixture.operation.supersede(LocalDateTime.now());
+            return fixture.listing;
+        }).when(fixture.planner).refresh(fixture.listingId);
+
+        fixture.worker.runBatch();
+
+        assertEquals(SalesChannelOperationStatus.SUPERSEDED, fixture.operation.getStatus());
+        verify(fixture.operationService, never()).markRunning(fixture.operation.getId());
+        verify(fixture.client, never()).ensureListing(any(), isNull());
+    }
+
+    @Test
     void applyingObservationReschedulesTheSameDurableCommand() {
         Fixture fixture = new Fixture(SalesChannelOperationType.ENSURE_LISTING, "OFFLINE", null);
         when(fixture.client.ensureListing(any(), isNull())).thenAnswer(invocation -> observation(
