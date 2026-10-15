@@ -122,10 +122,10 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
               data-active={selectedRootCategory === null}
               className={cn(
                 "segmented-control-item relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                selectedRootCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                selectedRootCategory === null ? "text-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
               )}
             >
-              {selectedRootCategory === null && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+              {selectedRootCategory === null && <motion.span layoutId="active-root-category" className="segmented-glass-indicator absolute inset-0 -z-0 rounded-pill" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
               <span className="relative z-10">{t("home.allCategories")}</span>
             </button>
             {rootCategories.map((category) => (
@@ -137,10 +137,10 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
                 data-active={selectedRootCategory === category.id}
                 className={cn(
                   "segmented-control-item relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                  selectedRootCategory === category.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                  selectedRootCategory === category.id ? "text-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                 )}
               >
-                {selectedRootCategory === category.id && <motion.span layoutId="active-root-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                {selectedRootCategory === category.id && <motion.span layoutId="active-root-category" className="segmented-glass-indicator absolute inset-0 -z-0 rounded-pill" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
                 <span className="relative z-10">{category.name}</span>
               </button>
             ))}
@@ -155,10 +155,10 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
                 data-active={selectedChildCategory === null}
                 className={cn(
                   "segmented-control-item relative min-h-9 px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                  selectedChildCategory === null ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                  selectedChildCategory === null ? "text-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                 )}
               >
-                {selectedChildCategory === null && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                {selectedChildCategory === null && <motion.span layoutId="active-child-category" className="segmented-glass-indicator absolute inset-0 -z-0 rounded-pill" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
                 <span className="relative z-10">{t("home.allSubcategories")}</span>
               </button>
               {selectedChildren.map((child) => (
@@ -170,10 +170,10 @@ export function HomeContent({ products, categories, siteSlogan, siteDescription,
                   data-active={selectedChildCategory === child.id}
                   className={cn(
                     "segmented-control-item relative min-h-9 px-3 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                    selectedChildCategory === child.id ? "text-primary-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
+                    selectedChildCategory === child.id ? "text-foreground" : "text-muted-foreground hover:bg-surface-muted hover:text-foreground"
                   )}
                 >
-                  {selectedChildCategory === child.id && <motion.span layoutId="active-child-category" className="absolute inset-0 -z-0 rounded-pill bg-primary shadow-sm" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
+                  {selectedChildCategory === child.id && <motion.span layoutId="active-child-category" className="segmented-glass-indicator absolute inset-0 -z-0 rounded-pill" transition={{ type: "spring", stiffness: 420, damping: 32 }} />}
                   <span className="relative z-10">{child.name}</span>
                 </button>
               ))}

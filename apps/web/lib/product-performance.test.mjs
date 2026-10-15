@@ -7,6 +7,7 @@ const dock = read("../components/layout/store-bottom-nav.tsx")
 const form = read("../components/admin/products/product-form.tsx")
 const editorPage = read("../components/admin/products/product-editor-page.tsx")
 const styles = read("../app/globals.css")
+const glassEffects = read("../components/ui/liquid-glass-effects.tsx")
 const perfScript = read("../scripts/perf-smoke.mjs")
 const webPackage = JSON.parse(read("../package.json"))
 const persistentSurfaces = [
@@ -27,25 +28,30 @@ test("the storefront Dock stays full size without scroll-direction work", () => 
   assert.match(dock, /useReducedMotion/)
 })
 
-test("persistent surfaces use static materials and touch devices skip backdrop sampling", () => {
+test("glass surfaces refract the live backdrop and keep a usable fallback", () => {
   const staticMaterial = styles.match(/\.static-material\s*\{[^}]*\}/s)?.[0]
   const largeMaterial = styles.match(/\.large-material\s*\{[^}]*\}/s)?.[0]
   assert.ok(staticMaterial)
   assert.ok(largeMaterial)
-  assert.doesNotMatch(staticMaterial, /backdrop-filter/i)
-  assert.doesNotMatch(largeMaterial, /backdrop-filter/i)
-  assert.match(styles, /\.transient-glass\s*\{[^}]*backdrop-filter:\s*blur\(4px\)/s)
-  assert.match(styles, /@media\s*\(pointer:\s*coarse\),\s*\(any-pointer:\s*coarse\)[\s\S]*?backdrop-filter:\s*none/)
+  assert.match(styles, /\.liquid-glass-enhanced\s*\{[^}]*backdrop-filter:\s*var\(--liquid-glass-filter\)/s)
+  assert.match(styles, /\.transient-glass\s*\{[^}]*backdrop-filter:\s*blur\(18px\)/s)
+  assert.doesNotMatch(styles, /@media\s*\(pointer:\s*coarse\)[\s\S]*?backdrop-filter:\s*none/)
+  assert.match(styles, /prefers-reduced-transparency:\s*reduce/)
+  assert.match(glassEffects, /feDisplacementMap/)
+  assert.match(glassEffects, /SourceGraphic/)
+  assert.match(glassEffects, /ResizeObserver/)
+  assert.match(glassEffects, /backdrop-filter["']?,\s*["']url\(/)
+  assert.match(glassEffects, /requestAnimationFrame/)
+  assert.match(glassEffects, /instance\.filter\.remove\(\)/)
+  assert.doesNotMatch(glassEffects, /html2canvas|captureStream|drawImage\(/i)
   assert.doesNotMatch(styles, /store-dock-viewport\[data-compact/)
   assert.match(styles, /padding:\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*0\.25rem\)/)
   for (const source of persistentSurfaces) {
     assert.match(source, /static-material|large-material/)
     assert.doesNotMatch(source, /bar-glass|sheet-glass/)
   }
-  const activeBlurDeclarations = [...styles.matchAll(/^[ \t]*(?:-webkit-)?backdrop-filter:[ \t]*([^;\r\n]+);/gm)]
-    .map((match) => match[1].trim())
-    .filter((value) => value !== "none")
-  assert.deepEqual(activeBlurDeclarations, ["blur(4px) saturate(120%)", "blur(4px) saturate(120%)", "blur(3px) saturate(115%)", "blur(3px) saturate(115%)"])
+  assert.match(styles, /\.large-material\s*\{[^}]*backdrop-filter:\s*blur\(18px\) saturate\(1\.3\)/s)
+  assert.match(glassEffects, /style\.setProperty\("--liquid-glass-filter",/)
 })
 
 test("WorkspaceSheet animation only changes opacity and transform", () => {

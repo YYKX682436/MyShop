@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Toaster } from "sonner"
 import { AppProviders } from "@/lib/context"
 import { MotionProvider } from "@/components/ui/motion"
+import { LiquidGlassEffects } from "@/components/ui/liquid-glass-effects"
 import { ThemeScript } from "./theme-script"
 import { DynamicFavicon } from "@/components/dynamic-favicon"
 import "./globals.css"
@@ -39,6 +40,7 @@ export default function RootLayout({
         <MotionProvider>
           <AppProviders>
             <DynamicFavicon />
+            <LiquidGlassEffects />
             {children}
             <Toaster position="top-center" richColors closeButton />
           </AppProviders>
