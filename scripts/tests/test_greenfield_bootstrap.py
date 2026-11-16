@@ -34,10 +34,15 @@ def container(service):
 
 if name == 'flock':
     import fcntl
-    try:
-        fcntl.flock(int(args[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        sys.exit(1)
+    deadline = time.monotonic() + (float(args[args.index('-w') + 1]) if '-w' in args else 0)
+    while True:
+        try:
+            fcntl.flock(int(args[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                sys.exit(1)
+            time.sleep(0.05)
     sys.exit(0)
 if name == 'sleep':
     time.sleep(0.05)
@@ -317,7 +322,7 @@ class GreenfieldBootstrapTest(unittest.TestCase):
         import time
         result = self.run_bootstrap(KILL_SCHEMA="1")
         self.assertNotEqual(result.returncode, 0)
-        for _ in range(100):
+        for _ in range(400):
             try:
                 fake = self.state()
                 if fake["containers"].get("api", {}).get("running") is False:
@@ -326,7 +331,9 @@ class GreenfieldBootstrapTest(unittest.TestCase):
                 pass
             time.sleep(0.05)
         else:
-            self.fail("watchdog did not stop candidate services")
+            logs = list((self.runtime / "candidates").glob("*.greenfield-watchdog.log"))
+            self.fail("watchdog did not stop candidate services: " +
+                      (logs[0].read_text() if logs else "no watchdog log"))
         self.assertFalse(fake["containers"]["web"]["running"])
         self.assertTrue(fake["containers"]["db"]["running"])
         self.assertFalse((self.runtime / "deploy-state.json").exists())

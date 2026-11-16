@@ -215,7 +215,7 @@ bootstrap_pid=$$
   exec 9>&-
   while kill -0 "$bootstrap_pid" 2>/dev/null; do sleep 2; done
   exec 9>"$lock_file"
-  flock -w 30 9 || exit 1
+  flock -w 30 9 || { printf '[myshop-bootstrap] watchdog could not obtain the deployment lock\n' >&2; exit 1; }
   if [[ ! -e "$state_file" && ! -L "$state_file" ]]; then
     printf '[myshop-bootstrap] operator process disappeared before acceptance\n'
     run_compose stop caddy web api node-exporter || exit 1
