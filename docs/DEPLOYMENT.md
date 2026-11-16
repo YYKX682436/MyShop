@@ -2,8 +2,9 @@
 
 This runbook describes the only supported production model. The application
 artifact is an immutable container image reference plus its builder-generated
-release manifest. Production never builds application images and runs only
-from the immutable image manifest recorded under `/opt/myshop/runtime`.
+release manifest. Production runs only from the immutable image manifest
+recorded under `/opt/myshop/runtime`. Production normally never builds
+application images; the one-time initial-release exception is recorded below.
 
 ## Host layout and immutable Compose
 
@@ -41,8 +42,10 @@ run `up --build`.
 ## First installation on an empty host
 
 `scripts/bootstrap-greenfield.sh` is a separate entry point for a new store.
-Use it only with the release manifest produced by successful CI for the exact
-source SHA and with the matching Compose file and production helpers installed.
+Use it only with a verified release manifest for the exact source SHA and with
+the matching Compose file and production helpers installed. Ordinarily the
+manifest is produced by CI; the one-time owner-approved exception below permits
+a locally built manifest for the November 17, 2026 first installation.
 Set the three wrapper variables above. The environment must include the real
 `SITE_DOMAIN`, matching HTTPS `PUBLIC_SITE_URL`, `ACME_EMAIL`, fresh database
 and JWT secrets, and the first administrator's bootstrap credentials.
@@ -84,6 +87,15 @@ the state commit, inspect the accepted containers and repair their policies
 before declaring host-reboot recovery verified.
 
 ## Release manifest and transaction
+
+For the November 17, 2026 greenfield launch only, the owner approved skipping
+GitHub Actions. The operator must run local validation, build both images from
+the exact release commit, push full-SHA tags, record the registry-reported
+digests in a validated release manifest, and complete production acceptance.
+This exception does not represent a successful CI run and does not remove the
+backup, image identity, health, schema, HTTPS, or storage gates. Building on
+the host is authorized for this one-time initial release before the store is
+running; future releases follow the normal immutable-image workflow.
 
 CI publishes `myshop-api:<full-source-sha>` and
 `myshop-web:<full-source-sha>` to the approved registry and uploads a JSON
