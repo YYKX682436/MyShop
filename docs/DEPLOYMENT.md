@@ -27,6 +27,10 @@ approved registry namespace.
 Manual inspection is allowed only through the installed wrapper:
 
 ```bash
+export MYSHOP_RUNTIME_ROOT=/opt/myshop/runtime
+export MYSHOP_ENV_FILE=/opt/myshop/.env
+export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
+
 bash /opt/myshop/scripts/myshop-compose.sh --env-file /opt/myshop/.env config
 bash /opt/myshop/scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
 ```
