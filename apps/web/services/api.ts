@@ -146,7 +146,7 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
   return sp.toString()
 }
 
-function getCsrfToken(): string | null {
+export function getCsrfToken(): string | null {
   if (typeof document === "undefined") return null
   const entry = document.cookie.split(";").map(value => value.trim()).find(value => value.startsWith("myshop_csrf="))
   return entry ? decodeURIComponent(entry.slice("myshop_csrf=".length)) : null
