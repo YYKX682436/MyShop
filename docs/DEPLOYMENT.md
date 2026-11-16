@@ -38,6 +38,51 @@ bash /opt/myshop/scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
 Do not run `docker compose` directly in the production directory and do not
 run `up --build`.
 
+## First installation on an empty host
+
+`scripts/bootstrap-greenfield.sh` is a separate entry point for a new store.
+Use it only with the release manifest produced by successful CI for the exact
+source SHA and with the matching Compose file and production helpers installed.
+Set the three wrapper variables above. The environment must include the real
+`SITE_DOMAIN`, matching HTTPS `PUBLIC_SITE_URL`, `ACME_EMAIL`, fresh database
+and JWT secrets, and the first administrator's bootstrap credentials.
+
+Before running it, stop and disable the old storage and Docker maintenance
+timers, wait for any old maintenance process, and install the complete helper
+set together. Verify the `/data` mount, Docker/containerd roots, and empty
+upload and private-upload directories. Supply the read-only IP database
+directory separately. Preserve the credentials outside the environment file
+in a root-only or equivalent secure store.
+
+```bash
+bash /opt/myshop/scripts/bootstrap-greenfield.sh /path/to/release-manifest.json
+```
+
+The entry point refuses any existing deployment state, project container,
+project network, or project database/Caddy volume. It verifies the manifest and pulled digests,
+starts only a new PostgreSQL database, verifies that it is empty, and creates
+and validates a fresh database backup before starting the application. It then
+checks the packaged schema contract, HTTPS, public endpoints, canonical URL,
+running image identity and storage. Only after those checks does it atomically
+create the initial state with an empty rollback list.
+
+Candidate containers have restart disabled until the state is committed. On an
+error or handled interruption, the public and application services are stopped
+and the database, backup and logs are retained. A separate guard also attempts
+to stop unaccepted services if the operator process disappears. A host crash
+or loss of both processes can leave containers and volumes behind; inspect
+them before any manual recovery. The first-install command deliberately
+refuses to reuse them. There is no previous application version to roll back to.
+
+After the first administrator login is verified, remove the bootstrap
+password from the protected environment file, recreate the API through
+`myshop-compose.sh`, and verify its health and administrator login again.
+Keep the administrator credential in the protected credential store. Enable
+the new storage timer only after all helpers have been updated together and
+the first accepted state exists. If restart-policy configuration fails after
+the state commit, inspect the accepted containers and repair their policies
+before declaring host-reboot recovery verified.
+
 ## Release manifest and transaction
 
 CI publishes `myshop-api:<full-source-sha>` and

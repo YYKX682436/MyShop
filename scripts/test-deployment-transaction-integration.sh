@@ -427,6 +427,29 @@ grep -Fq 'dry=no' "$case_root/retention.log" || fail 'post-commit retention was 
 printf 'COMMIT SUCCESS active=%s rollback=[%s,%s] history_append=%s\n' "$candidate_sha" "$old_sha" "$rollback1_sha" "$candidate_sha"
 pass 'candidate is promoted only after identity and prospective retention checks'
 
+# The first greenfield acceptance has no rollback records. Exercise the normal
+# upgrade transaction from that state as well as the two-rollback case above.
+reset_case
+python3 - "$case_root/deploy-state.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as handle:
+    state = json.load(handle)
+state['rollback'] = []
+state['history'] = [state['active']]
+with open(path, 'w', encoding='utf-8') as handle:
+    json.dump(state, handle)
+PY
+if output=$(run_deploy 2>&1); then success_status=0; else success_status=$?; fi
+(( success_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'upgrade from first accepted state failed'; }
+python3 - "$case_root/deploy-state.json" "$old_sha" "$candidate_sha" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding='utf-8'))
+assert state['active']['source_sha'] == sys.argv[3]
+assert [item['source_sha'] for item in state['rollback']] == [sys.argv[2]]
+PY
+pass 'ordinary upgrade from the first accepted state preserves the initial version for rollback'
+
 assert_post_commit_failure() {
   local hook=$1 output status maintenance_file
   reset_case
