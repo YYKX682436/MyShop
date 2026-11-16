@@ -130,7 +130,7 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
   const isMaintenance = configReady && config?.maintenance_enabled
 
   // Maintenance mode: block non-admin users on non-exempt pages
-  // auth 未就绪时暂不渲染内容，避免管理员被误拦（auth 读 localStorage，通常 <1 帧）
+  // 等待服务端用户资料返回，避免把维护模式下的管理员误判为访客。
   if (isMaintenance && !isExempt) {
     if (!authLoaded) return null
     if (!isAdmin) return <MaintenancePage />

@@ -6,6 +6,7 @@
   OrderBrief,
   OrderView,
   ProductCard,
+  ProductListQuery,
   ProductDetail,
   AdminProductDetail,
   AdminProductSpec,
@@ -169,11 +170,6 @@ async function ensureDeviceId(): Promise<string> {
   }
 }
 
-// 启动时异步预热，不阻塞首屏
-if (typeof window !== "undefined") {
-  ensureDeviceId()
-}
-
 // ============================================================
 // Turnstile token（模块级别，由页面组件设置）
 // ============================================================
@@ -217,14 +213,17 @@ async function request<T>(
     headers["X-Session-Token"] = sessionToken
   }
 
-  // 设备指纹 — 始终发送
-  const deviceId = cachedDeviceId || (await ensureDeviceId())
+  // Capture this action's token before any asynchronous fingerprint work.
+  const turnstileToken = consumeTurnstileToken()
+  // Only abuse-sensitive actions need to wait for device identification.
+  // Public reads, profile loading and uploads never trigger expensive collection.
+  const needsDeviceId = method === "POST" && ["/auth/login", "/auth/register", "/orders"].includes(path)
+  const deviceId = needsDeviceId ? await ensureDeviceId() : cachedDeviceId
   if (deviceId) {
     headers["X-Device-Id"] = deviceId
   }
 
   // Turnstile token — 如果有 pending token 则发送（单次消费）
-  const turnstileToken = consumeTurnstileToken()
   if (turnstileToken) {
     headers["X-Turnstile-Token"] = turnstileToken
   }
@@ -264,7 +263,7 @@ async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
   if (csrf) headers["X-CSRF-Token"] = csrf
   const sessionToken = getSessionToken()
   if (sessionToken) headers["X-Session-Token"] = sessionToken
-  const deviceId = cachedDeviceId || (await ensureDeviceId())
+  const deviceId = cachedDeviceId
   if (deviceId) headers["X-Device-Id"] = deviceId
   const turnstileToken = consumeTurnstileToken()
   if (turnstileToken) headers["X-Turnstile-Token"] = turnstileToken
@@ -370,9 +369,9 @@ export const userApi = {
 // ============================================================
 
 export const productApi = {
-  getList: (params: { page?: number; page_size?: number; category_id?: string; keyword?: string }) => {
+  getList: (params: ProductListQuery, options?: RequestInit) => {
     const qs = buildQuery(params)
-    return request<PaginatedData<ProductCard>>(`/products?${qs}`)
+    return request<PaginatedData<ProductCard>>(`/products?${qs}`, options)
   },
   getDetail: (id: string) =>
     request<ProductDetail>(`/products/${id}`),
@@ -441,302 +440,6 @@ export const adminDashboardApi = {
 // Admin Product
 // ============================================================
 
-export type XianyuPriceMode = "PRODUCT_RETAIL" | "FIXED" | "MARKUP_PERCENT"
-
-export interface XianyuPlatformAttribute {
-  propertyId?: string | null
-  propertyName?: string | null
-  valueId?: string | null
-  valueName?: string | null
-  text?: string | null
-  properties?: Record<string, unknown> | null
-}
-
-export interface XianyuAddressTip {
-  id?: string | null
-  name?: string | null
-  district?: string | null
-  adcode?: string | null
-  location?: string | null
-  address?: string | null
-  city?: string | null
-  searchKeyword?: string | null
-  expectedText?: string | null
-}
-
-export interface XianyuAddressSearchData {
-  requestId?: string
-  keywords: string
-  tips: XianyuAddressTip[]
-}
-
-export interface XianyuCategoryCandidate {
-  catId?: string | null
-  catName?: string | null
-  channelCatId?: string | null
-  channelCatName?: string | null
-  leafId?: string | null
-  tbCatId?: string | null
-  path?: Array<{ id?: string | null; name?: string | null }>
-  score?: number | null
-  isSelected?: boolean
-  [key: string]: unknown
-}
-
-export interface XianyuCategoryPropertyOption {
-  propertyId?: string | null
-  propertyName?: string | null
-  valueId?: string | null
-  valueName?: string | null
-  channelCatId?: string | null
-  tbCatId?: string | null
-  [key: string]: unknown
-}
-
-export interface XianyuCategoryProperty {
-  propertyId?: string | null
-  propertyName?: string | null
-  inputWord?: string | null
-  isMultiple?: boolean
-  options?: XianyuCategoryPropertyOption[]
-  [key: string]: unknown
-}
-
-export interface XianyuCategoryRecommendData {
-  requestId?: string
-  candidates: XianyuCategoryCandidate[]
-  properties: XianyuCategoryProperty[]
-  cardList?: unknown[]
-  card_list?: unknown[]
-}
-
-export interface XianyuProviderConfig {
-  titleOverride?: string | null
-  descriptionOverride?: string | null
-  imageUrls?: string[]
-  priceMode?: XianyuPriceMode
-  fixedPrice?: number | null
-  markupPercent?: number | null
-  address?: string | null
-  addressExpectedText?: string | null
-  platformCategoryId?: string | null
-  platformCategoryName?: string | null
-  platformChannelCategoryId?: string | null
-  platformChannelCategoryName?: string | null
-  platformLeafId?: string | null
-  platformTbCategoryId?: string | null
-  platformAttributes?: XianyuPlatformAttribute[]
-  deliveryMethod?: string | null
-  shippingMethod?: string | null
-  supportPickup?: boolean
-  postage?: number | null
-  unlimitedStockQuantity?: number | null
-  stockCapPerSku?: number | null
-}
-
-export interface SalesChannelAccountSummary {
-  id: string
-  providerAccountId: string
-  displayName?: string | null
-  accountType?: "FISH_SHOP" | "PERSONAL" | "UNKNOWN" | string | null
-  status: string
-  enabled?: boolean
-  isEnabled?: boolean
-  capabilities?: Record<string, boolean | string | null> | null
-  lastVerifiedAt?: string | null
-  lastLoginAt?: string | null
-  lastRefreshAt?: string | null
-  agentOperationalStatus?: string | null
-  statusSource?: string | null
-  authState?: "VALID" | "AUTH_REQUIRED" | "VERIFICATION_REQUIRED" | "UNKNOWN" | string | null
-  authStateSource?: string | null
-  authStateObservedAt?: string | null
-  orderSyncEnabled?: boolean
-}
-
-export interface XianyuQrLoginStartResponse {
-  loginIntentId: string
-  loginSessionId: string
-  qrCodeDataUrl: string
-  expiresInSeconds: number
-}
-
-export interface XianyuQrLoginStatusResponse {
-  status: "WAITING" | "SCANNED" | "VERIFICATION_REQUIRED" | "QR_SCAN_CONFIRMED" | "COOKIE_PERSISTED" | "PROVIDER_AUTH_VERIFIED" | "PROVIDER_AUTH_VERIFICATION_FAILED" | "EXPIRED" | "CANCELLED" | "FAILED"
-  loginIntentId?: string | null
-  loginSessionId?: string | null
-  accountId?: string | null
-  isNewAccount?: boolean | null
-  errorCode?: string | null
-  verificationMessage?: string | null
-  verificationQrCodeDataUrl?: string | null
-}
-
-export interface XianyuItemBindingSummary {
-  listingId: string
-  productId: string
-  productTitle?: string | null
-  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
-}
-
-export interface XianyuCatalogItemSummary {
-  accountId: string
-  itemId: string
-  title?: string | null
-  price?: string | null
-  quantity?: number | null
-  statusDesc?: string | null
-  skuCount: number
-  isMultiSpec: boolean
-  isSellerItem: boolean
-  catalogCreatedAt?: string | null
-  catalogUpdatedAt?: string | null
-  bindingState: "LINKED" | "UNLINKED" | "CONFLICT"
-  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
-  listingId?: string | null
-  productId?: string | null
-  productTitle?: string | null
-  bindings: XianyuItemBindingSummary[]
-}
-
-export interface XianyuItemsPage {
-  accountId: string
-  items: XianyuCatalogItemSummary[]
-  page: number
-  pageSize: number
-  total: number
-  totalPages: number
-}
-
-export interface XianyuItemSyncSummary {
-  accountId: string
-  fetchedCount: number
-  savedCount: number
-  pages: number
-  skipped: boolean
-}
-
-export interface XianyuLinkCandidate {
-  productId: string
-  productNo: number
-  title: string
-  isEnabled: boolean
-  eligibility: "AVAILABLE" | "ALREADY_LINKED_THIS_ITEM" | "LINKED_TO_OTHER_ITEM" | "LISTING_NOT_LINKABLE"
-  existingListingId?: string | null
-  existingExternalItemId?: string | null
-  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
-  reasonCode?: string | null
-}
-
-export interface XianyuLinkCandidatesPage {
-  accountId: string
-  itemId: string
-  candidates: XianyuLinkCandidate[]
-  page: number
-  pageSize: number
-  total: number
-  totalPages: number
-}
-
-export interface XianyuItemBindingResponse {
-  itemId: string
-  listingId: string
-  productId: string
-  productTitle: string
-  managementMode: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING"
-  result: "LINKED" | "ALREADY_LINKED"
-}
-
-export interface XianyuTakeoverResponse {
-  itemId: string
-  listingId: string
-  productId: string
-  managementMode: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING"
-  result: "TAKEOVER_COMPLETED" | "TAKEOVER_PENDING" | "ALREADY_MANAGED" | "OWNERSHIP_REPAIRED"
-}
-
-export interface SalesChannelSpecMappingSummary {
-  productSpecId: string
-  productSpecName: string
-  providerSpecName?: string | null
-  providerSpecValue?: string | null
-  externalSkuId?: string | null
-}
-
-export interface SalesChannelListingSummary {
-  id: string
-  providerAccountId: string
-  displayName?: string | null
-  accountType?: "FISH_SHOP" | "PERSONAL" | "UNKNOWN" | string | null
-  managementMode?: "MANAGED" | "LINKED_ONLY" | "TAKEOVER_PENDING" | string | null
-  isEnabled: boolean
-  autoFulfillmentEnabled?: boolean
-  status: string
-  externalItemId?: string | null
-  currentExternalItemId?: string | null
-  currentGenerationId?: string | null
-  currentGenerationNo?: number | null
-  generationCount?: number | null
-  desiredRevision?: number | null
-  appliedRevision?: number | null
-  lastSyncedAt?: string | null
-  lastErrorCode?: string | null
-  lastErrorMessage?: string | null
-  providerConfig?: XianyuProviderConfig | null
-  specMappings?: SalesChannelSpecMappingSummary[]
-}
-
-export interface SalesChannelSpecMappingSyncResult {
-  listingId: string
-  itemId: string
-  matched: number
-  mappings: SalesChannelSpecMappingSummary[]
-}
-
-export interface UpdateXianyuListingRequest {
-  accountId: string
-  config: XianyuProviderConfig
-}
-
-export interface SalesChannelOrderSummary {
-  id: string
-  provider: string
-  accountId: string
-  externalOrderNo: string
-  myshopOrderNo?: string | null
-  productTitle?: string | null
-  specName?: string | null
-  quantity: number
-  amount: number | string
-  currency: string
-  externalStatus: string
-  ingestStatus: string
-  deliveryStatus: string
-  lastErrorCode?: string | null
-  lastErrorMessage?: string | null
-  sourceUpdatedAt?: string | null
-  autoFulfillmentRequested: boolean
-}
-
-export interface SalesChannelDeliveryOperationSummary {
-  id: string
-  operationType: string
-  unitIndex?: number | null
-  cardKeyId?: string | null
-  status: string
-  requestId: string
-  attemptCount: number
-  startedAt?: string | null
-  finishedAt?: string | null
-  lastErrorCode?: string | null
-  lastErrorMessage?: string | null
-}
-
-export interface SalesChannelOrderDetail {
-  order: SalesChannelOrderSummary
-  deliveryOperations: SalesChannelDeliveryOperationSummary[]
-}
-
 export const adminProductApi = {
   getList: (params: {
     page?: number; page_size?: number; category_id?: string; is_enabled?: number; keyword?: string;
@@ -794,108 +497,6 @@ export const adminProductApi = {
     formData.append("file", file)
     return uploadRequest<{ url: string }>("/upload/image", formData)
   },
-}
-
-// ============================================================
-// Admin Sales Channels
-// ============================================================
-
-export const adminSalesChannelApi = {
-  getAccounts: () =>
-    request<SalesChannelAccountSummary[]>("/admin/sales-channels/accounts"),
-  getXianyuAccounts: () =>
-    request<SalesChannelAccountSummary[]>("/admin/xianyu/accounts"),
-  getXianyuItems: (params: { accountId: string; page?: number; pageSize?: number; keyword?: string }) =>
-    request<XianyuItemsPage>(`/admin/xianyu/items?${buildQuery(params)}`),
-  getXianyuLinkCandidates: (accountId: string, itemId: string, params: { page?: number; pageSize?: number; keyword?: string }) =>
-    request<XianyuLinkCandidatesPage>(
-      `/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/${encodeURIComponent(itemId)}/link-candidates?${buildQuery(params)}`,
-    ),
-  bindXianyuItem: (accountId: string, itemId: string, productId: string) =>
-    request<XianyuItemBindingResponse>(
-      `/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/${encodeURIComponent(itemId)}/binding`,
-      { method: "PUT", body: JSON.stringify({ productId }) },
-    ),
-  takeoverXianyuItem: (accountId: string, itemId: string) =>
-    request<XianyuTakeoverResponse>(
-      `/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/${encodeURIComponent(itemId)}/takeover`,
-      { method: "POST" },
-    ),
-  syncXianyuItems: (accountId: string) =>
-    request<XianyuItemSyncSummary>(`/admin/xianyu/accounts/${encodeURIComponent(accountId)}/items/sync`, {
-      method: "POST",
-    }),
-  startXianyuQrLogin: (loginIntentId: string, requestId: string) =>
-    request<XianyuQrLoginStartResponse>("/admin/xianyu/accounts/login/qr", {
-      method: "POST",
-      body: JSON.stringify({ request_id: requestId, login_intent_id: loginIntentId }),
-    }),
-  startXianyuQrReauthentication: (accountRowId: string, loginIntentId: string, requestId: string) =>
-    request<XianyuQrLoginStartResponse>(
-      `/admin/sales-channels/accounts/${encodeURIComponent(accountRowId)}/reauthenticate/qr/start`,
-      { method: "POST", body: JSON.stringify({ request_id: requestId, login_intent_id: loginIntentId }) },
-    ),
-  getXianyuQrLoginStatus: (sessionId: string, loginIntentId: string, requestId: string) =>
-    request<XianyuQrLoginStatusResponse>(
-      `/admin/xianyu/accounts/login/qr/${encodeURIComponent(sessionId)}/status`,
-      {
-        method: "POST",
-        body: JSON.stringify({ request_id: requestId, login_session_id: sessionId, login_intent_id: loginIntentId }),
-      },
-    ),
-  getXianyuQrReauthenticationStatus: (accountRowId: string, sessionId: string, loginIntentId: string, requestId: string) =>
-    request<XianyuQrLoginStatusResponse>(
-      `/admin/sales-channels/accounts/${encodeURIComponent(accountRowId)}/reauthenticate/qr/${encodeURIComponent(sessionId)}/status`,
-      { method: "POST", body: JSON.stringify({ request_id: requestId, login_session_id: sessionId, login_intent_id: loginIntentId }) },
-    ),
-  syncXianyuAccounts: () =>
-    request<unknown>("/admin/sales-channels/xianyu/accounts/sync", { method: "POST" }),
-  verifyAccount: (accountId: string) =>
-    request<SalesChannelAccountSummary>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/verify`, { method: "POST" }),
-  getProductListings: (productId: string) =>
-    request<SalesChannelListingSummary[]>(`/admin/products/${encodeURIComponent(productId)}/sales-channels`),
-  updateXianyuListing: (productId: string, data: UpdateXianyuListingRequest) =>
-    request<SalesChannelListingSummary>(`/admin/products/${encodeURIComponent(productId)}/sales-channels/xianyu`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    }),
-  enableListing: (listingId: string) =>
-    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/enable`, { method: "POST" }),
-  disableListing: (listingId: string) =>
-    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/disable`, { method: "POST" }),
-  retryListing: (listingId: string) =>
-    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/retry`, { method: "POST" }),
-  syncSpecMappings: (listingId: string) =>
-    request<SalesChannelSpecMappingSyncResult>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/spec-mappings/sync`, { method: "POST" }),
-  initializeOrderCursor: (accountId: string) =>
-    request<null>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/order-sync/initialize`, { method: "POST" }),
-  enableOrderSync: (accountId: string) =>
-    request<SalesChannelAccountSummary>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/order-sync/enable`, { method: "POST" }),
-  disableOrderSync: (accountId: string) =>
-    request<SalesChannelAccountSummary>(`/admin/sales-channels/accounts/${encodeURIComponent(accountId)}/order-sync/disable`, { method: "POST" }),
-  enableAutoFulfillment: (listingId: string) =>
-    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/auto-fulfillment/enable`, { method: "POST" }),
-  disableAutoFulfillment: (listingId: string) =>
-    request<SalesChannelListingSummary>(`/admin/sales-channel-listings/${encodeURIComponent(listingId)}/auto-fulfillment/disable`, { method: "POST" }),
-  getOrders: (params?: Record<string, string | undefined>) =>
-    request<SalesChannelOrderSummary[]>(`/admin/sales-channel-orders?${buildQuery(params || {})}`),
-  getOrder: (id: string) => request<SalesChannelOrderDetail>(`/admin/sales-channel-orders/${encodeURIComponent(id)}`),
-  searchXianyuAddress: (data: { keywords: string; city: string }) =>
-    request<XianyuAddressSearchData>("/admin/sales-channels/xianyu/metadata/address/search", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
-  recommendXianyuCategory: (data: {
-    accountId: string
-    title: string
-    description: string
-    cardList: unknown[]
-    selectedCategory: XianyuCategoryCandidate | null
-  }) =>
-    request<XianyuCategoryRecommendData>("/admin/sales-channels/xianyu/metadata/category/recommend", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
 }
 
 // ============================================================

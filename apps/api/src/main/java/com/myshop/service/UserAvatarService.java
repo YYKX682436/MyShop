@@ -29,12 +29,18 @@ public class UserAvatarService {
 
     @Transactional
     public UserProfileResponse uploadAvatar(UUID userId, MultipartFile file) {
-        User user = findUser(userId);
-        String previousAvatarUrl = user.getAvatarUrl();
+        if (userId == null) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Not logged in or session expired");
+        }
+        // Process the image before taking the user lock. The first user read
+        // must be locked so a stale avatar save cannot overwrite a balance or
+        // password update committed while the image was being processed.
         ImageUploadService.UploadedImage uploaded = imageUploadService.uploadAvatar(file);
         boolean cleanupRegistered = false;
 
         try {
+            User user = findUser(userId);
+            String previousAvatarUrl = user.getAvatarUrl();
             requireActiveTransactionSynchronization();
             user.setAvatarUrl(uploaded.url());
             User saved = userRepository.save(user);
@@ -83,7 +89,7 @@ public class UserAvatarService {
         if (userId == null) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "Not logged in or session expired");
         }
-        return userRepository.findById(userId)
+        return userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
     }
 

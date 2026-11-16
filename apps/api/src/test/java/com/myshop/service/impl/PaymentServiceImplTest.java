@@ -16,8 +16,8 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.PaymentChannelRepository;
-import com.myshop.service.ManualStockService;
-import com.myshop.service.OrderPaymentCompletionService;
+import com.myshop.service.OrderExpiryService;
+import com.myshop.service.PaymentQueryTransactionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -55,8 +55,8 @@ class PaymentServiceImplTest {
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private PaymentAttemptRepository paymentAttemptRepository;
     @Mock private PaymentProvider provider;
-    @Mock private ManualStockService manualStockService;
-    @Mock private OrderPaymentCompletionService orderPaymentCompletionService;
+    @Mock private OrderExpiryService orderExpiryService;
+    @Mock private PaymentQueryTransactionService paymentQueryTransactionService;
 
     private PaymentServiceImpl service;
 
@@ -74,8 +74,8 @@ class PaymentServiceImplTest {
                 });
         lenient().when(paymentAttemptRepository.existsByMerchantTradeNo(anyString())).thenReturn(false);
         service = new PaymentServiceImpl(paymentChannelRepository, orderRepository, orderItemRepository,
-                paymentAttemptRepository, List.of(provider), new ObjectMapper(), manualStockService,
-                orderPaymentCompletionService);
+                paymentAttemptRepository, List.of(provider), new ObjectMapper(), orderExpiryService,
+                paymentQueryTransactionService);
     }
 
     @Test
@@ -283,6 +283,24 @@ class PaymentServiceImplTest {
         assertNotEquals("merchant-old", capturedAttempt().getMerchantTradeNo());
         verify(paymentAttemptRepository).save(oldAttempt);
         verify(provider).create(any(PaymentProvider.PaymentRequest.class));
+    }
+
+    @Test
+    void repeatedRepayUsesLatestAttemptTimeEvenWhenOrderTimestampIsOld() {
+        UUID orderId = UUID.randomUUID();
+        Order order = pendingOrder(orderId, "10.00");
+        order.setUpdatedAt(LocalDateTime.now().minusMinutes(5));
+        PaymentAttempt latest = attempt(orderId, "merchant-new", new PaymentNextAction.Redirect(
+                "https://pay.example/new"));
+        latest.setCreatedAt(LocalDateTime.now());
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(paymentAttemptRepository.findFirstByOrderIdOrderByCreatedAtDesc(orderId))
+                .thenReturn(Optional.of(latest));
+
+        assertThrows(BusinessException.class, () -> service.repay(orderId, "pc"));
+
+        verify(provider, never()).create(any());
+        verify(paymentAttemptRepository, never()).findByOrderIdAndStatusForUpdate(any(), any());
     }
 
     private PaymentAttempt capturedAttempt() {

@@ -1,6 +1,7 @@
 package com.myshop.service.impl;
 
 import com.myshop.exception.BusinessException;
+import com.myshop.entity.Order;
 import com.myshop.repository.OrderRepository;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.FulfillmentService;
@@ -11,6 +12,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
+import java.time.LocalDateTime;
+import java.util.List;
 
 @Slf4j
 @Service
@@ -42,7 +45,20 @@ public class AutoFulfillmentServiceImpl implements AutoFulfillmentService {
             fixedDelayString = "${fulfillment.retry-interval-ms:60000}",
             initialDelayString = "${fulfillment.retry-initial-delay-ms:60000}")
     public void retryPendingPaidOrders() {
-        orderRepository.findPaidOrdersWithPendingAutoItems(PageRequest.of(0, RETRY_BATCH_SIZE))
-                .forEach(order -> trigger(order.getId()));
+        LocalDateTime scanStartedAt = LocalDateTime.now();
+        LocalDateTime afterCreatedAt = null;
+        UUID afterId = null;
+        while (true) {
+            List<Order> batch = orderRepository.findPaidOrdersWithPendingAutoItemsAfter(
+                    afterCreatedAt, afterId, scanStartedAt, PageRequest.of(0, RETRY_BATCH_SIZE));
+            if (batch.isEmpty()) return;
+            batch.forEach(order -> trigger(order.getId()));
+            // A failed old order must not monopolize the first batch. A keyset
+            // also avoids skipping rows when successful deliveries disappear.
+            Order last = batch.getLast();
+            afterCreatedAt = last.getCreatedAt();
+            afterId = last.getId();
+            if (batch.size() < RETRY_BATCH_SIZE) return;
+        }
     }
 }

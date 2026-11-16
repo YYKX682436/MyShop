@@ -4,28 +4,34 @@
  * 采集 Canvas 2D + WebGL + AudioContext + Navigator + Screen 信号，
  * 合并后 SHA-256 哈希生成 64 位十六进制 deviceId。
  *
- * 性能：< 200ms，页面加载时后台完成，用户无感知。
- * 稳定性：同一会话内 100% 稳定，跨会话平均 ~1.8 周。
- * 准确率：~85-92% 唯一识别率。
+ * 只在登录、注册、下单时按需采集，作为本站风控信号。
+ * 同页并发请求共享采集过程；不可用时由服务端按 IP 限流。
  */
 
 const CACHE_KEY = "__device_id__"
+let deviceIdPromise: Promise<string> | null = null
 
 /** 获取 deviceId（优先 sessionStorage 缓存） */
-export async function getDeviceId(): Promise<string> {
-  if (typeof window === "undefined") return ""
-
-  const cached = sessionStorage.getItem(CACHE_KEY)
-  if (cached) return cached
-
-  try {
-    const id = await generateDeviceId()
-    sessionStorage.setItem(CACHE_KEY, id)
-    return id
-  } catch {
-    // 采集失败不阻塞用户，返回空字符串（后端会降级为 IP 限流）
-    return ""
+export function getDeviceId(): Promise<string> {
+  if (typeof window === "undefined") return Promise.resolve("")
+  if (!deviceIdPromise) {
+    deviceIdPromise = (async () => {
+      try {
+        const cached = sessionStorage.getItem(CACHE_KEY)
+        if (cached) return cached
+      } catch {
+        // 浏览器禁用存储时仍可在本页复用采集结果。
+      }
+      try {
+        const id = await generateDeviceId()
+        try { sessionStorage.setItem(CACHE_KEY, id) } catch { /* 本页缓存仍有效 */ }
+        return id
+      } catch {
+        return ""
+      }
+    })()
   }
+  return deviceIdPromise
 }
 
 async function generateDeviceId(): Promise<string> {
@@ -116,8 +122,9 @@ function getAudioFingerprint(): Promise<string> {
       compressor.connect(context.destination)
       oscillator.start(0)
 
-      context.startRendering()
+      const timeout = setTimeout(() => resolve("audio:timeout"), 1000)
       context.oncomplete = (event) => {
+        clearTimeout(timeout)
         try {
           const data = event.renderedBuffer.getChannelData(0)
           let sum = 0
@@ -129,9 +136,10 @@ function getAudioFingerprint(): Promise<string> {
           resolve("audio:error")
         }
       }
-
-      // 超时保护
-      setTimeout(() => resolve("audio:timeout"), 1000)
+      void context.startRendering().catch(() => {
+        clearTimeout(timeout)
+        resolve("audio:error")
+      })
     } catch {
       resolve("audio:error")
     }

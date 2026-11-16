@@ -23,7 +23,7 @@ import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentChannelRepository;
-import com.myshop.repository.PaymentAttemptRepository;
+import com.myshop.service.OrderExpiryService;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.SiteConfigRepository;
@@ -59,6 +59,8 @@ import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
@@ -71,7 +73,7 @@ class OrderServiceImplTest {
     @Mock private CardKeyRepository cardKeyRepository;
     @Mock private SiteConfigRepository siteConfigRepository;
     @Mock private PaymentChannelRepository paymentChannelRepository;
-    @Mock private PaymentAttemptRepository paymentAttemptRepository;
+    @Mock private OrderExpiryService orderExpiryService;
     @Mock private PaymentService paymentService;
     @Mock private BalanceOrderPaymentService balanceOrderPaymentService;
     @Mock private ManualStockService manualStockService;
@@ -85,7 +87,7 @@ class OrderServiceImplTest {
     void setUp() {
         service = new OrderServiceImpl(orderRepository, orderItemRepository, productRepository,
                 productSpecRepository, cardKeyRepository,
-                siteConfigRepository, paymentChannelRepository, paymentAttemptRepository, paymentService,
+                siteConfigRepository, paymentChannelRepository, orderExpiryService, paymentService,
                 balanceOrderPaymentService,
                 manualStockService, userRepository, userLevelRepository, autoFulfillmentService,
                 new PricingServiceImpl(userRepository, userLevelRepository, null));
@@ -96,10 +98,6 @@ class OrderServiceImplTest {
         lenient().when(paymentService.createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class)))
                 .thenReturn(Map.of("status", PaymentStatus.PENDING,
                         "next_action", new PaymentNextAction.Redirect("https://pay.example/1")));
-        lenient().when(paymentAttemptRepository
-                .findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
-                        any(), eq(PaymentStatus.PENDING), any(LocalDateTime.class)))
-                .thenReturn(Optional.empty());
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
             Order order = invocation.getArgument(0);
             if (order.getId() == null) order.setId(UUID.randomUUID());
@@ -113,6 +111,22 @@ class OrderServiceImplTest {
             return order;
         });
         lenient().when(orderItemRepository.findByOrderId(any())).thenReturn(List.of());
+    }
+
+    @Test
+    void expiryScanContinuesAfterOneOrderFails() {
+        UUID damagedOrderId = UUID.randomUUID();
+        UUID healthyOrderId = UUID.randomUUID();
+        when(orderRepository.findExpiredOrderIds(any(LocalDateTime.class)))
+                .thenReturn(List.of(damagedOrderId, healthyOrderId));
+        doThrow(new IllegalStateException("Inconsistent manual stock reservation"))
+                .when(orderExpiryService).expireById(damagedOrderId);
+
+        service.expireOrders();
+
+        var expiryCalls = inOrder(orderExpiryService);
+        expiryCalls.verify(orderExpiryService).expireById(damagedOrderId);
+        expiryCalls.verify(orderExpiryService).expireById(healthyOrderId);
     }
 
     @Test

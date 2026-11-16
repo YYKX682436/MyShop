@@ -4,13 +4,14 @@
  * 与客户端 api.ts 的区别：
  * - 直接使用 BACKEND_URL 调用后端，不走 Next.js rewrites 代理
  * - 不依赖 localStorage（服务端无浏览器环境）
- * - 仅封装公开接口（不需要 auth token）
+ * - 商品价格按访问者 Cookie 获取；SEO 和站点配置使用匿名公开请求
  */
 
 import type {
   ApiResponse,
   PaginatedData,
   ProductCard,
+  ProductListQuery,
   ProductDetail,
   Category,
   PublicPaymentChannel,
@@ -60,46 +61,25 @@ async function viewerRequest<T>(path: string): Promise<T> {
 // Public API — 商品
 // ============================================================
 
-function productQuery(params?: {
-  page?: number
-  page_size?: number
-  category_id?: string
-  keyword?: string
-}): string {
+function productQuery(params: ProductListQuery = {}): string {
   const sp = new URLSearchParams()
-  if (params?.page) sp.set("page", String(params.page))
-  if (params?.page_size) sp.set("page_size", String(params.page_size))
-  if (params?.category_id) sp.set("category_id", params.category_id)
-  if (params?.keyword) sp.set("keyword", params.keyword)
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") sp.set(key, String(value))
+  }
   const qs = sp.toString()
   return `/products${qs ? `?${qs}` : ""}`
 }
 
-export async function getAnonymousProducts(params?: {
-  page?: number
-  page_size?: number
-  category_id?: string
-  keyword?: string
-}): Promise<PaginatedData<ProductCard>> {
+export async function getAnonymousProducts(params?: ProductListQuery): Promise<PaginatedData<ProductCard>> {
   return serverRequest<PaginatedData<ProductCard>>(productQuery(params))
 }
 
-export async function getViewerProducts(params?: {
-  page?: number
-  page_size?: number
-  category_id?: string
-  keyword?: string
-}): Promise<PaginatedData<ProductCard>> {
+export async function getViewerProducts(params?: ProductListQuery): Promise<PaginatedData<ProductCard>> {
   return viewerRequest<PaginatedData<ProductCard>>(productQuery(params))
 }
 
 /** Storefront lists are viewer-aware so the first server-rendered price is correct. */
-export async function getProducts(params?: {
-  page?: number
-  page_size?: number
-  category_id?: string
-  keyword?: string
-}): Promise<PaginatedData<ProductCard>> {
+export async function getProducts(params?: ProductListQuery): Promise<PaginatedData<ProductCard>> {
   return getViewerProducts(params)
 }
 

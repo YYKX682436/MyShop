@@ -4,7 +4,7 @@ set -Eeuo pipefail
 [[ "$(id -u)" == 0 ]] || { printf 'must run as root\n' >&2; exit 1; }
 CONFIG_SOURCE=${CONFIG_SOURCE:-/tmp/daemon.json.builder-gc.example}
 CONFIG_TARGET=${CONFIG_TARGET:-/etc/docker/daemon.json}
-LOCK_FILE=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-xianyu-deploy.lock}
+LOCK_FILE=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-deploy.lock}
 [[ -r "$CONFIG_SOURCE" ]] || { printf 'missing candidate Docker config: %s\n' "$CONFIG_SOURCE" >&2; exit 1; }
 
 exec 9>"$LOCK_FILE"

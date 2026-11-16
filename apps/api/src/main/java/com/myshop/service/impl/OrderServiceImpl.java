@@ -11,10 +11,11 @@ import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
+import com.myshop.exception.OrderExpiredException;
 import com.myshop.model.pricing.PriceResolution;
-import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.*;
 import com.myshop.service.OrderService;
+import com.myshop.service.OrderExpiryService;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.BalanceOrderPaymentService;
 import com.myshop.service.ManualStockService;
@@ -44,7 +45,7 @@ public class OrderServiceImpl implements OrderService {
     private final CardKeyRepository cardKeyRepository;
     private final SiteConfigRepository siteConfigRepository;
     private final PaymentChannelRepository paymentChannelRepository;
-    private final PaymentAttemptRepository paymentAttemptRepository;
+    private final OrderExpiryService orderExpiryService;
     private final PaymentService paymentService;
     private final BalanceOrderPaymentService balanceOrderPaymentService;
     private final ManualStockService manualStockService;
@@ -58,7 +59,7 @@ public class OrderServiceImpl implements OrderService {
                              ProductRepository productRepository, ProductSpecRepository productSpecRepository,
                              CardKeyRepository cardKeyRepository, SiteConfigRepository siteConfigRepository,
                              PaymentChannelRepository paymentChannelRepository,
-                             PaymentAttemptRepository paymentAttemptRepository, PaymentService paymentService,
+                             OrderExpiryService orderExpiryService, PaymentService paymentService,
                              BalanceOrderPaymentService balanceOrderPaymentService,
                              ManualStockService manualStockService,
                              UserRepository userRepository,
@@ -72,7 +73,7 @@ public class OrderServiceImpl implements OrderService {
         this.cardKeyRepository = cardKeyRepository;
         this.siteConfigRepository = siteConfigRepository;
         this.paymentChannelRepository = paymentChannelRepository;
-        this.paymentAttemptRepository = paymentAttemptRepository;
+        this.orderExpiryService = orderExpiryService;
         this.paymentService = paymentService;
         this.balanceOrderPaymentService = balanceOrderPaymentService;
         this.manualStockService = manualStockService;
@@ -83,12 +84,10 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = OrderExpiredException.class)
     public Map<String, Object> createDirectOrder(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
         String device = (String) req.get("device");
         Object requestedPaymentMethod = req.get("payment_method");
-        User currentUser = reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
-        boolean adminPickup = isEnabledAdministrator(currentUser);
         String guestSession = userId == null ? clean(sessionToken) : null;
         if (userId == null && guestSession == null) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "游客会话无效");
@@ -96,17 +95,23 @@ public class OrderServiceImpl implements OrderService {
         String idempotencyKey = clean((String) req.get("idempotency_key"));
         String idempotencyFingerprint = clean((String) req.get("idempotency_fingerprint"));
         if (idempotencyKey != null) {
-            Optional<Order> existing = orderRepository.findByIdempotencyKey(idempotencyKey);
+            Optional<Order> existing = orderRepository.findByIdempotencyKeyForUpdate(idempotencyKey);
             if (existing.isPresent()) {
                 Order existingOrder = existing.get();
                 boolean sameOwner = sameIdempotencyOwner(existingOrder, userId, sessionToken);
                 if (sameOwner) {
                     verifyIdempotencyFingerprint(existingOrder, idempotencyFingerprint);
+                    // Existing-order mutations always lock order before user,
+                    // matching refunds. Load it under the first lock so the
+                    // persistence context cannot retain a stale payment state.
+                    reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
                     return buildOrderResult(existingOrder, device);
                 }
                 throw new BusinessException(ErrorCode.FORBIDDEN, "幂等键不属于当前用户或会话");
             }
         }
+        User currentUser = reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
+        boolean adminPickup = isEnabledAdministrator(currentUser);
 
         UUID productId = UUID.fromString((String) req.get("product_id"));
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
@@ -218,24 +223,23 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     @Scheduled(fixedRate = 60000)
-    @Transactional
     public void expireOrders() {
-        List<Order> expired = orderRepository.findExpiredOrders(LocalDateTime.now());
-        for (Order order : expired) {
-            Order locked = orderRepository.findByIdForUpdate(order.getId()).orElse(null);
-            if (locked != null && locked.getStatus() == OrderStatus.PENDING
-                    && locked.getExpiresAt() != null && locked.getExpiresAt().isBefore(LocalDateTime.now())) {
-                expireOrder(locked);
+        // IDs avoid loading stale entities before the per-order lock. Each
+        // order has its own short transaction and releases its locks promptly.
+        for (UUID orderId : orderRepository.findExpiredOrderIds(LocalDateTime.now())) {
+            try {
+                orderExpiryService.expireById(orderId);
+            } catch (RuntimeException exception) {
+                // The failed order's transaction rolls back independently. A
+                // damaged reservation must not block unrelated orders forever.
+                log.error("Failed to expire order {}; continuing the expiry scan", orderId, exception);
             }
         }
     }
 
     @Override
     public void expireIfNeeded(Order order) {
-        if (order != null && order.getStatus() == OrderStatus.PENDING
-                && order.getExpiresAt() != null && order.getExpiresAt().isBefore(LocalDateTime.now())) {
-            expireOrder(order);
-        }
+        orderExpiryService.expireLockedOrder(order);
     }
 
     private void setUserLevelSnapshot(Order order, UserLevel level, boolean adminPickup) {
@@ -496,28 +500,6 @@ public class OrderServiceImpl implements OrderService {
         item.setStockMode(stockMode);
         item.setFulfillmentStatus(FulfillmentStatus.PENDING);
         item.setManualStockReserved(stockMode == StockMode.MANUAL ? quantity : 0);
-    }
-
-    private void expireOrder(Order order) {
-        for (PaymentAttempt attempt : paymentAttemptRepository
-                .findByOrderIdAndStatusForUpdate(order.getId(), PaymentStatus.PENDING)) {
-            attempt.setStatus(PaymentStatus.CLOSED);
-            paymentAttemptRepository.save(attempt);
-        }
-        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
-        for (OrderItem item : items) {
-            int reserved = item.getManualStockReserved();
-            if (reserved > 0 && item.getStockMode() == StockMode.MANUAL) {
-                manualStockService.release(item.getProductId(), item.getSpecId(), reserved);
-                item.setManualStockReserved(0);
-            }
-            if (item.getFulfillmentStatus() != FulfillmentStatus.DELIVERED) {
-                item.setFulfillmentStatus(FulfillmentStatus.CANCELLED);
-            }
-            orderItemRepository.save(item);
-        }
-        order.setStatus(OrderStatus.EXPIRED);
-        orderRepository.save(order);
     }
 
     private record StockView(long available, boolean unlimited) {

@@ -7,6 +7,7 @@ import com.myshop.constant.OrderType;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.CardImportBatch;
 import com.myshop.entity.CardKey;
+import com.myshop.entity.ManualStock;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.Product;
@@ -19,7 +20,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
-import com.myshop.service.ManualStockService;
+import com.myshop.repository.ManualStockRepository;
 import com.myshop.utils.CardContentParser;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,6 +30,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -58,7 +60,7 @@ class AdminCardKeyServiceImplTest {
     @Mock private ProductSpecRepository productSpecRepository;
     @Mock private OrderRepository orderRepository;
     @Mock private OrderItemRepository orderItemRepository;
-    @Mock private ManualStockService manualStockService;
+    @Mock private ManualStockRepository manualStockRepository;
 
     private AdminCardKeyServiceImpl service;
     private UUID productId;
@@ -67,7 +69,7 @@ class AdminCardKeyServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new AdminCardKeyServiceImpl(cardKeyRepository, batchRepository, productRepository,
-                productSpecRepository, orderRepository, orderItemRepository, manualStockService);
+                productSpecRepository, orderRepository, orderItemRepository, manualStockRepository);
         productId = UUID.randomUUID();
         product = new Product();
         product.setId(productId);
@@ -390,7 +392,10 @@ class AdminCardKeyServiceImplTest {
         UUID cardId = UUID.randomUUID();
         CardKey key = card(cardId, List.of("账号", "密码"), CardKeyStatus.AVAILABLE);
         stubPickupSaves(orderId, orderItemId);
-        when(cardKeyRepository.findById(cardId)).thenReturn(Optional.of(key));
+        when(cardKeyRepository.findStockPoolById(cardId)).thenReturn(Optional.of(new CardKeyRepository.StockPool() {
+            public UUID getProductId() { return key.getProductId(); }
+            public UUID getSpecId() { return key.getSpecId(); }
+        }));
         when(cardKeyRepository.findByIdForUpdate(cardId)).thenReturn(Optional.of(key));
 
         var result = service.pickupCardKey(cardId, UUID.randomUUID());
@@ -500,7 +505,10 @@ class AdminCardKeyServiceImplTest {
     void soldOrInvalidCardCannotBePickedUpBySingleCardId() {
         UUID cardId = UUID.randomUUID();
         CardKey key = card(cardId, List.of("secret"), CardKeyStatus.SOLD);
-        when(cardKeyRepository.findById(cardId)).thenReturn(Optional.of(key));
+        when(cardKeyRepository.findStockPoolById(cardId)).thenReturn(Optional.of(new CardKeyRepository.StockPool() {
+            public UUID getProductId() { return key.getProductId(); }
+            public UUID getSpecId() { return key.getSpecId(); }
+        }));
         when(cardKeyRepository.findByIdForUpdate(cardId)).thenReturn(Optional.of(key));
         when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
 
@@ -520,5 +528,54 @@ class AdminCardKeyServiceImplTest {
         key.setStatus(status);
         key.setContentFingerprint(CardContentParser.fingerprint(parts));
         return key;
+    }
+
+    @Test
+    void stockSummaryBatchesPoolsAndPreservesHiddenSpecsAndAllStockModes() {
+        product.setSpecEnabled(true);
+        ProductSpec hiddenSpec = new ProductSpec();
+        hiddenSpec.setId(UUID.randomUUID());
+        hiddenSpec.setProductId(productId);
+        hiddenSpec.setName("hidden stock");
+        hiddenSpec.setVisible(false);
+        Product manual = new Product();
+        manual.setId(UUID.randomUUID());
+        manual.setStockMode(StockMode.MANUAL);
+        Product unlimited = new Product();
+        unlimited.setId(UUID.randomUUID());
+        unlimited.setStockMode(StockMode.UNLIMITED);
+        List<UUID> productIds = List.of(productId, manual.getId(), unlimited.getId());
+        when(productRepository.findAdminProducts(null, null, Pageable.unpaged()))
+                .thenReturn(new PageImpl<>(List.of(product, manual, unlimited)));
+        when(productSpecRepository.findByProductIdInAndIsDeletedOrderByProductIdAscSortOrderAsc(productIds, 0))
+                .thenReturn(List.of(hiddenSpec));
+        when(cardKeyRepository.countPoolsByStatus(List.of(productId)))
+                .thenReturn(List.of(poolCount(null, CardKeyStatus.AVAILABLE, 1),
+                        poolCount(hiddenSpec.getId(), CardKeyStatus.SOLD, 2)));
+        ManualStock stock = new ManualStock(manual.getId(), null, 3, 1);
+        when(manualStockRepository.findByProductIdIn(List.of(manual.getId()))).thenReturn(List.of(stock));
+
+        List<?> result = service.getStockSummary(null, null);
+
+        assertEquals(4, result.size());
+        assertEquals(1L, ((Map<?, ?>) result.get(0)).get("available"));
+        assertEquals(hiddenSpec.getId(), ((Map<?, ?>) result.get(1)).get("spec_id"));
+        assertEquals(2L, ((Map<?, ?>) result.get(1)).get("sold"));
+        assertEquals(4, ((Map<?, ?>) result.get(2)).get("total"));
+        assertEquals(1, ((Map<?, ?>) result.get(2)).get("reserved"));
+        assertEquals(true, ((Map<?, ?>) result.get(3)).get("unlimited"));
+        assertNull(((Map<?, ?>) result.get(3)).get("available"));
+        verify(cardKeyRepository).countPoolsByStatus(List.of(productId));
+        verify(manualStockRepository).findByProductIdIn(List.of(manual.getId()));
+        verify(productSpecRepository, never()).findByProductIdAndIsDeletedOrderBySortOrderAsc(any(), anyInt());
+    }
+
+    private CardKeyRepository.PoolStatusCount poolCount(UUID specId, CardKeyStatus status, long quantity) {
+        return new CardKeyRepository.PoolStatusCount() {
+            public UUID getProductId() { return productId; }
+            public UUID getSpecId() { return specId; }
+            public CardKeyStatus getStatus() { return status; }
+            public long getQuantity() { return quantity; }
+        };
     }
 }

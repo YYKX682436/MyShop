@@ -8,13 +8,12 @@ interface PaginationProps {
   pageSize: number
   total: number
   onChange: (page: number) => void
+  disabled?: boolean
 }
 
-export function Pagination({ page, pageSize, total, onChange }: PaginationProps) {
+export function Pagination({ page, pageSize, total, onChange, disabled = false }: PaginationProps) {
   const { t } = useLocale()
   const totalPages = Math.ceil(total / pageSize)
-
-  if (totalPages <= 1) return null
 
   const pages: (number | "...")[] = []
   if (totalPages <= 7) {
@@ -30,14 +29,15 @@ export function Pagination({ page, pageSize, total, onChange }: PaginationProps)
   }
 
   return (
-    <div className="flex items-center justify-between px-2 py-4">
+    <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-4">
       <p className="text-sm text-muted-foreground">
         {t("common.total")} {total} {t("common.records")}
       </p>
-      <div className="flex items-center gap-1">
+      {totalPages > 1 && <nav className="flex flex-wrap items-center gap-1" aria-label={t("admin.pagination")}>
         <button
+          type="button"
           onClick={() => onChange(page - 1)}
-          disabled={page <= 1}
+          disabled={disabled || page <= 1}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-sm transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
           aria-label={t("common.prev")}
         >
@@ -50,8 +50,11 @@ export function Pagination({ page, pageSize, total, onChange }: PaginationProps)
             </span>
           ) : (
             <button
+              type="button"
               key={p}
               onClick={() => onChange(p)}
+              disabled={disabled}
+              aria-current={p === page ? "page" : undefined}
               className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-medium transition-colors ${
                 p === page
                   ? "bg-primary text-primary-foreground"
@@ -63,14 +66,15 @@ export function Pagination({ page, pageSize, total, onChange }: PaginationProps)
           )
         )}
         <button
+          type="button"
           onClick={() => onChange(page + 1)}
-          disabled={page >= totalPages}
+          disabled={disabled || page >= totalPages}
           className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-sm transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50"
           aria-label={t("common.next")}
         >
           <ChevronRight className="h-4 w-4" />
         </button>
-      </div>
+      </nav>}
     </div>
   )
 }

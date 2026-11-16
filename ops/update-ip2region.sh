@@ -7,11 +7,15 @@ official_repo="lionsoul2014/ip2region"
 github_api="https://api.github.com/repos/${official_repo}"
 raw_base="https://raw.githubusercontent.com/${official_repo}"
 target_dir="${IP_GEO_HOST_PATH:-/data/myshop/ipdb}"
-compose_dir="${MYSHOP_COMPOSE_DIR:-/opt/myshop}"
+runtime_root="${MYSHOP_RUNTIME_ROOT:-/opt/myshop/runtime}"
+env_file="${MYSHOP_ENV_FILE:-/opt/myshop/.env}"
 binding_version="${IP2REGION_JAVA_VERSION:-3.3.7}"
 restart_api="${RESTART_API:-true}"
 script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 repo_dir="$(CDPATH= cd -- "${script_dir}/.." && pwd)"
+compose_wrapper="${MYSHOP_COMPOSE_WRAPPER:-${repo_dir}/scripts/myshop-compose.sh}"
+approved_registry="${MYSHOP_APPROVED_REGISTRY:-ghcr.io/yykx682436}"
+lock_file="${HOST_DEPLOY_LOCK_FILE:-/run/myshop-deploy.lock}"
 
 if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1 \
   || ! command -v sha256sum >/dev/null 2>&1 || ! command -v docker >/dev/null 2>&1; then
@@ -21,6 +25,33 @@ fi
 if [[ ! -f "${repo_dir}/ops/Ip2RegionXdbVerifier.java" ]]; then
   echo "missing the official-binding XDB verifier source" >&2
   exit 1
+fi
+if [[ "${restart_api}" != "true" && "${restart_api}" != "false" ]]; then
+  echo "RESTART_API must be true or false" >&2
+  exit 1
+fi
+if [[ "${approved_registry}" != "ghcr.io/yykx682436" ]]; then
+  echo "MYSHOP_APPROVED_REGISTRY must be ghcr.io/yykx682436" >&2
+  exit 1
+fi
+# The data replacement and restart must not overlap a deployment or host
+# maintenance run. Keep the same lock through preflight, download and restart.
+if [[ "${HOST_DEPLOY_LOCK_HELD:-0}" != "1" ]]; then
+  mkdir -p -- "$(dirname -- "${lock_file}")"
+  exec 9>"${lock_file}"
+  flock -n 9 || { echo "deployment/maintenance lock is held" >&2; exit 1; }
+fi
+if [[ "${restart_api}" == "true" ]]; then
+  if [[ ! -x "${compose_wrapper}" || ! -f "${runtime_root}/docker-compose.prod.yml" || ! -f "${env_file}" ]]; then
+    echo "API restart requires the installed production wrapper, runtime Compose, and env file" >&2
+    exit 1
+  fi
+  # Validate the real installed stack before downloading or replacing either
+  # database. The process loads XDB data at startup, so a skipped restart must
+  # never be reported as a successful default update.
+  MYSHOP_RUNTIME_ROOT="${runtime_root}" MYSHOP_ENV_FILE="${env_file}" \
+    MYSHOP_APPROVED_REGISTRY="${approved_registry}" \
+    "${compose_wrapper}" config --quiet
 fi
 
 mkdir -p "${target_dir}"
@@ -105,18 +136,9 @@ EOF
 mv -f -- "${manifest_tmp}" "${target_dir}/manifest"
 
 if [[ "${restart_api}" == "true" ]]; then
-  if [[ -f "${compose_dir}/docker-compose.yml" ]]; then
-    compose_args=(--project-directory "${compose_dir}" -f "${compose_dir}/docker-compose.yml")
-    if [[ -f "${compose_dir}/docker-compose.runtime.yml" ]]; then
-      compose_args+=(-f "${compose_dir}/docker-compose.runtime.yml")
-    fi
-    IP_GEO_HOST_PATH="${target_dir}" \
-      IP_GEO_IPV4_DB_PATH=/app/ipdb/ip2region_v4.xdb \
-      IP_GEO_IPV6_DB_PATH=/app/ipdb/ip2region_v6.xdb \
-      docker compose "${compose_args[@]}" restart api
-  else
-    echo "XDB files updated; skipped API restart because ${compose_dir}/docker-compose.yml is absent" >&2
-  fi
+  MYSHOP_RUNTIME_ROOT="${runtime_root}" MYSHOP_ENV_FILE="${env_file}" \
+    MYSHOP_APPROVED_REGISTRY="${approved_registry}" \
+    "${compose_wrapper}" restart api
 fi
 
 echo "ip2region updated: version=${upstream_version} commit=${upstream_commit}"

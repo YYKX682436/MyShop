@@ -20,6 +20,8 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
 
     List<PaymentAttempt> findByOrderIdOrderByCreatedAtDesc(UUID orderId);
 
+    Optional<PaymentAttempt> findFirstByOrderIdOrderByCreatedAtDesc(UUID orderId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM PaymentAttempt p WHERE p.orderId = :orderId AND p.status = :status ORDER BY p.createdAt ASC")
     List<PaymentAttempt> findByOrderIdAndStatusForUpdate(@Param("orderId") UUID orderId,

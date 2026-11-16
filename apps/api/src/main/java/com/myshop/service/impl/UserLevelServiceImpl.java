@@ -22,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -46,13 +47,15 @@ public class UserLevelServiceImpl implements UserLevelService {
     @Override
     @Transactional
     public UserLevelResponse create(UserLevelUpsertRequest request) {
+        boolean defaultRequested = request != null && Boolean.TRUE.equals(request.isDefault());
+        List<UserLevel> lockedLevels = defaultRequested ? userLevelRepository.findAllForUpdate() : List.of();
         UserLevel level = new UserLevel();
         apply(level, request, false);
-        if (Boolean.TRUE.equals(request == null ? null : request.isDefault())) {
+        if (defaultRequested) {
             if (!level.isEnabled()) {
                 throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "默认等级必须启用");
             }
-            setAllDefaultsFalse();
+            clearDefaults(lockedLevels);
             level.setDefault(true);
         }
         UserLevel saved = userLevelRepository.saveAndFlush(level);
@@ -63,7 +66,9 @@ public class UserLevelServiceImpl implements UserLevelService {
     @Override
     @Transactional
     public UserLevelResponse update(UUID id, UserLevelUpsertRequest request) {
-        UserLevel level = lockLevel(id);
+        boolean defaultRequested = request != null && Boolean.TRUE.equals(request.isDefault());
+        List<UserLevel> lockedLevels = defaultRequested ? userLevelRepository.findAllForUpdate() : List.of();
+        UserLevel level = defaultRequested ? requireLockedLevel(lockedLevels, id) : lockLevel(id);
         UserLevel duplicate = findNamed(request == null ? null : request.name());
         if (duplicate != null && !duplicate.getId().equals(id)) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "用户等级名称已存在");
@@ -78,7 +83,10 @@ public class UserLevelServiceImpl implements UserLevelService {
         }
         if (level.isDefault()) {
             level.setEnabled(true);
-            clearOtherDefaults(id);
+            if (defaultRequested) {
+                clearDefaults(lockedLevels);
+                level.setDefault(true);
+            }
         }
         UserLevel saved = userLevelRepository.saveAndFlush(level);
         log("user_level.update", id, "更新用户等级：" + saved.getName());
@@ -107,11 +115,12 @@ public class UserLevelServiceImpl implements UserLevelService {
     @Override
     @Transactional
     public UserLevelResponse setDefault(UUID id) {
-        UserLevel level = lockLevel(id);
+        List<UserLevel> lockedLevels = userLevelRepository.findAllForUpdate();
+        UserLevel level = requireLockedLevel(lockedLevels, id);
         if (!level.isEnabled()) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "停用等级不能设为默认");
         }
-        setAllDefaultsFalse();
+        clearDefaults(lockedLevels);
         level.setDefault(true);
         UserLevel saved = userLevelRepository.saveAndFlush(level);
         log("user_level.default", id, "设置默认用户等级：" + saved.getName());
@@ -137,12 +146,16 @@ public class UserLevelServiceImpl implements UserLevelService {
     @Override
     @Transactional
     public int migrate(UUID sourceLevelId, UserLevelMigrationRequest request) {
-        if (request == null || request.targetLevelId() == null
+        if (sourceLevelId == null || request == null || request.targetLevelId() == null
                 || sourceLevelId.equals(request.targetLevelId())) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "迁移目标等级无效");
         }
-        UserLevel source = lockLevel(sourceLevelId);
-        UserLevel target = lockLevel(request.targetLevelId());
+        // Level locks always precede user locks. Use unsigned/string UUID
+        // order to match findAllForUpdate, including reverse migrations.
+        List<UserLevel> lockedLevels = List.of(sourceLevelId, request.targetLevelId()).stream()
+                .sorted(Comparator.comparing(UUID::toString)).map(this::lockLevel).toList();
+        UserLevel source = requireLockedLevel(lockedLevels, sourceLevelId);
+        UserLevel target = requireLockedLevel(lockedLevels, request.targetLevelId());
         if (!target.isEnabled()) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "不能迁移到停用等级");
         }
@@ -158,14 +171,14 @@ public class UserLevelServiceImpl implements UserLevelService {
         if (request == null || request.userLevelId() == null) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "用户等级不能为空");
         }
+        UserLevel target = lockLevel(request.userLevelId());
+        if (!target.isEnabled()) {
+            throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "停用等级不能分配");
+        }
         User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
         if (user.getRole() != UserRole.USER) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "管理员账号不能分配普通用户等级");
-        }
-        UserLevel target = lockLevel(request.userLevelId());
-        if (!target.isEnabled()) {
-            throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "停用等级不能分配");
         }
         UUID previous = user.getUserLevelId();
         user.setUserLevelId(target.getId());
@@ -216,26 +229,25 @@ public class UserLevelServiceImpl implements UserLevelService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_LEVEL_NOT_FOUND, "用户等级不存在"));
     }
 
+    private UserLevel requireLockedLevel(List<UserLevel> levels, UUID id) {
+        return levels.stream().filter(level -> level.getId().equals(id)).findFirst()
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_LEVEL_NOT_FOUND, "用户等级不存在"));
+    }
+
     private UserLevel findNamed(String name) {
         return name == null ? null : userLevelRepository.findByNameIgnoreCase(name.trim()).orElse(null);
     }
 
-    private void setAllDefaultsFalse() {
-        userLevelRepository.findAllOrdered().forEach(level -> {
+    private void clearDefaults(List<UserLevel> lockedLevels) {
+        lockedLevels.forEach(level -> {
             if (level.isDefault()) {
                 level.setDefault(false);
                 userLevelRepository.save(level);
             }
         });
-    }
-
-    private void clearOtherDefaults(UUID id) {
-        userLevelRepository.findAllOrdered().forEach(level -> {
-            if (!level.getId().equals(id) && level.isDefault()) {
-                level.setDefault(false);
-                userLevelRepository.save(level);
-            }
-        });
+        // The partial unique index is immediate. Clear the old flag before
+        // Hibernate can INSERT/UPDATE the new default, all in this transaction.
+        userLevelRepository.flush();
     }
 
     private UserLevelResponse toResponse(UserLevel level, long userCount) {

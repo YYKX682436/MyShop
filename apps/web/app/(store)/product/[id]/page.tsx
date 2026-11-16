@@ -9,6 +9,8 @@ import { ProductSummary } from "./product-summary"
 import { ScrollToTop } from "./scroll-to-top"
 import type { Metadata } from "next"
 import type { PublicPaymentChannel } from "@/types"
+import { serializeJsonLd } from "@/lib/json-ld"
+import { getPublicSiteUrl } from "@/lib/site-url"
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -48,7 +50,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   if (!product) notFound()
 
   const inStock = product.unlimited || product.specs?.some(spec => spec.unlimited || (spec.stock_available ?? 0) > 0) || (product.stock_available ?? 0) > 0
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"
+  const baseUrl = getPublicSiteUrl()
   const categoryPath = [product.primary_category_name, product.secondary_category_name]
     .filter((name): name is string => Boolean(name))
 
@@ -82,11 +84,11 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     <div className="product-detail-page storefront-content-width flex flex-col gap-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(breadcrumbLd) }}
       />
 
       {/* Breadcrumb */}

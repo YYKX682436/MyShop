@@ -13,6 +13,7 @@ permissions:
 
 env:
   DOCKER_BUILD_RECORD_UPLOAD: "false"
+  NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
   api:
@@ -46,13 +47,14 @@ jobs:
             target/surefire-reports/TEST-com.myshop.service.impl.OrderRefundConcurrencyIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.PostgresDeliveryIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.AfterSaleConcurrencyIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.SalesChannelDomainIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.SalesChannelPhase4PostgresIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.XianyuItemBindingPostgresIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.impl.BalanceAdjustmentConcurrencyIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.UserAvatarTransactionIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.impl.CoreStabilityPostgresIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.service.impl.UserLevelConcurrencyIntegrationTest.xml
           )
           rm -f "${reports[@]}"
           mvn -B \
-            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,OrderRefundConcurrencyIntegrationTest,PostgresDeliveryIntegrationTest,AfterSaleConcurrencyIntegrationTest,SalesChannelDomainIntegrationTest,SalesChannelPhase4PostgresIntegrationTest,com.myshop.service.XianyuItemBindingPostgresIntegrationTest \
+            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,OrderRefundConcurrencyIntegrationTest,PostgresDeliveryIntegrationTest,AfterSaleConcurrencyIntegrationTest,BalanceAdjustmentConcurrencyIntegrationTest,UserAvatarTransactionIntegrationTest,CoreStabilityPostgresIntegrationTest,UserLevelConcurrencyIntegrationTest \
             -Dsurefire.failIfNoSpecifiedTests=true \
             test
 
@@ -134,7 +136,7 @@ jobs:
       - name: Run deployment transaction regression tests
         run: bash scripts/test-deployment-transaction.sh
       - name: Check production shell entry syntax
-        run: bash -n scripts/deploy-production.sh scripts/deploy-runtime-config.sh scripts/read-runtime-config-safety.sh scripts/myshop-compose.sh
+        run: bash -n scripts/deploy-production.sh scripts/myshop-compose.sh
       - name: Run production schema contract regression tests
         run: bash scripts/test-production-schema-contract.sh
       - name: Validate required Compose variables

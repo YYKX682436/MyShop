@@ -8,18 +8,18 @@ import { toast } from "sonner"
 import { useLocale, useAuth } from "@/lib/context"
 import { authApi, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
+import { safeLoginRedirect } from "@/lib/safe-navigation"
 
 export default function LoginPage() {
   const { t } = useLocale()
   const { setUser } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const redirectTo = searchParams.get("redirect")
+  const redirectTo = safeLoginRedirect(searchParams.get("redirect"))
 
   const [account, setAccount] = useState("")
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
-  const [rememberMe, setRememberMe] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
 
@@ -34,14 +34,8 @@ export default function LoginPage() {
 
       setUser(result.user)
 
-      if (rememberMe) {
-        localStorage.setItem("rememberMe", "true")
-      } else {
-        localStorage.removeItem("rememberMe")
-      }
-
       toast.success(t("auth.loginSuccess"))
-      router.push(redirectTo || "/")
+      router.push(redirectTo)
     } catch (err: unknown) {
       toast.error(getApiErrorMessage(err, t))
       handleTurnstileReset()
@@ -112,23 +106,6 @@ export default function LoginPage() {
                   )}
                 </button>
               </div>
-            </div>
-
-            {/* Remember Me */}
-            <div className="flex items-center">
-              <input
-                id="rememberMe"
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring focus:ring-offset-0"
-              />
-              <label
-                htmlFor="rememberMe"
-                className="ml-2 text-sm text-muted-foreground cursor-pointer select-none"
-              >
-                {t("auth.rememberMe")}
-              </label>
             </div>
 
             <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mb-1" />

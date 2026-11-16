@@ -41,7 +41,7 @@ section() { printf '\n===== %s =====\n' "$1"; }
     docker image inspect --format '{{.Id}}\t{{range .RepoDigests}}{{println .}}{{end}}' "$image_ref" 2>/dev/null || true
   done < <(docker ps -aq)
   section 'deployment-markers'
-  for file in /opt/myshop/DEPLOYED_SHA /opt/myshop/DEPLOYED_SHA.pre-* /opt/myshop/.image-tags-*.rollback /opt/xianyu-agent/DEPLOYED_SOURCE_SHA /opt/xianyu-agent/DEPLOYED_SOURCE_SHA.pre-*; do
+  for file in /opt/myshop/DEPLOYED_SHA /opt/myshop/DEPLOYED_SHA.pre-* /opt/myshop/.image-tags-*.rollback; do
     [[ -f "$file" ]] || continue
     printf '%s\t' "$file"
     tr -d '\n' <"$file"
@@ -53,15 +53,11 @@ section() { printf '\n===== %s =====\n' "$1"; }
   printf '%s\n' '--- /etc/containerd/config.toml ---'
   cat /etc/containerd/config.toml
   section 'backup-files'
-  find /data/myshop/backups /opt/xianyu-agent/backups -maxdepth 2 -type f -printf '%p\t%s bytes\t%TY-%Tm-%TdT%TH:%TM:%TS\n' 2>/dev/null | sort
+  find /data/myshop/backups -maxdepth 2 -type f -printf '%p\t%s bytes\t%TY-%Tm-%TdT%TH:%TM:%TS\n' 2>/dev/null | sort
   section 'database-read-only-smoke'
   postgres_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter 'label=com.docker.compose.service=db' -q | head -n 1 || true)
   if [[ -n "$postgres_id" ]]; then
     docker exec "$postgres_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT current_database(), 1;"'
-  fi
-  mysql_id=$(docker ps --filter 'label=com.docker.compose.project=xianyu-agent' --filter 'label=com.docker.compose.service=mysql' -q | head -n 1 || true)
-  if [[ -n "$mysql_id" ]]; then
-    docker exec "$mysql_id" sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -Nse "SELECT DATABASE(), 1;"'
   fi
   section 'journal-and-logs'
   journalctl --disk-usage

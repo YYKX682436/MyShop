@@ -8,11 +8,6 @@ const shared = readSource("../components/admin/shared/index.tsx")
 const dashboardPanels = readSource("../components/admin/dashboard-panels.tsx")
 const orders = readSource("../app/admin/orders/page.tsx")
 const productForm = readSource("../components/admin/products/product-form.tsx")
-const salesChannelEditor = readSource("../components/admin/products/sales-channel-editor.tsx")
-const salesChannelApi = readSource("../services/api.ts")
-const xianyuAccounts = readSource("../app/admin/xianyu/accounts/page.tsx")
-const xianyuItems = readSource("../app/admin/xianyu/items/page.tsx")
-const adminSidebar = readSource("../components/layout/admin-sidebar.tsx")
 const productTabs = readSource("../components/ui/tabs.tsx")
 const categoryPage = readSource("../app/admin/categories/page.tsx")
 
@@ -50,69 +45,6 @@ test("admin FormSection restores its shared card while retaining utility overrid
   assert.match(section, /padding:\s*1\.25rem/)
   assert.match(section, /box-shadow:\s*var\(--shadow-xs\)/)
   assert.match(categoryPage, /FormSection[^>]*className="border-0 bg-transparent p-0 shadow-none"/)
-})
-
-test("sales channel unlimited stock accepts zero in the UI and save validation", () => {
-  assert.match(salesChannelEditor, /无限库存同步数量<Input type="number" min="0" step="1"/)
-  assert.match(salesChannelEditor, /isValidUnlimitedStockQuantity\(unlimitedStockQuantity\)/)
-})
-
-test("Xianyu per-SKU stock cap is optional, bounded, and explicitly channel-only", () => {
-  assert.match(salesChannelEditor, /闲鱼单规格库存上限<Input type="number" min="0" max="999999" step="1"/)
-  assert.match(salesChannelEditor, /isValidStockCapPerSku\(stockCapPerSku\)/)
-  assert.match(salesChannelEditor, /仅限制同步到闲鱼的单个规格库存，不影响商城真实库存；留空表示完全跟随商城库存，设为 0 表示闲鱼库存同步为 0。/)
-  assert.match(salesChannelEditor, /stockCapPerSku: null/)
-  assert.match(salesChannelEditor, /stockCapPerSku,/)
-})
-
-test("sales-channel status refreshes while the editor is open without replacing saved config", () => {
-  const polling = salesChannelEditor.match(/const pollStatus = async \(\) => \{[\s\S]*?\}, \[productId\]\)/)?.[0]
-  assert.ok(polling, "the listing status poll is scoped to the current product")
-  assert.match(polling, /adminSalesChannelApi\.getProductListings\(productId\)/)
-  assert.match(polling, /document\.visibilityState === "hidden"/)
-  assert.match(polling, /requestInFlight/)
-  assert.match(polling, /preserveSavedProviderConfigs\(current, nextListings\)/)
-  assert.match(salesChannelEditor, /window\.setInterval\(\(\) => \{ void pollStatus\(\) \}, 5000\)/)
-  assert.match(salesChannelEditor, /window\.clearInterval\(timer\)/)
-  assert.match(salesChannelEditor, /providerConfig: previous\.providerConfig/)
-  assert.match(salesChannelEditor, /目标版本 \/ 已应用版本[\s\S]*?desiredRevision[\s\S]*?appliedRevision/)
-  assert.match(salesChannelEditor, /case "APPLYING":\s*return "处理中"/)
-})
-
-test("Xianyu address and category configuration use MyShop metadata pickers", () => {
-  assert.match(salesChannelEditor, /宝贝所在地/)
-  assert.match(salesChannelEditor, /智能推荐分类/)
-  assert.match(salesChannelEditor, /tip\.searchKeyword/)
-  assert.match(salesChannelEditor, /tip\.expectedText/)
-  assert.match(salesChannelEditor, /selectedCategory:\s*rawCandidate/)
-  assert.match(salesChannelEditor, /分类动态属性/)
-  assert.doesNotMatch(salesChannelEditor, /地址校验文字<Input/)
-  assert.doesNotMatch(salesChannelEditor, /平台属性 JSON/)
-  assert.doesNotMatch(salesChannelEditor, /平台分类 ID<Input/)
-  assert.match(salesChannelApi, /\/admin\/sales-channels\/xianyu\/metadata\/address\/search/)
-  assert.match(salesChannelApi, /\/admin\/sales-channels\/xianyu\/metadata\/category\/recommend/)
-})
-
-test("Xianyu account onboarding stays inside MyShop and cleans up QR polling", () => {
-  assert.match(adminSidebar, /labelKey: "admin\.navXianyu"[\s\S]*?href: "\/admin\/xianyu\/accounts"/)
-  assert.match(adminSidebar, /labelKey: "admin\.xianyuItems", href: "\/admin\/xianyu\/items", icon: Package/)
-  assert.match(salesChannelApi, /\/admin\/xianyu\/accounts\/login\/qr/)
-  assert.match(xianyuAccounts, /setTimeout\(\(\) => void poll\(\), 2000\)/)
-  assert.match(xianyuAccounts, /clearTimeout\(timer\)/)
-  for (const state of ["WAITING", "SCANNED", "VERIFICATION_REQUIRED", "QR_SCAN_CONFIRMED",
-    "COOKIE_PERSISTED", "PROVIDER_AUTH_VERIFIED", "PROVIDER_AUTH_VERIFICATION_FAILED",
-    "EXPIRED", "CANCELLED", "FAILED"]) {
-    assert.match(xianyuAccounts, new RegExp(state))
-  }
-  assert.match(xianyuAccounts, /buildQrLoginPollCommand\(currentLogin, crypto\.randomUUID\(\)\)/)
-  assert.match(xianyuAccounts, /applyQrLoginStatus\(currentLogin, status\)/)
-  assert.match(salesChannelApi, /login_intent_id: loginIntentId/)
-  assert.match(salesChannelApi, /login_session_id: sessionId/)
-  assert.match(xianyuAccounts, /targetProviderAccountId: account\.providerAccountId/)
-  assert.match(xianyuAccounts, /闲鱼要求进行安全验证，请按手机端提示完成验证。/)
-  assert.match(xianyuAccounts, /verificationQrCodeDataUrl/)
-  assert.match(xianyuAccounts, /闲鱼 App 再次扫码/)
-  assert.doesNotMatch(xianyuAccounts, /<iframe\b/i)
 })
 
 test("dashboard content groups use tokenized surfaces and one responsive KPI separator system", () => {
@@ -190,26 +122,4 @@ test("product editor keeps segmented tabs without the extra underline", () => {
   assert.doesNotMatch(productForm, /className="admin-editor-tabs[^\"]*border-b/)
   assert.match(productForm, /<TabsList className="flex h-auto w-full max-w-full justify-start overflow-x-auto p-1"/)
   assert.match(productTabs, /segmented-control-item/)
-})
-
-test("Xianyu catalog exposes safe manual identity linking without platform takeover controls", () => {
-  assert.match(adminSidebar, /href: "\/admin\/xianyu\/items", icon: Package/)
-  assert.match(xianyuItems, /title="闲鱼商品" description="查看并同步闲鱼账号中的商品。"/)
-  assert.match(xianyuItems, /adminSalesChannelApi\.getXianyuItems\(/)
-  assert.match(xianyuItems, /adminSalesChannelApi\.syncXianyuItems\(accountId\)/)
-  assert.match(xianyuItems, /setTimeout\(\(\) => \{[\s\S]*setDebouncedKeyword\(keyword\.trim\(\)\)[\s\S]*\}, 300\)/)
-  assert.match(xianyuItems, /正在从闲鱼同步商品…/)
-  assert.match(xianyuItems, /闲鱼登录已失效，请先重新登录账号。/)
-  assert.match(xianyuItems, /href="\/admin\/xianyu\/accounts"/)
-  assert.match(xianyuItems, /LINKED|UNLINKED|CONFLICT/)
-  assert.match(xianyuItems, /getXianyuLinkCandidates\(/)
-  assert.match(xianyuItems, /bindXianyuItem\(/)
-  assert.match(xianyuItems, /关联商品/)
-  assert.match(xianyuItems, /本操作只建立 MyShop 与该闲鱼商品的本地关联关系。不会修改闲鱼商品/)
-  assert.match(xianyuItems, /setTimeout\(\(\) => \{[\s\S]*setDebouncedCandidateKeyword\(candidateKeyword\.trim\(\)\)[\s\S]*\}, 300\)/)
-  assert.match(xianyuItems, /candidatePageSize\] = useState\(10\)/)
-  const confirmation = xianyuItems.match(/const confirmBinding = async \(\) => \{[\s\S]*?\n  \}/)?.[0] || ""
-  assert.match(confirmation, /bindingSubmitting/)
-  assert.doesNotMatch(confirmation, /syncXianyuItems/)
-  assert.doesNotMatch(xianyuItems, /iframe|解除绑定|重新绑定|batchBind|createListing|updateXianyuListing/)
 })

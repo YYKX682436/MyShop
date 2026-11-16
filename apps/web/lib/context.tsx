@@ -138,27 +138,7 @@ export function useSiteConfig() {
 // ============================================================
 
 export function AppProviders({ children }: { children: ReactNode }) {
-  // ==============================================================
-  // 架构说明（重构版 - 零闪屏方案）：
-  //
-  // 1. ThemeScript（在 <head> 中同步执行）：
-  //    - 在 React hydration 之前读取 localStorage 并直接设置 DOM
-  //    - 设置 dark class、lang 属性
-  //    - 确保首帧渲染就是正确的视觉状态
-  //
-  // 2. React State 初始化（本 Provider）：
-  //    - 使用 lazy initializer 在首次渲染时同步读取 localStorage
-  //    - 直接从 DOM 读取 ThemeScript 已设置好的状态
-  //    - 零 useEffect，零二次渲染，零闪屏
-  //
-  // 3. 用户切换时：
-  //    - 同时更新：React state + localStorage + DOM
-  //    - 三者保持同步，无延迟
-  //
-  // 4. 登录状态（测试用）：
-  //    - 采用相同的 lazy initializer 模式
-  //    - 后续接入服务端时，只需替换数据源
-  // ==============================================================
+  // ThemeScript sets the first painted theme; effects then synchronize React state.
 
   // ---------- Theme ----------
   // 服务端和客户端都使用默认值，避免 hydration mismatch

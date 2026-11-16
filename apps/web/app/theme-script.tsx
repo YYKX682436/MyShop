@@ -10,7 +10,7 @@
  *
  * 与 Context 的配合：
  * - ThemeScript：负责首帧 DOM 设置
- * - Context Provider：使用 lazy initializer 读取相同的 localStorage 值
+ * - Context Provider：挂载后读取相同的 localStorage 值并同步 React 状态
  * - 用户切换：Context 的 setter 同时更新 state + localStorage + DOM
  */
 export function ThemeScript() {

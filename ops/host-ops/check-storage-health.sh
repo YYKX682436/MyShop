@@ -7,7 +7,6 @@ DATA_MOUNTPOINT=${DATA_MOUNTPOINT:-/data}
 CONTAINERD_ROOT=${CONTAINERD_ROOT:-/data/containerd}
 DOCKER_ROOT=${DOCKER_ROOT:-/data/docker}
 MYSHOP_ROOT=${MYSHOP_ROOT:-/opt/myshop/runtime}
-AGENT_ROOT=${AGENT_ROOT:-/opt/xianyu-agent/runtime}
 
 die() { printf '%s\n' "$*" >&2; exit 1; }
 command -v findmnt >/dev/null 2>&1 || die 'findmnt is required'
@@ -54,14 +53,6 @@ try:
 except Exception:
     print('missing')
 PY
-printf 'agent_accepted_count='; python3 - "$AGENT_ROOT/deploy-state.json" <<'PY'
-import json, sys
-try:
-    state = json.load(open(sys.argv[1], encoding='utf-8'))
-    print(1 + len(state.get('rollback', [])) if state.get('version') == 1 else 'invalid')
-except Exception:
-    print('missing')
-PY
 printf 'source_release_directories=disabled\n'
 
 if (( docker_available )); then
@@ -69,10 +60,9 @@ if (( docker_available )); then
   # ghcr.io/<namespace>/myshop-api:<sha>), so matching only the short local
   # repository name under-counts every production MyShop image.
   printf 'myshop_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0 ~ /(^|\/)myshop-(api|web)$/' | wc -l
-  printf 'agent_app_image_count='; docker image ls --format '{{.Repository}}' | awk '$0 ~ /(^|\/)xianyu-agent-(backend-web|websocket|scheduler|frontend)$/' | wc -l
   printf 'build_cache='; docker system df --format '{{.Type}}|{{.Size}}|{{.Reclaimable}}' | awk -F'|' '$1=="Build Cache" {print $2 " (reclaimable " $3 ")"; found=1} END {if (!found) print "unknown"}'
 else
-  printf 'myshop_app_image_count=unknown\nagent_app_image_count=unknown\nbuild_cache=unknown\n'
+  printf 'myshop_app_image_count=unknown\nbuild_cache=unknown\n'
 fi
 
 if (( used_percent >= 90 )); then

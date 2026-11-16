@@ -16,6 +16,11 @@ public interface UserLevelRepository extends JpaRepository<UserLevel, UUID> {
     @Query("SELECT level FROM UserLevel level ORDER BY level.sortOrder ASC, level.createdAt ASC, level.id ASC")
     List<UserLevel> findAllOrdered();
 
+    /** Default changes lock every existing level in PostgreSQL UUID order. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT level FROM UserLevel level ORDER BY level.id ASC")
+    List<UserLevel> findAllForUpdate();
+
     @Query("SELECT level FROM UserLevel level WHERE lower(trim(level.name)) = lower(trim(:name))")
     Optional<UserLevel> findByNameIgnoreCase(@Param("name") String name);
 

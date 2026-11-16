@@ -1,5 +1,5 @@
 [Unit]
-Description=MyShop and Xianyu Agent storage lifecycle orchestrator
+Description=MyShop storage lifecycle orchestrator
 After=docker.service
 Requires=docker.service
 ConditionPathIsMountPoint=/data

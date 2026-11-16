@@ -19,6 +19,7 @@
 #   node:22-alpine = 带 Node.js 22 的 Alpine Linux（一个极精简的 Linux 发行版，~5MB）
 #   AS builder = 给这个阶段取名叫 "builder"，后面可以用 --from=builder 引用它的产物
 FROM node:22-alpine AS builder
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # corepack 是 Node.js 内置的包管理器管理工具
 # 启用它才能使用 pnpm（本项目使用 pnpm 管理依赖）
@@ -63,7 +64,7 @@ FROM node:22-alpine AS runner
 WORKDIR /app
 
 # 告诉 Node.js 以生产模式运行（禁用开发调试功能，优化性能）
-ENV NODE_ENV=production
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 
 # 安全最佳实践：创建非 root 用户
 # 生产环境永远不要以 root 运行应用，防止容器逃逸时获得宿主机 root 权限

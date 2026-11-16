@@ -193,57 +193,57 @@ class AuthServiceImplTest {
     @Test
     void loginSelectsCaseInsensitiveUsernameWithoutTryingOtherIdentifierTypes() {
         User user = user("Tom123", "tom@example.com", "13800138000");
-        when(userRepository.findByUsernameIgnoreCase("ToM123")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameForUpdate("ToM123")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
         service.login(login("ToM123", "abcdef"), "2001:db8::20");
 
-        verify(userRepository).findByUsernameIgnoreCase("ToM123");
-        verify(userRepository, never()).findByPhone(anyString());
-        verify(userRepository, never()).findByEmailIgnoreCase(anyString());
+        verify(userRepository).findByUsernameForUpdate("ToM123");
+        verify(userRepository, never()).findByPhoneForUpdate(anyString());
+        verify(userRepository, never()).findByEmailForUpdate(anyString());
     }
 
     @Test
     void loginSelectsNormalizedEmailWhenAccountContainsAtSign() {
         User user = user("buyer", "buyer@example.com", "13800138001");
-        when(userRepository.findByEmailIgnoreCase("buyer@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("buyer@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
         service.login(login("  Buyer@Example.COM ", "abcdef"), "203.0.113.11");
 
-        verify(userRepository).findByEmailIgnoreCase("buyer@example.com");
+        verify(userRepository).findByEmailForUpdate("buyer@example.com");
         assertEquals("203.0.113.11", user.getLastLoginIp());
         assertNotNull(user.getLastLoginAt());
-        verify(userRepository, never()).findByUsernameIgnoreCase(anyString());
-        verify(userRepository, never()).findByPhone(anyString());
+        verify(userRepository, never()).findByUsernameForUpdate(anyString());
+        verify(userRepository, never()).findByPhoneForUpdate(anyString());
     }
 
     @Test
     void loginFallsBackToCaseInsensitiveUsernameWhenPhoneLookupMisses() {
         User user = user("13800138000", "numeric-username@example.com", "13900139000");
-        when(userRepository.findByPhone("13800138000")).thenReturn(Optional.empty());
-        when(userRepository.findByUsernameIgnoreCase("13800138000")).thenReturn(Optional.of(user));
+        when(userRepository.findByPhoneForUpdate("13800138000")).thenReturn(Optional.empty());
+        when(userRepository.findByUsernameForUpdate("13800138000")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
         service.login(login("13800138000", "abcdef"), "203.0.113.12");
 
         InOrder lookupOrder = inOrder(userRepository);
-        lookupOrder.verify(userRepository).findByPhone("13800138000");
-        lookupOrder.verify(userRepository).findByUsernameIgnoreCase("13800138000");
-        verify(userRepository, never()).findByEmailIgnoreCase(anyString());
+        lookupOrder.verify(userRepository).findByPhoneForUpdate("13800138000");
+        lookupOrder.verify(userRepository).findByUsernameForUpdate("13800138000");
+        verify(userRepository, never()).findByEmailForUpdate(anyString());
     }
 
     @Test
     void loginPrefersExactPhoneWhenPhoneLookupHits() {
         User user = user("buyer", "buyer-phone@example.com", "13800138000");
-        when(userRepository.findByPhone("13800138000")).thenReturn(Optional.of(user));
+        when(userRepository.findByPhoneForUpdate("13800138000")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("abcdef", user.getPasswordHash())).thenReturn(true);
 
         service.login(login(" 13800138000 ", "abcdef"), "203.0.113.13");
 
-        verify(userRepository).findByPhone("13800138000");
-        verify(userRepository, never()).findByUsernameIgnoreCase(anyString());
-        verify(userRepository, never()).findByEmailIgnoreCase(anyString());
+        verify(userRepository).findByPhoneForUpdate("13800138000");
+        verify(userRepository, never()).findByUsernameForUpdate(anyString());
+        verify(userRepository, never()).findByEmailForUpdate(anyString());
     }
 
     @Test
@@ -260,7 +260,7 @@ class AuthServiceImplTest {
         LocalDateTime previousLogin = LocalDateTime.of(2026, 1, 1, 12, 0);
         user.setLastLoginIp("198.51.100.8");
         user.setLastLoginAt(previousLogin);
-        when(userRepository.findByUsernameIgnoreCase("buyer")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameForUpdate("buyer")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong-password", user.getPasswordHash())).thenReturn(false);
 
         BusinessException wrongPassword = assertThrows(BusinessException.class,
@@ -276,7 +276,7 @@ class AuthServiceImplTest {
         LocalDateTime previousLogin = LocalDateTime.of(2026, 1, 1, 12, 0);
         user.setLastLoginIp("198.51.100.8");
         user.setLastLoginAt(previousLogin);
-        when(userRepository.findByUsernameIgnoreCase("buyer")).thenReturn(Optional.of(user));
+        when(userRepository.findByUsernameForUpdate("buyer")).thenReturn(Optional.of(user));
 
         user.setIsDeleted(1);
         assertEquals("该账号已被禁用", assertThrows(BusinessException.class,

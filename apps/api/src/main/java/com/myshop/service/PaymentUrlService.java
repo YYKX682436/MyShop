@@ -33,10 +33,6 @@ public class PaymentUrlService {
                 + "?paymentReturn=1";
     }
 
-    public String publicSiteUrl() {
-        return publicSiteUrl;
-    }
-
     public static String normalizePublicSiteUrl(String raw) {
         String value = raw == null ? "" : raw.trim();
         try {

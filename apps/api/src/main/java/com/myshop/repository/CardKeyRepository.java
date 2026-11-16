@@ -16,6 +16,15 @@ import java.util.UUID;
 
 public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
 
+    /** Read pool coordinates without caching a mutable CardKey before its lock. */
+    interface StockPool {
+        UUID getProductId();
+        UUID getSpecId();
+    }
+
+    @Query("SELECT ck.productId AS productId, ck.specId AS specId FROM CardKey ck WHERE ck.id = :id")
+    java.util.Optional<StockPool> findStockPoolById(@Param("id") UUID id);
+
     /**
      * Serializes duplicate-checked imports for one product/spec pool for the
      * lifetime of the surrounding PostgreSQL transaction. The hashed key is
@@ -101,11 +110,16 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
                                                     @Param("specId") UUID specId,
                                                     Pageable pageable);
 
-    @Query("SELECT ck.status, COUNT(ck) FROM CardKey ck " +
-            "WHERE ck.productId = :productId AND ((:specId IS NULL AND ck.specId IS NULL) OR ck.specId = :specId) " +
-            "GROUP BY ck.status")
-    List<Object[]> countByProductIdAndSpecIdGroupByStatus(@Param("productId") UUID productId,
-                                                          @Param("specId") UUID specId);
+    interface PoolStatusCount {
+        UUID getProductId();
+        UUID getSpecId();
+        CardKeyStatus getStatus();
+        long getQuantity();
+    }
+
+    @Query("SELECT ck.productId AS productId, ck.specId AS specId, ck.status AS status, COUNT(ck) AS quantity "
+            + "FROM CardKey ck WHERE ck.productId IN :productIds GROUP BY ck.productId, ck.specId, ck.status")
+    List<PoolStatusCount> countPoolsByStatus(@Param("productIds") List<UUID> productIds);
 
     @Modifying
     @Query("UPDATE CardKey ck SET ck.status = :newStatus " +

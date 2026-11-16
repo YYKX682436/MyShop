@@ -5,8 +5,7 @@ repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 valid_env="$(mktemp)"
 missing_env="$(mktemp)"
 production_env="$(mktemp)"
-production_true_env="$(mktemp)"
-trap 'rm -f "$valid_env" "$missing_env" "$production_env" "$production_true_env"' EXIT
+trap 'rm -f "$valid_env" "$missing_env" "$production_env"' EXIT
 
 cat >"$valid_env" <<'EOF'
 SITE_DOMAIN=store.example.test
@@ -59,39 +58,21 @@ assert_project_name() {
 
 rendered_config="$(docker compose --project-directory "$repo_dir" --env-file "$valid_env" config)"
 production_config="$(docker compose --project-directory "$repo_dir" --file "$repo_dir/docker-compose.prod.yml" --env-file "$production_env" config)"
-production_json_config="$(env -u SALES_CHANNEL_WORKER_ENABLED docker compose --project-directory "$repo_dir" --file "$repo_dir/docker-compose.prod.yml" --env-file "$production_env" config --format json)"
-cp "$production_env" "$production_true_env"
-cat >>"$production_true_env" <<'EOF'
-SALES_CHANNEL_WORKER_ENABLED=true
-EOF
-production_true_config="$(env -u SALES_CHANNEL_WORKER_ENABLED docker compose --project-directory "$repo_dir" --file "$repo_dir/docker-compose.prod.yml" --env-file "$production_true_env" config --format json)"
+production_json_config="$(docker compose --project-directory "$repo_dir" --file "$repo_dir/docker-compose.prod.yml" --env-file "$production_env" config --format json)"
 assert_project_name "$rendered_config" "normal repository"
 assert_project_name "$production_config" "production environment"
 python3 -c '
 import json, sys
-configs = ((json.loads(sys.stdin.read()), "false"),)
-for config, expected in configs:
-    services = config["services"]
-    api_env = services["api"]["environment"]
-    actual = str(api_env["SALES_CHANNEL_WORKER_ENABLED"]).lower()
-    if actual != expected:
-        raise SystemExit(f"production Compose worker gate expected {expected}, got {actual}")
-    for service, definition in services.items():
-        if service != "api" and "SALES_CHANNEL_WORKER_ENABLED" in (definition.get("environment") or {}):
-            raise SystemExit(f"production Compose worker gate unexpectedly appears on {service}")
-' <<<"$production_json_config"
-python3 -c '
-import json, sys
-config = json.loads(sys.stdin.read())
+config = json.load(sys.stdin)
 services = config["services"]
-api_env = services["api"]["environment"]
-actual = str(api_env["SALES_CHANNEL_WORKER_ENABLED"]).lower()
-if actual != "true":
-    raise SystemExit(f"production Compose explicit worker gate expected true, got {actual}")
+if services["web"]["environment"]["PUBLIC_SITE_URL"] != services["api"]["environment"]["PUBLIC_SITE_URL"]:
+    raise SystemExit("Web metadata and API payment origin differ")
+if any(network.get("external") for network in config.get("networks", {}).values()):
+    raise SystemExit("MyShop must start without a separate application network")
 for service, definition in services.items():
-    if service != "api" and "SALES_CHANNEL_WORKER_ENABLED" in (definition.get("environment") or {}):
-        raise SystemExit(f"production Compose worker gate unexpectedly appears on {service}")
-' <<<"$production_true_config"
+    if any(key.startswith(("XIANYU_", "SALES_CHANNEL_")) for key in definition.get("environment", {})):
+        raise SystemExit(f"retired channel configuration remains on {service}")
+' <<<"$production_json_config"
 
 if grep -Eq '^[[:space:]]*build:' "$repo_dir/docker-compose.prod.yml"; then
   echo "production Compose unexpectedly contains build:" >&2

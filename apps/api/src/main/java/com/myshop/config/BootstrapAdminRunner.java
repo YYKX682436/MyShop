@@ -3,6 +3,7 @@ package com.myshop.config;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.User;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +27,7 @@ import java.util.regex.Pattern;
 public class BootstrapAdminRunner implements ApplicationRunner {
 
     private final UserRepository userRepository;
+    private final UserNumberSequenceRepository userNumberSequenceRepository;
     private final PasswordEncoder passwordEncoder;
     private final String username;
     private final String email;
@@ -40,6 +42,7 @@ public class BootstrapAdminRunner implements ApplicationRunner {
     @Autowired
     public BootstrapAdminRunner(
             UserRepository userRepository,
+            UserNumberSequenceRepository userNumberSequenceRepository,
             PasswordEncoder passwordEncoder,
             @Value("${bootstrap.admin.username:}") String username,
             @Value("${bootstrap.admin.email:}") String email,
@@ -47,6 +50,7 @@ public class BootstrapAdminRunner implements ApplicationRunner {
             @Value("${bootstrap.super-admin.username:}") String superAdminUsername,
             @Value("${bootstrap.super-admin.password:}") String superAdminPassword) {
         this.userRepository = userRepository;
+        this.userNumberSequenceRepository = userNumberSequenceRepository;
         this.passwordEncoder = passwordEncoder;
         this.username = username;
         this.email = email;
@@ -56,14 +60,25 @@ public class BootstrapAdminRunner implements ApplicationRunner {
     }
 
     /** Kept for focused unit tests and callers that only exercise normal admin bootstrap. */
-    public BootstrapAdminRunner(UserRepository userRepository, PasswordEncoder passwordEncoder,
+    public BootstrapAdminRunner(UserRepository userRepository,
+                                UserNumberSequenceRepository userNumberSequenceRepository,
+                                PasswordEncoder passwordEncoder,
                                 String username, String email, String password) {
-        this(userRepository, passwordEncoder, username, email, password, "", "");
+        this(userRepository, userNumberSequenceRepository, passwordEncoder, username, email, password, "", "");
     }
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
+        if (username.isBlank() && email.isBlank() && password.isBlank()
+                && superAdminUsername.isBlank() && superAdminPassword.isBlank()) {
+            return;
+        }
+        // The configured ordinary administrator can have a numeric username.
+        // Serialize its identity checks with live registration/admin changes.
+        if (userNumberSequenceRepository.findByIdForUpdate(1) == null) {
+            throw new IllegalStateException("user_number_sequences is not initialized");
+        }
         bootstrapOrdinaryAdmin();
         bootstrapSuperAdmin();
     }
@@ -81,8 +96,9 @@ public class BootstrapAdminRunner implements ApplicationRunner {
         }
         String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
         if (userRepository.existsByUsernameIgnoreCase(normalizedUsername)
-                || userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
-            log.info("Admin bootstrap skipped because the configured account already exists.");
+                || userRepository.existsByEmailIgnoreCase(normalizedEmail)
+                || userRepository.existsByPhone(normalizedUsername)) {
+            log.info("Admin bootstrap skipped because a configured account identity already exists.");
             return;
         }
 

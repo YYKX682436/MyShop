@@ -19,6 +19,17 @@ export interface PaginatedData<T> {
   pagination: Pagination
 }
 
+export type ProductListQuery = {
+  page?: number
+  page_size?: number
+  category_id?: string
+  keyword?: string
+  sort?: "default" | "hot" | "price_low" | "price_high" | "new"
+  in_stock?: boolean
+  price_min?: string
+  price_max?: string
+}
+
 // ============================================================
 // Auth
 // ============================================================
