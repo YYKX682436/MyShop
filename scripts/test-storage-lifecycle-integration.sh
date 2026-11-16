@@ -50,19 +50,13 @@ set -Eeuo pipefail
 printf 'myshop held=%s lock=%s\n' "${HOST_DEPLOY_LOCK_HELD:-}" "${HOST_DEPLOY_LOCK_FILE:-}" >>"${EVENT_LOG:?}"
 RETENTION
 
-cat >"$tmp_dir/agent-retention.sh" <<'RETENTION'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-printf 'agent held=%s lock=%s\n' "${HOST_DEPLOY_LOCK_HELD:-}" "${HOST_DEPLOY_LOCK_FILE:-}" >>"${EVENT_LOG:?}"
-RETENTION
-
 cat >"$tmp_dir/maintenance.sh" <<'MAINTENANCE'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf 'maintenance held=%s lock=%s\n' "${HOST_DEPLOY_LOCK_HELD:-}" "${HOST_DEPLOY_LOCK_FILE:-}" >>"${EVENT_LOG:?}"
 MAINTENANCE
 
-chmod +x "$fake_bin/findmnt" "$fake_bin/flock" "$tmp_dir/health.sh" "$tmp_dir/myshop-retention.sh" "$tmp_dir/agent-retention.sh" "$tmp_dir/maintenance.sh"
+chmod +x "$fake_bin/findmnt" "$fake_bin/flock" "$tmp_dir/health.sh" "$tmp_dir/myshop-retention.sh" "$tmp_dir/maintenance.sh"
 
 run_orchestrator() {
   : >"$tmp_dir/health-count"
@@ -73,7 +67,6 @@ run_orchestrator() {
     DATA_MOUNTPOINT=/data \
     HOST_STORAGE_HEALTH_SCRIPT="$tmp_dir/health.sh" \
     MYSHOP_RETENTION_SCRIPT="$tmp_dir/myshop-retention.sh" \
-    AGENT_RETENTION_SCRIPT="$tmp_dir/agent-retention.sh" \
     HOST_MAINTENANCE_SCRIPT="$tmp_dir/maintenance.sh" \
     bash "$orchestrator"
 }
@@ -83,7 +76,6 @@ mapfile -t events <"$event_log"
 expected=(
   health
   "myshop held=1 lock=$lock_file"
-  "agent held=1 lock=$lock_file"
   "maintenance held=1 lock=$lock_file"
   health
 )
@@ -92,7 +84,7 @@ for index in "${!expected[@]}"; do
   [[ "${events[$index]}" == "${expected[$index]}" ]] || fail "orchestrator order/lock propagation mismatch: ${events[*]}"
 done
 grep -Fq 'SUCCESS pre_status=0 post_status=0' "$tmp_dir/success.out" || fail 'successful orchestrator run did not report success'
-pass 'orchestrator owns one lock and invokes both retainers plus host maintenance in order'
+pass 'orchestrator owns one lock and invokes MyShop retention plus host maintenance in order'
 
 run_high_water_case() {
   local label=$1 pre_status=$2 post_status=$3 expected=$4 log="$tmp_dir/$1-events.log" output status
@@ -102,7 +94,6 @@ run_high_water_case() {
   status=$?
   set -e
   grep -Fq 'myshop held=1' "$log" || fail "$label did not run MyShop retention"
-  grep -Fq 'agent held=1' "$log" || fail "$label did not run Agent retention"
   grep -Fq 'maintenance held=1' "$log" || fail "$label did not run host maintenance"
   [[ "$(grep -c '^health$' "$log")" -eq 2 ]] || fail "$label did not run both storage checks"
   if [[ "$expected" == SUCCESS ]]; then

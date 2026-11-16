@@ -3,6 +3,9 @@ package com.myshop.config;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.User;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
+import com.myshop.entity.UserNumberSequence;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -26,8 +29,15 @@ class BootstrapAdminRunnerTest {
 
     @Mock
     private UserRepository userRepository;
+    @Mock private UserNumberSequenceRepository userNumberSequenceRepository;
     @Mock
     private PasswordEncoder passwordEncoder;
+
+    @BeforeEach
+    void setUp() {
+        org.mockito.Mockito.lenient().when(userNumberSequenceRepository.findByIdForUpdate(1))
+                .thenReturn(new UserNumberSequence());
+    }
 
     @Test
     void createsFixedSuperAdminFromEnvironmentWithoutEmbeddingThePassword() throws Exception {
@@ -35,7 +45,7 @@ class BootstrapAdminRunnerTest {
         when(userRepository.countByRole(UserRole.SUPER_ADMIN)).thenReturn(0L);
         when(passwordEncoder.encode("valid1")).thenReturn("bcrypt-hash");
 
-        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, passwordEncoder,
+        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, userNumberSequenceRepository, passwordEncoder,
                 "", "", "", "muchen-admin", "valid1");
         runner.run(null);
 
@@ -59,7 +69,7 @@ class BootstrapAdminRunnerTest {
         when(userRepository.findByUsernameIgnoreCase("muchen-admin")).thenReturn(Optional.of(existing));
         when(userRepository.countByRole(UserRole.SUPER_ADMIN)).thenReturn(1L);
 
-        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, passwordEncoder,
+        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, userNumberSequenceRepository, passwordEncoder,
                 "", "", "", "muchen-admin", "valid1");
         runner.run(null);
 
@@ -74,7 +84,7 @@ class BootstrapAdminRunnerTest {
         when(userRepository.existsByEmailIgnoreCase("first@example.com")).thenReturn(false);
         when(passwordEncoder.encode("abc123")).thenReturn("ordinary-hash");
 
-        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, passwordEncoder,
+        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, userNumberSequenceRepository, passwordEncoder,
                 "first_admin-1", "FIRST@EXAMPLE.COM", "abc123");
         runner.run(null);
 
@@ -87,7 +97,7 @@ class BootstrapAdminRunnerTest {
 
     @Test
     void ordinaryAdminBootstrapRejectsUsernameOutsideUserRule() {
-        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, passwordEncoder,
+        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, userNumberSequenceRepository, passwordEncoder,
                 "first.admin", "first@example.com", "abc123");
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, () -> runner.run(null));
@@ -98,16 +108,31 @@ class BootstrapAdminRunnerTest {
 
     @Test
     void fixedUsernameAndPasswordConfigurationMustBeValid() {
-        BootstrapAdminRunner wrongUsername = new BootstrapAdminRunner(userRepository, passwordEncoder,
+        BootstrapAdminRunner wrongUsername = new BootstrapAdminRunner(userRepository, userNumberSequenceRepository, passwordEncoder,
                 "", "", "", "another-admin", "valid1");
         IllegalStateException usernameException = assertThrows(IllegalStateException.class,
                 () -> wrongUsername.run(null));
         assertTrue(usernameException.getMessage().contains("fixed account name"));
 
-        BootstrapAdminRunner partialPassword = new BootstrapAdminRunner(userRepository, passwordEncoder,
+        BootstrapAdminRunner partialPassword = new BootstrapAdminRunner(userRepository, userNumberSequenceRepository, passwordEncoder,
                 "", "", "", "muchen-admin", "short");
         IllegalStateException passwordException = assertThrows(IllegalStateException.class,
                 () -> partialPassword.run(null));
         assertTrue(passwordException.getMessage().contains("6-72"));
+    }
+
+    @Test
+    void ordinaryBootstrapDoesNotClaimAnExistingUsersPhoneAsItsUsername() throws Exception {
+        when(userRepository.existsByPhone("13800138000")).thenReturn(true);
+        BootstrapAdminRunner runner = new BootstrapAdminRunner(userRepository, userNumberSequenceRepository,
+                passwordEncoder, "13800138000", "bootstrap@example.test", "abc123");
+
+        runner.run(null);
+
+        var locks = org.mockito.Mockito.inOrder(userNumberSequenceRepository, userRepository);
+        locks.verify(userNumberSequenceRepository).findByIdForUpdate(1);
+        locks.verify(userRepository).existsByUsernameIgnoreCase("13800138000");
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(passwordEncoder);
     }
 }

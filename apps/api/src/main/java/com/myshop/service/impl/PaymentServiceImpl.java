@@ -3,7 +3,6 @@ package com.myshop.service.impl;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
-import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
@@ -11,6 +10,7 @@ import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.exception.BusinessException;
+import com.myshop.exception.OrderExpiredException;
 import com.myshop.payment.PaymentNextAction;
 import com.myshop.payment.PaymentNextActionPayload;
 import com.myshop.payment.PaymentProvider;
@@ -19,12 +19,13 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.PaymentChannelRepository;
-import com.myshop.service.ManualStockService;
-import com.myshop.service.OrderPaymentCompletionService;
+import com.myshop.service.OrderExpiryService;
+import com.myshop.service.PaymentQueryTransactionService;
 import com.myshop.service.PaymentService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -44,8 +45,8 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final List<PaymentProvider> paymentProviders;
     private final ObjectMapper objectMapper;
-    private final ManualStockService manualStockService;
-    private final OrderPaymentCompletionService orderPaymentCompletionService;
+    private final OrderExpiryService orderExpiryService;
+    private final PaymentQueryTransactionService paymentQueryTransactionService;
 
     @Autowired
     public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
@@ -54,25 +55,26 @@ public class PaymentServiceImpl implements PaymentService {
                               PaymentAttemptRepository paymentAttemptRepository,
                               List<PaymentProvider> paymentProviders,
                               ObjectMapper objectMapper,
-                              ManualStockService manualStockService,
-                              OrderPaymentCompletionService orderPaymentCompletionService) {
+                              OrderExpiryService orderExpiryService,
+                              PaymentQueryTransactionService paymentQueryTransactionService) {
         this.paymentChannelRepository = paymentChannelRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.paymentAttemptRepository = paymentAttemptRepository;
         this.paymentProviders = paymentProviders == null ? List.of() : List.copyOf(paymentProviders);
         this.objectMapper = objectMapper;
-        this.manualStockService = manualStockService;
-        this.orderPaymentCompletionService = orderPaymentCompletionService;
+        this.orderExpiryService = orderExpiryService;
+        this.paymentQueryTransactionService = paymentQueryTransactionService;
     }
 
     @Override
+    @Transactional(noRollbackFor = OrderExpiredException.class)
     public Map<String, Object> createPayment(UUID orderId, String paymentChannelCode, BigDecimal amount) {
         return createPayment(orderId, paymentChannelCode, amount, null);
     }
 
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = OrderExpiredException.class)
     public Map<String, Object> createPayment(UUID orderId, String paymentChannelCode,
                                               BigDecimal amount, String device) {
         Order order = orderRepository.findByIdForUpdate(orderId)
@@ -90,14 +92,16 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = OrderExpiredException.class)
     public Map<String, Object> repay(UUID orderId, String device) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         validateOnlineOrder(order);
         validatePendingOrder(order);
-        if (order.getUpdatedAt() != null
-                && order.getUpdatedAt().plusSeconds(REPAY_COOLDOWN_SECONDS).isAfter(LocalDateTime.now())) {
+        PaymentAttempt latest = paymentAttemptRepository.findFirstByOrderIdOrderByCreatedAtDesc(orderId)
+                .orElse(null);
+        if (latest != null && latest.getCreatedAt() != null
+                && latest.getCreatedAt().plusSeconds(REPAY_COOLDOWN_SECONDS).isAfter(LocalDateTime.now())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "操作过于频繁，请稍后再试");
         }
 
@@ -110,39 +114,24 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void refreshPayment(UUID orderId) {
-        Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
-        if (order == null || order.getStatus() != OrderStatus.PENDING) return;
-        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(LocalDateTime.now())) {
-            expireOrder(order);
-            return;
-        }
-
-        PaymentAttempt attempt = findActiveAttempt(order.getId());
-        if (attempt == null) return;
+        var context = paymentQueryTransactionService.prepare(orderId);
+        if (context == null) return;
         PaymentProvider provider = paymentProviders.stream()
-                .filter(candidate -> candidate.id().equalsIgnoreCase(attempt.getProviderType()))
-                .findFirst()
-                .orElse(null);
+                .filter(candidate -> candidate.id().equalsIgnoreCase(context.providerType()))
+                .findFirst().orElse(null);
         if (provider == null || !provider.supportsServerSideQuery()) return;
-
         PaymentProvider.PaymentQueryResult query;
         try {
             query = provider.query(new PaymentProvider.PaymentQueryRequest(
-                    attempt.getMerchantTradeNo(), parseConfig(attempt.getProviderConfigSnapshot())));
+                    context.merchantTradeNo(), parseConfig(context.providerConfigSnapshot())));
         } catch (RuntimeException ignored) {
             return;
         }
-        if (query == null || query.status() != PaymentStatus.PAID
-                || !sameAmount(query.amount(), attempt.getAmount())
-                || !sameProviderTrade(query.providerTradeNo(), attempt.getProviderTradeNo())) {
-            return;
-        }
-        attempt.setProviderTradeNo(query.providerTradeNo());
-        attempt.setStatus(PaymentStatus.PAID);
-        paymentAttemptRepository.save(attempt);
-        orderPaymentCompletionService.completeFirstPayment(order);
+        // A callback, repay or expiry may have won during the provider call.
+        // Complete only after reloading and locking the current rows.
+        paymentQueryTransactionService.complete(orderId, context.attemptId(), query);
     }
 
     private Map<String, Object> createAttempt(Order order, PaymentChannel channel,
@@ -244,16 +233,6 @@ public class PaymentServiceImpl implements PaymentService {
         return Math.max(0, java.time.Duration.between(LocalDateTime.now(), expiresAt).getSeconds());
     }
 
-    private boolean sameProviderTrade(String queried, String stored) {
-        String queryTrade = clean(queried);
-        String storedTrade = clean(stored);
-        return queryTrade != null && (storedTrade == null || queryTrade.equals(storedTrade));
-    }
-
-    private boolean sameAmount(BigDecimal actual, BigDecimal expected) {
-        return actual != null && expected != null && actual.compareTo(expected) == 0;
-    }
-
     private String serializeNextAction(PaymentNextAction action) {
         try {
             return objectMapper.writeValueAsString(action);
@@ -319,9 +298,9 @@ public class PaymentServiceImpl implements PaymentService {
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单状态不允许发起支付");
         }
-        if (order.getExpiresAt() != null && order.getExpiresAt().isBefore(LocalDateTime.now())) {
-            expireOrder(order);
-            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期");
+        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(LocalDateTime.now())) {
+            orderExpiryService.expireLockedOrder(order);
+            throw new OrderExpiredException();
         }
         if (order.getActualAmount() == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
@@ -340,25 +319,6 @@ public class PaymentServiceImpl implements PaymentService {
         if (items.isEmpty()) return "MyShop 订单";
         String firstName = items.get(0).getProductTitle();
         return items.size() == 1 ? firstName : firstName + " 等" + items.size() + "件商品";
-    }
-
-    private void expireOrder(Order order) {
-        for (PaymentAttempt attempt : paymentAttemptRepository
-                .findByOrderIdAndStatusForUpdate(order.getId(), PaymentStatus.PENDING)) {
-            attempt.setStatus(PaymentStatus.CLOSED);
-            paymentAttemptRepository.save(attempt);
-        }
-        for (OrderItem item : orderItemRepository.findByOrderId(order.getId())) {
-            int reserved = item.getManualStockReserved();
-            if (reserved > 0) {
-                manualStockService.release(item.getProductId(), item.getSpecId(), reserved);
-                item.setManualStockReserved(0);
-            }
-            item.setFulfillmentStatus(FulfillmentStatus.CANCELLED);
-            orderItemRepository.save(item);
-        }
-        order.setStatus(OrderStatus.EXPIRED);
-        orderRepository.save(order);
     }
 
     private String clean(String value) {

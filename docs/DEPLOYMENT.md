@@ -27,6 +27,10 @@ approved registry namespace.
 Manual inspection is allowed only through the installed wrapper:
 
 ```bash
+export MYSHOP_RUNTIME_ROOT=/opt/myshop/runtime
+export MYSHOP_ENV_FILE=/opt/myshop/.env
+export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
+
 bash /opt/myshop/scripts/myshop-compose.sh --env-file /opt/myshop/.env config
 bash /opt/myshop/scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
 ```
@@ -45,7 +49,7 @@ The operator supplies only that manifest:
 bash /opt/myshop/scripts/deploy-production.sh /path/to/release-manifest.json
 ```
 
-The deployer holds `/run/myshop-xianyu-deploy.lock` for the entire transaction
+The deployer holds `/run/myshop-deploy.lock` for the entire transaction
 and performs the following sequence:
 
 1. Verify the `/data` mount and disk watermark.
@@ -103,14 +107,14 @@ second accepted-image state file is maintained. Malformed state fails closed.
 Retention verifies source SHA, image ref, and image digest together. It protects
 all accepted records, all running container image IDs, and never infers history
 from mtime. It processes only `myshop-api` and `myshop-web`, never volumes,
-uploads, backups, Agent images, source release directories, or BuildKit cache.
+uploads, backups, unrelated images, source release directories, or BuildKit cache.
 
 ## Schema and backup acceptance
 
 The API image packages `db/production-schema-contract.json`. The deployment
 extracts that contract from the exact running artifact and checks Flyway has no
 failed migration, the expected migration count/latest version, every declared
-table and column, and the sales-channel indexes/constraints. `SELECT 1` alone
+table and column, and the retained historical indexes/constraints. `SELECT 1` alone
 is not an acceptance check. A schema failure rolls the candidate back.
 
 The backup is created by the deployment itself while the lock is held. An old
@@ -131,9 +135,8 @@ obtains the same host lock and runs, in order:
 
 1. storage precheck;
 2. MyShop scoped retention;
-3. Agent scoped retention;
-4. host BuildKit/dangling-image maintenance;
-5. storage postcheck.
+3. host BuildKit/dangling-image maintenance;
+4. storage postcheck.
 
 The service is non-zero for a lock collision or any failed step. A collision is
 not reported as successful maintenance. Enable and verify:
@@ -154,7 +157,7 @@ touches `/data/docker` or `/data/containerd` directly.
 
 The storage lifecycle service has a different responsibility from deployment:
 after the mount, Docker, and accepted-state safety prerequisites pass, it still
-runs both scoped retainers and host safe maintenance at every watermark,
+runs MyShop retention and host safe maintenance at every watermark,
 including 80% and 90%+. Its postcheck returns `SUCCESS` below 70%,
 `MAINTENANCE_INCOMPLETE` at 70--79%, `HARD_FAIL` at 80--89%, and `CRITICAL`
 at 90%+.
@@ -184,78 +187,30 @@ active plus valid rollback set
 Missing any item means `DEPLOYMENT NOT ACCEPTED`. A healthy container by itself
 is not a successful deployment.
 
-## Runtime-config-only transaction
+## Retiring the former marketplace integration
 
-Runtime configuration is a separate control plane from release state. The
-accepted file is `/opt/myshop/runtime/runtime-config-state.json`; it contains
-the accepted non-secret values, a monotonic revision, a canonical config
-digest, acceptance time, the source SHA under which the change was accepted,
-and prior accepted runtime revisions. It never changes
-`/opt/myshop/runtime/deploy-state.json`.
+The application no longer includes marketplace UI, controllers, workers, clients,
+shared networks, or the former channel-only runtime configuration control plane.
+The 42 Flyway migrations and schema contract are retained unchanged, as are the
+historic order/pricing enum values needed to read existing orders. Do not drop
+historical tables, remove Flyway rows, or delete database/upload/backup volumes.
 
-Create a reviewable JSON manifest and pass it as the only argument:
+Before installing these host helpers, stop the old storage lifecycle and Docker
+maintenance timers and wait for any old deployment/maintenance process to finish.
+Update the helpers together, then restart the timers: all maintained helpers now
+use `/run/myshop-deploy.lock`. This prevents two generations of scripts from
+running maintenance under different locks during the cutover.
 
-```bash
-bash /opt/myshop/scripts/deploy-runtime-config.sh /path/to/runtime-config-manifest.json
-```
+On the host, inventory the separately deployed retired Agent services, timers,
+Compose project, bind mounts, volumes, and running images before stopping them.
+Disable only the verified Agent execution/auto-start entries. Keep its data and
+backups separate from runnable artifacts. Never use a broad `docker system prune`,
+`docker volume prune`, or recursive deletion of shared paths as retirement.
+Remove the former Agent network only after verifying it has no connected
+containers. The independent Git repository and database archives are not deleted
+by this application release.
 
-The manifest is the only required operator input. The runtime-config deployer
-supplies its fixed production registry policy (`ghcr.io/yykx682436`) to every
-Compose validation, API recreation, and rollback call; callers do not need to
-set `MYSHOP_APPROVED_REGISTRY`. An explicitly inherited conflicting value
-fails closed with `RUNTIME_CONFIG_APPROVED_REGISTRY_CONFLICT`.
-
-Manifest v1 uses `project: "myshop"`, `expected_active_source_sha`, an
-ISO-8601 `created_at`, and a `changes` object whose entries contain string
-`from` and `to` values. The allowlist is limited to
-`SALES_CHANNEL_WORKER_ENABLED` (`true` or `false`),
-`SALES_CHANNEL_WORKER_BATCH_SIZE` (integer `1..100`), and
-`SALES_CHANNEL_WORKER_INTERVAL_MS` (integer `100..60000`). Secrets and
-unknown keys are rejected. Use `changes: {}` for the first baseline
-registration; the baseline must match the accepted release, production env,
-and running API container exactly.
-
-```json
-{
-  "version": 1,
-  "project": "myshop",
-  "expected_active_source_sha": "<full-40-character-sha>",
-  "created_at": "2026-10-07T00:00:00Z",
-  "changes": {
-    "SALES_CHANNEL_WORKER_BATCH_SIZE": {"from": "10", "to": "1"}
-  }
-}
-```
-
-The accepted file is version 1 with `project`, `active`, and `history`.
-`active` and every history record contain `revision`, `accepted_at`,
-`changed_under_source_sha`, `config_digest`, and the full normalized
-allowlisted `values` object. The digest is `sha256:` plus SHA-256 of compact
-UTF-8 JSON with sorted keys. The initial baseline is revision 1; every
-different accepted configuration increments the revision once. A same-value
-manifest leaves both revision and file bytes unchanged.
-
-The transaction holds `/run/myshop-xianyu-deploy.lock`, renders candidate
-Compose through `myshop-compose.sh`, preserves env-file owner/group/mode while
-atomically replacing it, and recreates only `api` with the accepted image and
-`--pull never`. It verifies health, accepted image identity, and managed
-container values before promoting runtime-config state. A same-value no-op
-does not recreate the service. The temporary full env copy is mode `0600`,
-never logged, and removed on exit.
-
-Every API recreation is blocked by a running or stale-running `ENSURE_LISTING`.
-Enabling the worker also requires zero ACTIVE listings, zero ready work, zero
-attempted recovery ENSURE, zero unresolved legacy work, and both Agent writes
-and adoption gates false. If new ENSURE attempts, a running ENSURE, or a new
-Agent integration operation appears after a worker-enable candidate starts,
-the transaction records safe count-only evidence and stops with
-`RUNTIME_CONFIG_SIDE_EFFECT_BOUNDARY_CROSSED`; it leaves the running command
-alone. Other pre-commit failures atomically restore the original env and
-recreate/verify the accepted API image. An incomplete restore returns
-`CRITICAL_RUNTIME_CONFIG_ROLLBACK_FAILED`.
-
-Once the runtime-config state exists, `deploy-production.sh` checks that the
-production env and running API managed values still equal the accepted runtime
-state before starting a release candidate. Drift stops the release with
-`RUNTIME_CONFIG_DRIFT`. This guard is read-only and never promotes runtime
-state.
+`PUBLIC_SITE_URL` is injected into both API and Web at runtime and must be the
+canonical store origin. Robots, sitemap, metadata and payment URLs use it; a
+production image does not need a domain-specific rebuild. Optional Next.js
+telemetry is disabled in both image stages and CI.

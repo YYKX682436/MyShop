@@ -10,6 +10,7 @@ import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentAttempt;
 import com.myshop.exception.BusinessException;
+import com.myshop.exception.OrderExpiredException;
 import com.myshop.payment.PaymentNextAction;
 import com.myshop.payment.PaymentNextActionPayload;
 import com.myshop.payment.PaymentStatus;
@@ -25,6 +26,9 @@ import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -52,6 +56,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private final CardKeyReclaimService cardKeyReclaimService;
     private final AfterSaleService afterSaleService;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactions;
 
     public OrderAccessServiceImpl(OrderRepository orderRepository,
                                   OrderItemRepository orderItemRepository,
@@ -62,7 +67,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                                   BalanceOrderPaymentService balanceOrderPaymentService,
                                   CardKeyReclaimService cardKeyReclaimService,
                                   AfterSaleService afterSaleService,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  PlatformTransactionManager transactionManager) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.cardKeyRepository = cardKeyRepository;
@@ -73,6 +79,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         this.cardKeyReclaimService = cardKeyReclaimService;
         this.afterSaleService = afterSaleService;
         this.objectMapper = objectMapper;
+        this.transactions = new TransactionTemplate(transactionManager);
     }
 
     @Override
@@ -84,20 +91,17 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     }
 
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Map<String, Object> refreshOrder(UUID orderId, UUID requestUserId, String sessionToken) {
-        Order order = authorizedOrder(orderId, requestUserId, sessionToken);
-        orderService.expireIfNeeded(order);
-        if (order.getStatus() == OrderStatus.PENDING) {
-            paymentService.refreshPayment(order.getId());
-            order = orderRepository.findByIdForUpdate(order.getId())
-                    .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        }
-        return view(order);
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        authorize(order, requestUserId, sessionToken);
+        paymentService.refreshPayment(orderId);
+        return transactions.execute(status -> getOrder(orderId, requestUserId, sessionToken));
     }
 
     @Override
-    @Transactional
+    @Transactional(noRollbackFor = OrderExpiredException.class)
     public Map<String, Object> repayOrder(UUID orderId, String device,
                                           UUID requestUserId, String sessionToken) {
         // This authorization check intentionally precedes the payment service.
@@ -138,6 +142,10 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private Order authorizedOrder(UUID orderId, UUID requestUserId, String sessionToken) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        return authorize(order, requestUserId, sessionToken);
+    }
+
+    private Order authorize(Order order, UUID requestUserId, String sessionToken) {
         if (order.getUserId() != null) {
             if (requestUserId == null || !requestUserId.equals(order.getUserId())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问此订单");

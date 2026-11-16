@@ -14,7 +14,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.repository.UserRepository;
-import com.myshop.service.ManualStockService;
+import com.myshop.service.OrderExpiryService;
 import com.myshop.service.AfterSaleService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,7 +49,7 @@ class UserServiceImplTest {
     @Mock
     private PasswordEncoder passwordEncoder;
     @Mock
-    private ManualStockService manualStockService;
+    private OrderExpiryService orderExpiryService;
     @Mock
     private UserLevelRepository userLevelRepository;
     @Mock
@@ -62,7 +62,7 @@ class UserServiceImplTest {
         user.setRole(UserRole.USER);
         user.setPasswordHash("old-hash");
         user.setAuthVersion(4);
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("old-password", "old-hash")).thenReturn(true);
         when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
 
@@ -71,7 +71,7 @@ class UserServiceImplTest {
         request.setNewPassword("new-password");
 
         new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
-                passwordEncoder, manualStockService, userLevelRepository, afterSaleService)
+                passwordEncoder, orderExpiryService, userLevelRepository, afterSaleService)
                 .changePassword(userId, request);
 
         assertEquals("new-hash", user.getPasswordHash());
@@ -112,7 +112,7 @@ class UserServiceImplTest {
         when(orderItemRepository.findByOrderIdIn(List.of(orderId))).thenReturn(List.of(item));
 
         PageResult<?> result = new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
-                passwordEncoder, manualStockService, userLevelRepository, afterSaleService)
+                passwordEncoder, orderExpiryService, userLevelRepository, afterSaleService)
                 .getOrders(userId, null, 1, 20);
 
         Map<?, ?> orderView = (Map<?, ?>) result.getList().get(0);
@@ -151,7 +151,7 @@ class UserServiceImplTest {
                 .thenReturn(Map.of(firstOrderId, firstSummary, secondOrderId, secondSummary));
 
         PageResult<?> result = new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
-                passwordEncoder, manualStockService, userLevelRepository, afterSaleService)
+                passwordEncoder, orderExpiryService, userLevelRepository, afterSaleService)
                 .getOrders(userId, null, 1, 20);
 
         assertEquals(firstSummary, ((Map<?, ?>) result.getList().get(0)).get("after_sale"));
@@ -168,5 +168,48 @@ class UserServiceImplTest {
         order.setTotalAmount(new java.math.BigDecimal("10.00"));
         order.setStatus(OrderStatus.DELIVERED);
         return order;
+    }
+
+    @Test
+    void orderHistoryReloadsAfterExpiryRatherThanOverwritingAConcurrentPayment() {
+        UUID userId = UUID.randomUUID();
+        UUID orderId = UUID.randomUUID();
+        Order stale = order(orderId, userId);
+        stale.setStatus(OrderStatus.PENDING);
+        stale.setExpiresAt(java.time.LocalDateTime.now().minusMinutes(1));
+        Order paid = order(orderId, userId);
+        paid.setStatus(OrderStatus.PAID);
+        when(orderRepository.findByUserIdOrderByCreatedAtDesc(eq(userId), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(stale)), new PageImpl<>(List.of(paid)));
+        when(orderItemRepository.findByOrderIdIn(List.of(orderId))).thenReturn(List.of());
+
+        PageResult<?> result = new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
+                passwordEncoder, orderExpiryService, userLevelRepository, afterSaleService)
+                .getOrders(userId, null, 1, 20);
+
+        assertEquals("PAID", ((Map<?, ?>) result.getList().get(0)).get("status"));
+        verify(orderExpiryService).expireById(orderId);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void pendingFilterAlsoExpiresOverdueOrdersThatRefillThePage() {
+        UUID userId = UUID.randomUUID();
+        Order first = order(UUID.randomUUID(), userId);
+        Order next = order(UUID.randomUUID(), userId);
+        for (Order order : List.of(first, next)) {
+            order.setStatus(OrderStatus.PENDING);
+            order.setExpiresAt(java.time.LocalDateTime.now().minusMinutes(1));
+        }
+        when(orderRepository.findByUserIdAndStatusOrderByCreatedAtDesc(eq(userId), eq(OrderStatus.PENDING), any(PageRequest.class)))
+                .thenReturn(new PageImpl<>(List.of(first)), new PageImpl<>(List.of(next)), new PageImpl<>(List.of()));
+
+        PageResult<?> result = new UserServiceImpl(userRepository, orderRepository, orderItemRepository,
+                passwordEncoder, orderExpiryService, userLevelRepository, afterSaleService)
+                .getOrders(userId, "PENDING", 1, 1);
+
+        assertEquals(List.of(), result.getList());
+        verify(orderExpiryService).expireById(first.getId());
+        verify(orderExpiryService).expireById(next.getId());
     }
 }

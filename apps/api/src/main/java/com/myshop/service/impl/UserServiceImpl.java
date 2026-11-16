@@ -16,7 +16,7 @@ import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.UserService;
 import com.myshop.service.AfterSaleService;
-import com.myshop.service.ManualStockService;
+import com.myshop.service.OrderExpiryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -38,7 +38,7 @@ public class UserServiceImpl implements UserService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final PasswordEncoder passwordEncoder;
-    private final ManualStockService manualStockService;
+    private final OrderExpiryService orderExpiryService;
     private final UserLevelRepository userLevelRepository;
     private final AfterSaleService afterSaleService;
 
@@ -54,7 +54,7 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public void changePassword(UUID userId, ChangePasswordRequest request) {
-        User user = userRepository.findById(userId)
+        User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
         if (!passwordEncoder.matches(request.getOldPassword(), user.getPasswordHash())) {
             throw new BusinessException(ErrorCode.OLD_PASSWORD_WRONG, "原密码错误");
@@ -68,55 +68,36 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    @Transactional
     public PageResult<?> getOrders(UUID userId, String status, int page, int pageSize) {
         PageRequest pageable = PageRequest.of(page - 1, pageSize);
-        Page<Order> orderPage;
+        OrderStatus requestedStatus = null;
         if (status != null) {
-            OrderStatus os;
             try {
-                os = OrderStatus.valueOf(status);
+                requestedStatus = OrderStatus.valueOf(status);
             } catch (IllegalArgumentException e) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的订单状态: " + status);
             }
-            orderPage = orderRepository.findByUserIdAndStatusOrderByCreatedAtDesc(
-                    userId, os, pageable);
-        } else {
-            orderPage = orderRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
         }
-
+        Page<Order> orderPage = findOrderPage(userId, requestedStatus, pageable);
+        LocalDateTime now = LocalDateTime.now();
+        while (true) {
+            List<UUID> expiredIds = orderPage.getContent().stream()
+                    .filter(order -> order.getStatus() == OrderStatus.PENDING && order.getExpiresAt() != null
+                            && !order.getExpiresAt().isAfter(now))
+                    .map(Order::getId).toList();
+            if (expiredIds.isEmpty()) break;
+            expiredIds.forEach(orderExpiryService::expireById);
+            // Expiry and a concurrent payment both change what this page
+            // should contain. A PENDING filter can refill the page with more
+            // overdue orders, so validate each replacement page as well.
+            orderPage = findOrderPage(userId, requestedStatus, pageable);
+        }
         List<Order> orders = orderPage.getContent();
         List<UUID> orderIds = orders.stream().map(Order::getId).toList();
         Map<UUID, List<OrderItem>> itemsByOrderId = orderIds.isEmpty()
                 ? Map.of()
                 : orderItemRepository.findByOrderIdIn(orderIds).stream()
                 .collect(java.util.stream.Collectors.groupingBy(OrderItem::getOrderId));
-
-        // 主动过期检查：PENDING 且已超时的订单标记为 EXPIRED。
-        LocalDateTime now = LocalDateTime.now();
-        for (Order o : orders) {
-            if (o.getStatus() == OrderStatus.PENDING && o.getExpiresAt() != null && o.getExpiresAt().isBefore(now)) {
-                // The order list may race the payment/expiry worker. Lock the
-                // order before touching its item reservation so recovery is
-                // idempotent across all expiry entry points.
-                Order locked = orderRepository.findByIdForUpdate(o.getId()).orElse(o);
-                if (locked.getStatus() != OrderStatus.PENDING || locked.getExpiresAt() == null
-                        || !locked.getExpiresAt().isBefore(LocalDateTime.now())) {
-                    continue;
-                }
-                itemsByOrderId.getOrDefault(locked.getId(), List.of()).forEach(item -> {
-                    if (item.getManualStockReserved() > 0) {
-                        manualStockService.release(item.getProductId(), item.getSpecId(), item.getManualStockReserved());
-                        item.setManualStockReserved(0);
-                    }
-                    item.setFulfillmentStatus(com.myshop.constant.FulfillmentStatus.CANCELLED);
-                    orderItemRepository.save(item);
-                });
-                locked.setStatus(OrderStatus.EXPIRED);
-                orderRepository.save(locked);
-                o.setStatus(OrderStatus.EXPIRED);
-            }
-        }
 
         List<UUID> afterSaleOrderIds = orders.stream()
                 .filter(order -> order.getStatus() == OrderStatus.AFTER_SALE)
@@ -133,6 +114,12 @@ public class UserServiceImpl implements UserService {
                         afterSaleSummaries.get(order.getId())))
                 .toList();
         return PageResult.of(orderPage, list);
+    }
+
+    private Page<Order> findOrderPage(UUID userId, OrderStatus status, PageRequest pageable) {
+        return status == null
+                ? orderRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable)
+                : orderRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, status, pageable);
     }
 
     private Map<String, Object> toOrderBrief(Order o, List<OrderItem> items,

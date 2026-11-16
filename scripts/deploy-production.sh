@@ -15,10 +15,8 @@ BACKUP_SCRIPT=${MYSHOP_BACKUP_SCRIPT:-$SCRIPT_DIR/create-predeploy-backup.sh}
 RETENTION=${MYSHOP_RETENTION_SCRIPT:-$SCRIPT_DIR/cleanup-docker-retention.sh}
 HEALTH_SCRIPT=${HOST_STORAGE_HEALTH_SCRIPT:-/opt/host-ops/check-storage-health.sh}
 HOST_MAINTENANCE=${HOST_MAINTENANCE_SCRIPT:-/opt/host-ops/docker-maintenance.sh}
-HOST_LOCK=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-xianyu-deploy.lock}
+HOST_LOCK=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-deploy.lock}
 RUNTIME_CANDIDATES="$PROJECT_ROOT/candidates"
-RUNTIME_CONFIG_STATE=${MYSHOP_RUNTIME_CONFIG_STATE:-$PROJECT_ROOT/runtime-config-state.json}
-RUNTIME_CONFIG_TOOL=${MYSHOP_RUNTIME_CONFIG_TOOL:-$SCRIPT_DIR/runtime_config_state.py}
 MAINTENANCE_DIR=${MYSHOP_MAINTENANCE_DIR:-$PROJECT_ROOT/maintenance}
 
 [[ -f "$manifest" ]] || die "release manifest is missing: $manifest"
@@ -119,13 +117,6 @@ verify_baseline() {
   done
 }
 verify_baseline || die 'running production does not match the accepted baseline image refs/digests'
-if [[ -f "$RUNTIME_CONFIG_STATE" ]]; then
-  runtime_config_container=$(docker ps --filter 'label=com.docker.compose.project=myshop' \
-    --filter 'label=com.docker.compose.service=api' -q | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') \
-    || die 'RUNTIME_CONFIG_DRIFT'
-  python3 "$RUNTIME_CONFIG_TOOL" verify-baseline --runtime-state "$RUNTIME_CONFIG_STATE" \
-    --env-file "$ENV_FILE" --container-id "$runtime_config_container" || die 'RUNTIME_CONFIG_DRIFT'
-fi
 
 storage_gate() {
   set +e

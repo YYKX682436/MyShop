@@ -65,9 +65,9 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "用户名和手机号不能相同");
         }
 
-        // Every registration locks this singleton row before checking the
-        // cross-field identifier rules. That keeps two concurrent requests
-        // from passing the application-level username/phone checks together.
+        // Registration, administrator identity writes and bootstrap share this
+        // singleton lock before checking cross-field identifier rules. This
+        // prevents username/phone checks from racing across those entry points.
         var sequence = userNumberSequenceRepository.findByIdForUpdate(1);
         if (sequence == null || sequence.getNextUserNo() == null) {
             throw new IllegalStateException("user_number_sequences is not initialized");
@@ -139,14 +139,14 @@ public class AuthServiceImpl implements AuthService {
 
         Optional<User> userLookup;
         if (account.contains("@")) {
-            userLookup = userRepository.findByEmailIgnoreCase(normalizeEmail(account));
+            userLookup = userRepository.findByEmailForUpdate(normalizeEmail(account));
         } else if (PHONE_PATTERN.matcher(account).matches()) {
-            userLookup = userRepository.findByPhone(account);
+            userLookup = userRepository.findByPhoneForUpdate(account);
             if (userLookup.isEmpty()) {
-                userLookup = userRepository.findByUsernameIgnoreCase(account);
+                userLookup = userRepository.findByUsernameForUpdate(account);
             }
         } else {
-            userLookup = userRepository.findByUsernameIgnoreCase(account);
+            userLookup = userRepository.findByUsernameForUpdate(account);
         }
         User user = userLookup
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误"));

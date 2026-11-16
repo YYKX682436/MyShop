@@ -12,6 +12,8 @@ import com.myshop.model.request.UpdateAdministratorRequest;
 import com.myshop.model.response.AdministratorResponse;
 import com.myshop.repository.OperationLogRepository;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
+import com.myshop.entity.UserNumberSequence;
 import com.myshop.service.OperationLogService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,6 +45,7 @@ class AdministratorServiceImplTest {
 
     @Mock
     private UserRepository userRepository;
+    @Mock private UserNumberSequenceRepository userNumberSequenceRepository;
     @Mock
     private OperationLogService operationLogService;
     @Mock
@@ -54,7 +57,9 @@ class AdministratorServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new AdministratorServiceImpl(userRepository, operationLogService,
+        org.mockito.Mockito.lenient().when(userNumberSequenceRepository.findByIdForUpdate(1))
+                .thenReturn(new UserNumberSequence());
+        service = new AdministratorServiceImpl(userRepository, userNumberSequenceRepository, operationLogService,
                 operationLogRepository, passwordEncoder);
     }
 
@@ -86,6 +91,9 @@ class AdministratorServiceImplTest {
         assertEquals(UserRole.ADMIN, response.role());
         assertNull(response.email());
         assertNull(response.phone());
+        var locks = org.mockito.Mockito.inOrder(userNumberSequenceRepository, userRepository);
+        locks.verify(userNumberSequenceRepository).findByIdForUpdate(1);
+        locks.verify(userRepository).existsByUsernameIgnoreCase("Ops_12-3");
         verify(operationLogService).logCurrentRequest(
                 "administrator.create", "ADMINISTRATOR", saved.getId().toString(),
                 "创建普通管理员：Ops_12-3");
@@ -190,6 +198,10 @@ class AdministratorServiceImplTest {
         update.setEmail(" NEW@Example.COM ");
         update.setPhone(" 13900139000 ");
         AdministratorResponse response = service.updateAdministrator(id, update);
+
+        var locks = org.mockito.Mockito.inOrder(userNumberSequenceRepository, userRepository);
+        locks.verify(userNumberSequenceRepository).findByIdForUpdate(1);
+        locks.verify(userRepository).findByIdForUpdate(id);
 
         assertEquals("new@example.com", response.email());
         assertEquals("13900139000", response.phone());

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-LOCK_FILE=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-xianyu-deploy.lock}
+LOCK_FILE=${HOST_DEPLOY_LOCK_FILE:-/run/myshop-deploy.lock}
 DATA_MOUNTPOINT=${DATA_MOUNTPOINT:-/data}
 if [[ "${HOST_DEPLOY_LOCK_HELD:-0}" != 1 ]]; then
   mkdir -p -- "$(dirname -- "$LOCK_FILE")"

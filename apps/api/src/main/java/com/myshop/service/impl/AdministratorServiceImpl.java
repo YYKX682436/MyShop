@@ -14,6 +14,7 @@ import com.myshop.model.response.AdminOperationLogResponse;
 import com.myshop.model.response.AdministratorResponse;
 import com.myshop.repository.OperationLogRepository;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.service.AdministratorService;
 import com.myshop.service.OperationLogService;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,7 @@ public class AdministratorServiceImpl implements AdministratorService {
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
 
     private final UserRepository userRepository;
+    private final UserNumberSequenceRepository userNumberSequenceRepository;
     private final OperationLogService operationLogService;
     private final OperationLogRepository operationLogRepository;
     private final PasswordEncoder passwordEncoder;
@@ -75,6 +77,7 @@ public class AdministratorServiceImpl implements AdministratorService {
         String email = normalizeEmail(request.getEmail());
         String phone = normalizePhone(request.getPhone());
         validateOptionalContact(email, phone);
+        lockIdentityMutation();
         validateIdentityAvailability(username, email, phone, null);
 
         User user = new User();
@@ -100,6 +103,7 @@ public class AdministratorServiceImpl implements AdministratorService {
         if (request == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "管理员修改参数不能为空");
         }
+        lockIdentityMutation();
         User user = requireMutableAdministrator(id);
         String email = normalizeEmail(request.getEmail());
         String phone = normalizePhone(request.getPhone());
@@ -186,6 +190,14 @@ public class AdministratorServiceImpl implements AdministratorService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "固定超级管理员只能查看，不能被此页面管理");
         }
         return user;
+    }
+
+    private void lockIdentityMutation() {
+        // Share registration's existing singleton lock. Always take it before
+        // a user lock so username/phone checks cannot race another writer.
+        if (userNumberSequenceRepository.findByIdForUpdate(1) == null) {
+            throw new IllegalStateException("user_number_sequences is not initialized");
+        }
     }
 
     private void validateIdentityAvailability(String username, String email, String phone, UUID excludedId) {

@@ -298,8 +298,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
     }
 
     private void notifyAfterCommit(Order order, List<UUID> orderItemIds) {
-        // Sales-channel delivery is sent by the provider delivery worker;
-        // only normal storefront orders receive the MyShop email.
+        // Only normal storefront orders receive a delivery email.
         if (order.getOrderType() != OrderType.NORMAL) {
             return;
         }

@@ -27,6 +27,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserOrderMetricsProjection;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.AdminUserService;
 import com.myshop.service.BalanceTransactionService;
@@ -60,6 +61,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
+    private final UserNumberSequenceRepository userNumberSequenceRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final BalanceTransactionService balanceTransactionService;
@@ -70,7 +72,9 @@ public class AdminUserServiceImpl implements AdminUserService {
     private final IpLocationService ipLocationService;
 
     @Autowired
-    public AdminUserServiceImpl(UserRepository userRepository, OrderRepository orderRepository,
+    public AdminUserServiceImpl(UserRepository userRepository,
+                                UserNumberSequenceRepository userNumberSequenceRepository,
+                                OrderRepository orderRepository,
                                 OrderItemRepository orderItemRepository,
                                 BalanceTransactionService balanceTransactionService,
                                 OperationLogService operationLogService,
@@ -79,6 +83,7 @@ public class AdminUserServiceImpl implements AdminUserService {
                                 UserLevelRepository userLevelRepository,
                                 IpLocationService ipLocationService) {
         this.userRepository = userRepository;
+        this.userNumberSequenceRepository = userNumberSequenceRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.balanceTransactionService = balanceTransactionService;
@@ -176,6 +181,11 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional
     public AdminUserDetailResponse updateProfile(UUID id, AdminUpdateUserProfileRequest request) {
+        // Identity mutations use sequence -> user, matching registration and
+        // administrator contacts, before checking a new email's availability.
+        if (userNumberSequenceRepository.findByIdForUpdate(1) == null) {
+            throw new IllegalStateException("user_number_sequences is not initialized");
+        }
         User user = requireRegularUser(id, true);
         String email = normalizeEmail(request == null ? null : request.getEmail());
         if (email == null || email.isBlank()) {

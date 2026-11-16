@@ -4,9 +4,6 @@ import com.myshop.common.PageResult;
 import com.myshop.model.response.AdministratorResponse;
 import com.myshop.service.AdministratorService;
 import com.myshop.service.OperationLogService;
-import com.myshop.service.SalesChannelAdminService;
-import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStartData;
-import com.myshop.saleschannel.model.SalesChannelDtos.QrLoginStatusData;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +22,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -34,7 +32,6 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -56,8 +53,8 @@ class SecurityAuthorizationIntegrationTest {
     @MockitoBean
     private OperationLogService operationLogService;
 
-    @MockitoBean
-    private SalesChannelAdminService salesChannelAdminService;
+    @Autowired
+    private RequestMappingHandlerMapping requestMappingHandlerMapping;
 
     @BeforeEach
     void setUp() {
@@ -68,16 +65,6 @@ class SecurityAuthorizationIntegrationTest {
                 .thenReturn(PageResult.of(java.util.List.<AdministratorResponse>of(), 1, 20, 0));
         when(operationLogService.listLogs(any(), anyString(), anyString(), anyString(), anyString(), anyInt(), anyInt()))
                 .thenReturn(PageResult.of(java.util.List.of(), 1, 20, 0));
-        when(salesChannelAdminService.accounts()).thenReturn(java.util.List.of());
-        when(salesChannelAdminService.startQrLogin(anyString(), anyString(), anyString()))
-                .thenReturn(new QrLoginStartData("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-                        "11111111-1111-1111-1111-111111111111", "data:image/png;base64,AA==", 300));
-        when(salesChannelAdminService.startQrReauthentication(any(), anyString(), anyString(), anyString()))
-                .thenReturn(new QrLoginStartData("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-                        "11111111-1111-1111-1111-111111111111", "data:image/png;base64,AA==", 300));
-        when(salesChannelAdminService.getQrLoginStatus(anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(new QrLoginStatusData("WAITING", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-                        "11111111-1111-1111-1111-111111111111", null, null, null, null, null));
     }
 
     @Test
@@ -108,24 +95,6 @@ class SecurityAuthorizationIntegrationTest {
     void unauthenticatedAdminRouteRemainsUnauthorizedAndLoginRemainsPublic() throws Exception {
         mockMvc.perform(get("/api/admin/operation-logs").contextPath("/api"))
                 .andExpect(status().isUnauthorized());
-        mockMvc.perform(get("/api/admin/xianyu/accounts").contextPath("/api"))
-                .andExpect(status().isUnauthorized());
-        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
-                        .contextPath("/api"))
-                .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
-                        .contextPath("/api"))
-                .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr")
-                        .contextPath("/api")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\",\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
-                .andExpect(status().isUnauthorized());
-        mockMvc.perform(post("/api/admin/sales-channels/accounts/22222222-2222-2222-2222-222222222222/reauthenticate/qr/start")
-                        .contextPath("/api")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\",\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
-                .andExpect(status().isUnauthorized());
 
         mockMvc.perform(post("/api/auth/login")
                         .contextPath("/api")
@@ -145,62 +114,6 @@ class SecurityAuthorizationIntegrationTest {
                         .contextPath("/api")
                         .with(user("muchen-admin").roles("SUPER_ADMIN")))
                 .andExpect(status().isOk());
-
-        mockMvc.perform(get("/api/admin/xianyu/accounts")
-                        .contextPath("/api")
-                        .with(user("ordinary-admin").roles("ADMIN")))
-                .andExpect(status().isOk());
-        mockMvc.perform(get("/api/admin/xianyu/accounts")
-                        .contextPath("/api")
-                        .with(user("muchen-admin").roles("SUPER_ADMIN")))
-                .andExpect(status().isOk());
-        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
-                        .contextPath("/api")
-                        .with(user("ordinary-admin").roles("ADMIN")))
-                .andExpect(status().isOk());
-        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
-                        .contextPath("/api")
-                        .with(user("muchen-admin").roles("SUPER_ADMIN")))
-                .andExpect(status().isOk());
-        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
-                        .contextPath("/api")
-                        .with(user("ordinary-admin").roles("ADMIN")))
-                .andExpect(status().isOk());
-
-        mockMvc.perform(post("/api/admin/sales-channels/accounts/22222222-2222-2222-2222-222222222222/reauthenticate/qr/start")
-                        .contextPath("/api")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\",\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}")
-                        .with(user("authorized-operator").roles("ADMIN")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.loginIntentId").value("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
-        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
-                        .contextPath("/api")
-                        .with(user("muchen-admin").roles("SUPER_ADMIN")))
-                .andExpect(status().isOk());
-        mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr")
-                        .contextPath("/api")
-                        .with(user("ordinary-admin").roles("ADMIN"))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"request_id\":\"11111111-1111-1111-1111-111111111111\","
-                                + "\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.loginSessionId").value("11111111-1111-1111-1111-111111111111"))
-                .andExpect(jsonPath("$.data.qrCodeDataUrl").value("data:image/png;base64,AA=="))
-                .andExpect(jsonPath("$.data.expiresInSeconds").value(300))
-                .andExpect(jsonPath("$.data.login_session_id").doesNotExist())
-                .andExpect(jsonPath("$.data.qr_code_data_url").doesNotExist());
-        mockMvc.perform(post("/api/admin/xianyu/accounts/login/qr/11111111-1111-1111-1111-111111111111/status")
-                        .contextPath("/api")
-                        .with(user("ordinary-admin").roles("ADMIN"))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"request_id\":\"22222222-2222-2222-2222-222222222222\","
-                                + "\"login_session_id\":\"11111111-1111-1111-1111-111111111111\","
-                                + "\"login_intent_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("WAITING"))
-                .andExpect(jsonPath("$.data.accountId").doesNotExist())
-                .andExpect(jsonPath("$.data.isNewAccount").doesNotExist());
     }
 
     @Test
@@ -210,23 +123,23 @@ class SecurityAuthorizationIntegrationTest {
                         .with(user("buyer").roles("USER")))
                 .andExpect(status().isForbidden());
 
-        mockMvc.perform(get("/api/admin/xianyu/accounts")
-                        .contextPath("/api")
-                        .with(user("buyer").roles("USER")))
-                .andExpect(status().isForbidden());
-        mockMvc.perform(get("/api/admin/xianyu/items?accountId=11111111-1111-1111-1111-111111111111")
-                        .contextPath("/api")
-                        .with(user("buyer").roles("USER")))
-                .andExpect(status().isForbidden());
-        mockMvc.perform(post("/api/admin/xianyu/accounts/11111111-1111-1111-1111-111111111111/items/sync")
-                        .contextPath("/api")
-                        .with(user("buyer").roles("USER")))
-                .andExpect(status().isForbidden());
-
         mockMvc.perform(get("/api/admin/administrators")
                         .contextPath("/api")
                         .with(user("ordinary-admin").roles("ADMIN")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void retiredChannelEndpointsAreAbsentAndTheirInternalBypassIsRemoved() throws Exception {
+        assertTrue(requestMappingHandlerMapping.getHandlerMethods().keySet().stream()
+                .flatMap(mapping -> mapping.getPatternValues().stream())
+                .noneMatch(path -> path.contains("xianyu") || path.contains("sales-channel")));
+
+        mockMvc.perform(post("/api/internal/xianyu/reply/resolve")
+                        .contextPath("/api")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(os.environ.get("MYSHOP_RUNTIME_ROOT", "/opt/myshop/runtime"))
 DEFAULT_STATE = Path(os.environ.get("MYSHOP_DEPLOY_STATE", str(ROOT / "deploy-state.json")))
-LOCK = Path(os.environ.get("HOST_DEPLOY_LOCK_FILE", "/run/myshop-xianyu-deploy.lock"))
+LOCK = Path(os.environ.get("HOST_DEPLOY_LOCK_FILE", "/run/myshop-deploy.lock"))
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 SERVICES = {"api", "web"}

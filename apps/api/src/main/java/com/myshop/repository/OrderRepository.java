@@ -24,7 +24,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
                                                         OrderStatus status,
                                                         OrderType orderType);
 
-    Optional<Order> findByIdempotencyKey(String idempotencyKey);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT o FROM Order o WHERE o.idempotencyKey = :idempotencyKey")
+    Optional<Order> findByIdempotencyKeyForUpdate(@Param("idempotencyKey") String idempotencyKey);
 
     List<Order> findByStatusAndDeliveredAtIsNullOrderByCreatedAtAsc(OrderStatus status, Pageable pageable);
 
@@ -32,12 +34,16 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     @Query(value = "SELECT DISTINCT o.* FROM orders o JOIN order_items oi ON oi.order_id = o.id "
             + "WHERE o.status = 'PAID' AND oi.fulfillment_status NOT IN ('DELIVERED', 'CANCELLED') "
             + "AND oi.delivery_type = 'AUTO' AND oi.stock_mode = 'CARD_KEY' "
-            + "AND (o.order_type IN ('NORMAL', 'ADMIN_PICKUP') "
-            + "OR (o.order_type = 'SALES_CHANNEL' AND EXISTS ("
-            + "SELECT 1 FROM sales_channel_orders sco "
-            + "WHERE sco.order_id = o.id AND sco.auto_fulfillment_requested = true))) "
-            + "ORDER BY o.created_at ASC", nativeQuery = true)
-    List<Order> findPaidOrdersWithPendingAutoItems(Pageable pageable);
+            + "AND o.order_type IN ('NORMAL', 'ADMIN_PICKUP') "
+            + "AND o.created_at <= :scanStartedAt "
+            + "AND (CAST(:afterCreatedAt AS timestamp) IS NULL "
+            + "OR (o.created_at, o.id) > (CAST(:afterCreatedAt AS timestamp), CAST(:afterId AS uuid))) "
+            + "ORDER BY o.created_at ASC, o.id ASC", nativeQuery = true)
+    List<Order> findPaidOrdersWithPendingAutoItemsAfter(
+            @Param("afterCreatedAt") LocalDateTime afterCreatedAt,
+            @Param("afterId") UUID afterId,
+            @Param("scanStartedAt") LocalDateTime scanStartedAt,
+            Pageable pageable);
 
     Page<Order> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 
@@ -45,8 +51,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     List<Order> findByIdIn(List<UUID> ids);
 
-    @Query("SELECT o FROM Order o WHERE o.status = com.myshop.constant.OrderStatus.PENDING AND o.expiresAt < :now")
-    List<Order> findExpiredOrders(@Param("now") LocalDateTime now);
+    @Query("SELECT o.id FROM Order o WHERE o.status = com.myshop.constant.OrderStatus.PENDING AND o.expiresAt <= :now")
+    List<UUID> findExpiredOrderIds(@Param("now") LocalDateTime now);
 
     /** One aggregate query supplies successful-order metrics for a user page. */
     @Query("""

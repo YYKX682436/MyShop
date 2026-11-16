@@ -49,7 +49,7 @@ class UserAvatarServiceTest {
         user.setAvatarUrl(previous);
         MockMultipartFile file = validPng();
         ImageUploadService.UploadedImage uploaded = uploaded("avatar-22222222-2222-2222-2222-222222222222.png");
-        when(userRepository.findById(userId)).thenReturn(java.util.Optional.of(user));
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
         when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(imageUploadService.deleteManagedAvatar(any())).thenReturn(true);
@@ -76,7 +76,7 @@ class UserAvatarServiceTest {
         user.setAvatarUrl(previous);
         MockMultipartFile file = validPng();
         ImageUploadService.UploadedImage uploaded = uploaded("avatar-44444444-4444-4444-4444-444444444444.png");
-        when(userRepository.findById(userId)).thenReturn(java.util.Optional.of(user));
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
         when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(imageUploadService.deleteManagedAvatar(any())).thenReturn(true);
@@ -98,7 +98,7 @@ class UserAvatarServiceTest {
         user.setAvatarUrl(previous);
         MockMultipartFile file = validPng();
         ImageUploadService.UploadedImage uploaded = uploaded("avatar-66666666-6666-6666-6666-666666666666.png");
-        when(userRepository.findById(userId)).thenReturn(java.util.Optional.of(user));
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
         when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
         when(userRepository.save(any(User.class))).thenThrow(new IllegalStateException("save failed"));
         when(imageUploadService.deleteManagedAvatar(uploaded.url())).thenReturn(true);
@@ -118,7 +118,7 @@ class UserAvatarServiceTest {
         user.setAvatarUrl(previous);
         MockMultipartFile file = validPng();
         ImageUploadService.UploadedImage uploaded = uploaded("avatar-88888888-8888-8888-8888-888888888888.png");
-        when(userRepository.findById(userId)).thenReturn(java.util.Optional.of(user));
+        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
         when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
         when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(imageUploadService.deleteManagedAvatar(previous)).thenThrow(new IllegalStateException("cleanup failed"));

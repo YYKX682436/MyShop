@@ -25,6 +25,8 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.UserOrderMetricsProjection;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserNumberSequenceRepository;
+import com.myshop.entity.UserNumberSequence;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.IpLocationService;
@@ -59,6 +61,7 @@ class AdminUserServiceImplTest {
 
     @Mock
     private UserRepository userRepository;
+    @Mock private UserNumberSequenceRepository userNumberSequenceRepository;
     @Mock
     private OrderRepository orderRepository;
     @Mock
@@ -80,7 +83,9 @@ class AdminUserServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new AdminUserServiceImpl(userRepository, orderRepository, orderItemRepository,
+        org.mockito.Mockito.lenient().when(userNumberSequenceRepository.findByIdForUpdate(1))
+                .thenReturn(new UserNumberSequence());
+        service = new AdminUserServiceImpl(userRepository, userNumberSequenceRepository, orderRepository, orderItemRepository,
                 balanceTransactionService, operationLogService, operationLogRepository,
                 passwordEncoder, userLevelRepository, ipLocationService);
     }
@@ -355,6 +360,10 @@ class AdminUserServiceImplTest {
         RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(), "admin", "ADMIN"));
 
         service.updateProfile(userId, request);
+
+        var locks = org.mockito.Mockito.inOrder(userNumberSequenceRepository, userRepository);
+        locks.verify(userNumberSequenceRepository).findByIdForUpdate(1);
+        locks.verify(userRepository).findByIdForUpdate(userId);
 
         assertEquals("new@example.com", user.getEmail());
         verify(operationLogService).logCurrentRequest(

@@ -4,5 +4,6 @@ package com.myshop.constant;
 public enum OrderType {
     NORMAL,
     ADMIN_PICKUP,
+    /** Retained only to read historical channel orders after the integration was retired. */
     SALES_CHANNEL
 }

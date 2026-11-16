@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import jakarta.servlet.http.HttpServletResponse;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 @RestController
@@ -21,10 +22,14 @@ public class ProductController {
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(value = "page_size", defaultValue = "20") int pageSize,
+            @RequestParam(defaultValue = "default") String sort,
+            @RequestParam(value = "in_stock", defaultValue = "false") boolean inStock,
+            @RequestParam(value = "price_min", required = false) BigDecimal priceMin,
+            @RequestParam(value = "price_max", required = false) BigDecimal priceMax,
             HttpServletResponse response) {
         response.setHeader("Cache-Control", "private, no-store");
         return ApiResponse.success(productService.listProducts(categoryId, keyword, page, pageSize,
-                RequestContext.getUserId()));
+                RequestContext.getUserId(), sort, inStock, priceMin, priceMax));
     }
 
     @GetMapping("/products/{id}")

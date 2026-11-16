@@ -1,6 +1,7 @@
 import { getCategories, getSiteConfig, getProducts } from "@/services/api-server"
 import { HomeContent } from "./home-content"
 import type { Metadata } from "next"
+import { serializeJsonLd } from "@/lib/json-ld"
 
 export async function generateMetadata(): Promise<Metadata> {
   try {
@@ -23,10 +24,10 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function HomePage() {
   const [productsResult, categories, config] = await Promise.all([
-    getProducts({ page: 1, page_size: 100 })
+    getProducts({ page: 1, page_size: 24 })
       .then(data => ({ data, error: false }))
       .catch(() => ({
-        data: { list: [] as never[], pagination: { page: 1, page_size: 100, total: 0 } },
+        data: { list: [] as never[], pagination: { page: 1, page_size: 24, total: 0 } },
         error: true,
       })),
     getCategories().catch(() => []),
@@ -44,10 +45,10 @@ export default async function HomePage() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
       <HomeContent
-        products={productsResult.data.list}
+        initialProducts={productsResult.data}
         categories={categories}
         siteSlogan={config?.site_slogan || ""}
         siteDescription={config?.site_description || ""}

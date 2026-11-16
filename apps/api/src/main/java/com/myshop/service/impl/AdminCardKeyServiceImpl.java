@@ -10,6 +10,7 @@ import com.myshop.constant.PricingSource;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.CardImportBatch;
 import com.myshop.entity.CardKey;
+import com.myshop.entity.ManualStock;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.Order;
 import com.myshop.entity.Product;
@@ -20,12 +21,12 @@ import com.myshop.model.response.AdminCardKeyPickupCardResponse;
 import com.myshop.model.response.AdminCardKeyPickupResponse;
 import com.myshop.repository.*;
 import com.myshop.service.AdminCardKeyService;
-import com.myshop.service.ManualStockService;
 import com.myshop.utils.CardContentParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,7 +47,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
     private final ProductSpecRepository productSpecRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
-    private final ManualStockService manualStockService;
+    private final ManualStockRepository manualStockRepository;
 
     @Override
     public List<?> getStockSummary(UUID productId, UUID specId) {
@@ -55,17 +56,40 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         if (productId != null) {
             products = productRepository.findById(productId).map(List::of).orElse(List.of());
         } else {
-            products = productRepository.findAll();
+            products = productRepository.findAdminProducts(null, null, Pageable.unpaged()).getContent();
+        }
+
+        products = products.stream().filter(product -> product.getIsDeleted() == 0).toList();
+        if (products.isEmpty()) return List.of();
+        List<UUID> productIds = products.stream().map(Product::getId).toList();
+        Map<UUID, List<ProductSpec>> specsByProduct = productSpecRepository
+                .findByProductIdInAndIsDeletedOrderByProductIdAscSortOrderAsc(productIds, 0).stream()
+                .collect(Collectors.groupingBy(ProductSpec::getProductId));
+        List<UUID> cardProductIds = products.stream()
+                .filter(product -> product.getStockMode() == StockMode.CARD_KEY).map(Product::getId).toList();
+        Map<StockPool, Map<CardKeyStatus, Long>> cardCounts = new HashMap<>();
+        if (!cardProductIds.isEmpty()) {
+            for (var row : cardKeyRepository.countPoolsByStatus(cardProductIds)) {
+                cardCounts.computeIfAbsent(new StockPool(row.getProductId(), row.getSpecId()),
+                        ignored -> new EnumMap<>(CardKeyStatus.class)).put(row.getStatus(), row.getQuantity());
+            }
+        }
+        List<UUID> manualProductIds = products.stream()
+                .filter(product -> product.getStockMode() == StockMode.MANUAL).map(Product::getId).toList();
+        Map<StockPool, ManualStock> manualStocks = new HashMap<>();
+        if (!manualProductIds.isEmpty()) {
+            for (ManualStock stock : manualStockRepository.findByProductIdIn(manualProductIds)) {
+                manualStocks.put(new StockPool(stock.getProductId(), stock.getSpecId()), stock);
+            }
         }
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (Product p : products) {
-            if (p.getIsDeleted() != 0) continue;
-            var specs = productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(p.getId(), 0);
+            var specs = specsByProduct.getOrDefault(p.getId(), List.of());
 
             if (specId == null) {
                 // 无规格筛选：展示默认库存池（spec_id=null）+ 所有规格库存
-                Map<String, Object> defaultEntry = buildStockEntry(p, null, null);
+                Map<String, Object> defaultEntry = buildStockEntry(p, null, null, cardCounts, manualStocks);
                 Object defaultTotalValue = defaultEntry.get("total");
                 long defaultTotal = defaultTotalValue instanceof Number number ? number.longValue() : 0;
                 // 如果默认池有卡密，或者商品没有任何规格，则显示默认池条目
@@ -74,7 +98,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
                     result.add(defaultEntry);
                 }
                 for (var spec : specs) {
-                    Map<String, Object> entry = buildStockEntry(p, spec.getId(), spec.getName());
+                    Map<String, Object> entry = buildStockEntry(p, spec.getId(), spec.getName(), cardCounts, manualStocks);
                     entry.put("spec_enabled", p.isSpecEnabled());
                     result.add(entry);
                 }
@@ -82,7 +106,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
                 // 按指定规格筛选
                 for (var spec : specs) {
                     if (spec.getId().equals(specId)) {
-                        Map<String, Object> entry = buildStockEntry(p, spec.getId(), spec.getName());
+                        Map<String, Object> entry = buildStockEntry(p, spec.getId(), spec.getName(), cardCounts, manualStocks);
                         entry.put("spec_enabled", p.isSpecEnabled());
                         result.add(entry);
                     }
@@ -234,7 +258,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
     @Override
     @Transactional
     public void invalidateCardKey(UUID id) {
-        CardKey key = cardKeyRepository.findById(id)
+        CardKey key = cardKeyRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "卡密不存在"));
         if (key.getStatus() == CardKeyStatus.SOLD) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "已售出的卡密不可作废");
@@ -323,7 +347,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         // Read only to discover the pool. The shared method acquires the
         // product lock before the exact CardKey FOR UPDATE lock, matching the
         // batch path and preventing a product/key lock-order deadlock.
-        CardKey key = cardKeyRepository.findById(cardKeyId)
+        CardKeyRepository.StockPool key = cardKeyRepository.findStockPoolById(cardKeyId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "卡密不存在"));
         return pickupCardKeys(key.getProductId(), key.getSpecId(), 1, cardKeyId, operatorId);
     }
@@ -433,7 +457,9 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         return null;
     }
 
-    private Map<String, Object> buildStockEntry(Product product, UUID specId, String specName) {
+    private Map<String, Object> buildStockEntry(Product product, UUID specId, String specName,
+                                               Map<StockPool, Map<CardKeyStatus, Long>> cardCounts,
+                                               Map<StockPool, ManualStock> manualStocks) {
         UUID productId = product.getId();
         String productTitle = product.getTitle();
         StockMode stockMode = product.getStockMode();
@@ -454,8 +480,9 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             return unlimited;
         }
         if (stockMode == StockMode.MANUAL) {
-            int available = manualStockService.getAvailable(productId, specId);
-            int reserved = manualStockService.getReserved(productId, specId);
+            ManualStock stock = manualStocks.get(new StockPool(productId, specId));
+            int available = stock == null ? 0 : stock.getAvailableQuantity();
+            int reserved = stock == null ? 0 : stock.getReservedQuantity();
             Map<String, Object> manual = new LinkedHashMap<>();
             manual.put("product_id", productId);
             manual.put("product_title", productTitle);
@@ -471,19 +498,12 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             manual.put("invalid", 0);
             return manual;
         }
-        List<Object[]> counts = cardKeyRepository.countByProductIdAndSpecIdGroupByStatus(productId, specId);
-        long total = 0, available = 0, sold = 0, locked = 0, invalid = 0;
-        for (Object[] row : counts) {
-            CardKeyStatus status = (CardKeyStatus) row[0];
-            long cnt = (Long) row[1];
-            total += cnt;
-            switch (status) {
-                case AVAILABLE -> available = cnt;
-                case SOLD -> sold = cnt;
-                case LOCKED -> locked = cnt;
-                case INVALID -> invalid = cnt;
-            }
-        }
+        Map<CardKeyStatus, Long> counts = cardCounts.getOrDefault(new StockPool(productId, specId), Map.of());
+        long total = counts.values().stream().mapToLong(Long::longValue).sum();
+        long available = counts.getOrDefault(CardKeyStatus.AVAILABLE, 0L);
+        long sold = counts.getOrDefault(CardKeyStatus.SOLD, 0L);
+        long locked = counts.getOrDefault(CardKeyStatus.LOCKED, 0L);
+        long invalid = counts.getOrDefault(CardKeyStatus.INVALID, 0L);
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("product_id", productId);
         map.put("product_title", productTitle);
@@ -513,5 +533,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         if (value instanceof Boolean bool) return bool;
         return Boolean.parseBoolean(String.valueOf(value));
     }
+
+    private record StockPool(UUID productId, UUID specId) { }
 
 }

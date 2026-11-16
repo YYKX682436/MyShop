@@ -10,7 +10,6 @@ import {
   LayoutDashboard,
   Package,
   ScrollText,
-  Store,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -64,17 +63,9 @@ const navGroups: AdminNavGroup[] = [
     ],
   },
   {
-    labelKey: "admin.navXianyu",
-    items: [
-      { labelKey: "admin.xianyuAccounts", href: "/admin/xianyu/accounts", icon: Store },
-      { labelKey: "admin.xianyuItems", href: "/admin/xianyu/items", icon: Package },
-    ],
-  },
-  {
     labelKey: "admin.navTransactions",
     items: [
       { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: true },
-      { labelKey: "admin.salesChannelOrders", href: "/admin/sales-channel-orders", icon: Store },
       { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
     ],
   },

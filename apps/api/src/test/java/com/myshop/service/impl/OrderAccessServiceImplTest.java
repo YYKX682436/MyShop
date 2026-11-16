@@ -50,6 +50,7 @@ class OrderAccessServiceImplTest {
     @Mock private BalanceOrderPaymentService balanceOrderPaymentService;
     @Mock private CardKeyReclaimService cardKeyReclaimService;
     @Mock private AfterSaleService afterSaleService;
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     private OrderAccessServiceImpl service;
 
@@ -57,7 +58,7 @@ class OrderAccessServiceImplTest {
     void setUp() {
         service = new OrderAccessServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
                 paymentAttemptRepository, orderService, paymentService, balanceOrderPaymentService,
-                cardKeyReclaimService, afterSaleService, new ObjectMapper());
+                cardKeyReclaimService, afterSaleService, new ObjectMapper(), transactionManager);
     }
 
     @Test
@@ -89,6 +90,7 @@ class OrderAccessServiceImplTest {
         Map<?, ?> deliveryItem = (Map<?, ?>) deliveryItems.get(0);
         assertEquals("card-value", ((List<?>) deliveryItem.get("content_parts")).get(0));
 
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
         Map<String, Object> refreshed = service.refreshOrder(orderId, null, "session-a");
         assertEquals(orderId, ((Map<?, ?>) refreshed.get("order")).get("id"));
         verify(paymentService).refreshPayment(orderId);
@@ -108,6 +110,7 @@ class OrderAccessServiceImplTest {
 
         assertForbidden(() -> service.getOrder(orderId, null, null));
         clearInvocations(orderRepository);
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(guestOrder(orderId, "session-a")));
         assertForbidden(() -> service.refreshOrder(orderId, null, "session-b"));
         clearInvocations(orderRepository);
         assertForbidden(() -> service.repayOrder(orderId, "pc", null, "session-b"));

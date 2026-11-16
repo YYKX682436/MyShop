@@ -12,6 +12,8 @@ import java.util.UUID;
 
 public interface ManualStockRepository extends JpaRepository<ManualStock, UUID> {
 
+    List<ManualStock> findByProductIdIn(List<UUID> productIds);
+
     @Query(value = "SELECT product_id, spec_id, available_quantity FROM manual_stocks "
             + "WHERE product_id IN (:productIds)", nativeQuery = true)
     List<Object[]> findAvailableByProductIds(@Param("productIds") List<UUID> productIds);
