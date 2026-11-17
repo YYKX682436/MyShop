@@ -62,7 +62,8 @@ export function StoreBottomNav() {
   const dragMovedRef = useRef(false)
   const suppressTapRef = useRef(false)
   const animationRef = useRef<ReturnType<typeof animate> | null>(null)
-  const pendingTargetRef = useRef<string | null>(null)
+  const navigationEpochRef = useRef(0)
+  const pendingTargetRef = useRef<{ href: string; epoch: number } | null>(null)
   const wasPendingRef = useRef(false)
 
   const indicatorX = useMotionValue(0)
@@ -160,7 +161,7 @@ export function StoreBottomNav() {
   // Clear pending target when destination is reached
   useEffect(() => {
     if (pendingTargetRef.current) {
-      if (normalizeStorefrontPath(pathname) === normalizeStorefrontPath(pendingTargetRef.current)) {
+      if (normalizeStorefrontPath(pathname) === normalizeStorefrontPath(pendingTargetRef.current.href)) {
         pendingTargetRef.current = null
       }
     }
@@ -169,9 +170,11 @@ export function StoreBottomNav() {
   // Recover indicator if navigation transition settles without reaching the target route
   useEffect(() => {
     if (wasPendingRef.current && !isNavigationPending) {
+      const pending = pendingTargetRef.current
       if (
-        pendingTargetRef.current &&
-        normalizeStorefrontPath(pathname) !== normalizeStorefrontPath(pendingTargetRef.current)
+        pending &&
+        pending.epoch === navigationEpochRef.current &&
+        normalizeStorefrontPath(pathname) !== normalizeStorefrontPath(pending.href)
       ) {
         pendingTargetRef.current = null
         if (metrics && activeKey) {
@@ -193,11 +196,12 @@ export function StoreBottomNav() {
   // Navigate immediately to a dock item, accounting for any in-flight navigation intent
   const navigateToKey = useCallback(
     (key: DockKey): boolean => {
-      const currentDestination = pendingTargetRef.current ?? pathname
+      const currentDestination = pendingTargetRef.current?.href ?? pathname
       const action = getStorefrontDockAction(key, currentDestination)
       if (!action.href) return false
       const targetPathname = action.href
-      pendingTargetRef.current = targetPathname
+      const epoch = ++navigationEpochRef.current
+      pendingTargetRef.current = { href: targetPathname, epoch }
 
       const targetIndex = navItems.findIndex((item) => item.key === key)
       if (metrics && targetIndex >= 0) {
@@ -209,7 +213,9 @@ export function StoreBottomNav() {
           router.replace(targetPathname)
         })
       } catch {
-        pendingTargetRef.current = null
+        if (pendingTargetRef.current?.epoch === epoch) {
+          pendingTargetRef.current = null
+        }
         if (metrics && activeKey) {
           snapIndicator(getOffsetForIndex(activeIndex, metrics))
         }

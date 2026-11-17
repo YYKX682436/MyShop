@@ -11,6 +11,7 @@
     "perf:smoke": "node scripts/perf-smoke.mjs",
     "test": "pnpm run test:logic",
     "test:logic": "node --experimental-strip-types --test lib/*.test.mjs",
+    "test:dock-race": "node scripts/test-dock-race.mjs",
     "clean": "node scripts/clear-cache.mjs"
   },
   "dependencies": {
