@@ -7,7 +7,7 @@ import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
 import { useLocale } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
 import { getStorefrontDockAction } from "@/lib/storefront-dock"
-import { getStorefrontActiveTab, isStorefrontDockVisible, type StorefrontNavKey } from "@/lib/storefront-routes"
+import { getStorefrontActiveTab, isStorefrontDockVisible, normalizeStorefrontPath, type StorefrontNavKey } from "@/lib/storefront-routes"
 import { cn } from "@/lib/utils"
 
 type DockKey = StorefrontNavKey
@@ -50,7 +50,7 @@ export function StoreBottomNav() {
   const pathname = usePathname()
   const router = useRouter()
   const reducedMotion = useReducedMotion() ?? false
-  const [, startNavigationTransition] = useTransition()
+  const [isNavigationPending, startNavigationTransition] = useTransition()
   const { t } = useLocale()
 
   const isVisible = isStorefrontDockVisible(pathname)
@@ -62,6 +62,8 @@ export function StoreBottomNav() {
   const dragMovedRef = useRef(false)
   const suppressTapRef = useRef(false)
   const animationRef = useRef<ReturnType<typeof animate> | null>(null)
+  const pendingTargetRef = useRef<string | null>(null)
+  const wasPendingRef = useRef(false)
 
   const indicatorX = useMotionValue(0)
   const [metrics, setMetrics] = useState<DockMetrics | null>(null)
@@ -155,37 +157,74 @@ export function StoreBottomNav() {
     [],
   )
 
-  // Keep indicator in sync with authoritative pathname
+  // Clear pending target when destination is reached
   useEffect(() => {
-    if (!metrics || isDraggingRef.current) return
+    if (pendingTargetRef.current) {
+      if (normalizeStorefrontPath(pathname) === normalizeStorefrontPath(pendingTargetRef.current)) {
+        pendingTargetRef.current = null
+      }
+    }
+  }, [pathname])
+
+  // Recover indicator if navigation transition settles without reaching the target route
+  useEffect(() => {
+    if (wasPendingRef.current && !isNavigationPending) {
+      if (
+        pendingTargetRef.current &&
+        normalizeStorefrontPath(pathname) !== normalizeStorefrontPath(pendingTargetRef.current)
+      ) {
+        pendingTargetRef.current = null
+        if (metrics && activeKey) {
+          snapIndicator(getOffsetForIndex(activeIndex, metrics))
+        }
+      }
+    }
+    wasPendingRef.current = isNavigationPending
+  }, [isNavigationPending, pathname, activeKey, activeIndex, metrics, getOffsetForIndex, snapIndicator])
+
+  // Keep indicator in sync with authoritative pathname when idle
+  useEffect(() => {
+    if (!metrics || isDraggingRef.current || pendingTargetRef.current) return
     const targetOffset = getOffsetForIndex(activeIndex, metrics)
     snapIndicator(targetOffset)
     setDragPreviewKey(null)
   }, [activeIndex, getOffsetForIndex, metrics, snapIndicator])
 
-  // Navigate immediately to a dock item
+  // Navigate immediately to a dock item, accounting for any in-flight navigation intent
   const navigateToKey = useCallback(
-    (key: DockKey) => {
-      const action = getStorefrontDockAction(key, pathname)
-      if (!action.href) return
+    (key: DockKey): boolean => {
+      const currentDestination = pendingTargetRef.current ?? pathname
+      const action = getStorefrontDockAction(key, currentDestination)
+      if (!action.href) return false
       const targetPathname = action.href
-      startNavigationTransition(() => {
-        router.replace(targetPathname)
-      })
+      pendingTargetRef.current = targetPathname
+
+      const targetIndex = navItems.findIndex((item) => item.key === key)
+      if (metrics && targetIndex >= 0) {
+        snapIndicator(getOffsetForIndex(targetIndex, metrics))
+      }
+
+      try {
+        startNavigationTransition(() => {
+          router.replace(targetPathname)
+        })
+      } catch {
+        pendingTargetRef.current = null
+        if (metrics && activeKey) {
+          snapIndicator(getOffsetForIndex(activeIndex, metrics))
+        }
+      }
+      return true
     },
-    [pathname, router, startNavigationTransition],
+    [activeKey, activeIndex, getOffsetForIndex, metrics, navItems, pathname, router, snapIndicator, startNavigationTransition],
   )
 
   const requestDockAction = useCallback(
     (key: DockKey) => {
       if (!activeKey) return
-      const targetIndex = navItems.findIndex((item) => item.key === key)
-      if (metrics && targetIndex >= 0) {
-        snapIndicator(getOffsetForIndex(targetIndex, metrics))
-      }
       navigateToKey(key)
     },
-    [activeKey, getOffsetForIndex, metrics, navItems, navigateToKey, snapIndicator],
+    [activeKey, navigateToKey],
   )
 
   const handleDragStart = useCallback(() => {
@@ -221,16 +260,16 @@ export function StoreBottomNav() {
     const targetItem = navItems[nearestIndex]
 
     if (targetItem) {
-      snapIndicator(getOffsetForIndex(nearestIndex, metrics))
-      if (targetItem.key !== activeKey) {
-        navigateToKey(targetItem.key)
+      const navigated = navigateToKey(targetItem.key)
+      if (!navigated) {
+        snapIndicator(getOffsetForIndex(nearestIndex, metrics))
       }
     } else {
       snapIndicator(getOffsetForIndex(activeIndex, metrics))
     }
 
     setDragPreviewKey(null)
-  }, [activeIndex, activeKey, getOffsetForIndex, indicatorX, metrics, navItems, navigateToKey, snapIndicator])
+  }, [activeIndex, getOffsetForIndex, indicatorX, metrics, navItems, navigateToKey, snapIndicator])
 
   const cancelDrag = useCallback(() => {
     if (!isDraggingRef.current) return

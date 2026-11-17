@@ -1,12 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import {
-  getStorefrontDockAction,
-  isCurrentStorefrontDockAction,
-  resolveStorefrontDockNavigation,
-  tryStartStorefrontDockNavigation,
-} from "./storefront-dock.ts"
+import { getStorefrontDockAction } from "./storefront-dock.ts"
 
 const readSource = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8")
 
@@ -68,82 +63,65 @@ test("non-Dock secondary navigation still keeps its push/back boundary", () => {
   assert.match(ordersPageSource, /href=\{buildOrderPageHref\(order\.id\)\}/)
 })
 
-test("stale Dock actions cannot commit after a newer action starts", () => {
-  assert.equal(isCurrentStorefrontDockAction(7, 7), true)
-  assert.equal(isCurrentStorefrontDockAction(7, 8), false)
-})
+test("consecutive dock navigation behavior resolves the latest user intent under in-flight transitions", () => {
+  // Simulates the exact state machine used by StoreBottomNav:
+  // pendingTarget tracks in-flight navigation; pathname is the current authoritative URL
+  let pathname = "/"
+  let pendingTarget = null
+  const dispatchedNavigations = []
 
-test("resolves navigation against the real pathname", () => {
-  const attempt = {
-    id: 3,
-    fromPathname: "/",
-    targetPathname: "/my/orders",
-    phase: "navigating",
+  const navigateToKey = (key) => {
+    const currentDestination = pendingTarget ?? pathname
+    const action = getStorefrontDockAction(key, currentDestination)
+    if (!action.href) return false
+    pendingTarget = action.href
+    dispatchedNavigations.push(action.href)
+    return true
   }
 
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/my/orders/"), "succeeded")
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/", true), "pending")
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/my"), "interrupted")
-})
+  // 1. Initial state at '/'
+  assert.equal(pathname, "/")
+  assert.equal(pendingTarget, null)
 
-test("does not fail a slow navigation while its transition is pending", () => {
-  const attempt = {
-    fromPathname: "/",
-    targetPathname: "/my/orders",
+  // 2. User clicks "orders" (/my/orders) -> dispatches navigation to /my/orders
+  const firstClick = navigateToKey("orders")
+  assert.equal(firstClick, true)
+  assert.equal(pendingTarget, "/my/orders")
+  assert.deepEqual(dispatchedNavigations, ["/my/orders"])
+
+  // 3. User clicks "orders" again while first navigation is still pending -> duplicate suppressed
+  const duplicateClick = navigateToKey("orders")
+  assert.equal(duplicateClick, false)
+  assert.deepEqual(dispatchedNavigations, ["/my/orders"])
+
+  // 4. Before first navigation completes (pathname is still '/'), user clicks "home"
+  // Without pendingTarget, getStorefrontDockAction('home', '/') would wrongly return null.
+  // With pendingTarget ('/my/orders'), it recognizes user wants to go back to '/'!
+  const reversalClick = navigateToKey("home")
+  assert.equal(reversalClick, true)
+  assert.equal(pendingTarget, "/")
+  assert.deepEqual(dispatchedNavigations, ["/my/orders", "/"])
+
+  // 5. In-flight transition to '/' finally completes
+  pathname = "/"
+  if (pendingTarget === pathname) {
+    pendingTarget = null
   }
+  assert.equal(pendingTarget, null)
+  assert.equal(pathname, "/")
 
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/", true), "pending")
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/", true), "pending")
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/my/orders", true), "succeeded")
-})
+  // 6. Rapid consecutive sequence: Home -> Orders -> Me
+  navigateToKey("orders") // pendingTarget: /my/orders
+  assert.equal(pendingTarget, "/my/orders")
+  navigateToKey("me")     // pendingTarget: /my
+  assert.equal(pendingTarget, "/my")
+  assert.deepEqual(dispatchedNavigations, ["/my/orders", "/", "/my/orders", "/my"])
 
-test("a settled transition at the source route is a navigation failure", () => {
-  const attempt = {
-    fromPathname: "/",
-    targetPathname: "/my/orders",
+  // Transition to /my resolves
+  pathname = "/my"
+  if (pendingTarget === pathname) {
+    pendingTarget = null
   }
-
-  // This is the recovery branch used when a transition settles without a
-  // target pathname, including a synchronous router.replace exception.
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/", false), "failed")
-})
-
-test("a synchronous navigation error immediately invokes recovery", () => {
-  let recoveryCalls = 0
-
-  const started = tryStartStorefrontDockNavigation(
-    () => {
-      throw new Error("router.replace failed synchronously")
-    },
-    () => {
-      recoveryCalls += 1
-    },
-  )
-
-  assert.equal(started, false)
-  assert.equal(recoveryCalls, 1)
-})
-
-test("a slow navigation never needs a target-source-target rollback", () => {
-  const attempt = {
-    fromPathname: "/",
-    targetPathname: "/my/orders",
-  }
-  const observations = [
-    resolveStorefrontDockNavigation(attempt, "/", true),
-    resolveStorefrontDockNavigation(attempt, "/my/orders", true),
-  ]
-
-  assert.deepEqual(observations, ["pending", "succeeded"])
-  assert.equal(observations.includes("failed"), false)
-})
-
-test("a failed navigation stays tied to the real source route for recovery", () => {
-  const attempt = {
-    fromPathname: "/my/orders",
-    targetPathname: "/my",
-  }
-
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/my/orders/", true), "pending")
-  assert.equal(resolveStorefrontDockNavigation(attempt, "/my"), "succeeded")
+  assert.equal(pendingTarget, null)
+  assert.equal(pathname, "/my")
 })

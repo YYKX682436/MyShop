@@ -59,7 +59,7 @@ function LoadingAccount() {
       </header>
       <section className="content-surface rounded-card p-5 sm:p-6" data-layout="account-identity" aria-hidden="true">
         <div className="flex items-start gap-4">
-          <div className="size-20 animate-pulse rounded-full bg-foreground/[0.07] sm:size-24" />
+          <div className="size-16 shrink-0 animate-pulse rounded-full bg-foreground/[0.07] sm:size-20 md:size-24" />
           <div className="min-w-0 flex-1 space-y-2 pt-1">
             <div className="h-5 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
             <div className="mt-2 flex min-w-0 max-w-full items-center gap-2">

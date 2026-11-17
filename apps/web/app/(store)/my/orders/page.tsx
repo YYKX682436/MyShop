@@ -30,7 +30,8 @@ export default function MyOrdersPage() {
   const pageSize = 20
 
   useEffect(() => {
-    if (!authLoaded || !isLoggedIn || !user) {
+    if (!authLoaded) return
+    if (!isLoggedIn || !user) {
       setLoading(false)
       return
     }
