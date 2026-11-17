@@ -37,7 +37,7 @@ test("does not expose a search action or search state in Dock results", () => {
 test("StoreBottomNav submits primary Dock navigation with replace", () => {
   const source = readSource("../components/layout/store-bottom-nav.tsx")
 
-  assert.match(source, /router\.replace\(pending\.targetPathname\)/)
+  assert.match(source, /router\.replace\(targetPathname\)/)
   assert.doesNotMatch(source, /router\.push\(/)
 })
 
@@ -45,8 +45,8 @@ test("Dock clicks and capsule drops share the replace submission path", () => {
   const source = readSource("../components/layout/store-bottom-nav.tsx")
 
   assert.match(source, /onClick=\{\(\) => requestDockAction\(item\.key\)\}/)
-  assert.match(source, /const requestDockAction = useCallback\([\s\S]*?snapAndComplete\(key, actionId\)/)
-  assert.match(source, /const finishDrag = useCallback\([\s\S]*?snapAndComplete\(nearestKey, actionId\)/)
+  assert.match(source, /const requestDockAction = useCallback\([\s\S]*?navigateToKey\(key\)/)
+  assert.match(source, /const finishDrag = useCallback\([\s\S]*?navigateToKey\(targetItem\.key\)/)
 })
 
 test("replacing consecutive primary Dock destinations leaves one storefront history entry", () => {

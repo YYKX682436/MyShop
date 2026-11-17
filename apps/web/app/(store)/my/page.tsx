@@ -103,22 +103,22 @@ export default function MyPage() {
         <section className="account-identity-section" aria-label={t("my.title")}>
           <div className="account-identity">
             <AccountAvatar avatarUrl={null} username="" editable={false} />
-            <div className="min-w-0">
-              <p className="text-lg font-semibold text-foreground">{t("my.visitor")}</p>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">{t("my.visitorDescription")}</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-lg font-semibold text-foreground text-balance">{t("my.visitor")}</p>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground text-pretty">{t("my.visitorDescription")}</p>
             </div>
           </div>
-          <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-4 flex flex-col gap-2.5 sm:flex-row">
             <Link
               href="/login"
-              className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-control bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] hover:bg-primary/90 active:scale-[.99]"
+              className="inline-flex min-h-11 h-11 w-full sm:flex-1 shrink-0 items-center justify-center gap-2 rounded-control bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] hover:bg-primary/90 active:scale-[.99]"
             >
               <LogIn className="size-4" aria-hidden="true" />
               {t("nav.login")}
             </Link>
             <Link
               href="/register"
-              className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-control border border-input bg-surface px-4 text-sm font-semibold text-foreground transition-colors hover:bg-surface-muted"
+              className="inline-flex min-h-11 h-11 w-full sm:flex-1 shrink-0 items-center justify-center gap-2 rounded-control border border-input bg-surface px-4 text-sm font-semibold text-foreground transition-colors hover:bg-surface-muted"
             >
               <UserPlus className="size-4" aria-hidden="true" />
               {t("nav.register")}

@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { Package } from "lucide-react"
-import { useLocale } from "@/lib/context"
-import { useRequireAuth } from "@/lib/hooks"
+import { LogIn, Package } from "lucide-react"
+import { useAuth, useLocale } from "@/lib/context"
 import { userApi, requestOrThrow } from "@/services/api"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { AfterSaleRequestDialog } from "@/components/shared/after-sale-request-dialog"
@@ -19,7 +18,7 @@ const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELI
 
 export default function MyOrdersPage() {
   const { t, locale } = useLocale()
-  const user = useRequireAuth()
+  const { user, isLoggedIn, authLoaded } = useAuth()
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "ALL">("ALL")
   const [orders, setOrders] = useState<OrderBrief[]>([])
   const [loading, setLoading] = useState(true)
@@ -31,7 +30,10 @@ export default function MyOrdersPage() {
   const pageSize = 20
 
   useEffect(() => {
-    if (!user) return
+    if (!authLoaded || !isLoggedIn || !user) {
+      setLoading(false)
+      return
+    }
     let cancelled = false
     async function fetchOrders() {
       setLoading(true)
@@ -54,7 +56,7 @@ export default function MyOrdersPage() {
     }
     fetchOrders()
     return () => { cancelled = true }
-  }, [user, statusFilter, page, refreshNonce])
+  }, [authLoaded, isLoggedIn, user, statusFilter, page, refreshNonce])
 
   const statusKeys: Record<OrderStatus, TranslationKey> = {
     PENDING: "status.PENDING",
@@ -70,7 +72,55 @@ export default function MyOrdersPage() {
     return t(statusKeys[s])
   }
 
-  if (!user) return null
+  if (!authLoaded) {
+    return (
+      <div className="order-history-page space-y-6">
+        <div>
+          <div className="h-8 w-32 animate-pulse rounded bg-foreground/[0.07]" />
+        </div>
+        <div className="flex items-center justify-center py-24">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        </div>
+      </div>
+    )
+  }
+
+  if (!isLoggedIn || !user) {
+    return (
+      <div className="order-history-page space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("myOrders.title")}</h1>
+        </div>
+
+        <section className="rounded-card border border-border-subtle bg-surface p-8 text-center sm:p-12" aria-label={t("myOrders.title")}>
+          <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-foreground/[0.05] text-muted-foreground sm:size-16">
+            <Package className="size-7 sm:size-8" strokeWidth={1.75} aria-hidden="true" />
+          </div>
+          <h2 className="mt-4 text-base font-semibold text-foreground sm:text-lg">
+            {t("my.visitor")}
+          </h2>
+          <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground text-pretty">
+            {t("my.visitorDescription")}
+          </p>
+          <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Link
+              href="/login?redirect=/my/orders"
+              className="inline-flex min-h-11 h-11 w-full max-w-xs sm:w-auto items-center justify-center gap-2 rounded-control bg-primary px-6 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] hover:bg-primary/90 active:scale-[.99]"
+            >
+              <LogIn className="size-4" aria-hidden="true" />
+              {t("nav.login")}
+            </Link>
+            <Link
+              href="/register?redirect=/my/orders"
+              className="inline-flex min-h-11 h-11 w-full max-w-xs sm:w-auto items-center justify-center gap-2 rounded-control border border-input bg-surface px-6 text-sm font-semibold text-foreground transition-colors hover:bg-surface-muted"
+            >
+              {t("nav.register")}
+            </Link>
+          </div>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div className="order-history-page space-y-6">

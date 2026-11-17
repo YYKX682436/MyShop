@@ -70,7 +70,9 @@ export default function LoginPage() {
                 type="text"
                 value={account}
                 onChange={(e) => setAccount(e.target.value)}
-                autoComplete="username email"
+                autoComplete="username"
+                spellCheck={false}
+                enterKeyHint="next"
                 className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
               />
@@ -91,6 +93,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
+                  enterKeyHint="done"
                   className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   required
                 />
@@ -127,7 +130,10 @@ export default function LoginPage() {
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
             {t("auth.noAccount")}{" "}
-            <Link href="/register" className="font-medium text-primary hover:underline">
+            <Link
+              href={redirectTo !== "/" ? `/register?redirect=${encodeURIComponent(redirectTo)}` : "/register"}
+              className="font-medium text-primary hover:underline"
+            >
               {t("auth.goRegister")}
             </Link>
           </p>

@@ -3,18 +3,21 @@
 import { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Eye, EyeOff, UserPlus, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
 import { authApi, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { buildRegisterRequest, validateRegistrationForm } from "@/lib/auth-validation"
+import { safeLoginRedirect } from "@/lib/safe-navigation"
 
 export default function RegisterPage() {
   const { t } = useLocale()
   const { setUser } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const redirectTo = safeLoginRedirect(searchParams.get("redirect"))
 
   const [form, setForm] = useState({
     username: "",
@@ -69,7 +72,7 @@ export default function RegisterPage() {
       const result = await authApi.register(buildRegisterRequest(form, captchaId))
       setUser(result.user)
       toast.success(t("auth.registerSuccess"))
-      router.replace("/")
+      router.replace(redirectTo)
     } catch (err: unknown) {
       toast.error(getApiErrorMessage(err, t))
       // Refresh captcha after failed attempt
@@ -105,6 +108,7 @@ export default function RegisterPage() {
                 value={form.username}
                 onChange={(e) => update("username", e.target.value)}
                 autoComplete="username"
+                spellCheck={false}
                 minLength={3}
                 maxLength={20}
                 className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
@@ -124,6 +128,7 @@ export default function RegisterPage() {
                 value={form.email}
                 onChange={(e) => update("email", e.target.value)}
                 autoComplete="email"
+                spellCheck={false}
                 maxLength={255}
                 className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 required
@@ -266,7 +271,10 @@ export default function RegisterPage() {
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
             {t("auth.hasAccount")}{" "}
-            <Link href="/login" className="font-medium text-primary hover:underline">
+            <Link
+              href={redirectTo !== "/" ? `/login?redirect=${encodeURIComponent(redirectTo)}` : "/login"}
+              className="font-medium text-primary hover:underline"
+            >
               {t("auth.goLogin")}
             </Link>
           </p>

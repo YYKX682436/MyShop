@@ -152,6 +152,20 @@ export function AppProviders({ children }: { children: ReactNode }) {
     setThemeState(savedTheme)
     setResolvedTheme(isDark ? "dark" : "light")
 
+    const updateColorSchemeMeta = (t: Theme, darkResolved: boolean) => {
+      let meta = document.querySelector('meta[name="color-scheme"]')
+      if (!meta) {
+        meta = document.createElement("meta")
+        meta.setAttribute("name", "color-scheme")
+        document.head.appendChild(meta)
+      }
+      const content = t === "system" ? "light dark" : t
+      meta.setAttribute("content", content)
+      document.documentElement.style.colorScheme = darkResolved ? "dark" : "light"
+    }
+
+    updateColorSchemeMeta(savedTheme, isDark)
+
     // 监听系统主题变化
     const mq = window.matchMedia("(prefers-color-scheme: dark)")
     const handler = () => {
@@ -160,6 +174,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
         const systemIsDark = mq.matches
         setResolvedTheme(systemIsDark ? "dark" : "light")
         document.documentElement.classList.toggle("dark", systemIsDark)
+        updateColorSchemeMeta("system", systemIsDark)
       }
     }
     mq.addEventListener("change", handler)
@@ -170,14 +185,25 @@ export function AppProviders({ children }: { children: ReactNode }) {
     setThemeState(t)
     localStorage.setItem("theme", t)
 
+    let meta = document.querySelector('meta[name="color-scheme"]')
+    if (!meta) {
+      meta = document.createElement("meta")
+      meta.setAttribute("name", "color-scheme")
+      document.head.appendChild(meta)
+    }
+    const content = t === "system" ? "light dark" : t
+    meta.setAttribute("content", content)
+
     // 立即同步更新 DOM 和 resolvedTheme
     if (t === "system") {
       const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches
       document.documentElement.classList.toggle("dark", isDark)
+      document.documentElement.style.colorScheme = isDark ? "dark" : "light"
       setResolvedTheme(isDark ? "dark" : "light")
     } else {
       const isDark = t === "dark"
       document.documentElement.classList.toggle("dark", isDark)
+      document.documentElement.style.colorScheme = isDark ? "dark" : "light"
       setResolvedTheme(isDark ? "dark" : "light")
     }
   }, [])
@@ -267,29 +293,37 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const [priceMin, setPriceMin] = useState("")
   const [priceMax, setPriceMax] = useState("")
 
+  // ---------- Memoized Context Values ----------
+  const themeValue = useMemo<ThemeContextValue>(() => ({ theme, setTheme, resolvedTheme }), [theme, setTheme, resolvedTheme])
+  const localeValue = useMemo<LocaleContextValue>(() => ({ locale, setLocale, t }), [locale, setLocale, t])
+  const authValue = useMemo<AuthContextValue>(() => ({ user, setUser, isLoggedIn, authLoaded, logout }), [user, setUser, isLoggedIn, authLoaded, logout])
+  const siteConfigValue = useMemo<SiteConfigContextValue>(() => ({ config: siteConfig, isLoading: siteConfigLoading }), [siteConfig, siteConfigLoading])
+  const searchValue = useMemo<SearchContextValue>(
+    () => ({
+      searchQuery,
+      setSearchQuery,
+      searchOpen,
+      setSearchOpen,
+      sortBy,
+      setSortBy,
+      filterOpen,
+      setFilterOpen,
+      inStockOnly,
+      setInStockOnly,
+      priceMin,
+      setPriceMin,
+      priceMax,
+      setPriceMax,
+    }),
+    [searchQuery, searchOpen, sortBy, filterOpen, inStockOnly, priceMin, priceMax],
+  )
+
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
-      <LocaleContext.Provider value={{ locale, setLocale, t }}>
-        <AuthContext.Provider value={{ user, setUser, isLoggedIn, authLoaded, logout }}>
-          <SiteConfigContext.Provider value={{ config: siteConfig, isLoading: siteConfigLoading }}>
-            <SearchContext.Provider
-              value={{
-                searchQuery,
-                setSearchQuery,
-                searchOpen,
-                setSearchOpen,
-                sortBy,
-                setSortBy,
-                filterOpen,
-                setFilterOpen,
-                inStockOnly,
-                setInStockOnly,
-                priceMin,
-                setPriceMin,
-                priceMax,
-                setPriceMax,
-              }}
-            >
+    <ThemeContext.Provider value={themeValue}>
+      <LocaleContext.Provider value={localeValue}>
+        <AuthContext.Provider value={authValue}>
+          <SiteConfigContext.Provider value={siteConfigValue}>
+            <SearchContext.Provider value={searchValue}>
               {children}
             </SearchContext.Provider>
           </SiteConfigContext.Provider>

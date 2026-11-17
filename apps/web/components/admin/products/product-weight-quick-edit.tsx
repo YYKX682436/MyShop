@@ -83,7 +83,8 @@ export function ProductWeightQuickEdit({
           onChange={(event) => setDraft(event.target.value)}
           aria-label={t("admin.sortWeightLabel")}
           onKeyDown={(event) => {
-            if (event.key === "Enter") {
+            const isComposing = event.nativeEvent.isComposing || event.keyCode === 229
+            if (event.key === "Enter" && !isComposing) {
               event.preventDefault()
               void handleSave()
             }
