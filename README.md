@@ -29,18 +29,7 @@ docker-compose.prod.yml
 
 ## 本地开发
 
-前端需要 Node.js 22+ 和 pnpm 10；后端需要 Java 25 LTS 和 Maven 3.9+。本地 API 默认连接 `localhost:5432` 的 PostgreSQL，生产配置不能使用默认数据库密码或 JWT 密钥。
-
-```powershell
-Copy-Item .env.example .env
-# 编辑 .env：至少填写 DB_URL、DB_USERNAME、DB_PASSWORD、JWT_SECRET。
-
-pnpm install --frozen-lockfile
-pnpm --filter @myshop/web dev
-
-cd apps/api
-mvn spring-boot:run
-```
+Mac 本地预览、启动与停止方法见 [docs/LOCAL-DEVELOPMENT.md](docs/LOCAL-DEVELOPMENT.md)。
 
 使用 Compose 时，先复制并编辑 `.env`，填写 `SITE_DOMAIN`、`ACME_EMAIL` 和数据库/JWT 配置，然后执行：
 
@@ -50,8 +39,8 @@ docker compose ps
 docker compose logs -f api
 ```
 
-`docker-compose.yml` 是本地源码构建编排；`docker-compose.prod.yml` 是唯一生产
-编排，明确禁止 `build:`。生产 application artifact 只有 CI 生成的 immutable
+`docker-compose.yml` 是本地源码构建编排；共享服务器使用 [独立生产配置](docs/DEPLOYMENT-SHARED-SERVER.md)。
+旧服务器使用 `docker-compose.prod.yml`，明确禁止 `build:`。生产 application artifact 只有 CI 生成的 immutable
 image manifest；生产 host 只使用 `/opt/myshop/runtime`，不从源码 release
 目录运行。生产操作统一从受保护入口调用：
 

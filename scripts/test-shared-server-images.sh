@@ -37,7 +37,7 @@ for invariant in (
     "skopeo copy --all --preserve-digests",
     '[[ "$source_digest" == "$expected" ]]',
     '[[ "$target_digest" == "$source_digest" ]]',
-    "github.ref == 'refs/heads/codex/shared-server-prep'",
+    "if: ${{ inputs.mirror_base_images }}",
     "packages: write",
 ):
     if invariant not in workflow:
