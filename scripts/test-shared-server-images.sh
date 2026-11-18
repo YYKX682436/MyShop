@@ -19,7 +19,9 @@ expected = {
 }
 for name, (tag, digest) in expected.items():
     ref = f"ghcr.io/yykx682436/myshop-{name}:{tag}@sha256:{digest}"
-    if ref not in compose:
+    image_var = {"postgres": "MYSHOP_POSTGRES_IMAGE", "caddy": "MYSHOP_CADDY_IMAGE", "node-exporter": "MYSHOP_NODE_EXPORTER_IMAGE"}[name]
+    expected_default = "$" + "{" + image_var + ":-" + ref + "}"
+    if ref not in compose or expected_default not in compose:
         raise SystemExit(f"shared Compose is missing exact mirrored ref for {name}")
 if re.search(r"image:\s*(?:postgres:|caddy:|quay\.io/)", compose):
     raise SystemExit("shared Compose still depends on a non-GHCR base registry")

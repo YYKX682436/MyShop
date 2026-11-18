@@ -61,6 +61,9 @@ def record(value: object, label: str, services: set[str] = SERVICES) -> dict:
         ref, digest = item.get("ref"), item.get("digest")
         if not isinstance(ref, str) or not ref or ":latest" in ref or ":local" in ref or not isinstance(digest, str) or not DIGEST.fullmatch(digest):
             die(f"{label}.images.{service} is mutable or has an invalid digest")
+        image_id = item.get("image_id")
+        if image_id is not None and (not isinstance(image_id, str) or not DIGEST.fullmatch(image_id)):
+            die(f"{label}.images.{service}.image_id is invalid")
     return value
 
 
@@ -89,12 +92,12 @@ def load_records(state_path: Path) -> list[dict]:
     return records
 
 
-def image_matches(ref: str, expected_digest: str) -> tuple[str, bool]:
+def image_matches(ref: str, expected_digest: str, expected_image_id: str = "") -> tuple[str, bool]:
     image_id = docker("image", "inspect", "--format", "{{.Id}}", ref, check=False).strip()
     if not image_id:
         return "", False
     repo_digests = docker("image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", ref, check=False)
-    return image_id, image_id == expected_digest or any(line.endswith("@" + expected_digest) for line in repo_digests.splitlines())
+    return image_id, image_id == expected_image_id or image_id == expected_digest or any(line.endswith("@" + expected_digest) for line in repo_digests.splitlines())
 
 
 def main() -> int:
@@ -137,7 +140,7 @@ def main() -> int:
                     die(f"Web image is outside MyShop namespace: {repo}")
                 if tag != item["source_sha"]:
                     die(f"accepted image tag does not match source SHA: {ref}")
-                image_id, matches = image_matches(ref, image["digest"])
+                image_id, matches = image_matches(ref, image["digest"], image.get("image_id", ""))
                 if not matches:
                     die(f"accepted image digest cannot be verified locally: {ref}")
                 accepted_refs.add(ref)
@@ -181,7 +184,7 @@ def main() -> int:
         # restoring an older deployment state.
         for item in records:
             for image in item["images"].values():
-                _, matches = image_matches(image["ref"], image["digest"])
+                _, matches = image_matches(image["ref"], image["digest"], image.get("image_id", ""))
                 if not matches:
                     die(f"accepted image disappeared or changed: {image['ref']}")
 

@@ -79,34 +79,46 @@ shared Compose file pins each GHCR image by digest as well as a content-named
 tag. `scripts/test-shared-server-images.sh` checks these pins and confirms the
 legacy production Compose remains on its existing references.
 
+If GHCR metadata is reachable but blob downloads reset, export each exact
+digest reference with Skopeo to a Docker archive in a trusted build environment.
+Run `scripts/create-offline-image-bundle.py` with the validated release manifest
+and archive directory, then verify it with
+`scripts/verify-offline-image-bundle.py --manifest ... --verify-archives ...`.
+Transfer the archives, manifest, bundle, and runtime files over an authenticated
+channel. On the host, `scripts/import-offline-image-bundle.sh <manifest>
+<bundle> <archive-dir>` checks archive hashes, tags, config digests, and
+`linux/amd64`, then loads the images without creating containers. With
+`MYSHOP_OFFLINE_IMAGES=1`, deployment checks the preloaded image IDs, skips
+registry pulls, adds `--pull never` to Compose startup, and records both the
+GHCR manifest digest and local config ID for future rollback/retention. Keep
+the three infrastructure image overrides blank when pulling from GHCR; set
+them to the approved digest-derived `mirror-<digest>` tags only after an offline
+import.
+
 ## Friend-host audit snapshot
 
-The read-only Baota view on 2026-11-17 confirmed CentOS 9, 8 CPU cores,
-15.6 GiB memory, a 99.9 GB root filesystem with 35.8 GB used, Nginx 1.30.4,
-MySQL 8.0.45 with three managed local databases, two running PHP sites and four
-Go projects (two running, two stopped). Baota's reverse-proxy list is empty.
-The firewall page marks 80, 443, and 30163 in use; it marks 8082 unused, so 8082
-is the port candidate in the example. The on-host preflight must still verify
-that it can bind on `127.0.0.1` immediately before deployment.
+The read-only audit confirmed CentOS Stream 9, 8 CPU cores, about 15.6 GiB RAM,
+and 64 GB free on the 100 GB root filesystem. Docker Engine 29.10.0 and Compose
+5.8.0 are running. Existing Nginx owns 80/443, the Go service owns 8081, and
+the friend's MySQL owns 3306/33060. No containers, named volumes, or custom
+Docker networks were present at audit time; Docker's default bridge is
+`172.17.0.0/16`. Candidate port 8082 had no listener, and the reserved
+`172.29.240.0/24` edge network did not overlap host routes or Docker networks.
+The MyShop data root is `/srv/myshop-friend`, on the root filesystem. The
+`myshop-candidate.mc520.top` Baota site and its certificate are separate from
+the friend's existing sites. Formal `mc.mc520.top` DNS remains on the old host.
 
-The panel reports SSH disabled with port `0`. Its Docker management module is
-not installed, so the Docker Engine, running containers, networks, volumes, and
-current Nginx `proxy_pass` directives could not be audited from the panel. Do
-not infer that Docker is absent. Run `audit-readonly.sh` from a server terminal
-once the friend enables an authorized access path. Baota shows one active free
-certificate on an existing Go service, with 87 days remaining; the listed PHP
-sites have SSL undeployed, and no certificate for `mc.mc520.top` appears in the
-panel. Provision a separate target certificate before production DNS cutover.
+This is a point-in-time snapshot. First-install preflight checks current port
+ownership, Docker resource names, routes, mounts, symlinks, and project state
+immediately before creating MyShop resources.
 
 ## Before the first start
 
-Run the read-only audit on the friend server and verify the actual OS, Docker
-Engine/Compose, Nginx, container projects, networks, listeners, storage, and
-provider firewall/security-group rules. The audit must confirm that the chosen
-project name, the one loopback port, and the requested edge subnet do not
-collide with existing resources. Baota marks port 8082 unused, but the target
-host's socket preflight must still confirm that binding succeeds. The edge
-subnet remains blank until Docker networks and host routes have been inspected.
+The current host passed the read-only audit. Immediately before first install,
+re-run the target-host preflight to catch changes in Docker resources, routes,
+mounts, symlinks, and port ownership. It verifies the reserved
+`myshop-friend-prod` project, `172.29.240.0/24` edge network, and loopback-only
+8082 binding without creating resources.
 
 Create the dedicated paths and install the private environment file only after
 the audit:
@@ -114,6 +126,8 @@ the audit:
 ```text
 /opt/myshop-friend/runtime/docker-compose.shared-server.yml
 /opt/myshop-friend/runtime/Caddyfile.shared-server
+/opt/myshop-friend/runtime/release-manifest.json
+/opt/myshop-friend/runtime/offline-image-bundle.json  # offline import only
 /opt/myshop-friend/runtime/deploy-state.json
 /opt/myshop-friend/scripts/...
 /opt/myshop-friend/ops/shared-server/check-storage-health.sh
@@ -126,8 +140,12 @@ the audit:
 
 No real passwords, payment secrets, or old `.env` file belong in this
 repository. Configure `DB_PASSWORD` and `JWT_SECRET` freshly for the friend
-host. Set `AUTH_COOKIE_SECURE=true` and `PUBLIC_SITE_URL=https://mc.mc520.top`.
-Use a database and upload paths dedicated to this installation.
+host. Set `AUTH_COOKIE_SECURE=true` and use
+`PUBLIC_SITE_URL=https://myshop-candidate.mc520.top` while validating the
+temporary candidate. Switch to `https://mc.mc520.top` only in the separately
+approved cutover. Use a new database and upload paths dedicated to this
+installation; do not copy production data or payment credentials into the
+candidate smoke environment.
 
 Before starting MyShop, run the read-only preflight as root on the target host:
 
@@ -155,11 +173,12 @@ loopback binding.
 
 ## Baota site configuration
 
-After the audit and before DNS cutover, create a new site for `mc.mc520.top` in
-Baota without editing another site's configuration. Enable HTTP-to-HTTPS
-redirect and attach a certificate for `mc.mc520.top` managed by Baota. If DNS
-still points to the old server, pre-issue the certificate using DNS validation;
-otherwise the ordinary HTTP challenge cannot reach the new host yet.
+The temporary `myshop-candidate.mc520.top` site uses its own Baota proxy and
+certificate. Keep it separate from the friend's sites and from the formal
+`mc.mc520.top` site. Before the later DNS cutover, create a new
+`mc.mc520.top` site in Baota without editing another site's configuration,
+attach its own certificate, and proxy it to the same loopback port. If DNS
+still points to the old server, pre-issue the certificate using DNS validation.
 
 Configure that site's reverse proxy to `http://127.0.0.1:<MYSHOP_WEB_PORT>` and
 preserve the URI (use no trailing path component in `proxy_pass`). The relevant
@@ -183,24 +202,31 @@ database traffic for this site.
 
 ## First data migration and later releases
 
-The target remains offline until the UI rebuild is finished and accepted. When
-the migration is authorized:
+Use only a completed, accepted UI commit. The current candidate image source is
+`78e991d2372a6c76ccdf6d5e1ac50e70a83b6339`. The temporary candidate starts
+with a new, isolated PostgreSQL database and no production payment credentials;
+it does not copy the old database or uploads. After the app and proxy checks
+pass, final production data migration remains a separate operation.
+
+When final data migration is authorized:
 
 1. Select a completed UI commit and its validated release manifest. Keep the
    application images tagged with that full source SHA; the Compose file has no
    `build:` entries, so the friend server only pulls prebuilt images.
-2. Take a fresh PostgreSQL dump from the old production server at the cutover
-   freeze and sync both public and private uploads. The recently observed old
-   server backup is a valid recovery point for that moment only; it is not a
-   substitute for a fresh final dump.
-3. Start only the new PostgreSQL service, restore and inspect the transferred
-   dump, then leave API/Web/Caddy stopped. Keep the old host and DNS untouched.
+2. Take a fresh PostgreSQL dump from old production and sync both public and
+   private uploads. Validate the dump and a restore into an isolated database.
+   The older observed backup is not a substitute for this fresh recovery point.
+3. After final confirmation to freeze old writes, restore the fresh dump into
+   the dedicated MyShop PostgreSQL volume. Keep the old host and DNS untouched
+   during candidate validation of the restored copy.
 4. Run `deploy-production.sh <release-manifest.json>` with the shared-host
    environment below. On first install there is no accepted friend-host
    version: the script takes a fresh database backup, starts the candidate,
    checks health and the packaged Flyway/schema contract, and probes the
    candidate through the exact Caddy binding at `127.0.0.1:<MYSHOP_WEB_PORT>`
-   with `Host: mc.mc520.top`. It cannot fall back to the old public domain. On
+   with the selected candidate Host: use `myshop-candidate.mc520.top` before
+   cutover, and `mc.mc520.top` only after final approval. It cannot fall back
+   to the old public domain. On
    failure it writes only a failed-candidate record, stops this project's
    API/Web/Caddy services, and preserves the database and backup; it does not
    create accepted state or roll back to the failed candidate. Restore the
@@ -232,13 +258,13 @@ export HOST_DEPLOY_LOCK_FILE=/run/myshop-friend-deploy.lock
 export MYSHOP_RUN_HOST_MAINTENANCE=0
 export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
 export MYSHOP_SMOKE_BASE_URL=http://127.0.0.1:8082
-export MYSHOP_SMOKE_HOST_HEADER=mc.mc520.top
+export MYSHOP_SMOKE_HOST_HEADER=myshop-candidate.mc520.top
 ```
 
-For a pre-DNS candidate smoke, these two environment values test the local
-route and canonical metadata. If preflight selects another port, update the
-loopback URL. The separate HTTPS check must still pass before DNS moves.
+The local smoke verifies the candidate through Caddy at the selected port. The
+separate HTTPS check must also pass against `myshop-candidate.mc520.top`; update
+the Host value to `mc.mc520.top` only for the final approved cutover.
 
-No formal database migration, site creation, service start, DNS update, Docker
-daemon change, firewall change, or host maintenance schedule is part of this
-preparation.
+Do not change formal DNS or stop old-host writes until the final cutover
+approval. The shared setup never changes Docker's global data root, firewall,
+or host-wide maintenance schedule.

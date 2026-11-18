@@ -133,10 +133,16 @@ for service_name in ("api", "web"):
     app_shas.add(match.group(2))
 if len(app_shas) != 1:
     fail("API and Web images must use the same release SHA")
-for service_name in ("db", "caddy", "node-exporter"):
-    if "@sha256:" not in str(services[service_name].get("image", "")):
-        fail(f"{service_name} infrastructure image is not digest-pinned")
-
+expected_digest_refs = {
+    "db": "ghcr.io/yykx682436/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "caddy": "ghcr.io/yykx682436/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
+    "node-exporter": "ghcr.io/yykx682436/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
+}
+offline_tag_refs = {
+    "db": "ghcr.io/yykx682436/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+    "caddy": "ghcr.io/yykx682436/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
+    "node-exporter": "ghcr.io/yykx682436/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
+}
 ports = []
 for service_name, service in services.items():
     for port in service.get("ports", []) or []:
@@ -179,8 +185,9 @@ if str(api_env.get("AUTH_COOKIE_SECURE", "")).lower() != "true":
     fail("AUTH_COOKIE_SECURE must be true")
 public_url = str(api_env.get("PUBLIC_SITE_URL", ""))
 parsed_url = urlsplit(public_url)
-if parsed_url.scheme != "https" or parsed_url.netloc != "mc.mc520.top" or parsed_url.path or parsed_url.query or parsed_url.fragment:
-    fail("PUBLIC_SITE_URL must be exactly https://mc.mc520.top")
+if (parsed_url.scheme != "https" or parsed_url.netloc not in {"mc.mc520.top", "myshop-candidate.mc520.top"}
+        or parsed_url.path or parsed_url.query or parsed_url.fragment):
+    fail("PUBLIC_SITE_URL must be the canonical production or temporary candidate HTTPS origin")
 db_password = str(api_env.get("DB_PASSWORD", ""))
 jwt_secret = str(api_env.get("JWT_SECRET", ""))
 if len(db_password) < 24 or len(jwt_secret) < 32:
@@ -204,6 +211,29 @@ for line in data_root_raw.splitlines():
         continue
     key, value = line.split("=", 1)
     env_values[key] = value.strip().strip("\"'")
+offline_images = env_values.get("MYSHOP_OFFLINE_IMAGES", "0")
+if offline_images not in {"0", "1"}:
+    fail("MYSHOP_OFFLINE_IMAGES must be 0 or 1")
+for service_name, image in ((name, str(services[name].get("image", ""))) for name in expected_digest_refs):
+    if image == expected_digest_refs[service_name]:
+        continue
+    if offline_images != "1" or image != offline_tag_refs[service_name]:
+        fail(f"{service_name} infrastructure image is not the approved digest-pinned image or offline-import tag")
+if offline_images == "1":
+    bundle_path = Path(env_values.get("MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE", ""))
+    if not bundle_path.is_file() or bundle_path.is_symlink():
+        fail("offline image mode requires a regular, non-symlink image bundle file")
+    manifest_path = Path(env_values.get("MYSHOP_RELEASE_MANIFEST_FILE", ""))
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        fail("offline image mode requires a regular, non-symlink release manifest file")
+    verify_script = SCRIPT_DIR / "verify-offline-image-bundle.py"
+    try:
+        subprocess.run([
+            sys.executable, str(verify_script), str(bundle_path), "--manifest", str(manifest_path),
+            "--verify-local", "--expected-source-sha", next(iter(app_shas), ""),
+        ], check=True)
+    except Exception as exc:
+        fail(f"offline image bundle verification failed: {exc}")
 configured_root = Path(env_values.get("MYSHOP_DATA_ROOT", ""))
 if str(configured_root) != "/srv/myshop-friend":
     fail("MYSHOP_DATA_ROOT must be exactly /srv/myshop-friend")
@@ -402,7 +432,7 @@ else:
             fail("the candidate port has a listener beyond the expected loopback-only binding")
 
 disk = shutil.disk_usage(data_root)
-print(f"preflight=passed mode={mode} project={expected_project} domain=mc.mc520.top loopback_port={published}")
+print(f"preflight=passed mode={mode} project={expected_project} domain={parsed_url.hostname} loopback_port={published}")
 print(f"docker_engine={engine_version} docker_compose={compose_version}")
 print(f"edge_subnet={edge_network} caddy_ip={caddy_ip} baota_proxy_cidr={proxy_cidr} data_root={data_root}")
 print(f"data_disk_total_bytes={disk.total} data_disk_free_bytes={disk.free}")

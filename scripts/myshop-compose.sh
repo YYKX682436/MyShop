@@ -26,6 +26,10 @@ PROJECT_NAME=${PROJECT_NAME:-myshop}
 [[ -f "$COMPOSE_FILE" ]] || die "production Compose file is missing: $COMPOSE_FILE"
 [[ "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die 'MYSHOP_COMPOSE_PROJECT_NAME is invalid'
 
+offline_images=${MYSHOP_OFFLINE_IMAGES:-$(read_env_value MYSHOP_OFFLINE_IMAGES)}
+offline_images=${offline_images:-0}
+[[ "$offline_images" == 0 || "$offline_images" == 1 ]] || die 'MYSHOP_OFFLINE_IMAGES must be 0 or 1'
+
 grep -Eq '^[[:space:]]*build:' "$COMPOSE_FILE" && die 'production Compose contains build:'
 grep -Eq '(:latest|:local)([[:space:]]|$)' "$COMPOSE_FILE" && die 'production Compose contains a mutable latest/local image'
 approved_registry=${MYSHOP_APPROVED_REGISTRY:-}
@@ -111,4 +115,10 @@ fi
 export MYSHOP_API_IMAGE="$api_ref" MYSHOP_WEB_IMAGE="$web_ref"
 export MYSHOP_COMPOSE_PROJECT_NAME="$PROJECT_NAME"
 export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+if [[ "$offline_images" == 1 ]]; then
+  for arg in "${args[@]}"; do
+    [[ "$arg" != pull ]] || die 'offline image mode refuses Docker Compose pull'
+  done
+  if [[ " ${args[*]} " == *" up "* ]]; then args+=(--pull never); fi
+fi
 exec docker compose --project-directory "$PROJECT_ROOT" --file "$COMPOSE_FILE" --env-file "$env_file" "${args[@]}"

@@ -10,7 +10,7 @@ x-default-logging: &default-logging
 
 services:
   db:
-    image: ghcr.io/yykx682436/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    image: ${MYSHOP_POSTGRES_IMAGE:-ghcr.io/yykx682436/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685}
     logging: *default-logging
     environment:
       POSTGRES_DB: myshop
@@ -95,7 +95,7 @@ services:
   node-exporter:
     # Retain the dashboard metrics with a limited collector set on an
     # application-only network; no host port is published.
-    image: ghcr.io/yykx682436/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+    image: ${MYSHOP_NODE_EXPORTER_IMAGE:-ghcr.io/yykx682436/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0}
     logging: *default-logging
     command:
       - --path.procfs=/host/proc
@@ -142,7 +142,7 @@ services:
       - edge
 
   caddy:
-    image: ghcr.io/yykx682436/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    image: ${MYSHOP_CADDY_IMAGE:-ghcr.io/yykx682436/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648}
     logging: *default-logging
     environment:
       BAOTA_NGINX_PROXY_CIDR: ${MYSHOP_BAOTA_NGINX_PROXY_CIDR:?must set the exact audited Baota-to-Caddy source address as /32 or /128}

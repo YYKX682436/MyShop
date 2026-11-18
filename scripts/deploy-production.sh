@@ -50,6 +50,16 @@ if network.prefixlen != network.max_prefixlen:
     raise SystemExit("MYSHOP_BAOTA_NGINX_PROXY_CIDR must trust exactly one confirmed host address")
 PY
 fi
+offline_images=${MYSHOP_OFFLINE_IMAGES:-$(read_env_setting MYSHOP_OFFLINE_IMAGES)}
+offline_images=${offline_images:-0}
+[[ "$offline_images" == 0 || "$offline_images" == 1 ]] || die 'MYSHOP_OFFLINE_IMAGES must be 0 or 1'
+offline_bundle=${MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE:-$(read_env_setting MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE)}
+OFFLINE_IMAGE_VERIFIER=${MYSHOP_OFFLINE_IMAGE_VERIFIER:-$SCRIPT_DIR/verify-offline-image-bundle.py}
+if [[ "$offline_images" == 1 ]]; then
+  (( shared_server_mode )) || die 'offline image imports are supported only for the isolated shared-server project'
+  [[ -n "$offline_bundle" && -f "$offline_bundle" && ! -L "$offline_bundle" ]] || die 'offline image bundle file is missing or unsafe'
+  [[ -x "$OFFLINE_IMAGE_VERIFIER" ]] || die 'offline image verifier is missing or not executable'
+fi
 run_host_maintenance_default=1
 (( shared_server_mode )) && run_host_maintenance_default=0
 RUN_HOST_MAINTENANCE=${MYSHOP_RUN_HOST_MAINTENANCE:-$(read_env_setting MYSHOP_RUN_HOST_MAINTENANCE)}
@@ -100,7 +110,7 @@ if [[ -f "$STATE_FILE" ]]; then
   cp -p -- "$STATE_FILE" "$state_backup"
   state_existed=1
 fi
-declare -A before_ref before_digest baseline_container_ref candidate_ref candidate_digest
+declare -A before_ref before_digest before_image_id baseline_container_ref candidate_ref candidate_digest candidate_image_id
 candidate_ref[api]=$api_ref
 candidate_ref[web]=$web_ref
 candidate_digest[api]=$api_digest
@@ -123,16 +133,19 @@ for service in ('api', 'web'):
     image = images[service]
     if not isinstance(image, dict) or not image.get('ref') or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(image.get('digest', ''))):
         raise SystemExit(f'malformed active image: {service}')
-    print(f'{service}\t{image["ref"]}\t{image["digest"]}')
+    image_id = image.get('image_id', '')
+    if image_id and not re.fullmatch(r'sha256:[0-9a-f]{64}', str(image_id)):
+        raise SystemExit(f'malformed active image_id: {service}')
+    print(f'{service}\t{image["ref"]}\t{image["digest"]}\t{image_id}')
 print(f'active_sha\t{active["source_sha"]}')
 PY
 }
 
 active_sha=bootstrap
 if (( state_existed )); then
-  while IFS=$'\t' read -r key value digest; do
+  while IFS=$'\t' read -r key value digest image_id; do
     case "$key" in
-      api|web) before_ref[$key]=$value; before_digest[$key]=$digest ;;
+      api|web) before_ref[$key]=$value; before_digest[$key]=$digest; before_image_id[$key]=$image_id ;;
       active_sha) active_sha=$value ;;
     esac
   done < <(read_state_active) || die 'accepted deployment state is malformed'
@@ -172,6 +185,7 @@ verify_baseline() {
     [[ -n "$container_id" ]] || return 1
     [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${baseline_container_ref[$service]}" ]] || return 1
     image_id=$(docker image inspect --format '{{.Id}}' "${before_ref[$service]}" 2>/dev/null) || return 1
+    [[ -n "${before_image_id[$service]:-}" && "$image_id" == "${before_image_id[$service]}" ]] && continue
     [[ "$image_id" == "${before_digest[$service]}" ]] && continue
     docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${before_ref[$service]}" 2>/dev/null \
       | grep -F "@${before_digest[$service]}" >/dev/null || return 1
@@ -212,6 +226,15 @@ verify_remote_digest() {
 }
 
 pull_candidate() {
+  if [[ "$offline_images" == 1 ]]; then
+    python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --manifest "$manifest" --verify-local >/dev/null \
+      || die 'preloaded image bundle does not match the release manifest or local image IDs'
+    for service in api web; do
+      candidate_image_id[$service]=$(python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --get-config-digest "$service") \
+        || die "could not read preloaded ${service} image identity"
+    done
+    return 0
+  fi
   docker pull "$api_ref"
   docker pull "$web_ref"
   verify_remote_digest "$api_ref" "$api_digest" || die 'API RepoDigest does not match release manifest'
@@ -219,7 +242,8 @@ pull_candidate() {
 }
 
 run_compose() {
-  MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" \
+  MYSHOP_OFFLINE_IMAGES="$offline_images" MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="$offline_bundle" \
+    MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" \
     MYSHOP_COMPOSE_FILE="$COMPOSE_FILE" MYSHOP_SHARED_SERVER="$shared_server_mode" \
     MYSHOP_ENV_FILE="$ENV_FILE" MYSHOP_APPROVED_REGISTRY="$approved_registry" \
     MYSHOP_API_IMAGE="${candidate_ref[api]}" MYSHOP_WEB_IMAGE="${candidate_ref[web]}" \
@@ -262,8 +286,12 @@ verify_candidate_identity() {
     image_id=$(docker inspect --format '{{.Image}}' "$container_id")
     expected_id=$(docker image inspect --format '{{.Id}}' "${candidate_ref[$service]}") || return 1
     [[ "$image_id" == "$expected_id" ]] || return 1
-    docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${candidate_ref[$service]}" \
-      | grep -F "@${candidate_digest[$service]}" >/dev/null || return 1
+    if [[ "$offline_images" == 1 ]]; then
+      [[ "$image_id" == "${candidate_image_id[$service]}" ]] || return 1
+    else
+      docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${candidate_ref[$service]}" \
+        | grep -F "@${candidate_digest[$service]}" >/dev/null || return 1
+    fi
   done
 }
 
@@ -274,7 +302,8 @@ prepare_prospective_state() {
   if (( state_existed )); then
     cp -p -- "$state_backup" "$prospective_state"
   fi
-  "$STATE_WRITER" "$prospective_state" "$manifest" >/dev/null
+  MYSHOP_OFFLINE_IMAGES="$offline_images" MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="$offline_bundle" \
+    "$STATE_WRITER" "$prospective_state" "$manifest" >/dev/null
 }
 
 wait_health() {
@@ -310,7 +339,8 @@ if (smoke.scheme != "http" or smoke.hostname != "127.0.0.1" or smoke.port is Non
         or smoke.username or smoke.password or smoke.path not in ("", "/")
         or smoke.query or smoke.fragment):
     raise SystemExit("shared-host smoke URL must be plain HTTP to 127.0.0.1:<port>")
-if public.scheme != "https" or not public.hostname or public.path or public.query or public.fragment:
+if (public.scheme != "https" or public.hostname not in {"mc.mc520.top", "myshop-candidate.mc520.top"}
+        or public.netloc != public.hostname or public.path or public.query or public.fragment):
     raise SystemExit("shared-host PUBLIC_SITE_URL must be a canonical HTTPS origin")
 if sys.argv[3] != public.hostname:
     raise SystemExit("shared-host smoke Host must match PUBLIC_SITE_URL")
@@ -508,7 +538,7 @@ if (( ! shared_bootstrap )); then
 fi
 [[ "${DEPLOY_TEST_FAIL:-}" != health ]] || pre_commit_fail health
 run_compose config --quiet || pre_commit_fail compose
-run_compose pull || pre_commit_fail pull
+if [[ "$offline_images" == 0 ]]; then run_compose pull || pre_commit_fail pull; fi
 prepare_bootstrap_rollback_refs || pre_commit_fail bootstrap-rollback-prepare
 [[ "${DEPLOY_TEST_FAIL:-}" != start ]] || pre_commit_fail start
 candidate_started=1
@@ -543,7 +573,8 @@ HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" \
 # sole accepted deployment state. Once it returns
 # successfully, application rollback is forbidden; only post-commit
 # maintenance may fail.
-"$STATE_WRITER" "$STATE_FILE" "$manifest" >/dev/null || pre_commit_fail promote
+MYSHOP_OFFLINE_IMAGES="$offline_images" MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="$offline_bundle" \
+  "$STATE_WRITER" "$STATE_FILE" "$manifest" >/dev/null || pre_commit_fail promote
 committed=1
 printf 'DEPLOYMENT TRANSACTION COMMITTED source=%s active_state=%s\n' "$candidate_sha" "$STATE_FILE"
 

@@ -65,6 +65,33 @@ manifest = {
 Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
+offline_bundle="$tmp_dir/offline-image-bundle.json"
+python3 - "$manifest" "$offline_bundle" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1], encoding='utf-8'))
+images = {}
+for service in ('api', 'web'):
+    item = manifest['images'][service]
+    images[service] = {
+        'ref': item['ref'],
+        'source_digest': item['digest'],
+        'config_digest': 'sha256:' + ('5' if service == 'api' else '6') * 64,
+        'archive': service + '.tar',
+        'archive_sha256': '0' * 64,
+    }
+for name in ('postgres', 'caddy', 'node-exporter'):
+    images[name] = {'ref': 'unused', 'source_digest': 'unused', 'config_digest': 'unused', 'archive': name + '.tar', 'archive_sha256': '0' * 64}
+json.dump({'version':1,'source_sha':manifest['source_sha'],'platform':'linux/amd64','images':images}, open(sys.argv[2], 'w'))
+PY
+cat >"$tmp_dir/offline-verifier.py" <<'OFFLINE_VERIFY'
+#!/usr/bin/env python3
+import sys
+if '--get-config-digest' in sys.argv:
+    service = sys.argv[sys.argv.index('--get-config-digest') + 1]
+    print('sha256:' + ('5' if service == 'api' else '6') * 64)
+OFFLINE_VERIFY
+chmod +x "$tmp_dir/offline-verifier.py"
+
 fake_bin="$tmp_dir/fake-bin"
 mkdir -p "$fake_bin"
 
@@ -99,6 +126,14 @@ digest_for_sha() {
     "$rollback2_sha") printf 'sha256:%s' "$(printf '3%.0s' {1..64})" ;;
     "$candidate_sha") printf 'sha256:%s' "$(printf '4%.0s' {1..64})" ;;
     *) printf 'sha256:%s' "$(printf '9%.0s' {1..64})" ;;
+  esac
+}
+
+offline_id_for() {
+  case "$1" in
+    *myshop-api:*) printf 'sha256:%s' "$(printf '5%.0s' {1..64})" ;;
+    *myshop-web:*) printf 'sha256:%s' "$(printf '6%.0s' {1..64})" ;;
+    *) digest_for_sha "${1##*:}" ;;
   esac
 }
 
@@ -218,6 +253,9 @@ case "${1:-}" in
         [[ "$stage" == candidate ]] && sha=$candidate_sha
         if [[ "$stage" == candidate && "${DEPLOY_TEST_FAIL:-}" == final-identity ]]; then
           printf 'sha256:%s\n' "$(printf '8%.0s' {1..64})"
+        elif [[ "$stage" == candidate && "${FAKE_OFFLINE_MODE:-0}" == 1 ]]; then
+          offline_id_for "${registry}/myshop-${service}:${candidate_sha}"
+          printf '\n'
         else
           digest_for_sha "$sha"
           printf '\n'
@@ -234,7 +272,12 @@ case "${1:-}" in
       tag=${target##*:}
       digest=$(digest_for_sha "$tag")
       if [[ "$format" == '{{.Id}}' ]]; then
-        printf '%s\n' "$digest"
+        if [[ "${FAKE_OFFLINE_MODE:-0}" == 1 && "$tag" == "$candidate_sha" ]]; then
+          offline_id_for "$target"
+          printf '\n'
+        else
+          printf '%s\n' "$digest"
+        fi
       else
         printf '%s@%s\n' "${target%:*}" "$digest"
       fi
@@ -264,6 +307,7 @@ for arg in "$@"; do
   case "$arg" in config|pull|up|stop) action=$arg ;; esac
 done
 printf 'compose-project=%s\n' "${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}" >>"${FAKE_PROJECT_LOG:?}"
+printf '%s\n' "$action" >>"${FAKE_COMPOSE_LOG:?}"
 candidate=0
 [[ "${MYSHOP_API_IMAGE:-}" == *":${CANDIDATE_SHA}" ]] && candidate=1
 case "$action" in
@@ -361,6 +405,7 @@ reset_case() {
   : >"$case_root/docker-projects.log"
   : >"$case_root/deploy-curl.log"
   : >"$case_root/helper-projects.log"
+  : >"$case_root/compose.log"
   rm -f "$case_root/health-count" "$case_root/curl-count" "$case_root/recovery-point.dump"
 }
 
@@ -373,6 +418,7 @@ run_deploy() {
     CANDIDATE_SHA="$candidate_sha" \
     FAKE_REGISTRY="$registry" \
     FAKE_PULL_LOG="$case_root/pull.log" \
+    FAKE_COMPOSE_LOG="$case_root/compose.log" \
     FAKE_REMOVAL_LOG="$case_root/removal.log" \
     FAKE_BACKUP_LOG="$case_root/backup.log" \
     FAKE_SCHEMA_LOG="$case_root/schema.log" \
@@ -382,6 +428,7 @@ run_deploy() {
     FAKE_PROJECT_LOG="$case_root/helper-projects.log" \
     FAKE_CURL_LOG="$case_root/deploy-curl.log" \
     FAKE_CANDIDATE_DOWN="${FAKE_CANDIDATE_DOWN:-0}" \
+    FAKE_OFFLINE_MODE="${FAKE_OFFLINE_TEST:-0}" \
     MYSHOP_RUNTIME_ROOT="$case_root" \
     MYSHOP_DEPLOY_STATE="$case_root/deploy-state.json" \
     MYSHOP_ENV_FILE="$case_root/.env" \
@@ -394,7 +441,7 @@ run_deploy() {
     MYSHOP_BAOTA_PROXY_SOURCE_CONFIRMED="${FAKE_BAOTA_PROXY_CONFIRMED-${FAKE_SHARED_TEST:+1}}" \
     MYSHOP_BAOTA_NGINX_PROXY_CIDR="${FAKE_BAOTA_PROXY_CIDR-${FAKE_SHARED_TEST:+172.29.0.1/32}}" \
     MYSHOP_SMOKE_BASE_URL="${FAKE_SHARED_TEST:+http://127.0.0.1:8082}" \
-    MYSHOP_SMOKE_HOST_HEADER="${FAKE_SHARED_TEST:+mc.mc520.top}" \
+    MYSHOP_SMOKE_HOST_HEADER="${FAKE_SHARED_TEST:+${FAKE_CANDIDATE_HOST:-mc.mc520.top}}" \
     MYSHOP_COMPOSE_WRAPPER="$tmp_dir/compose.sh" \
     MYSHOP_STATE_WRITER="$state_writer" \
     MYSHOP_SCHEMA_SCRIPT="$tmp_dir/schema.sh" \
@@ -403,6 +450,9 @@ run_deploy() {
     HOST_STORAGE_HEALTH_SCRIPT="$tmp_dir/health.sh" \
     HOST_DEPLOY_LOCK_FILE="$case_root/deploy.lock" \
     MYSHOP_APPROVED_REGISTRY="$registry" \
+    MYSHOP_OFFLINE_IMAGES="${FAKE_OFFLINE_TEST:-0}" \
+    MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="${FAKE_OFFLINE_TEST:+$offline_bundle}" \
+    MYSHOP_OFFLINE_IMAGE_VERIFIER="${FAKE_OFFLINE_TEST:+$tmp_dir/offline-verifier.py}" \
     MYSHOP_MAINTENANCE_DIR="$case_root/maintenance" \
     bash "$deploy_script" "$manifest"
 }
@@ -517,6 +567,51 @@ for helper in compose backup schema retention; do
   grep -Fxq "$helper-project=myshop-friend-prod" "$case_root/helper-projects.log" || fail "shared $helper helper did not receive the dedicated Compose project"
 done
 pass 'shared first install starts without a baseline and commits only after loopback candidate acceptance'
+
+reset_case
+rm -f "$case_root/deploy-state.json"
+cat >"$case_root/.env" <<EOF
+PUBLIC_SITE_URL=https://myshop-candidate.mc520.top
+MYSHOP_OFFLINE_IMAGES=1
+MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE=$offline_bundle
+EOF
+if output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_CANDIDATE_HOST=myshop-candidate.mc520.top run_deploy 2>&1); then offline_status=0; else offline_status=$?; fi
+(( offline_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'offline shared candidate deployment failed'; }
+grep -Fq 'DEPLOYMENT ACCEPTED' <<<"$output" || fail 'offline shared candidate was not accepted'
+[[ ! -s "$case_root/pull.log" ]] || fail 'offline deployment attempted a registry image pull'
+if grep -Fxq pull "$case_root/compose.log"; then fail 'offline deployment invoked docker compose pull'; fi
+python3 - "$case_root/deploy-state.json" "$candidate_sha" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding='utf-8'))
+active = state['active']
+assert active['source_sha'] == sys.argv[2]
+assert active['images']['api']['image_id'] == 'sha256:' + '5' * 64
+assert active['images']['web']['image_id'] == 'sha256:' + '6' * 64
+assert active['images']['api']['digest'].startswith('sha256:4')
+PY
+grep -Fxq 'http://127.0.0.1:8082/' "$case_root/deploy-curl.log" || fail 'offline candidate smoke did not target the local candidate port'
+pass 'offline shared deployment verifies preloaded config IDs, skips registry pulls, and accepts the temporary candidate host'
+
+reset_case
+rm -f "$case_root/deploy-state.json"
+cat >"$case_root/.env" <<EOF
+PUBLIC_SITE_URL=https://myshop-candidate.mc520.top
+MYSHOP_OFFLINE_IMAGES=1
+MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE=$offline_bundle
+EOF
+printf 'old production data untouched\n' >"$case_root/old-production-sentinel"
+set +e
+offline_failure=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_CANDIDATE_HOST=myshop-candidate.mc520.top DEPLOY_TEST_FAIL=smoke run_deploy 2>&1)
+offline_failure_status=$?
+set -e
+(( offline_failure_status == 1 )) || { printf '%s\n' "$offline_failure" >&2; fail 'offline first-install smoke failure was not rejected'; }
+grep -Fq 'BOOTSTRAP FAILED' <<<"$offline_failure" || fail 'offline bootstrap failure was treated as a successful rollback target'
+[[ ! -e "$case_root/deploy-state.json" ]] || fail 'offline failed candidate was recorded as accepted'
+[[ -f "$case_root/recovery-point.dump" && -f "$case_root/candidates/$candidate_sha.failed.json" ]] || fail 'offline failed candidate lost its recovery record'
+[[ "$(<"$case_root/running")" == stopped ]] || fail 'offline failed candidate app services were left running'
+[[ ! -s "$case_root/pull.log" ]] || fail 'offline failure path attempted a registry pull'
+grep -Fxq 'old production data untouched' "$case_root/old-production-sentinel" || fail 'offline failure changed the old production fixture'
+pass 'offline first-install failure stops only candidate apps and preserves recovery data and old production'
 
 reset_case
 rm -f "$case_root/deploy-state.json"
