@@ -62,6 +62,23 @@ its trusted real-IP ranges in that site before relying on the client's IP.
   shared-host acceptance, candidate-only smoke failure, rollback, and project
   isolation. The proxy and audit config checks have separate focused scripts.
 
+## Base image registry mirrors
+
+The shared-host Compose file uses copies of the upstream PostgreSQL, Caddy, and
+node-exporter manifests in the MyShop GHCR namespace. The manual
+`workflow_dispatch` path on `codex/shared-server-prep` uses Skopeo to copy the
+source digest and all platform manifests, then verifies the source and target
+manifest hashes and the `linux/amd64` entry before the image is accepted.
+This branch-only operation skips the API, Web, Compose CI jobs and the existing
+production image publisher.
+
+The three personal GHCR packages must be public for anonymous pulls from the
+friend server. Their contents are byte-for-byte copies of already public
+upstream images; no application secret or private source is included. The
+shared Compose file pins each GHCR image by digest as well as a content-named
+tag. `scripts/test-shared-server-images.sh` checks these pins and confirms the
+legacy production Compose remains on its existing references.
+
 ## Friend-host audit snapshot
 
 The read-only Baota view on 2026-11-17 confirmed CentOS 9, 8 CPU cores,

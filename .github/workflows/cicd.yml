@@ -17,6 +17,7 @@ env:
 
 jobs:
   api:
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/codex/shared-server-prep'
     name: API build and tests
     runs-on: ubuntu-latest
     steps:
@@ -105,6 +106,7 @@ jobs:
         run: docker build --file Dockerfile.api --tag myshop-api:ci .
 
   web:
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/codex/shared-server-prep'
     name: Web typecheck, lint, and build
     runs-on: ubuntu-latest
     steps:
@@ -125,6 +127,7 @@ jobs:
         run: docker build --file Dockerfile.web --tag myshop-web:ci .
 
   compose:
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/codex/shared-server-prep'
     name: Compose configuration smoke test
     runs-on: ubuntu-latest
     steps:
@@ -141,6 +144,101 @@ jobs:
         run: bash scripts/test-production-schema-contract.sh
       - name: Validate required Compose variables
         run: bash scripts/check-compose.sh
+
+  mirror-base-images:
+    name: Mirror approved base images to GHCR
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/shared-server-prep'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify shared image pins and legacy production isolation
+        run: bash scripts/test-shared-server-images.sh
+      - name: Install Skopeo from Ubuntu packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+          skopeo --version
+      - name: Authenticate to GHCR with the job token
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" | skopeo login \
+            --authfile "$RUNNER_TEMP/ghcr-auth.json" \
+            --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+      - name: Copy source-pinned multi-platform manifests and verify identity
+        env:
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/ghcr-auth.json
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          while IFS='|' read -r name source expected tag; do
+            [[ -n "$name" ]] || continue
+            source_ref="docker://$source@$expected"
+            target_ref="docker://ghcr.io/yykx682436/myshop-$name:$tag"
+            source_raw="$RUNNER_TEMP/$name-source-manifest.json"
+            target_raw="$RUNNER_TEMP/$name-target-manifest.json"
+
+            skopeo inspect --raw --tls-verify=true "$source_ref" > "$source_raw"
+            source_digest="sha256:$(sha256sum "$source_raw" | awk '{print $1}')"
+            [[ "$source_digest" == "$expected" ]] || {
+              printf 'Source digest mismatch for %s: %s\n' "$name" "$source_digest" >&2
+              exit 1
+            }
+            python3 - "$source_raw" "$name" <<'PY'
+          import json, sys
+          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+          platforms = {
+              f"{item.get('platform', {}).get('os')}/{item.get('platform', {}).get('architecture')}"
+              for item in manifest.get("manifests", [])
+          }
+          if "linux/amd64" not in platforms:
+              raise SystemExit(f"{sys.argv[2]} source index is missing linux/amd64")
+          print(f"{sys.argv[2]} source platforms: {', '.join(sorted(platforms))}")
+          PY
+
+            skopeo copy --all --preserve-digests \
+              --src-tls-verify=true --dest-tls-verify=true \
+              --authfile "$REGISTRY_AUTH_FILE" \
+              --digestfile "$RUNNER_TEMP/$name-destination.digest" \
+              "$source_ref" "$target_ref"
+
+            skopeo inspect --raw --authfile "$REGISTRY_AUTH_FILE" \
+              --tls-verify=true "$target_ref" > "$target_raw"
+            target_digest="sha256:$(sha256sum "$target_raw" | awk '{print $1}')"
+            [[ "$target_digest" == "$source_digest" ]] || {
+              printf 'Destination digest mismatch for %s: %s != %s\n' \
+                "$name" "$target_digest" "$source_digest" >&2
+              exit 1
+            }
+            python3 - "$target_raw" "$name" <<'PY'
+          import json, sys
+          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+          platforms = {
+              f"{item.get('platform', {}).get('os')}/{item.get('platform', {}).get('architecture')}"
+              for item in manifest.get("manifests", [])
+          }
+          if "linux/amd64" not in platforms:
+              raise SystemExit(f"{sys.argv[2]} target index is missing linux/amd64")
+          PY
+            printf '%s|%s|%s\n' "$name" "$source_digest" "$target_digest" \
+              >> "$RUNNER_TEMP/myshop-base-image-digests.txt"
+          done <<'IMAGES'
+          postgres|docker.io/library/postgres|sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685|mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+          caddy|docker.io/library/caddy|sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648|mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+          node-exporter|quay.io/prometheus/node-exporter|sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0|mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
+          IMAGES
+
+          {
+            printf '| Image | Source digest | GHCR digest |\n|---|---|---|\n'
+            while IFS='|' read -r name source_digest target_digest; do
+              printf '| %s | \`%s\` | \`%s\` |\n' "$name" "$source_digest" "$target_digest"
+            done < "$RUNNER_TEMP/myshop-base-image-digests.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish-images:
     name: Publish immutable production images
