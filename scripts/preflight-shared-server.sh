@@ -34,7 +34,7 @@ MYSHOP_COMPOSE_PROJECT_NAME="$PROJECT_NAME" COMPOSE_PROJECT_NAME="$PROJECT_NAME"
   --env-file "$ENV_FILE" config --format json >"$tmp_dir/compose.json" \
   || die 'Compose configuration could not be rendered'
 
-python3 - "$tmp_dir/compose.json" "$ENV_FILE" "$PROJECT_NAME" "$MODE" "$PROJECT_ROOT" <<'PY'
+python3 - "$tmp_dir/compose.json" "$ENV_FILE" "$PROJECT_NAME" "$MODE" "$PROJECT_ROOT" "$SCRIPT_DIR" <<'PY'
 from __future__ import annotations
 
 import ipaddress
@@ -54,6 +54,7 @@ env_path = Path(sys.argv[2])
 expected_project = sys.argv[3]
 mode = sys.argv[4]
 runtime_root = Path(sys.argv[5])
+script_dir = Path(sys.argv[6])
 
 
 def fail(message: str) -> "NoReturn":
@@ -226,7 +227,7 @@ if offline_images == "1":
     manifest_path = Path(env_values.get("MYSHOP_RELEASE_MANIFEST_FILE", ""))
     if not manifest_path.is_file() or manifest_path.is_symlink():
         fail("offline image mode requires a regular, non-symlink release manifest file")
-    verify_script = SCRIPT_DIR / "verify-offline-image-bundle.py"
+    verify_script = script_dir / "verify-offline-image-bundle.py"
     try:
         subprocess.run([
             sys.executable, str(verify_script), str(bundle_path), "--manifest", str(manifest_path),

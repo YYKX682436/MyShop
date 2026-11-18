@@ -45,6 +45,8 @@ with tempfile.TemporaryDirectory(prefix="myshop-preflight-path-") as temporary:
         raise AssertionError("relative data path was accepted")
 
 assert 'str(configured_root) != "/srv/myshop-friend"' in body
+assert 'script_dir = Path(sys.argv[6])' in body
+assert 'verify_script = script_dir / "verify-offline-image-bundle.py"' in body
 assert 'mode == "first-install"' in body and 'mode == "bootstrap-retry"' in body
 assert 'if project_network_names != expected_networks' in body
 assert 'docker", "port"' in body and '"ss", "-H", "-lnt"' in body
