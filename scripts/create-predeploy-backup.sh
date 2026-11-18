@@ -4,7 +4,9 @@ set -Eeuo pipefail
 (( $# == 2 )) || { printf 'usage: %s <active-source-sha-or-bootstrap> <candidate-manifest>\n' "$0" >&2; exit 2; }
 active_sha=$1
 manifest=$2
-backup_dir=${MYSHOP_BACKUP_DIR:-/data/myshop/backups/database}
+project_name=${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}
+backup_dir=${MYSHOP_BACKUP_DIR:-${MYSHOP_DATA_ROOT:-/data/myshop}/backups/database}
+[[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { printf 'invalid MYSHOP_COMPOSE_PROJECT_NAME\n' >&2; exit 2; }
 mkdir -p -- "$backup_dir"
 umask 077
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -13,10 +15,11 @@ import json, sys
 print(json.load(open(sys.argv[1], encoding='utf-8'))['source_sha'])
 PY
 )
-final_file="$backup_dir/myshop-predeploy-${stamp}-${candidate_sha}.dump"
+final_file="$backup_dir/${project_name}-predeploy-${stamp}-${candidate_sha}.dump"
 temporary="${final_file}.partial"
-db_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter 'label=com.docker.compose.service=db' -q | head -n 1)
-[[ -n "$db_id" ]] || { printf 'MyShop database container is missing\n' >&2; exit 1; }
+db_id=$(docker ps --filter "label=com.docker.compose.project=$project_name" --filter 'label=com.docker.compose.service=db' -q \
+  | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') \
+  || { printf 'expected exactly one database container for Compose project %s\n' "$project_name" >&2; exit 1; }
 rm -f -- "$temporary"
 trap 'rm -f -- "$temporary"' EXIT
 docker exec -i "$db_id" sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' >"$temporary"
@@ -28,15 +31,15 @@ size=$(stat -c '%s' "$final_file")
 sha256=$(sha256sum "$final_file" | awk '{print $1}')
 database=$(docker exec "$db_id" sh -c 'printf "%s@%s/%s" "$POSTGRES_USER" "${POSTGRES_HOSTNAME:-db}" "$POSTGRES_DB"')
 manifest_file="${final_file}.manifest.json"
-python3 - "$manifest_file" "$active_sha" "$candidate_sha" "$database" "$final_file" "$size" "$sha256" <<'PY'
+python3 - "$manifest_file" "$project_name" "$active_sha" "$candidate_sha" "$database" "$final_file" "$size" "$sha256" <<'PY'
 import json, os, sys, tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-out, active, candidate, database, filename, size, sha256 = sys.argv[1:]
+out, project, active, candidate, database, filename, size, sha256 = sys.argv[1:]
 payload = {
     "version": 1,
-    "project": "myshop",
+    "project": project,
     "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
     "source_active_sha": active,
     "candidate_sha": candidate,

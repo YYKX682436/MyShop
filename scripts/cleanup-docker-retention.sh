@@ -23,11 +23,21 @@ LOCK = Path(os.environ.get("HOST_DEPLOY_LOCK_FILE", "/run/myshop-deploy.lock"))
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 SERVICES = {"api", "web"}
+PROJECT_NAME = os.environ.get("MYSHOP_COMPOSE_PROJECT_NAME", "myshop")
+SHARED_SERVER = (
+    os.environ.get("MYSHOP_SHARED_SERVER", "0").lower() in {"1", "true", "yes"}
+    or PROJECT_NAME.startswith("myshop-friend-")
+)
+STORAGE_MOUNTPOINT = os.environ.get("MYSHOP_STORAGE_MOUNTPOINT", "/data")
 
 
 def die(message: str) -> "NoReturn":
     print(f"[myshop-retention] ERROR: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+if SHARED_SERVER and not PROJECT_NAME.startswith("myshop-friend-"):
+    die("shared-server retention requires a dedicated myshop-friend-* Compose project")
 
 
 def docker(*args: str, check: bool = True) -> str:
@@ -134,10 +144,13 @@ def main() -> int:
                 repositories.add(repo)
                 accepted_ids.add(image_id)
 
-        owned_repositories = repositories | {"myshop-api", "myshop-web"}
+        # Legacy local tags remain supported on the original MyShop host.
+        # Shared-host retention may touch only repositories named by its
+        # accepted SHA state, never similarly named local images from a friend.
+        owned_repositories = repositories if SHARED_SERVER else repositories | {"myshop-api", "myshop-web"}
         if not args.prospective:
             for service, expected in active["images"].items():
-                rows = docker("ps", "--filter", "label=com.docker.compose.project=myshop", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
+                rows = docker("ps", "--filter", f"label=com.docker.compose.project={PROJECT_NAME}", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
                 matches = [line.split("|", 1) for line in rows.splitlines() if "|" in line]
                 if len(matches) != 1:
                     die(f"expected one active MyShop {service} container, found {len(matches)}")
@@ -173,7 +186,7 @@ def main() -> int:
                     die(f"accepted image disappeared or changed: {image['ref']}")
 
         print(docker("system", "df", "-v"), end="")
-        print(subprocess.run(["df", "-h", "/data"], check=False, text=True, capture_output=True).stdout, end="")
+        print(subprocess.run(["df", "-h", STORAGE_MOUNTPOINT], check=False, text=True, capture_output=True).stdout, end="")
         print("[myshop-retention] completed; no source releases, volumes, or BuildKit cache were touched")
     return 0
 

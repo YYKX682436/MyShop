@@ -1,0 +1,33 @@
+{
+    auto_https off
+
+    servers {
+        # Baota Nginx reaches this Caddy instance through a loopback-published
+        # host port. This must be the exact source observed by Caddy from the
+        # Baota proxy, expressed as one host prefix (/32 or /128).
+        trusted_proxies static {$BAOTA_NGINX_PROXY_CIDR}
+        client_ip_headers X-Forwarded-For
+    }
+}
+
+:80 {
+    encode gzip
+
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        X-Frame-Options "DENY"
+    }
+
+    @https header X-Forwarded-Proto https
+    header @https Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    # Keep /api intact for Spring, including payment callbacks and uploads.
+    reverse_proxy /api/* api:8083 {
+        header_up X-Real-IP {client_ip}
+        header_up X-Forwarded-For {client_ip}
+    }
+
+    reverse_proxy web:3000
+}

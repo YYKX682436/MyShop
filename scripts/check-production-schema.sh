@@ -5,9 +5,13 @@ set -Eeuo pipefail
 # /app/production-schema-contract.json. It is versioned with the code that
 # consumes the schema, not maintained as a second migration-number list here.
 die() { printf '[myshop-schema] ERROR: %s\n' "$*" >&2; exit 1; }
-api_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter 'label=com.docker.compose.service=api' -q | head -n 1)
-db_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter 'label=com.docker.compose.service=db' -q | head -n 1)
-[[ -n "$api_id" && -n "$db_id" ]] || die 'MyShop api/db containers are missing'
+project_name=${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}
+[[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die 'MYSHOP_COMPOSE_PROJECT_NAME is invalid'
+api_id=$(docker ps --filter "label=com.docker.compose.project=$project_name" --filter 'label=com.docker.compose.service=api' -q \
+  | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') || true
+db_id=$(docker ps --filter "label=com.docker.compose.project=$project_name" --filter 'label=com.docker.compose.service=db' -q \
+  | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') || true
+[[ -n "$api_id" && -n "$db_id" ]] || die "MyShop api/db containers are missing for Compose project $project_name"
 contract_json=$(docker exec "$api_id" sh -c 'cat /app/production-schema-contract.json') || die 'API artifact has no production schema contract'
 sql=$(python3 - "$contract_json" <<'PY'
 import json
