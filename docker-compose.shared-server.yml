@@ -175,6 +175,7 @@ networks:
     ipam:
       config:
         - subnet: ${MYSHOP_EDGE_SUBNET:?MYSHOP_EDGE_SUBNET must be selected after the Docker-network audit}
+          ip_range: ${MYSHOP_EDGE_IP_RANGE:?MYSHOP_EDGE_IP_RANGE must reserve a dynamic range away from the fixed Caddy address}
   database:
     driver: bridge
     internal: true

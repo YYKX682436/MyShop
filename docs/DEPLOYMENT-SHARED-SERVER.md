@@ -22,8 +22,9 @@ Baota keeps public ports 80/443 and TLS. The only published MyShop port is the
 preflight-selected loopback port on Caddy. PostgreSQL, API, Web, and node-exporter
 have no host-published ports. Compose allocates isolated database and metrics
 networks; only API can access the node-exporter metrics service. The edge subnet,
-Caddy IP, and Baota-to-Caddy source CIDR are explicit because both proxy hops
-must trust only the addresses assigned to the preceding hop.
+Docker dynamic allocation range, Caddy IP, and Baota-to-Caddy source CIDR are
+explicit. Keep Caddy's fixed address outside the dynamic range so Compose cannot
+assign it to an API container first.
 
 The browser sends `/api/*` to the same origin. Caddy forwards the path unchanged
 to Spring, including uploads and payment webhooks. Baota must overwrite

@@ -163,11 +163,16 @@ if len(subnets) != 1 or not subnets[0].get("subnet"):
     fail("edge network must have one audited subnet")
 try:
     edge_network = ipaddress.ip_network(subnets[0]["subnet"], strict=True)
+    edge_ip_range = ipaddress.ip_network(subnets[0].get("ip_range", ""), strict=True)
     caddy_ip = ipaddress.ip_address(services["caddy"].get("networks", {}).get("edge", {}).get("ipv4_address", ""))
 except ValueError as exc:
     fail(f"edge subnet or Caddy address is invalid: {exc}")
 if caddy_ip not in edge_network or caddy_ip in (edge_network.network_address, edge_network.broadcast_address, edge_network.network_address + 1):
     fail("Caddy address must be a usable host address other than the Docker gateway")
+if edge_network.version != 4 or edge_ip_range.version != 4 or not edge_ip_range.subnet_of(edge_network):
+    fail("edge dynamic IP range must be an IPv4 subnet within the audited edge subnet")
+if caddy_ip in edge_ip_range:
+    fail("fixed Caddy address must be outside Docker's dynamic edge IP range")
 for network_name in ("database", "metrics"):
     if not config.get("networks", {}).get(network_name, {}).get("internal", False):
         fail(f"{network_name} network must be internal")
@@ -376,9 +381,20 @@ for network_id in network_ids:
         name = item.get("Name", "unknown")
         if mode in {"upgrade", "bootstrap-retry"} and name in expected_networks:
             if name == f"{expected_project}_edge":
-                actual = [entry.get("Subnet") for entry in item.get("IPAM", {}).get("Config", []) or [] if entry.get("Subnet")]
-                if str(edge_network) not in [str(ipaddress.ip_network(value, strict=False)) for value in actual]:
-                    fail("existing MyShop edge network differs from the configured audited subnet")
+                actual_configs = item.get("IPAM", {}).get("Config", []) or []
+                actual_pairs = {
+                    (
+                        str(ipaddress.ip_network(entry.get("Subnet", ""), strict=False)),
+                        str(ipaddress.ip_network(entry.get("IPRange", ""), strict=False)) if entry.get("IPRange") else "",
+                    )
+                    for entry in actual_configs if entry.get("Subnet")
+                }
+                if (str(edge_network), str(edge_ip_range)) not in actual_pairs:
+                    fail("existing MyShop edge network differs from the configured subnet or dynamic IP range")
+                for endpoint in (item.get("Containers") or {}).values():
+                    raw_ip = str(endpoint.get("IPv4Address", "")).split("/", 1)[0]
+                    if raw_ip and ipaddress.ip_address(raw_ip) == caddy_ip and endpoint.get("Name") != f"{expected_project}-caddy-1":
+                        fail("fixed Caddy address is already assigned to another edge-network container")
             continue
         for subnet_config in item.get("IPAM", {}).get("Config", []) or []:
             raw_subnet = subnet_config.get("Subnet")
