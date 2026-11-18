@@ -230,7 +230,7 @@ pull_candidate() {
     python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --manifest "$manifest" --verify-local >/dev/null \
       || die 'preloaded image bundle does not match the release manifest or local image IDs'
     for service in api web; do
-      candidate_image_id[$service]=$(python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --get-config-digest "$service") \
+      candidate_image_id[$service]=$(python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --get-loaded-image-id "$service") \
         || die "could not read preloaded ${service} image identity"
     done
     return 0

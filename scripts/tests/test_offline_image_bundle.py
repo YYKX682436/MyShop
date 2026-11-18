@@ -20,6 +20,10 @@ DIGESTS = {
     "node-exporter": "sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
 }
 CONFIG_IDS: dict[str, str] = {}
+CONFIGS: dict[str, dict] = {}
+LOADED_IDS = {service: "sha256:" + character * 64 for service, character in zip(
+    ("api", "web", "postgres", "caddy", "node-exporter"), "abcde"
+)}
 
 
 def image_ref(service: str) -> str:
@@ -32,7 +36,13 @@ def image_ref(service: str) -> str:
 def make_archive(path: Path, service: str) -> str:
     layer = b"layer-fixture"
     diff_id = "sha256:" + hashlib.sha256(layer).hexdigest()
-    config = {"architecture": "amd64", "os": "linux", "rootfs": {"type": "layers", "diff_ids": [diff_id]}}
+    config = {
+        "architecture": "amd64",
+        "os": "linux",
+        "config": {"Env": ["PATH=/usr/bin"], "Labels": {"org.opencontainers.image.revision": SHA}},
+        "rootfs": {"type": "layers", "diff_ids": [diff_id]},
+    }
+    CONFIGS[service] = config
     config_bytes = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
     config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
     CONFIG_IDS[service] = config_digest
@@ -85,6 +95,10 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
         str(bundle_path),
     )
     assert created.returncode == 0, created.stderr
+    bundle_data = json.loads(bundle_path.read_text(encoding="utf-8"))
+    for service in CONFIG_IDS:
+        bundle_data["images"][service]["loaded_image_id"] = LOADED_IDS[service]
+    bundle_path.write_text(json.dumps(bundle_data), encoding="utf-8")
     verify = run(
         sys.executable,
         str(ROOT / "scripts/verify-offline-image-bundle.py"),
@@ -96,7 +110,17 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     )
     assert verify.returncode == 0, verify.stderr
 
-    metadata = {image_ref(service): CONFIG_IDS[service] for service in CONFIG_IDS}
+    metadata = {
+        image_ref(service): {
+            "Id": LOADED_IDS[service],
+            "Os": "linux",
+            "Architecture": "amd64",
+            "RepoTags": [image_ref(service)],
+            "Config": CONFIGS[service]["config"],
+            "RootFS": {"Layers": CONFIGS[service]["rootfs"]["diff_ids"]},
+        }
+        for service in CONFIG_IDS
+    }
     metadata_path = root / "fake-images.json"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     fake_bin = root / "bin"
@@ -107,15 +131,33 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
         "import json, os, sys\n"
         "images=json.load(open(os.environ['FAKE_IMAGE_METADATA']))\n"
         "ref=sys.argv[-1]\n"
-        "image_id=images.get(ref, 'missing')\n"
-        "if os.environ.get('FAKE_BAD_REF') == ref: image_id='sha256:'+'f'*64\n"
-        "print(json.dumps({'Id':image_id,'Os':'linux','Architecture':'amd64','RepoTags':[ref]}))\n",
+        "image=images.get(ref)\n"
+        "if image is None: raise SystemExit('missing fake image')\n"
+        "if os.environ.get('FAKE_BAD_REF') == ref: image['Config']['Env']=['PATH=/tampered']\n"
+        "print(json.dumps(image))\n",
         encoding="utf-8",
     )
     fake_docker.chmod(0o755)
     local_env = os.environ.copy()
     local_env["PATH"] = str(fake_bin) + os.pathsep + local_env.get("PATH", "")
     local_env["FAKE_IMAGE_METADATA"] = str(metadata_path)
+    unrecorded = json.loads(bundle_path.read_text(encoding="utf-8"))
+    unrecorded["images"]["api"]["loaded_image_id"] = ""
+    unrecorded_path = root / "unrecorded-image-bundle.json"
+    unrecorded_path.write_text(json.dumps(unrecorded), encoding="utf-8")
+    unrecorded_check = run(
+        sys.executable,
+        str(ROOT / "scripts/verify-offline-image-bundle.py"),
+        str(unrecorded_path),
+        "--verify-local",
+        env=local_env,
+    )
+    assert unrecorded_check.returncode != 0 and "has not been recorded" in unrecorded_check.stderr
+    recorded_bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    assert recorded_bundle["version"] == 2
+    for service in CONFIG_IDS:
+        assert recorded_bundle["images"][service]["loaded_image_id"] == LOADED_IDS[service]
+        assert recorded_bundle["images"][service]["loaded_image_id"] != CONFIG_IDS[service]
     local_check = run(
         sys.executable,
         str(ROOT / "scripts/verify-offline-image-bundle.py"),
@@ -126,6 +168,25 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
         env=local_env,
     )
     assert local_check.returncode == 0, local_check.stderr
+    loaded_id = run(
+        sys.executable,
+        str(ROOT / "scripts/verify-offline-image-bundle.py"),
+        str(bundle_path),
+        "--get-loaded-image-id",
+        "api",
+    )
+    assert loaded_id.returncode == 0 and loaded_id.stdout.strip() == LOADED_IDS["api"]
+
+    bad_local_env = local_env.copy()
+    bad_local_env["FAKE_BAD_REF"] = image_ref("web")
+    bad_runtime = run(
+        sys.executable,
+        str(ROOT / "scripts/verify-offline-image-bundle.py"),
+        str(bundle_path),
+        "--verify-local",
+        env=bad_local_env,
+    )
+    assert bad_runtime.returncode != 0 and "runtime config differs" in bad_runtime.stderr
 
     tampered_archive = archive_dir / "api.tar"
     tampered_archive.write_bytes(tampered_archive.read_bytes() + b"corrupt")
@@ -197,4 +258,4 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     assert pull.returncode != 0 and "refuses Docker Compose pull" in pull.stderr
     assert len((root / "wrapper-docker.log").read_text(encoding="utf-8").splitlines()) == 1
 
-print("offline image bundle source, platform, archive integrity, and loaded-image identity checks passed")
+print("offline image bundle source, platform, archive integrity, normalized runtime configuration, layers, and loaded image IDs passed")

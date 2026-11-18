@@ -75,19 +75,22 @@ for service in ('api', 'web'):
     images[service] = {
         'ref': item['ref'],
         'source_digest': item['digest'],
-        'config_digest': 'sha256:' + ('5' if service == 'api' else '6') * 64,
+        'config_digest': 'sha256:' + ('7' if service == 'api' else '8') * 64,
+        'runtime_config_digest': 'sha256:' + ('9' if service == 'api' else 'a') * 64,
+        'rootfs_diff_ids': ['sha256:' + ('b' if service == 'api' else 'c') * 64],
+        'loaded_image_id': 'sha256:' + ('5' if service == 'api' else '6') * 64,
         'archive': service + '.tar',
         'archive_sha256': '0' * 64,
     }
 for name in ('postgres', 'caddy', 'node-exporter'):
-    images[name] = {'ref': 'unused', 'source_digest': 'unused', 'config_digest': 'unused', 'archive': name + '.tar', 'archive_sha256': '0' * 64}
-json.dump({'version':1,'source_sha':manifest['source_sha'],'platform':'linux/amd64','images':images}, open(sys.argv[2], 'w'))
+    images[name] = {'ref': 'unused', 'source_digest': 'unused', 'config_digest': 'unused', 'runtime_config_digest': 'unused', 'rootfs_diff_ids': [], 'loaded_image_id': 'unused', 'archive': name + '.tar', 'archive_sha256': '0' * 64}
+json.dump({'version':2,'source_sha':manifest['source_sha'],'platform':'linux/amd64','images':images}, open(sys.argv[2], 'w'))
 PY
 cat >"$tmp_dir/offline-verifier.py" <<'OFFLINE_VERIFY'
 #!/usr/bin/env python3
 import sys
-if '--get-config-digest' in sys.argv:
-    service = sys.argv[sys.argv.index('--get-config-digest') + 1]
+if '--get-loaded-image-id' in sys.argv:
+    service = sys.argv[sys.argv.index('--get-loaded-image-id') + 1]
     print('sha256:' + ('5' if service == 'api' else '6') * 64)
 OFFLINE_VERIFY
 chmod +x "$tmp_dir/offline-verifier.py"
@@ -590,7 +593,7 @@ assert active['images']['web']['image_id'] == 'sha256:' + '6' * 64
 assert active['images']['api']['digest'].startswith('sha256:4')
 PY
 grep -Fxq 'http://127.0.0.1:8082/' "$case_root/deploy-curl.log" || fail 'offline candidate smoke did not target the local candidate port'
-pass 'offline shared deployment verifies preloaded config IDs, skips registry pulls, and accepts the temporary candidate host'
+pass 'offline shared deployment verifies loaded image IDs, skips registry pulls, and accepts the temporary candidate host'
 
 reset_case
 rm -f "$case_root/deploy-state.json"

@@ -86,14 +86,16 @@ and archive directory, then verify it with
 `scripts/verify-offline-image-bundle.py --manifest ... --verify-archives ...`.
 Transfer the archives, manifest, bundle, and runtime files over an authenticated
 channel. On the host, `scripts/import-offline-image-bundle.sh <manifest>
-<bundle> <archive-dir>` checks archive hashes, tags, config digests, and
-`linux/amd64`, then loads the images without creating containers. With
-`MYSHOP_OFFLINE_IMAGES=1`, deployment checks the preloaded image IDs, skips
-registry pulls, adds `--pull never` to Compose startup, and records both the
-GHCR manifest digest and local config ID for future rollback/retention. Keep
-the three infrastructure image overrides blank when pulling from GHCR; set
-them to the approved digest-derived `mirror-<digest>` tags only after an offline
-import.
+<bundle> <archive-dir>` checks archive hashes, tags, full config digests, and
+`linux/amd64`, then loads the images without creating containers. Docker may
+normalize local image metadata during import, so the importer also compares the
+runtime config and all filesystem layer diff IDs against the checked archive,
+then records the daemon's local image IDs. With `MYSHOP_OFFLINE_IMAGES=1`,
+deployment checks those recorded IDs and runtime contents, skips registry pulls,
+adds `--pull never` to Compose startup, and records both the GHCR manifest
+digest and local image ID for future rollback/retention. Keep the three
+infrastructure image overrides blank when pulling from GHCR; set them to the
+approved digest-derived `mirror-<digest>` tags only after an offline import.
 
 ## Friend-host audit snapshot
 

@@ -43,6 +43,11 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def canonical_sha256(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
 if len(sys.argv) != 4:
     raise SystemExit("usage: create-offline-image-bundle.py <release-manifest.json> <archive-directory> <bundle.json>")
 manifest_path, archive_dir, output_path = map(Path, sys.argv[1:])
@@ -105,11 +110,14 @@ for service in SERVICES:
         "ref": ref,
         "source_digest": source_digest,
         "config_digest": config_digest,
+        "runtime_config_digest": canonical_sha256(config.get("config", {})),
+        "rootfs_diff_ids": config["rootfs"]["diff_ids"],
+        "loaded_image_id": "",
         "archive": archive_name,
         "archive_sha256": sha256_file(archive),
     }
 
-bundle = {"version": 1, "source_sha": sha, "platform": "linux/amd64", "images": images}
+bundle = {"version": 2, "source_sha": sha, "platform": "linux/amd64", "images": images}
 output_path.parent.mkdir(parents=True, exist_ok=True)
 fd, temporary = tempfile.mkstemp(prefix=f".{output_path.name}.", dir=output_path.parent)
 try:

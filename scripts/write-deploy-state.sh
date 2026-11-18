@@ -98,7 +98,7 @@ if offline_mode == "1":
         bundle = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
     except Exception as exc:
         fail(f"offline image bundle is invalid: {exc}")
-    if bundle.get("version") != 1 or bundle.get("source_sha") != candidate["source_sha"]:
+    if bundle.get("version") != 2 or bundle.get("source_sha") != candidate["source_sha"]:
         fail("offline image bundle does not match candidate source SHA")
     bundle_images = bundle.get("images")
     if not isinstance(bundle_images, dict):
@@ -109,9 +109,9 @@ if offline_mode == "1":
             fail(f"offline image bundle has no {service} record")
         if image.get("ref") != candidate["images"][service]["ref"] or image.get("source_digest") != candidate["images"][service]["digest"]:
             fail(f"offline image bundle {service} identity differs from the release manifest")
-        image_id = image.get("config_digest")
+        image_id = image.get("loaded_image_id")
         if not isinstance(image_id, str) or not digest_re.fullmatch(image_id):
-            fail(f"offline image bundle {service} config digest is invalid")
+            fail(f"offline image bundle {service} loaded image ID is invalid")
         candidate["images"][service]["image_id"] = image_id
 
 old_state = None

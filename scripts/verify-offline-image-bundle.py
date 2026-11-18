@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import tempfile
 from pathlib import Path, PurePosixPath
 
 REGISTRY = "ghcr.io/yykx682436"
@@ -55,6 +56,11 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def canonical_sha256(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
 def verify_manifest(bundle: dict, manifest_path: Path) -> None:
     validator = Path(__file__).with_name("validate-release-manifest.py")
     result = subprocess.run(
@@ -80,7 +86,7 @@ def verify_manifest(bundle: dict, manifest_path: Path) -> None:
 
 def validate_bundle(path: Path) -> dict:
     bundle = read_json(path, "image bundle")
-    if set(bundle) != {"version", "source_sha", "platform", "images"} or bundle.get("version") != 1:
+    if set(bundle) != {"version", "source_sha", "platform", "images"} or bundle.get("version") != 2:
         fail("image bundle version or fields are unsupported")
     sha = bundle.get("source_sha")
     if not isinstance(sha, str) or not SHA.fullmatch(sha):
@@ -92,7 +98,10 @@ def validate_bundle(path: Path) -> dict:
         fail(f"images must contain exactly {SERVICES}")
     for service in SERVICES:
         item = images[service]
-        if not isinstance(item, dict) or set(item) != {"ref", "source_digest", "config_digest", "archive", "archive_sha256"}:
+        if not isinstance(item, dict) or set(item) != {
+            "ref", "source_digest", "config_digest", "runtime_config_digest",
+            "rootfs_diff_ids", "loaded_image_id", "archive", "archive_sha256",
+        }:
             fail(f"images.{service} fields are unsupported")
         if service in ("api", "web"):
             expected_ref = f"{REGISTRY}/myshop-{service}:{sha}"
@@ -106,6 +115,14 @@ def validate_bundle(path: Path) -> dict:
                 fail(f"images.{service} is not the approved mirror ref and source digest")
         if not isinstance(item["config_digest"], str) or not DIGEST.fullmatch(item["config_digest"]):
             fail(f"images.{service}.config_digest is invalid")
+        if not isinstance(item["runtime_config_digest"], str) or not DIGEST.fullmatch(item["runtime_config_digest"]):
+            fail(f"images.{service}.runtime_config_digest is invalid")
+        diff_ids = item["rootfs_diff_ids"]
+        if not isinstance(diff_ids, list) or not diff_ids or any(not isinstance(value, str) or not DIGEST.fullmatch(value) for value in diff_ids):
+            fail(f"images.{service}.rootfs_diff_ids is invalid")
+        loaded_id = item["loaded_image_id"]
+        if loaded_id != "" and (not isinstance(loaded_id, str) or not DIGEST.fullmatch(loaded_id)):
+            fail(f"images.{service}.loaded_image_id is invalid")
         if item["archive"] != f"{service}.tar":
             fail(f"images.{service}.archive must be {service}.tar")
         if not isinstance(item["archive_sha256"], str) or not HEX.fullmatch(item["archive_sha256"]):
@@ -151,6 +168,10 @@ def verify_archives(bundle: dict, directory: Path) -> None:
                 config = json.loads(config_bytes)
                 if config.get("os") != "linux" or config.get("architecture") != "amd64":
                     fail(f"{service} Docker archive platform is not linux/amd64")
+                if canonical_sha256(config.get("config", {})) != item["runtime_config_digest"]:
+                    fail(f"{service} runtime config digest differs from the checked archive")
+                if config.get("rootfs", {}).get("diff_ids") != item["rootfs_diff_ids"]:
+                    fail(f"{service} layer identities differ from the checked archive")
                 layers = record.get("Layers")
                 if not isinstance(layers, list) or not layers:
                     fail(f"{service} Docker archive has no layers")
@@ -164,13 +185,14 @@ def verify_archives(bundle: dict, directory: Path) -> None:
             fail(f"{service} Docker archive is invalid: {exc}")
 
 
-def verify_local_images(bundle: dict) -> None:
+def verify_local_images(bundle: dict, *, allow_unrecorded: bool = False) -> dict[str, str]:
     try:
         info = os.stat(bundle_path)
     except OSError as exc:
         fail(f"image bundle cannot be stat'ed: {exc}")
     if os.geteuid() == 0 and (info.st_uid != 0 or info.st_mode & 0o077):
         fail("server image bundle must be root-owned with mode 0600 or stricter")
+    observed: dict[str, str] = {}
     for service in SERVICES:
         item = bundle["images"][service]
         result = subprocess.run(
@@ -185,12 +207,56 @@ def verify_local_images(bundle: dict) -> None:
             image = json.loads(result.stdout)
         except Exception as exc:
             fail(f"{service} Docker inspect output is invalid: {exc}")
-        if image.get("Id") != item["config_digest"]:
-            fail(f"{service} loaded image ID differs from the checked archive config digest")
+        image_id = image.get("Id")
+        if not isinstance(image_id, str) or not DIGEST.fullmatch(image_id):
+            fail(f"{service} loaded image has an invalid Docker image ID")
+        expected_loaded_id = item["loaded_image_id"]
+        if expected_loaded_id and image_id != expected_loaded_id:
+            fail(f"{service} loaded image ID differs from the recorded image")
+        if not expected_loaded_id and not allow_unrecorded:
+            fail(f"{service} loaded image ID has not been recorded from the verified archive")
         if image.get("Os") != "linux" or image.get("Architecture") != "amd64":
             fail(f"{service} loaded image platform is not linux/amd64")
         if item["ref"] not in (image.get("RepoTags") or []):
             fail(f"{service} loaded image is not tagged with its expected immutable ref")
+        if canonical_sha256(image.get("Config", {})) != item["runtime_config_digest"]:
+            fail(f"{service} loaded runtime config differs from the verified archive")
+        if image.get("RootFS", {}).get("Layers") != item["rootfs_diff_ids"]:
+            fail(f"{service} loaded layer identities differ from the verified archive")
+        observed[service] = image_id
+    return observed
+
+
+def record_local_image_ids(bundle: dict, bundle_file: Path) -> None:
+    if os.geteuid() != 0:
+        fail("recording loaded image IDs requires root")
+    try:
+        info = os.stat(bundle_file)
+    except OSError as exc:
+        fail(f"image bundle cannot be stat'ed: {exc}")
+    if info.st_uid != 0 or info.st_mode & 0o077:
+        fail("server image bundle must be root-owned with mode 0600 or stricter")
+    observed = verify_local_images(bundle, allow_unrecorded=True)
+    for service, image_id in observed.items():
+        bundle["images"][service]["loaded_image_id"] = image_id
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{bundle_file.name}.", dir=bundle_file.parent)
+    temporary = Path(temporary_name)
+    try:
+        os.fchown(fd, 0, 0)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(bundle, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, bundle_file)
+        directory_fd = os.open(bundle_file.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
 
 
 parser = argparse.ArgumentParser()
@@ -198,8 +264,10 @@ parser.add_argument("bundle")
 parser.add_argument("--manifest")
 parser.add_argument("--verify-archives")
 parser.add_argument("--verify-local", action="store_true")
+parser.add_argument("--record-loaded-image-ids", action="store_true")
 parser.add_argument("--expected-source-sha")
 parser.add_argument("--get-config-digest", choices=SERVICES)
+parser.add_argument("--get-loaded-image-id", choices=SERVICES)
 args = parser.parse_args()
 bundle_path = Path(args.bundle)
 bundle = validate_bundle(bundle_path)
@@ -211,9 +279,16 @@ if args.verify_archives:
     verify_archives(bundle, Path(args.verify_archives))
 if args.verify_local:
     verify_local_images(bundle)
+if args.record_loaded_image_ids:
+    record_local_image_ids(bundle, bundle_path)
 if args.get_config_digest:
     print(bundle["images"][args.get_config_digest]["config_digest"])
-elif not (args.manifest or args.verify_archives or args.verify_local or args.expected_source_sha):
-    parser.error("select --manifest, --verify-archives, --verify-local, --expected-source-sha, or --get-config-digest")
+elif args.get_loaded_image_id:
+    image_id = bundle["images"][args.get_loaded_image_id]["loaded_image_id"]
+    if not isinstance(image_id, str) or not DIGEST.fullmatch(image_id):
+        fail(f"{args.get_loaded_image_id} loaded image ID has not been recorded")
+    print(image_id)
+elif not (args.manifest or args.verify_archives or args.verify_local or args.record_loaded_image_ids or args.expected_source_sha):
+    parser.error("select --manifest, --verify-archives, --verify-local, --record-loaded-image-ids, --expected-source-sha, --get-config-digest, or --get-loaded-image-id")
 else:
     print(f"offline-image-bundle=valid source_sha={bundle['source_sha']} platform={bundle['platform']}")

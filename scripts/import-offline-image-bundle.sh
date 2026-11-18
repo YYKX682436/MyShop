@@ -27,6 +27,8 @@ PY
 done
 install -o root -g root -m 0600 "$bundle" "$bundle.tmp"
 mv -f -- "$bundle.tmp" "$bundle"
+python3 "$verifier" "$bundle" --record-loaded-image-ids >/dev/null \
+  || die 'loaded image runtime configuration or layers differ from the verified archive'
 python3 "$verifier" "$bundle" --manifest "$manifest" --verify-local >/dev/null \
   || die 'loaded image IDs or platforms do not match the verified transfer bundle'
 printf 'OFFLINE_IMAGES_IMPORTED source_sha=%s platform=linux/amd64 services=5\n' \
