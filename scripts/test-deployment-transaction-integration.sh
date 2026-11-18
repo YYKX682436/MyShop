@@ -310,6 +310,7 @@ for arg in "$@"; do
   case "$arg" in config|pull|up|stop) action=$arg ;; esac
 done
 printf 'compose-project=%s\n' "${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}" >>"${FAKE_PROJECT_LOG:?}"
+if [[ "$action" == up && " $* " == *" db "* ]]; then action=db-up; fi
 printf '%s\n' "$action" >>"${FAKE_COMPOSE_LOG:?}"
 candidate=0
 [[ "${MYSHOP_API_IMAGE:-}" == *":${CANDIDATE_SHA}" ]] && candidate=1
@@ -318,6 +319,9 @@ case "$action" in
     [[ ! ( "$candidate" == 1 && "${DEPLOY_TEST_FAIL:-}" == compose ) ]] || exit 1
     ;;
   pull) ;;
+  db-up)
+    [[ "${DEPLOY_TEST_FAIL:-}" != database-start ]]
+    ;;
   up)
     [[ ! ( "$candidate" == 1 && "${DEPLOY_TEST_FAIL:-}" == start ) ]] || exit 1
     [[ ! ( "$candidate" == 0 && "${DEPLOY_TEST_FAIL:-}" == rollback-start ) ]] || exit 1
@@ -563,6 +567,7 @@ assert state['rollback'] == []
 PY
 [[ "$(<"$case_root/running")" == candidate ]] || fail 'shared bootstrap did not keep the accepted candidate running'
 [[ -f "$case_root/recovery-point.dump" ]] || fail 'shared bootstrap did not preserve its fresh database recovery point'
+[[ "$(head -n 1 "$case_root/compose.log")" == db-up ]] || fail 'shared bootstrap did not start only PostgreSQL before making its recovery point'
 grep -Fxq myshop-friend-prod "$case_root/docker-projects.log" || fail 'shared bootstrap did not target the dedicated Compose project'
 if grep -vFxq myshop-friend-prod "$case_root/docker-projects.log"; then fail 'shared bootstrap queried a non-shared Compose project'; fi
 if grep -vE '^(compose|backup|schema|retention)-project=myshop-friend-prod$' "$case_root/helper-projects.log"; then fail 'a shared helper used a non-shared Compose project'; fi

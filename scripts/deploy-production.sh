@@ -322,6 +322,20 @@ wait_health() {
   done
 }
 
+wait_database() {
+  local project=$1 container_id status
+  for attempt in $(seq 1 60); do
+    container_id=$(docker ps --filter "label=com.docker.compose.project=$project" --filter 'label=com.docker.compose.service=db' -q | head -n 1)
+    if [[ -n "$container_id" ]]; then
+      status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")
+      [[ "$status" == healthy ]] && return 0
+      [[ "$status" != unhealthy && "$status" != exited && "$status" != dead ]] || return 1
+    fi
+    (( attempt == 60 )) && return 1
+    sleep 2
+  done
+}
+
 smoke() {
   [[ "${DEPLOY_TEST_FAIL:-}" != smoke ]] || return 1
   public_url=$(awk -F= '$1 == "PUBLIC_SITE_URL" {sub(/^[^=]*=/, ""); print; exit}' "$ENV_FILE")
@@ -527,6 +541,11 @@ create_predeploy_backup() {
 # A first shared-host attempt has no previously accepted friend-host version.
 # Snapshot the restored database before any registry failure can end the run.
 if (( shared_bootstrap )); then
+  # The shared first install owns a fresh, initially empty PostgreSQL volume.
+  # Start only that isolated service so the pre-migration recovery dump can be
+  # made before API schema changes or any application-facing service starts.
+  run_compose up -d db || pre_commit_fail database-start
+  wait_database "$COMPOSE_PROJECT" || pre_commit_fail database-health
   create_predeploy_backup || pre_commit_fail backup
 fi
 [[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || pre_commit_fail pull
