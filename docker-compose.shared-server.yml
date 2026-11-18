@@ -1,0 +1,184 @@
+# Shared-host production stack. Baota Nginx owns public 80/443; this stack
+# publishes only the internal Caddy ingress on an audited loopback port.
+name: ${MYSHOP_COMPOSE_PROJECT_NAME:-myshop-friend-prod}
+
+x-default-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: ${MYSHOP_POSTGRES_IMAGE:-ghcr.io/yykx682436/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685}
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: myshop
+      POSTGRES_USER: ${DB_USERNAME:-myshop}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in the private environment file}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - database
+
+  api:
+    image: ${MYSHOP_API_IMAGE:?MYSHOP_API_IMAGE must be a registry image tagged with the full 40-character release SHA}
+    logging: *default-logging
+    environment:
+      TZ: Asia/Shanghai
+      DB_URL: ${DB_URL:-jdbc:postgresql://db:5432/myshop}
+      DB_USERNAME: ${DB_USERNAME:-myshop}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in the private environment file}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in the private environment file}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_SUPER_ADMIN_USERNAME: ${BOOTSTRAP_SUPER_ADMIN_USERNAME:-}
+      BOOTSTRAP_SUPER_ADMIN_PASSWORD: ${BOOTSTRAP_SUPER_ADMIN_PASSWORD:-}
+      UPLOAD_PATH: ${UPLOAD_PATH:-/app/uploads}
+      UPLOAD_URL_PREFIX: ${UPLOAD_URL_PREFIX:-/api/uploads}
+      PRIVATE_UPLOAD_PATH: ${PRIVATE_UPLOAD_PATH:-/app/private-uploads}
+      MAIL_ENABLED: ${MAIL_ENABLED:-false}
+      MAIL_HOST: ${MAIL_HOST:-localhost}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_SITE_URL: ${MAIL_SITE_URL:-https://mc.mc520.top}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be set in the private environment file}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      RATE_LIMIT_TRUSTED_PROXIES: ${MYSHOP_CADDY_IP:?MYSHOP_CADDY_IP must match the reserved Caddy address}
+      IP_GEO_IPV4_DB_PATH: ${IP_GEO_IPV4_DB_PATH:-/app/ipdb/ip2region_v4.xdb}
+      IP_GEO_IPV6_DB_PATH: ${IP_GEO_IPV6_DB_PATH:-/app/ipdb/ip2region_v6.xdb}
+      NODE_EXPORTER_URL: http://node-exporter:9100
+      DATA_DISK_MOUNTPOINT: ${MYSHOP_DATA_MOUNTPOINT:-/}
+      DASHBOARD_CADDY_HOST: caddy
+      DASHBOARD_CADDY_PORT: "80"
+    volumes:
+      - type: bind
+        source: ${MYSHOP_DATA_ROOT:?MYSHOP_DATA_ROOT must point to the independent data directory}/uploads
+        target: /app/uploads
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MYSHOP_DATA_ROOT:?MYSHOP_DATA_ROOT must point to the independent data directory}/private-uploads
+        target: /app/private-uploads
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MYSHOP_DATA_ROOT:?MYSHOP_DATA_ROOT must point to the independent data directory}/ipdb
+        target: /app/ipdb
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8083/api/site/config || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      edge: {}
+      database: {}
+      metrics: {}
+
+  node-exporter:
+    # Retain the dashboard metrics with a limited collector set on an
+    # application-only network; no host port is published.
+    image: ${MYSHOP_NODE_EXPORTER_IMAGE:-ghcr.io/yykx682436/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0}
+    logging: *default-logging
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.filesystem
+      - --collector.loadavg
+      - --collector.meminfo
+      - --collector.stat
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    restart: unless-stopped
+    networks:
+      - metrics
+
+  web:
+    image: ${MYSHOP_WEB_IMAGE:?MYSHOP_WEB_IMAGE must be a registry image tagged with the full 40-character release SHA}
+    logging: *default-logging
+    environment:
+      TZ: Asia/Shanghai
+      BACKEND_URL: http://api:8083
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be set in the private environment file}
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - edge
+
+  caddy:
+    image: ${MYSHOP_CADDY_IMAGE:-ghcr.io/yykx682436/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648}
+    logging: *default-logging
+    environment:
+      BAOTA_NGINX_PROXY_CIDR: ${MYSHOP_BAOTA_NGINX_PROXY_CIDR:?must set the exact audited Baota-to-Caddy source address as /32 or /128}
+      BAOTA_NGINX_PROXY_SOURCE_CONFIRMED: ${MYSHOP_BAOTA_PROXY_SOURCE_CONFIRMED:?must explicitly confirm the audited Baota-to-Caddy source address}
+    ports:
+      - "127.0.0.1:${MYSHOP_WEB_PORT:?MYSHOP_WEB_PORT must be selected by the shared-host preflight}:80"
+    volumes:
+      - ./Caddyfile.shared-server:/etc/caddy/Caddyfile:ro
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      edge:
+        ipv4_address: ${MYSHOP_CADDY_IP:?MYSHOP_CADDY_IP must be a reserved address on the audited edge subnet}
+
+volumes:
+  postgres_data:
+
+networks:
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${MYSHOP_EDGE_SUBNET:?MYSHOP_EDGE_SUBNET must be selected after the Docker-network audit}
+          ip_range: ${MYSHOP_EDGE_IP_RANGE:?MYSHOP_EDGE_IP_RANGE must reserve a dynamic range away from the fixed Caddy address}
+  database:
+    driver: bridge
+    internal: true
+  metrics:
+    driver: bridge
+    internal: true

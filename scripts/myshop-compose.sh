@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 
 readonly PROJECT_ROOT="${MYSHOP_RUNTIME_ROOT:-$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
-readonly COMPOSE_FILE="$PROJECT_ROOT/docker-compose.prod.yml"
+PROJECT_NAME=${MYSHOP_COMPOSE_PROJECT_NAME:-}
+COMPOSE_FILE=${MYSHOP_COMPOSE_FILE:-}
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 2; }
-[[ -f "$COMPOSE_FILE" ]] || die "production Compose file is missing: $COMPOSE_FILE"
 command -v docker >/dev/null 2>&1 || die 'docker is unavailable'
 docker compose version >/dev/null 2>&1 || die 'docker compose is unavailable'
 
@@ -17,14 +17,25 @@ for ((i=0; i<${#args[@]}; i++)); do case "${args[$i]}" in
   --env-file=*) env_file=${args[$i]#--env-file=} ;;
 esac; done
 
+[[ -f "$env_file" ]] || die "production env file is missing: $env_file"
+read_env_value() { local key=$1 value source_file=${2:-$env_file}; value=$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$source_file"); value=${value#\"}; value=${value%\"}; value=${value#\'}; value=${value%\'}; printf '%s' "$value"; }
+COMPOSE_FILE=${COMPOSE_FILE:-$(read_env_value MYSHOP_COMPOSE_FILE)}
+COMPOSE_FILE=${COMPOSE_FILE:-$PROJECT_ROOT/docker-compose.prod.yml}
+PROJECT_NAME=${PROJECT_NAME:-$(read_env_value MYSHOP_COMPOSE_PROJECT_NAME)}
+PROJECT_NAME=${PROJECT_NAME:-myshop}
+[[ -f "$COMPOSE_FILE" ]] || die "production Compose file is missing: $COMPOSE_FILE"
+[[ "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die 'MYSHOP_COMPOSE_PROJECT_NAME is invalid'
+
+offline_images=${MYSHOP_OFFLINE_IMAGES:-$(read_env_value MYSHOP_OFFLINE_IMAGES)}
+offline_images=${offline_images:-0}
+[[ "$offline_images" == 0 || "$offline_images" == 1 ]] || die 'MYSHOP_OFFLINE_IMAGES must be 0 or 1'
+
 grep -Eq '^[[:space:]]*build:' "$COMPOSE_FILE" && die 'production Compose contains build:'
 grep -Eq '(:latest|:local)([[:space:]]|$)' "$COMPOSE_FILE" && die 'production Compose contains a mutable latest/local image'
-[[ -f "$env_file" ]] || die "production env file is missing: $env_file"
 approved_registry=${MYSHOP_APPROVED_REGISTRY:-}
 [[ -n "$approved_registry" ]] || die 'MYSHOP_APPROVED_REGISTRY must be supplied by host deployment configuration'
 [[ "$approved_registry" == ghcr.io/yykx682436 ]] || die 'MYSHOP_APPROVED_REGISTRY must be ghcr.io/yykx682436'
 
-read_env_value() { local key=$1 value source_file=${2:-$env_file}; value=$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$source_file"); value=${value#\"}; value=${value%\"}; value=${value#\'}; value=${value%\'}; printf '%s' "$value"; }
 state_file=${MYSHOP_DEPLOY_STATE:-$PROJECT_ROOT/deploy-state.json}
 
 read_state_ref() {
@@ -60,7 +71,7 @@ PY
 
 bootstrap_ref_from_running() {
   local service=$1 container_id
-  container_id=$(docker ps --filter 'label=com.docker.compose.project=myshop' --filter "label=com.docker.compose.service=$service" -q | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') \
+  container_id=$(docker ps --filter "label=com.docker.compose.project=$PROJECT_NAME" --filter "label=com.docker.compose.service=$service" -q | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') \
     || die "bootstrap requires exactly one running legacy $service container"
   docker inspect --format '{{.Config.Image}}' "$container_id" \
     || die "cannot read running legacy $service image ref"
@@ -102,5 +113,12 @@ fi
 [[ "$api_tag" == "$web_tag" ]] || die 'API and Web must use the same full release SHA'
 
 export MYSHOP_API_IMAGE="$api_ref" MYSHOP_WEB_IMAGE="$web_ref"
-export COMPOSE_PROJECT_NAME=myshop
+export MYSHOP_COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+if [[ "$offline_images" == 1 ]]; then
+  for arg in "${args[@]}"; do
+    [[ "$arg" != pull ]] || die 'offline image mode refuses Docker Compose pull'
+  done
+  if [[ " ${args[*]} " == *" up "* ]]; then args+=(--pull never); fi
+fi
 exec docker compose --project-directory "$PROJECT_ROOT" --file "$COMPOSE_FILE" --env-file "$env_file" "${args[@]}"

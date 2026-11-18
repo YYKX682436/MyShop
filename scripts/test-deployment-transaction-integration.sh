@@ -65,6 +65,36 @@ manifest = {
 Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
+offline_bundle="$tmp_dir/offline-image-bundle.json"
+python3 - "$manifest" "$offline_bundle" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1], encoding='utf-8'))
+images = {}
+for service in ('api', 'web'):
+    item = manifest['images'][service]
+    images[service] = {
+        'ref': item['ref'],
+        'source_digest': item['digest'],
+        'config_digest': 'sha256:' + ('7' if service == 'api' else '8') * 64,
+        'runtime_config_digest': 'sha256:' + ('9' if service == 'api' else 'a') * 64,
+        'rootfs_diff_ids': ['sha256:' + ('b' if service == 'api' else 'c') * 64],
+        'loaded_image_id': 'sha256:' + ('5' if service == 'api' else '6') * 64,
+        'archive': service + '.tar',
+        'archive_sha256': '0' * 64,
+    }
+for name in ('postgres', 'caddy', 'node-exporter'):
+    images[name] = {'ref': 'unused', 'source_digest': 'unused', 'config_digest': 'unused', 'runtime_config_digest': 'unused', 'rootfs_diff_ids': [], 'loaded_image_id': 'unused', 'archive': name + '.tar', 'archive_sha256': '0' * 64}
+json.dump({'version':2,'source_sha':manifest['source_sha'],'platform':'linux/amd64','images':images}, open(sys.argv[2], 'w'))
+PY
+cat >"$tmp_dir/offline-verifier.py" <<'OFFLINE_VERIFY'
+#!/usr/bin/env python3
+import sys
+if '--get-loaded-image-id' in sys.argv:
+    service = sys.argv[sys.argv.index('--get-loaded-image-id') + 1]
+    print('sha256:' + ('5' if service == 'api' else '6') * 64)
+OFFLINE_VERIFY
+chmod +x "$tmp_dir/offline-verifier.py"
+
 fake_bin="$tmp_dir/fake-bin"
 mkdir -p "$fake_bin"
 
@@ -86,6 +116,11 @@ candidate_sha=${CANDIDATE_SHA:?}
 registry=${FAKE_REGISTRY:?}
 mode=${FAKE_MODE:-deploy}
 stage=$(cat "$root/running" 2>/dev/null || printf old)
+if [[ "${1:-}" == ps && -n "${FAKE_DOCKER_PROJECT_LOG:-}" ]]; then
+  for arg in "$@"; do
+    [[ "$arg" == label=com.docker.compose.project=* ]] && printf '%s\n' "${arg##*=}" >>"$FAKE_DOCKER_PROJECT_LOG"
+  done
+fi
 
 digest_for_sha() {
   case "$1" in
@@ -94,6 +129,14 @@ digest_for_sha() {
     "$rollback2_sha") printf 'sha256:%s' "$(printf '3%.0s' {1..64})" ;;
     "$candidate_sha") printf 'sha256:%s' "$(printf '4%.0s' {1..64})" ;;
     *) printf 'sha256:%s' "$(printf '9%.0s' {1..64})" ;;
+  esac
+}
+
+offline_id_for() {
+  case "$1" in
+    *myshop-api:*) printf 'sha256:%s' "$(printf '5%.0s' {1..64})" ;;
+    *myshop-web:*) printf 'sha256:%s' "$(printf '6%.0s' {1..64})" ;;
+    *) digest_for_sha "${1##*:}" ;;
   esac
 }
 
@@ -156,6 +199,9 @@ if [[ "$mode" == retention ]]; then
             printf '%s/myshop-%s|%s|%s\n' "$registry" "$service" "$sha" "$(digest_for_sha "$sha")"
           done
         done
+        if [[ "${MYSHOP_SHARED_SERVER:-0}" == 1 ]]; then
+          printf 'myshop-api|friend-custom|sha256:%s\n' "$(printf '7%.0s' {1..64})"
+        fi
       else
         printf '%s\n' "${3:-}" >>"${FAKE_REMOVAL_LOG:?}"
       fi
@@ -186,6 +232,10 @@ case "${1:-}" in
       fi
     fi
     ;;
+  port)
+    [[ "${stage}" == candidate && "${2:-}" == myshop-caddy-candidate && "${3:-}" == 80/tcp ]] || exit 1
+    printf '127.0.0.1:8082\n'
+    ;;
   inspect)
     format=${3:-}
     target=${4:-}
@@ -206,6 +256,9 @@ case "${1:-}" in
         [[ "$stage" == candidate ]] && sha=$candidate_sha
         if [[ "$stage" == candidate && "${DEPLOY_TEST_FAIL:-}" == final-identity ]]; then
           printf 'sha256:%s\n' "$(printf '8%.0s' {1..64})"
+        elif [[ "$stage" == candidate && "${FAKE_OFFLINE_MODE:-0}" == 1 ]]; then
+          offline_id_for "${registry}/myshop-${service}:${candidate_sha}"
+          printf '\n'
         else
           digest_for_sha "$sha"
           printf '\n'
@@ -222,7 +275,12 @@ case "${1:-}" in
       tag=${target##*:}
       digest=$(digest_for_sha "$tag")
       if [[ "$format" == '{{.Id}}' ]]; then
-        printf '%s\n' "$digest"
+        if [[ "${FAKE_OFFLINE_MODE:-0}" == 1 && "$tag" == "$candidate_sha" ]]; then
+          offline_id_for "$target"
+          printf '\n'
+        else
+          printf '%s\n' "$digest"
+        fi
       else
         printf '%s@%s\n' "${target%:*}" "$digest"
       fi
@@ -249,8 +307,11 @@ set -Eeuo pipefail
 root=${FAKE_ROOT:?}
 action=
 for arg in "$@"; do
-  case "$arg" in config|pull|up) action=$arg ;; esac
+  case "$arg" in config|pull|up|stop) action=$arg ;; esac
 done
+printf 'compose-project=%s\n' "${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}" >>"${FAKE_PROJECT_LOG:?}"
+if [[ "$action" == up && " $* " == *" db "* ]]; then action=db-up; fi
+printf '%s\n' "$action" >>"${FAKE_COMPOSE_LOG:?}"
 candidate=0
 [[ "${MYSHOP_API_IMAGE:-}" == *":${CANDIDATE_SHA}" ]] && candidate=1
 case "$action" in
@@ -258,10 +319,17 @@ case "$action" in
     [[ ! ( "$candidate" == 1 && "${DEPLOY_TEST_FAIL:-}" == compose ) ]] || exit 1
     ;;
   pull) ;;
+  db-up)
+    [[ "${DEPLOY_TEST_FAIL:-}" != database-start ]]
+    ;;
   up)
     [[ ! ( "$candidate" == 1 && "${DEPLOY_TEST_FAIL:-}" == start ) ]] || exit 1
     [[ ! ( "$candidate" == 0 && "${DEPLOY_TEST_FAIL:-}" == rollback-start ) ]] || exit 1
     if (( candidate )); then printf 'candidate\n' >"$root/running"; else printf 'old\n' >"$root/running"; fi
+    ;;
+  stop)
+    [[ "$candidate" == 1 ]] || exit 1
+    printf 'stopped\n' >"$root/running"
     ;;
   *) exit 99 ;;
 esac
@@ -271,6 +339,8 @@ cat >"$tmp_dir/backup.sh" <<'BACKUP'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf 'backup\n' >>"${FAKE_BACKUP_LOG:?}"
+printf 'backup-project=%s\n' "${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}" >>"${FAKE_PROJECT_LOG:?}"
+[[ -e "$FAKE_ROOT/recovery-point.dump" ]] || printf 'imported-data-recovery-point\n' >"$FAKE_ROOT/recovery-point.dump"
 [[ "${DEPLOY_TEST_FAIL:-}" != backup ]]
 BACKUP
 
@@ -278,6 +348,7 @@ cat >"$tmp_dir/schema.sh" <<'SCHEMA'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf 'schema\n' >>"${FAKE_SCHEMA_LOG:?}"
+printf 'schema-project=%s\n' "${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}" >>"${FAKE_PROJECT_LOG:?}"
 [[ "${DEPLOY_TEST_FAIL:-}" != schema && "${DEPLOY_TEST_FAIL:-}" != rollback-start ]]
 SCHEMA
 
@@ -299,6 +370,7 @@ cat >"$tmp_dir/retention.sh" <<'RETENTION'
 set -Eeuo pipefail
 if [[ " $* " == *" --dry-run "* ]]; then dry=yes; else dry=no; fi
 printf 'retention held=%s dry=%s args=%s\n' "${HOST_DEPLOY_LOCK_HELD:-}" "$dry" "$*" >>"${FAKE_RETENTION_LOG:?}"
+printf 'retention-project=%s\n' "${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}" >>"${FAKE_PROJECT_LOG:?}"
 if [[ "${DEPLOY_TEST_FAIL:-}" == retention-preflight && "$dry" == yes ]]; then exit 1; fi
 if [[ "${DEPLOY_TEST_FAIL:-}" == retention && "$dry" == no ]]; then exit 1; fi
 exit 0
@@ -307,6 +379,10 @@ RETENTION
 cat >"$fake_bin/curl" <<'CURL'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+url=${!#}
+printf '%s\n' "$url" >>"${FAKE_CURL_LOG:?}"
+if [[ "$url" == https://mc.mc520.top/* ]]; then exit 0; fi
+if [[ "${FAKE_CANDIDATE_DOWN:-0}" == 1 && "$url" == http://127.0.0.1:* ]]; then exit 22; fi
 count_file="$FAKE_ROOT/curl-count"
 count=$(cat "$count_file" 2>/dev/null || printf 0)
 if [[ "${DEPLOY_TEST_FAIL:-}" == smoke && "$count" -eq 0 ]]; then
@@ -333,7 +409,11 @@ reset_case() {
   : >"$case_root/schema.log"
   : >"$case_root/health.log"
   : >"$case_root/retention.log"
-  rm -f "$case_root/health-count" "$case_root/curl-count"
+  : >"$case_root/docker-projects.log"
+  : >"$case_root/deploy-curl.log"
+  : >"$case_root/helper-projects.log"
+  : >"$case_root/compose.log"
+  rm -f "$case_root/health-count" "$case_root/curl-count" "$case_root/recovery-point.dump"
 }
 
 run_deploy() {
@@ -345,14 +425,30 @@ run_deploy() {
     CANDIDATE_SHA="$candidate_sha" \
     FAKE_REGISTRY="$registry" \
     FAKE_PULL_LOG="$case_root/pull.log" \
+    FAKE_COMPOSE_LOG="$case_root/compose.log" \
     FAKE_REMOVAL_LOG="$case_root/removal.log" \
     FAKE_BACKUP_LOG="$case_root/backup.log" \
     FAKE_SCHEMA_LOG="$case_root/schema.log" \
     FAKE_HEALTH_LOG="$case_root/health.log" \
     FAKE_RETENTION_LOG="$case_root/retention.log" \
+    FAKE_DOCKER_PROJECT_LOG="$case_root/docker-projects.log" \
+    FAKE_PROJECT_LOG="$case_root/helper-projects.log" \
+    FAKE_CURL_LOG="$case_root/deploy-curl.log" \
+    FAKE_CANDIDATE_DOWN="${FAKE_CANDIDATE_DOWN:-0}" \
+    FAKE_OFFLINE_MODE="${FAKE_OFFLINE_TEST:-0}" \
     MYSHOP_RUNTIME_ROOT="$case_root" \
     MYSHOP_DEPLOY_STATE="$case_root/deploy-state.json" \
     MYSHOP_ENV_FILE="$case_root/.env" \
+    MYSHOP_COMPOSE_PROJECT_NAME="${FAKE_SHARED_TEST:+myshop-friend-prod}" \
+    MYSHOP_COMPOSE_FILE="${FAKE_SHARED_TEST:+$case_root/docker-compose.shared-server.yml}" \
+    MYSHOP_SHARED_SERVER="${FAKE_SHARED_TEST:-0}" \
+    MYSHOP_RUN_HOST_MAINTENANCE="${FAKE_SHARED_TEST:+0}" \
+    MYSHOP_DATA_ROOT="${FAKE_SHARED_TEST:+/srv/myshop-friend}" \
+    MYSHOP_BACKUP_DIR="${FAKE_SHARED_TEST:+$case_root/database-backups}" \
+    MYSHOP_BAOTA_PROXY_SOURCE_CONFIRMED="${FAKE_BAOTA_PROXY_CONFIRMED-${FAKE_SHARED_TEST:+1}}" \
+    MYSHOP_BAOTA_NGINX_PROXY_CIDR="${FAKE_BAOTA_PROXY_CIDR-${FAKE_SHARED_TEST:+172.29.0.1/32}}" \
+    MYSHOP_SMOKE_BASE_URL="${FAKE_SHARED_TEST:+http://127.0.0.1:8082}" \
+    MYSHOP_SMOKE_HOST_HEADER="${FAKE_SHARED_TEST:+${FAKE_CANDIDATE_HOST:-mc.mc520.top}}" \
     MYSHOP_COMPOSE_WRAPPER="$tmp_dir/compose.sh" \
     MYSHOP_STATE_WRITER="$state_writer" \
     MYSHOP_SCHEMA_SCRIPT="$tmp_dir/schema.sh" \
@@ -361,6 +457,9 @@ run_deploy() {
     HOST_STORAGE_HEALTH_SCRIPT="$tmp_dir/health.sh" \
     HOST_DEPLOY_LOCK_FILE="$case_root/deploy.lock" \
     MYSHOP_APPROVED_REGISTRY="$registry" \
+    MYSHOP_OFFLINE_IMAGES="${FAKE_OFFLINE_TEST:-0}" \
+    MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="${FAKE_OFFLINE_TEST:+$offline_bundle}" \
+    MYSHOP_OFFLINE_IMAGE_VERIFIER="${FAKE_OFFLINE_TEST:+$tmp_dir/offline-verifier.py}" \
     MYSHOP_MAINTENANCE_DIR="$case_root/maintenance" \
     bash "$deploy_script" "$manifest"
 }
@@ -409,6 +508,9 @@ pass 'rollback failure returns CRITICAL_ROLLBACK_FAILED without retention'
 reset_case
 if output=$(run_deploy 2>&1); then success_status=0; else success_status=$?; fi
 (( success_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'successful candidate deployment failed'; }
+grep -Fq 'backup-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production backup did not retain the myshop project ID'
+grep -Fq 'schema-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production schema check did not retain the myshop project ID'
+grep -Fq 'retention-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production retention did not retain the myshop project ID'
 grep -Fq 'DEPLOYMENT TRANSACTION COMMITTED' <<<"$output" || fail 'commit point was not reported'
 grep -Fq 'DEPLOYMENT ACCEPTED' <<<"$output" || fail 'successful deployment was not accepted'
 python3 - "$case_root/deploy-state.json" "$old_sha" "$rollback1_sha" "$candidate_sha" <<'PY'
@@ -449,6 +551,126 @@ assert state['active']['source_sha'] == sys.argv[3]
 assert [item['source_sha'] for item in state['rollback']] == [sys.argv[2]]
 PY
 pass 'ordinary upgrade from the first accepted state preserves the initial version for rollback'
+
+printf 'SHARED FIRST-INSTALL BOOTSTRAP REGRESSION\n'
+reset_case
+rm -f "$case_root/deploy-state.json"
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+if output=$(FAKE_SHARED_TEST=1 run_deploy 2>&1); then bootstrap_status=0; else bootstrap_status=$?; fi
+(( bootstrap_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'shared first-install bootstrap failed'; }
+grep -Fq 'DEPLOYMENT ACCEPTED' <<<"$output" || fail 'shared bootstrap did not reach acceptance'
+python3 - "$case_root/deploy-state.json" "$candidate_sha" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding='utf-8'))
+assert state['active']['source_sha'] == sys.argv[2]
+assert state['rollback'] == []
+PY
+[[ "$(<"$case_root/running")" == candidate ]] || fail 'shared bootstrap did not keep the accepted candidate running'
+[[ -f "$case_root/recovery-point.dump" ]] || fail 'shared bootstrap did not preserve its fresh database recovery point'
+[[ "$(head -n 1 "$case_root/compose.log")" == db-up ]] || fail 'shared bootstrap did not start only PostgreSQL before making its recovery point'
+grep -Fxq myshop-friend-prod "$case_root/docker-projects.log" || fail 'shared bootstrap did not target the dedicated Compose project'
+if grep -vFxq myshop-friend-prod "$case_root/docker-projects.log"; then fail 'shared bootstrap queried a non-shared Compose project'; fi
+if grep -vE '^(compose|backup|schema|retention)-project=myshop-friend-prod$' "$case_root/helper-projects.log"; then fail 'a shared helper used a non-shared Compose project'; fi
+for helper in compose backup schema retention; do
+  grep -Fxq "$helper-project=myshop-friend-prod" "$case_root/helper-projects.log" || fail "shared $helper helper did not receive the dedicated Compose project"
+done
+pass 'shared first install starts without a baseline and commits only after loopback candidate acceptance'
+
+reset_case
+rm -f "$case_root/deploy-state.json"
+cat >"$case_root/.env" <<EOF
+PUBLIC_SITE_URL=https://myshop-candidate.mc520.top
+MYSHOP_OFFLINE_IMAGES=1
+MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE=$offline_bundle
+EOF
+if output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_CANDIDATE_HOST=myshop-candidate.mc520.top run_deploy 2>&1); then offline_status=0; else offline_status=$?; fi
+(( offline_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'offline shared candidate deployment failed'; }
+grep -Fq 'DEPLOYMENT ACCEPTED' <<<"$output" || fail 'offline shared candidate was not accepted'
+[[ ! -s "$case_root/pull.log" ]] || fail 'offline deployment attempted a registry image pull'
+if grep -Fxq pull "$case_root/compose.log"; then fail 'offline deployment invoked docker compose pull'; fi
+python3 - "$case_root/deploy-state.json" "$candidate_sha" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1], encoding='utf-8'))
+active = state['active']
+assert active['source_sha'] == sys.argv[2]
+assert active['images']['api']['image_id'] == 'sha256:' + '5' * 64
+assert active['images']['web']['image_id'] == 'sha256:' + '6' * 64
+assert active['images']['api']['digest'].startswith('sha256:4')
+PY
+grep -Fxq 'http://127.0.0.1:8082/' "$case_root/deploy-curl.log" || fail 'offline candidate smoke did not target the local candidate port'
+pass 'offline shared deployment verifies loaded image IDs, skips registry pulls, and accepts the temporary candidate host'
+
+reset_case
+rm -f "$case_root/deploy-state.json"
+cat >"$case_root/.env" <<EOF
+PUBLIC_SITE_URL=https://myshop-candidate.mc520.top
+MYSHOP_OFFLINE_IMAGES=1
+MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE=$offline_bundle
+EOF
+printf 'old production data untouched\n' >"$case_root/old-production-sentinel"
+set +e
+offline_failure=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_CANDIDATE_HOST=myshop-candidate.mc520.top DEPLOY_TEST_FAIL=smoke run_deploy 2>&1)
+offline_failure_status=$?
+set -e
+(( offline_failure_status == 1 )) || { printf '%s\n' "$offline_failure" >&2; fail 'offline first-install smoke failure was not rejected'; }
+grep -Fq 'BOOTSTRAP FAILED' <<<"$offline_failure" || fail 'offline bootstrap failure was treated as a successful rollback target'
+[[ ! -e "$case_root/deploy-state.json" ]] || fail 'offline failed candidate was recorded as accepted'
+[[ -f "$case_root/recovery-point.dump" && -f "$case_root/candidates/$candidate_sha.failed.json" ]] || fail 'offline failed candidate lost its recovery record'
+[[ "$(<"$case_root/running")" == stopped ]] || fail 'offline failed candidate app services were left running'
+[[ ! -s "$case_root/pull.log" ]] || fail 'offline failure path attempted a registry pull'
+grep -Fxq 'old production data untouched' "$case_root/old-production-sentinel" || fail 'offline failure changed the old production fixture'
+pass 'offline first-install failure stops only candidate apps and preserves recovery data and old production'
+
+reset_case
+rm -f "$case_root/deploy-state.json"
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+set +e
+first_pull_failure=$(FAKE_SHARED_TEST=1 DEPLOY_TEST_FAIL=pull run_deploy 2>&1)
+first_pull_status=$?
+set -e
+(( first_pull_status == 1 )) || { printf '%s\n' "$first_pull_failure" >&2; fail 'first shared image-pull failure did not preserve bootstrap state'; }
+grep -Fq 'BOOTSTRAP FAILED' <<<"$first_pull_failure" || fail 'first shared pull failure was incorrectly treated as an accepted rollback'
+[[ -s "$case_root/backup.log" && -f "$case_root/recovery-point.dump" ]] || fail 'first shared pull failure happened before the database recovery point was made'
+[[ ! -e "$case_root/deploy-state.json" ]] || fail 'first shared pull failure wrote accepted state'
+pass 'first shared attempt backs up the restored database before registry pulls'
+
+reset_case
+rm -f "$case_root/deploy-state.json"
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+set +e
+unconfirmed_output=$(FAKE_SHARED_TEST=1 FAKE_BAOTA_PROXY_CONFIRMED=0 FAKE_BAOTA_PROXY_CIDR= run_deploy 2>&1)
+unconfirmed_status=$?
+set -e
+(( unconfirmed_status != 0 )) || fail 'shared deployment started without a confirmed Baota proxy address'
+grep -Fq 'source address has not been explicitly confirmed' <<<"$unconfirmed_output" || fail 'unconfirmed proxy source failed for an unrelated reason'
+[[ ! -s "$case_root/pull.log" && ! -s "$case_root/backup.log" && ! -s "$case_root/docker-projects.log" ]] || fail 'unconfirmed proxy source reached Docker operations'
+[[ ! -e "$case_root/deploy-state.json" ]] || fail 'unconfirmed proxy source created accepted deployment state'
+pass 'unconfirmed Baota-to-Caddy source address blocks deployment before any Docker operation'
+
+reset_case
+rm -f "$case_root/deploy-state.json"
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+printf 'old production domain and data unchanged\n' >"$case_root/old-production-sentinel"
+PATH="$fake_bin:$PATH" FAKE_ROOT="$case_root" FAKE_CURL_LOG="$case_root/old-site-check.log" \
+  FAKE_CANDIDATE_DOWN=1 curl --fail --silent --show-error https://mc.mc520.top/ \
+  || fail 'old public production-site fixture should be healthy'
+: >"$case_root/deploy-curl.log"
+set +e
+bootstrap_failure_output=$(FAKE_SHARED_TEST=1 FAKE_CANDIDATE_DOWN=1 run_deploy 2>&1)
+bootstrap_failure_status=$?
+set -e
+(( bootstrap_failure_status == 1 )) || { printf '%s\n' "$bootstrap_failure_output" >&2; fail 'failed shared candidate did not stop without accepting state'; }
+grep -Fq 'BOOTSTRAP FAILED' <<<"$bootstrap_failure_output" || fail 'first-install failure was reported as a rollback to an accepted version'
+[[ ! -e "$case_root/deploy-state.json" ]] || fail 'failed first-install candidate was written as accepted state'
+[[ -f "$case_root/candidates/$candidate_sha.failed.json" ]] || fail 'failed first-install candidate record is missing'
+[[ -f "$case_root/recovery-point.dump" ]] || fail 'failed first-install candidate removed the database recovery point'
+[[ "$(<"$case_root/running")" == stopped ]] || fail 'failed first-install app services were not stopped'
+grep -Fxq 'old production domain and data unchanged' "$case_root/old-production-sentinel" || fail 'shared failure changed old production data fixture'
+[[ -s "$case_root/old-site-check.log" ]] || fail 'old production site fixture was not verified healthy'
+if grep -v '^http://127\.0\.0\.1:8082' "$case_root/deploy-curl.log" | grep -q .; then fail 'shared smoke attempted a non-candidate URL'; fi
+if grep -q 'mc\.mc520\.top' "$case_root/deploy-curl.log"; then fail 'shared smoke used the public old-domain URL'; fi
+if grep -vFxq myshop-friend-prod "$case_root/docker-projects.log"; then fail 'shared failure inspected a non-shared Compose project'; fi
+pass 'healthy old domain cannot mask a failing candidate; no accepted state is written and recovery data stays intact'
 
 assert_post_commit_failure() {
   local hook=$1 output status maintenance_file
@@ -525,5 +747,29 @@ printf 'DESTRUCTIVE-RETENTION INVARIANT before=active:%s rollback:[%s,%s] promot
   "$old_sha" "$rollback1_sha" "$rollback2_sha" "$candidate_sha" "$old_sha" "$rollback1_sha" \
   "$registry/myshop-api:$rollback2_sha" "$registry/myshop-web:$rollback2_sha" "$candidate_sha" "$old_sha" "$rollback1_sha"
 pass 'accepted D,A,B remains the invariant after C deletion and post-commit maintenance failure'
+
+shared_retention_root="$tmp_dir/shared-retention"
+mkdir -p "$shared_retention_root"
+cp "$invariant_root/deploy-state.json" "$shared_retention_root/deploy-state.json"
+: >"$shared_retention_root/removals.log"
+PATH="$fake_bin:$PATH" \
+  FAKE_MODE=retention \
+  FAKE_ROOT="$shared_retention_root" \
+  OLD_SHA="$old_sha" \
+  ROLLBACK1_SHA="$rollback1_sha" \
+  ROLLBACK2_SHA="$rollback2_sha" \
+  CANDIDATE_SHA="$candidate_sha" \
+  FAKE_REGISTRY="$registry" \
+  FAKE_REMOVAL_LOG="$shared_retention_root/removals.log" \
+  MYSHOP_RUNTIME_ROOT="$shared_retention_root" \
+  MYSHOP_DEPLOY_STATE="$shared_retention_root/deploy-state.json" \
+  MYSHOP_COMPOSE_PROJECT_NAME=myshop-friend-prod \
+  MYSHOP_SHARED_SERVER=1 \
+  HOST_DEPLOY_LOCK_FILE="$shared_retention_root/deploy.lock" \
+  HOST_DEPLOY_LOCK_HELD=1 \
+  bash "$retention_script" >/dev/null
+if grep -q '^myshop-api:friend-custom$' "$shared_retention_root/removals.log"; then fail 'shared retention removed a similarly named friend image'; fi
+printf 'PROJECT ISOLATION shared retention removed no unrelated local myshop-api image\n'
+pass 'shared retention limits deletion to repositories present in the accepted MyShop state'
 
 printf 'Deployment transaction shell integration regression passed\n'

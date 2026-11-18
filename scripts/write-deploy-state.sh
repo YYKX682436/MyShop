@@ -68,6 +68,9 @@ def validate_record(record: object, label: str, services: set[str] | None = None
             fail(f"{label}.images.{service}.ref tag must equal source_sha")
         if not isinstance(digest, str) or not digest_re.fullmatch(digest):
             fail(f"{label}.images.{service}.digest is invalid")
+        image_id = image.get("image_id")
+        if image_id is not None and (not isinstance(image_id, str) or not digest_re.fullmatch(image_id)):
+            fail(f"{label}.images.{service}.image_id is invalid")
     return {
         "source_sha": sha,
         "accepted_at": accepted_at,
@@ -84,6 +87,32 @@ candidate = {
     "images": manifest.get("images"),
 }
 candidate = validate_record(candidate, "candidate")
+offline_mode = os.environ.get("MYSHOP_OFFLINE_IMAGES", "0")
+if offline_mode not in {"0", "1"}:
+    fail("MYSHOP_OFFLINE_IMAGES must be 0 or 1")
+if offline_mode == "1":
+    bundle_path = os.environ.get("MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE", "")
+    if not bundle_path:
+        fail("offline image mode requires MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE")
+    try:
+        bundle = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"offline image bundle is invalid: {exc}")
+    if bundle.get("version") != 2 or bundle.get("source_sha") != candidate["source_sha"]:
+        fail("offline image bundle does not match candidate source SHA")
+    bundle_images = bundle.get("images")
+    if not isinstance(bundle_images, dict):
+        fail("offline image bundle images are malformed")
+    for service in ("api", "web"):
+        image = bundle_images.get(service)
+        if not isinstance(image, dict):
+            fail(f"offline image bundle has no {service} record")
+        if image.get("ref") != candidate["images"][service]["ref"] or image.get("source_digest") != candidate["images"][service]["digest"]:
+            fail(f"offline image bundle {service} identity differs from the release manifest")
+        image_id = image.get("loaded_image_id")
+        if not isinstance(image_id, str) or not digest_re.fullmatch(image_id):
+            fail(f"offline image bundle {service} loaded image ID is invalid")
+        candidate["images"][service]["image_id"] = image_id
 
 old_state = None
 if state_path.exists():

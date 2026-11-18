@@ -23,11 +23,21 @@ LOCK = Path(os.environ.get("HOST_DEPLOY_LOCK_FILE", "/run/myshop-deploy.lock"))
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 SERVICES = {"api", "web"}
+PROJECT_NAME = os.environ.get("MYSHOP_COMPOSE_PROJECT_NAME", "myshop")
+SHARED_SERVER = (
+    os.environ.get("MYSHOP_SHARED_SERVER", "0").lower() in {"1", "true", "yes"}
+    or PROJECT_NAME.startswith("myshop-friend-")
+)
+STORAGE_MOUNTPOINT = os.environ.get("MYSHOP_STORAGE_MOUNTPOINT", "/data")
 
 
 def die(message: str) -> "NoReturn":
     print(f"[myshop-retention] ERROR: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+if SHARED_SERVER and not PROJECT_NAME.startswith("myshop-friend-"):
+    die("shared-server retention requires a dedicated myshop-friend-* Compose project")
 
 
 def docker(*args: str, check: bool = True) -> str:
@@ -51,6 +61,9 @@ def record(value: object, label: str, services: set[str] = SERVICES) -> dict:
         ref, digest = item.get("ref"), item.get("digest")
         if not isinstance(ref, str) or not ref or ":latest" in ref or ":local" in ref or not isinstance(digest, str) or not DIGEST.fullmatch(digest):
             die(f"{label}.images.{service} is mutable or has an invalid digest")
+        image_id = item.get("image_id")
+        if image_id is not None and (not isinstance(image_id, str) or not DIGEST.fullmatch(image_id)):
+            die(f"{label}.images.{service}.image_id is invalid")
     return value
 
 
@@ -79,12 +92,12 @@ def load_records(state_path: Path) -> list[dict]:
     return records
 
 
-def image_matches(ref: str, expected_digest: str) -> tuple[str, bool]:
+def image_matches(ref: str, expected_digest: str, expected_image_id: str = "") -> tuple[str, bool]:
     image_id = docker("image", "inspect", "--format", "{{.Id}}", ref, check=False).strip()
     if not image_id:
         return "", False
     repo_digests = docker("image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", ref, check=False)
-    return image_id, image_id == expected_digest or any(line.endswith("@" + expected_digest) for line in repo_digests.splitlines())
+    return image_id, image_id == expected_image_id or image_id == expected_digest or any(line.endswith("@" + expected_digest) for line in repo_digests.splitlines())
 
 
 def main() -> int:
@@ -127,17 +140,20 @@ def main() -> int:
                     die(f"Web image is outside MyShop namespace: {repo}")
                 if tag != item["source_sha"]:
                     die(f"accepted image tag does not match source SHA: {ref}")
-                image_id, matches = image_matches(ref, image["digest"])
+                image_id, matches = image_matches(ref, image["digest"], image.get("image_id", ""))
                 if not matches:
                     die(f"accepted image digest cannot be verified locally: {ref}")
                 accepted_refs.add(ref)
                 repositories.add(repo)
                 accepted_ids.add(image_id)
 
-        owned_repositories = repositories | {"myshop-api", "myshop-web"}
+        # Legacy local tags remain supported on the original MyShop host.
+        # Shared-host retention may touch only repositories named by its
+        # accepted SHA state, never similarly named local images from a friend.
+        owned_repositories = repositories if SHARED_SERVER else repositories | {"myshop-api", "myshop-web"}
         if not args.prospective:
             for service, expected in active["images"].items():
-                rows = docker("ps", "--filter", "label=com.docker.compose.project=myshop", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
+                rows = docker("ps", "--filter", f"label=com.docker.compose.project={PROJECT_NAME}", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
                 matches = [line.split("|", 1) for line in rows.splitlines() if "|" in line]
                 if len(matches) != 1:
                     die(f"expected one active MyShop {service} container, found {len(matches)}")
@@ -168,12 +184,12 @@ def main() -> int:
         # restoring an older deployment state.
         for item in records:
             for image in item["images"].values():
-                _, matches = image_matches(image["ref"], image["digest"])
+                _, matches = image_matches(image["ref"], image["digest"], image.get("image_id", ""))
                 if not matches:
                     die(f"accepted image disappeared or changed: {image['ref']}")
 
         print(docker("system", "df", "-v"), end="")
-        print(subprocess.run(["df", "-h", "/data"], check=False, text=True, capture_output=True).stdout, end="")
+        print(subprocess.run(["df", "-h", STORAGE_MOUNTPOINT], check=False, text=True, capture_output=True).stdout, end="")
         print("[myshop-retention] completed; no source releases, volumes, or BuildKit cache were touched")
     return 0
 
