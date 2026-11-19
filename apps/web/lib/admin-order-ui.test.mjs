@@ -421,3 +421,25 @@ test("operation-log surfaces mask UUIDs instead of rendering technical target id
   assert.match(administratorLogsSource, /maskTechnicalIdsInText\(log\.detail\)/)
   assert.doesNotMatch(globalLogsSource, /log\.target_id/)
 })
+
+test("global operation logs label and filter user secret-price actions", () => {
+  const globalLogsSource = readSource("../app/admin/operation-logs/page.tsx")
+  const i18nSource = readSource("../lib/i18n.ts")
+
+  const actions = [
+    ["secret_price.create", "admin.actionSecretPriceCreate", "新增用户密价", "Create user secret price"],
+    ["secret_price.update", "admin.actionSecretPriceUpdate", "修改用户密价", "Update user secret price"],
+    ["secret_price.delete", "admin.actionSecretPriceDelete", "删除用户密价", "Delete user secret price"],
+  ]
+  for (const [action, key, zh, en] of actions) {
+    assert.match(globalLogsSource, new RegExp(`"${action.replaceAll(".", "\\.")}"`))
+    assert.match(i18nSource, new RegExp(`"${key}": "${zh}"`))
+    assert.match(i18nSource, new RegExp(`"${key}": "${en}"`))
+  }
+  assert.match(globalLogsSource, /value="secret_price"/)
+  assert.match(globalLogsSource, /admin\.secretPriceOps/)
+  for (const [, key] of actions) {
+    assert.equal((i18nSource.match(new RegExp(`"${key}"`, "g")) || []).length, 2)
+  }
+  assert.equal((i18nSource.match(/"admin\.secretPriceOps"/g) || []).length, 2)
+})

@@ -11,6 +11,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.model.pricing.PriceResolution;
 import com.myshop.model.pricing.PriceTarget;
 import com.myshop.model.request.UserSecretPriceRequest;
+import com.myshop.model.response.UserSecretPriceAuditTargetResponse;
 import com.myshop.model.response.UserSecretPriceResponse;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
@@ -95,12 +96,16 @@ public class UserSecretPriceService {
     }
 
     @Transactional
-    public void delete(UUID userId, UUID id) {
+    public UserSecretPriceAuditTargetResponse delete(UUID userId, UUID id) {
         requireUser(userId);
         UserSecretPrice entry = requireEntry(userId, id);
-        lockProduct(entry.getProductId());
+        Product product = lockProduct(entry.getProductId());
+        validateTarget(product, entry.getSpecId());
+        UserSecretPriceAuditTargetResponse auditTarget = new UserSecretPriceAuditTargetResponse(
+                entry.getId(), entry.getProductId(), entry.getSpecId());
         secrets.delete(entry);
         secrets.flush();
+        return auditTarget;
     }
 
     private User requireUser(UUID userId) {

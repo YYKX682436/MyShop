@@ -10,6 +10,7 @@ import com.myshop.context.RequestContext;
 import com.myshop.entity.BalanceTransaction;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
+import com.myshop.entity.OperationLog;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.request.AdminAdjustBalanceRequest;
@@ -19,6 +20,7 @@ import com.myshop.model.response.AdminResetPasswordResponse;
 import com.myshop.model.response.AdminUserDetailResponse;
 import com.myshop.model.response.AdminUserListResponse;
 import com.myshop.model.response.AdminUserOrderResponse;
+import com.myshop.model.response.AdminOperationLogResponse;
 import com.myshop.model.response.BalanceTransactionResponse;
 import com.myshop.repository.OperationLogRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -207,6 +209,31 @@ class AdminUserServiceImplTest {
         assertEquals(1000000001L, result.getList().get(1).orderNo());
         verify(orderItemRepository).findByOrderIdIn(List.of(firstOrderId, secondOrderId));
         verify(orderItemRepository, never()).findByOrderId(any());
+    }
+
+    @Test
+    void userOperationHistoryIncludesSecretPriceEventsAlongsideExistingUserEvents() {
+        UUID userId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        User buyer = user(userId, "buyer", "buyer@example.com", 10000L, "0.00");
+        PageRequest pageable = PageRequest.of(0, 10);
+        OperationLog profileLog = operationLog(adminId, "user.update_profile", userId, "资料已更新");
+        OperationLog secretPriceLog = operationLog(adminId, "secret_price.create", userId,
+                "新增用户密价：密价记录=price-id 商品=product-id 规格=spec-id");
+        OperationLog balanceLog = operationLog(adminId, "user.adjust_balance", userId, "余额已调整");
+        OperationLog levelLog = operationLog(adminId, "user.change_level", userId, "用户换级");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(buyer));
+        when(operationLogRepository.findByTargetTypeAndTargetIdOrderByCreatedAtDesc("USER", userId.toString(), pageable))
+                .thenReturn(new PageImpl<>(List.of(profileLog, secretPriceLog, balanceLog, levelLog), pageable, 4));
+
+        PageResult<AdminOperationLogResponse> result = service.listUserOperationLogs(userId, 1, 10);
+
+        assertEquals(List.of("user.update_profile", "secret_price.create", "user.adjust_balance", "user.change_level"),
+                result.getList().stream().map(AdminOperationLogResponse::action).toList());
+        assertEquals(userId.toString(), result.getList().get(1).targetId());
+        assertEquals("新增用户密价：密价记录=price-id 商品=product-id 规格=spec-id",
+                result.getList().get(1).detail());
+        verify(operationLogRepository).findByTargetTypeAndTargetIdOrderByCreatedAtDesc("USER", userId.toString(), pageable);
     }
 
     @Test
@@ -455,6 +482,17 @@ class AdminUserServiceImplTest {
                     transaction.setId(UUID.randomUUID());
                     return transaction;
                 });
+    }
+
+    private OperationLog operationLog(UUID operatorId, String action, UUID targetUserId, String detail) {
+        OperationLog log = new OperationLog();
+        log.setUserId(operatorId);
+        log.setUsername("admin");
+        log.setAction(action);
+        log.setTargetType("USER");
+        log.setTargetId(targetUserId.toString());
+        log.setDetail(detail);
+        return log;
     }
 
     private UserOrderMetricsProjection metrics(UUID userId, long orderCount, String totalSpent) {

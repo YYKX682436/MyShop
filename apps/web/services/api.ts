@@ -27,6 +27,7 @@
   AdminUserItem,
   AdminUserDetail,
   UserSecretPrice,
+  UserSecretPriceAuditTarget,
   AdminUserOrder,
   AdminResetPasswordResponse,
   BalanceTransaction,
@@ -675,7 +676,7 @@ export const adminUserApi = {
   updateSecretPrice: (id: string, priceId: string, price: string) =>
     request<UserSecretPrice>(`/admin/users/${id}/secret-prices/${priceId}`, { method: "PUT", body: JSON.stringify({ price }) }),
   deleteSecretPrice: (id: string, priceId: string) =>
-    request<null>(`/admin/users/${id}/secret-prices/${priceId}`, { method: "DELETE" }),
+    request<UserSecretPriceAuditTarget>(`/admin/users/${id}/secret-prices/${priceId}`, { method: "DELETE" }),
   getOrders: (id: string, params: { page?: number; page_size?: number } = {}) => {
     const qs = buildQuery(params)
     return request<PaginatedData<AdminUserOrder>>(`/admin/users/${id}/orders?${qs}`)

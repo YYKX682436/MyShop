@@ -1262,6 +1262,7 @@ const zh = {
   "admin.cardKeyOps": "卡密操作",
   "admin.orderOps": "订单操作",
   "admin.userOps": "用户操作",
+  "admin.secretPriceOps": "密价操作",
   "admin.configOps": "配置操作",
   "admin.categoryOps": "分类操作",
   "admin.paymentOps": "支付操作",
@@ -1324,6 +1325,9 @@ const zh = {
   "admin.actionUserAdjustBalance": "调整用户余额",
   "admin.actionUserResetPassword": "重置用户密码",
   "admin.actionUserNumberUpdate": "更新用户编号配置",
+  "admin.actionSecretPriceCreate": "新增用户密价",
+  "admin.actionSecretPriceUpdate": "修改用户密价",
+  "admin.actionSecretPriceDelete": "删除用户密价",
   "admin.unknownAction": "其他操作",
 
   // Error messages (API error code i18n)
@@ -2621,6 +2625,7 @@ const en: Record<keyof typeof zh, string> = {
   "admin.cardKeyOps": "Card Key Ops",
   "admin.orderOps": "Order Ops",
   "admin.userOps": "User Ops",
+  "admin.secretPriceOps": "Secret Price Ops",
   "admin.configOps": "Config Ops",
   "admin.categoryOps": "Category Ops",
   "admin.paymentOps": "Payment Ops",
@@ -2683,6 +2688,9 @@ const en: Record<keyof typeof zh, string> = {
   "admin.actionUserAdjustBalance": "Adjust user balance",
   "admin.actionUserResetPassword": "Reset user password",
   "admin.actionUserNumberUpdate": "Update user number settings",
+  "admin.actionSecretPriceCreate": "Create user secret price",
+  "admin.actionSecretPriceUpdate": "Update user secret price",
+  "admin.actionSecretPriceDelete": "Delete user secret price",
   "admin.unknownAction": "Other operation",
 
   // Error messages (API error code i18n)
