@@ -8,9 +8,11 @@ interface CardContentImportFieldsProps {
   columns: string[]
   onChange: (columns: string[]) => void
   disabled?: boolean
+  locked?: boolean
+  showValidationError?: boolean
 }
 
-export function CardContentImportFields({ columns, onChange, disabled = false }: CardContentImportFieldsProps) {
+export function CardContentImportFields({ columns, onChange, disabled = false, locked = false, showValidationError = false }: CardContentImportFieldsProps) {
   const { t } = useLocale()
   const validationError = validateCardContentColumns(columns)
   const update = (index: number, value: string) => {
@@ -24,14 +26,14 @@ export function CardContentImportFields({ columns, onChange, disabled = false }:
           <p className="text-sm font-medium text-foreground">{t("admin.cardContent")}</p>
           <p className="text-xs text-muted-foreground">{t("admin.cardContentHint")}</p>
         </div>
-        <button
+        {!locked && <button
           type="button"
           disabled={disabled}
           onClick={() => onChange([...columns, ""])}
-          className="inline-flex items-center gap-1 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted disabled:opacity-50"
+          className="inline-flex min-h-11 items-center gap-1 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted disabled:opacity-50"
         >
           <Plus className="h-3.5 w-3.5" />{t("admin.addColumn")}
-        </button>
+        </button>}
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         {columns.map((column, index) => (
@@ -40,15 +42,15 @@ export function CardContentImportFields({ columns, onChange, disabled = false }:
               <label htmlFor={`card-content-column-${index}`} className="text-sm font-medium text-foreground">
                 {t("admin.cardContentColumn").replace("{index}", String(index + 1))} <span className="text-destructive">*</span>
               </label>
-              <button
+              {!locked && <button
                 type="button"
                 disabled={disabled || columns.length <= 1}
                 onClick={() => onChange(columns.filter((_, current) => current !== index))}
                 aria-label={t("admin.removeColumn").replace("{index}", String(index + 1))}
-                className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"
+                className="inline-flex size-11 items-center justify-center rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              </button>}
             </div>
             <textarea
               id={`card-content-column-${index}`}
@@ -62,7 +64,7 @@ export function CardContentImportFields({ columns, onChange, disabled = false }:
           </div>
         ))}
       </div>
-      {validationError && (
+      {showValidationError && validationError && (
         <p role="alert" className="rounded-control border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {validationError}
         </p>

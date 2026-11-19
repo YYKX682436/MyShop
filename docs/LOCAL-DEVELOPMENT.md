@@ -18,3 +18,21 @@ bash scripts/dev-local.sh
 首次运行会初始化独立数据库、创建演示分类和商品，以及本地管理员 `muchen-admin` / `LocalPreview123!`。本地数据和日志保存在 `~/Library/Application Support/MyShop/local-dev/`，停止后保留。测试数据库不包含生产数据，默认没有支付渠道；不要填入真实支付凭据。
 
 正常提交和推送不会运行 Actions。正式发布由 Codex 在你明确要求后手动运行 GitHub Actions，生成固定 SHA 镜像和发布清单，再按共享服务器部署流程执行。共享服务器说明见 [DEPLOYMENT-SHARED-SERVER.md](DEPLOYMENT-SHARED-SERVER.md)。
+
+卡券浏览器回归可在本地预览运行时，另开终端执行：
+
+```bash
+pnpm --filter @myshop/web test:card-ui
+```
+
+该测试使用本地预览管理员登录，并拦截测试商品、导入和订单接口，不会写入卡券库存。需要本机 Chrome 或 Playwright Chromium。
+
+迁移、发货和退款的 PostgreSQL 测试默认使用 Docker；也可以分别为各测试类指定独立的临时 PostgreSQL 16 数据库，例如：
+
+```bash
+cd apps/api
+MYSHOP_TEST_POSTGRES_URL=jdbc:postgresql://127.0.0.1:55439/myshop_test_delivery \
+MYSHOP_TEST_POSTGRES_USER=myshop_test mvn -B -Dtest=PostgresDeliveryIntegrationTest test
+```
+
+外部测试地址只接受 `127.0.0.1` 上名称以 `myshop_test_` 开头的数据库；迁移链测试会清空其测试数据库，其他类也会修改测试数据，必须为每个测试类使用专门的临时库。

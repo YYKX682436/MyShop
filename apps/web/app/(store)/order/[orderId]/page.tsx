@@ -467,8 +467,8 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
             <p className="mt-1 text-xs text-muted-foreground">{t("order.deliveredCount").replace("{count}", String(deliveredCardCount))}</p>
           </div>
           {hasCards && <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
-            <button type="button" onClick={() => copy(allCardText(deliveredGroups))} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted sm:flex-none"><Copy className="h-3.5 w-3.5" />{t("order.copyAll")}</button>
-            <button type="button" onClick={() => void exportKeys()} className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted sm:flex-none"><Download className="h-3.5 w-3.5" />{t("order.exportKeys")}</button>
+            <button type="button" onClick={() => copy(allCardText(deliveredGroups))} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted sm:flex-none"><Copy className="h-3.5 w-3.5" />{t("order.copyAll")}</button>
+            <button type="button" onClick={() => void exportKeys()} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-control border border-border-strong bg-surface px-3 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted sm:flex-none"><Download className="h-3.5 w-3.5" />{t("order.exportKeys")}</button>
           </div>}
         </div>
 
@@ -622,9 +622,9 @@ function DeliveryGroup({ group, startNumber, onCopy, copyLabel, countLabel }: { 
             <li key={`${startNumber + itemIndex}`} className="flex min-w-0 flex-col gap-3 rounded-control border border-border-subtle bg-surface-muted/40 p-3 sm:flex-row sm:items-start sm:gap-4">
               <div className="flex min-w-0 flex-1 items-start gap-3">
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary" aria-hidden="true">{startNumber + itemIndex}</span>
-                <CardContentParts parts={item.content_parts} onCopy={onCopy} showPartCopy={false} showCopyAll={false} className="flex-1" />
+                <CardContentParts parts={item.content_parts} onCopy={onCopy} showCopyAll={false} className="flex-1" />
               </div>
-              <button type="button" onClick={() => onCopy(value)} className="inline-flex min-h-10 w-full shrink-0 items-center justify-center gap-1 rounded-control border border-border-subtle px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface hover:text-foreground sm:w-auto sm:self-start"><Copy className="h-3.5 w-3.5" />{copyLabel}</button>
+              {item.content_parts.length > 1 && <button type="button" onClick={() => onCopy(value)} className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-1 rounded-control border border-border-subtle px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface hover:text-foreground sm:w-auto sm:self-start"><Copy className="h-3.5 w-3.5" aria-hidden="true" />{copyLabel}</button>}
             </li>
           )
         })}

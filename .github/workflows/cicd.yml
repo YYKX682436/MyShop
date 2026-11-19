@@ -35,10 +35,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The test class keeps disabledWithoutDocker=true so local developers
-          # can still run ordinary tests without installing Docker. CI must
-          # explicitly prove that Docker is available and must fail if any of
-          # the PostgreSQL/Testcontainers tests is skipped.
+          # Local developers may use disposable loopback databases or skip
+          # Docker-backed tests. CI must prove Docker is available and fail if
+          # any PostgreSQL integration test was skipped.
           docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
           docker info --format 'server={{.ServerVersion}} containers={{.Containers}}'
 

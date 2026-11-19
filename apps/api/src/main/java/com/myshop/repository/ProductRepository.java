@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
@@ -66,6 +67,11 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Product p WHERE p.id = :id")
     Optional<Product> findByIdForUpdate(@Param("id") UUID id);
+
+    @Modifying
+    @Query(value = "UPDATE products SET card_content_column_count = :columnCount WHERE id = :id",
+            nativeQuery = true)
+    int setCardContentColumnCount(@Param("id") UUID id, @Param("columnCount") int columnCount);
 
     long countByCategoryIdAndIsDeleted(UUID categoryId, int isDeleted);
 

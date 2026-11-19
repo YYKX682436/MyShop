@@ -3,6 +3,8 @@ package com.myshop.service.impl;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
+import com.myshop.entity.CardKey;
 import com.myshop.entity.User;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
@@ -30,6 +32,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ExtendWith(MockitoExtension.class)
 class EmailServiceImplTest {
@@ -116,6 +120,37 @@ class EmailServiceImplTest {
         org.junit.jupiter.api.Assertions.assertTrue(html.contains("商家已完成发货，请前往订单详情查看发货结果。"));
         org.junit.jupiter.api.Assertions.assertFalse(html.contains("buyer-only secret"));
         org.junit.jupiter.api.Assertions.assertFalse(html.contains("卡密信息"));
+    }
+
+    @Test
+    void cardDeliveryEmailSeparatesRawFieldsAndEscapesHtml() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order(orderId, userId)));
+        User user = new User();
+        user.setEmail("account@example.com");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(mailSenderProvider.getIfAvailable()).thenReturn(mailSender);
+        when(mailSender.createMimeMessage()).thenReturn(new MimeMessage((Session) null));
+        OrderItem item = new OrderItem();
+        item.setId(itemId);
+        item.setProductTitle("测试商品");
+        CardKey key = new CardKey();
+        key.setOrderItemId(itemId);
+        key.setContentParts(List.of("account<1>", "password&2", "third"));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of(key));
+        when(siteConfigRepository.findByConfigKey("site_name")).thenReturn(Optional.empty());
+
+        service.sendDeliveryEmail(orderId, List.of(itemId));
+        var captor = org.mockito.ArgumentCaptor.forClass(MimeMessage.class);
+        verify(mailSender).send(captor.capture());
+        String html = flattenMimeContent(captor.getValue().getContent());
+        assertTrue(html.contains("account&lt;1&gt;</div>"));
+        assertTrue(html.contains("password&amp;2</div>"));
+        assertTrue(html.contains("third</div>"));
+        assertFalse(html.contains("卡券内容 1:"));
     }
 
     private String flattenMimeContent(Object content) throws Exception {

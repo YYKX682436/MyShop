@@ -25,30 +25,15 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
     @Query("SELECT ck.productId AS productId, ck.specId AS specId FROM CardKey ck WHERE ck.id = :id")
     java.util.Optional<StockPool> findStockPoolById(@Param("id") UUID id);
 
-    /**
-     * Serializes duplicate-checked imports for one product/spec pool for the
-     * lifetime of the surrounding PostgreSQL transaction. The hashed key is
-     * stable and the extremely unlikely hash collision only causes harmless
-     * serialization between pools.
-     */
-    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(" +
-            "CAST(:productId AS text) || ':' || COALESCE(CAST(:specId AS text), '<default>'), 0))",
-            nativeQuery = true)
-    void lockImportPool(@Param("productId") UUID productId, @Param("specId") UUID specId);
-
-    /**
-     * Returns the active content widths in one product/spec inventory pool.
-     * SOLD and INVALID history deliberately does not participate in the
-     * format contract, so a pool can adopt a new width after it is empty of
-     * deliverable keys.
-     */
-    @Query(value = "SELECT DISTINCT jsonb_array_length(content_parts) " +
-            "FROM card_keys WHERE product_id = :productId " +
-            "AND ((:specId IS NULL AND spec_id IS NULL) OR spec_id = CAST(:specId AS uuid)) " +
-            "AND status IN ('AVAILABLE', 'LOCKED') " +
-            "ORDER BY 1", nativeQuery = true)
-    List<Integer> findActiveColumnCounts(@Param("productId") UUID productId,
-                                         @Param("specId") UUID specId);
+    /** Report widths only, never card contents, for a legacy mixed-format product. */
+    @Query(value = """
+            SELECT width FROM (
+                SELECT jsonb_array_length(content_parts) AS width FROM card_keys WHERE product_id = :productId
+                UNION
+                SELECT column_count AS width FROM card_import_batches WHERE product_id = :productId AND success_count > 0
+            ) history ORDER BY width
+            """, nativeQuery = true)
+    List<Integer> findHistoricalColumnCounts(@Param("productId") UUID productId);
 
     @Query(value = "SELECT * FROM card_keys WHERE product_id = :productId " +
             "AND ((:specId IS NULL AND spec_id IS NULL) OR spec_id = CAST(:specId AS uuid)) " +

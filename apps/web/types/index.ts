@@ -227,6 +227,9 @@ export interface AdminProductDetail {
   delivery_type: "AUTO" | "MANUAL"
   customer_input_fields: CustomerInputField[]
   stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  /** null: unconfigured; 0: conflicting historical formats; positive: fixed column count. */
+  card_content_column_count: number | null
+  card_content_column_counts: number[]
   sales_count: number
   initial_sales: number
   spec_enabled: boolean

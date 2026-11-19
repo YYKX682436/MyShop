@@ -18,21 +18,24 @@ import com.myshop.service.FulfillmentService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
+import com.myshop.service.AdminProductService;
+import com.myshop.repository.ProductRepository;
 import com.myshop.service.WebhookService;
 import com.myshop.utils.CardContentParser;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 import java.util.Map;
@@ -61,13 +64,17 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-@Testcontainers(disabledWithoutDocker = true)
+@EnabledIf(value = "postgresAvailable", disabledReason = "PostgreSQL test database or Docker required")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class PostgresDeliveryIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+
+    static boolean postgresAvailable() { return POSTGRES.available(); }
+
+    @AfterAll
+    static void stopPostgres() { POSTGRES.close(); }
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -77,6 +84,15 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired
     private AdminCardKeyService adminCardKeyService;
+
+    @Autowired
+    private AdminProductService adminProductService;
+
+    @Autowired
+    private ProductRepository productRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private AdminOrderService adminOrderService;
@@ -726,6 +742,94 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
         assertEquals(2, scalar("select column_count from card_import_batches where id = ?",
                 Integer.class, result.get("id")));
+        assertEquals(2, scalar("select card_content_column_count from products where id = ?", Integer.class, productId));
+    }
+
+    @Test
+    void twoColumnsPairRowsIntoOneCardPerRow() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        Map<String, Object> result = adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(),
+                "content_columns", List.of("first-account\nsecond-account", "first-code\nsecond-code")), UUID.randomUUID());
+        assertEquals(2, result.get("success_count"));
+        assertEquals(2, number("select count(*) from card_keys where product_id = ?", productId));
+        assertEquals(1, number("select count(*) from card_keys where product_id = ? and content_parts = '[\"first-account\",\"first-code\"]'::jsonb", productId));
+        assertEquals(1, number("select count(*) from card_keys where product_id = ? and content_parts = '[\"second-account\",\"second-code\"]'::jsonb", productId));
+    }
+
+    @Test
+    void rolledBackFirstImportDoesNotEstablishAFormatOrLeaveInventory() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        assertThrows(IllegalStateException.class, () -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            adminCardKeyService.importCardKeys(Map.of("product_id", productId.toString(),
+                    "content_columns", List.of("account", "code")), UUID.randomUUID());
+            throw new IllegalStateException("force transaction rollback");
+        }));
+        assertNull(scalar("select card_content_column_count from products where id = ?", Integer.class, productId));
+        assertEquals(0, number("select count(*) from card_keys where product_id = ?", productId));
+        assertEquals(0, number("select count(*) from card_import_batches where product_id = ?", productId));
+    }
+
+    @Test
+    void repeatedImportsInTheSameTransactionSeeTheEstablishedFormat() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            adminCardKeyService.importCardKeys(Map.of("product_id", productId.toString(),
+                    "content_columns", List.of("account", "code")), UUID.randomUUID());
+            BusinessException exception = assertThrows(BusinessException.class, () -> adminCardKeyService.importCardKeys(
+                    Map.of("product_id", productId.toString(), "content_columns", List.of("wrong")), UUID.randomUUID()));
+            assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+            // The nested service marks the shared transaction rollback-only.
+            status.setRollbackOnly();
+        });
+    }
+
+    @Test
+    void productDetailReportsThePersistedTemplateAndMixedHistory() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        adminCardKeyService.importCardKeys(Map.of("product_id", productId.toString(),
+                "content_columns", List.of("account", "code")), UUID.randomUUID());
+        assertEquals(2, adminProductService.getProduct(productId).cardContentColumnCount());
+        assertEquals(List.of(), adminProductService.getProduct(productId).cardContentColumnCounts());
+        insertCardParts(productId, List.of("legacy-single"), CardKeyStatus.INVALID);
+        var detail = adminProductService.getProduct(productId);
+        assertEquals(0, detail.cardContentColumnCount());
+        assertEquals(List.of(1, 2), detail.cardContentColumnCounts());
+    }
+
+    @Test
+    void staleProductEditCannotEraseAFormatEstablishedConcurrently() throws Exception {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        CountDownLatch read = new CountDownLatch(1);
+        CountDownLatch continueEdit = new CountDownLatch(1);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> edit = executor.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                Product stale = productRepository.findById(productId).orElseThrow();
+                read.countDown();
+                try {
+                    if (!continueEdit.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("edit timeout");
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(exception);
+                }
+                stale.setTitle("edited product");
+            }));
+            assertTrue(read.await(10, TimeUnit.SECONDS));
+            adminCardKeyService.importCardKeys(Map.of("product_id", productId.toString(),
+                    "content_columns", List.of("account", "code")), UUID.randomUUID());
+            continueEdit.countDown();
+            edit.get(20, TimeUnit.SECONDS);
+            assertEquals(2, scalar("select card_content_column_count from products where id = ?", Integer.class, productId));
+        } finally {
+            continueEdit.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -757,7 +861,7 @@ class PostgresDeliveryIntegrationTest {
                 "content_columns", List.of("one-column")), UUID.randomUUID()));
 
         assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
-        assertEquals("当前库存池为 2 列卡券内容，本次导入为 1 列，请保持一致或先清空当前可售库存。", exception.getMessage());
+        assertEquals("该商品固定为 2 列卡券内容，请按 2 列导入。", exception.getMessage());
         assertEquals(keysBefore, number("select count(*) from card_keys where product_id = ?", productId));
         assertEquals(batchesBefore, number("select count(*) from card_import_batches where product_id = ?", productId));
     }
@@ -777,20 +881,19 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
-    void soldAndInvalidHistoryDoesNotPreventAdoptingANewColumnCount() {
+    void soldAndInvalidHistoryCannotChangeTheProductColumnCount() {
         UUID productId = UUID.randomUUID();
         insertProduct(productId);
         insertCardParts(productId, List.of("sold-account", "sold-password"), CardKeyStatus.SOLD);
         insertCardParts(productId, List.of("invalid-account", "invalid-password"), CardKeyStatus.INVALID);
 
-        Map<String, Object> result = adminCardKeyService.importCardKeys(Map.of(
+        BusinessException exception = assertThrows(BusinessException.class, () -> adminCardKeyService.importCardKeys(Map.of(
                 "product_id", productId.toString(),
-                "content_columns", List.of("new-one-column")), UUID.randomUUID());
+                "content_columns", List.of("new-one-column")), UUID.randomUUID()));
 
-        assertEquals(1, result.get("success_count"));
-        assertEquals(1, scalar("select count(distinct jsonb_array_length(content_parts)) from card_keys "
-                + "where product_id = ? and status in ('AVAILABLE','LOCKED')", Integer.class, productId));
-        assertEquals(1, number("select count(*) from card_keys where product_id = ? and status = 'AVAILABLE'", productId));
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        assertEquals(2, scalar("select card_content_column_count from products where id = ?", Integer.class, productId));
+        assertEquals(0, number("select count(*) from card_keys where product_id = ? and status = 'AVAILABLE'", productId));
     }
 
     @Test
@@ -806,7 +909,7 @@ class PostgresDeliveryIntegrationTest {
                 "content_columns", List.of("another", "two")), UUID.randomUUID()));
 
         assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
-        assertEquals("当前库存池存在混合列数卡券内容（1、2列），请先处理现有可售库存后再导入。", exception.getMessage());
+        assertEquals("该商品历史卡券列数冲突（1、2列），暂不能导入，请联系管理员处理。", exception.getMessage());
         assertEquals(keysBefore, number("select count(*) from card_keys where product_id = ?", productId));
         assertEquals(0, number("select count(*) from card_import_batches where product_id = ?", productId));
     }
@@ -847,6 +950,48 @@ class PostgresDeliveryIntegrationTest {
             assertNotEquals(oneColumnSucceeded, twoColumnsSucceeded);
             assertEquals(1, number("select count(*) from card_import_batches where product_id = ?", productId));
             assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void otherSpecificationsMustUseTheSameProductFormat() {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID firstSpec = addSpec(productId, "first");
+        UUID secondSpec = addSpec(productId, "second");
+        adminCardKeyService.importCardKeys(Map.of("product_id", productId.toString(), "spec_id", firstSpec.toString(),
+                "content_columns", List.of("account", "code")), UUID.randomUUID());
+        BusinessException conflict = assertThrows(BusinessException.class, () -> adminCardKeyService.importCardKeys(Map.of(
+                "product_id", productId.toString(), "spec_id", secondSpec.toString(),
+                "content_columns", List.of("one"), "check_duplicate", false), UUID.randomUUID()));
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, conflict.getCode());
+        Map<String, Object> matching = adminCardKeyService.importCardKeys(Map.of("product_id", productId.toString(),
+                "spec_id", secondSpec.toString(), "content_columns", List.of("account-2", "code-2")), UUID.randomUUID());
+        assertEquals(1, matching.get("success_count"));
+        assertEquals(2, number("select count(*) from card_keys where product_id = ?", productId));
+    }
+
+    @Test
+    void concurrentFirstImportsAcrossSpecificationsEstablishOnlyOneWidth() throws Exception {
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID firstSpec = addSpec(productId, "first-race");
+        UUID secondSpec = addSpec(productId, "second-race");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Boolean> one = executor.submit(() -> importWidthAfter(ready, start, productId, firstSpec, List.of("one")));
+            Future<Boolean> two = executor.submit(() -> importWidthAfter(ready, start, productId, secondSpec, List.of("one", "two")));
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            assertNotEquals(one.get(20, TimeUnit.SECONDS), two.get(20, TimeUnit.SECONDS));
+            assertEquals(1, number("select count(*) from card_keys where product_id = ?", productId));
+            assertEquals(1, number("select count(*) from card_import_batches where product_id = ?", productId));
+            assertEquals(1, number("select count(*) from card_keys ck join products p on p.id = ck.product_id "
+                    + "where p.id = ? and p.card_content_column_count = jsonb_array_length(ck.content_parts)", productId));
         } finally {
             executor.shutdownNow();
         }
@@ -1167,14 +1312,21 @@ class PostgresDeliveryIntegrationTest {
 
     private boolean importWidthAfter(CountDownLatch ready, CountDownLatch start,
                                      UUID productId, List<String> columns) throws Exception {
+        return importWidthAfter(ready, start, productId, null, columns);
+    }
+
+    private boolean importWidthAfter(CountDownLatch ready, CountDownLatch start,
+                                     UUID productId, UUID specId, List<String> columns) throws Exception {
         ready.countDown();
         if (!start.await(20, TimeUnit.SECONDS)) {
             throw new IllegalStateException("card import concurrency test did not start");
         }
         try {
-            adminCardKeyService.importCardKeys(Map.of(
-                    "product_id", productId.toString(),
-                    "content_columns", columns), UUID.randomUUID());
+            Map<String, Object> request = new java.util.HashMap<>();
+            request.put("product_id", productId.toString());
+            request.put("content_columns", columns);
+            if (specId != null) request.put("spec_id", specId.toString());
+            adminCardKeyService.importCardKeys(request, UUID.randomUUID());
             return true;
         } catch (BusinessException exception) {
             assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
@@ -1344,6 +1496,14 @@ class PostgresDeliveryIntegrationTest {
                     nextval('product_no_sequence'), 10.00, 10.00, ?,
                     'AUTO', true, 0)
                 """, productId, categoryId);
+    }
+
+    private UUID addSpec(UUID productId, String name) {
+        UUID specId = UUID.randomUUID();
+        jdbcTemplate.update("update products set spec_enabled = true where id = ?", productId);
+        jdbcTemplate.update("insert into product_specs(id, product_id, name, retail_price, cost_price) values (?, ?, ?, 10.00, 10.00)",
+                specId, productId, name);
+        return specId;
     }
 
     private void insertUnlimitedProduct(UUID productId) {
@@ -1539,6 +1699,13 @@ class PostgresDeliveryIntegrationTest {
                     """, cardId, productId, parts.get(0), parts.get(1),
                     CardContentParser.fingerprint(parts), status.name());
         }
+        // Direct SQL fixtures stand in for a previously successful import.
+        jdbcTemplate.update("""
+                UPDATE products SET card_content_column_count = CASE
+                    WHEN card_content_column_count IS NULL THEN ?
+                    WHEN card_content_column_count <> ? THEN 0
+                    ELSE card_content_column_count END WHERE id = ?
+                """, parts.size(), parts.size(), productId);
         return cardId;
     }
 

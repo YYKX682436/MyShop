@@ -103,6 +103,25 @@ class OrderAccessServiceImplTest {
     }
 
     @Test
+    void guestExportKeepsFieldsAndCardsSeparateInOrder() {
+        UUID orderId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
+        OrderItem item = item(itemId);
+        CardKey first = cardKey(orderId, itemId);
+        CardKey second = cardKey(orderId, itemId);
+        CardKey third = cardKey(orderId, itemId);
+        first.setContentParts(List.of("single"));
+        second.setContentParts(List.of("account", "password"));
+        third.setContentParts(List.of("one", "two", "three"));
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(guestOrder(orderId, "session-a")));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of(first, second, third));
+
+        assertEquals("MyShop 卡密\n\n测试商品\nsingle\n\naccount\npassword\n\none\ntwo\nthree\n",
+                service.exportCardKeys(orderId, null, "session-a"));
+    }
+
+    @Test
     void missingOrDifferentGuestSessionIsForbiddenBeforeSensitiveReads() {
         UUID orderId = UUID.randomUUID();
         when(orderRepository.findByIdForUpdate(orderId))

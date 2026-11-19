@@ -812,7 +812,10 @@ public class AdminProductServiceImpl implements AdminProductService {
                 categoryPath.primaryCategoryName(), categoryPath.secondaryCategoryId(),
                 categoryPath.secondaryCategoryName(),
                 rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
-                ProductRules.currentFields(product), product.getStockMode().name(), sales, product.getInitialSales(),
+                ProductRules.currentFields(product), product.getStockMode().name(), product.getCardContentColumnCount(),
+                Integer.valueOf(0).equals(product.getCardContentColumnCount())
+                        ? cardKeyRepository.findHistoricalColumnCounts(product.getId()) : List.of(),
+                sales, product.getInitialSales(),
                 product.isSpecEnabled(), product.isEnabled(), product.getSortWeight(), product.getLowStockThreshold(),
                 buildSpecResponses(product, specs, stock), overrides.stream().map(this::toOverride).toList(), matrix,
                 warnings, product.getCreatedAt(), product.getUpdatedAt());

@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "migration_count": 42,
-  "latest_migration_version": "42",
+  "migration_count": 43,
+  "latest_migration_version": "43",
   "tables": {
     "users": ["id", "username", "role"],
-    "products": ["id", "title", "retail_price"],
+    "products": ["id", "title", "retail_price", "card_content_column_count"],
     "orders": ["id", "order_no", "status", "created_at"],
     "order_items": ["id", "order_id", "product_id"],
     "card_keys": ["id", "product_id", "status"],

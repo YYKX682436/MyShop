@@ -1,8 +1,8 @@
-/** Keep fields within one card together; separate cards with newlines. */
+/** Keep fields within one card together; separate distinct cards with a blank line. */
 export function formatCardContent(parts: string[]): string {
-  return parts.join("\t")
+  return parts.join("\n")
 }
 
 export function formatCardContents(cards: { content_parts: string[] }[]): string {
-  return cards.map(card => formatCardContent(card.content_parts)).join("\n")
+  return cards.map(card => formatCardContent(card.content_parts)).join("\n\n")
 }

@@ -58,6 +58,12 @@ public class Product extends BaseEntity {
     @Column(name = "stock_mode", nullable = false, length = 32)
     private StockMode stockMode = StockMode.CARD_KEY;
 
+    // NULL: not configured; 0: conflicting historical formats; positive: fixed width.
+    // Only the import service updates this under the product row lock. Keeping it
+    // out of ordinary entity updates also prevents stale product edits resetting it.
+    @Column(name = "card_content_column_count", updatable = false)
+    private Integer cardContentColumnCount;
+
     private int lowStockThreshold = 10;
 
     @Column(name = "spec_enabled", columnDefinition = "boolean not null default false")

@@ -30,6 +30,8 @@ public record AdminProductResponse(
         String deliveryType,
         List<CustomerInputField> customerInputFields,
         String stockMode,
+        @JsonProperty("card_content_column_count") Integer cardContentColumnCount,
+        @JsonProperty("card_content_column_counts") List<Integer> cardContentColumnCounts,
         long salesCount,
         int initialSales,
         boolean specEnabled,

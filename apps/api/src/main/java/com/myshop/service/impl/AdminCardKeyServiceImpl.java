@@ -122,7 +122,9 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         UUID productId = UUID.fromString((String) req.get("product_id"));
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
 
-        Product product = productRepository.findById(productId)
+        // A single product lock serializes all specifications, duplicate modes,
+        // format establishment and inventory writes in the same transaction.
+        Product product = productRepository.findByIdForUpdate(productId)
                 .filter(p -> p.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
 
@@ -153,12 +155,7 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         List<List<String>> rows = parsed.rows();
         List<String> fingerprints = rows.stream().map(CardContentParser::fingerprint).toList();
 
-        // This transaction-scoped pool lock is required for both duplicate
-        // modes. It serializes the active format read, optional historical
-        // fingerprint read, and both writes so concurrent first imports
-        // cannot establish different content widths in the same pool.
-        cardKeyRepository.lockImportPool(productId, specId);
-        validateActiveColumnCount(productId, specId, parsed.columns().size());
+        validateProductColumnCount(product, parsed.columns().size());
 
         Set<String> historical = checkDuplicate && !fingerprints.isEmpty()
                 ? new HashSet<>(cardKeyRepository.findExistingFingerprints(productId, specId, fingerprints))
@@ -187,6 +184,13 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
             key.setContentFingerprint(fingerprint);
             key.setStatus(CardKeyStatus.AVAILABLE);
             importedCardKeys.add(key);
+        }
+
+        if (product.getCardContentColumnCount() == null && !importedCardKeys.isEmpty()) {
+            productRepository.setCardContentColumnCount(productId, parsed.columns().size());
+            // The native update leaves the managed entity stale; keep it in
+            // sync if another import joins this same transaction.
+            product.setCardContentColumnCount(parsed.columns().size());
         }
 
         CardImportBatch batch = new CardImportBatch();
@@ -226,20 +230,18 @@ public class AdminCardKeyServiceImpl implements AdminCardKeyService {
         return result;
     }
 
-    private void validateActiveColumnCount(UUID productId, UUID specId, int incomingColumnCount) {
-        List<Integer> activeColumnCounts = Optional.ofNullable(
-                cardKeyRepository.findActiveColumnCounts(productId, specId)).orElseGet(List::of);
-        if (activeColumnCounts.size() > 1) {
-            String existingColumns = activeColumnCounts.stream()
+    private void validateProductColumnCount(Product product, int incomingColumnCount) {
+        Integer fixedCount = product.getCardContentColumnCount();
+        if (fixedCount != null && fixedCount == 0) {
+            String existingColumns = cardKeyRepository.findHistoricalColumnCounts(product.getId()).stream()
                     .map(String::valueOf)
                     .collect(Collectors.joining("、"));
             throw new BusinessException(ErrorCode.CARD_KEY_FORMAT_ERROR,
-                    "当前库存池存在混合列数卡券内容（" + existingColumns + "列），请先处理现有可售库存后再导入。");
+                    "该商品历史卡券列数冲突（" + existingColumns + "列），暂不能导入，请联系管理员处理。");
         }
-        if (activeColumnCounts.size() == 1 && activeColumnCounts.get(0) != incomingColumnCount) {
+        if (fixedCount != null && fixedCount != incomingColumnCount) {
             throw new BusinessException(ErrorCode.CARD_KEY_FORMAT_ERROR,
-                    "当前库存池为 " + activeColumnCounts.get(0) + " 列卡券内容，本次导入为 "
-                            + incomingColumnCount + " 列，请保持一致或先清空当前可售库存。");
+                    "该商品固定为 " + fixedCount + " 列卡券内容，请按 " + fixedCount + " 列导入。");
         }
     }
 

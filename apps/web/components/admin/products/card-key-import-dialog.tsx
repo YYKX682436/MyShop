@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { useLocale } from "@/lib/context"
 import { validateCardContentColumns } from "@/lib/card-content"
-import { adminCardKeyApi, requestOrThrow } from "@/services/api"
+import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail } from "@/types"
 
 interface CardKeyImportDialogProps {
@@ -32,26 +32,44 @@ export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpe
   const [columns, setColumns] = useState([""])
   const [checkDuplicate, setCheckDuplicate] = useState(true)
   const [importing, setImporting] = useState(false)
+  const [template, setTemplate] = useState<AdminProductDetail | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const [validationAttempted, setValidationAttempted] = useState(false)
+  const productId = product?.id
 
   useEffect(() => {
-    if (!open) {
-      setSpecId("")
-      setColumns([""])
-      setCheckDuplicate(true)
-    }
-  }, [open])
+    let cancelled = false
+    setTemplate(null)
+    setLoadError(false)
+    if (!open || !productId) return () => { cancelled = true }
 
-  useEffect(() => {
-    if (open) setSpecId(initialSpecId || "")
-  }, [open, product?.id, initialSpecId])
+    setSpecId(initialSpecId || "")
+    setCheckDuplicate(true)
+    setValidationAttempted(false)
+    // Do not enable input until the authoritative template arrives. A late
+    // response or a parent re-render can therefore never replace typed values.
+    void requestOrThrow(() => adminProductApi.getDetail(productId)).then((detail) => {
+      if (cancelled) return
+      const width = detail.card_content_column_count
+      setColumns(Array.from({ length: width && width > 0 ? width : 1 }, () => ""))
+      setTemplate(detail)
+    }).catch(() => {
+      if (!cancelled) setLoadError(true)
+    })
+    return () => { cancelled = true }
+  }, [open, productId, initialSpecId])
+
+  const conflict = template?.card_content_column_count === 0
+  const fixedWidth = (template?.card_content_column_count ?? 0) > 0
 
   const handleImport = async () => {
     const validationError = validateCardContentColumns(columns)
-    if (!product || validationError) {
+    if (!template || conflict || validationError) {
+      if (validationError) setValidationAttempted(true)
       toast.error(validationError || t("admin.cardKeyContentReq"))
       return
     }
-    if (product.spec_enabled && !specId) {
+    if (template.spec_enabled && !specId) {
       toast.error(t("admin.specRequiredForImport"))
       return
     }
@@ -59,8 +77,8 @@ export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpe
     setImporting(true)
     try {
       const result = await requestOrThrow(() => adminCardKeyApi.import({
-        product_id: product.id,
-        spec_id: product.spec_enabled ? specId : null,
+        product_id: template.id,
+        spec_id: template.spec_enabled ? specId : null,
         content_columns: columns,
         check_duplicate: checkDuplicate,
       }))
@@ -89,7 +107,10 @@ export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpe
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-2">
-          {product?.spec_enabled && (
+          {loadError && <p role="alert" className="text-sm text-destructive">{t("admin.loadProductFailed")}</p>}
+          {!template && !loadError && <p role="status" className="text-sm text-muted-foreground">{t("common.loading")}</p>}
+          {conflict && <p role="alert" className="text-sm text-destructive">{t("admin.cardFormatConflict").replace("{columns}", template.card_content_column_counts.join("、"))}</p>}
+          {template?.spec_enabled && !conflict && (
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectSpec")}
               <select
@@ -99,14 +120,14 @@ export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpe
                 disabled={importing}
               >
                 <option value="">{t("admin.chooseSpec")}</option>
-                {product.specs.map((spec) => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
+                {template.specs.map((spec) => <option key={spec.id} value={spec.id}>{spec.name}</option>)}
               </select>
             </label>
           )}
 
-          <CardContentImportFields columns={columns} onChange={setColumns} disabled={importing} />
+          {template && !conflict && <CardContentImportFields columns={columns} onChange={(next) => { setColumns(next); setValidationAttempted(false) }} disabled={importing} locked={fixedWidth} showValidationError={validationAttempted} />}
 
-          <label className="flex items-start gap-2 text-sm text-foreground">
+          {template && !conflict && <label className="flex items-start gap-2 text-sm text-foreground">
             <input
               type="checkbox"
               className="mt-0.5 h-4 w-4 rounded border-input accent-primary"
@@ -115,12 +136,12 @@ export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpe
               disabled={importing}
             />
             <span>{t("admin.checkDuplicate")}</span>
-          </label>
+          </label>}
         </div>
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={importing}>{t("admin.cancel")}</Button>
-          <Button type="button" onClick={() => void handleImport()} disabled={importing || !product || (product.spec_enabled && !specId)}>
+          <Button type="button" onClick={() => void handleImport()} disabled={importing || !template || conflict || (template.spec_enabled && !specId)}>
             {importing ? t("admin.importing") : t("admin.import")}
           </Button>
         </DialogFooter>

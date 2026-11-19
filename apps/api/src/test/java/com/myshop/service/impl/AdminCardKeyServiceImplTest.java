@@ -83,6 +83,7 @@ class AdminCardKeyServiceImplTest {
         product.setSpecEnabled(false);
         product.setIsDeleted(0);
         lenient().when(productRepository.findById(productId)).thenReturn(Optional.of(product));
+        lenient().when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
     }
 
     private void stubBatchSave() {
@@ -227,8 +228,8 @@ class AdminCardKeyServiceImplTest {
     }
 
     @Test
-    void activeTwoColumnPoolAcceptsMatchingTwoColumnImport() {
-        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+    void fixedTwoColumnProductAcceptsMatchingTwoColumnImport() {
+        product.setCardContentColumnCount(2);
         stubBatchSave();
 
         Map<String, Object> result = service.importCardKeys(
@@ -237,32 +238,30 @@ class AdminCardKeyServiceImplTest {
 
         assertEquals(1, result.get("success_count"));
         assertEquals(2, result.get("column_count"));
-        verify(cardKeyRepository).lockImportPool(productId, null);
+        verify(productRepository).findByIdForUpdate(productId);
         ArgumentCaptor<CardImportBatch> batch = ArgumentCaptor.forClass(CardImportBatch.class);
         verify(batchRepository).save(batch.capture());
         assertEquals(2, batch.getValue().getColumnCount());
     }
 
     @Test
-    void activeTwoColumnPoolRejectsOneColumnImportBeforeAnyWrites() {
-        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+    void fixedTwoColumnProductRejectsOneColumnImportBeforeAnyWrites() {
+        product.setCardContentColumnCount(2);
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
                 Map.of("product_id", productId.toString(),
                         "content_columns", List.of("A")), UUID.randomUUID()));
 
         assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
-        assertEquals("当前库存池为 2 列卡券内容，本次导入为 1 列，请保持一致或先清空当前可售库存。", exception.getMessage());
-        verify(cardKeyRepository).lockImportPool(productId, null);
+        assertEquals("该商品固定为 2 列卡券内容，请按 2 列导入。", exception.getMessage());
+        verify(productRepository).findByIdForUpdate(productId);
         verify(batchRepository, never()).save(any(CardImportBatch.class));
         verify(cardKeyRepository, never()).saveAll(anyList());
     }
 
     @Test
-    void lockedTwoColumnPoolRejectsOneColumnImport() {
-        // The repository query includes LOCKED rows; the service only needs
-        // its authoritative distinct-width result here.
-        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+    void lockedHistoryDoesNotChangeTheProductFormat() {
+        product.setCardContentColumnCount(2);
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
                 Map.of("product_id", productId.toString(),
@@ -274,38 +273,33 @@ class AdminCardKeyServiceImplTest {
     }
 
     @Test
-    void soldAndInvalidHistoryDoesNotLockTheNextImportToItsOldWidth() {
-        // SOLD/INVALID rows are excluded by CardKeyRepository, represented by
-        // an empty active-width result even if their historical width was 2.
-        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of());
-        stubBatchSave();
-
-        Map<String, Object> result = service.importCardKeys(
+    void soldAndInvalidHistoryKeepsTheProductFormatLocked() {
+        product.setCardContentColumnCount(2);
+        BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
                 Map.of("product_id", productId.toString(),
-                        "content_columns", List.of("A")), UUID.randomUUID());
-
-        assertEquals(1, result.get("success_count"));
-        assertEquals(1, result.get("column_count"));
-        verify(cardKeyRepository).lockImportPool(productId, null);
+                        "content_columns", List.of("A")), UUID.randomUUID()));
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
+        verify(batchRepository, never()).save(any(CardImportBatch.class));
     }
 
     @Test
-    void dirtyActivePoolRejectsAnyNewImportWithoutChoosingAWidth() {
-        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(1, 2));
+    void mixedHistoricalProductRejectsAnyNewImportWithoutChoosingAWidth() {
+        product.setCardContentColumnCount(0);
+        when(cardKeyRepository.findHistoricalColumnCounts(productId)).thenReturn(List.of(1, 2));
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
                 Map.of("product_id", productId.toString(),
                         "content_columns", List.of("A", "B")), UUID.randomUUID()));
 
         assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
-        assertEquals("当前库存池存在混合列数卡券内容（1、2列），请先处理现有可售库存后再导入。", exception.getMessage());
+        assertEquals("该商品历史卡券列数冲突（1、2列），暂不能导入，请联系管理员处理。", exception.getMessage());
         verify(batchRepository, never()).save(any(CardImportBatch.class));
         verify(cardKeyRepository, never()).saveAll(anyList());
     }
 
     @Test
-    void duplicateCheckOffStillLocksAndValidatesTheActivePool() {
-        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of(2));
+    void duplicateCheckOffStillLocksAndValidatesTheProduct() {
+        product.setCardContentColumnCount(2);
 
         BusinessException exception = assertThrows(BusinessException.class, () -> service.importCardKeys(
                 Map.of("product_id", productId.toString(),
@@ -313,16 +307,14 @@ class AdminCardKeyServiceImplTest {
                         "check_duplicate", false), UUID.randomUUID()));
 
         assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
-        verify(cardKeyRepository).lockImportPool(productId, null);
-        verify(cardKeyRepository).findActiveColumnCounts(productId, null);
+        verify(productRepository).findByIdForUpdate(productId);
         verify(cardKeyRepository, never()).findExistingFingerprints(any(), any(), anyList());
         verify(batchRepository, never()).save(any(CardImportBatch.class));
         verify(cardKeyRepository, never()).saveAll(anyList());
     }
 
     @Test
-    void importLockCoversActiveWidthCheckAndBothWritesWhenDuplicateCheckIsOff() {
-        when(cardKeyRepository.findActiveColumnCounts(productId, null)).thenReturn(List.of());
+    void productLockCoversFormatEstablishmentAndBothWritesWhenDuplicateCheckIsOff() {
         stubBatchSave();
 
         service.importCardKeys(
@@ -330,11 +322,24 @@ class AdminCardKeyServiceImplTest {
                         "content_columns", List.of("A"),
                         "check_duplicate", false), UUID.randomUUID());
 
-        var order = inOrder(cardKeyRepository, batchRepository);
-        order.verify(cardKeyRepository).lockImportPool(productId, null);
-        order.verify(cardKeyRepository).findActiveColumnCounts(productId, null);
+        var order = inOrder(productRepository, cardKeyRepository, batchRepository);
+        order.verify(productRepository).findByIdForUpdate(productId);
+        order.verify(productRepository).setCardContentColumnCount(productId, 1);
         order.verify(batchRepository).save(any(CardImportBatch.class));
         order.verify(cardKeyRepository).saveAll(anyList());
+    }
+
+    @Test
+    void entirelyDuplicateImportDoesNotEstablishAnUnconfiguredFormat() {
+        String fingerprint = CardContentParser.fingerprint(List.of("A"));
+        when(cardKeyRepository.findExistingFingerprints(productId, null, List.of(fingerprint)))
+                .thenReturn(List.of(fingerprint));
+        stubBatchSave();
+
+        Map<String, Object> result = service.importCardKeys(
+                Map.of("product_id", productId.toString(), "content_columns", List.of("A")), UUID.randomUUID());
+        assertEquals(0, result.get("success_count"));
+        verify(productRepository, never()).setCardContentColumnCount(any(), anyInt());
     }
 
     @Test

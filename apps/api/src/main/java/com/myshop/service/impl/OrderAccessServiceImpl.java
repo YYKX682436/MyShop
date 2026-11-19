@@ -132,9 +132,9 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                 result.append(" [").append(item.getSpecName()).append("]");
             }
             result.append("\n");
-            for (CardKey key : itemKeys) {
-                result.append(String.join("\t", key.getContentParts())).append("\n");
-            }
+            result.append(itemKeys.stream()
+                    .map(key -> String.join("\n", key.getContentParts()))
+                    .collect(Collectors.joining("\n\n"))).append("\n");
         }
         return result.toString();
     }

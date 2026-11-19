@@ -81,7 +81,7 @@ if name == 'schema':
         sys.exit(137)
     if os.getenv('FAIL_SCHEMA'):
         fail('schema failed')
-    print('MYSHOP_SCHEMA_CONTRACT_OK migrations=42')
+    print('MYSHOP_SCHEMA_CONTRACT_OK migrations=43')
     sys.exit(0)
 if name == 'curl':
     if os.getenv('FAIL_SMOKE'):

@@ -5,14 +5,17 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.context.RequestContext;
 import com.myshop.exception.BusinessException;
 import com.myshop.service.AdminOrderService;
+import com.myshop.service.AdminCardKeyService;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.OrderRefundService;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import com.myshop.payment.PaymentProvider;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -20,9 +23,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -39,13 +39,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Proves the order lock and partial unique refund index together make refunds one-shot. */
-@Testcontainers(disabledWithoutDocker = true)
+@EnabledIf(value = "postgresAvailable", disabledReason = "PostgreSQL test database or Docker required")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class OrderRefundConcurrencyIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+
+    static boolean postgresAvailable() { return POSTGRES.available(); }
+
+    @AfterAll
+    static void stopPostgres() { POSTGRES.close(); }
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -55,6 +59,9 @@ class OrderRefundConcurrencyIntegrationTest {
 
     @Autowired
     private AdminOrderService adminOrderService;
+
+    @Autowired
+    private AdminCardKeyService adminCardKeyService;
 
     @Autowired
     private PaymentConfirmationTransactionService paymentConfirmationTransactionService;
@@ -223,6 +230,29 @@ class OrderRefundConcurrencyIntegrationTest {
         assertTrue(audit.contains("回收数量=2"));
         assertTrue(audit.contains("原因=确认卡密未使用"));
         assertTrue(!audit.contains("test-key"));
+    }
+
+    @Test
+    void refundReclaimPreservesTheProductFormat() {
+        UUID operatorId = insertAdmin("refund-format-admin");
+        UUID userId = insertUser("refund-format-buyer", "0.00");
+        DeliveredCardOrder fixture = insertDeliveredCardOrder(userId, 1);
+        UUID productId = scalar("SELECT product_id FROM order_items WHERE id = ?", UUID.class, fixture.itemId());
+        jdbcTemplate.update("""
+                INSERT INTO products(id, title, retail_price, cost_price, category_id, card_content_column_count)
+                VALUES (?, 'refund-format', 1.00, 0.10, ?, 2)
+                """, productId, UUID.randomUUID());
+        jdbcTemplate.update("UPDATE card_keys SET content_parts = '[\"account\",\"code\"]'::jsonb WHERE id = ?",
+                fixture.cardKeyIds().get(0));
+        RequestContext.set(new RequestContext.UserInfo(operatorId, "refund-format-admin", "ADMIN"));
+        orderRefundService.refund(fixture.orderId(), "回收", true, true);
+
+        assertEquals(2, scalar("SELECT card_content_column_count FROM products WHERE id = ?", Integer.class, productId));
+        assertEquals("AVAILABLE", scalar("SELECT status FROM card_keys WHERE id = ?", String.class, fixture.cardKeyIds().get(0)));
+        BusinessException exception = org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class,
+                () -> adminCardKeyService.importCardKeys(Map.of("product_id", productId.toString(),
+                        "content_columns", List.of("wrong-width")), operatorId));
+        assertEquals(ErrorCode.CARD_KEY_FORMAT_ERROR, exception.getCode());
     }
 
     @Test

@@ -223,12 +223,11 @@ public class EmailServiceImpl implements EmailService {
             }
             for (int cardIndex = 0; cardIndex < itemKeys.size(); cardIndex++) {
                 CardKey key = itemKeys.get(cardIndex);
-                        List<String> parts = key.getContentParts();
+                List<String> parts = key.getContentParts();
                 sb.append("<div style=\"margin-bottom:10px;padding:8px 0 2px;color:#666;font-size:12px;\">第 ")
                   .append(cardIndex + 1).append(" 份</div>");
                 for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
                     sb.append("<div style=\"background-color:#fafafa;border:1px solid #eee;border-radius:4px;padding:8px 12px;margin-bottom:6px;font-family:'Courier New',Courier,monospace;font-size:13px;color:#222;word-break:break-all;\">")
-                      .append("卡券内容 ").append(partIndex + 1).append(": ")
                       .append(escapeHtml(parts.get(partIndex))).append("</div>");
                 }
             }
