@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { announceCreatedProduct, getAdminDataRevision, invalidateAdminData, subscribeAdminDataInvalidation, takeCreatedProduct } from "./admin-data-invalidation.ts"
+import { announceCreatedProduct, getAdminDataRevision, invalidateAdminData, prepareProductRestock, subscribeAdminDataInvalidation, takeCreatedProduct, takeProductRestock } from "./admin-data-invalidation.ts"
 
 test("only affected resources receive one notification per change", () => {
   const beforeProducts = getAdminDataRevision("products")
@@ -22,4 +22,10 @@ test("the newly created product can be located exactly once", () => {
   announceCreatedProduct("new-product", 42)
   assert.deepEqual(takeCreatedProduct(), { id: "new-product", productNo: 42 })
   assert.equal(takeCreatedProduct(), null)
+})
+
+test("a full-page restock intent is consumed only once by the list", () => {
+  prepareProductRestock("new-product")
+  assert.equal(takeProductRestock(), "new-product")
+  assert.equal(takeProductRestock(), null)
 })

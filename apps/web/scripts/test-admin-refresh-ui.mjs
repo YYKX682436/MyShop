@@ -157,6 +157,7 @@ try {
   console.log("Product steps, validation, one create, restock ID, list and intercepted edit passed")
 
   // A direct full-page editor must also return to the refreshed list.
+  await page.waitForTimeout(1500)
   await page.goto(new URL("/admin/products/new", base).href)
   await page.getByTestId("product-title-input").fill(`${unique}-全页`)
   await page.waitForFunction(() => document.querySelector('[data-testid="product-category-select"]')?.options.length > 1)
@@ -174,6 +175,39 @@ try {
   await page.getByText(`${unique}-全页`, { exact: true }).first().waitFor()
   assert.equal(createRequests, beforeSuccessfulCreate + 2)
   console.log("Full-page create returns to the new product passed")
+
+  // A full-page create must first return to the list before opening an
+  // intercepted restock workspace. Mock this create to avoid a third record.
+  await page.waitForTimeout(1500)
+  await page.goto(new URL("/admin/products/new", base).href)
+  await page.getByTestId("product-title-input").fill("全页补货回归")
+  await page.waitForFunction(() => document.querySelector('[data-testid="product-category-select"]')?.options.length > 1)
+  await page.getByTestId("product-category-select").selectOption({ index: 1 })
+  await tab("pricing")
+  const restockPrices = activePanel("pricing").locator('tbody tr').first().locator('input[type="number"]')
+  await restockPrices.nth(0).fill("1")
+  await restockPrices.nth(1).fill("2")
+  await tab("details")
+  await page.route("**/api/admin/products", async route => {
+    if (route.request().method() === "POST") await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, data: fullCreated, message: "Success" }) })
+    else await route.continue()
+  })
+  const beforeFullRestock = createRequests
+  await page.getByRole("button", { name: "保存并继续补货" }).click()
+  await page.waitForURL(url => url.pathname === `/admin/products/${fullCreated.id}/edit` && url.searchParams.get("tab") === "inventory")
+  const restockSheet = page.getByTestId("product-workspace-sheet")
+  await restockSheet.getByTestId("product-tab-panel-inventory").waitFor({ state: "visible" })
+  assert.equal(await page.locator(".admin-page-header h1").first().textContent(), "商品管理")
+  await restockSheet.getByRole("button", { name: "导入卡密", exact: true }).click()
+  const fullImportDialog = page.getByRole("dialog", { name: `导入卡密 · ${fullCreated.title}` })
+  await fullImportDialog.getByRole("textbox", { name: "卡券内容 1 *" }).waitFor()
+  await page.keyboard.press("Escape")
+  await restockSheet.getByTestId("product-form").getByRole("button", { name: "取消", exact: true }).click()
+  await page.waitForURL(url => url.pathname === "/admin/products")
+  assert.equal(await page.getByLabel("搜索商品名称 / 商品编号").inputValue(), String(fullCreated.product_no))
+  assert.equal(createRequests, beforeFullRestock + 1)
+  await page.unroute("**/api/admin/products")
+  console.log("Full-page restock opens the saved product and closes to its list")
 
   const pages = [
     ["dashboard", ["/api/admin/dashboard", "/api/admin/dashboard/sales-trend", "/api/admin/dashboard/system-status", "/api/admin/orders/search", "/api/admin/attention-summary"]],

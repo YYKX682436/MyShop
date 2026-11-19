@@ -8,6 +8,7 @@ import { ProductForm } from "@/components/admin/products/product-form"
 import { AdminPage, PageHeader } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
+import { prepareProductRestock } from "@/lib/admin-data-invalidation"
 import type { ProductEditorTab } from "@/lib/product-editor"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
@@ -108,7 +109,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
   }, [productId])
 
   const handleSaved = onSaved || ((saved: AdminProductDetail, continueRestock: boolean) => {
-    if (continueRestock) router.replace(`/admin/products/${saved.id}/edit?tab=inventory`)
+    if (continueRestock) { prepareProductRestock(saved.id); router.replace("/admin/products") }
     else router.push("/admin/products")
   })
   const handleCancel = onCancel || (() => router.push("/admin/products"))

@@ -10,6 +10,7 @@ const listeners: Record<AdminResource, Set<Listener>> = {
 }
 
 let createdProduct: { id: string; productNo: number } | null = null
+let pendingRestockProductId: string | null = null
 
 export function getAdminDataRevision(resource: AdminResource) {
   return revisions[resource]
@@ -36,6 +37,16 @@ export function takeCreatedProduct() {
   const result = createdProduct
   createdProduct = null
   return result
+}
+
+export function prepareProductRestock(id: string) {
+  pendingRestockProductId = id
+}
+
+export function takeProductRestock() {
+  const id = pendingRestockProductId
+  pendingRestockProductId = null
+  return id
 }
 
 export function useAdminDataRevision(resource: AdminResource) {

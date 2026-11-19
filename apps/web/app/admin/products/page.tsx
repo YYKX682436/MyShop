@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { AlertCircle, Copy, Edit, Plus, Trash2 } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
 import { AdminPage, AdminPagination, ConfirmAlert, DataTableShell, PageHeader, PageToolbar, TableEmptyState, TableErrorState, TableLoadingState } from "@/components/admin/shared"
@@ -17,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useLocale } from "@/lib/context"
-import { invalidateAdminData, takeCreatedProduct, useAdminDataRevision } from "@/lib/admin-data-invalidation"
+import { invalidateAdminData, takeCreatedProduct, takeProductRestock, useAdminDataRevision } from "@/lib/admin-data-invalidation"
 import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { getProductCategoryPathLabel, matchesCategory } from "@/lib/categories"
 import { cn, stripInvisible } from "@/lib/utils"
@@ -39,6 +40,7 @@ type QuickEditField = "title" | "category" | "prices" | "sort_weight" | "status"
 
 export default function AdminProductsPage() {
   const { t } = useLocale()
+  const router = useRouter()
   const [products, setProducts] = useState<AdminProductDetail[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
@@ -130,6 +132,10 @@ export default function AdminProductsPage() {
     }
     void loadProducts()
   }, [loadProducts, productRevision, categoryFilter, debouncedSearch, page, statusFilter])
+  useEffect(() => {
+    const id = takeProductRestock()
+    if (id) router.push(`/admin/products/${id}/edit?tab=inventory`)
+  }, [router])
   const refreshPage = useCallback(async () => { await Promise.all([loadProducts(), loadCategories()]) }, [loadProducts, loadCategories])
   const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
 
