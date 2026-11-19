@@ -964,9 +964,3 @@ export interface UserSecretPrice {
   cost_price?: number | null
   below_cost: boolean
 }
-
-export interface UserSecretPriceAuditTarget {
-  id: string
-  product_id: string
-  spec_id?: string | null
-}

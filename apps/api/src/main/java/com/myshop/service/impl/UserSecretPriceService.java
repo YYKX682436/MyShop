@@ -1,5 +1,6 @@
 package com.myshop.service.impl;
 
+import com.myshop.annotation.LogOperation;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.Product;
@@ -11,7 +12,6 @@ import com.myshop.exception.BusinessException;
 import com.myshop.model.pricing.PriceResolution;
 import com.myshop.model.pricing.PriceTarget;
 import com.myshop.model.request.UserSecretPriceRequest;
-import com.myshop.model.response.UserSecretPriceAuditTargetResponse;
 import com.myshop.model.response.UserSecretPriceResponse;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
@@ -95,17 +95,17 @@ public class UserSecretPriceService {
         return response(entry, product, spec, pricing.resolve(product, spec, levelFor(user)));
     }
 
+    @LogOperation(action = "secret_price.delete", targetType = "USER", targetId = "#userId",
+            detail = "'删除用户密价：密价记录=' + #result.id + ' 商品=' + #result.productId + ' 规格=' + #result.specId")
     @Transactional
-    public UserSecretPriceAuditTargetResponse delete(UUID userId, UUID id) {
+    public UserSecretPrice delete(UUID userId, UUID id) {
         requireUser(userId);
         UserSecretPrice entry = requireEntry(userId, id);
         Product product = lockProduct(entry.getProductId());
         validateTarget(product, entry.getSpecId());
-        UserSecretPriceAuditTargetResponse auditTarget = new UserSecretPriceAuditTargetResponse(
-                entry.getId(), entry.getProductId(), entry.getSpecId());
         secrets.delete(entry);
         secrets.flush();
-        return auditTarget;
+        return entry;
     }
 
     private User requireUser(UUID userId) {

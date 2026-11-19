@@ -3,7 +3,6 @@ package com.myshop.controller;
 import com.myshop.annotation.LogOperation;
 import com.myshop.common.ApiResponse;
 import com.myshop.model.request.UserSecretPriceRequest;
-import com.myshop.model.response.UserSecretPriceAuditTargetResponse;
 import com.myshop.model.response.UserSecretPriceResponse;
 import com.myshop.service.impl.UserSecretPriceService;
 import lombok.RequiredArgsConstructor;
@@ -31,9 +30,8 @@ public class AdminUserSecretPriceController {
     @PutMapping("/{id}") public ApiResponse<UserSecretPriceResponse> update(@PathVariable UUID userId, @PathVariable UUID id, @RequestBody UserSecretPriceRequest request) {
         return ApiResponse.success(service.update(userId, id, request));
     }
-    @LogOperation(action = "secret_price.delete", targetType = "USER", targetId = "#userId",
-            detail = "'删除用户密价：密价记录=' + #result.getData().id() + ' 商品=' + #result.getData().productId() + ' 规格=' + #result.getData().specId()")
-    @DeleteMapping("/{id}") public ApiResponse<UserSecretPriceAuditTargetResponse> delete(@PathVariable UUID userId, @PathVariable UUID id) {
-        return ApiResponse.success(service.delete(userId, id));
+    @DeleteMapping("/{id}") public ApiResponse<Void> delete(@PathVariable UUID userId, @PathVariable UUID id) {
+        service.delete(userId, id);
+        return ApiResponse.success();
     }
 }
