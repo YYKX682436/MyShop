@@ -13,12 +13,15 @@ import com.myshop.model.pricing.PriceTarget;
 import com.myshop.repository.ProductLevelPriceOverrideRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.repository.UserRepository;
+import com.myshop.repository.UserSecretPriceRepository;
+import com.myshop.entity.UserSecretPrice;
 import com.myshop.service.PricingCalculator;
 import com.myshop.service.PricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +36,7 @@ public class PricingServiceImpl implements PricingService {
     private final UserRepository userRepository;
     private final UserLevelRepository userLevelRepository;
     private final ProductLevelPriceOverrideRepository overrideRepository;
+    private final UserSecretPriceRepository secretPriceRepository;
     private final PricingCalculator calculator = new PricingCalculator();
 
     @Override
@@ -84,6 +88,34 @@ public class PricingServiceImpl implements PricingService {
         }
         return calculator.calculate(spec.getCostPrice(), spec.getRetailPrice(), level,
                 selected == null ? null : selected.getPrice());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PriceResolution resolveForUser(Product product, ProductSpec spec, UserLevel level, UUID userId) {
+        if (userId == null || level == null || secretPriceRepository == null) return resolve(product, spec, level);
+        BigDecimal secret = secretPriceRepository.findByUserIdAndProductIdAndSpecId(userId, product.getId(),
+                spec == null ? null : spec.getId()).map(UserSecretPrice::getPrice).orElse(null);
+        if (secret == null) return resolve(product, spec, level);
+        return calculator.calculate(spec == null ? product.getCostPrice() : spec.getCostPrice(),
+                spec == null ? product.getRetailPrice() : spec.getRetailPrice(), level, null, secret);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map<PriceTarget, PriceResolution> resolveBatchForUser(Collection<Product> products,
+            Map<UUID, List<ProductSpec>> specsByProduct, UserLevel level, UUID userId) {
+        Map<PriceTarget, PriceResolution> result = new HashMap<>(resolveBatch(products, specsByProduct, level));
+        if (userId == null || level == null || products == null || products.isEmpty() || secretPriceRepository == null) return result;
+        Map<UUID, Product> byId = products.stream().collect(Collectors.toMap(Product::getId, p -> p));
+        for (UserSecretPrice secret : secretPriceRepository.findByUserIdAndProductIdIn(userId, List.copyOf(byId.keySet()))) {
+            PriceTarget target = new PriceTarget(secret.getProductId(), secret.getSpecId());
+            PriceResolution original = result.get(target);
+            if (original != null) {
+                result.put(target, calculator.calculate(original.costPrice(), original.retailPrice(), level, null, secret.getPrice()));
+            }
+        }
+        return result;
     }
 
     @Override

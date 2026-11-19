@@ -145,7 +145,7 @@ class PublicProductServiceImplTest {
                 new PriceResolution(product == last ? money("5.00") : money("10.00"),
                         money("3.00"), money("10.00"), PricingSource.LEVEL_OVERRIDE,
                         false, null, level.getId(), "Member")));
-        when(pricingService.resolveBatch(anyCollection(), anyMap(), eq(level))).thenReturn(prices);
+        when(pricingService.resolveBatchForUser(anyCollection(), anyMap(), eq(level), eq(viewer))).thenReturn(prices);
         when(inventoryBatchService.load(anyCollection(), anyMap())).thenReturn(Map.of(
                 new PriceTarget(last.getId(), null), new ProductInventoryBatchService.StockSnapshot(null, true)));
 
@@ -160,7 +160,7 @@ class PublicProductServiceImplTest {
         var captor = org.mockito.ArgumentCaptor.forClass(Pageable.class);
         verify(productRepository).findPublicProducts(isNull(), captor.capture());
         assertTrue(captor.getValue().isUnpaged());
-        verify(pricingService, times(1)).resolveBatch(anyCollection(), anyMap(), eq(level));
+        verify(pricingService, times(1)).resolveBatchForUser(anyCollection(), anyMap(), eq(level), eq(viewer));
         verify(inventoryBatchService, times(1)).load(anyCollection(), anyMap());
     }
 

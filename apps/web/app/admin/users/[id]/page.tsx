@@ -21,6 +21,7 @@ import {
   TableLoadingState,
   maskTechnicalIdsInText,
 } from "@/components/admin/shared"
+import { UserSecretPrices } from "@/components/admin/users/user-secret-prices"
 import { UserLevelQuickEdit } from "@/components/admin/users/user-level-quick-edit"
 import { UserStatusQuickEdit } from "@/components/admin/users/user-status-quick-edit"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
@@ -36,8 +37,8 @@ import { buildPasswordResetResultText, formatBalanceAdjustmentResult, isOptional
 import { adminUserApi, adminUserLevelApi, requestOrThrow } from "@/services/api"
 import type { AdminOperationLogDetail, AdminUserDetail, AdminUserOrder, BalanceTransaction, UserLevel } from "@/types"
 
-type DetailTab = "overview" | "orders" | "balance" | "logs"
-type RecordTab = Exclude<DetailTab, "overview">
+type DetailTab = "overview" | "orders" | "balance" | "logs" | "secret"
+type RecordTab = Exclude<DetailTab, "overview" | "secret">
 type CopyStatus = "pending" | "success" | "failed"
 const PAGE_SIZE = 10
 
@@ -77,6 +78,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   const [resetResult, setResetResult] = useState<{ password: string; text: string; copyStatus: CopyStatus } | null>(null)
   const [levels, setLevels] = useState<UserLevel[]>([])
   const [levelLoading, setLevelLoading] = useState(false)
+  const [secretDirty, setSecretDirty] = useState(false)
 
   const loadUser = useCallback(async (): Promise<AdminUserDetail | null> => {
     setLoading(true)
@@ -126,7 +128,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   useEffect(() => { void loadUser() }, [loadUser])
   useEffect(() => { void adminUserLevelApi.getList().then(setLevels).catch(() => setLevels([])) }, [])
   useEffect(() => {
-    if (activeTab !== "overview") void loadRecords(activeTab, recordPage)
+    if (activeTab !== "overview" && activeTab !== "secret") void loadRecords(activeTab, recordPage)
   }, [activeTab, loadRecords, recordPage])
 
   const previewBalanceCents = useMemo(() => {
@@ -145,7 +147,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   }, [loadRecords])
 
   const retryActiveRecords = () => {
-    if (activeTab !== "overview") void loadRecords(activeTab, recordPage)
+    if (activeTab !== "overview" && activeTab !== "secret") void loadRecords(activeTab, recordPage)
   }
 
   const openEdit = () => {
@@ -280,6 +282,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
   const formDirty = Boolean(
     (editOpen && user && editEmail !== user.email)
     || (balanceOpen && (balanceAmount.trim() || balanceReason.trim()))
+    || secretDirty
   )
 
   useEffect(() => {
@@ -295,6 +298,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
 
   const tabs: { key: DetailTab; label: string }[] = [
     { key: "overview", label: t("admin.overview") },
+    { key: "secret", label: t("admin.secretPrices") },
     { key: "orders", label: t("admin.orderRecords") },
     { key: "balance", label: t("admin.balanceRecords") },
     { key: "logs", label: t("admin.managementRecords") },
@@ -344,6 +348,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
       </div>
 
       {activeTab === "overview" && <Overview user={user} t={t} locale={locale} />}
+      {activeTab === "secret" && <UserSecretPrices userId={userId} onDirtyChange={setSecretDirty} />}
       {activeTab === "orders" && <OrdersTab orders={orders} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
       {activeTab === "balance" && <BalanceTab transactions={transactions} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}
       {activeTab === "logs" && <LogsTab logs={logs} loading={recordsLoading} error={recordsError} onRetry={retryActiveRecords} page={recordPage} total={recordTotal} onPageChange={setRecordPage} t={t} locale={locale} />}

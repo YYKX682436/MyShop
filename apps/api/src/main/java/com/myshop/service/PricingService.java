@@ -24,6 +24,11 @@ public interface PricingService {
     PriceResolution resolve(Product product, ProductSpec spec, UserLevel level,
                             Collection<com.myshop.entity.ProductLevelPriceOverride> overrides);
 
+    PriceResolution resolveForUser(Product product, ProductSpec spec, UserLevel level, UUID userId);
+
+    Map<PriceTarget, PriceResolution> resolveBatchForUser(Collection<Product> products,
+            Map<UUID, List<ProductSpec>> specsByProduct, UserLevel level, UUID userId);
+
     Map<PriceTarget, PriceResolution> resolveBatch(Collection<Product> products,
                                                    Map<UUID, List<ProductSpec>> specsByProduct,
                                                    UserLevel level);

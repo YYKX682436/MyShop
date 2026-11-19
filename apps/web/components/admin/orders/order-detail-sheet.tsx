@@ -41,6 +41,8 @@ function fulfillmentLabel(item: OrderItemDetail, t: Translator) {
 }
 
 function pricingSourceLabel(source: AdminOrderItemDetail["pricing_source"], t: Translator) {
+  if (source === "SALES_CHANNEL") return t("admin.pricingSourceChannel")
+  if (source === "USER_SECRET") return t("admin.pricingSourceSecret")
   if (source === "LEVEL_OVERRIDE") return t("admin.pricingSourceOverride")
   if (source === "LEVEL_MARKUP") return t("admin.pricingSourceMarkup")
   return t("admin.pricingSourceRetail")

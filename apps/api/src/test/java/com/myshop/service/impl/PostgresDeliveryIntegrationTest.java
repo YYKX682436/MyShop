@@ -4,6 +4,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.constant.CardKeyStatus;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.Product;
 import com.myshop.model.request.AdminCardKeyBatchPickupRequest;
 import com.myshop.model.request.AdminOrderSearchRequest;
@@ -91,6 +92,9 @@ class PostgresDeliveryIntegrationTest {
     @Autowired
     private ProductRepository productRepository;
 
+    @Autowired private UserSecretPriceService secretPrices;
+    @Autowired private com.myshop.service.PublicProductService publicProducts;
+
     @Autowired
     private PlatformTransactionManager transactionManager;
 
@@ -141,6 +145,123 @@ class PostgresDeliveryIntegrationTest {
         registry.add("bootstrap.admin.username", () -> "");
         registry.add("bootstrap.admin.email", () -> "");
         registry.add("bootstrap.admin.password", () -> "");
+    }
+
+    @Test
+    void secretPricesArePrivateOverrideLevelPricesAndEnforceTargets() {
+        UUID a = insertUser("secret-a-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID b = insertUser("secret-b-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID product = UUID.randomUUID();
+        insertUnlimitedProduct(product);
+        UUID level = scalar("select user_level_id from users where id = ?", UUID.class, a);
+        jdbcTemplate.update("insert into product_level_price_overrides(product_id, user_level_id, price) values (?, ?, 7.00)", product, level);
+        var secret = secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("9.00")));
+        assertEquals(new BigDecimal("7.00"), secret.levelPrice());
+        assertEquals(new BigDecimal("9.00"), publicProducts.getProduct(product, a).price());
+        assertEquals(new BigDecimal("7.00"), publicProducts.getProduct(product, b).price());
+        assertEquals(new BigDecimal("10.00"), publicProducts.getProduct(product, null).price());
+        assertThrows(BusinessException.class, () -> secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("8.00"))));
+        assertThrows(BusinessException.class, () -> secretPrices.create(b, new com.myshop.model.request.UserSecretPriceRequest(product, UUID.randomUUID(), new BigDecimal("8.00"))));
+        assertThrows(BusinessException.class, () -> secretPrices.create(b, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("0"))));
+        assertThrows(BusinessException.class, () -> secretPrices.create(b, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("1.001"))));
+        assertThrows(BusinessException.class, () -> secretPrices.create(b, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("10.01"))));
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbcTemplate.update("insert into user_secret_prices(user_id, product_id, price) values (?, ?, 8.00)", a, product));
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbcTemplate.update("update products set retail_price = 8.00 where id = ?", product));
+        assertThrows(BusinessException.class, () -> adminProductService.updatePrices(product,
+                new com.myshop.model.request.AdminProductPricesUpdateRequest(new BigDecimal("10.00"), new BigDecimal("8.00"), null)));
+        UUID category = scalar("select category_id from products where id = ?", UUID.class, product);
+        var aggregate = new com.myshop.model.request.AdminProductUpsertRequest("Integration product", null, null, null,
+                new BigDecimal("10.00"), new BigDecimal("8.00"), category, 10, false, true, 0, 0,
+                "MANUAL", List.of(), StockMode.UNLIMITED, null, List.of(), null);
+        assertThrows(BusinessException.class, () -> adminProductService.updateProduct(product, aggregate));
+        assertThrows(BusinessException.class, () -> secretPrices.delete(b, secret.id()));
+        secretPrices.delete(a, secret.id());
+        assertEquals(new BigDecimal("7.00"), publicProducts.getProduct(product, a).price());
+        UUID markupLevel = UUID.randomUUID();
+        jdbcTemplate.update("insert into user_levels(id,name,pricing_type,markup_rate) values (?, ?, 'COST_MARKUP', 10.0000)", markupLevel, "secret-markup-" + markupLevel);
+        jdbcTemplate.update("update users set user_level_id = ? where id in (?, ?)", markupLevel, a, b);
+        jdbcTemplate.update("update products set retail_price = 20.00 where id = ?", product);
+        secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("12.00")));
+        assertEquals(new BigDecimal("12.00"), publicProducts.getProduct(product, a).price());
+        assertEquals(new BigDecimal("11.00"), publicProducts.getProduct(product, b).price());
+        jdbcTemplate.update("update users set is_deleted = 1 where id = ?", a);
+        assertEquals(new BigDecimal("11.00"), secretPrices.list(a).get(0).levelPrice());
+        assertEquals(new BigDecimal("20.00"), publicProducts.getProduct(product, a).price());
+    }
+
+    @Test
+    void specSecretsDriveDisplaySortingAndAreRemovedWhenTargetsChange() {
+        UUID a = insertUser("spec-a-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID b = insertUser("spec-b-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID product = UUID.randomUUID(); insertUnlimitedProduct(product);
+        UUID first = addSpec(product, "first"); UUID second = addSpec(product, "second");
+        UUID other = UUID.randomUUID(); insertUnlimitedProduct(other);
+        UUID category = scalar("select category_id from products where id = ?", UUID.class, product);
+        jdbcTemplate.update("update products set category_id = ? where id = ?", category, other);
+        secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, first, new BigDecimal("8.00")));
+        secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, second, new BigDecimal("3.00")));
+        var detail = publicProducts.getProduct(product, a);
+        assertEquals(new BigDecimal("3.00"), detail.price());
+        var specPrices = detail.specs().stream().collect(java.util.stream.Collectors.toMap(s -> s.id(), s -> s.price()));
+        assertEquals(new BigDecimal("8.00"), specPrices.get(first));
+        assertEquals(new BigDecimal("3.00"), specPrices.get(second));
+        assertEquals(new BigDecimal("10.00"), publicProducts.getProduct(product, b).price());
+        assertThrows(BusinessException.class, () -> secretPrices.create(b, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("4.00"))));
+        assertThrows(BusinessException.class, () -> secretPrices.create(b, new com.myshop.model.request.UserSecretPriceRequest(other, first, new BigDecimal("4.00"))));
+        assertThrows(BusinessException.class, () -> adminProductService.updatePrices(product,
+                new com.myshop.model.request.AdminProductPricesUpdateRequest(null, null, List.of(
+                        new com.myshop.model.request.AdminProductSpecPriceRequest(first, new BigDecimal("10.00"), new BigDecimal("7.00")),
+                        new com.myshop.model.request.AdminProductSpecPriceRequest(second, new BigDecimal("10.00"), new BigDecimal("10.00"))))));
+        var filtered = publicProducts.listProducts(category, null, 1, 20, a, "price_low", false, new BigDecimal("2.00"), new BigDecimal("9.00"));
+        assertEquals(List.of(product), filtered.getList().stream().map(p -> p.id()).toList());
+        var sorted = publicProducts.listProducts(category, null, 1, 20, a, "price_high", false, null, null);
+        assertEquals(List.of(other, product), sorted.getList().stream().map(p -> p.id()).toList());
+        assertThrows(org.springframework.dao.DataAccessException.class, () -> jdbcTemplate.update("update product_specs set retail_price = 2.00 where id = ?", second));
+        jdbcTemplate.update("update product_specs set is_deleted = 1 where id = ?", second);
+        assertEquals(1, number("select count(*) from user_secret_prices where product_id = ?", product));
+        jdbcTemplate.update("update products set spec_enabled = false where id = ?", product);
+        assertEquals(0, number("select count(*) from user_secret_prices where product_id = ?", product));
+        secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("5.00")));
+        jdbcTemplate.update("update products set is_deleted = 1 where id = ?", product);
+        assertEquals(0, number("select count(*) from user_secret_prices where product_id = ?", product));
+    }
+
+    @Test
+    void secretPriceIsRecalculatedForBothPaymentsAndExistingOrderKeepsSnapshot() {
+        UUID a = insertUser("order-secret-a-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID b = insertUser("order-secret-b-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        setBalance(a, new BigDecimal("100.00"));
+        UUID product = UUID.randomUUID(); insertUnlimitedProduct(product);
+        var secret = secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("6.00")));
+        Map<String, Object> balance = balanceOrderRequest(product, "secret-" + UUID.randomUUID(), "fingerprint");
+        balance.put("expected_unit_price", "6.00");
+        balance.put("user_id", b.toString());
+        Map<?, ?> order = (Map<?, ?>) orderService.createDirectOrder(balance, a, "203.0.113.1", "unused").get("order");
+        UUID orderId = (UUID) order.get("id");
+        assertEquals(new BigDecimal("6.00"), scalar("select actual_amount from orders where id = ?", BigDecimal.class, orderId));
+        assertEquals(new BigDecimal("94.00"), scalar("select balance from users where id = ?", BigDecimal.class, a));
+        assertEquals("USER_SECRET", scalar("select pricing_source from order_items where order_id = ?", String.class, orderId));
+        assertEquals(new BigDecimal("10.00"), scalar("select cost_price_snapshot from order_items where order_id = ?", BigDecimal.class, orderId));
+        Map<?, ?> adminDetail = (Map<?, ?>) adminOrderService.getOrderDetail(orderId);
+        Map<?, ?> adminItem = (Map<?, ?>) ((List<?>) adminDetail.get("items")).get(0);
+        assertEquals(com.myshop.constant.PricingSource.USER_SECRET, adminItem.get("pricing_source"));
+        assertEquals(new BigDecimal("-4.00"), adminItem.get("gross_profit"));
+        secretPrices.update(a, secret.id(), new com.myshop.model.request.UserSecretPriceRequest(null, null, new BigDecimal("8.00")));
+        assertEquals(new BigDecimal("6.00"), scalar("select unit_price from order_items where order_id = ?", BigDecimal.class, orderId));
+        assertThrows(BusinessException.class, () -> orderService.createDirectOrder(balanceOrderRequest(product, "stale-" + UUID.randomUUID(), "fingerprint"), a, "203.0.113.1", "unused"));
+        insertPaymentChannel("secret-channel-" + product);
+        configurePaymentCreation("secret-trade-" + product);
+        Map<String, Object> online = directOrderRequest(product, "secret-channel-" + product);
+        online.put("expected_unit_price", "8.00");
+        Map<?, ?> onlineOrder = (Map<?, ?>) orderService.createDirectOrder(online, a, "203.0.113.1", "unused").get("order");
+        UUID onlineId = (UUID) onlineOrder.get("id");
+        assertEquals(new BigDecimal("8.00"), scalar("select actual_amount from orders where id = ?", BigDecimal.class, onlineId));
+        assertEquals("USER_SECRET", scalar("select pricing_source from order_items where order_id = ?", String.class, onlineId));
+        assertEquals(new BigDecimal("8.00"), scalar("select amount from payment_attempts where order_id = ?", BigDecimal.class, onlineId));
+        assertEquals(new BigDecimal("8.00"), publicProducts.getProduct(product, a).price());
+        secretPrices.delete(a, secret.id());
+        assertEquals(new BigDecimal("10.00"), publicProducts.getProduct(product, a).price());
+        assertEquals(new BigDecimal("6.00"), scalar("select unit_price from order_items where order_id = ?", BigDecimal.class, orderId));
     }
 
     @Test

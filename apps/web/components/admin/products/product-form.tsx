@@ -414,8 +414,10 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
   const removeSpec = (index: number) => {
     const spec = draft.specs[index]
     if (!spec) return
-    if (spec.card_key_count && spec.card_key_count > 0
-      && !window.confirm(t("admin.deleteSpecDescription").replace("{name}", spec.name).replace("{count}", String(spec.card_key_count)))) return
+    if (spec.card_key_count && spec.card_key_count > 0) {
+      if (!window.confirm(t("admin.deleteSpecDescription").replace("{name}", spec.name).replace("{count}", String(spec.card_key_count)))) return
+    } else if (product?.specs.some(existing => existing.id === spec.id)
+      && !window.confirm(t("admin.deleteSpecSecretWarning"))) return
     markDirty()
     setDraft((current) => ({
       ...current,

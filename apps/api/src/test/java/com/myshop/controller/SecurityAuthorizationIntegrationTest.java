@@ -53,6 +53,9 @@ class SecurityAuthorizationIntegrationTest {
     @MockitoBean
     private OperationLogService operationLogService;
 
+    @MockitoBean
+    private com.myshop.service.impl.UserSecretPriceService secretPriceService;
+
     @Autowired
     private RequestMappingHandlerMapping requestMappingHandlerMapping;
 
@@ -65,6 +68,14 @@ class SecurityAuthorizationIntegrationTest {
                 .thenReturn(PageResult.of(java.util.List.<AdministratorResponse>of(), 1, 20, 0));
         when(operationLogService.listLogs(any(), anyString(), anyString(), anyString(), anyString(), anyInt(), anyInt()))
                 .thenReturn(PageResult.of(java.util.List.of(), 1, 20, 0));
+    }
+
+    @Test
+    void secretPriceManagementRejectsGuestsAndOrdinaryUsers() throws Exception {
+        String path = "/api/admin/users/00000000-0000-0000-0000-000000000001/secret-prices";
+        mockMvc.perform(get(path).contextPath("/api")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get(path).contextPath("/api").with(user("buyer").roles("USER"))).andExpect(status().isForbidden());
+        mockMvc.perform(get(path).contextPath("/api").with(user("admin").roles("ADMIN"))).andExpect(status().isOk());
     }
 
     @Test

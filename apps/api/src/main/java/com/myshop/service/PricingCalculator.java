@@ -23,9 +23,23 @@ public class PricingCalculator {
                                      BigDecimal retailPrice,
                                      UserLevel level,
                                      BigDecimal overridePrice) {
+        return calculate(costPrice, retailPrice, level, overridePrice, null);
+    }
+
+    public PriceResolution calculate(BigDecimal costPrice, BigDecimal retailPrice, UserLevel level,
+                                     BigDecimal overridePrice, BigDecimal secretPrice) {
         BigDecimal retail = money(retailPrice, "零售价必须大于 0");
         if (retail.signum() <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "零售价必须大于 0");
+        }
+
+        if (secretPrice != null) {
+            BigDecimal secret = money(secretPrice, "密价格式无效");
+            if (secret.signum() <= 0 || secret.compareTo(retail) > 0) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "密价必须大于 0 且不能高于零售价");
+            }
+            return new PriceResolution(secret, nullableMoney(costPrice), retail, PricingSource.USER_SECRET,
+                    false, null, level == null ? null : level.getId(), level == null ? null : level.getName());
         }
 
         if (overridePrice != null) {

@@ -5,6 +5,7 @@ public enum PricingSource {
     RETAIL,
     LEVEL_MARKUP,
     LEVEL_OVERRIDE,
+    USER_SECRET,
     /** Retained only for the immutable price snapshots of historical channel orders. */
     SALES_CHANNEL
 }

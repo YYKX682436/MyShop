@@ -148,7 +148,9 @@ public class OrderServiceImpl implements OrderService {
         if (!adminPickup && currentUser != null && currentUser.getRole() == UserRole.USER) {
             userLevel = pricingService.requireActiveLevel(currentUser);
         }
-        PriceResolution price = pricingService.resolve(product, spec, userLevel);
+        PriceResolution price = userLevel != null
+                ? pricingService.resolveForUser(product, spec, userLevel, currentUser.getId())
+                : pricingService.resolve(product, spec, userLevel);
         BigDecimal unitPrice = price.price();
         if (!adminPickup) {
             BigDecimal expectedUnitPrice = parseExpectedUnitPrice(req.get("expected_unit_price"));

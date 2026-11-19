@@ -78,6 +78,18 @@ class PricingCalculatorTest {
         assertEquals(PricingSource.LEVEL_OVERRIDE, fixed.pricingSource());
     }
 
+    @Test
+    void secretPriceWinsEvenWhenHigherThanTheLevelOverride() {
+        var result = calculator.calculate(money("80"), money("100"),
+                level(PricingType.COST_MARKUP, money("10")), money("70"), money("90"));
+        assertEquals(money("90.00"), result.price());
+        assertEquals(PricingSource.USER_SECRET, result.pricingSource());
+        assertThrows(BusinessException.class, () -> calculator.calculate(money("80"), money("100"),
+                null, null, new BigDecimal("1.001")));
+        assertThrows(BusinessException.class, () -> calculator.calculate(money("80"), money("100"),
+                null, null, money("100.01")));
+    }
+
     private UserLevel level(PricingType type, BigDecimal markup) {
         UserLevel level = new UserLevel();
         level.setPricingType(type);

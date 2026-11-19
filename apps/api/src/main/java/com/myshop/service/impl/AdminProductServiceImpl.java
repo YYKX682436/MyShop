@@ -12,6 +12,7 @@ import com.myshop.entity.ProductCategory;
 import com.myshop.entity.ProductLevelPriceOverride;
 import com.myshop.entity.ProductSpec;
 import com.myshop.entity.UserLevel;
+import com.myshop.entity.UserSecretPrice;
 import com.myshop.exception.BusinessException;
 import com.myshop.model.CustomerInputField;
 import com.myshop.model.ProductCategoryPath;
@@ -40,6 +41,7 @@ import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.ProductSalesProjection;
 import com.myshop.repository.UserLevelRepository;
+import com.myshop.repository.UserSecretPriceRepository;
 import com.myshop.service.AdminProductService;
 import com.myshop.service.ProductInventoryBatchService;
 import com.myshop.service.ProductListSort;
@@ -81,6 +83,7 @@ public class AdminProductServiceImpl implements AdminProductService {
     private final ProductRepository productRepository;
     private final ProductSpecRepository productSpecRepository;
     private final ProductLevelPriceOverrideRepository overrideRepository;
+    private final UserSecretPriceRepository secretPriceRepository;
     private final UserLevelRepository userLevelRepository;
     private final ProductCategoryRepository categoryRepository;
     private final CardKeyRepository cardKeyRepository;
@@ -205,6 +208,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         BigDecimal costPrice = ProductRules.validateMoney(request.costPrice(), false, "成本价");
         BigDecimal retailPrice = ProductRules.validateMoney(request.retailPrice(), true, "零售价");
         validateExistingOverridePrices(product, Map.of(), retailPrice);
+        validateSecretPrices(product, false, Map.of(), retailPrice);
 
         product.setCostPrice(costPrice);
         product.setRetailPrice(retailPrice);
@@ -251,6 +255,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         }
 
         validateExistingOverridePrices(product, nextRetailBySpec, product.getRetailPrice());
+        validateSecretPrices(product, true, nextRetailBySpec, product.getRetailPrice());
         BigDecimal derivedRetailPrice = existingSpecs.stream()
                 .filter(ProductSpec::isVisible)
                 .map(spec -> nextRetailBySpec.get(spec.getId()))
@@ -290,6 +295,18 @@ public class AdminProductServiceImpl implements AdminProductService {
                 String target = specId == null ? "商品" : "规格 " + specId;
                 throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT,
                         "新的" + target + "零售价不能低于已有特殊价");
+            }
+        }
+    }
+
+    private void validateSecretPrices(Product product, boolean nextSpecEnabled,
+                                      Map<UUID, BigDecimal> retailBySpec, BigDecimal rootRetail) {
+        // A mode switch retires all old targets; removed specs are retired below.
+        if (product.isSpecEnabled() != nextSpecEnabled) return;
+        for (UserSecretPrice secret : secretPriceRepository.findByProductId(product.getId())) {
+            BigDecimal retail = secret.getSpecId() == null ? rootRetail : retailBySpec.get(secret.getSpecId());
+            if (retail != null && secret.getPrice().compareTo(retail) > 0) {
+                throw new BusinessException(ErrorCode.PRICE_OVERRIDE_CONFLICT, "新零售价不能低于已有用户密价，请先调整密价");
             }
         }
     }
@@ -491,6 +508,11 @@ public class AdminProductServiceImpl implements AdminProductService {
 
     private AdminProductResponse saveAggregate(Product product, AdminProductUpsertRequest request, boolean creating) {
         PreparedAggregate aggregate = prepare(product, request, creating);
+        if (!creating) {
+            Map<UUID, BigDecimal> nextRetail = aggregate.specs().stream()
+                    .collect(Collectors.toMap(PreparedSpec::id, PreparedSpec::retailPrice));
+            validateSecretPrices(product, aggregate.specEnabled(), nextRetail, aggregate.retailPrice());
+        }
         List<ProductLevelPriceOverride> existingOverrides = creating
                 ? List.of() : overrideRepository.findByProductId(product.getId());
         List<ProductLevelPriceOverride> desiredOverrides = prepareOverrides(aggregate, request.overrides(), existingOverrides);

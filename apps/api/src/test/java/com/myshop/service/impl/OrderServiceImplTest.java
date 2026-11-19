@@ -90,7 +90,7 @@ class OrderServiceImplTest {
                 siteConfigRepository, paymentChannelRepository, orderExpiryService, paymentService,
                 balanceOrderPaymentService,
                 manualStockService, userRepository, userLevelRepository, autoFulfillmentService,
-                new PricingServiceImpl(userRepository, userLevelRepository, null));
+                new PricingServiceImpl(userRepository, userLevelRepository, null, null));
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
         lenient().when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))

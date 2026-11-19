@@ -135,7 +135,9 @@ public class PublicProductServiceImpl implements PublicProductService {
                 .collect(java.util.stream.Collectors.groupingBy(ProductSpec::getProductId,
                         LinkedHashMap::new, java.util.stream.Collectors.toList()));
         UserLevel level = pricingService.resolvePublicLevel(requestUserId);
-        Map<PriceTarget, PriceResolution> prices = pricingService.resolveBatch(products, specsByProduct, level);
+        Map<PriceTarget, PriceResolution> prices = requestUserId != null && level != null
+                ? pricingService.resolveBatchForUser(products, specsByProduct, level, requestUserId)
+                : pricingService.resolveBatch(products, specsByProduct, level);
         Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock =
                 inventoryBatchService.load(products, specsByProduct);
         Map<UUID, Long> sales = loadSales(productIds);

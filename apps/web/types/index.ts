@@ -98,7 +98,7 @@ export interface ProductSpec {
 }
 
 export type PricingType = "RETAIL" | "COST_MARKUP"
-export type PricingSource = "RETAIL" | "LEVEL_MARKUP" | "LEVEL_OVERRIDE"
+export type PricingSource = "RETAIL" | "LEVEL_MARKUP" | "LEVEL_OVERRIDE" | "USER_SECRET" | "SALES_CHANNEL"
 
 export interface CustomerInputField {
   id: string
@@ -950,4 +950,17 @@ export interface RiskConfig {
   login_attempt_limit: number
   max_purchase_per_user: number
   order_expire_minutes: number
+}
+
+export interface UserSecretPrice {
+  id: string
+  product_id: string
+  product_title: string
+  spec_id?: string | null
+  spec_name?: string | null
+  price: number
+  level_price: number
+  retail_price: number
+  cost_price?: number | null
+  below_cost: boolean
 }

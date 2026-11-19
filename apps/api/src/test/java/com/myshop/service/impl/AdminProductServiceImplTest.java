@@ -22,6 +22,7 @@ import com.myshop.repository.ProductLevelPriceOverrideRepository;
 import com.myshop.repository.ProductRepository;
 import com.myshop.repository.ProductSpecRepository;
 import com.myshop.repository.UserLevelRepository;
+import com.myshop.repository.UserSecretPriceRepository;
 import com.myshop.service.ProductInventoryBatchService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.PricingService;
@@ -60,6 +61,7 @@ class AdminProductServiceImplTest {
     @Mock private ProductSpecRepository productSpecRepository;
     @Mock private ProductLevelPriceOverrideRepository overrideRepository;
     @Mock private UserLevelRepository userLevelRepository;
+    @Mock private UserSecretPriceRepository secretPriceRepository;
     @Mock private ProductCategoryRepository categoryRepository;
     @Mock private CardKeyRepository cardKeyRepository;
     @Mock private OrderItemRepository orderItemRepository;
@@ -79,7 +81,7 @@ class AdminProductServiceImplTest {
     }
 
     private AdminProductServiceImpl service() {
-        return new AdminProductServiceImpl(productRepository, productSpecRepository, overrideRepository,
+        return new AdminProductServiceImpl(productRepository, productSpecRepository, overrideRepository, secretPriceRepository,
                 userLevelRepository, categoryRepository, cardKeyRepository, orderItemRepository,
                 inventoryBatchService, pricingService, manualStockService);
     }
