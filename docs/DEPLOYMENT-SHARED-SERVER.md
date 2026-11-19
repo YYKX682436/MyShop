@@ -1,11 +1,78 @@
-# MyShop on a shared Baota host
+# MyShop production on the shared Baota host
 
-This configuration is for an independent MyShop production stack behind the
-friend's existing Baota Nginx. It does not replace or edit the existing store,
-database, certificate, Docker daemon settings, or global Nginx configuration.
-Do not run `scripts/bootstrap-greenfield.sh` on this host: that entry point is
-specific to `/data`, Docker/containerd roots under `/data`, and the `myshop`
-project identity.
+**The production store already exists. Routine releases upgrade it in place.**
+
+| Setting | Production value |
+| --- | --- |
+| Public URL | `https://mc.mc520.top` |
+| Server | `110.42.34.161` |
+| Compose project | `myshop-friend-prod` |
+| Runtime directory | `/opt/myshop-friend/runtime` |
+| Private environment file | `/etc/myshop-friend/myshop.env` |
+| Persistent data root | `/srv/myshop-friend` |
+
+The old `myshop` Compose project is not the production target. The temporary
+`myshop-candidate.mc520.top` route is intentionally disabled; a 502 there is
+not a deployment blocker. Do not restore it. Routine releases do not recreate
+the stack, restore a database from another host, or change DNS or TLS.
+
+## Routine production upgrade
+
+1. Follow `AGENTS.md`: preview locally, push the selected commit, and wait for
+   the owner's production release approval. Run the manual GitHub release
+   workflow for the **exact** approved commit. Confirm that the Web, API
+   (including PostgreSQL integration tests), and Compose checks passed and
+   that the matching immutable API/Web images and release manifest are
+   available. Stop if checks were skipped or publication did not complete.
+2. Use an authorized terminal on `110.42.34.161`. The already authorized Baota
+   web terminal works for this purpose when available; it does not require
+   separate SSH credentials. First verify the host identity, the running
+   `myshop-friend-prod` services and current accepted release, and the
+   existing runtime, mounts, and loopback binding. If the expected stack or
+   accepted state is missing, stop and check the target. Do not fall back to
+   first-install mode.
+3. Use the existing production configuration and persistence. Load the
+   shared-host settings below and run the read-only `upgrade` preflight as
+   root on the target host.
+   Resolve any failure before deploying; do not bypass the checks or touch
+   other projects on the host.
+4. Run the installed `deploy-production.sh` with the validated **new**
+   release-manifest path using the same settings. The existing release
+   transaction checks images and digests, keeps its predeploy recovery point,
+   verifies health/schema/smoke checks, and rolls back the app images on
+   pre-commit failure. Leave the existing proxy and data in place.
+5. Verify the accepted release and the real HTTPS site, including the homepage
+   and `/api/site/config`. Verify the changed feature and report the version
+   deployed. Do not use the disabled candidate site for acceptance.
+
+Use the currently configured loopback port, confirmed on the host. The example
+below uses `8082`; if it differs, match the verified production binding.
+`PUBLIC_SITE_URL` in the existing private configuration remains
+`https://mc.mc520.top`. Do not copy secrets into the repository or logs.
+
+```bash
+export MYSHOP_RUNTIME_ROOT=/opt/myshop-friend/runtime
+export MYSHOP_ENV_FILE=/etc/myshop-friend/myshop.env
+export MYSHOP_COMPOSE_FILE=/opt/myshop-friend/runtime/docker-compose.shared-server.yml
+export MYSHOP_COMPOSE_PROJECT_NAME=myshop-friend-prod
+export MYSHOP_SHARED_SERVER=1
+export MYSHOP_BACKUP_DIR=/srv/myshop-friend/backups/database
+export MYSHOP_STORAGE_MOUNTPOINT=/srv/myshop-friend
+export HOST_STORAGE_HEALTH_SCRIPT=/opt/myshop-friend/ops/shared-server/check-storage-health.sh
+export HOST_DEPLOY_LOCK_FILE=/run/myshop-friend-deploy.lock
+export MYSHOP_RUN_HOST_MAINTENANCE=0
+export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
+export MYSHOP_SMOKE_BASE_URL=http://127.0.0.1:8082
+export MYSHOP_SMOKE_HOST_HEADER=mc.mc520.top
+
+bash /opt/myshop-friend/scripts/preflight-shared-server.sh --mode upgrade
+# Only after preflight succeeds, substitute the validated new manifest path:
+bash /opt/myshop-friend/scripts/deploy-production.sh /path/to/new-release-manifest.json
+```
+
+The existing production stack is independent of the friend's other sites and
+services. Do not run `scripts/bootstrap-greenfield.sh`, modify global
+Nginx/Docker or firewall settings, or run host-wide cleanup as part of a release.
 
 ## Request path
 
@@ -46,17 +113,13 @@ its trusted real-IP ranges in that site before relying on the client's IP.
 - `Caddyfile.shared-server`: internal HTTP routing and proxy-header handling;
   it does not request or store public certificates.
 - `ops/shared-server/myshop.env.example`: credential-free operational template.
-  It proposes port 8082, which Baota marks unused; the subnet, Caddy IP, image
-  SHA, exact Baota proxy source CIDR, database password, and JWT secret still
-  need to be supplied.
+  It is a reference only; do not replace the live environment with it.
 - `ops/shared-server/audit-readonly.sh`: sanitized read-only host inventory for
   a server operator to run when direct access is unavailable.
 - `scripts/preflight-shared-server.sh`: renders Compose without starting it and
   verifies Docker versions, resource names, port binding, edge-network
   conflicts, secrets-file permissions, image refs, and canonical persistent
-  paths. Use `--mode first-install` before creation, `--mode bootstrap-retry`
-  after a failed first acceptance, and `--mode upgrade` only after an accepted
-  deployment exists.
+  paths. Use `--mode upgrade` for this production instance.
 - The existing compose, schema, backup, deploy, and retention helpers accept a
   project/file override while retaining `myshop` as their default.
 - `scripts/test-deployment-transaction.sh` covers accepted upgrades, first
@@ -66,12 +129,8 @@ its trusted real-IP ranges in that site before relying on the client's IP.
 ## Base image registry mirrors
 
 The shared-host Compose file uses copies of the upstream PostgreSQL, Caddy, and
-node-exporter manifests in the MyShop GHCR namespace. The manual
-`workflow_dispatch` path on `codex/shared-server-prep` uses Skopeo to copy the
-source digest and all platform manifests, then verifies the source and target
-manifest hashes and the `linux/amd64` entry before the image is accepted.
-This branch-only operation skips the API, Web, Compose CI jobs and the existing
-production image publisher.
+node-exporter manifests in the MyShop GHCR namespace. Routine application
+releases reuse their pinned digests.
 
 The three personal GHCR packages must be public for anonymous pulls from the
 friend server. Their contents are byte-for-byte copies of already public
@@ -97,177 +156,3 @@ adds `--pull never` to Compose startup, and records both the GHCR manifest
 digest and local image ID for future rollback/retention. Keep the three
 infrastructure image overrides blank when pulling from GHCR; set them to the
 approved digest-derived `mirror-<digest>` tags only after an offline import.
-
-## Friend-host audit snapshot
-
-The read-only audit confirmed CentOS Stream 9, 8 CPU cores, about 15.6 GiB RAM,
-and 64 GB free on the 100 GB root filesystem. Docker Engine 29.10.0 and Compose
-5.8.0 are running. Existing Nginx owns 80/443, the Go service owns 8081, and
-the friend's MySQL owns 3306/33060. No containers, named volumes, or custom
-Docker networks were present at audit time; Docker's default bridge is
-`172.17.0.0/16`. Candidate port 8082 had no listener, and the reserved
-`172.29.240.0/24` edge network did not overlap host routes or Docker networks.
-The MyShop data root is `/srv/myshop-friend`, on the root filesystem. The
-`myshop-candidate.mc520.top` Baota site and its certificate are separate from
-the friend's existing sites. Formal `mc.mc520.top` DNS remains on the old host.
-
-This is a point-in-time snapshot. First-install preflight checks current port
-ownership, Docker resource names, routes, mounts, symlinks, and project state
-immediately before creating MyShop resources.
-
-## Before the first start
-
-The current host passed the read-only audit. Immediately before first install,
-re-run the target-host preflight to catch changes in Docker resources, routes,
-mounts, symlinks, and port ownership. It verifies the reserved
-`myshop-friend-prod` project, `172.29.240.0/24` edge network, and loopback-only
-8082 binding without creating resources.
-
-Create the dedicated paths and install the private environment file only after
-the audit:
-
-```text
-/opt/myshop-friend/runtime/docker-compose.shared-server.yml
-/opt/myshop-friend/runtime/Caddyfile.shared-server
-/opt/myshop-friend/runtime/release-manifest.json
-/opt/myshop-friend/runtime/offline-image-bundle.json  # offline import only
-/opt/myshop-friend/runtime/deploy-state.json
-/opt/myshop-friend/scripts/...
-/opt/myshop-friend/ops/shared-server/check-storage-health.sh
-/etc/myshop-friend/myshop.env                  root:root, mode 0600
-/srv/myshop-friend/uploads/
-/srv/myshop-friend/private-uploads/
-/srv/myshop-friend/ipdb/
-/srv/myshop-friend/backups/database/
-```
-
-No real passwords, payment secrets, or old `.env` file belong in this
-repository. Configure `DB_PASSWORD` and `JWT_SECRET` freshly for the friend
-host. Set `AUTH_COOKIE_SECURE=true` and use
-`PUBLIC_SITE_URL=https://myshop-candidate.mc520.top` while validating the
-temporary candidate. Switch to `https://mc.mc520.top` only in the separately
-approved cutover. Use a new database and upload paths dedicated to this
-installation; do not copy production data or payment credentials into the
-candidate smoke environment.
-
-Before starting MyShop, run the read-only preflight as root on the target host:
-
-```bash
-MYSHOP_RUNTIME_ROOT=/opt/myshop-friend/runtime \
-MYSHOP_ENV_FILE=/etc/myshop-friend/myshop.env \
-MYSHOP_COMPOSE_PROJECT_NAME=myshop-friend-prod \
-MYSHOP_COMPOSE_FILE=/opt/myshop-friend/runtime/docker-compose.shared-server.yml \
-bash /opt/myshop-friend/scripts/preflight-shared-server.sh --mode first-install
-```
-
-It fails if the published port is busy, the selected CIDR overlaps any existing
-Docker network or host route, project resources already exist, Compose exposes
-anything other than the loopback Caddy port, the Baota source address is not a
-single audited host prefix, or a persistent path escapes `/srv/myshop-friend`.
-It also checks Docker versions, named volume and network ownership, and any
-listener on the candidate port. It creates no directories, network, volume,
-container, timer, or firewall rule.
-After a failed first acceptance, run it with `--mode bootstrap-retry`; it
-requires no accepted state, a failed-candidate record, the existing dedicated
-database volume, and stopped failed app containers. After a first acceptance,
-run it with `--mode upgrade`; that mode verifies the existing MyShop-owned
-volumes, networks, service set, accepted image state, and Caddy's exclusive
-loopback binding.
-
-## Baota site configuration
-
-The temporary `myshop-candidate.mc520.top` site uses its own Baota proxy and
-certificate. Keep it separate from the friend's sites and from the formal
-`mc.mc520.top` site. Before the later DNS cutover, create a new
-`mc.mc520.top` site in Baota without editing another site's configuration,
-attach its own certificate, and proxy it to the same loopback port. If DNS
-still points to the old server, pre-issue the certificate using DNS validation.
-
-Configure that site's reverse proxy to `http://127.0.0.1:<MYSHOP_WEB_PORT>` and
-preserve the URI (use no trailing path component in `proxy_pass`). The relevant
-site-level Nginx section is:
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:<MYSHOP_WEB_PORT>;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $remote_addr;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Host $host;
-}
-```
-
-Use the Baota site's proxy editor or site-specific configuration only. Do not
-add these directives to the global Nginx configuration. Do not proxy PHP or
-database traffic for this site.
-
-## First data migration and later releases
-
-Use only a completed, accepted UI commit. The current candidate image source is
-`78e991d2372a6c76ccdf6d5e1ac50e70a83b6339`. The temporary candidate starts
-with a new, isolated PostgreSQL database and no production payment credentials;
-it does not copy the old database or uploads. After the app and proxy checks
-pass, final production data migration remains a separate operation.
-
-When final data migration is authorized:
-
-1. Select a completed UI commit and its validated release manifest. Keep the
-   application images tagged with that full source SHA; the Compose file has no
-   `build:` entries, so the friend server only pulls prebuilt images.
-2. Take a fresh PostgreSQL dump from old production and sync both public and
-   private uploads. Validate the dump and a restore into an isolated database.
-   The older observed backup is not a substitute for this fresh recovery point.
-3. After final confirmation to freeze old writes, restore the fresh dump into
-   the dedicated MyShop PostgreSQL volume. Keep the old host and DNS untouched
-   during candidate validation of the restored copy.
-4. Run `deploy-production.sh <release-manifest.json>` with the shared-host
-   environment below. On first install there is no accepted friend-host
-   version: the script takes a fresh database backup, starts the candidate,
-   checks health and the packaged Flyway/schema contract, and probes the
-   candidate through the exact Caddy binding at `127.0.0.1:<MYSHOP_WEB_PORT>`
-   with the selected candidate Host: use `myshop-candidate.mc520.top` before
-   cutover, and `mc.mc520.top` only after final approval. It cannot fall back
-   to the old public domain. On
-   failure it writes only a failed-candidate record, stops this project's
-   API/Web/Caddy services, and preserves the database and backup; it does not
-   create accepted state or roll back to the failed candidate. Restore the
-   retained predeploy dump before retrying if Flyway changed the imported schema.
-5. After that first accepted state, each subsequent release uses the existing
-   transactional deployer: image pulls and digest checks, predeploy database
-   backup, health/schema/smoke gates, old-image rollback on pre-commit failure,
-   and MyShop-only image retention. High shared-host disk usage fails closed;
-   the deployer does not invoke global Docker cleanup.
-6. Validate the HTTPS endpoint against the target IP with a `curl --resolve`
-   check, verify callback URLs and cookies, then perform DNS cutover only after
-   a separate approval. Do not change DNS during this preparation phase.
-7. After the production cutover, convert the old host to `aikayun.aiove.top`
-   in a separate task. Keep its DB, Compose project, uploads, environment file,
-   cookies/domain settings, and test-only payment configuration independent.
-
-The shared-host shell environment for the existing release transaction is:
-
-```bash
-export MYSHOP_RUNTIME_ROOT=/opt/myshop-friend/runtime
-export MYSHOP_ENV_FILE=/etc/myshop-friend/myshop.env
-export MYSHOP_COMPOSE_FILE=/opt/myshop-friend/runtime/docker-compose.shared-server.yml
-export MYSHOP_COMPOSE_PROJECT_NAME=myshop-friend-prod
-export MYSHOP_SHARED_SERVER=1
-export MYSHOP_BACKUP_DIR=/srv/myshop-friend/backups/database
-export MYSHOP_STORAGE_MOUNTPOINT=/srv/myshop-friend
-export HOST_STORAGE_HEALTH_SCRIPT=/opt/myshop-friend/ops/shared-server/check-storage-health.sh
-export HOST_DEPLOY_LOCK_FILE=/run/myshop-friend-deploy.lock
-export MYSHOP_RUN_HOST_MAINTENANCE=0
-export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
-export MYSHOP_SMOKE_BASE_URL=http://127.0.0.1:8082
-export MYSHOP_SMOKE_HOST_HEADER=myshop-candidate.mc520.top
-```
-
-The local smoke verifies the candidate through Caddy at the selected port. The
-separate HTTPS check must also pass against `myshop-candidate.mc520.top`; update
-the Host value to `mc.mc520.top` only for the final approved cutover.
-
-Do not change formal DNS or stop old-host writes until the final cutover
-approval. The shared setup never changes Docker's global data root, firewall,
-or host-wide maintenance schedule.
