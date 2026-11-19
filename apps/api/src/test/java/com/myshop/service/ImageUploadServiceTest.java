@@ -15,6 +15,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -82,6 +83,59 @@ class ImageUploadServiceTest {
         assertFalse(service.deleteManagedAvatar("https://cdn.example/avatar.png"));
         assertEquals("must remain", Files.readString(outside));
         assertNull(service.extractManagedAvatarPath("/api/uploads/avatars/avatar-../../outside.txt"));
+    }
+
+    @Test
+    void mediaNameFailureKeepsPublishedUrlAndUsesFilenameFallbackWithoutChangingBytes() throws IOException {
+        byte[] png = pngBytes();
+        UploadStorage metadataFailureStorage = new UploadStorage(
+                tempDirectory.resolve("metadata-failure-uploads").toString()) {
+            @Override
+            public void rememberMediaName(String identifier, String name) throws IOException {
+                throw new IOException("simulated metadata write failure");
+            }
+        };
+        metadataFailureStorage.initialize();
+        ImageUploadService metadataFailureService = new ImageUploadService(
+                metadataFailureStorage, new ImageProcessor(), "/api/uploads");
+
+        ImageUploadService.UploadedImage uploaded = metadataFailureService.uploadAdminImage(
+                new MockMultipartFile("file", "photo.png", "image/png", png));
+        Path published = metadataFailureStorage.resolve(uploaded.relativePath());
+        byte[] publishedBytes = Files.readAllBytes(published);
+
+        ImageUploadService.UploadedImage duplicate = metadataFailureService.uploadAdminImage(
+                new MockMultipartFile("file", "renamed.png", "image/png", png));
+        var listed = new MediaLibraryService(metadataFailureStorage, "/api/uploads")
+                .list(1, 24, "", "desc", false);
+
+        assertEquals(uploaded.url(), duplicate.url());
+        assertArrayEquals(publishedBytes, Files.readAllBytes(published));
+        assertEquals(published.getFileName().toString(), listed.items().getFirst().name());
+        assertEquals(uploaded.url(), listed.items().getFirst().url());
+        assertNotNull(javax.imageio.ImageIO.read(published.toFile()));
+    }
+
+    @Test
+    void publishFailureStillReturnsUploadFailureAndLeavesNoImage() throws IOException {
+        UploadStorage publishFailureStorage = new UploadStorage(
+                tempDirectory.resolve("publish-failure-uploads").toString()) {
+            @Override
+            public void publish(String relativePath, byte[] bytes, boolean allowExisting) throws IOException {
+                throw new IOException("simulated publish failure");
+            }
+        };
+        publishFailureStorage.initialize();
+        ImageUploadService publishFailureService = new ImageUploadService(
+                publishFailureStorage, new ImageProcessor(), "/api/uploads");
+
+        BusinessException exception = assertThrows(BusinessException.class, () -> publishFailureService.uploadAdminImage(
+                new MockMultipartFile("file", "photo.png", "image/png", pngBytes())));
+
+        assertEquals(ErrorCode.SERVER_ERROR, exception.getCode());
+        try (var files = Files.list(publishFailureStorage.directory())) {
+            assertFalse(files.findAny().isPresent());
+        }
     }
 
     @Test

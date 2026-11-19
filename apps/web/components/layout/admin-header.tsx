@@ -49,7 +49,6 @@ import type { TranslationKey } from "@/lib/i18n"
 const commandItems: Array<{ labelKey: TranslationKey; href: string; icon: typeof LayoutDashboard; superAdminOnly?: boolean }> = [
   { labelKey: "admin.dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { labelKey: "admin.products", href: "/admin/products", icon: Package },
-  { labelKey: "admin.media", href: "/admin/media", icon: Images },
   { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
   { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
   { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList },
@@ -59,6 +58,7 @@ const commandItems: Array<{ labelKey: TranslationKey; href: string; icon: typeof
   { labelKey: "admin.risk", href: "/admin/risk", icon: ShieldAlert },
   { labelKey: "admin.logs", href: "/admin/operation-logs", icon: ScrollText },
   { labelKey: "admin.siteConfig", href: "/admin/site-config", icon: Settings },
+  { labelKey: "admin.media", href: "/admin/media", icon: Images },
   { labelKey: "admin.administrators", href: "/admin/administrators", icon: Users, superAdminOnly: true },
 ]
 

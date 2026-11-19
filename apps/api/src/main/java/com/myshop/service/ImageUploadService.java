@@ -107,12 +107,18 @@ public class ImageUploadService {
                 : identifier + canonicalExtension;
         try {
             uploadStorage.publish(relativePath, processed, !avatar);
-            if (!avatar) uploadStorage.rememberMediaName(identifier, safeName(file.getOriginalFilename(), relativePath));
-            return new UploadedImage(urlPrefix + "/" + relativePath, relativePath);
         } catch (IOException | RuntimeException exception) {
             log.error("Image upload failed: {}", exception.getClass().getSimpleName());
             throw new BusinessException(ErrorCode.SERVER_ERROR, "文件上传失败");
         }
+        if (!avatar) {
+            try {
+                uploadStorage.rememberMediaName(identifier, safeName(file.getOriginalFilename(), relativePath));
+            } catch (IOException | RuntimeException exception) {
+                log.warn("Image uploaded, but its resource name metadata could not be saved; using the filename fallback");
+            }
+        }
+        return new UploadedImage(urlPrefix + "/" + relativePath, relativePath);
     }
 
     private static String safeName(String name, String fallback) {

@@ -13,6 +13,8 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,6 +31,49 @@ class UploadStorageTest {
         assertTrue(Files.isDirectory(storage.directory()));
         try (var files = Files.list(storage.directory())) {
             assertFalse(files.findAny().isPresent());
+        }
+    }
+
+    @Test
+    void startupRequiresHardLinksAndRemovesProbeFilesWhenUnsupported() throws IOException {
+        Path directory = tempDirectory.resolve("no-hardlinks");
+        UploadStorage storage = new UploadStorage(directory.toString(), (link, existing) -> {
+            throw new UnsupportedOperationException("hard links are unavailable");
+        });
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class, storage::initialize);
+
+        assertTrue(exception.getMessage().contains("hard-link"));
+        try (var files = Files.list(directory)) {
+            assertFalse(files.findAny().isPresent());
+        }
+    }
+
+    @Test
+    void startupVerifiesTheProbeIsAHardLinkAndRemovesCopiedProbeFiles() throws IOException {
+        Path directory = tempDirectory.resolve("copy-instead-of-link");
+        UploadStorage storage = new UploadStorage(directory.toString(), Files::copy);
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class, storage::initialize);
+
+        assertTrue(exception.getMessage().contains("hard-link"));
+        try (var files = Files.list(directory)) {
+            assertFalse(files.findAny().isPresent());
+        }
+    }
+
+    @Test
+    void publishRejectsDifferentContentAtExistingPathWithoutChangingOriginal() throws IOException {
+        UploadStorage storage = new UploadStorage(tempDirectory.resolve("uploads").toString());
+        storage.initialize();
+        byte[] original = {1, 2, 3};
+        Path destination = storage.resolve("same.png");
+        storage.publish("same.png", original, false);
+
+        assertThrows(IOException.class, () -> storage.publish("same.png", new byte[]{4, 5, 6}, true));
+        assertArrayEquals(original, Files.readAllBytes(destination));
+        try (var files = Files.list(storage.directory())) {
+            assertEquals(1, files.count());
         }
     }
 

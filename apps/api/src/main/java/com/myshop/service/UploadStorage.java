@@ -2,6 +2,7 @@ package com.myshop.service;
 
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -18,6 +19,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 /**
  * Owns the configured upload directory and proves it is usable before the
@@ -28,9 +30,16 @@ import java.nio.charset.StandardCharsets;
 public class UploadStorage {
 
     private final Path uploadDirectory;
+    private final HardLinkCreator hardLinkCreator;
 
+    @Autowired
     public UploadStorage(@Value("${upload.path:./uploads}") String configuredPath) {
+        this(configuredPath, Files::createLink);
+    }
+
+    UploadStorage(String configuredPath, HardLinkCreator hardLinkCreator) {
         this.uploadDirectory = resolveConfiguredPath(configuredPath);
+        this.hardLinkCreator = hardLinkCreator;
     }
 
     @PostConstruct
@@ -57,11 +66,46 @@ public class UploadStorage {
                 output.write(0x4d);
                 output.flush();
             }
-            Files.delete(probe);
-            log.info("Upload storage initialized and write probe passed");
         } catch (IOException | SecurityException e) {
-            deleteProbe(probe);
+            IOException cleanupFailure = deleteProbes(probe);
+            if (cleanupFailure != null) e.addSuppressed(cleanupFailure);
             throw unavailable("the configured directory is not writable");
+        }
+
+        IOException cleanupFailure = deleteProbes(probe);
+        if (cleanupFailure != null) {
+            throw unavailable("the upload write-check file could not be removed", cleanupFailure);
+        }
+        verifyHardLinkSupport();
+        log.info("Upload storage initialized and write and hard-link checks passed");
+    }
+
+    private void verifyHardLinkSupport() {
+        Path source = null;
+        Path hardLink = null;
+        Exception checkFailure = null;
+        try {
+            source = Files.createTempFile(uploadDirectory, ".myshop-hardlink-source-", ".tmp");
+            try (OutputStream output = Files.newOutputStream(source, StandardOpenOption.WRITE,
+                    StandardOpenOption.TRUNCATE_EXISTING)) {
+                output.write(0x4d);
+            }
+            hardLink = uploadDirectory.resolve(".myshop-hardlink-" + UUID.randomUUID() + ".tmp");
+            hardLinkCreator.createLink(hardLink, source);
+            if (!Files.isSameFile(source, hardLink)) {
+                throw new IOException("hard-link verification did not resolve to the same file");
+            }
+        } catch (IOException | SecurityException | UnsupportedOperationException exception) {
+            checkFailure = exception;
+        }
+
+        IOException cleanupFailure = deleteProbes(hardLink, source);
+        if (checkFailure != null) {
+            if (cleanupFailure != null) checkFailure.addSuppressed(cleanupFailure);
+            throw unavailable("the configured upload directory does not support verified hard-link publication", checkFailure);
+        }
+        if (cleanupFailure != null) {
+            throw unavailable("the temporary hard-link self-check files could not be removed", cleanupFailure);
         }
     }
 
@@ -255,16 +299,20 @@ public class UploadStorage {
         }
     }
 
-    private static void deleteProbe(Path probe) {
-        if (probe == null) {
-            return;
+    private static IOException deleteProbes(Path... probes) {
+        IOException failure = null;
+        for (Path probe : probes) {
+            if (probe == null) continue;
+            try {
+                Files.deleteIfExists(probe);
+            } catch (IOException | SecurityException exception) {
+                IOException cleanupFailure = exception instanceof IOException ioException
+                        ? ioException : new IOException("temporary upload self-check file could not be removed", exception);
+                if (failure == null) failure = cleanupFailure;
+                else failure.addSuppressed(cleanupFailure);
+            }
         }
-        try {
-            Files.deleteIfExists(probe);
-        } catch (IOException | SecurityException ignored) {
-            // The startup failure below is the actionable signal. Do not
-            // expose filesystem paths or a second noisy exception.
-        }
+        return failure;
     }
 
     private static IllegalStateException unavailable(String reason) {
@@ -272,5 +320,17 @@ public class UploadStorage {
                 + ". Check UPLOAD_PATH and directory permissions.";
         log.error(message);
         return new IllegalStateException(message);
+    }
+
+    private static IllegalStateException unavailable(String reason, Throwable cause) {
+        String message = "Upload storage initialization failed: " + reason
+                + ". Check UPLOAD_PATH, hard-link support, and directory permissions.";
+        log.error(message, cause);
+        return new IllegalStateException(message, cause);
+    }
+
+    @FunctionalInterface
+    interface HardLinkCreator {
+        Path createLink(Path link, Path existing) throws IOException;
     }
 }

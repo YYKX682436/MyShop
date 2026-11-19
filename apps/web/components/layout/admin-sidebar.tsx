@@ -59,7 +59,6 @@ const navGroups: AdminNavGroup[] = [
     labelKey: "admin.navProductsInventory",
     items: [
       { labelKey: "admin.products", href: "/admin/products", icon: Package },
-      { labelKey: "admin.media", href: "/admin/media", icon: Images },
       { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
       { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
     ],
@@ -89,6 +88,7 @@ const navGroups: AdminNavGroup[] = [
     labelKey: "admin.navSystem",
     items: [
       { labelKey: "admin.siteConfig", href: "/admin/site-config", icon: Settings },
+      { labelKey: "admin.media", href: "/admin/media", icon: Images },
       { labelKey: "admin.administrators", href: "/admin/administrators", icon: ShieldCheck, superAdminOnly: true },
     ],
   },
