@@ -499,6 +499,14 @@ export const adminProductApi = {
   },
 }
 
+export type MediaItem = { name: string; url: string; size: number; format: string; uploaded_at: number }
+export type MediaPage = { items: MediaItem[]; total: number; page: number; page_size: number }
+
+export const adminMediaApi = {
+  getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc"; qr_only: boolean }, signal?: AbortSignal) =>
+    request<MediaPage>(`/admin/media?${buildQuery(params)}`, { signal }),
+}
+
 // ============================================================
 // Admin Category
 // ============================================================

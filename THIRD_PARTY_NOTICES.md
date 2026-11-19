@@ -17,3 +17,8 @@ Apache License 2.0; its dependency metadata and license are available in the
 and the repository's [Apache-2.0 license](https://github.com/lionsoul2014/ip2region/blob/master/LICENSE).
 The XDB files are provisioned on the production host and are not committed to
 this repository.
+
+MyShop uses [Thumbnailator](https://github.com/coobird/thumbnailator) (MIT)
+for image resizing and [metadata-extractor](https://github.com/drewnoakes/metadata-extractor)
+(Apache-2.0) to read image orientation. Metadata-extractor depends on
+[Adobe XMP Core](https://github.com/adobe/XMP-Toolkit-SDK) (BSD-3-Clause).

@@ -68,6 +68,14 @@ class SecurityAuthorizationIntegrationTest {
     }
 
     @Test
+    void mediaListingRequiresAnAdministrator() throws Exception {
+        mockMvc.perform(get("/api/admin/media").contextPath("/api")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/admin/media").contextPath("/api").with(user("buyer").roles("USER"))).andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/media").contextPath("/api").with(user("admin").roles("ADMIN"))).andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/media").contextPath("/api").with(user("super").roles("SUPER_ADMIN"))).andExpect(status().isOk());
+    }
+
+    @Test
     void applicationHasNoBootDefaultUserServiceAndRetainsItsJwtSecurityFilterChain() {
         assertTrue(webApplicationContext.getBeansOfType(InMemoryUserDetailsManager.class).isEmpty());
         assertTrue(webApplicationContext.getBeansOfType(UserDetailsService.class).isEmpty());

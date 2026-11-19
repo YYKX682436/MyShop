@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { ALLOWED_IMAGE_ACCEPT, validateImageFile } from "@/lib/image-upload"
 import { useLocale } from "@/lib/context"
+import { MediaPicker } from "@/components/admin/media-library"
 
 interface ImageUploadDropzoneProps {
   value: string
@@ -186,6 +187,8 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
             disabled={busy}
           />
         </label>
+
+        <div className="mt-3"><MediaPicker disabled={busy} onSelect={(item) => handleUrlChange(item.url)} /></div>
 
         {normalizedValue && (
           <div className="mt-3 flex flex-wrap items-center gap-2">

@@ -31,6 +31,8 @@ docker-compose.prod.yml
 
 Mac 本地预览、启动与停止方法见 [docs/LOCAL-DEVELOPMENT.md](docs/LOCAL-DEVELOPMENT.md)。
 
+图片上传、资源库与存储要求见 [docs/MEDIA.md](docs/MEDIA.md)。
+
 使用 Compose 时，先复制并编辑 `.env`，填写 `SITE_DOMAIN`、`ACME_EMAIL` 和数据库/JWT 配置，然后执行：
 
 ```powershell

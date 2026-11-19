@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   ChevronDown,
   Globe2,
+  Images,
   LayoutDashboard,
   LogOut,
   Moon,
@@ -48,6 +49,7 @@ import type { TranslationKey } from "@/lib/i18n"
 const commandItems: Array<{ labelKey: TranslationKey; href: string; icon: typeof LayoutDashboard; superAdminOnly?: boolean }> = [
   { labelKey: "admin.dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { labelKey: "admin.products", href: "/admin/products", icon: Package },
+  { labelKey: "admin.media", href: "/admin/media", icon: Images },
   { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
   { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
   { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList },
@@ -65,6 +67,7 @@ function getPageLabel(pathname: string): TranslationKey {
   if (pathname === "/admin/products/new") return "admin.addProduct"
   if (pathname.startsWith("/admin/products/") && pathname.endsWith("/edit")) return "admin.editProduct"
   if (pathname.startsWith("/admin/products")) return "admin.products"
+  if (pathname.startsWith("/admin/media")) return "admin.media"
   if (pathname.startsWith("/admin/categories")) return "admin.categories"
   if (pathname.startsWith("/admin/card-keys")) return "admin.cardKeys"
   if (pathname.startsWith("/admin/orders")) return "admin.orders"

@@ -57,9 +57,9 @@ class UploadControllerTest {
     @BeforeEach
     void setUp() throws IOException {
         mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
-        try (var files = Files.list(UPLOAD_DIRECTORY)) {
-            for (Path file : files.toList()) {
-                Files.deleteIfExists(file);
+        try (var files = Files.walk(UPLOAD_DIRECTORY)) {
+            for (Path file : files.sorted(Comparator.reverseOrder()).toList()) {
+                if (!file.equals(UPLOAD_DIRECTORY)) Files.deleteIfExists(file);
             }
         }
     }
@@ -81,12 +81,11 @@ class UploadControllerTest {
 
     @Test
     void jpegAndPngAreWrittenAndCanBeReadThroughStaticResourceRoute() throws Exception {
-        assertUploadedAndReadable("valid.jpg", "image/jpeg", new byte[]{
-                (byte) 0xff, (byte) 0xd8, (byte) 0xff, 0x00, 0x01
-        });
-        assertUploadedAndReadable("valid.png", "image/png", new byte[]{
-                (byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00
-        });
+        byte[] png = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGP4z8DQAMIMMAYAOOgF/REzMMkAAAAASUVORK5CYII=");
+        var jpeg = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(10, 10, java.awt.image.BufferedImage.TYPE_INT_RGB), "jpeg", jpeg);
+        assertUploadedAndReadable("valid.jpg", "image/jpeg", jpeg.toByteArray());
+        assertUploadedAndReadable("valid.png", "image/png", png);
     }
 
     @Test
@@ -140,6 +139,24 @@ class UploadControllerTest {
                 .andExpect(header().string("Access-Control-Allow-Headers", containsString("X-Turnstile-Token")));
     }
 
+
+    @Test
+    void legacyUrlsWorkAndSymlinksAndHiddenMetadataCannotBeRead() throws Exception {
+        String oldName = "11111111-1111-1111-1111-111111111111.png";
+        byte[] bytes = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGP4z8DQAMIMMAYAOOgF/REzMMkAAAAASUVORK5CYII=");
+        Files.write(UPLOAD_DIRECTORY.resolve(oldName), bytes);
+        mockMvc.perform(get("/api/uploads/" + oldName).contextPath("/api")).andExpect(status().isOk()).andExpect(content().bytes(bytes));
+        Path outside = Files.createTempFile("myshop-outside-", ".png");
+        try {
+            Files.write(outside, bytes);
+            Files.createSymbolicLink(UPLOAD_DIRECTORY.resolve("22222222-2222-2222-2222-222222222222.png"), outside);
+            mockMvc.perform(get("/api/uploads/22222222-2222-2222-2222-222222222222.png").contextPath("/api")).andExpect(status().isNotFound());
+            Files.createDirectory(UPLOAD_DIRECTORY.resolve(".media-info"));
+            Files.writeString(UPLOAD_DIRECTORY.resolve(".media-info/secret.txt"), "secret");
+            mockMvc.perform(get("/api/uploads/.media-info/secret.txt").contextPath("/api")).andExpect(status().isNotFound());
+        } finally { Files.deleteIfExists(outside); }
+    }
+
     private void assertUploadedAndReadable(String originalFilename, String contentType, byte[] bytes) throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", originalFilename, contentType, bytes);
 
@@ -153,12 +170,13 @@ class UploadControllerTest {
         String url = body.path("data").path("url").asText();
         String filename = url.substring("/api/uploads/".length());
         Path target = UPLOAD_DIRECTORY.resolve(filename);
-        org.junit.jupiter.api.Assertions.assertArrayEquals(bytes, Files.readAllBytes(target));
+        byte[] stored = Files.readAllBytes(target);
+        org.junit.jupiter.api.Assertions.assertNotNull(javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(stored)));
 
         mockMvc.perform(get("/api/uploads/" + filename).contextPath("/api"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.parseMediaType(contentType)))
-                .andExpect(content().bytes(bytes));
+                .andExpect(content().bytes(stored));
     }
 
     private static Path createUploadDirectory() {

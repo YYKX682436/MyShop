@@ -9,7 +9,10 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.servlet.resource.PathResourceResolver;
+import org.springframework.core.io.Resource;
 
+import java.io.IOException;
 import java.util.Arrays;
 
 @Configuration
@@ -73,6 +76,14 @@ public class WebMvcConfig implements WebMvcConfigurer {
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         String location = "file:" + uploadStorage.directory().toString().replace('\\', '/') + "/";
         registry.addResourceHandler("/uploads/**")
-                .addResourceLocations(location);
+                .addResourceLocations(location)
+                .resourceChain(false)
+                .addResolver(new PathResourceResolver() {
+                    @Override
+                    protected Resource getResource(String resourcePath, Resource location) throws IOException {
+                        if (!uploadStorage.isSafePublicFile(resourcePath)) return null;
+                        return super.getResource(resourcePath, location);
+                    }
+                });
     }
 }

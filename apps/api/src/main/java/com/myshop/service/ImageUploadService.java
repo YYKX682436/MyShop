@@ -10,10 +10,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -57,11 +53,13 @@ public class ImageUploadService {
     );
 
     private final UploadStorage uploadStorage;
+    private final ImageProcessor imageProcessor;
     private final String urlPrefix;
 
-    public ImageUploadService(UploadStorage uploadStorage,
+    public ImageUploadService(UploadStorage uploadStorage, ImageProcessor imageProcessor,
                               @Value("${upload.url-prefix:/api/uploads}") String urlPrefix) {
         this.uploadStorage = uploadStorage;
+        this.imageProcessor = imageProcessor;
         this.urlPrefix = normalizeUrlPrefix(urlPrefix);
     }
 
@@ -97,22 +95,32 @@ public class ImageUploadService {
     private UploadedImage upload(MultipartFile file, UploadPolicy policy, boolean avatar) {
         validate(file, policy, avatar);
         String extension = extensionOf(file.getOriginalFilename());
-        String relativePath = policy.directoryPrefix + policy.filenamePrefix
-                + UUID.randomUUID() + extension;
-        Path target = uploadStorage.prepareManagedFile(relativePath);
-
+        final byte[] processed;
         try {
-            try (InputStream input = file.getInputStream();
-                 OutputStream output = Files.newOutputStream(target, StandardOpenOption.CREATE_NEW,
-                         StandardOpenOption.WRITE)) {
-                input.transferTo(output);
-            }
+            processed = imageProcessor.process(file, extension);
+        } catch (IOException exception) {
+            throw invalidFormat(avatar, "图片损坏或尺寸超过限制");
+        }
+        String canonicalExtension = extension.equals(".jpeg") ? ".jpg" : extension;
+        String identifier = UploadStorage.identifier(processed);
+        String relativePath = avatar ? policy.directoryPrefix + policy.filenamePrefix + UUID.randomUUID() + extension
+                : identifier + canonicalExtension;
+        try {
+            uploadStorage.publish(relativePath, processed, !avatar);
+            if (!avatar) uploadStorage.rememberMediaName(identifier, safeName(file.getOriginalFilename(), relativePath));
             return new UploadedImage(urlPrefix + "/" + relativePath, relativePath);
         } catch (IOException | RuntimeException exception) {
-            uploadStorage.deleteManagedFile(relativePath);
             log.error("Image upload failed: {}", exception.getClass().getSimpleName());
             throw new BusinessException(ErrorCode.SERVER_ERROR, "文件上传失败");
         }
+    }
+
+    private static String safeName(String name, String fallback) {
+        if (!StringUtils.hasText(name)) return fallback;
+        String clean = name.replace('\\', '/');
+        clean = clean.substring(clean.lastIndexOf('/') + 1).replaceAll("[\\p{Cntrl}]", "").trim();
+        if (clean.isEmpty()) return fallback;
+        return clean.length() > 120 ? clean.substring(0, 120) : clean;
     }
 
     private void validate(MultipartFile file, UploadPolicy policy, boolean avatar) {

@@ -27,6 +27,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 for cmd in node pnpm java mvn curl; do command -v "$cmd" >/dev/null || { echo "Missing $cmd" >&2; exit 1; }; done
+myshop_java_home="${JAVA_HOME:-$(/usr/libexec/java_home -v 25)}"
 [[ -x "$pg_bin/pg_ctl" ]] || { echo 'Install PostgreSQL 16 with: brew install postgresql@16' >&2; exit 1; }
 for port in 3000 8083 "$pg_port"; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1; then echo "Port $port is already in use." >&2; exit 1; fi
@@ -43,7 +44,7 @@ if ! "$pg_bin/psql" -h 127.0.0.1 -p "$pg_port" -U myshop_local -d postgres -Atqc
 fi
 (
   cd "$root/apps/api"
-  exec env -i HOME="$HOME" PATH="$PATH" \
+  exec env -i HOME="$HOME" PATH="$PATH" JAVA_HOME="$myshop_java_home" \
     DB_URL="jdbc:postgresql://127.0.0.1:$pg_port/myshop_local" DB_USERNAME=myshop_local DB_PASSWORD=localonly \
     JWT_SECRET='local-preview-only-change-before-any-real-deployment-0123456789-abcdefghijklmnopqrstuvwxyz' \
     PUBLIC_SITE_URL=http://localhost:3000 AUTH_COOKIE_SECURE=false MAIL_ENABLED=false SERVER_ADDRESS=127.0.0.1 \

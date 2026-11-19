@@ -31,18 +31,20 @@ class ImageUploadServiceTest {
     void setUp() {
         uploadStorage = new UploadStorage(tempDirectory.resolve("uploads").toString());
         uploadStorage.initialize();
-        service = new ImageUploadService(uploadStorage, "/api/uploads");
+        service = new ImageUploadService(uploadStorage, new ImageProcessor(), "/api/uploads");
     }
 
     @Test
-    void avatarUploadUsesGeneratedAvatarPathAndPreservesBytes() throws IOException {
+    void avatarUploadUsesGeneratedAvatarPathAndPreservesTransparency() throws IOException {
         byte[] bytes = pngBytes();
         ImageUploadService.UploadedImage uploaded = service.uploadAvatar(
                 new MockMultipartFile("file", "portrait.png", "image/png", bytes));
 
         assertTrue(uploaded.url().startsWith("/api/uploads/avatars/avatar-"));
         assertTrue(uploaded.relativePath().matches("avatars/avatar-[0-9a-f-]+\\.png"));
-        assertArrayEquals(bytes, Files.readAllBytes(uploadStorage.resolve(uploaded.relativePath())));
+        var original = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+        var saved = javax.imageio.ImageIO.read(uploadStorage.resolve(uploaded.relativePath()).toFile());
+        assertEquals(original.getRGB(0, 0), saved.getRGB(0, 0));
     }
 
     @Test
@@ -84,10 +86,7 @@ class ImageUploadServiceTest {
 
     @Test
     void webpRequiresBothRiffAndWebpMagicBytes() {
-        byte[] validWebp = new byte[]{
-                0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00,
-                0x57, 0x45, 0x42, 0x50
-        };
+        byte[] validWebp = java.util.Base64.getDecoder().decode("UklGRjwAAABXRUJQVlA4IDAAAAAwAgCdASoCAAIAAUAmJaACdLoB+AH4AAYeAAD+8U2v/Vn00Iv7SP/1v/qCA/SAAAA=");
         assertTrue(service.uploadAvatar(new MockMultipartFile(
                 "file", "portrait.webp", "image/webp", validWebp)).url().contains(".webp"));
 
@@ -98,6 +97,6 @@ class ImageUploadServiceTest {
     }
 
     private static byte[] pngBytes() {
-        return new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00};
+        return java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGP4z8DQAMIMMAYAOOgF/REzMMkAAAAASUVORK5CYII=");
     }
 }

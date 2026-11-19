@@ -8,6 +8,7 @@ import { ALLOWED_IMAGE_ACCEPT, validateImageFile } from "@/lib/image-upload"
 import { createMarkdownImage, insertMarkdownImage, type TextSelection } from "@/lib/markdown-image"
 import { MarkdownPreview } from "@/components/admin/markdown-preview"
 import { useLocale } from "@/lib/context"
+import { MediaPicker } from "@/components/admin/media-library"
 
 interface MarkdownEditorProps {
   value: string
@@ -135,16 +136,19 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
       <div className="min-w-0">
         <div className="mb-1.5 flex items-center justify-between gap-3">
           <span className="text-xs text-muted-foreground">{t("admin.markdownHint")}</span>
-          <button
-            type="button"
-            className="inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-            onMouseDown={() => rememberSelection()}
-            onClick={openFilePicker}
-            disabled={uploading}
-          >
-            {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
-            {t("admin.insertImage")}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <MediaPicker disabled={uploading} onOpen={() => rememberSelection()} onSelect={(item) => insertImage(item.name.replace(/[\[\]]/g, ""), item.url)} />
+            <button
+              type="button"
+              className="inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+              onMouseDown={() => rememberSelection()}
+              onClick={openFilePicker}
+              disabled={uploading}
+            >
+              {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+              {t("admin.insertImage")}
+            </button>
+          </div>
         </div>
         <div
           className={cn(

@@ -13,6 +13,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.LinkOption;
+import java.nio.file.FileAlreadyExistsException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Owns the configured upload directory and proves it is usable before the
@@ -66,6 +71,99 @@ public class UploadStorage {
 
     public Path resolve(String filename) {
         return resolveManagedPath(filename);
+    }
+
+    /** Publish a complete file without replacing an existing file, even across processes. */
+    public void publish(String relativePath, byte[] bytes, boolean allowExisting) throws IOException {
+        Path target = prepareManagedFile(relativePath);
+        Path temporary = Files.createTempFile(uploadDirectory, ".myshop-upload-", ".tmp");
+        try {
+            Files.write(temporary, bytes, StandardOpenOption.TRUNCATE_EXISTING);
+            try {
+                // Hard links are atomic and fail if the destination exists. Both
+                // paths are on the same configured upload filesystem.
+                Files.createLink(target, temporary);
+            } catch (FileAlreadyExistsException exists) {
+                if (!allowExisting || !isSafePublicFile(relativePath) || Files.size(target) != bytes.length
+                        || !MessageDigest.isEqual(sha256(bytes), sha256File(target))) {
+                    throw new IOException("Existing upload does not match its identifier", exists);
+                }
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    public static byte[] sha256(byte[] bytes) {
+        try { return MessageDigest.getInstance("SHA-256").digest(bytes); }
+        catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+
+    private static byte[] sha256File(Path file) throws IOException {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (var input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+                byte[] buffer = new byte[8192];
+                for (int count; (count = input.read(buffer)) != -1;) digest.update(buffer, 0, count);
+            }
+            return digest.digest();
+        } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+
+    public static String identifier(byte[] bytes) { return HexFormat.of().formatHex(sha256(bytes)); }
+
+    public void rememberMediaName(String identifier, String name) throws IOException {
+        if (!identifier.matches("[0-9a-f]{64}")) throw new IOException("Invalid identifier");
+        Path metadata = uploadDirectory.resolve(".media-info");
+        if (!Files.exists(metadata, LinkOption.NOFOLLOW_LINKS)) {
+            try { Files.createDirectory(metadata); } catch (FileAlreadyExistsException ignored) { }
+        }
+        if (Files.isSymbolicLink(metadata) || !Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS)
+                || !metadata.toRealPath().startsWith(uploadDirectory.toRealPath())) throw new IOException("Invalid media metadata directory");
+        Path target = metadata.resolve(identifier + ".txt");
+        Path temporary = Files.createTempFile(uploadDirectory, ".myshop-name-", ".tmp");
+        try {
+            Files.writeString(temporary, name, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
+            try { Files.createLink(target, temporary); }
+            catch (FileAlreadyExistsException ignored) {
+                if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Invalid media metadata");
+            }
+        } finally { Files.deleteIfExists(temporary); }
+    }
+
+    public String mediaName(String identifier, String fallback) {
+        if (!identifier.matches("[0-9a-f]{64}")) return fallback;
+        Path metadata = uploadDirectory.resolve(".media-info");
+        Path file = metadata.resolve(identifier + ".txt");
+        try {
+            if (Files.isSymbolicLink(metadata) || !Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > 2048
+                    || !file.toRealPath().startsWith(uploadDirectory.toRealPath())) return fallback;
+            String name = Files.readString(file, StandardCharsets.UTF_8).trim();
+            return name.isEmpty() ? fallback : name;
+        } catch (IOException | SecurityException ignored) { return fallback; }
+    }
+
+    /** Reject hidden paths, symlink components and files outside the actual root. */
+    public boolean isSafePublicFile(String relativePath) {
+        try {
+            if (relativePath == null || relativePath.indexOf('\\') >= 0) return false;
+            for (Path part : Paths.get(relativePath)) {
+                if (part.toString().equals(".") || part.toString().equals("..")) return false;
+            }
+            Path target = resolveManagedPath(relativePath);
+            Path relative = uploadDirectory.relativize(target);
+            Path current = uploadDirectory;
+            for (Path part : relative) {
+                if (part.toString().startsWith(".")) return false;
+                current = current.resolve(part);
+                if (Files.isSymbolicLink(current)) return false;
+            }
+            return Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)
+                    && target.toRealPath().startsWith(uploadDirectory.toRealPath());
+        } catch (IOException | IllegalArgumentException | SecurityException exception) {
+            return false;
+        }
     }
 
     /**

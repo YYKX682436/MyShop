@@ -82,6 +82,11 @@ public class GlobalExceptionHandler {
                 .body(ApiResponse.error(ErrorCode.BAD_REQUEST, "数据校验失败"));
     }
 
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<Void> handleMissingResource() {
+        return ResponseEntity.notFound().build();
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneral(Exception e) {
         log.error("Unexpected error", e);
