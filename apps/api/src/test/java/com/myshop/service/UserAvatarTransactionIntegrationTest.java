@@ -19,9 +19,13 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -131,8 +135,16 @@ class UserAvatarTransactionIntegrationTest {
                 CHECK (avatar_url IS NULL OR avatar_url = '/api/uploads/avatars/avatar-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.png')
                 """);
 
-        assertThrows(RuntimeException.class,
-                () -> userAvatarService.uploadAvatar(user.getId(), validPng()));
+        MockMultipartFile replacement = validPng();
+        RuntimeException failure = assertThrows(RuntimeException.class,
+                () -> userAvatarService.uploadAvatar(user.getId(), replacement));
+        Throwable cause = failure;
+        while (cause != null && !(cause instanceof SQLException)) {
+            cause = cause.getCause();
+        }
+        assertTrue(cause instanceof SQLException, "Expected a database constraint failure");
+        assertEquals("23514", ((SQLException) cause).getSQLState());
+        assertTrue(cause.getMessage().contains(ROLLBACK_CONSTRAINT));
 
         entityManager.clear();
         User reloaded = userRepository.findById(user.getId()).orElseThrow();
@@ -165,12 +177,17 @@ class UserAvatarTransactionIntegrationTest {
         return userRepository.saveAndFlush(user);
     }
 
-    private static MockMultipartFile validPng() {
+    private static MockMultipartFile validPng() throws IOException {
         return new MockMultipartFile("file", "replacement.png", "image/png", pngBytes());
     }
 
-    private static byte[] pngBytes() {
-        return new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+    private static byte[] pngBytes() throws IOException {
+        BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        if (!ImageIO.write(image, "png", bytes)) {
+            throw new IOException("PNG writer is unavailable");
+        }
+        return bytes.toByteArray();
     }
 
     private static String relativePath(String url) {
