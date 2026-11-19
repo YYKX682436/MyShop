@@ -37,6 +37,11 @@ print(
     f"(count={len(versions)}, latest={max(versions)})"
 )
 assert contract["tables"]["products"] == ["id", "title", "retail_price", "card_content_column_count"]
+assert contract["tables"]["user_secret_prices"] == [
+    "id", "user_id", "product_id", "spec_id", "price", "created_at", "updated_at"
+]
+for required_index in ("uq_user_secret_price_product", "uq_user_secret_price_spec"):
+    assert required_index in contract["indexes"], f"missing user secret-price unique index: {required_index}"
 assert contract["tables"]["sales_channel_accounts"] == ["id", "provider", "status"]
 assert contract["tables"]["sales_channel_orders"] == [
     "id",
