@@ -295,6 +295,28 @@ verify_candidate_identity() {
   done
 }
 
+# A pre-commit rollback may only start the old API against the same Flyway
+# history it was using before the candidate started. Do not infer schema
+# compatibility from health checks or automatically restore a live database.
+database_schema_fingerprint() {
+  local db_id fingerprint
+  db_id=$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+    --filter 'label=com.docker.compose.service=db' -q \
+    | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') || return 1
+  fingerprint=$(docker exec -i "$db_id" sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atq' <<'SQL'
+BEGIN;
+SET LOCAL statement_timeout = '10s';
+LOCK TABLE public.flyway_schema_history IN EXCLUSIVE MODE;
+SELECT md5(COALESCE(string_agg(row_to_json(h)::text, ',' ORDER BY installed_rank), ''))
+FROM public.flyway_schema_history h;
+COMMIT;
+SQL
+  ) || return 1
+  [[ "$fingerprint" =~ ^[0-9a-f]{32}$ ]] || return 1
+  printf '%s\n' "$fingerprint"
+}
+
 prepare_prospective_state() {
   prospective_root="$tmp_dir/prospective"
   prospective_state="$prospective_root/deploy-state.json"
@@ -480,12 +502,20 @@ PY
 }
 
 restore_old() {
-  rollback_state
+  local current_schema
+  rollback_state || return 1
   if (( shared_bootstrap )); then
     # There is no accepted application version to restore. Stop only this
     # candidate's app-facing services; preserve the imported DB and its backup.
     run_compose stop api web caddy || return 1
     return 0
+  fi
+  if (( candidate_started )); then
+    # The candidate may still be migrating or serving writes. Stop it before
+    # checking history; otherwise the database can change after the check.
+    run_compose stop api web caddy || return 1
+    current_schema=$(database_schema_fingerprint) || return 2
+    [[ -n "${baseline_schema_fingerprint:-}" && "$current_schema" == "$baseline_schema_fingerprint" ]] || return 2
   fi
   if (( ! state_existed && ! candidate_started )); then
     verify_baseline || return 1
@@ -501,7 +531,7 @@ restore_old() {
 }
 
 pre_commit_fail() {
-  local reason=$1
+  local reason=$1 restore_status=0
   if (( committed )); then
     post_commit_fail "$reason"
   fi
@@ -516,9 +546,15 @@ pre_commit_fail() {
       "$candidate_sha" "$reason" >&2
     exit 2
   fi
-  if restore_old; then
+  restore_old || restore_status=$?
+  if (( restore_status == 0 )); then
     printf 'DEPLOYMENT FAILED / ROLLED BACK source=%s reason=%s\n' "$candidate_sha" "$reason" >&2
     exit 1
+  fi
+  if (( restore_status == 2 )); then
+    printf 'CRITICAL_SCHEMA_ROLLBACK_BLOCKED source=%s reason=%s; database and recovery point preserved, application services stopped\n' \
+      "$candidate_sha" "$reason" >&2
+    exit 2
   fi
   printf 'CRITICAL_ROLLBACK_FAILED source=%s reason=%s\n' "$candidate_sha" "$reason" >&2
   exit 2
@@ -554,6 +590,7 @@ pull_candidate || pre_commit_fail pull
 # verification first to avoid backup churn for an unavailable candidate.
 if (( ! shared_bootstrap )); then
   create_predeploy_backup || pre_commit_fail backup
+  baseline_schema_fingerprint=$(database_schema_fingerprint) || pre_commit_fail baseline-schema
 fi
 [[ "${DEPLOY_TEST_FAIL:-}" != health ]] || pre_commit_fail health
 run_compose config --quiet || pre_commit_fail compose

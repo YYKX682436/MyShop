@@ -1,9 +1,6 @@
 package com.myshop.service.impl;
 
-import com.myshop.aspect.OperationLogAspect;
-import com.myshop.config.ClientIpResolver;
 import com.myshop.constant.UserRole;
-import com.myshop.context.RequestContext;
 import com.myshop.entity.Product;
 import com.myshop.entity.User;
 import com.myshop.entity.UserSecretPrice;
@@ -14,10 +11,8 @@ import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserSecretPriceRepository;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.PricingService;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -36,7 +31,6 @@ class UserSecretPriceDeletionAuditTest {
     private final ProductSpecRepository specs = mock(ProductSpecRepository.class);
     private final PricingService pricing = mock(PricingService.class);
     private final OperationLogService operationLogs = mock(OperationLogService.class);
-    private final UUID operatorId = UUID.randomUUID();
     private final UUID userId = UUID.randomUUID();
     private final UUID productId = UUID.randomUUID();
     private final UUID secretPriceId = UUID.randomUUID();
@@ -44,17 +38,8 @@ class UserSecretPriceDeletionAuditTest {
 
     @BeforeEach
     void setUp() {
-        RequestContext.set(new RequestContext.UserInfo(operatorId, "pricing-admin", "ADMIN"));
-        UserSecretPriceService target = new UserSecretPriceService(secretPrices, users, levels,
-                products, specs, pricing);
-        AspectJProxyFactory proxyFactory = new AspectJProxyFactory(target);
-        proxyFactory.addAspect(new OperationLogAspect(operationLogs, mock(ClientIpResolver.class)));
-        service = proxyFactory.getProxy();
-    }
-
-    @AfterEach
-    void clearRequestContext() {
-        RequestContext.clear();
+        service = new UserSecretPriceService(secretPrices, users, levels,
+                products, specs, pricing, operationLogs);
     }
 
     @Test
@@ -76,8 +61,8 @@ class UserSecretPriceDeletionAuditTest {
 
         service.delete(userId, secretPriceId);
 
-        verify(operationLogs).log(operatorId, "pricing-admin", "secret_price.delete", "USER",
-                userId.toString(), "删除用户密价：密价记录=" + secretPriceId + " 商品=" + productId + " 规格=null", "unknown");
+        verify(operationLogs).logCurrentRequest("secret_price.delete", "USER", userId.toString(),
+                "删除用户密价：密价记录=" + secretPriceId + " 商品=" + productId + " 规格=null");
         verify(secretPrices).delete(entry);
         verify(secretPrices).flush();
     }

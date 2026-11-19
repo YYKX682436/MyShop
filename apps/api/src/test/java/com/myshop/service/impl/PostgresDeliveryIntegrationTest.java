@@ -23,6 +23,8 @@ import com.myshop.service.AdminProductService;
 import com.myshop.repository.ProductRepository;
 import com.myshop.service.WebhookService;
 import com.myshop.utils.CardContentParser;
+import com.myshop.utils.JwtUtils;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterAll;
@@ -37,6 +39,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.security.web.FilterChainProxy;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.WebApplicationContext;
 
 import java.util.List;
 import java.util.Map;
@@ -64,6 +70,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @EnabledIf(value = "postgresAvailable", disabledReason = "PostgreSQL test database or Docker required")
 @ExtendWith(SpringExtension.class)
@@ -94,6 +102,9 @@ class PostgresDeliveryIntegrationTest {
 
     @Autowired private UserSecretPriceService secretPrices;
     @Autowired private com.myshop.service.PublicProductService publicProducts;
+    @Autowired private WebApplicationContext webApplicationContext;
+    @Autowired private FilterChainProxy springSecurityFilterChain;
+    @Autowired private JwtUtils jwtUtils;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -148,7 +159,7 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
-    void secretPricesArePrivateOverrideLevelPricesAndEnforceTargets() {
+    void secretPricesArePrivateOverrideLevelPricesAndEnforceTargets() throws Exception {
         UUID a = insertUser("secret-a-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
         UUID b = insertUser("secret-b-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
         UUID product = UUID.randomUUID();
@@ -175,7 +186,7 @@ class PostgresDeliveryIntegrationTest {
                 "MANUAL", List.of(), StockMode.UNLIMITED, null, List.of(), null);
         assertThrows(BusinessException.class, () -> adminProductService.updateProduct(product, aggregate));
         assertThrows(BusinessException.class, () -> secretPrices.delete(b, secret.id()));
-        secretPrices.delete(a, secret.id());
+        deleteSecretPriceAsAdmin(a, secret.id(), product);
         assertEquals(new BigDecimal("7.00"), publicProducts.getProduct(product, a).price());
         UUID markupLevel = UUID.randomUUID();
         jdbcTemplate.update("insert into user_levels(id,name,pricing_type,markup_rate) values (?, ?, 'COST_MARKUP', 10.0000)", markupLevel, "secret-markup-" + markupLevel);
@@ -227,7 +238,7 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
-    void secretPriceIsRecalculatedForBothPaymentsAndExistingOrderKeepsSnapshot() {
+    void secretPriceIsRecalculatedForBothPaymentsAndExistingOrderKeepsSnapshot() throws Exception {
         UUID a = insertUser("order-secret-a-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
         UUID b = insertUser("order-secret-b-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
         setBalance(a, new BigDecimal("100.00"));
@@ -259,9 +270,75 @@ class PostgresDeliveryIntegrationTest {
         assertEquals("USER_SECRET", scalar("select pricing_source from order_items where order_id = ?", String.class, onlineId));
         assertEquals(new BigDecimal("8.00"), scalar("select amount from payment_attempts where order_id = ?", BigDecimal.class, onlineId));
         assertEquals(new BigDecimal("8.00"), publicProducts.getProduct(product, a).price());
-        secretPrices.delete(a, secret.id());
+        deleteSecretPriceAsAdmin(a, secret.id(), product);
         assertEquals(new BigDecimal("10.00"), publicProducts.getProduct(product, a).price());
         assertEquals(new BigDecimal("6.00"), scalar("select unit_price from order_items where order_id = ?", BigDecimal.class, orderId));
+    }
+
+    @Test
+    void secretPriceDeletionWithoutAnAuthenticatedOperatorRollsBackAndUserIsForbidden() throws Exception {
+        String username = "secret-buyer-" + UUID.randomUUID();
+        UUID userId = insertUser(username, UUID.randomUUID() + "@example.com");
+        UUID product = UUID.randomUUID();
+        insertUnlimitedProduct(product);
+        var secret = secretPrices.create(userId,
+                new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("6.00")));
+
+        assertThrows(IllegalStateException.class, () -> secretPrices.delete(userId, secret.id()));
+        assertEquals(1, number("select count(*) from user_secret_prices where id = ?", secret.id()));
+
+        int authVersion = scalar("select auth_version from users where id = ?", Integer.class, userId);
+        String token = jwtUtils.generateToken(userId, username, "USER", authVersion);
+        secretPriceDeleteRequest(userId, secret.id(), token).andExpect(status().isForbidden());
+        assertEquals(1, number("select count(*) from user_secret_prices where id = ?", secret.id()));
+        assertEquals(0, number("select count(*) from operation_logs where action = 'secret_price.delete' and target_id = ?", userId.toString()));
+    }
+
+    @Test
+    void secretPriceDeletionRollsBackIfAdministratorAuditCannotBeStored() throws Exception {
+        UUID userId = insertUser("audit-buyer-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID product = UUID.randomUUID();
+        insertUnlimitedProduct(product);
+        var secret = secretPrices.create(userId,
+                new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("6.00")));
+        String username = "audit-admin-" + UUID.randomUUID();
+        UUID adminId = insertAdminUser(username, UUID.randomUUID() + "@example.com");
+        int authVersion = scalar("select auth_version from users where id = ?", Integer.class, adminId);
+        String token = jwtUtils.generateToken(adminId, username, "ADMIN", authVersion);
+
+        jdbcTemplate.execute("alter table operation_logs add constraint test_secret_audit_failure check (action <> 'secret_price.delete') not valid");
+        try {
+            secretPriceDeleteRequest(userId, secret.id(), token).andExpect(status().isBadRequest());
+            assertEquals(1, number("select count(*) from user_secret_prices where id = ?", secret.id()));
+            assertEquals(0, number("select count(*) from operation_logs where user_id = ? and action = 'secret_price.delete'", adminId));
+        } finally {
+            jdbcTemplate.execute("alter table operation_logs drop constraint test_secret_audit_failure");
+        }
+    }
+
+    private void deleteSecretPriceAsAdmin(UUID userId, UUID secretId, UUID productId) throws Exception {
+        String username = "secret-admin-" + UUID.randomUUID();
+        UUID adminId = insertAdminUser(username, UUID.randomUUID() + "@example.com");
+        int authVersion = scalar("select auth_version from users where id = ?", Integer.class, adminId);
+        String token = jwtUtils.generateToken(adminId, username, "ADMIN", authVersion);
+        secretPriceDeleteRequest(userId, secretId, token).andExpect(status().isOk());
+        assertEquals(1, number("""
+                select count(*) from operation_logs
+                where user_id = ? and username = ? and action = 'secret_price.delete'
+                    and target_type = 'USER' and target_id = ? and detail = ?
+                """, adminId, username, userId.toString(),
+                "删除用户密价：密价记录=" + secretId + " 商品=" + productId + " 规格=null"));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions secretPriceDeleteRequest(
+            UUID userId, UUID secretId, String token) throws Exception {
+        MockMvc mvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
+                .addFilters(springSecurityFilterChain).build();
+        String csrf = UUID.randomUUID().toString();
+        return mvc.perform(delete("/api/admin/users/{userId}/secret-prices/{id}", userId, secretId)
+                .contextPath("/api")
+                .cookie(new Cookie("myshop_access_token", token), new Cookie("myshop_csrf", csrf))
+                .header("X-CSRF-Token", csrf));
     }
 
     @Test

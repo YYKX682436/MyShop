@@ -1,6 +1,5 @@
 package com.myshop.service.impl;
 
-import com.myshop.annotation.LogOperation;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.Product;
@@ -19,6 +18,7 @@ import com.myshop.repository.UserRepository;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.repository.UserSecretPriceRepository;
 import com.myshop.service.PricingService;
+import com.myshop.service.OperationLogService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +39,7 @@ public class UserSecretPriceService {
     private final ProductRepository products;
     private final ProductSpecRepository specs;
     private final PricingService pricing;
+    private final OperationLogService operationLogs;
 
     @Transactional(readOnly = true)
     public List<UserSecretPriceResponse> list(UUID userId) {
@@ -95,8 +96,6 @@ public class UserSecretPriceService {
         return response(entry, product, spec, pricing.resolve(product, spec, levelFor(user)));
     }
 
-    @LogOperation(action = "secret_price.delete", targetType = "USER", targetId = "#userId",
-            detail = "'删除用户密价：密价记录=' + #result.id + ' 商品=' + #result.productId + ' 规格=' + #result.specId")
     @Transactional
     public UserSecretPrice delete(UUID userId, UUID id) {
         requireUser(userId);
@@ -105,6 +104,9 @@ public class UserSecretPriceService {
         validateTarget(product, entry.getSpecId());
         secrets.delete(entry);
         secrets.flush();
+        operationLogs.logCurrentRequest("secret_price.delete", "USER", userId.toString(),
+                "删除用户密价：密价记录=" + entry.getId() + " 商品=" + entry.getProductId()
+                        + " 规格=" + entry.getSpecId());
         return entry;
     }
 

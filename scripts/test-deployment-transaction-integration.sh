@@ -295,7 +295,15 @@ case "${1:-}" in
       exit 99
     fi
     ;;
-  exec) exit 0 ;;
+  exec)
+    [[ "${2:-}" == -i ]] || exit 99
+    if [[ "${FAKE_SCHEMA_MODE:-}" == unreadable && "$stage" == stopped ]]; then exit 1; fi
+    if [[ "${FAKE_SCHEMA_MODE:-}" == changed && "$stage" == stopped ]]; then
+      printf '%032d\n' 1
+    else
+      printf '%032d\n' 0
+    fi
+    ;;
   system) printf 'fake docker system df\n' ;;
   *) exit 99 ;;
 esac
@@ -329,6 +337,7 @@ case "$action" in
     ;;
   stop)
     [[ "$candidate" == 1 ]] || exit 1
+    [[ "${FAKE_STOP_FAIL:-0}" != 1 ]] || exit 1
     printf 'stopped\n' >"$root/running"
     ;;
   *) exit 99 ;;
@@ -490,6 +499,33 @@ for hook in pull backup compose start health-after-start schema smoke candidate-
   assert_pre_commit_failure "$hook"
 done
 pass 'all ten pre-commit failure paths restore old state and stack without destructive retention'
+
+for schema_mode in changed unreadable; do
+  reset_case
+  printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+  set +e
+  blocked_output=$(FAKE_SHARED_TEST=1 FAKE_SCHEMA_MODE="$schema_mode" DEPLOY_TEST_FAIL=health-after-start run_deploy 2>&1)
+  blocked_status=$?
+  set -e
+  (( blocked_status == 2 )) || fail "$schema_mode schema did not block rollback"
+  grep -Fq 'CRITICAL_SCHEMA_ROLLBACK_BLOCKED' <<<"$blocked_output" || fail "$schema_mode schema was not reported"
+  cmp -s "$base_state" "$case_root/deploy-state.json" || fail "$schema_mode schema changed accepted state"
+  [[ "$(<"$case_root/running")" == stopped ]] || fail "$schema_mode schema did not stop app-facing services"
+  [[ -f "$case_root/recovery-point.dump" ]] || fail "$schema_mode schema lost the recovery point"
+  [[ "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail "$schema_mode schema restarted the old API"
+  ! grep -Ev 'dry=yes' "$case_root/retention.log" | grep -q . || fail "$schema_mode schema executed destructive retention"
+done
+pass 'changed or unreadable Flyway history blocks old API rollback and preserves recovery data'
+
+reset_case
+set +e
+stop_output=$(FAKE_STOP_FAIL=1 DEPLOY_TEST_FAIL=health-after-start run_deploy 2>&1)
+stop_status=$?
+set -e
+(( stop_status == 2 )) || fail 'failed candidate stop did not block rollback'
+grep -Fq 'CRITICAL_ROLLBACK_FAILED' <<<"$stop_output" || fail 'failed candidate stop was not reported'
+[[ "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail 'failed candidate stop restarted the old API'
+pass 'failure to stop the candidate never starts the old API'
 
 reset_case
 set +e

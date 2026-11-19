@@ -40,7 +40,12 @@ the stack, restore a database from another host, or change DNS or TLS.
    release-manifest path using the same settings. The existing release
    transaction checks images and digests, keeps its predeploy recovery point,
    verifies health/schema/smoke checks, and rolls back the app images on
-   pre-commit failure. Leave the existing proxy and data in place.
+   pre-commit failure only when the Flyway history is unchanged. If the
+   candidate has started, rollback stops the app-facing services before
+   checking history; a changed or unreadable history blocks the old API and
+   leaves the database and recovery point for operator assessment. It does
+   not automatically restore a live database. Leave the existing proxy and
+   data in place.
 5. Verify the accepted release and the real HTTPS site, including the homepage
    and `/api/site/config`. Verify the changed feature and report the version
    deployed. Do not use the disabled candidate site for acceptance.

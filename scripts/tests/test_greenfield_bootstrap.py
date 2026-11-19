@@ -18,20 +18,8 @@ from pathlib import Path
 
 name = Path(sys.argv[0]).name
 args = sys.argv[1:]
-root = Path(os.environ['FAKE_ROOT'])
-state_file = root / 'fake.json'
-s = json.loads(state_file.read_text())
-def save():
-    state_file.write_text(json.dumps(s))
-def log(message):
-    s['events'].append(message)
-    save()
-def fail(message):
-    print(message, file=sys.stderr)
-    sys.exit(1)
-def container(service):
-    return s['containers'].get(service)
-
+# These primitives run concurrently with the operator's fake Docker commands.
+# Like their real counterparts, they must not read the container state file.
 if name == 'flock':
     import fcntl
     deadline = time.monotonic() + (float(args[args.index('-w') + 1]) if '-w' in args else 0)
@@ -47,6 +35,22 @@ if name == 'flock':
 if name == 'sleep':
     time.sleep(0.05)
     sys.exit(0)
+root = Path(os.environ['FAKE_ROOT'])
+state_file = root / 'fake.json'
+s = json.loads(state_file.read_text())
+def save():
+    pending = state_file.with_name(state_file.name + '.' + str(os.getpid()) + '.tmp')
+    pending.write_text(json.dumps(s))
+    os.replace(pending, state_file)
+def log(message):
+    s['events'].append(message)
+    save()
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+def container(service):
+    return s['containers'].get(service)
+
 if name == 'findmnt':
     print(os.environ['DATA_MOUNTPOINT'])
     sys.exit(0)
@@ -249,6 +253,17 @@ class GreenfieldBootstrapTest(unittest.TestCase):
 
     def state(self):
         return json.loads(self.fake_state.read_text())
+
+    def test_watchdog_primitives_do_not_read_fake_container_state(self):
+        # The operator can be writing the fake state while the watchdog sleeps.
+        # Neither sleep nor flock has any dependency on container state.
+        self.fake_state.write_text("")
+        sleeping = subprocess.run([str(self.bin / "sleep"), "2"], env=self.env, capture_output=True)
+        self.assertEqual(sleeping.returncode, 0, sleeping.stderr.decode())
+        with (self.root / "primitive-lock").open("w") as lock:
+            locking = subprocess.run([str(self.bin / "flock"), "-n", str(lock.fileno())],
+                                     env=self.env, pass_fds=(lock.fileno(),), capture_output=True)
+        self.assertEqual(locking.returncode, 0, locking.stderr.decode())
 
     def test_initial_install_and_next_state_promotion(self):
         result = self.run_bootstrap()
