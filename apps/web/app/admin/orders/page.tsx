@@ -23,6 +23,7 @@ import { useLocale } from "@/lib/context"
 import { formatAdminOrderCustomer, formatAdminOrderProductMeta, limitAdminOrderProductItems } from "@/lib/admin-order-display"
 import { useAdminOrderInvalidation } from "@/lib/admin-order-invalidation"
 import { useAdminAttention } from "@/lib/admin-attention"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { getAfterSaleWaitingLabelKey } from "@/lib/after-sale-waiting"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { adminOrderApi, requestOrThrow } from "@/services/api"
@@ -94,7 +95,7 @@ function ProductSummary({ order, emptyLabel }: { order: AdminOrderItem; emptyLab
 export default function AdminOrdersPage() {
   const { t, locale } = useLocale()
   const orderInvalidationRevision = useAdminOrderInvalidation()
-  const { afterSaleNeedsAttention } = useAdminAttention()
+  const { afterSaleNeedsAttention, refresh: refreshAttention } = useAdminAttention()
   const [orders, setOrders] = useState<AdminOrderItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -107,6 +108,7 @@ export default function AdminOrdersPage() {
   const [customTo, setCustomTo] = useState("")
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
   const [page, setPage] = useState(1)
+  const startRequest = useRequestGuard()
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -119,6 +121,7 @@ export default function AdminOrdersPage() {
   const bounds = useMemo(() => dateBounds(timeRange, customFrom, customTo), [timeRange, customFrom, customTo])
 
   const loadOrders = useCallback(async () => {
+    const current = startRequest()
     setLoading(true)
     setError(false)
     try {
@@ -130,18 +133,27 @@ export default function AdminOrdersPage() {
         ...bounds,
         sort_direction: sortDirection,
       }))
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (page > lastPage) { setPage(lastPage); return }
       setOrders(data.list)
       setTotal(data.pagination.total)
     } catch {
+      if (!current()) return
       setOrders([])
       setTotal(0)
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [bounds, debouncedSearch, page, sortDirection, statusFilter])
+  }, [bounds, debouncedSearch, page, sortDirection, statusFilter, startRequest])
 
   useEffect(() => { void loadOrders() }, [loadOrders, orderInvalidationRevision])
+  const refreshPage = useCallback(async () => {
+    const [, attentionOk] = await Promise.all([loadOrders(), refreshAttention()])
+    if (!attentionOk) toast.error(t("admin.loadError"))
+  }, [loadOrders, refreshAttention, t])
+  const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
 
   const copyOrderNo = (value: number) => {
     const cleanValue = stripInvisible(String(value))
@@ -162,7 +174,7 @@ export default function AdminOrdersPage() {
 
   return (
     <AdminPage>
-      <PageHeader title={t("admin.orders")} description={t("admin.ordersDesc")} />
+      <PageHeader title={t("admin.orders")} description={t("admin.ordersDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
 
       <div className="-mx-1 max-w-full px-1">
         <div className="segmented-control w-max gap-1" role="group" aria-label={t("admin.statusLabel")}>

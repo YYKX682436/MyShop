@@ -12,6 +12,7 @@ import {
   ConfirmAlert,
   DataTableShell,
   PageHeader,
+  PageRefreshButton,
   PageToolbar,
   StatusBadge,
   TableEmptyState,
@@ -30,6 +31,8 @@ import {
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminData, useAdminDataRevision } from "@/lib/admin-data-invalidation"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { formatCardContents } from "@/lib/card-display"
 import { formatDateTime, stripInvisible } from "@/lib/utils"
 import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
@@ -103,6 +106,13 @@ export default function AdminCardKeysPage() {
   const [batchInvalidating, setBatchInvalidating] = useState(false)
   const detailRequestRef = useRef(0)
   const pickupProductRequestRef = useRef(0)
+  const startProductsRequest = useRequestGuard()
+  const startStockRequest = useRequestGuard()
+  const startBatchesRequest = useRequestGuard()
+  const startPickupStockRequest = useRequestGuard()
+  const inventoryRevision = useAdminDataRevision("inventory")
+  const lastInventoryRevision = useRef(inventoryRevision)
+  useEffect(() => () => { detailRequestRef.current += 1; pickupProductRequestRef.current += 1 }, [])
 
   const importableProducts = products.filter(
     (product) => (product.delivery_type || "AUTO") === "AUTO" && (product.stock_mode || "CARD_KEY") === "CARD_KEY",
@@ -110,45 +120,54 @@ export default function AdminCardKeysPage() {
   const pickupProducts = products.filter((product) => (product.stock_mode || "CARD_KEY") === "CARD_KEY")
 
   const loadProducts = useCallback(async () => {
+    const current = startProductsRequest()
     setProductsError(false)
     try {
       const data = await requestOrThrow(() => adminProductApi.getList({ page: 1, page_size: 100 }))
-      setProducts(data.list)
+      if (current()) setProducts(data.list)
     } catch {
+      if (!current()) return
       setProducts([])
       setProductsError(true)
     }
-  }, [])
+  }, [startProductsRequest])
 
   const loadStock = useCallback(async () => {
+    const current = startStockRequest()
     setStockLoading(true)
     setStockError(false)
     try {
       const data = await requestOrThrow(() => adminCardKeyApi.getStock(filterProductId ? { product_id: filterProductId } : undefined))
-      setStockList(data)
+      if (current()) setStockList(data)
     } catch {
+      if (!current()) return
       setStockList([])
       setStockError(true)
     } finally {
-      setStockLoading(false)
+      if (current()) setStockLoading(false)
     }
-  }, [filterProductId])
+  }, [filterProductId, startStockRequest])
 
   const loadImportBatches = useCallback(async () => {
+    const current = startBatchesRequest()
     setImportLoading(true)
     setImportError(false)
     try {
       const data = await requestOrThrow(() => adminCardKeyApi.getImportBatches({ page: importPage, page_size: PAGE_SIZE }))
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (importPage > lastPage) { setImportPage(lastPage); return }
       setImportBatches(data.list)
       setImportTotal(data.pagination.total)
     } catch {
+      if (!current()) return
       setImportBatches([])
       setImportTotal(0)
       setImportError(true)
     } finally {
-      setImportLoading(false)
+      if (current()) setImportLoading(false)
     }
-  }, [importPage])
+  }, [importPage, startBatchesRequest])
 
   useEffect(() => { void loadProducts() }, [loadProducts])
   useEffect(() => { void loadStock() }, [loadStock])
@@ -246,6 +265,7 @@ export default function AdminCardKeysPage() {
 
   const resetBatchPickup = () => {
     pickupProductRequestRef.current += 1
+    startPickupStockRequest()
     setPickupProductId("")
     setPickupProduct(null)
     setPickupSpecId("")
@@ -274,6 +294,7 @@ export default function AdminCardKeysPage() {
 
   const handlePickupProductChange = async (productId: string) => {
     const requestId = ++pickupProductRequestRef.current
+    const stockCurrent = startPickupStockRequest()
     setPickupProductId(productId)
     setPickupProduct(null)
     setPickupSpecId("")
@@ -294,19 +315,19 @@ export default function AdminCardKeysPage() {
         requestOrThrow(() => adminCardKeyApi.getStock({ product_id: productId })),
       ])
       if (product.stock_mode !== "CARD_KEY") throw new Error(t("admin.cardImportOnlyAutoCard"))
-      if (pickupProductRequestRef.current === requestId) {
+      if (pickupProductRequestRef.current === requestId && stockCurrent()) {
         setPickupProduct(product)
         setPickupStockList(stock)
         setPickupStockError(false)
       }
     } catch (requestError: unknown) {
-      if (pickupProductRequestRef.current === requestId) {
+      if (pickupProductRequestRef.current === requestId && stockCurrent()) {
         setPickupStockError(true)
         toast.error(requestError instanceof Error ? requestError.message : t("admin.pickupFailed"))
       }
     } finally {
       if (pickupProductRequestRef.current === requestId) setPickupProductLoading(false)
-      if (pickupProductRequestRef.current === requestId) setPickupStockLoading(false)
+      if (pickupProductRequestRef.current === requestId && stockCurrent()) setPickupStockLoading(false)
     }
   }
 
@@ -323,8 +344,14 @@ export default function AdminCardKeysPage() {
     setDetailLoading(true)
     setDetailError(false)
     try {
-      const data = await requestOrThrow(() => adminCardKeyApi.getList({ product_id: item.product_id, spec_id: item.spec_id, page, page_size: PAGE_SIZE }))
+      let data = await requestOrThrow(() => adminCardKeyApi.getList({ product_id: item.product_id, spec_id: item.spec_id, page, page_size: PAGE_SIZE }))
       if (detailRequestRef.current !== detailRequestId) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (page > lastPage) {
+        data = await requestOrThrow(() => adminCardKeyApi.getList({ product_id: item.product_id, spec_id: item.spec_id, page: lastPage, page_size: PAGE_SIZE }))
+        if (detailRequestRef.current !== detailRequestId) return
+        setDetailPage(lastPage)
+      }
       setDetailKeys(data.list)
       setDetailTotal(data.pagination.total)
     } catch {
@@ -381,16 +408,27 @@ export default function AdminCardKeysPage() {
     const detailRefresh = detailItem
       ? fetchDetailKeys(detailItem, detailPage)
       : Promise.resolve()
+    const pickupRequestId = pickupProductRequestRef.current
+    const pickupCurrent = startPickupStockRequest()
     const pickupStockRefresh = pickupProductId
       ? requestOrThrow(() => adminCardKeyApi.getStock({ product_id: pickupProductId }))
           .then((data) => {
+            if (!pickupCurrent() || pickupRequestId !== pickupProductRequestRef.current) return
             setPickupStockList(data)
             setPickupStockError(false)
           })
-          .catch(() => setPickupStockError(true))
+          .catch(() => { if (pickupCurrent() && pickupRequestId === pickupProductRequestRef.current) setPickupStockError(true) })
       : Promise.resolve()
     await Promise.all([loadProducts(), loadStock(), detailRefresh, pickupStockRefresh])
-  }, [detailItem, detailPage, fetchDetailKeys, loadProducts, loadStock, pickupProductId])
+  }, [detailItem, detailPage, fetchDetailKeys, loadProducts, loadStock, pickupProductId, startPickupStockRequest])
+
+  const refreshPage = useCallback(async () => { await Promise.all([refreshCardKeyData(), loadImportBatches()]) }, [refreshCardKeyData, loadImportBatches])
+  const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
+  useEffect(() => {
+    if (lastInventoryRevision.current === inventoryRevision) return
+    lastInventoryRevision.current = inventoryRevision
+    void refreshCardKeyData()
+  }, [inventoryRevision, refreshCardKeyData])
 
   const handleImportCompleted = async () => {
     await Promise.all([refreshCardKeyData(), loadImportBatches()])
@@ -417,6 +455,7 @@ export default function AdminCardKeysPage() {
         spec_id: pickupSpecId || null,
         quantity: pickupQuantityNumber,
       }))
+      invalidateAdminData("products")
       setBatchPickupDialogOpen(false)
       resetBatchPickup()
       setPickupResult(result)
@@ -436,6 +475,7 @@ export default function AdminCardKeysPage() {
     setSinglePickingUp(true)
     try {
       const result = await requestOrThrow(() => adminCardKeyApi.pickup(singlePickupTarget.id))
+      invalidateAdminData("products")
       setSinglePickupTarget(null)
       setPickupResult(result)
       await refreshCardKeyData()
@@ -457,6 +497,7 @@ export default function AdminCardKeysPage() {
     setSingleInvalidating(true)
     try {
       await requestOrThrow(() => adminCardKeyApi.invalidate(singleInvalidateTarget.id))
+      invalidateAdminData("products")
       toast.success(t("admin.keyInvalidated"))
       setSingleInvalidateTarget(null)
       if (detailItem) await fetchDetailKeys(detailItem, detailPage)
@@ -473,9 +514,10 @@ export default function AdminCardKeysPage() {
     setBatchInvalidating(true)
     try {
       const result = await requestOrThrow(() => adminCardKeyApi.batchInvalidate({ product_id: batchInvalidateTarget.product_id, spec_id: batchInvalidateTarget.spec_id }))
+      invalidateAdminData("products")
       toast.success(t("admin.keysInvalidated").replace("{count}", String(result.invalidated_count)))
       setBatchInvalidateTarget(null)
-      await loadStock()
+      await refreshCardKeyData()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.invalidateFailed"))
     } finally {
@@ -501,6 +543,8 @@ export default function AdminCardKeysPage() {
       <PageHeader
         title={t("admin.cardKeys")}
         description={t("admin.cardKeysDesc")}
+        onRefresh={() => void refresh()}
+        refreshing={refreshing}
         actions={
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" onClick={openBatchImport} disabled={productsError || importableProducts.length === 0 || batchImportProductLoading}>
@@ -759,7 +803,7 @@ export default function AdminCardKeysPage() {
       <Sheet open={detailItem !== null} onOpenChange={closeDetail}>
         <SheetContent className="flex w-full flex-col p-0 sm:max-w-5xl">
           <SheetHeader className="border-b border-border-subtle px-6 py-5 pr-14">
-            <SheetTitle>{t("admin.cardDetail")}</SheetTitle>
+            <div className="flex items-center gap-1"><SheetTitle>{t("admin.cardDetail")}</SheetTitle><PageRefreshButton onRefresh={() => void refresh()} refreshing={refreshing} /></div>
             <SheetDescription>{detailItem ? `${detailItem.product_title} · ${detailItem.spec_name || t("admin.defaultSpec")}` : ""}</SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto p-6">

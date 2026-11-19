@@ -30,6 +30,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminData } from "@/lib/admin-data-invalidation"
 import { copyText } from "@/lib/clipboard"
 import { formatDateTime } from "@/lib/utils"
 import { formatCents, formatYuanFromCents, formatYuanValue, MAX_BALANCE_CENTS, parseMoneyValueToCents, parsePositiveMoneyToCents } from "@/lib/money"
@@ -165,6 +166,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
     setEditLoading(true)
     try {
       const data = await requestOrThrow(() => adminUserApi.updateProfile(userId, { email }))
+      invalidateAdminData("users")
       setUser(data)
       setEditOpen(false)
       await refreshRecords("logs")
@@ -181,6 +183,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
     setLevelLoading(true)
     try {
       const level = await requestOrThrow(() => adminUserApi.changeLevel(user.id, userLevelId))
+      invalidateAdminData("users", "user-levels")
       setUser((current) => current ? { ...current, user_level_id: level.id, user_level_name: level.name } : current)
       await refreshRecords("logs")
       toast.success(t("admin.userLevelChanged"))
@@ -221,6 +224,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
         amount: formatCents(amountCents),
         reason,
       }))
+      invalidateAdminData("users")
       setUser((current) => current ? { ...current, balance: Number(transaction.balance_after) } : current)
       await loadUser()
       await refreshRecords("balance")
@@ -257,6 +261,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
     if (!user || user.is_deleted === nextIsDeleted) return true
     try {
       await requestOrThrow(() => adminUserApi.toggleStatus(userId, nextIsDeleted))
+      invalidateAdminData("users", "user-levels")
       setUser((current) => current ? { ...current, is_deleted: nextIsDeleted } : current)
       await refreshRecords("logs")
       toast.success(nextIsDeleted === 1 ? t("admin.userDisabled") : t("admin.userEnabled"))

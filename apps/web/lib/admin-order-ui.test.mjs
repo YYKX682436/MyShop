@@ -317,7 +317,7 @@ test("admin order mutations publish one shared invalidation after each detail mu
   assert.match(listSource, /\[loadOrders, orderInvalidationRevision\]/)
   assert.doesNotMatch(listSource, /invalidateAdminOrders\(\)/)
   assert.doesNotMatch(listSource, /await loadOrders\(\)/)
-  assert.match(routeSource, /await load\(\)[\s\S]*invalidateAdminOrders\(\)/)
+  assert.match(routeSource, /adminOrderApi\.markPaid\([\s\S]*?invalidateAdminOrders\(\)[\s\S]*?await load\(\)/)
   assert.equal((routeSource.match(/invalidateAdminOrders\(\)/g) ?? []).length, 6)
   assert.match(routeSource, /adminOrderApi\.sendAfterSaleMessage/)
   assert.match(routeSource, /invalidateAdminAttention\(\)/)

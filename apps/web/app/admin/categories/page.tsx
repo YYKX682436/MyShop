@@ -26,6 +26,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminData } from "@/lib/admin-data-invalidation"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { adminCategoryApi, requestOrThrow } from "@/services/api"
 import type { Category } from "@/types"
 
@@ -47,21 +49,26 @@ export default function AdminCategoriesPage() {
   const [deleteCategory, setDeleteCategory] = useState<Category | null>(null)
   const [deleting, setDeleting] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
+  const startRequest = useRequestGuard()
 
   const loadCategories = useCallback(async () => {
+    const current = startRequest()
     setLoading(true)
     setError(false)
     try {
-      setCategories(await requestOrThrow(() => adminCategoryApi.getList()))
+      const data = await requestOrThrow(() => adminCategoryApi.getList())
+      if (current()) setCategories(data)
     } catch {
+      if (!current()) return
       setCategories([])
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [])
+  }, [startRequest])
 
   useEffect(() => { void loadCategories() }, [loadCategories])
+  const { refresh, refreshing } = useAdminPageRefresh(loadCategories)
 
   const openCreate = (parentId = "") => {
     setEditing(null)
@@ -121,6 +128,7 @@ export default function AdminCategoriesPage() {
         }))
       }
       toast.success(t("admin.categorySaved"))
+      invalidateAdminData("categories", "products")
       closeDialogAfterSuccess()
       await loadCategories()
     } catch (requestError: unknown) {
@@ -136,6 +144,7 @@ export default function AdminCategoriesPage() {
     try {
       await requestOrThrow(() => adminCategoryApi.delete(deleteCategory.id))
       toast.success(t("admin.categoryDeleted"))
+      invalidateAdminData("categories", "products")
       setDeleteCategory(null)
       await loadCategories()
     } catch (requestError: unknown) {
@@ -194,6 +203,8 @@ export default function AdminCategoriesPage() {
       <PageHeader
         title={t("admin.categories")}
         description={t("admin.manageCategories")}
+        onRefresh={() => void refresh()}
+        refreshing={refreshing}
       />
 
       <PageToolbar>

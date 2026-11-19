@@ -23,6 +23,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminData, useAdminDataRevision } from "@/lib/admin-data-invalidation"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { copyText } from "@/lib/clipboard"
 import { formatCents, formatYuanFromCents, formatYuanValue, MAX_BALANCE_CENTS, parseMoneyValueToCents, parsePositiveMoneyToCents } from "@/lib/money"
 import { formatBalanceAdjustmentResult, isOptionalReasonValid, normalizeOptionalReason } from "@/lib/user-management"
@@ -46,8 +48,13 @@ export default function AdminUsersPage() {
   const [statusFilter, setStatusFilter] = useState<"" | "0" | "1">("")
   const [levelFilter, setLevelFilter] = useState("")
   const [levels, setLevels] = useState<UserLevel[]>([])
+  const [levelError, setLevelError] = useState(false)
   const [levelSavingId, setLevelSavingId] = useState<string | null>(null)
   const [statusSavingId, setStatusSavingId] = useState<string | null>(null)
+  const usersRevision = useAdminDataRevision("users")
+  const levelsRevision = useAdminDataRevision("user-levels")
+  const startUsersRequest = useRequestGuard()
+  const startLevelsRequest = useRequestGuard()
 
   const [balanceTarget, setBalanceTarget] = useState<AdminUserItem | null>(null)
   const [balanceType, setBalanceType] = useState<"INCREASE" | "DECREASE">("INCREASE")
@@ -56,9 +63,15 @@ export default function AdminUsersPage() {
   const [balanceLoading, setBalanceLoading] = useState(false)
   const [balanceResult, setBalanceResult] = useState<{ text: string; transaction: BalanceTransaction; copyStatus: CopyStatus } | null>(null)
 
-  useEffect(() => {
-    void adminUserLevelApi.getList().then(setLevels).catch(() => setLevels([]))
-  }, [])
+  const loadLevels = useCallback(async () => {
+    const current = startLevelsRequest()
+    try {
+      const data = await requestOrThrow(() => adminUserLevelApi.getList())
+      if (current()) { setLevels(data); setLevelError(false) }
+      return true
+    } catch { if (current()) setLevelError(true); return false }
+  }, [startLevelsRequest])
+  useEffect(() => { void loadLevels() }, [loadLevels, levelsRevision])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -69,6 +82,7 @@ export default function AdminUsersPage() {
   }, [search])
 
   const loadUsers = useCallback(async () => {
+    const current = startUsersRequest()
     setLoading(true)
     setError(false)
     try {
@@ -79,18 +93,27 @@ export default function AdminUsersPage() {
         is_deleted: statusFilter ? Number(statusFilter) as 0 | 1 : undefined,
         user_level_id: levelFilter || undefined,
       }))
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (page > lastPage) { setPage(lastPage); return }
       setUsers(data.list)
       setTotal(data.pagination.total)
     } catch {
+      if (!current()) return
       setUsers([])
       setTotal(0)
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [debouncedSearch, levelFilter, page, statusFilter])
+  }, [debouncedSearch, levelFilter, page, statusFilter, startUsersRequest])
 
-  useEffect(() => { void loadUsers() }, [loadUsers])
+  useEffect(() => { void loadUsers() }, [loadUsers, usersRevision, levelsRevision])
+  const refreshPage = useCallback(async () => {
+    const [, levelsOk] = await Promise.all([loadUsers(), loadLevels()])
+    if (!levelsOk) toast.error(t("admin.loadError"))
+  }, [loadUsers, loadLevels, t])
+  const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
 
   const changeLevel = async (user: AdminUserItem, userLevelId: string): Promise<boolean> => {
     if (!userLevelId || userLevelId === user.user_level_id) return true
@@ -100,6 +123,7 @@ export default function AdminUsersPage() {
       setUsers((current) => current.map((candidate) => candidate.id === user.id
         ? { ...candidate, user_level_id: level.id, user_level_name: level.name }
         : candidate))
+      invalidateAdminData("users", "user-levels")
       toast.success(t("admin.userLevelChanged"))
       return true
     } catch (requestError: unknown) {
@@ -118,6 +142,7 @@ export default function AdminUsersPage() {
       setUsers((current) => current.map((candidate) => candidate.id === user.id
         ? { ...candidate, is_deleted: nextIsDeleted }
         : candidate))
+      invalidateAdminData("users", "user-levels")
       toast.success(nextIsDeleted === 1 ? t("admin.userDisabled") : t("admin.userEnabled"))
       return true
     } catch (requestError: unknown) {
@@ -172,6 +197,7 @@ export default function AdminUsersPage() {
       setUsers((current) => current.map((candidate) => candidate.id === balanceTarget.id
         ? { ...candidate, balance: Number(transaction.balance_after) }
         : candidate))
+      invalidateAdminData("users")
       setBalanceTarget(null)
       setBalanceAmount("")
       setBalanceReason("")
@@ -193,7 +219,7 @@ export default function AdminUsersPage() {
 
   return (
     <AdminPage>
-      <PageHeader title={t("admin.users")} description={t("admin.usersDesc")} />
+      <PageHeader title={t("admin.users")} description={t("admin.usersDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
       <PageToolbar>
         <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row">
           <Input
@@ -222,6 +248,7 @@ export default function AdminUsersPage() {
             <option value="">{t("admin.allUserLevels")}</option>
             {levels.map((level) => <option key={level.id} value={level.id}>{level.name}{!level.enabled ? ` · ${t("admin.inactive")}` : ""}</option>)}
           </select>
+          {levelError && <Button type="button" variant="outline" size="sm" onClick={() => void loadLevels()}>{t("common.retry")}</Button>}
         </div>
       </PageToolbar>
 

@@ -4,7 +4,8 @@ import { use } from "react"
 
 import { ProductEditorPage } from "@/components/admin/products/product-editor-page"
 
-export default function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
+export default function EditProductPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
   const { id } = use(params)
-  return <ProductEditorPage productId={id} />
+  const { tab } = use(searchParams)
+  return <ProductEditorPage productId={id} initialTab={tab === "inventory" ? "inventory" : "basic"} />
 }

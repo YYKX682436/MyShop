@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useAuth } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
 import { adminAttentionApi, requestOrThrow } from "@/services/api"
+import { useRequestGuard } from "@/lib/admin-page-requests"
 
 type AttentionListener = () => void
 
@@ -25,13 +26,13 @@ function subscribe(listener: AttentionListener) {
 interface AdminAttentionContextValue {
   afterSaleNeedsAttention: number
   loading: boolean
-  refresh: () => Promise<void>
+  refresh: () => Promise<boolean>
 }
 
 const AdminAttentionContext = createContext<AdminAttentionContextValue>({
   afterSaleNeedsAttention: 0,
   loading: false,
-  refresh: async () => undefined,
+  refresh: async () => false,
 })
 
 export function useAdminAttention() {
@@ -44,6 +45,7 @@ export function AdminAttentionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false)
   const [invalidationRevision, setInvalidationRevision] = useState(revision)
   const isAdmin = authLoaded && isAdminRole(user?.role)
+  const startRequest = useRequestGuard()
 
   useEffect(() => {
     const unsubscribe = subscribe(() => setInvalidationRevision(current => current + 1))
@@ -51,22 +53,27 @@ export function AdminAttentionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refresh = useCallback(async () => {
-    if (!isAdmin) return
+    if (!isAdmin) return false
+    const current = startRequest()
     setLoading(true)
     try {
       const summary = await requestOrThrow(() => adminAttentionApi.getSummary())
-      setAfterSaleNeedsAttention(Math.max(0, summary.after_sale_needs_attention || 0))
+      if (current()) setAfterSaleNeedsAttention(Math.max(0, summary.after_sale_needs_attention || 0))
+      return true
     } catch {
       // Attention is advisory; retain the last successful count while an
       // authenticated background refresh is temporarily unavailable.
+      return false
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [isAdmin])
+  }, [isAdmin, startRequest])
 
   useEffect(() => {
     if (!isAdmin) {
+      startRequest()
       setAfterSaleNeedsAttention(0)
+      setLoading(false)
       return
     }
     void refresh()
@@ -81,7 +88,7 @@ export function AdminAttentionProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", refreshWhenVisible)
       window.removeEventListener("focus", refreshWhenVisible)
     }
-  }, [isAdmin, refresh])
+  }, [isAdmin, refresh, startRequest])
 
   useEffect(() => {
     if (invalidationRevision === 0 || !isAdmin) return

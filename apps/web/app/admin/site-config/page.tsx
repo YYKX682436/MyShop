@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import { AlertTriangle, ImagePlus, Loader2, Plus, Save, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { cn } from "@/lib/utils"
 import { MAX_CONTACT_ITEMS, parseContactItemsSafely, resolveContactItemsForSave, serializeContactItems } from "@/lib/contact-items"
 import { ALLOWED_IMAGE_ACCEPT, QR_ALLOWED_IMAGE_ACCEPT, validateImageFile, validateQrImageFile } from "@/lib/image-upload"
@@ -38,52 +39,75 @@ export default function AdminSiteConfigPage() {
   const [userNumberConfig, setUserNumberConfig] = useState<UserNumberConfig>({ start_user_no: 10000, next_user_no: 10000, has_existing_users: false })
   const [userNumberLoading, setUserNumberLoading] = useState(true)
   const [userNumberSaving, setUserNumberSaving] = useState(false)
+  const [hasConfig, setHasConfig] = useState(false)
+  const [hasNumbering, setHasNumbering] = useState(false)
+  const [userNumberError, setUserNumberError] = useState(false)
+  const [settingsDirty, setSettingsDirty] = useState(false)
+  const [numberDirty, setNumberDirty] = useState(false)
+  const settingsVersion = useRef(0)
+  const numberVersion = useRef(0)
+  const startRequest = useRequestGuard()
   const popupContent = getValueFromMap(configMap, "popup_content")
 
   const load = useCallback(async () => {
+    const current = startRequest()
+    const configVersion = settingsVersion.current
+    const numberingVersion = numberVersion.current
     setLoading(true)
     setError(false)
     setUserNumberLoading(true)
-    setContactConfigError(false)
-    setContactItemsDirty(false)
-    try {
-      const [data, numbering] = await Promise.all([
+    setUserNumberError(false)
+    const [data, numbering] = await Promise.allSettled([
         requestOrThrow(() => adminConfigApi.get()),
         requestOrThrow(() => adminConfigApi.getUserNumbering()),
-      ])
+    ])
+    if (!current()) return
+    if (data.status === "fulfilled" && configVersion === settingsVersion.current) {
       const map: Record<string, string> = {}
-      data.forEach((item: SiteConfigKV) => { map[item.config_key] = item.config_value })
+      data.value.forEach((item: SiteConfigKV) => { map[item.config_key] = item.config_value })
       const parsedContacts = parseContactItemsSafely(map.contact_items)
       if (!parsedContacts.hasError) map.contact_items = serializeContactItems(parsedContacts.items)
       setContactItems(parsedContacts.items)
       setContactConfigError(parsedContacts.hasError)
       setContactItemsDirty(false)
       setConfigMap(map)
-      setUserNumberConfig(numbering)
-      setUserNumberLoading(false)
-    } catch {
-      setConfigMap({})
-      setContactItems([])
-      setContactConfigError(false)
-      setContactItemsDirty(false)
+      setSettingsDirty(false)
+      setHasConfig(true)
+    } else {
       setError(true)
-      setUserNumberLoading(false)
-    } finally {
-      setLoading(false)
     }
-  }, [])
+    if (numbering.status === "fulfilled" && numberingVersion === numberVersion.current) {
+      setUserNumberConfig(numbering.value)
+      setHasNumbering(true)
+      setNumberDirty(false)
+    } else setUserNumberError(true)
+    setUserNumberLoading(false)
+    setLoading(false)
+  }, [startRequest])
 
   useEffect(() => { void load() }, [load])
+  const { refresh, refreshing } = useAdminPageRefresh(load)
+  const requestRefresh = () => {
+    if ((settingsDirty || numberDirty) && !window.confirm(t("admin.refreshDiscardDraft"))) return
+    void refresh()
+  }
 
   const getValue = (key: string) => configMap[key] ?? ""
-  const setValue = (key: string, value: string) => setConfigMap((current) => ({ ...current, [key]: value }))
+  const setValue = (key: string, value: string) => {
+    settingsVersion.current += 1
+    setSettingsDirty(true)
+    setConfigMap((current) => ({ ...current, [key]: value }))
+  }
   const getBool = (key: string) => getValue(key) === "true"
   const updateContactItems = (updater: (items: ContactItem[]) => ContactItem[]) => {
+    settingsVersion.current += 1
+    setSettingsDirty(true)
     setContactItemsDirty(true)
     setContactItems((current) => updater(current))
   }
 
   const handleSave = async () => {
+    const version = settingsVersion.current
     setSaving(true)
     try {
       const configs = Object.entries(configMap).filter(([key]) => key !== "contact_items").map(([config_key, config_value]) => ({ config_key, config_value }))
@@ -95,11 +119,25 @@ export default function AdminSiteConfigPage() {
       })
       configs.push({ config_key: "contact_items", config_value: contactItemsValue })
       await requestOrThrow(() => adminConfigApi.update({ configs }))
-      if (contactItemsDirty) {
+      if (contactItemsDirty && version === settingsVersion.current) {
         setConfigMap((current) => ({ ...current, contact_items: contactItemsValue }))
         setContactConfigError(false)
         setContactItemsDirty(false)
       }
+      if (version === settingsVersion.current) setSettingsDirty(false)
+      try {
+        const saved = await requestOrThrow(() => adminConfigApi.get())
+        if (version === settingsVersion.current) {
+          const map: Record<string, string> = {}
+          saved.forEach((item: SiteConfigKV) => { map[item.config_key] = item.config_value })
+          const contacts = parseContactItemsSafely(map.contact_items)
+          if (!contacts.hasError) map.contact_items = serializeContactItems(contacts.items)
+          setConfigMap(map)
+          setContactItems(contacts.items)
+          setContactConfigError(contacts.hasError)
+          setContactItemsDirty(false)
+        }
+      } catch { setError(true) }
       toast.success(t("admin.settingsSaved"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -108,7 +146,7 @@ export default function AdminSiteConfigPage() {
     }
   }
 
-  const saveButton = <div className="flex justify-end border-t border-border pt-5"><Button type="button" onClick={() => void handleSave()} disabled={saving}><Save className="h-4 w-4" aria-hidden="true" />{saving ? t("admin.saving") : t("admin.saveSettings")}</Button></div>
+  const saveButton = <div className="flex justify-end border-t border-border pt-5"><Button type="button" onClick={() => void handleSave()} disabled={saving || refreshing || maintenanceToggling}><Save className="h-4 w-4" aria-hidden="true" />{saving ? t("admin.saving") : t("admin.saveSettings")}</Button></div>
 
   const uploadLogo = async (file: File | undefined) => {
     if (!file) return
@@ -144,9 +182,15 @@ export default function AdminSiteConfigPage() {
 
   const toggleMaintenance = async (enabled: boolean) => {
     setMaintenanceToggling(true)
+    settingsVersion.current += 1
     try {
       await requestOrThrow(() => adminConfigApi.toggleMaintenance(enabled))
-      setValue("maintenance_enabled", String(enabled))
+      setConfigMap((current) => ({ ...current, maintenance_enabled: String(enabled) }))
+      try {
+        const saved = await requestOrThrow(() => adminConfigApi.get())
+        const value = saved.find((item) => item.config_key === "maintenance_enabled")?.config_value
+        if (value !== undefined) setConfigMap((current) => ({ ...current, maintenance_enabled: value }))
+      } catch { setError(true) }
       toast.success(enabled ? t("admin.maintenanceEnabled") : t("admin.maintenanceDisabled"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -156,6 +200,8 @@ export default function AdminSiteConfigPage() {
   }
 
   const updateUserNumber = (key: "start_user_no" | "next_user_no", value: string) => {
+    numberVersion.current += 1
+    setNumberDirty(true)
     const parsed = Number(value)
     setUserNumberConfig((current) => ({ ...current, [key]: Number.isFinite(parsed) ? parsed : 0 }))
   }
@@ -172,12 +218,18 @@ export default function AdminSiteConfigPage() {
       toast.error(t("admin.userNumberNextInvalid"))
       return
     }
+    const version = numberVersion.current
     setUserNumberSaving(true)
     try {
       await requestOrThrow(() => adminConfigApi.updateUserNumbering({
         start_user_no: userNumberConfig.start_user_no,
         next_user_no: userNumberConfig.next_user_no,
       }))
+      if (version === numberVersion.current) setNumberDirty(false)
+      try {
+        const saved = await requestOrThrow(() => adminConfigApi.getUserNumbering())
+        if (version === numberVersion.current) { setUserNumberConfig(saved); setUserNumberError(false) }
+      } catch { setUserNumberError(true) }
       toast.success(t("admin.settingsSaved"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -186,12 +238,14 @@ export default function AdminSiteConfigPage() {
     }
   }
 
-  if (loading) return <AdminPage><PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} /><div className="h-64 animate-pulse rounded-xl border border-border bg-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
-  if (error) return <AdminPage><PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} /><div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button></div></AdminPage>
+  const header = <PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} onRefresh={requestRefresh} refreshing={refreshing} refreshDisabled={saving || userNumberSaving || logoUploading || qrUploadingIndex !== null || maintenanceToggling} />
+  if (loading && !hasConfig) return <AdminPage>{header}<div className="h-64 animate-pulse rounded-xl border border-border bg-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
+  if (error && !hasConfig) return <AdminPage>{header}<div className="flex flex-col items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={requestRefresh}>{t("common.retry")}</Button></div></AdminPage>
 
   return (
     <AdminPage>
-      <PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} />
+      {header}
+      {error && <div role="alert" className="flex items-center gap-3 text-sm text-destructive">{t("admin.loadError")}<Button type="button" variant="outline" size="sm" onClick={requestRefresh}>{t("common.retry")}</Button></div>}
       <Tabs value={tab} onValueChange={(value) => setTab(value as TabKey)}>
         <TabsList className="max-w-full justify-start overflow-x-auto"><TabsTrigger value="basic">{t("admin.basicInfo")}</TabsTrigger><TabsTrigger value="announcement">{t("admin.announcementTab")}</TabsTrigger><TabsTrigger value="contact">{t("admin.contactTab")}</TabsTrigger><TabsTrigger value="user">{t("admin.userSettingsTab")}</TabsTrigger><TabsTrigger value="maintenance">{t("admin.maintenanceTab")}</TabsTrigger></TabsList>
 
@@ -239,8 +293,11 @@ export default function AdminSiteConfigPage() {
           <SettingsSection title={t("admin.userSettingsTab")} description={t("admin.userNumberSettingsDesc")}>
             {userNumberLoading ? (
               <div className="h-32 animate-pulse rounded-lg bg-muted" role="status" aria-label={t("common.loading")} />
+            ) : userNumberError && !hasNumbering ? (
+              <div role="alert" className="flex items-center gap-3 text-sm text-destructive">{t("admin.loadError")}<Button type="button" variant="outline" size="sm" onClick={requestRefresh}>{t("common.retry")}</Button></div>
             ) : (
               <div className="max-w-2xl space-y-5">
+                {userNumberError && <div role="alert" className="flex items-center gap-3 text-sm text-destructive">{t("admin.loadError")}<Button type="button" variant="outline" size="sm" onClick={requestRefresh}>{t("common.retry")}</Button></div>}
                 <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm text-blue-700 dark:text-blue-300">
                   {t("admin.userNumberSettingsHint")}
                 </div>
@@ -256,7 +313,7 @@ export default function AdminSiteConfigPage() {
                   </label>
                 </div>
                 <div className="flex justify-end border-t border-border pt-5">
-                  <Button type="button" onClick={() => void handleSaveUserNumbering()} disabled={userNumberSaving}>
+                  <Button type="button" onClick={() => void handleSaveUserNumbering()} disabled={userNumberSaving || refreshing}>
                     <Save className="h-4 w-4" aria-hidden="true" />
                     {userNumberSaving ? t("admin.saving") : t("admin.saveSettings")}
                   </Button>
@@ -268,7 +325,7 @@ export default function AdminSiteConfigPage() {
 
         <TabsContent value="maintenance">
           <SettingsSection title={t("admin.maintenanceTab")} description={t("admin.maintenanceLabelDesc")}>
-            <div className="max-w-3xl space-y-5"><div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" /><div><p className="text-sm font-medium">{t("admin.maintenanceWarning")}</p><p className="mt-1 text-xs text-muted-foreground">{t("admin.maintenanceWarningDesc")}</p></div></div><div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5"><div><p className="text-sm font-medium">{t("admin.maintenanceLabel")}</p><p className="text-xs text-muted-foreground">{t("admin.maintenanceLabelDesc")}</p></div><Switch checked={getBool("maintenance_enabled")} onCheckedChange={(checked) => void toggleMaintenance(checked)} disabled={maintenanceToggling} aria-label={t("admin.maintenanceLabel")} /></div><label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.maintenanceMessage")}</span><Textarea value={getValue("maintenance_message")} onChange={(event) => setValue("maintenance_message", event.target.value)} /></label></div>
+            <div className="max-w-3xl space-y-5"><div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden="true" /><div><p className="text-sm font-medium">{t("admin.maintenanceWarning")}</p><p className="mt-1 text-xs text-muted-foreground">{t("admin.maintenanceWarningDesc")}</p></div></div><div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5"><div><p className="text-sm font-medium">{t("admin.maintenanceLabel")}</p><p className="text-xs text-muted-foreground">{t("admin.maintenanceLabelDesc")}</p></div><Switch checked={getBool("maintenance_enabled")} onCheckedChange={(checked) => void toggleMaintenance(checked)} disabled={maintenanceToggling || saving || refreshing} aria-label={t("admin.maintenanceLabel")} /></div><label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.maintenanceMessage")}</span><Textarea value={getValue("maintenance_message")} onChange={(event) => setValue("maintenance_message", event.target.value)} /></label></div>
             {saveButton}
           </SettingsSection>
         </TabsContent>

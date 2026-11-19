@@ -9,6 +9,7 @@ import {
   AdminPagination,
   DataTableShell,
   PageHeader,
+  PageRefreshButton,
   PageToolbar,
   StatusBadge,
   TableEmptyState,
@@ -28,6 +29,7 @@ import {
 } from "@/components/ui/dialog"
 import { ConfirmAlert } from "@/components/admin/shared"
 import { useLocale } from "@/lib/context"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { useRequireSuperAdmin } from "@/lib/hooks"
 import { formatDateTime } from "@/lib/utils"
 import { adminAdministratorApi, requestOrThrow } from "@/services/api"
@@ -71,6 +73,8 @@ export default function AdministratorsPage() {
   const [logsTotal, setLogsTotal] = useState(0)
   const [logsLoading, setLogsLoading] = useState(false)
   const [logsError, setLogsError] = useState(false)
+  const startListRequest = useRequestGuard()
+  const startLogsRequest = useRequestGuard()
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -82,6 +86,7 @@ export default function AdministratorsPage() {
 
   const loadAdministrators = useCallback(async () => {
     if (!currentUser) return
+    const current = startListRequest()
     setLoading(true)
     setError(false)
     try {
@@ -91,16 +96,20 @@ export default function AdministratorsPage() {
         keyword: debouncedSearch || undefined,
         is_deleted: statusFilter ? Number(statusFilter) as 0 | 1 : undefined,
       }))
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (page > lastPage) { setPage(lastPage); return }
       setAdministrators(data.list)
       setTotal(data.pagination.total)
     } catch {
+      if (!current()) return
       setAdministrators([])
       setTotal(0)
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [currentUser, debouncedSearch, page, statusFilter])
+  }, [currentUser, debouncedSearch, page, statusFilter, startListRequest])
 
   useEffect(() => { void loadAdministrators() }, [loadAdministrators])
 
@@ -189,24 +198,33 @@ export default function AdministratorsPage() {
   }
 
   const loadLogs = useCallback(async (administrator: AdministratorItem, requestedPage: number) => {
+    const current = startLogsRequest()
     setLogsLoading(true)
     setLogsError(false)
     try {
-      const data = await requestOrThrow(() => adminAdministratorApi.getOperationLogs(administrator.id, {
+      let data = await requestOrThrow(() => adminAdministratorApi.getOperationLogs(administrator.id, {
         page: requestedPage,
         page_size: LOG_PAGE_SIZE,
       }))
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / LOG_PAGE_SIZE))
+      if (requestedPage > lastPage) {
+        requestedPage = lastPage
+        data = await requestOrThrow(() => adminAdministratorApi.getOperationLogs(administrator.id, { page: lastPage, page_size: LOG_PAGE_SIZE }))
+        if (!current()) return
+      }
       setLogs(data.list)
       setLogsTotal(data.pagination.total)
       setLogsPage(requestedPage)
     } catch {
+      if (!current()) return
       setLogs([])
       setLogsTotal(0)
       setLogsError(true)
     } finally {
-      setLogsLoading(false)
+      if (current()) setLogsLoading(false)
     }
-  }, [])
+  }, [startLogsRequest])
 
   const openLogs = (administrator: AdministratorItem) => {
     setLogsTarget(administrator)
@@ -214,6 +232,12 @@ export default function AdministratorsPage() {
     setLogsPage(1)
     void loadLogs(administrator, 1)
   }
+  const refreshPage = useCallback(async () => {
+    await Promise.all([loadAdministrators(), logsTarget ? loadLogs(logsTarget, logsPage) : Promise.resolve()])
+  }, [loadAdministrators, loadLogs, logsPage, logsTarget])
+  const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
+  const refreshOpenLogs = useCallback(async () => { if (logsTarget) await loadLogs(logsTarget, logsPage) }, [loadLogs, logsPage, logsTarget])
+  const logRefresh = useAdminPageRefresh(refreshOpenLogs)
 
   if (!currentUser) return null
 
@@ -222,6 +246,8 @@ export default function AdministratorsPage() {
       <PageHeader
         title={t("admin.administrators")}
         description={t("admin.administratorsDesc")}
+        onRefresh={() => void refresh()}
+        refreshing={refreshing}
         actions={
           <Button type="button" onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" aria-hidden="true" />
@@ -395,10 +421,10 @@ export default function AdministratorsPage() {
         onConfirm={() => void handleToggle()}
       />
 
-      <Dialog open={!!logsTarget} onOpenChange={(open) => { if (!open) setLogsTarget(null) }}>
+      <Dialog open={!!logsTarget} onOpenChange={(open) => { if (!open) { startLogsRequest(); setLogsTarget(null) } }}>
         <DialogContent className="max-w-4xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />{t("admin.administratorOperationLogs")}</DialogTitle>
+            <div className="flex items-center gap-1"><DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />{t("admin.administratorOperationLogs")}</DialogTitle><PageRefreshButton onRefresh={() => void logRefresh.refresh()} refreshing={logsLoading || logRefresh.refreshing} /></div>
             <DialogDescription>{logsTarget?.username || ""} · {logsTarget?.role === "SUPER_ADMIN" ? t("admin.administratorSuperAdminReadonly") : t("admin.administratorOrdinary")}</DialogDescription>
           </DialogHeader>
           <div className="admin-table-region max-h-[55vh] overflow-auto">

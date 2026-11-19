@@ -17,6 +17,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminData, takeCreatedProduct, useAdminDataRevision } from "@/lib/admin-data-invalidation"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { getProductCategoryPathLabel, matchesCategory } from "@/lib/categories"
 import { cn, stripInvisible } from "@/lib/utils"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
@@ -49,10 +51,15 @@ export default function AdminProductsPage() {
   const [sortOption, setSortOption] = useState("weight_desc")
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [createdTarget, setCreatedTarget] = useState<{ id: string; productNo: number } | null>(null)
   const [deleteProduct, setDeleteProduct] = useState<AdminProductDetail | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [savingFields, setSavingFields] = useState<Record<string, boolean>>({})
   const savingFieldKeys = useRef(new Set<string>())
+  const productRevision = useAdminDataRevision("products")
+  const categoryRevision = useAdminDataRevision("categories")
+  const startProductsRequest = useRequestGuard()
+  const startCategoriesRequest = useRequestGuard()
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
@@ -60,15 +67,18 @@ export default function AdminProductsPage() {
   }, [search])
 
   const loadCategories = useCallback(async () => {
+    const current = startCategoriesRequest()
     setCategoryError(false)
     try {
-      setCategories(await requestOrThrow(() => adminCategoryApi.getList()))
+      const data = await requestOrThrow(() => adminCategoryApi.getList())
+      if (current()) setCategories(data)
     } catch {
-      setCategoryError(true)
+      if (current()) setCategoryError(true)
     }
-  }, [])
+  }, [startCategoriesRequest])
 
   const loadProducts = useCallback(async () => {
+    const current = startProductsRequest()
     setLoading(true)
     setError(false)
     try {
@@ -82,19 +92,46 @@ export default function AdminProductsPage() {
         sort_by: selectedSort.sortBy,
         sort_direction: selectedSort.sortDirection,
       }))
-      setProducts(data.list)
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (page > lastPage) { setPage(lastPage); return }
+      let list = data.list
+      if (createdTarget && page === 1 && debouncedSearch === String(createdTarget.productNo) && !categoryFilter && !statusFilter) {
+        const created = list.find((item) => item.id === createdTarget.id)
+          || await requestOrThrow(() => adminProductApi.getDetail(createdTarget.id))
+        if (!current()) return
+        list = [created, ...list.filter((item) => item.id !== created.id)].slice(0, PAGE_SIZE)
+      }
+      setProducts(list)
       setTotal(data.pagination.total)
     } catch {
+      if (!current()) return
       setProducts([])
       setTotal(0)
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [categoryFilter, debouncedSearch, page, sortOption, statusFilter])
+  }, [categoryFilter, createdTarget, debouncedSearch, page, sortOption, statusFilter, startProductsRequest])
 
-  useEffect(() => { void loadCategories() }, [loadCategories])
-  useEffect(() => { void loadProducts() }, [loadProducts])
+  useEffect(() => { void loadCategories() }, [loadCategories, categoryRevision])
+  useEffect(() => {
+    const created = takeCreatedProduct()
+    if (created) {
+      const number = String(created.productNo)
+      setSearch(number)
+      setDebouncedSearch(number)
+      setCategoryFilter("")
+      setStatusFilter("")
+      setPage(1)
+      setCreatedTarget(created)
+      setSortOption("created_desc")
+      return
+    }
+    void loadProducts()
+  }, [loadProducts, productRevision, categoryFilter, debouncedSearch, page, statusFilter])
+  const refreshPage = useCallback(async () => { await Promise.all([loadProducts(), loadCategories()]) }, [loadProducts, loadCategories])
+  const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
 
   const getCategoryName = (product: AdminProductDetail) =>
     getProductCategoryPathLabel(product, categories) || t("admin.systemNoData")
@@ -134,6 +171,7 @@ export default function AdminProductsPage() {
       const result = await action()
       if (result && typeof result === "object" && "id" in result) replaceProduct(result as AdminProductDetail)
       await onSuccess?.()
+      invalidateAdminData("products", "inventory")
       toast.success(t("admin.quickEditSaved"))
       return true
     } catch (requestError: unknown) {
@@ -172,8 +210,9 @@ export default function AdminProductsPage() {
     try {
       await requestOrThrow(() => adminProductApi.delete(deleteProduct.id))
       toast.success(t("admin.productDeleted"))
+      if (createdTarget?.id === deleteProduct.id) setCreatedTarget(null)
       setDeleteProduct(null)
-      await loadProducts()
+      invalidateAdminData("products", "inventory")
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.deleteConfirm"))
     } finally {
@@ -186,6 +225,8 @@ export default function AdminProductsPage() {
       <PageHeader
         title={t("admin.products")}
         description={t("admin.manageProducts")}
+        onRefresh={() => void refresh()}
+        refreshing={refreshing}
         actions={
           <Button asChild>
             <Link href="/admin/products/new" data-testid="admin-add-product"><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addProduct")}</Link>
@@ -198,14 +239,14 @@ export default function AdminProductsPage() {
           <Input
             className="min-w-0 sm:max-w-sm"
             value={search}
-            onChange={(event) => { setSearch(event.target.value); setPage(1) }}
+            onChange={(event) => { setCreatedTarget(null); setSearch(event.target.value); setPage(1) }}
             placeholder={t("admin.searchProduct")}
             aria-label={t("admin.searchProduct")}
           />
           <select
             className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
             value={categoryFilter}
-            onChange={(event) => { setCategoryFilter(event.target.value); setPage(1) }}
+            onChange={(event) => { setCreatedTarget(null); setCategoryFilter(event.target.value); setPage(1) }}
             aria-label={t("admin.category")}
             disabled={categoryError}
           >
@@ -222,7 +263,7 @@ export default function AdminProductsPage() {
           <select
             className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
             value={statusFilter}
-            onChange={(event) => { setStatusFilter(event.target.value); setPage(1) }}
+            onChange={(event) => { setCreatedTarget(null); setStatusFilter(event.target.value); setPage(1) }}
             aria-label={t("admin.statusLabel")}
           >
             <option value="">{t("admin.allStatus")}</option>
@@ -232,7 +273,7 @@ export default function AdminProductsPage() {
           <select
             className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
             value={sortOption}
-            onChange={(event) => { setSortOption(event.target.value); setPage(1) }}
+            onChange={(event) => { setCreatedTarget(null); setSortOption(event.target.value); setPage(1) }}
             aria-label={t("admin.sortBy")}
           >
             {PRODUCT_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
@@ -245,7 +286,7 @@ export default function AdminProductsPage() {
         )}
       </PageToolbar>
 
-      <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
+      <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={(nextPage) => { setCreatedTarget(null); setPage(nextPage) }} />}>
         <Table className="min-w-[1180px] table-fixed">
           <colgroup>
             <col className="w-[280px]" />
@@ -334,7 +375,7 @@ export default function AdminProductsPage() {
                   </TableCell>
                   <TableCell data-label={t("admin.stockLabel")} className="whitespace-nowrap text-center">
                     <div className="flex justify-center">
-                      <ProductStockQuickAction product={product} className={stockClass} onImported={loadProducts}>
+                      <ProductStockQuickAction product={product} className={stockClass} onImported={() => undefined}>
                         {unlimited ? t("admin.unlimited") : product.stock_available ?? 0}
                       </ProductStockQuickAction>
                     </div>

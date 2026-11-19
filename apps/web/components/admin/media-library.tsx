@@ -6,6 +6,7 @@ import { Copy, ImagePlus, Loader2, Search, Upload } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { PageHeader } from "@/components/admin/shared"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { useLocale } from "@/lib/context"
@@ -14,7 +15,7 @@ import { adminMediaApi, adminProductApi, type MediaItem } from "@/services/api"
 
 const PAGE_SIZE = 24
 
-export function MediaLibrary({ onSelect, qrOnly = false }: { onSelect?: (item: MediaItem) => void; qrOnly?: boolean }) {
+export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: { onSelect?: (item: MediaItem) => void; qrOnly?: boolean; showHeader?: boolean }) {
   const { t, locale } = useLocale()
   const [search, setSearch] = useState("")
   const [query, setQuery] = useState("")
@@ -39,7 +40,12 @@ export function MediaLibrary({ onSelect, qrOnly = false }: { onSelect?: (item: M
     setLoading(true)
     setError(false)
     adminMediaApi.getList({ page, page_size: PAGE_SIZE, query, order, qr_only: qrOnly }, controller.signal)
-      .then((result) => { setItems(result.items); setTotal(result.total) })
+      .then((result) => {
+        if (controller.signal.aborted) return
+        const lastPage = Math.max(1, Math.ceil(result.total / PAGE_SIZE))
+        if (page > lastPage) { setPage(lastPage); return }
+        setItems(result.items); setTotal(result.total)
+      })
       .catch(() => { if (!controller.signal.aborted) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
@@ -69,6 +75,7 @@ export function MediaLibrary({ onSelect, qrOnly = false }: { onSelect?: (item: M
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   return (
     <div className="min-w-0 space-y-4">
+      {showHeader && <PageHeader title={t("admin.media")} onRefresh={() => { setLoading(true); setRevision((value) => value + 1) }} refreshing={loading} className="mb-8" />}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-40 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />

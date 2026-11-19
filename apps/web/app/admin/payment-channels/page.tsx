@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { PaymentIcon } from "@/components/shared/payment-icon"
 import { useLocale } from "@/lib/context"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { adminPaymentApi, paymentApi, requestOrThrow } from "@/services/api"
 import type { AdminPaymentChannel, PaymentProviderConfigField, PaymentProviderMetadata } from "@/types"
 
@@ -60,6 +61,7 @@ export default function AdminPaymentChannelsPage() {
   const [providers, setProviders] = useState<PaymentProviderMetadata[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [providerError, setProviderError] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<ChannelForm>(EMPTY_FORM)
@@ -67,6 +69,7 @@ export default function AdminPaymentChannelsPage() {
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<AdminPaymentChannel | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const startRequest = useRequestGuard()
 
   const currentProvider = useMemo(
     () => providers.find((provider) => provider.provider_id === form.provider_type),
@@ -74,25 +77,23 @@ export default function AdminPaymentChannelsPage() {
   )
 
   const load = useCallback(async () => {
+    const current = startRequest()
     setLoading(true)
     setError(false)
-    try {
-      const [channelData, providerData] = await Promise.all([
-        requestOrThrow(() => adminPaymentApi.getList()),
-        requestOrThrow(() => paymentApi.getProviders()),
-      ])
-      setChannels(channelData)
-      setProviders(providerData)
-    } catch {
-      setChannels([])
-      setProviders([])
-      setError(true)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+    const [channelData, providerData] = await Promise.allSettled([
+      requestOrThrow(() => adminPaymentApi.getList()),
+      requestOrThrow(() => paymentApi.getProviders()),
+    ])
+    if (!current()) return
+    if (channelData.status === "fulfilled") setChannels(channelData.value)
+    if (providerData.status === "fulfilled") setProviders(providerData.value)
+    setProviderError(providerData.status === "rejected")
+    setError(channelData.status === "rejected" || providerData.status === "rejected")
+    setLoading(false)
+  }, [startRequest])
 
   useEffect(() => { void load() }, [load])
+  const { refresh, refreshing } = useAdminPageRefresh(load)
 
   const resetDialog = () => {
     setEditingId(null)
@@ -201,6 +202,7 @@ export default function AdminPaymentChannelsPage() {
       await requestOrThrow(() => adminPaymentApi.update(channel.id, { is_enabled: enabled }))
       setChannels((current) => current.map((candidate) => candidate.id === channel.id
         ? { ...candidate, is_enabled: enabled } : candidate))
+      await load()
       toast.success(enabled ? t("admin.channelEnabled") : t("admin.channelDisabled"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -237,14 +239,14 @@ export default function AdminPaymentChannelsPage() {
 
   return (
     <AdminPage>
-      <PageHeader title={t("admin.payment")} description={t("admin.paymentDesc")} />
+      <PageHeader title={t("admin.payment")} description={t("admin.paymentDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
       <PageToolbar>
         <span className="text-sm text-muted-foreground">{t("admin.paymentDesc")}</span>
-        <Button type="button" onClick={openCreate} disabled={loading || providers.length === 0}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addChannel")}</Button>
+        <Button type="button" onClick={openCreate} disabled={loading || providerError || providers.length === 0}><Plus className="h-4 w-4" aria-hidden="true" />{t("admin.addChannel")}</Button>
       </PageToolbar>
       {loading && <div className="h-24 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} />}
       {!loading && error && <div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadPaymentFailed")}</span><Button type="button" variant="outline" onClick={() => void load()}>{t("common.retry")}</Button></div>}
-      {!loading && !error && <div className="grid gap-4 lg:grid-cols-2">
+      {!loading && (!error || channels.length > 0) && <div className="grid gap-4 lg:grid-cols-2">
         {channels.map((channel) => <SettingsSection key={channel.id} title={channel.channel_name} description={`${channel.channel_code} · ${channel.provider_type} · ${channel.payment_type}`} className={!channel.is_enabled ? "opacity-65" : undefined}>
           <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><PaymentIcon method={channel.payment_type} className="h-5 w-5" /><StatusBadge label={channel.is_enabled ? t("admin.channelEnabled") : t("admin.channelDisabled")} tone={channel.is_enabled ? "success" : "neutral"} />{channel.badge_text && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{channel.badge_text}</span>}</div><Switch checked={channel.is_enabled} onCheckedChange={(checked) => void toggle(channel, checked)} aria-label={channel.is_enabled ? t("admin.channelDisabled") : t("admin.channelEnabled")} /></div>
           {channel.payment_hint && <p className="mt-3 text-sm text-muted-foreground">{channel.payment_hint}</p>}

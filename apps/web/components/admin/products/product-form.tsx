@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
 import { getCategoryChildren, getCategorySelection, getRootCategories } from "@/lib/categories"
+import { announceCreatedProduct, invalidateAdminData } from "@/lib/admin-data-invalidation"
 import {
   buildPricingPreviewDraft,
   getCardKeyImportAvailability,
@@ -204,16 +205,17 @@ interface ProductFormProps {
   categories: Category[]
   categoryStatus: CategoryLoadStatus
   onRetryCategories: () => void
-  onSaved: () => void | Promise<void>
+  onSaved: (product: AdminProductDetail, continueRestock: boolean) => void | Promise<void>
   onCancel: () => void
   onDirtyChange?: (dirty: boolean) => void
   onProductRefresh?: () => void | Promise<void>
+  initialTab?: ProductEditorTab
 }
 
-export function ProductForm({ product, categories, categoryStatus, onRetryCategories, onSaved, onCancel, onDirtyChange, onProductRefresh }: ProductFormProps) {
+export function ProductForm({ product, categories, categoryStatus, onRetryCategories, onSaved, onCancel, onDirtyChange, onProductRefresh, initialTab = "basic" }: ProductFormProps) {
   const { t } = useLocale()
   const [draft, setDraft] = useState<ProductFormData>(() => getProductDraft(product))
-  const [activeTab, setActiveTab] = useState<ProductEditorTab>("basic")
+  const [activeTab, setActiveTab] = useState<ProductEditorTab>(initialTab)
   const [tabErrors, setTabErrors] = useState<Partial<Record<ProductEditorTab, boolean>>>({})
   const [levels, setLevels] = useState<UserLevel[]>([])
   const [levelsLoading, setLevelsLoading] = useState(false)
@@ -225,6 +227,8 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
   const [dirty, setDirtyState] = useState(false)
   const [cardKeyImportOpen, setCardKeyImportOpen] = useState(false)
   const dirtyRef = useRef(false)
+  const savingRef = useRef(false)
+  const savedProductRef = useRef<AdminProductDetail | null>(null)
   const onDirtyChangeRef = useRef(onDirtyChange)
   const fieldRefs = useRef<Record<string, HTMLElement | null>>({})
   const previousProductIdRef = useRef<string | null | undefined>(undefined)
@@ -245,9 +249,11 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
 
   useEffect(() => {
     const nextProductId = product?.id ?? null
+    if (previousProductIdRef.current === nextProductId && dirtyRef.current) return
     setDraft(getProductDraft(product))
     if (shouldResetProductEditorTab(previousProductIdRef.current, nextProductId)) {
-      setActiveTab("basic")
+      savedProductRef.current = product
+      setActiveTab(initialTab)
     }
     previousProductIdRef.current = nextProductId
     setTabErrors({})
@@ -255,7 +261,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     setPreview(getInitialPreview(product))
     setPreviewError(false)
     setCardKeyImportOpen(false)
-  }, [product, setDirty])
+  }, [product, setDirty, initialTab])
 
   const levelsRequestRef = useRef<Promise<UserLevel[]> | null>(null)
 
@@ -296,7 +302,8 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     window.requestAnimationFrame(() => {
       const node = fieldRefs.current[field]
       node?.scrollIntoView({ block: "center", behavior: "smooth" })
-      node?.focus()
+      const target = node?.matches("input, textarea, select, button") ? node : node?.querySelector<HTMLElement>("input, textarea, select, button, [tabindex]") || node
+      target?.focus()
     })
   }, [])
 
@@ -462,54 +469,55 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     return null
   }
 
-  const validate = (): ValidationFailure | null => {
+  const validate = (step?: ProductEditorTab): ValidationFailure | null => {
+    const checks = (tab: ProductEditorTab) => !step || step === tab
     const titleError = validateProductTitleDraft(draft.title)
-    if (titleError === "required") return { tab: "basic", field: "title", message: t("admin.productNameRequired") }
-    if (titleError === "length") return { tab: "basic", field: "title", message: t("admin.productNameLength") }
-    if (!draft.category_id) return { tab: "basic", field: "category_id", message: t("admin.categoryRequired") }
-    if (!isValidIntegerDraft(draft.initial_sales, 0)) return { tab: "basic", field: "initial_sales", message: t("admin.initialSalesInvalid") }
-    if (!isValidIntegerDraft(draft.sort_weight)) return { tab: "basic", field: "sort_weight", message: t("admin.sortWeightInvalid") }
+    if (checks("basic") && titleError === "required") return { tab: "basic", field: "title", message: t("admin.productNameRequired") }
+    if (checks("basic") && titleError === "length") return { tab: "basic", field: "title", message: t("admin.productNameLength") }
+    if (checks("basic") && !draft.category_id) return { tab: "basic", field: "category_id", message: t("admin.categoryRequired") }
+    if (checks("basic") && !isValidIntegerDraft(draft.initial_sales, 0)) return { tab: "basic", field: "initial_sales", message: t("admin.initialSalesInvalid") }
+    if (checks("basic") && !isValidIntegerDraft(draft.sort_weight)) return { tab: "basic", field: "sort_weight", message: t("admin.sortWeightInvalid") }
 
     const customerError = validateCustomerFields()
-    if (customerError) return customerError
-    if (!isValidIntegerDraft(draft.low_stock_threshold, 0)) {
+    if (checks("inventory") && customerError) return customerError
+    if (checks("inventory") && !isValidIntegerDraft(draft.low_stock_threshold, 0)) {
       return { tab: "inventory", field: "low_stock_threshold", message: t("admin.lowStockThresholdInvalid") }
     }
 
-    if (!draft.spec_enabled) {
+    if (checks("pricing") && !draft.spec_enabled) {
       if (!isValidMoneyDraft(draft.cost_price, false)) return { tab: "pricing", field: "cost_price", message: t("admin.costPriceRequired") }
       if (!isValidMoneyDraft(draft.retail_price, true)) return { tab: "pricing", field: "retail_price", message: t("admin.retailPriceRequired") }
     }
 
-    if (draft.spec_enabled && draft.is_enabled && (draft.specs.length === 0 || !draft.specs.some((spec) => spec.visible))) {
+    if (checks("specs") && draft.spec_enabled && draft.is_enabled && (draft.specs.length === 0 || !draft.specs.some((spec) => spec.visible))) {
       return { tab: "specs", field: "spec-mode", message: t("admin.visibleSpecRequired") }
     }
     const names = new Set<string>()
     for (const spec of draft.specs) {
-      if (!spec.name.trim()) return { tab: "specs", field: `spec-name-${spec.id}`, message: t("admin.specNameRequired") }
+      if (checks("specs") && !spec.name.trim()) return { tab: "specs", field: `spec-name-${spec.id}`, message: t("admin.specNameRequired") }
       const normalizedName = spec.name.trim().toLocaleLowerCase()
-      if (!names.add(normalizedName)) {
+      if (checks("specs") && !names.add(normalizedName)) {
         return {
           tab: "specs",
           field: `spec-name-${spec.id}`,
           message: t("admin.specNameDuplicate").replace("{name}", spec.name.trim()),
         }
       }
-      if (!isValidMoneyDraft(spec.cost_price, false)) {
+      if (checks("pricing") && !isValidMoneyDraft(spec.cost_price, false)) {
         return {
           tab: "pricing",
           field: `spec-cost-${spec.id}`,
           message: t("admin.specCostInvalid").replace("{name}", spec.name || t("admin.unnamed")),
         }
       }
-      if (!isValidMoneyDraft(spec.retail_price, true)) {
+      if (checks("pricing") && !isValidMoneyDraft(spec.retail_price, true)) {
         return {
           tab: "pricing",
           field: `spec-retail-${spec.id}`,
           message: t("admin.specRetailInvalid").replace("{name}", spec.name || t("admin.unnamed")),
         }
       }
-      if (draft.stock_mode === "MANUAL" && !isValidIntegerDraft(spec.manual_stock, 0)) {
+      if (checks("inventory") && draft.stock_mode === "MANUAL" && !isValidIntegerDraft(spec.manual_stock, 0)) {
         return {
           tab: "inventory",
           field: `spec-stock-${spec.id}`,
@@ -518,13 +526,13 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
       }
     }
 
-    if (draft.stock_mode === "MANUAL" && !draft.spec_enabled && !isValidIntegerDraft(draft.manual_stock, 0)) {
+    if (checks("inventory") && draft.stock_mode === "MANUAL" && !draft.spec_enabled && !isValidIntegerDraft(draft.manual_stock, 0)) {
       return { tab: "inventory", field: "manual_stock", message: t("admin.manualStockInvalid") }
     }
 
     const specIds = new Set(draft.specs.map((spec) => spec.id))
     const keys = new Set<string>()
-    for (const override of draft.overrides) {
+    for (const override of checks("pricing") ? draft.overrides : []) {
       if (!override.user_level_id || !isValidMoneyDraft(override.price, true)) {
         return { tab: "pricing", field: `override-${override.user_level_id}-${override.spec_id || "product"}`, message: t("admin.overridePriceInvalid") }
       }
@@ -553,19 +561,26 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     return "detail_md"
   }
 
-  const handleSave = async () => {
+  const handleSave = async (continueRestock = false) => {
+    if (savingRef.current) return
     const failure = validate()
     if (failure) {
       showValidationFailure(failure)
       return
     }
+    savingRef.current = true
     setSaving(true)
     try {
-      if (product) await requestOrThrow(() => adminProductApi.update(product.id, payload))
-      else await requestOrThrow(() => adminProductApi.create(payload))
+      const existing = product || savedProductRef.current
+      const saved = existing
+        ? await requestOrThrow(() => adminProductApi.update(existing.id, payload))
+        : await requestOrThrow(() => adminProductApi.create(payload))
+      savedProductRef.current = saved
+      if (existing) invalidateAdminData("products", "inventory")
+      else announceCreatedProduct(saved.id, saved.product_no)
       toast.success(t("admin.productSaved"))
       setDirty(false)
-      await onSaved()
+      await onSaved(saved, continueRestock)
     } catch (requestError: unknown) {
       const message = requestError instanceof Error ? requestError.message : t("admin.saveFailed")
       const tab = getProductEditorTabForMessage(message)
@@ -574,7 +589,24 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
       toast.error(message)
       window.setTimeout(() => focusField(defaultFieldForTab(tab)), 0)
     } finally {
+      savingRef.current = false
       setSaving(false)
+    }
+  }
+
+  const moveStep = (direction: -1 | 1) => {
+    if (savingRef.current) return
+    if (direction === 1) {
+      const failure = validate(activeTab)
+      if (failure) { showValidationFailure(failure); return }
+    }
+    const next = PRODUCT_EDITOR_TABS[PRODUCT_EDITOR_TABS.indexOf(activeTab) + direction]
+    if (next) {
+      setActiveTab(next)
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(`[data-testid="product-tab-${next}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" })
+        document.querySelector<HTMLElement>(`[data-testid="product-tab-panel-${next}"]`)?.focus({ preventScroll: true })
+      })
     }
   }
 
@@ -642,7 +674,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
   const cardKeyImportAvailability = getCardKeyImportAvailability(product, draft.stock_mode, dirty)
 
   return (
-    <form data-testid="product-form" className="admin-editor-form flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); void handleSave() }}>
+    <form data-testid="product-form" noValidate className="admin-editor-form flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); if (activeTab === "details") void handleSave(); else moveStep(1) }}>
       <Tabs value={activeTab} onValueChange={(value) => {
           if (PRODUCT_EDITOR_TABS.includes(value as ProductEditorTab)) setActiveTab(value as ProductEditorTab)
         }}>
@@ -913,16 +945,21 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
 
         <TabsContent value="details" data-testid="product-tab-panel-details">
             <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
-              <Suspense fallback={<div className="content-surface min-h-52 p-4 text-sm text-muted-foreground" role="status">{t("common.loading")}</div>}>
-                <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage} />
-              </Suspense>
+              <div ref={registerField("detail_md")} tabIndex={-1}>
+                <Suspense fallback={<div className="content-surface min-h-52 p-4 text-sm text-muted-foreground" role="status">{t("common.loading")}</div>}>
+                  <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage} />
+                </Suspense>
+              </div>
             </FormSection>
         </TabsContent>
       </Tabs>
 
-      <div className="static-material action-bar-material sticky bottom-3 z-20 flex flex-col-reverse gap-3 p-3 sm:flex-row sm:justify-end">
+      <div className="static-material action-bar-material sticky bottom-3 z-20 flex flex-wrap justify-end gap-2 p-3">
         <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
-        <Button type="submit" disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button>
+        {product && activeTab !== "details" && <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={saving}>{t("admin.save")}</Button>}
+        {activeTab !== "basic" && <Button type="button" variant="outline" onClick={() => moveStep(-1)} disabled={saving}>{t("admin.previousStep")}</Button>}
+        {activeTab === "details" && !product && draft.delivery_type === "AUTO" && draft.stock_mode === "CARD_KEY" && <Button type="button" variant="outline" onClick={() => void handleSave(true)} disabled={saving}>{t("admin.saveAndRestock")}</Button>}
+        <Button type="submit" disabled={saving}>{saving ? t("admin.saving") : activeTab === "details" ? t("admin.saveAndFinish") : t("admin.nextStep")}</Button>
       </div>
       {cardKeyImportOpen && cardKeyImportAvailability === "ready" && (
         <Suspense fallback={<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" role="status"><div className="static-material rounded-surface px-5 py-4 text-sm text-foreground">{t("common.loading")}</div></div>}>

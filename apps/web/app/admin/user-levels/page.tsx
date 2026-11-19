@@ -21,6 +21,8 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminData } from "@/lib/admin-data-invalidation"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { adminUserLevelApi, requestOrThrow, type UserLevelUpsertPayload } from "@/services/api"
 import type { PricingType, UserLevel } from "@/types"
 
@@ -84,21 +86,26 @@ export default function AdminUserLevelsPage() {
   const [deleteTarget, setDeleteTarget] = useState<UserLevel | null>(null)
   const [migrateSource, setMigrateSource] = useState<UserLevel | null>(null)
   const [migrateTargetId, setMigrateTargetId] = useState("")
+  const startRequest = useRequestGuard()
 
   const loadLevels = useCallback(async () => {
+    const current = startRequest()
     setLoading(true)
     setError(false)
     try {
-      setLevels(await requestOrThrow(() => adminUserLevelApi.getList()))
+      const data = await requestOrThrow(() => adminUserLevelApi.getList())
+      if (current()) setLevels(data)
     } catch {
+      if (!current()) return
       setLevels([])
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [])
+  }, [startRequest])
 
   useEffect(() => { void loadLevels() }, [loadLevels])
+  const { refresh, refreshing } = useAdminPageRefresh(loadLevels)
 
   const openCreate = () => {
     setEditing(null)
@@ -131,6 +138,7 @@ export default function AdminUserLevelsPage() {
       const payload = toPayload(form)
       if (editing) await requestOrThrow(() => adminUserLevelApi.update(editing.id, payload))
       else await requestOrThrow(() => adminUserLevelApi.create(payload))
+      invalidateAdminData("user-levels", "users", "products")
       setDialogOpen(false)
       toast.success(t("admin.levelSaved"))
       await loadLevels()
@@ -149,6 +157,7 @@ export default function AdminUserLevelsPage() {
     setActionId(level.id)
     try {
       await requestOrThrow(() => adminUserLevelApi.setStatus(level.id, !level.enabled))
+      invalidateAdminData("user-levels", "users", "products")
       await loadLevels()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -162,6 +171,7 @@ export default function AdminUserLevelsPage() {
     setActionId(level.id)
     try {
       await requestOrThrow(() => adminUserLevelApi.setDefault(level.id))
+      invalidateAdminData("user-levels", "users", "products")
       await loadLevels()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -175,6 +185,7 @@ export default function AdminUserLevelsPage() {
     setActionId(deleteTarget.id)
     try {
       await requestOrThrow(() => adminUserLevelApi.delete(deleteTarget.id))
+      invalidateAdminData("user-levels", "users", "products")
       setDeleteTarget(null)
       toast.success(t("admin.levelDeleted"))
       await loadLevels()
@@ -198,6 +209,7 @@ export default function AdminUserLevelsPage() {
     setActionId(migrateSource.id)
     try {
       const count = await requestOrThrow(() => adminUserLevelApi.migrate(migrateSource.id, migrateTargetId))
+      invalidateAdminData("user-levels", "users", "products")
       setMigrateSource(null)
       toast.success(t("admin.migrateSuccess").replace("{count}", String(count)))
       await loadLevels()
@@ -218,6 +230,8 @@ export default function AdminUserLevelsPage() {
       <PageHeader
         title={t("admin.userLevels")}
         description={t("admin.userLevelsDesc")}
+        onRefresh={() => void refresh()}
+        refreshing={refreshing}
       />
 
       <p className="rounded-card border border-amber-500/20 bg-amber-500/[0.07] px-4 py-3 text-sm text-amber-800 dark:text-amber-200">

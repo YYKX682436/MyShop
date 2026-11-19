@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Eye, Save, ShieldAlert, ShieldCheck } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { formatAdminOrderCustomer } from "@/lib/admin-order-display"
 import { formatDateTime, formatYuan } from "@/lib/utils"
 import { adminRiskApi, requestOrThrow } from "@/services/api"
@@ -38,59 +39,101 @@ export default function AdminRiskPage() {
   const [configLoading, setConfigLoading] = useState(true)
   const [configError, setConfigError] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [toggling, setToggling] = useState(false)
+  const togglingRef = useRef(false)
   const [flaggedOrders, setFlaggedOrders] = useState<AdminOrderItem[]>([])
   const [flaggedTotal, setFlaggedTotal] = useState(0)
   const [flaggedPage, setFlaggedPage] = useState(1)
   const [flaggedLoading, setFlaggedLoading] = useState(false)
   const [flaggedError, setFlaggedError] = useState(false)
+  const [hasConfig, setHasConfig] = useState(false)
+  const savedConfig = useRef<RiskConfig | null>(null)
+  const draftVersion = useRef(0)
+  const startConfigRequest = useRequestGuard()
+  const startFlaggedRequest = useRequestGuard()
 
   const loadConfig = useCallback(async () => {
+    const current = startConfigRequest()
+    const version = draftVersion.current
     setConfigLoading(true)
     setConfigError(false)
     try {
-      setConfig(await requestOrThrow(() => adminRiskApi.getConfig()))
+      const data = { ...DEFAULT_CONFIG, ...await requestOrThrow(() => adminRiskApi.getConfig()) }
+      if (!current()) return
+      if (version !== draftVersion.current) { setConfigError(true); return }
+      setConfig(data)
+      savedConfig.current = data
+      setHasConfig(true)
     } catch {
-      setConfigError(true)
+      if (current()) setConfigError(true)
     } finally {
-      setConfigLoading(false)
+      if (current()) setConfigLoading(false)
     }
-  }, [])
+  }, [startConfigRequest])
 
   const loadFlaggedOrders = useCallback(async () => {
+    const current = startFlaggedRequest()
     setFlaggedLoading(true)
     setFlaggedError(false)
     try {
       const data = await requestOrThrow(() => adminRiskApi.getFlaggedOrders({ page: flaggedPage, page_size: PAGE_SIZE }))
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (flaggedPage > lastPage) { setFlaggedPage(lastPage); return }
       setFlaggedOrders(data.list)
       setFlaggedTotal(data.pagination.total)
     } catch {
+      if (!current()) return
       setFlaggedOrders([])
       setFlaggedTotal(0)
       setFlaggedError(true)
     } finally {
-      setFlaggedLoading(false)
+      if (current()) setFlaggedLoading(false)
     }
-  }, [flaggedPage])
+  }, [flaggedPage, startFlaggedRequest])
 
   useEffect(() => { void loadConfig() }, [loadConfig])
   useEffect(() => { if (tab === "flagged") void loadFlaggedOrders() }, [loadFlaggedOrders, tab])
+  const refreshPage = useCallback(async () => { await Promise.all([loadConfig(), loadFlaggedOrders()]) }, [loadConfig, loadFlaggedOrders])
+  const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
+  const requestRefresh = () => {
+    if (savedConfig.current && JSON.stringify(savedConfig.current) !== JSON.stringify(config) && !window.confirm(t("admin.refreshDiscardDraft"))) return
+    void refresh()
+  }
 
   const handleToggle = async (key: "turnstile_enabled" | "device_rate_limit_enabled", value: boolean) => {
+    if (togglingRef.current) return
+    togglingRef.current = true
+    setToggling(true)
     const previous = config[key]
+    draftVersion.current += 1
     setConfig((current) => ({ ...current, [key]: value }))
     try {
       await requestOrThrow(() => adminRiskApi.updateConfig({ [key]: value }))
+      if (savedConfig.current) savedConfig.current = { ...savedConfig.current, [key]: value }
+      try {
+        const authoritative = await requestOrThrow(() => adminRiskApi.getConfig())
+        const actual = authoritative[key] ?? value
+        setConfig((current) => ({ ...current, [key]: actual }))
+        if (savedConfig.current) savedConfig.current = { ...savedConfig.current, [key]: actual }
+      } catch { setConfigError(true) }
       toast.success(t("admin.riskSaved"))
     } catch (requestError: unknown) {
       setConfig((current) => ({ ...current, [key]: previous }))
       toast.error(requestError instanceof Error ? requestError.message : t("admin.riskSaveFailed"))
+    } finally {
+      togglingRef.current = false
+      setToggling(false)
     }
   }
 
   const handleSaveConfig = async () => {
+    const version = draftVersion.current
     setSaving(true)
     try {
       await requestOrThrow(() => adminRiskApi.updateConfig(config))
+      savedConfig.current = config
+      if (version === draftVersion.current) await loadConfig()
       toast.success(t("admin.riskSaved"))
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.riskSaveFailed"))
@@ -99,31 +142,33 @@ export default function AdminRiskPage() {
     }
   }
 
-  const configNumber = (key: keyof RiskConfig, label: string) => <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{label}</span><Input type="number" min="0" value={Number(config[key])} onChange={(event) => setConfig((current) => ({ ...current, [key]: Number.parseInt(event.target.value, 10) || 0 }))} /></label>
+  const configNumber = (key: keyof RiskConfig, label: string) => <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{label}</span><Input type="number" min="0" value={Number(config[key])} onChange={(event) => { draftVersion.current += 1; setConfig((current) => ({ ...current, [key]: Number.parseInt(event.target.value, 10) || 0 })) }} /></label>
 
-  if (configLoading) return <AdminPage><PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} /><div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
-  if (configError) return <AdminPage><PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} /><div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={() => void loadConfig()}>{t("common.retry")}</Button></div></AdminPage>
+  const header = <PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} onRefresh={requestRefresh} refreshing={refreshing} refreshDisabled={saving || toggling} />
+  if (configLoading && !hasConfig) return <AdminPage>{header}<div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
+  if (configError && !hasConfig) return <AdminPage>{header}<div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={requestRefresh}>{t("common.retry")}</Button></div></AdminPage>
 
   return (
     <AdminPage>
-      <PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} />
+      {header}
+      {configError && <div role="alert" className="flex items-center gap-3 text-sm text-destructive">{t("admin.loadError")}<Button type="button" variant="outline" size="sm" onClick={requestRefresh}>{t("common.retry")}</Button></div>}
       <Tabs value={tab} onValueChange={(value) => setTab(value as "config" | "flagged")}>
         <TabsList><TabsTrigger value="config"><ShieldCheck className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.riskConfig")}</TabsTrigger><TabsTrigger value="flagged"><ShieldAlert className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.flaggedOrders")}</TabsTrigger></TabsList>
         <TabsContent value="config" className="flex flex-col gap-6">
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="flex flex-col gap-6">
               <SettingsSection title={t("admin.turnstileTitle")} description={t("admin.turnstileDescription")}>
-                <div className="flex items-center justify-between gap-4"><span className="text-sm font-medium">{t("admin.turnstileLabel")}</span><Switch checked={config.turnstile_enabled} onCheckedChange={(checked) => void handleToggle("turnstile_enabled", checked)} aria-label={t("admin.turnstileLabel")} /></div>
+                <div className="flex items-center justify-between gap-4"><span className="text-sm font-medium">{t("admin.turnstileLabel")}</span><Switch checked={config.turnstile_enabled} onCheckedChange={(checked) => void handleToggle("turnstile_enabled", checked)} disabled={toggling || saving || refreshing} aria-label={t("admin.turnstileLabel")} /></div>
               </SettingsSection>
               <SettingsSection title={t("admin.generalLimits")}>
                 <div className="grid gap-4 sm:grid-cols-2">{configNumber("rate_limit_per_second", t("admin.ratePerSecond"))}{configNumber("login_attempt_limit", t("admin.loginAttemptLimit"))}{configNumber("max_purchase_per_user", t("admin.maxPurchasePerUser"))}{configNumber("order_expire_minutes", t("admin.orderExpire"))}</div>
               </SettingsSection>
             </div>
             <SettingsSection title={t("admin.deviceRateLimitTitle")} description={t("admin.deviceRateLimitDescription")}>
-              <div className="space-y-4"><div className="flex items-center justify-between gap-4"><span className="text-sm font-medium">{t("admin.deviceRateLimitLabel")}</span><Switch checked={config.device_rate_limit_enabled} onCheckedChange={(checked) => void handleToggle("device_rate_limit_enabled", checked)} aria-label={t("admin.deviceRateLimitLabel")} /></div><p className="text-xs text-muted-foreground">{t("admin.instantApplyHint")}</p><div className="grid gap-4 sm:grid-cols-2">{configNumber("device_order_limit_per_hour", t("admin.deviceOrderLimit"))}{configNumber("device_login_limit_per_hour", t("admin.deviceLoginLimit"))}{configNumber("device_register_limit_per_hour", t("admin.deviceRegisterLimit"))}</div></div>
+              <div className="space-y-4"><div className="flex items-center justify-between gap-4"><span className="text-sm font-medium">{t("admin.deviceRateLimitLabel")}</span><Switch checked={config.device_rate_limit_enabled} onCheckedChange={(checked) => void handleToggle("device_rate_limit_enabled", checked)} disabled={toggling || saving || refreshing} aria-label={t("admin.deviceRateLimitLabel")} /></div><p className="text-xs text-muted-foreground">{t("admin.instantApplyHint")}</p><div className="grid gap-4 sm:grid-cols-2">{configNumber("device_order_limit_per_hour", t("admin.deviceOrderLimit"))}{configNumber("device_login_limit_per_hour", t("admin.deviceLoginLimit"))}{configNumber("device_register_limit_per_hour", t("admin.deviceRegisterLimit"))}</div></div>
             </SettingsSection>
           </div>
-          <div className="flex justify-end"><Button type="button" onClick={() => void handleSaveConfig()} disabled={saving}><Save className="h-4 w-4" aria-hidden="true" />{saving ? t("admin.saving") : t("admin.saveRiskConfig")}</Button></div>
+          <div className="flex justify-end"><Button type="button" onClick={() => void handleSaveConfig()} disabled={saving || toggling || refreshing}><Save className="h-4 w-4" aria-hidden="true" />{saving ? t("admin.saving") : t("admin.saveRiskConfig")}</Button></div>
         </TabsContent>
 
         <TabsContent value="flagged">

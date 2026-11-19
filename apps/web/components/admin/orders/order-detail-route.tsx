@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useLocale } from "@/lib/context"
 import { invalidateAdminOrders } from "@/lib/admin-order-invalidation"
+import { invalidateAdminData } from "@/lib/admin-data-invalidation"
+import { useRequestGuard } from "@/lib/admin-page-requests"
 import { invalidateAdminAttention } from "@/lib/admin-attention"
 import { getRefundCardKeyAvailability, normalizeRefundCardKeySelection } from "@/lib/admin-refund-ui"
 import { adminCardKeyApi, adminOrderApi, adminProductApi, requestOrThrow } from "@/services/api"
@@ -47,8 +49,10 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [afterSaleApproveOpen, setAfterSaleApproveOpen] = useState(false)
   const [afterSaleApproveLoading, setAfterSaleApproveLoading] = useState(false)
   const [afterSaleMessageLoading, setAfterSaleMessageLoading] = useState(false)
+  const startRequest = useRequestGuard()
 
   const load = useCallback(async () => {
+    const current = startRequest()
     setLoading(true)
     setError(false)
     setCardKeys([])
@@ -57,6 +61,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     setReclaimCardKeys(false)
     try {
       const detail = await requestOrThrow(() => adminOrderApi.getDetail(orderId))
+      if (!current()) return
       setOrder(detail)
       const hasAutomaticCardItems = detail.items.some((item) =>
         !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
@@ -64,22 +69,25 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       if ((detail.status === "PAID" || detail.status === "DELIVERED" || detail.status === "AFTER_SALE" || detail.status === "REFUNDED") && hasAutomaticCardItems) {
         setCardKeysLoading(true)
         try {
-          setCardKeys(await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId)))
+          const keys = await requestOrThrow(() => adminCardKeyApi.getByOrder(orderId))
+          if (current()) setCardKeys(keys)
         } catch {
+          if (!current()) return
           setCardKeys([])
           setCardKeysError(true)
           setReclaimCardKeys(false)
         } finally {
-          setCardKeysLoading(false)
+          if (current()) setCardKeysLoading(false)
         }
       }
     } catch {
+      if (!current()) return
       setOrder(null)
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [orderId])
+  }, [orderId, startRequest])
 
   useEffect(() => { void load() }, [load])
 
@@ -90,10 +98,11 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     setManualFulfillmentLoading(true)
     try {
       await requestOrThrow(() => adminOrderApi.fulfill(order.id, { confirmed: true, items }))
+      invalidateAdminOrders()
+      invalidateAdminData("products", "inventory")
       toast.success(t("admin.manualDeliveryCompleted"))
       setManualFulfillmentOpen(false)
       await load()
-      invalidateAdminOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -110,11 +119,12 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     setMarkPaidLoading(true)
     try {
       await requestOrThrow(() => adminOrderApi.markPaid(orderId, reason))
+      invalidateAdminOrders()
+      invalidateAdminData("products", "inventory")
       toast.success(t("admin.markedPaid"))
       setMarkPaidOpen(false)
       setMarkPaidReason("")
       await load()
-      invalidateAdminOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -138,12 +148,13 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     setRefundLoading(true)
     try {
       await requestOrThrow(() => adminOrderApi.refund(order.id, reason, reclaimSelection))
+      invalidateAdminOrders()
+      invalidateAdminData("products", "inventory", "users")
       toast.success(t("admin.refundSuccess"))
       setRefundOpen(false)
       setRefundReason("")
       setReclaimCardKeys(false)
       await load()
-      invalidateAdminOrders()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -161,12 +172,12 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     setAfterSaleRejectLoading(true)
     try {
       await requestOrThrow(() => adminOrderApi.rejectAfterSale(order.id, normalizedReason))
+      invalidateAdminOrders()
+      invalidateAdminAttention()
       toast.success(t("admin.afterSaleRejectSuccess"))
       setAfterSaleRejectOpen(false)
       setRejectionReason("")
       await load()
-      invalidateAdminOrders()
-      invalidateAdminAttention()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {
@@ -189,12 +200,13 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     setAfterSaleApproveLoading(true)
     try {
       await requestOrThrow(() => adminOrderApi.approveAfterSale(order.id, Boolean(reclaimSelection)))
+      invalidateAdminOrders()
+      invalidateAdminAttention()
+      invalidateAdminData("products", "inventory", "users")
       toast.success(t("admin.afterSaleApproveSuccess"))
       setAfterSaleApproveOpen(false)
       setReclaimCardKeys(false)
       await load()
-      invalidateAdminOrders()
-      invalidateAdminAttention()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
     } finally {

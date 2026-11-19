@@ -1,8 +1,8 @@
 "use client"
 
-import { RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
+import { toast } from "sonner"
 
 import {
   AttentionStrip,
@@ -20,8 +20,10 @@ import {
 import { SalesChart } from "@/components/admin/sales-chart"
 import { RecentOrders } from "@/components/admin/recent-orders"
 import { AdminPage, PageHeader } from "@/components/admin/shared"
-import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
+import { useAdminAttention } from "@/lib/admin-attention"
+import { useAdminDataRevision } from "@/lib/admin-data-invalidation"
+import { useAdminOrderInvalidation } from "@/lib/admin-order-invalidation"
 import { buildDashboardAttention, shouldShowInitialDashboardLoading } from "@/lib/dashboard"
 import type { TranslationKey } from "@/lib/i18n"
 import { formatDateTime } from "@/lib/utils"
@@ -38,6 +40,10 @@ const initialState = <T,>(): AsyncState<T> => ({ data: null, loading: true, erro
 
 export default function AdminDashboardPage() {
   const { locale, t } = useLocale()
+  const { refresh: refreshAttention } = useAdminAttention()
+  const productRevision = useAdminDataRevision("products")
+  const orderRevision = useAdminOrderInvalidation()
+  const lastBusinessRevision = useRef({ productRevision, orderRevision })
   const mountedRef = useRef(false)
   const businessAbortRef = useRef<AbortController | null>(null)
   const systemAbortRef = useRef<AbortController | null>(null)
@@ -46,6 +52,7 @@ export default function AdminDashboardPage() {
   const [recentOrders, setRecentOrders] = useState<AsyncState<AdminOrderItem[]>>(initialState)
   const [system, setSystem] = useState<AsyncState<SystemStatus>>(initialState)
   const [manualRefreshing, setManualRefreshing] = useState(false)
+  const manualRefreshRef = useRef(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const loadBusiness = useCallback(async () => {
@@ -105,13 +112,18 @@ export default function AdminDashboardPage() {
   }, [])
 
   const refreshAll = useCallback(async (showIndicator = false) => {
-    if (showIndicator) setManualRefreshing(true)
+    if (showIndicator && manualRefreshRef.current) return
+    if (showIndicator) { manualRefreshRef.current = true; setManualRefreshing(true) }
     try {
-      await Promise.allSettled([loadBusiness(), loadSystem()])
+      const results = await Promise.allSettled([loadBusiness(), loadSystem(), ...(showIndicator ? [refreshAttention()] : [])])
+      if (showIndicator && (results[2]?.status === "rejected" || (results[2]?.status === "fulfilled" && results[2].value === false))) toast.error(t("admin.loadError"))
     } finally {
-      if (showIndicator && mountedRef.current) setManualRefreshing(false)
+      if (showIndicator) {
+        manualRefreshRef.current = false
+        if (mountedRef.current) setManualRefreshing(false)
+      }
     }
-  }, [loadBusiness, loadSystem])
+  }, [loadBusiness, loadSystem, refreshAttention, t])
 
   useEffect(() => {
     mountedRef.current = true
@@ -123,6 +135,13 @@ export default function AdminDashboardPage() {
       systemAbortRef.current?.abort()
     }
   }, [refreshAll])
+
+  useEffect(() => {
+    const previous = lastBusinessRevision.current
+    if (previous.productRevision === productRevision && previous.orderRevision === orderRevision) return
+    lastBusinessRevision.current = { productRevision, orderRevision }
+    void loadBusiness()
+  }, [loadBusiness, orderRevision, productRevision])
 
   const attention = useMemo(() => {
     const copy = (key: TranslationKey, values: Record<string, string | number>) =>
@@ -169,13 +188,11 @@ export default function AdminDashboardPage() {
       <PageHeader
         title={t("admin.dashboard")}
         description={t("admin.welcome")}
+        onRefresh={() => void refreshAll(true)}
+        refreshing={isRefreshing}
         actions={
           <div className="flex items-center gap-3">
             <p className="hidden truncate text-xs text-muted-foreground sm:block">{t("admin.dashboardLastUpdated").replace("{time}", updatedText)}</p>
-            <Button type="button" variant="outline" onClick={() => void refreshAll(true)} disabled={isRefreshing} aria-label={t("admin.refresh")}>
-              <RefreshCw className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} aria-hidden="true" />
-              <span className="hidden min-[420px]:inline">{isRefreshing ? t("admin.refreshing") : t("admin.refresh")}</span>
-            </Button>
           </div>
         }
       />

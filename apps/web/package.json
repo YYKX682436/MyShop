@@ -13,6 +13,9 @@
     "test:logic": "node --experimental-strip-types --test lib/*.test.mjs",
     "test:dock-race": "node scripts/test-dock-race.mjs",
     "test:card-ui": "node scripts/test-card-ui.mjs",
+    "test:admin-refresh-ui": "node scripts/test-admin-refresh-ui.mjs",
+    "test:admin-user-sync": "node scripts/test-admin-user-sync.mjs",
+    "test:admin-product-list-sync": "node scripts/test-admin-product-list-sync.mjs",
     "clean": "node scripts/clear-cache.mjs"
   },
   "dependencies": {

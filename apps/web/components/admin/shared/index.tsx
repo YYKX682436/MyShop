@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
+import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react"
 
 import {
   AlertDialog,
@@ -36,18 +36,32 @@ interface PageHeaderProps {
   description?: ReactNode
   actions?: ReactNode
   className?: string
+  onRefresh?: () => void
+  refreshing?: boolean
+  refreshDisabled?: boolean
 }
 
-export function PageHeader({ title, description, actions, className }: PageHeaderProps) {
+export function PageHeader({ title, description, actions, className, onRefresh, refreshing = false, refreshDisabled = false }: PageHeaderProps) {
   return (
     <header className={cn("admin-page-header flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between", className)}>
       <div className="min-w-0">
-        <h1 className="text-title1 font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
+        <div className="flex min-w-0 items-center gap-1">
+          <h1 className="min-w-0 text-title1 font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
+          {onRefresh && <PageRefreshButton onRefresh={onRefresh} refreshing={refreshing} disabled={refreshDisabled} />}
+        </div>
         {description && <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
   )
+}
+
+export function PageRefreshButton({ onRefresh, refreshing = false, disabled = false }: { onRefresh: () => void; refreshing?: boolean; disabled?: boolean }) {
+  const { t } = useLocale()
+  const label = refreshing ? t("admin.refreshing") : t("admin.refresh")
+  return <Button type="button" variant="ghost" size="icon" className="h-11 w-11 shrink-0" onClick={onRefresh} disabled={refreshing || disabled} title={label} aria-label={label}>
+    <RefreshCw className={cn("h-4 w-4", refreshing && "motion-safe:animate-spin")} aria-hidden="true" />
+  </Button>
 }
 
 export function PageToolbar({ children, className }: { children: ReactNode; className?: string }) {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 
 import { AdminPage, AdminPagination, DataTableShell, PageHeader, PageToolbar, StatusBadge, TableEmptyState, TableErrorState, TableLoadingState, maskTechnicalIdsInText } from "@/components/admin/shared"
 import { useLocale } from "@/lib/context"
+import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import type { TranslationKey } from "@/lib/i18n"
 import { formatDateTime } from "@/lib/utils"
 import { adminLogApi, requestOrThrow } from "@/services/api"
@@ -50,28 +51,35 @@ export default function AdminOperationLogsPage() {
   const [actionFilter, setActionFilter] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const startRequest = useRequestGuard()
 
   const loadLogs = useCallback(async () => {
+    const current = startRequest()
     setLoading(true)
     setError(false)
     try {
       const data = await requestOrThrow(() => adminLogApi.getList({ page, page_size: PAGE_SIZE, action: actionFilter || undefined }))
+      if (!current()) return
+      const lastPage = Math.max(1, Math.ceil(data.pagination.total / PAGE_SIZE))
+      if (page > lastPage) { setPage(lastPage); return }
       setLogs(data.list)
       setTotal(data.pagination.total)
     } catch {
+      if (!current()) return
       setLogs([])
       setTotal(0)
       setError(true)
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [actionFilter, page])
+  }, [actionFilter, page, startRequest])
 
   useEffect(() => { void loadLogs() }, [loadLogs])
+  const { refresh, refreshing } = useAdminPageRefresh(loadLogs)
 
   return (
     <AdminPage>
-      <PageHeader title={t("admin.logs")} description={t("admin.logsDesc")} />
+      <PageHeader title={t("admin.logs")} description={t("admin.logsDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
       <PageToolbar><select className="h-11 w-full max-w-xs rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={actionFilter} onChange={(event) => { setActionFilter(event.target.value); setPage(1) }} aria-label={t("admin.allActionTypes")}><option value="">{t("admin.allActionTypes")}</option><option value="product">{t("admin.productOps")}</option><option value="cardkey">{t("admin.cardKeyOps")}</option><option value="order">{t("admin.orderOps")}</option><option value="user">{t("admin.userOps")}</option><option value="secret_price">{t("admin.secretPriceOps")}</option><option value="config">{t("admin.configOps")}</option><option value="category">{t("admin.categoryOps")}</option><option value="payment">{t("admin.paymentOps")}</option></select></PageToolbar>
 
       <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>

@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useLocale } from "@/lib/context"
+import { invalidateAdminData } from "@/lib/admin-data-invalidation"
 import { validateCardContentColumns } from "@/lib/card-content"
 import { adminCardKeyApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail } from "@/types"
@@ -82,6 +83,7 @@ export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpe
         content_columns: columns,
         check_duplicate: checkDuplicate,
       }))
+      invalidateAdminData("products")
       toast.success(
         t("admin.importSummary")
           .replace("{total}", String(result.total_count))

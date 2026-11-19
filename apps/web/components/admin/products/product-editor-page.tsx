@@ -8,6 +8,7 @@ import { ProductForm } from "@/components/admin/products/product-form"
 import { AdminPage, PageHeader } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
+import type { ProductEditorTab } from "@/lib/product-editor"
 import { adminCategoryApi, adminProductApi, requestOrThrow } from "@/services/api"
 import type { AdminProductDetail, Category } from "@/types"
 
@@ -33,12 +34,13 @@ function ProductEditorSkeleton({ loadingLabel }: { loadingLabel: string }) {
 interface ProductEditorPageProps {
   productId?: string
   presentation?: "full" | "workspace"
-  onSaved?: () => void | Promise<void>
+  onSaved?: (product: AdminProductDetail, continueRestock: boolean) => void | Promise<void>
   onCancel?: () => void
   onDirtyChange?: (dirty: boolean) => void
+  initialTab?: ProductEditorTab
 }
 
-export function ProductEditorPage({ productId, presentation = "full", onSaved, onCancel, onDirtyChange }: ProductEditorPageProps) {
+export function ProductEditorPage({ productId, presentation = "full", onSaved, onCancel, onDirtyChange, initialTab }: ProductEditorPageProps) {
   const { t } = useLocale()
   const router = useRouter()
   const isWorkspace = presentation === "workspace"
@@ -100,11 +102,15 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
 
   const refreshProduct = useCallback(async () => {
     if (!productId) return
+    const requestId = ++productRequestIdRef.current
     const productData = await requestOrThrow(() => adminProductApi.getDetail(productId))
-    setProduct(productData)
+    if (productRequestIdRef.current === requestId) setProduct(productData)
   }, [productId])
 
-  const handleSaved = onSaved || (() => router.push("/admin/products"))
+  const handleSaved = onSaved || ((saved: AdminProductDetail, continueRestock: boolean) => {
+    if (continueRestock) router.replace(`/admin/products/${saved.id}/edit?tab=inventory`)
+    else router.push("/admin/products")
+  })
   const handleCancel = onCancel || (() => router.push("/admin/products"))
 
   const currentProduct = productId && product?.id === productId ? product : null
@@ -155,6 +161,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}
         onProductRefresh={refreshProduct}
+        initialTab={initialTab}
       />
     )
   }
@@ -179,6 +186,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}
         onProductRefresh={refreshProduct}
+        initialTab={initialTab}
       />
     </AdminPage>
   )
