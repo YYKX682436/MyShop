@@ -15,6 +15,9 @@ public interface SupplierProductMappingRepository extends JpaRepository<Supplier
     @Query("select m from SupplierProductMapping m where m.productId=:productId and " +
            "((:specId is null and m.specId is null) or m.specId=:specId)")
     java.util.Optional<SupplierProductMapping> findLocal(@Param("productId") UUID productId, @Param("specId") UUID specId);
+    @Query("select m.accountId from SupplierProductMapping m where m.productId=:productId and " +
+           "((:specId is null and m.specId is null) or m.specId=:specId)")
+    java.util.Optional<UUID> findLocalAccount(@Param("productId") UUID productId, @Param("specId") UUID specId);
     List<SupplierProductMapping> findByProductIdIn(List<UUID> productIds);
     List<SupplierProductMapping> findByProductId(UUID productId);
     @Query("select m.accountId, m.remoteGoodsId from SupplierProductMapping m, SupplierAccount a " +

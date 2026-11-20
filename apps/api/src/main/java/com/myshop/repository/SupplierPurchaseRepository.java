@@ -17,6 +17,12 @@ public interface SupplierPurchaseRepository extends JpaRepository<SupplierPurcha
     Optional<UUID> findIdByAccountAndOuter(@Param("account") UUID account,@Param("outer") String outer);
     List<SupplierPurchase> findByOrderId(UUID id);
     boolean existsByOrderId(UUID id);
+    @Query("select (count(p) > 0) from SupplierPurchase p, OrderItem i where p.orderItemId=i.id " +
+            "and i.productId=:productId and ((:specId is null and i.specId is null) or i.specId=:specId) " +
+            "and (p.status not in ('COMPLETED','WITHDRAWN','REFUNDED') or exists " +
+            "(select op.id from SupplierAftercareOperation op where op.purchaseId=p.id " +
+            "and op.status in ('INTENT','SUBMITTING','UNKNOWN','ACCEPTED'))) ")
+    boolean hasUnfinishedForBinding(@Param("productId") UUID productId, @Param("specId") UUID specId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from SupplierPurchase p where p.id=:id")
     Optional<SupplierPurchase> findForUpdate(@Param("id") UUID id);

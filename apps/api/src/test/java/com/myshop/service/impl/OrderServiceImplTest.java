@@ -226,7 +226,7 @@ class OrderServiceImplTest {
         when(productSpecRepository.findById(specId)).thenReturn(Optional.of(ownedSpec));
         when(cardKeyRepository.countByProductIdAndSpecIdAndStatus(productId, specId, CardKeyStatus.AVAILABLE))
                 .thenReturn(2L);
-        when(productRepository.findById(productId)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(productId)).thenReturn(Optional.of(product));
 
         service.createDirectOrder(request(productId, specId, 2, "5.00"), null, "203.0.113.11", "guest-session");
 
@@ -553,13 +553,13 @@ class OrderServiceImplTest {
     }
 
     private void stubProduct(Product product, long available) {
-        when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(product.getId())).thenReturn(Optional.of(product));
         when(cardKeyRepository.countByProductIdAndSpecIdIsNullAndStatus(product.getId(), CardKeyStatus.AVAILABLE))
                 .thenReturn(available);
     }
 
     private void stubProductWithoutStock(Product product) {
-        when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(product.getId())).thenReturn(Optional.of(product));
     }
 
     private Product product(UUID id, String price) {

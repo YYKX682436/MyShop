@@ -34,11 +34,26 @@ public class AdminSupplierController {
     @PostMapping("/{id}/goods/{goodsId}/import") public ApiResponse<?> importProduct(@PathVariable UUID id,@PathVariable String goodsId,@RequestBody ImportRequest request) {
         return ApiResponse.success(suppliers.importProduct(id,goodsId,request.categoryId()));
     }
+    @LogOperation(action="supplier.bind", targetType="SUPPLIER", targetId="#id", detail="'绑定货源商品规格'")
+    @PostMapping("/{id}/goods/{goodsId}/bind") public ApiResponse<?> bind(@PathVariable UUID id,@PathVariable String goodsId,@RequestBody BindRequest request) {
+        return ApiResponse.success(suppliers.bind(id,goodsId,request.productId(),request.specId(),request.remoteSku(),
+                Boolean.TRUE.equals(request.confirmed()),Boolean.TRUE.equals(request.moveConfirmed()),
+                new com.myshop.supplier.SupplierCatalogTransaction.BindingExpectation(request.expectedTargetMappingId(),
+                        request.expectedSourceMappingId(),request.expectedSourceProductId(),request.expectedSourceSpecId())));
+    }
+    @LogOperation(action="supplier.presentation", targetType="SUPPLIER", targetId="#id", detail="'同步货源商品资料'")
+    @PostMapping("/{id}/goods/{goodsId}/presentation") public ApiResponse<?> presentation(@PathVariable UUID id,@PathVariable String goodsId,@RequestBody PresentationRequest request) {
+        suppliers.syncPresentation(id,goodsId,request.productId(),Boolean.TRUE.equals(request.confirmed())); return ApiResponse.success();
+    }
     @GetMapping("/{id}/mappings") public ApiResponse<?> mappings(@PathVariable UUID id) { return ApiResponse.success(suppliers.mappings(id)); }
+    @GetMapping("/products/{productId}/mappings") public ApiResponse<?> productMappings(@PathVariable UUID productId) { return ApiResponse.success(suppliers.productMappings(productId)); }
     @LogOperation(action="supplier.sync", targetType="SUPPLIER", targetId="#id", detail="'同步货源商品'")
     @PostMapping("/{id}/goods/{goodsId}/sync") public ApiResponse<?> sync(@PathVariable UUID id,@PathVariable String goodsId) {
         suppliers.sync(id,goodsId); return ApiResponse.success();
     }
     public record Status(Boolean enabled,Boolean confirmed) {}
     public record ImportRequest(UUID categoryId) {}
+    public record BindRequest(UUID productId,UUID specId,String remoteSku,Boolean confirmed,Boolean moveConfirmed,
+                              UUID expectedTargetMappingId,UUID expectedSourceMappingId,UUID expectedSourceProductId,UUID expectedSourceSpecId) {}
+    public record PresentationRequest(UUID productId,Boolean confirmed) {}
 }

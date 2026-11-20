@@ -197,7 +197,7 @@ public class PublicProductServiceImpl implements PublicProductService {
         if (product.getStockMode()!=StockMode.SUPPLIER || supplierStockService==null) return ProductRules.currentFields(product);
         if (!detail) return List.of();
         List<CustomerInputField> fields=new java.util.ArrayList<>(ProductRules.currentFields(product));
-        fields.addAll(supplierStockService.fields(product.getId()));
+        if (!product.isSpecEnabled()) fields.addAll(supplierStockService.fields(product.getId(),null));
         return List.copyOf(fields);
     }
 
@@ -208,7 +208,9 @@ public class PublicProductServiceImpl implements PublicProductService {
         ProductInventoryBatchService.StockSnapshot stockSnapshot = stock.getOrDefault(
                 new PriceTarget(product.getId(), spec.getId()), new ProductInventoryBatchService.StockSnapshot(0L, false));
         return new PublicProductSpecResponse(spec.getId(), spec.getName(), price.price(), spec.getRetailPrice(),
-                stockSnapshot.available(), stockSnapshot.unlimited(), product.getStockMode().name());
+                stockSnapshot.available(), stockSnapshot.unlimited(), product.getStockMode().name(),
+                product.getStockMode()==StockMode.SUPPLIER && supplierStockService!=null
+                        ? supplierStockService.fields(product.getId(),spec.getId()) : null);
     }
 
     private Map<UUID, Long> loadSales(List<UUID> productIds) {

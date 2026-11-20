@@ -9,8 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { SupplierSensitivePanel } from "@/components/admin/suppliers/supplier-sensitive-panel"
 import { useAuth } from "@/lib/context"
-import { adminCategoryApi, adminSupplierApi, type SupplierAccount, type SupplierAccountInput, type SupplierCategory, type SupplierMapping, type SupplierProduct, type SupplierSummary } from "@/services/api"
-import type { Category } from "@/types"
+import { adminCategoryApi, adminProductApi, adminSupplierApi, type SupplierAccount, type SupplierAccountInput, type SupplierCategory, type SupplierMapping, type SupplierProduct, type SupplierSummary } from "@/services/api"
+import type { AdminProductDetail, Category } from "@/types"
 
 const blank: SupplierAccountInput = { name: "", provider_type: "KAYIXIN", base_url: "https://", app_id: "", secret: "", enabled: true }
 const fieldClass = "flex flex-col gap-1.5 text-sm font-medium"
@@ -43,6 +43,15 @@ export default function SuppliersPage() {
   const [detail, setDetail] = useState<SupplierProduct | null>(null)
   const [mappings, setMappings] = useState<SupplierMapping[]>([])
   const [loadingMappings, setLoadingMappings] = useState(false)
+  const [importMode, setImportMode] = useState<"new" | "existing">("new")
+  const [localKeyword, setLocalKeyword] = useState("")
+  const [localProducts, setLocalProducts] = useState<AdminProductDetail[]>([])
+  const [targetProduct, setTargetProduct] = useState<AdminProductDetail | null>(null)
+  const [targetMappings, setTargetMappings] = useState<SupplierMapping[]>([])
+  const [targetSpec, setTargetSpec] = useState("")
+  const [remoteSku, setRemoteSku] = useState<string | null>(null)
+  const [resultProduct, setResultProduct] = useState("")
+  const targetSequence = useRef(0)
   const active = accounts.find(account => account.id === selected)
   const importedIds = new Set(mappings.map(mapping => mapping.remote_goods_id))
 
@@ -51,6 +60,7 @@ export default function SuppliersPage() {
     searchSequence.current += 1
     setSelected(id); setBalance(null); setRemoteCategories([]); setRemoteCategory("")
     setGoods([]); setPage(0); setHasMore(false); setSearching(false); setDetail(null); setMappings([])
+    targetSequence.current += 1; setTargetProduct(null); setTargetMappings([]); setLocalProducts([]); setResultProduct(""); setBusy(false)
   }, [])
   const loadAccounts = useCallback(async () => {
     try {
@@ -121,7 +131,7 @@ export default function SuppliersPage() {
   async function showDetail(goodsId: string) {
     if (!active) return
     const id = active.id; setBusy(true)
-    try { const item = await adminSupplierApi.detail(id, goodsId); if (selectedRef.current === id) setDetail(item) }
+    try { const item = await adminSupplierApi.detail(id, goodsId); if (selectedRef.current === id) { setDetail(item); setRemoteSku(item.sku_type === 0 ? "" : null); setResultProduct("") } }
     catch (error) { if (selectedRef.current === id) toast.error(message(error)) } finally { setBusy(false) }
   }
   async function importProduct() {
@@ -129,8 +139,45 @@ export default function SuppliersPage() {
     const id = active.id; setBusy(true)
     try {
       const result = await adminSupplierApi.import(id, detail.id, localCategory)
-      if (selectedRef.current === id) { await loadMappings(id); toast.success(result.created ? "已导入，下架待配置" : "该商品已导入") }
+      if (selectedRef.current === id) { await loadMappings(id); setResultProduct(result.product_id); toast.success(result.created ? "已导入，下架待配置" : "该商品已导入") }
     } catch (error) { if (selectedRef.current === id) toast.error(message(error)) } finally { setBusy(false) }
+  }
+  async function searchLocal() {
+    setBusy(true)
+    try { const result=await adminProductApi.getList({ keyword: localKeyword.trim(), page: 1, page_size: 30 }); setLocalProducts(result.list) }
+    catch (error) { toast.error(message(error)) } finally { setBusy(false) }
+  }
+  async function selectLocal(id: string) {
+    const sequence=++targetSequence.current
+    setTargetProduct(null); setTargetMappings([]); setTargetSpec("")
+    if (!id) return
+    setBusy(true)
+    try {
+      const [product, rows]=await Promise.all([adminProductApi.getDetail(id),adminSupplierApi.productMappings(id)])
+      if (targetSequence.current===sequence) { setTargetProduct(product); setTargetMappings(rows) }
+    } catch (error) { if (targetSequence.current===sequence) toast.error(message(error)) }
+    finally { if (targetSequence.current===sequence) setBusy(false) }
+  }
+  async function bindProduct() {
+    if (!active || !detail || !targetProduct || remoteSku===null || (targetProduct.spec_enabled && !targetSpec)) return
+    const target=targetMappings.find(row => (row.spec_id || "") === targetSpec)
+    const source=mappings.find(row => row.remote_goods_id===detail.id && row.remote_sku===remoteSku)
+    const moving=Boolean(source && (source.product_id!==targetProduct.id || (source.spec_id || "")!==targetSpec))
+    const oldTarget=target ? `当前规格绑定：${accounts.find(a => a.id===target.account_id)?.name || target.account_id} / 商品 ${target.remote_goods_id} / SKU ${target.remote_sku || "单规格"}。` : "当前规格尚未绑定货源。"
+    const oldSource=moving && source ? `该上游规格已绑定商品 ${source.product_id}${source.spec_id ? ` / 规格 ${source.spec_id}` : ""}，确认后将移动绑定，原商品不会删除。` : ""
+    const conversion=targetProduct.stock_mode!=="SUPPLIER" ? "整个商品将转换为供应商库存，其他未绑定规格将无库存；存在本地库存或未完成订单时不能转换。" : ""
+    if (!window.confirm(`绑定到「${targetProduct.title}」${targetSpec ? ` / ${targetProduct.specs.find(s => s.id===targetSpec)?.name || targetSpec}` : ""}？\n${oldTarget}\n${oldSource}\n${conversion}\n将更新供应关系、成本和库存，保留名称及售价。`)) return
+    const id=active.id; setBusy(true)
+    try {
+      const result=await adminSupplierApi.bind(id,detail.id,{ product_id: targetProduct.id, spec_id: targetSpec || null, remote_sku: remoteSku, confirmed: true, move_confirmed: moving, expected_target_mapping_id: target?.id || null, expected_source_mapping_id: source?.id || null, expected_source_product_id: source?.product_id || null, expected_source_spec_id: source?.spec_id || null })
+      if (selectedRef.current===id) { await loadMappings(id); setTargetMappings(await adminSupplierApi.productMappings(targetProduct.id)); setResultProduct(result.product_id); toast.success("货源绑定已保存") }
+    } catch (error) { if (selectedRef.current===id) toast.error(message(error)) } finally { setBusy(false) }
+  }
+  async function syncPresentation(row: SupplierMapping) {
+    if (!active || !window.confirm("同步商品资料将覆盖本地图片、简介、详情和购买提醒，保留商品名称、分类及售价。确定继续？")) return
+    const id=active.id; setBusy(true)
+    try { await adminSupplierApi.presentation(id,row.remote_goods_id,row.product_id); if (selectedRef.current===id) toast.success("商品资料已同步") }
+    catch (error) { if (selectedRef.current===id) toast.error(message(error)) } finally { setBusy(false) }
   }
   async function sync(goodsId: string) {
     if (!active) return
@@ -164,13 +211,28 @@ export default function SuppliersPage() {
           <div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-semibold">{detail.name}</h3><p className="mt-1 text-sm text-muted-foreground">#{detail.id} · {detail.goods_type === 1 ? "卡券" : "直充"} · {detail.sku_type === 0 ? "单规格" : detail.sku_type === 1 ? "多规格" : "多单规格"} · {detail.status === 1 ? "销售中" : "停售"}</p></div></div>
           <p className="mt-3 text-sm">购买倍数 {detail.multiple} · 数量 {detail.min_quantity}–{detail.max_quantity}</p>
           <div className="mt-3 overflow-x-auto" role="region" aria-label="上游规格" tabIndex={0}><table className="w-full text-left text-sm"><thead><tr><th scope="col" className="p-2">规格</th><th scope="col" className="p-2">SKU</th><th scope="col" className="p-2">成本</th><th scope="col" className="p-2">库存</th><th scope="col" className="p-2">状态</th></tr></thead><tbody>{detail.skus.map(s => <tr className="border-t border-border-subtle" key={s.id || "single"}><td className="p-2">{[s.group, s.name].filter(Boolean).join(" / ") || "默认"}</td><td className="p-2">{s.id || "—"}</td><td className="p-2">¥{s.cost}</td><td className="p-2">{s.stock}</td><td className="p-2">{s.status === 1 ? "上架" : "下架"}</td></tr>)}</tbody></table></div>
-          <div className="mt-4 flex flex-wrap items-end gap-3"><label className={`${fieldClass} min-w-48`}>本地分类<select className={selectClass} value={localCategory} onChange={event => setLocalCategory(event.target.value)}><option value="">选择分类</option>{flatten(localCategories).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><Button type="button" disabled={busy || !localCategory || !active.enabled} onClick={() => void importProduct()}>{importedIds.has(detail.id) ? "检查导入" : "导入商品"}</Button><span className="text-sm text-muted-foreground">导入后默认下架</span></div>
+          <fieldset className="mt-4"><legend className="mb-2 text-sm font-medium">导入方式</legend><div className="flex flex-wrap gap-5 text-sm">
+            <label className="flex items-center gap-2"><input type="radio" name="import-mode" checked={importMode==="new"} onChange={() => setImportMode("new")} />新增商品</label>
+            <label className="flex items-center gap-2"><input type="radio" name="import-mode" checked={importMode==="existing"} onChange={() => setImportMode("existing")} />覆盖已有</label>
+          </div></fieldset>
+          {importMode==="new" ? <div className="mt-4 flex flex-wrap items-end gap-3"><label className={`${fieldClass} min-w-48`}>本地分类<select className={selectClass} value={localCategory} onChange={event => setLocalCategory(event.target.value)}><option value="">选择分类</option>{flatten(localCategories).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><Button type="button" disabled={busy || !localCategory || !active.enabled} onClick={() => void importProduct()}>{importedIds.has(detail.id) ? "检查导入" : "导入商品"}</Button><span className="text-sm text-muted-foreground">导入后默认下架</span></div> : <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-end gap-3"><label className={`${fieldClass} min-w-48 flex-1`}>搜索本地商品<Input type="search" value={localKeyword} onChange={event => setLocalKeyword(event.target.value)} /></label><Button type="button" variant="outline" disabled={busy} onClick={() => void searchLocal()}>搜索</Button></div>
+            <label className={fieldClass}>本地商品<select className={selectClass} value={targetProduct?.id || ""} onChange={event => void selectLocal(event.target.value)}><option value="">选择商品</option>{localProducts.map(p => <option key={p.id} value={p.id}>{p.title} #{p.product_no}</option>)}</select></label>
+            {targetProduct?.spec_enabled && <label className={fieldClass}>本地规格<select className={selectClass} value={targetSpec} onChange={event => setTargetSpec(event.target.value)}><option value="">选择规格</option>{targetProduct.specs.filter(s => s.is_deleted===0).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>}
+            {detail.sku_type!==0 && <label className={fieldClass}>上游规格<select className={selectClass} value={remoteSku ?? ""} onChange={event => setRemoteSku(event.target.value || null)}><option value="">选择上游 SKU</option>{detail.skus.map(s => <option key={s.id} value={s.id}>{[s.group,s.name].filter(Boolean).join(" / ")} · {s.id}</option>)}</select></label>}
+            {targetProduct && <div className="text-sm text-muted-foreground">当前绑定：{(() => { const row=targetMappings.find(m => (m.spec_id || "")===targetSpec); return row ? `${accounts.find(a => a.id===row.account_id)?.name || row.account_id} / 商品 ${row.remote_goods_id} / SKU ${row.remote_sku || "单规格"}` : "无" })()}</div>}
+            {remoteSku!==null && mappings.filter(m => m.remote_goods_id===detail.id && m.remote_sku===remoteSku).map(m => <div className="text-sm text-muted-foreground" key={m.id}>上游规格已绑定 <a className="text-primary underline" href={`/admin/products/${m.product_id}/edit`}>商品 {m.product_id.slice(0,8)}</a>{m.spec_id ? ` / 规格 ${m.spec_id.slice(0,8)}` : ""}</div>)}
+            <p className="text-sm text-muted-foreground">绑定会更新供应关系、成本和库存；名称、售价及分类保持不变。商品资料可单独同步。</p>
+            {targetProduct && targetProduct.stock_mode!=="SUPPLIER" && <p className="text-sm text-muted-foreground">整个商品将改为供应商库存；其他未绑定规格无库存。本地库存或未完成订单需先处理。</p>}
+            <Button type="button" disabled={busy || !active.enabled || !targetProduct || remoteSku===null || Boolean(targetProduct.spec_enabled && !targetSpec)} onClick={() => void bindProduct()}>确认绑定</Button>
+          </div>}
+          {resultProduct && <a className="mt-3 inline-block text-sm text-primary underline" href={`/admin/products/${resultProduct}/edit`}>进入商品编辑</a>}
         </div>}
       </section>
       {active.provider_type === "KAYIXIN" && <SupplierSensitivePanel key={active.id} account={active} product={detail} superAdmin={user?.role === "SUPER_ADMIN"} />}
       <section>
         <div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold">已导入与同步</h2><Button type="button" variant="ghost" size="sm" disabled={loadingMappings} onClick={() => void loadMappings(active.id)}><RefreshCw />刷新</Button></div>
-        <section className="admin-table-region min-w-0"><div className="admin-table-scroll min-w-0 overflow-x-auto" role="region" aria-label="货源商品同步状态" tabIndex={0}><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-border-subtle"><th scope="col" className="p-3">上游商品 / SKU</th><th scope="col" className="p-3">本地商品 / 规格</th><th scope="col" className="p-3">成本</th><th scope="col" className="p-3">库存快照</th><th scope="col" className="p-3">状态</th><th scope="col" className="p-3">上次成功同步</th><th scope="col" className="p-3">操作</th></tr></thead><tbody>{mappings.map(row => <tr className="border-b border-border-subtle" key={row.id}><td className="p-3">{row.remote_goods_id}<br /><span className="text-xs text-muted-foreground">{row.remote_sku || "单规格"}</span></td><td className="p-3"><a className="text-primary underline" href={`/admin/products/${row.product_id}/edit`}>查看商品</a>{row.spec_id && <div className="text-xs text-muted-foreground">规格 {row.spec_id.slice(0, 8)}</div>}</td><td className="p-3">¥{row.cost}</td><td className="p-3">{row.stock}</td><td className="p-3">{row.goods_status === 1 && row.sku_status === 1 ? "可售" : "停售"}{row.sync_error && <div className="text-destructive">同步失败：{row.sync_error}</div>}</td><td className="p-3">{row.last_synced_at}</td><td className="p-3"><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled} onClick={() => void sync(row.remote_goods_id)}>同步</Button></td></tr>)}{!mappings.length && <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">暂无已导入商品</td></tr>}</tbody></table></div></section>
+        <section className="admin-table-region min-w-0"><div className="admin-table-scroll min-w-0 overflow-x-auto" role="region" aria-label="货源商品同步状态" tabIndex={0}><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-border-subtle"><th scope="col" className="p-3">上游商品 / SKU</th><th scope="col" className="p-3">本地商品 / 规格</th><th scope="col" className="p-3">成本</th><th scope="col" className="p-3">库存快照</th><th scope="col" className="p-3">状态</th><th scope="col" className="p-3">上次成功同步</th><th scope="col" className="p-3">操作</th></tr></thead><tbody>{mappings.map(row => <tr className="border-b border-border-subtle" key={row.id}><td className="p-3">{row.remote_goods_id}<br /><span className="text-xs text-muted-foreground">{row.remote_sku || "单规格"}</span></td><td className="p-3"><a className="text-primary underline" href={`/admin/products/${row.product_id}/edit`}>查看商品</a>{row.spec_id && <div className="text-xs text-muted-foreground">规格 {row.spec_id.slice(0, 8)}</div>}</td><td className="p-3">¥{row.cost}</td><td className="p-3">{row.stock}</td><td className="p-3">{row.goods_status === 1 && row.sku_status === 1 ? "可售" : "停售"}{row.sync_error && <div className="text-destructive">同步失败：{row.sync_error}</div>}</td><td className="p-3">{row.last_synced_at}</td><td className="p-3"><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled} onClick={() => void sync(row.remote_goods_id)}>同步库存</Button><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled} onClick={() => void syncPresentation(row)}>同步商品资料</Button></div></td></tr>)}{!mappings.length && <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">暂无已导入商品</td></tr>}</tbody></table></div></section>
       </section>
     </>}
     <Dialog open={accountDialog} onOpenChange={open => { if (!open && !busy) closeAccount() }}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑货源" : "添加货源"}</DialogTitle><DialogDescription>{editing ? "留空密钥以保留现有密钥。" : "密钥仅加密保存在服务端。"}</DialogDescription></DialogHeader><form onSubmit={saveAccount} aria-label={editing ? "编辑货源" : "添加货源"} className="space-y-4">

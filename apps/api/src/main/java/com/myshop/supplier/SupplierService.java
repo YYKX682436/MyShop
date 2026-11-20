@@ -39,7 +39,7 @@ public class SupplierService {
         @Override public String toString() { return "SupplierAccountRequest[redacted]"; }
     }
     public record AccountView(UUID id,String name,String providerType,String baseUrl,String appId,String secretMask,boolean enabled,String goodsCallbackUrl) {}
-    public record MappingView(UUID id,String remoteGoodsId,String remoteSku,UUID productId,UUID specId,
+    public record MappingView(UUID id,UUID accountId,String remoteGoodsId,String remoteSku,UUID productId,UUID specId,
                               int goodsType,int skuType,@com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) java.math.BigDecimal cost,long stock,int goodsStatus,int skuStatus,
                               int multiple,int minQuantity,int maxQuantity,LocalDateTime lastSyncedAt,
                               LocalDateTime lastAttemptAt,String syncError) {}
@@ -89,10 +89,23 @@ public class SupplierService {
         SupplierModels.Product detail=detail(accountId,goodsId);
         return transactions.importProduct(accountId,categoryId,detail);
     }
+    public SupplierCatalogTransaction.ImportResult bind(UUID accountId,String goodsId,UUID productId,UUID specId,
+                                                        String remoteSku,boolean confirmed,boolean moveConfirmed,
+                                                        SupplierCatalogTransaction.BindingExpectation expected) {
+        return transactions.bind(accountId,productId,specId,remoteSku,confirmed,moveConfirmed,expected,detail(accountId,goodsId));
+    }
+    public void syncPresentation(UUID accountId,String goodsId,UUID productId,boolean confirmed) {
+        if (!confirmed || productId==null) throw invalid("请选择商品并确认同步商品资料");
+        transactions.syncPresentation(accountId,productId,detail(accountId,goodsId));
+    }
     @Transactional(readOnly=true)
     public List<MappingView> mappings(UUID id) {
         accounts.findById(id).orElseThrow(() -> invalid("货源账号不存在"));
         return mappings.findByAccountIdOrderByRemoteGoodsIdAscRemoteSkuAsc(id).stream().map(this::view).toList();
+    }
+    @Transactional(readOnly=true)
+    public List<MappingView> productMappings(UUID productId) {
+        return mappings.findByProductId(productId).stream().map(this::view).toList();
     }
     public void sync(UUID accountId,String goodsId) {
         LocalDateTime attempt=transactions.markAttempt(accountId,goodsId);
@@ -172,7 +185,7 @@ public class SupplierService {
         return new AccountView(a.getId(),a.getName(),a.getProviderType(),a.getBaseUrl(),a.getAppId(),"••••••••",a.isEnabled(),callback);
     }
     private MappingView view(SupplierProductMapping m) {
-        return new MappingView(m.getId(),m.getRemoteGoodsId(),m.getRemoteSku(),m.getProductId(),m.getSpecId(),m.getGoodsType(),m.getSkuType(),
+        return new MappingView(m.getId(),m.getAccountId(),m.getRemoteGoodsId(),m.getRemoteSku(),m.getProductId(),m.getSpecId(),m.getGoodsType(),m.getSkuType(),
                 m.getCost(),m.getStock(),m.getGoodsStatus(),m.getSkuStatus(),m.getMultiple(),m.getMinQuantity(),m.getMaxQuantity(),
                 m.getLastSyncedAt(),m.getLastAttemptAt(),m.getSyncError());
     }

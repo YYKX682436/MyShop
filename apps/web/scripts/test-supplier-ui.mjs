@@ -15,9 +15,18 @@ let listReads = 0
 let editsPreservedSecret = false
 let sensitiveOperations = { transfers: [], cdkeys: [] }
 let transferPosts = 0, cdkeyPosts = 0
+let presentationPosts = 0, bindingPosts = []
 const ok = data => ({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, message: "Success", data }) })
 const summary = { id: "31397", name: "本地模拟测试商品", goods_type: 1, status: 1, sku_type: 0, cost: "0.01000000" }
 const item = { ...summary, multiple: 1, min_quantity: 1, max_quantity: 1, skus: [{ id: "", name: "", group: "", cost: "0.01000000", stock: 12, status: 1 }], snapshot: {} }
+const multiSummary = { id: "31396", name: "模拟多规格商品", goods_type: 1, status: 1, sku_type: 2, cost: "0.02000000" }
+const multiItem = { ...multiSummary, multiple: 1, min_quantity: 1, max_quantity: 10, skus: [
+  { id: "A", name: "上游月卡", group: "", cost: "0.02", stock: 10, status: 1 },
+  { id: "B", name: "上游季卡", group: "", cost: "0.03", stock: 10, status: 1 },
+], snapshot: {} }
+const local = { id: "manual-product", product_no: 100, title: "我的会员商品", spec_enabled: true, specs: [
+  { id: "month", name: "月卡", is_deleted: 0 }, { id: "quarter", name: "季卡", is_deleted: 0 }, { id: "year", name: "年卡", is_deleted: 0 },
+] }
 
 try {
   await page.route("**/api/**", async route => {
@@ -28,6 +37,9 @@ try {
     if (path === "/api/site/config") return route.fulfill(ok({}))
     if (path === "/api/admin/attention") return route.fulfill(ok({ after_sale_needs_attention: 0 }))
     if (path === "/api/admin/categories") return route.fulfill(ok([{ id: "local-category", name: "本地分类", parent_id: null, children: [] }]))
+    if (path === "/api/admin/products" && method === "GET") return route.fulfill(ok({ list: [local], total: 1, page: 1, page_size: 30 }))
+    if (path === "/api/admin/products/manual-product") return route.fulfill(ok(local))
+    if (path === "/api/admin/suppliers/products/manual-product/mappings") return route.fulfill(ok(mappings.filter(row => row.product_id === local.id)))
     if (path === "/api/admin/suppliers" && method === "GET") return route.fulfill(ok(accounts))
     if (path === "/api/admin/suppliers" && method === "POST") {
       const body = route.request().postDataJSON()
@@ -55,15 +67,32 @@ try {
     }
     if (path === "/api/admin/suppliers/account-1/transfers/transfers-1/review") { sensitiveOperations.transfers[0].review_outcome = "MANUAL_HANDLING"; return route.fulfill(ok(sensitiveOperations.transfers[0])) }
     if (path === "/api/admin/suppliers/account-1/cdkeys/cdkeys-1/result") return route.fulfill(ok([{ pwd: "mock-cdkey-1", url: "" }, { pwd: "mock-cdkey-2", url: "" }]))
-    if (path === "/api/admin/suppliers/account-1/goods") { listReads++; return route.fulfill(ok({ items: [summary], reported_count: 50, reported_pages: 1 })) }
+    if (path === "/api/admin/suppliers/account-1/goods") { listReads++; return route.fulfill(ok({ items: [summary, multiSummary], reported_count: 50, reported_pages: 1 })) }
     if (path === "/api/admin/suppliers/account-1/goods/31397" && method === "GET") return route.fulfill(ok(item))
+    if (path === "/api/admin/suppliers/account-1/goods/31396" && method === "GET") return route.fulfill(ok(multiItem))
     if (path === "/api/admin/suppliers/account-1/goods/31397/import") {
       assert.equal(route.request().postDataJSON().category_id, "local-category")
       const created = mappings.length === 0
-      mappings = [{ id: "mapping-1", remote_goods_id: "31397", remote_sku: "", product_id: "local-product", goods_type: 1, sku_type: 0, cost: "0.01000000", stock: 12, goods_status: 1, sku_status: 1, multiple: 1, min_quantity: 1, max_quantity: 1, last_synced_at: "2026-11-20 14:00:00", last_attempt_at: "2026-11-20 14:00:00" }]
+      mappings = [{ id: "mapping-1", account_id: "account-1", remote_goods_id: "31397", remote_sku: "", product_id: "local-product", goods_type: 1, sku_type: 0, cost: "0.01000000", stock: 12, goods_status: 1, sku_status: 1, multiple: 1, min_quantity: 1, max_quantity: 1, last_synced_at: "2026-11-20 14:00:00", last_attempt_at: "2026-11-20 14:00:00" }]
       return route.fulfill(ok({ product_id: "local-product", created }))
     }
     if (path === "/api/admin/suppliers/account-1/goods/31397/sync") { mappings[0].stock = 8; mappings[0].cost = "0.02000000"; return route.fulfill(ok(null)) }
+    if (path === "/api/admin/suppliers/account-1/goods/31397/presentation") { assert.equal(route.request().postDataJSON().confirmed, true); presentationPosts++; return route.fulfill(ok(null)) }
+    if (path.endsWith("/bind") && method === "POST") {
+      const body = route.request().postDataJSON(); const goodsId = path.split("/").at(-2)
+      bindingPosts.push({ ...body, goodsId })
+      assert.equal(body.confirmed, true)
+      if (goodsId === "31397") {
+        assert.equal(body.move_confirmed, true); assert.equal(body.expected_source_mapping_id, "mapping-1")
+        assert.equal(body.expected_source_product_id, "local-product"); assert.equal(body.spec_id, "month")
+        mappings[0] = { ...mappings[0], product_id: local.id, spec_id: "month" }
+      } else {
+        assert.equal(body.move_confirmed, false); assert.equal(body.remote_sku, "B"); assert.equal(body.spec_id, "quarter")
+        assert.equal(body.expected_source_mapping_id, null); assert.equal(body.expected_target_mapping_id, null)
+        mappings.push({ ...mappings[0], id: "mapping-2", remote_goods_id: goodsId, remote_sku: "B", spec_id: "quarter", sku_type: 2 })
+      }
+      return route.fulfill(ok({ product_id: local.id, created: false }))
+    }
     return route.fulfill(ok({}))
   })
   await page.goto(new URL("/admin/suppliers", base).href)
@@ -115,9 +144,31 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByLabel("本地分类").selectOption("local-category")
   await page.getByRole("button", { name: "导入商品" }).click()
-  await page.getByRole("button", { name: "同步", exact: true }).waitFor()
-  await page.getByRole("button", { name: "同步", exact: true }).click()
+  await page.getByRole("button", { name: "同步库存", exact: true }).waitFor()
+  await page.getByRole("button", { name: "同步库存", exact: true }).click()
   await page.getByText("0.02000000", { exact: false }).waitFor()
+  page.once("dialog", modal => { assert.match(modal.message(), /覆盖本地图片/); void modal.accept() })
+  await page.getByRole("button", { name: "同步商品资料", exact: true }).click()
+  await page.getByText("商品资料已同步").waitFor()
+  assert.equal(presentationPosts, 1)
+  await page.getByLabel("覆盖已有").check()
+  await page.getByLabel("搜索本地商品").fill("会员")
+  await page.getByLabel("搜索本地商品").locator("..").locator("..").getByRole("button", { name: "搜索" }).click()
+  await page.getByLabel("本地商品").last().selectOption(local.id)
+  await page.getByLabel("本地规格").selectOption("month")
+  page.once("dialog", modal => { assert.match(modal.message(), /移动绑定/); void modal.accept() })
+  await page.getByRole("button", { name: "确认绑定" }).click()
+  await page.getByText("货源绑定已保存").waitFor()
+  assert.equal(bindingPosts.length, 1)
+  await page.getByRole("button", { name: /模拟多规格商品/ }).click()
+  await page.getByLabel("本地规格").selectOption("quarter")
+  await page.locator("label").filter({ hasText: "上游规格" }).locator("select").selectOption("B")
+  await page.setViewportSize({ width: 390, height: 844 })
+  assert.ok(await page.locator("body").evaluate(el => el.scrollWidth <= window.innerWidth), "mobile binding form must not overflow")
+  page.once("dialog", modal => modal.accept())
+  await Promise.all([page.waitForResponse(response => response.url().endsWith("/goods/31396/bind")), page.getByRole("button", { name: "确认绑定" }).click()])
+  assert.equal(bindingPosts.length, 2)
+  await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByRole("button", { name: "加载更多" }).click()
   await page.getByRole("button", { name: "加载更多" }).waitFor({ state: "hidden" })
   assert.equal(listReads, 2)
@@ -130,5 +181,5 @@ try {
   await scrollRegion.focus()
   assert.ok(await scrollRegion.evaluate(element => document.activeElement === element), "table scroll region must be keyboard focusable")
   assert.ok(await page.locator("body").evaluate(el => el.scrollWidth <= window.innerWidth), "mobile page must not overflow")
-  console.log("Supplier UI: account, connection, catalog, import, sync, transfer review, CDKEY result and mobile layout passed")
+  console.log("Supplier UI: import, source move, selected SKU binding, presentation sync and mobile layout passed; existing account and sensitive-operation fixtures passed")
 } finally { await browser.close() }

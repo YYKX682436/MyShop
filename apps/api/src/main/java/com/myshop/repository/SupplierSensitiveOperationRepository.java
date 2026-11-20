@@ -16,6 +16,10 @@ public interface SupplierSensitiveOperationRepository extends JpaRepository<Supp
     @Query("select count(o)>0 from SupplierSensitiveOperation o where o.accountId=:account and o.kind=:kind and "
             + "(o.status in ('INTENT','SUBMITTING') or (o.status='UNKNOWN' and (o.reviewOutcome is null or o.reviewOutcome<>'MANUAL_HANDLING')))")
     boolean hasUnresolved(@Param("account") UUID accountId,@Param("kind") String kind);
+    @Query(value="select exists(select 1 from supplier_sensitive_operations where account_id=:account " +
+            "and kind='CDKEY' and parameters->>'goods_id'=:goodsId " +
+            "and status in ('INTENT','SUBMITTING','UNKNOWN'))", nativeQuery=true)
+    boolean hasUnfinishedCdkeyForGoods(@Param("account") UUID accountId, @Param("goodsId") String goodsId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select o from SupplierSensitiveOperation o where o.id=:id")
     Optional<SupplierSensitiveOperation> findForUpdate(@Param("id") UUID id);

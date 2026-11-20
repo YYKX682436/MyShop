@@ -95,6 +95,7 @@ export interface ProductSpec {
   card_key_count?: number
   is_visible?: boolean
   sort_order?: number
+  supplier_input_fields?: CustomerInputField[]
 }
 
 export type PricingType = "RETAIL" | "COST_MARKUP"

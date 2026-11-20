@@ -548,7 +548,7 @@ public class AdminProductServiceImpl implements AdminProductService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品只能通过货源管理导入");
         }
         if (!creating && product.getStockMode() == StockMode.SUPPLIER) {
-            if (Boolean.TRUE.equals(request.isEnabled())) {
+            if (Boolean.TRUE.equals(request.isEnabled()) && !product.isEnabled()) {
                 if (supplierCheckout==null) throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售");
                 supplierCheckout.validateActivation(product);
             }

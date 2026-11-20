@@ -190,7 +190,8 @@ public class OrderServiceImpl implements OrderService {
             validatePaymentRequest(req, paymentMethod, paymentChannelCode);
         }
 
-        Product product = productRepository.findById(productId)
+        // Serialize checkout snapshots with inventory-mode and supplier binding changes.
+        Product product = productRepository.findByIdForUpdate(productId)
                 .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
 

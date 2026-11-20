@@ -77,7 +77,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
     firstPurchasableSpec(product.specs ?? [])
   ))
   const [quantity, setQuantity] = useState(1)
-  const customerInputFields = product.customer_input_fields ?? []
+  const customerInputFields = [...(product.customer_input_fields ?? []), ...(selectedSpec?.supplier_input_fields ?? [])]
   const [customerInputs, setCustomerInputs] = useState<Record<string, string>>(() => (
     Object.fromEntries(customerInputFields.map((field) => [field.id, ""]))
   ))
@@ -376,6 +376,8 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                           onClick={() => {
                             setSelectedSpec(spec)
                             setQuantity(1)
+                            setCustomerInputs({})
+                            setCustomerInputErrors({})
                           }}
                           className={cn(
                             "min-h-11 rounded-control border px-3 py-2 text-left text-sm font-medium transition-[border-color,background-color,opacity] duration-180",

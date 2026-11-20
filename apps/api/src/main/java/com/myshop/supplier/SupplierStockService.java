@@ -42,10 +42,10 @@ public class SupplierStockService {
         }
         return result;
     }
-    public List<CustomerInputField> fields(UUID productId) {
-        var rows=mappings.findByProductId(productId);
-        if (rows.isEmpty()) return List.of();
-        try { var first=rows.getFirst(); return suppliers.customerFields(first.getAccountId(),first.getSnapshot()); }
+    public List<CustomerInputField> fields(UUID productId, UUID specId) {
+        var row=mappings.findLocal(productId,specId);
+        if (row.isEmpty()) return List.of();
+        try { var mapping=row.get(); return suppliers.customerFields(mapping.getAccountId(),mapping.getSnapshot()); }
         catch (RuntimeException ignored) { return List.of(); }
     }
 }

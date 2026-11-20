@@ -5,7 +5,7 @@ import { existsSync } from "node:fs"
 import { chromium } from "playwright"
 
 // Entirely local fixtures: no payment or supplier request leaves this process.
-const product = { id: "fixture-product", title: "模拟直充商品", description: "", detail_md: "", cover_url: null,
+let product = { id: "fixture-product", title: "模拟直充商品", description: "", detail_md: "", cover_url: null,
   price: 10, retail_price: 10, category_id: "cat", category_name: "测试", stock_available: 10,
   unlimited: false, has_specs: false, delivery_type: "AUTO", stock_mode: "SUPPLIER", sales_count: 0,
   initial_sales: 0, spec_enabled: false, specs: [], created_at: "2026-01-01T00:00:00", customer_input_fields: [
@@ -96,6 +96,28 @@ try {
   assert.equal(payload.customer_inputs.find(value => value.id === "zone").value, "zone-1")
   assert.equal(payload.customer_inputs.find(value => value.id === "note").value, "第一行\n第二行")
   assert.ok(await page.locator("body").evaluate(element => element.scrollWidth <= innerWidth))
+  product = { ...product, has_specs: true, spec_enabled: true, customer_input_fields: [],
+    detail_md: "商品说明\n\n![商品图片](/api/uploads/fixture.png)\n\n<script>window.fixtureInjected=true</script>",
+    specs: [
+      { id: "month", name: "月卡", price: 10, retail_price: 10, stock_available: 5, unlimited: false, stock_mode: "SUPPLIER", supplier_input_fields: [{ id: "account-a", label: "月卡账号", type: "TEXT", required: true }] },
+      { id: "quarter", name: "季卡", price: 20, retail_price: 20, stock_available: 5, unlimited: false, stock_mode: "SUPPLIER", supplier_input_fields: [{ id: "account-b", label: "季卡账号", type: "TEXT", required: true }] },
+      { id: "year", name: "未绑定年卡", price: 30, retail_price: 30, stock_available: 0, unlimited: false, stock_mode: "SUPPLIER", supplier_input_fields: [] },
+    ] }
+  await page.reload()
+  await page.locator('img[alt="商品图片"]').waitFor()
+  assert.equal(await page.evaluate(() => window.fixtureInjected), undefined)
+  await page.getByRole("button", { name: "立即购买" }).click()
+  await dialog.getByLabel("月卡账号").fill("month-user")
+  assert.equal(await dialog.getByRole("button", { name: /未绑定年卡/ }).isDisabled(), true)
+  await dialog.getByRole("button", { name: "季卡", exact: true }).click()
+  await dialog.getByLabel("季卡账号").fill("quarter-user")
+  assert.equal(await dialog.getByLabel("月卡账号").count(), 0)
+  await Promise.all([
+    page.waitForResponse(response => new URL(response.url()).pathname === "/api/orders" && response.request().method() === "POST"),
+    dialog.locator('button[type="submit"]').click(),
+  ])
+  assert.equal(payload.spec_id, "quarter")
+  assert.deepEqual(payload.customer_inputs.map(value => value.id), ["account-b"])
   await page.goto(`${base}/order/fixture-order`)
   await page.getByText("正在处理", { exact: true }).waitFor()
   await page.getByText("充值排队中", { exact: true }).waitFor()
@@ -114,7 +136,7 @@ try {
   await page.getByRole("button", { name: "查询最新状态" }).click()
   await page.waitForFunction(() => document.body.innerText.includes("模拟货源"))
   assert.equal(refreshed,1)
-  console.log("Supplier order UI: mobile inputs and order progress, admin status refresh, and selected upstream value passed; requests were intercepted locally")
+  console.log("Supplier order UI: per-spec inputs, unbound stock, safe detail rendering, mobile order progress and admin status passed; requests were intercepted locally")
 } finally {
   if (browser) await browser.close()
   web.kill("SIGTERM")

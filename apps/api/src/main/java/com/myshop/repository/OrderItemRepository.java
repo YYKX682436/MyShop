@@ -14,6 +14,19 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, UUID> {
 
     List<OrderItem> findByOrderIdIn(List<UUID> orderIds);
 
+    @Query("SELECT (COUNT(oi) > 0) FROM OrderItem oi JOIN Order o ON oi.orderId = o.id " +
+            "WHERE oi.productId = :productId AND (:allSpecs = true OR " +
+            "((:specId IS NULL AND oi.specId IS NULL) OR oi.specId = :specId)) " +
+            "AND (o.status IN (com.myshop.constant.OrderStatus.PENDING, com.myshop.constant.OrderStatus.PAID, " +
+            "com.myshop.constant.OrderStatus.AFTER_SALE) OR oi.manualStockReserved > 0)")
+    boolean hasUnfinishedForBinding(@Param("productId") UUID productId, @Param("specId") UUID specId,
+                                    @Param("allSpecs") boolean allSpecs);
+
+    @Query("select distinct oi.orderId from OrderItem oi where oi.productId=:productId and " +
+            "(:allSpecs=true or ((:specId is null and oi.specId is null) or oi.specId=:specId))")
+    List<UUID> orderIdsForBinding(@Param("productId") UUID productId, @Param("specId") UUID specId,
+                                  @Param("allSpecs") boolean allSpecs);
+
     @Query("SELECT COALESCE(SUM(oi.quantity), 0) FROM OrderItem oi JOIN Order o ON oi.orderId = o.id " +
             "WHERE oi.productId = :productId AND o.orderType = com.myshop.constant.OrderType.NORMAL " +
             "AND (o.status = com.myshop.constant.OrderStatus.PAID OR o.status = com.myshop.constant.OrderStatus.DELIVERED " +

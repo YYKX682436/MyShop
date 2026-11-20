@@ -55,6 +55,8 @@ public interface CardKeyRepository extends JpaRepository<CardKey, UUID> {
 
     long countByProductIdAndStatus(UUID productId, CardKeyStatus status);
 
+    long countByProductId(UUID productId);
+
     long countByStatus(CardKeyStatus status);
 
     @Query(value = "SELECT COUNT(ck.id) FROM card_keys ck "

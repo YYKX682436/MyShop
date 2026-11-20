@@ -15,6 +15,7 @@ import com.myshop.supplier.SupplierModels;
 import com.myshop.supplier.SupplierProvider;
 import com.myshop.supplier.SupplierSecretCipher;
 import com.myshop.supplier.SupplierService;
+import com.myshop.supplier.SupplierCatalogTransaction;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -125,6 +126,261 @@ class SupplierCatalogPostgresIntegrationTest {
                 json.readTree("{\"rechargeTemplates\":[{\"type\":0},{\"type\":1},{\"type\":13},{\"type\":14},{\"type\":15},{\"type\":16,\"required\":1,\"regex\":\".*\",\"options\":[{\"value\":\"x\",\"children\":[{\"value\":\"y\"}],\"expand\":[{\"type\":0}]}]}],\"isRefOrder\":1,\"warrantyTime\":30}"));
     }
 
+    private UUID localProduct(boolean specsEnabled) {
+        UUID id=UUID.randomUUID();
+        jdbc.update("insert into products (id,title,description,detail_md,retail_price,cost_price,category_id,stock_mode,spec_enabled,is_enabled) values (?,'本地名称','本地简介','本地详情',20,?,?, 'CARD_KEY',?,false)",
+                id,specsEnabled ? null : BigDecimal.ONE,category,specsEnabled);
+        return id;
+    }
+    private UUID localSpec(UUID product,String name,int price) {
+        UUID id=UUID.randomUUID();
+        jdbc.update("insert into product_specs (id,product_id,name,retail_price,cost_price) values (?,?,?,?,1)",id,product,name,price);
+        return id;
+    }
+    private SupplierCatalogTransaction.BindingExpectation expected(SupplierService.MappingView target,SupplierService.MappingView source) {
+        return new SupplierCatalogTransaction.BindingExpectation(target==null ? null : target.id(),source==null ? null : source.id(),
+                source==null ? null : source.productId(),source==null ? null : source.specId());
+    }
+    private void bind(UUID account,String goods,UUID product,UUID spec,String sku,boolean move,
+                      SupplierService.MappingView target,SupplierService.MappingView source) {
+        service.bind(account,goods,product,spec,sku,true,move,expected(target,source));
+    }
+    private void addOrder(UUID order,UUID item,UUID product,UUID spec,String status) {
+        jdbc.update("insert into orders (id,status,payment_method,total_amount,actual_amount) values (?,?,'BALANCE',20,20)",order,status);
+        jdbc.update("insert into order_items (id,order_id,product_id,spec_id,product_title,quantity,unit_price,subtotal,cost_price_snapshot,retail_price_snapshot,product_no) select ?,?,?,?,'snapshot',1,20,20,1,20,product_no from products where id=?",
+                item,order,product,spec,product);
+    }
+    private void removeOrder(UUID order) {
+        jdbc.update("delete from supplier_aftercare_operations where purchase_id in (select id from supplier_purchases where order_id=?)",order);
+        jdbc.update("delete from supplier_purchases where order_id=?",order);
+        jdbc.update("delete from order_items where order_id=?",order);
+        jdbc.update("delete from orders where id=?",order);
+    }
+
+    @Test void bindsIndependentSpecsAcrossSitesAndSyncsOnlyMappedSku() throws Exception {
+        var a=account("spec-a","fake-secret-a"); var b=account("spec-b","fake-secret-b");
+        fixture.goods.put("111",product("111",1,0,"0.10",20));
+        fixture.goods.put("112",product("112",1,2,"0.20",30));
+        fixture.goods.put("113",product("113",1,0,"0.30",40));
+        UUID local=localProduct(true), month=localSpec(local,"月卡",10), quarter=localSpec(local,"季卡",30), year=localSpec(local,"年卡",60);
+        bind(a.id(),"111",local,month,"",false,null,null);
+        bind(a.id(),"112",local,quarter,"A",false,null,null);
+        bind(b.id(),"113",local,year,"",false,null,null);
+        var all=service.productMappings(local);
+        assertEquals(3,all.size());
+        assertEquals(List.of("111","112","113"),List.of(
+                all.stream().filter(x->month.equals(x.specId())).findFirst().orElseThrow().remoteGoodsId(),
+                all.stream().filter(x->quarter.equals(x.specId())).findFirst().orElseThrow().remoteGoodsId(),
+                all.stream().filter(x->year.equals(x.specId())).findFirst().orElseThrow().remoteGoodsId()));
+        assertEquals(StockMode.SUPPLIER,products.findById(local).orElseThrow().getStockMode());
+        var original=fixture.goods.get("112");
+        fixture.goods.put("112",new SupplierModels.Product(original.id(),"远程改名",original.goodsType(),original.status(),original.skuType(),
+                original.multiple(),original.minQuantity(),original.maxQuantity(),List.of(
+                new SupplierModels.Sku("A","远程改名","",new BigDecimal("0.45"),8,1),
+                new SupplierModels.Sku("NEW","新增规格","",new BigDecimal("0.60"),9,1)),original.snapshot()));
+        service.sync(a.id(),"112");
+        assertEquals(3,jdbc.queryForObject("select count(*) from product_specs where product_id=?",Integer.class,local));
+        assertEquals(3,service.productMappings(local).size());
+        assertEquals("季卡",jdbc.queryForObject("select name from product_specs where id=?",String.class,quarter));
+        assertEquals(new BigDecimal("30.00"),jdbc.queryForObject("select retail_price from product_specs where id=?",BigDecimal.class,quarter));
+        assertEquals(new BigDecimal("0.90"),jdbc.queryForObject("select cost_price from product_specs where id=?",BigDecimal.class,quarter));
+        assertEquals(new BigDecimal("0.60"),jdbc.queryForObject("select cost_price from product_specs where id=?",BigDecimal.class,year));
+        assertEquals(40,service.productMappings(local).stream().filter(x->year.equals(x.specId())).findFirst().orElseThrow().stock());
+        assertEquals("本地名称",products.findById(local).orElseThrow().getTitle());
+        assertEquals("本地详情",products.findById(local).orElseThrow().getDetailMd());
+    }
+
+    @Test void presentationIsImportedAndOnlyExplicitSyncReplacesLocalContent() throws Exception {
+        var a=account("presentation","fake-secret-a"); var initial=product("115",1,0,"0.10",20);
+        var snapshot=json.readTree("{\"imgUrl\":\"/img/main.png\",\"goodsDescribe\":\"简介\",\"goodsDetail\":\"<p>上游详情</p><img src='/img/a.png'>\",\"buyNotice\":\"购买前阅读\"}");
+        fixture.goods.put("115",new SupplierModels.Product(initial.id(),initial.name(),initial.goodsType(),initial.status(),initial.skuType(),
+                initial.multiple(),initial.minQuantity(),initial.maxQuantity(),initial.skus(),snapshot));
+        UUID local=service.importProduct(a.id(),"115",category).productId();
+        var imported=products.findById(local).orElseThrow();
+        assertEquals("上游商品115",imported.getTitle()); assertEquals("简介",imported.getDescription());
+        assertEquals("https://supplier.example/img/main.png",imported.getCoverUrl());
+        assertTrue(imported.getDetailMd().contains("https://supplier.example/img/a.png"));
+        assertTrue(imported.getDetailMd().contains("购买提醒"));
+        jdbc.update("update products set title='自己命名',description='自己简介',detail_md='自己详情',retail_price=9.99 where id=?",local);
+        service.sync(a.id(),"115");
+        assertEquals("自己详情",products.findById(local).orElseThrow().getDetailMd());
+        assertThrows(SupplierException.class,()->service.syncPresentation(a.id(),"115",local,false));
+        service.syncPresentation(a.id(),"115",local,true);
+        var updated=products.findById(local).orElseThrow();
+        assertEquals("自己命名",updated.getTitle()); assertEquals(new BigDecimal("9.99"),updated.getRetailPrice());
+        assertEquals(category,updated.getCategoryId()); assertEquals("简介",updated.getDescription());
+        assertTrue(updated.getDetailMd().contains("上游详情"));
+    }
+
+    @Test void enabledLocalProductCanStillEditNamesAndPricesAfterBindingWhenPurchasingIsDisabled() throws Exception {
+        var a=account("edit-converted","fake-secret-a"); fixture.goods.put("117",product("117",1,0,"0.10",20));
+        UUID local=localProduct(true),first=localSpec(local,"月卡",10),second=localSpec(local,"季卡",30);
+        jdbc.update("update products set is_enabled=true where id=?",local);
+        bind(a.id(),"117",local,first,"",false,null,null);
+        var requested=List.of(
+                new com.myshop.model.request.AdminProductSpecRequest(first,"新月卡",new BigDecimal("99"),new BigDecimal("12"),true,0,null),
+                new com.myshop.model.request.AdminProductSpecRequest(second,"新季卡",new BigDecimal("99"),new BigDecimal("32"),true,1,null));
+        var update=new com.myshop.model.request.AdminProductUpsertRequest("我的商品","简介","详情",null,
+                null,new BigDecimal("12"),category,10,true,true,0,0,"AUTO",List.of(),StockMode.SUPPLIER,null,requested,List.of());
+        adminProducts.updateProduct(local,update);
+        assertTrue(products.findById(local).orElseThrow().isEnabled());
+        assertEquals("我的商品",products.findById(local).orElseThrow().getTitle());
+        assertEquals("新月卡",jdbc.queryForObject("select name from product_specs where id=?",String.class,first));
+        assertEquals(new BigDecimal("12.00"),jdbc.queryForObject("select retail_price from product_specs where id=?",BigDecimal.class,first));
+        assertEquals(new BigDecimal("0.20"),jdbc.queryForObject("select cost_price from product_specs where id=?",BigDecimal.class,first));
+        assertEquals(new BigDecimal("1.00"),jdbc.queryForObject("select cost_price from product_specs where id=?",BigDecimal.class,second));
+        assertThrows(BusinessException.class,()->orders.createDirectOrder(Map.of("product_id",local.toString(),"spec_id",first.toString(),"quantity",1,"payment_method","BALANCE"),null,"127.0.0.1","guest-session"));
+    }
+
+    @Test void syncUpdatesDifferentProductsBoundToOneUpstreamGoodsWithoutAddingSpecs() throws Exception {
+        var a=account("split-goods","fake-secret-a"); fixture.goods.put("116",product("116",1,2,"0.10",20));
+        UUID one=localProduct(true),two=localProduct(true),first=localSpec(one,"我的月卡",10),second=localSpec(two,"我的年卡",50);
+        bind(a.id(),"116",one,first,"A",false,null,null);
+        bind(a.id(),"116",two,second,"B",false,null,null);
+        fixture.goods.put("116",product("116",1,2,"0.25",8));
+        service.sync(a.id(),"116");
+        assertEquals(new BigDecimal("0.50"),jdbc.queryForObject("select cost_price from product_specs where id=?",BigDecimal.class,first));
+        assertEquals(new BigDecimal("0.50"),jdbc.queryForObject("select cost_price from product_specs where id=?",BigDecimal.class,second));
+        assertEquals(2,jdbc.queryForObject("select count(*) from product_specs where product_id in (?,?)",Integer.class,one,two));
+        assertEquals("我的月卡",jdbc.queryForObject("select name from product_specs where id=?",String.class,first));
+        assertEquals("我的年卡",jdbc.queryForObject("select name from product_specs where id=?",String.class,second));
+    }
+
+    @Test void sourceMoveRequiresConfirmationAndPreservesHistoricalPurchase() throws Exception {
+        var a=account("move","fake-secret-a"); fixture.goods.put("120",product("120",1,0,"0.10",20));
+        UUID old=service.importProduct(a.id(),"120",category).productId(), target=localProduct(false);
+        var source=service.mappings(a.id()).getFirst();
+        UUID order=UUID.randomUUID(),item=UUID.randomUUID(),purchase=UUID.randomUUID(),operation=UUID.randomUUID();
+        try {
+            addOrder(order,item,old,null,"DELIVERED");
+            jdbc.update("insert into supplier_purchases (id,order_id,order_item_id,account_id,remote_goods_id,remote_sku,goods_type,outer_number,buyer_quantity,multiple,actual_quantity,unit_cost,safe_price,status) values (?,?,?,?,?,'',1,?,1,2,2,0.1,0.2,'UNKNOWN')",
+                    purchase,order,item,a.id(),"120","fixture-"+purchase);
+            assertThrows(SupplierException.class,()->bind(a.id(),"120",target,null,"",false,null,source));
+            assertThrows(SupplierException.class,()->bind(a.id(),"120",target,null,"",true,null,source));
+            jdbc.update("update supplier_purchases set status='COMPLETED' where id=?",purchase);
+            jdbc.update("insert into supplier_aftercare_operations (id,account_id,purchase_id,kind,idempotency_key,operator_id,status) values (?,?,?,'REFUND',?,?,'UNKNOWN')",operation,a.id(),purchase,UUID.randomUUID(),UUID.randomUUID());
+            assertThrows(SupplierException.class,()->bind(a.id(),"120",target,null,"",true,null,source));
+            jdbc.update("delete from supplier_aftercare_operations where id=?",operation);
+            bind(a.id(),"120",target,null,"",true,null,source);
+            assertEquals(target,service.mappings(a.id()).getFirst().productId());
+            assertTrue(service.productMappings(old).isEmpty());
+            assertEquals("120",jdbc.queryForObject("select remote_goods_id from supplier_purchases where id=?",String.class,purchase));
+            assertEquals(a.id(),jdbc.queryForObject("select account_id from supplier_purchases where id=?",UUID.class,purchase));
+            assertEquals("",jdbc.queryForObject("select remote_sku from supplier_purchases where id=?",String.class,purchase));
+            assertEquals("本地名称",products.findById(target).orElseThrow().getTitle());
+        } finally { removeOrder(order); }
+    }
+
+    @Test void localCardKeysPreventConversionAndAreNotModified() throws Exception {
+        var a=account("local-stock","fake-secret-a"); fixture.goods.put("130",product("130",1,0,"0.10",20));
+        UUID local=localProduct(false), card=UUID.randomUUID();
+        try {
+            jdbc.update("insert into card_keys (id,product_id,content_parts,content_fingerprint,status) values (?,?,'[\"fixture\"]'::jsonb,?,'AVAILABLE')",card,local,"a".repeat(64));
+            assertThrows(SupplierException.class,()->bind(a.id(),"130",local,null,"",false,null,null));
+            assertEquals(StockMode.CARD_KEY,products.findById(local).orElseThrow().getStockMode());
+            assertEquals("AVAILABLE",jdbc.queryForObject("select status from card_keys where id=?",String.class,card));
+            assertTrue(service.productMappings(local).isEmpty());
+        } finally { jdbc.update("delete from card_keys where id=?",card); }
+    }
+
+    @Test void reservedManualStockAndUnresolvedCdkeyBothPreventBinding() throws Exception {
+        var a=account("blocked-operations","fake-secret-a"); fixture.goods.put("131",product("131",1,0,"0.10",20));
+        UUID local=localProduct(false), stock=UUID.randomUUID(), operation=UUID.randomUUID();
+        try {
+            jdbc.update("update products set stock_mode='MANUAL',delivery_type='MANUAL' where id=?",local);
+            jdbc.update("insert into manual_stocks (id,product_id,available_quantity,reserved_quantity) values (?,?,0,1)",stock,local);
+            assertThrows(SupplierException.class,()->bind(a.id(),"131",local,null,"",false,null,null));
+            assertEquals(1,jdbc.queryForObject("select reserved_quantity from manual_stocks where id=?",Integer.class,stock));
+            jdbc.update("delete from manual_stocks where id=?",stock);
+            jdbc.update("insert into supplier_sensitive_operations (id,account_id,account_name_snapshot,provider_type_snapshot,base_url_snapshot,app_id_snapshot,kind,idempotency_key,operator_id,status,parameters) values (?,?,'fixture','FIXTURE','https://fixture.example','fixture','CDKEY',?,?,'UNKNOWN','{\"goods_id\":\"131\"}'::jsonb)",operation,a.id(),UUID.randomUUID(),UUID.randomUUID());
+            assertThrows(SupplierException.class,()->bind(a.id(),"131",local,null,"",false,null,null));
+            assertTrue(service.productMappings(local).isEmpty());
+        } finally {
+            jdbc.update("delete from supplier_sensitive_operations where id=?",operation);
+            jdbc.update("delete from manual_stocks where id=?",stock);
+        }
+    }
+
+    @Test void concurrentConfirmedBindingsCannotSilentlyReplaceOneAnother() throws Exception {
+        var a=account("race-a","fake-secret-a"); var b=account("race-b","fake-secret-b");
+        fixture.goods.put("141",product("141",1,0,"0.10",20)); fixture.goods.put("142",product("142",1,0,"0.20",20));
+        UUID local=localProduct(false);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2); var start=new java.util.concurrent.CountDownLatch(1);
+        try {
+            var one=pool.submit(()-> { start.await(); try { bind(a.id(),"141",local,null,"",false,null,null); return true; } catch (SupplierException ex) { return false; } });
+            var two=pool.submit(()-> { start.await(); try { bind(b.id(),"142",local,null,"",false,null,null); return true; } catch (SupplierException ex) { return false; } });
+            start.countDown();
+            assertNotEquals(one.get(10,java.util.concurrent.TimeUnit.SECONDS),two.get(10,java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(1,service.productMappings(local).size());
+            var winner=service.productMappings(local).getFirst();
+            UUID loser=winner.accountId().equals(a.id()) ? b.id() : a.id();
+            String goods=winner.accountId().equals(a.id()) ? "142" : "141";
+            assertThrows(SupplierException.class,()->bind(loser,goods,local,null,"",false,null,null));
+            bind(loser,goods,local,null,"",false,winner,null);
+            assertEquals(loser,service.productMappings(local).getFirst().accountId());
+        } finally { pool.shutdownNow(); }
+    }
+
+    @Test void conversionWaitsForCheckoutLockAndRejectsNewPendingOrder() throws Exception {
+        var a=account("order-lock","fake-secret-a"); fixture.goods.put("150",product("150",1,0,"0.10",20));
+        UUID local=localProduct(false),order=UUID.randomUUID(),item=UUID.randomUUID();
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        var locked=new java.util.concurrent.CountDownLatch(1); var release=new java.util.concurrent.CountDownLatch(1);
+        try {
+            var checkout=pool.submit(()->new TransactionTemplate(transactionManager).execute(status->{
+                jdbc.queryForObject("select id from products where id=? for update",UUID.class,local);
+                locked.countDown();
+                try { if (!release.await(5,java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("timeout"); }
+                catch (InterruptedException ex) { Thread.currentThread().interrupt(); throw new IllegalStateException(ex); }
+                addOrder(order,item,local,null,"PENDING"); return null;
+            }));
+            assertTrue(locked.await(5,java.util.concurrent.TimeUnit.SECONDS));
+            var binding=pool.submit(()-> { bind(a.id(),"150",local,null,"",false,null,null); return null; });
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(3); boolean waiting=false;
+            while (System.nanoTime()<deadline) {
+                if (jdbc.queryForObject("select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%products%'",Integer.class)>0) { waiting=true; break; }
+                Thread.sleep(20);
+            }
+            assertTrue(waiting,"binding must wait for checkout product lock");
+            release.countDown(); checkout.get(5,java.util.concurrent.TimeUnit.SECONDS);
+            assertInstanceOf(SupplierException.class,assertThrows(java.util.concurrent.ExecutionException.class,()->binding.get(5,java.util.concurrent.TimeUnit.SECONDS)).getCause());
+            assertTrue(service.productMappings(local).isEmpty());
+            assertEquals(StockMode.CARD_KEY,products.findById(local).orElseThrow().getStockMode());
+        } finally { release.countDown(); pool.shutdownNow(); removeOrder(order); }
+    }
+
+    @Test void checkoutCanPersistExistingSupplierSnapshotWhileReplacementWaits() throws Exception {
+        var a=account("checkout-source","fake-secret-a"); var b=account("checkout-new","fake-secret-b");
+        fixture.goods.put("151",product("151",1,0,"0.10",20)); fixture.goods.put("152",product("152",1,0,"0.20",20));
+        UUID local=localProduct(false),order=UUID.randomUUID(),item=UUID.randomUUID(),purchase=UUID.randomUUID();
+        bind(a.id(),"151",local,null,"",false,null,null); var target=service.productMappings(local).getFirst();
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        var locked=new java.util.concurrent.CountDownLatch(1); var release=new java.util.concurrent.CountDownLatch(1);
+        try {
+            var checkout=pool.submit(()->new TransactionTemplate(transactionManager).execute(status->{
+                jdbc.queryForObject("select id from products where id=? for update",UUID.class,local); locked.countDown();
+                try { if (!release.await(5,java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("timeout"); }
+                catch (InterruptedException ex) { Thread.currentThread().interrupt(); throw new IllegalStateException(ex); }
+                addOrder(order,item,local,null,"PENDING");
+                jdbc.update("insert into supplier_purchases (id,order_id,order_item_id,account_id,remote_goods_id,remote_sku,goods_type,outer_number,buyer_quantity,multiple,actual_quantity,unit_cost,safe_price,status) values (?,?,?,?,?,'',1,?,1,2,2,0.1,0.2,'WAITING_PAYMENT')",
+                        purchase,order,item,a.id(),"151","fixture-"+purchase);
+                return null;
+            }));
+            assertTrue(locked.await(5,java.util.concurrent.TimeUnit.SECONDS));
+            var binding=pool.submit(()-> { bind(b.id(),"152",local,null,"",false,target,null); return null; });
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(3); boolean waiting=false;
+            while (System.nanoTime()<deadline) {
+                if (jdbc.queryForObject("select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%products%'",Integer.class)>0) { waiting=true; break; }
+                Thread.sleep(20);
+            }
+            assertTrue(waiting); release.countDown();
+            checkout.get(10,java.util.concurrent.TimeUnit.SECONDS);
+            assertInstanceOf(SupplierException.class,assertThrows(java.util.concurrent.ExecutionException.class,()->binding.get(10,java.util.concurrent.TimeUnit.SECONDS)).getCause());
+            assertEquals(a.id(),service.productMappings(local).getFirst().accountId());
+            assertEquals("151",jdbc.queryForObject("select remote_goods_id from supplier_purchases where id=?",String.class,purchase));
+        } finally { release.countDown(); pool.shutdownNow(); removeOrder(order); }
+    }
+
     @Test void encryptsCredentialsKeepsEditSecretAndSeparatesSitesWithSameGoodsId() throws Exception {
         var a=account("a","fake-secret-a"); var b=account("b","fake-secret-b");
         assertEquals("10.00",service.test(a.id()).balance().toPlainString());
@@ -174,6 +430,21 @@ class SupplierCatalogPostgresIntegrationTest {
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         assertTrue(mappingResponse.contains("remote_goods_id")); assertTrue(mappingResponse.contains("0.01234567"));
         assertTrue(json.readTree(mappingResponse).path("data").get(0).path("cost").isTextual());
+        var source=json.readTree(mappingResponse).path("data").get(0);
+        UUID target=localProduct(true), targetSpec=localSpec(target,"自选规格",50);
+        var bindBody=json.createObjectNode().put("product_id",target.toString()).put("spec_id",targetSpec.toString())
+                .put("remote_sku",source.path("remote_sku").asText()).put("confirmed",true).put("move_confirmed",false)
+                .put("expected_source_mapping_id",source.path("id").asText()).put("expected_source_product_id",source.path("product_id").asText())
+                .put("expected_source_spec_id",source.path("spec_id").asText());
+        String bindPath="/api/admin/suppliers/"+accountId+"/goods/60/bind";
+        mvc.perform(post(bindPath).contextPath("/api").with(user("buyer").roles("USER")).cookie(csrf).header("X-CSRF-Token","test-csrf")
+                .contentType("application/json").content(bindBody.toString())).andExpect(status().isForbidden());
+        mvc.perform(post(bindPath).contextPath("/api").cookie(auth,csrf).header("X-CSRF-Token","test-csrf")
+                .contentType("application/json").content(bindBody.toString())).andExpect(status().isBadRequest());
+        bindBody.put("move_confirmed",true);
+        mvc.perform(post(bindPath).contextPath("/api").cookie(auth,csrf).header("X-CSRF-Token","test-csrf")
+                .contentType("application/json").content(bindBody.toString())).andExpect(status().isOk());
+        assertEquals(1,jdbc.queryForObject("select count(*) from operation_logs where user_id=? and action='supplier.bind'",Integer.class,adminId));
         assertFalse(detail.contains("fixture-secret-never-in-output")); assertFalse(mappingResponse.contains("fixture-secret-never-in-output"));
         assertEquals(2,jdbc.queryForObject("select count(*) from operation_logs where user_id=? and action in ('supplier.create','supplier.import')",Integer.class,adminId));
         mvc.perform(post("/api/admin/suppliers/"+accountId+"/status").contextPath("/api").cookie(auth,csrf).header("X-CSRF-Token","test-csrf")
