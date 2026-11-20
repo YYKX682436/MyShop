@@ -1265,15 +1265,23 @@ class PostgresDeliveryIntegrationTest {
         java.sql.Connection gate = webApplicationContext.getBean(javax.sql.DataSource.class).getConnection();
         ExecutorService workers = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
+        CountDownLatch bothStarted = new CountDownLatch(2);
         try {
             try (var statement = gate.createStatement()) { statement.execute("select pg_advisory_lock(7362539)"); }
-            Future<Map<String, Object>> a = workers.submit(() -> { start.await(); return orderService.createDirectOrder(request, null, "127.0.0.1", "first-race-owner"); });
-            Future<Map<String, Object>> b = workers.submit(() -> { start.await(); return orderService.createDirectOrder(request, null, "127.0.0.1", "first-race-owner"); });
+            Future<Map<String, Object>> a = workers.submit(() -> {
+                start.await(); bothStarted.countDown();
+                return orderService.createDirectOrder(request, null, "127.0.0.1", "first-race-owner");
+            });
+            Future<Map<String, Object>> b = workers.submit(() -> {
+                start.await(); bothStarted.countDown();
+                return orderService.createDirectOrder(request, null, "127.0.0.1", "first-race-owner");
+            });
             start.countDown();
+            assertTrue(bothStarted.await(5, TimeUnit.SECONDS), "both concurrent requests must start");
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
             String waiting = "select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%insert%orders%'";
-            while (System.nanoTime() < deadline && number(waiting) < 2) Thread.sleep(25);
-            assertTrue(number(waiting) >= 2, "both inserts must reach the database gate before either commits");
+            while (System.nanoTime() < deadline && number(waiting) < 1) Thread.sleep(25);
+            assertTrue(number(waiting) >= 1, "one order insert must reach the database gate while the same-product checkout is serialized");
             try (var statement = gate.createStatement()) { statement.execute("select pg_advisory_unlock(7362539)"); }
             Map<?, ?> firstOrder = (Map<?, ?>) a.get(15, TimeUnit.SECONDS).get("order");
             Map<?, ?> secondOrder = (Map<?, ?>) b.get(15, TimeUnit.SECONDS).get("order");
