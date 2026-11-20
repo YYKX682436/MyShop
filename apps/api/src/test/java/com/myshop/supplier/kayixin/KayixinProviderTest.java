@@ -143,4 +143,41 @@ class KayixinProviderTest {
         assertEquals(3,p.purchaseDetail(c,"fixed-outer").status());
         assertEquals(1,creates.get()); assertTrue(originalOuter.get());
     }
+    @Test void aftercareEndpointsUseSignedBodiesAndNeverRetryWrites() throws Exception {
+        AtomicInteger writes=new AtomicInteger(); AtomicBoolean signed=new AtomicBoolean(true);
+        server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/", exchange -> {
+            byte[] body=exchange.getRequestBody().readAllBytes();
+            String timestamp=exchange.getRequestHeaders().getFirst("X-Timestamp");
+            signed.set(signed.get() && KayixinProvider.signature("test-id","test-secret","3.0",timestamp,body)
+                    .equals(exchange.getRequestHeaders().getFirst("X-Signature")));
+            String path=exchange.getRequestURI().getPath();
+            if (!path.endsWith("getDetail")) writes.incrementAndGet();
+            String data=path.endsWith("refunds") ? "{\"status\":9}"
+                    : path.endsWith("create") ? "{\"reqId\":107}"
+                    : path.endsWith("void") ? "{\"status\":4,\"result\":\"处理中\"}"
+                    : "{\"cardId\":\"card-1\",\"status\":0,\"cancelRequest\":1}";
+            byte[] response=("{\"code\":1000,\"data\":"+data+"}").getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,response.length); exchange.getResponseBody().write(response); exchange.close();
+        }); server.start();
+        var p=new KayixinProvider(HttpClient.newHttpClient());
+        var c=new SupplierModels.Connection("http://127.0.0.1:"+server.getAddress().getPort(),"test-id","test-secret");
+        assertEquals(9,p.requestRefund(c,"outer-1").status());
+        assertEquals(107,p.createComplaint(c,new SupplierModels.ComplaintRequest("up-1","主题","说明","https://example.invalid/notify",List.of())).requestId());
+        assertEquals(0,p.cardDetail(c,"card-1").status());
+        assertEquals(4,p.voidCard(c,"card-1").status());
+        assertEquals(3,writes.get()); assertTrue(signed.get());
+    }
+    @Test void aftercareHttpResponseLossDoesNotReplayAnyWriteBody() throws Exception {
+        AtomicInteger count=new AtomicInteger();
+        server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/", exchange -> { count.incrementAndGet(); exchange.getRequestBody().readAllBytes(); exchange.close(); });
+        server.start();
+        var p=new KayixinProvider(HttpClient.newHttpClient());
+        var c=new SupplierModels.Connection("http://127.0.0.1:"+server.getAddress().getPort(),"test-id","test-secret");
+        assertThrows(SupplierException.class,() -> p.requestRefund(c,"outer-1")); assertEquals(1,count.get());
+        assertThrows(SupplierException.class,() -> p.voidCard(c,"card-1")); assertEquals(2,count.get());
+        assertThrows(SupplierException.class,() -> p.createComplaint(c,new SupplierModels.ComplaintRequest("up-1","主题","内容","https://example.invalid",List.of())));
+        assertEquals(3,count.get());
+    }
 }

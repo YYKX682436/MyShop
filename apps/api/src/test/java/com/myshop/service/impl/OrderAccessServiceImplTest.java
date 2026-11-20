@@ -7,6 +7,7 @@ import com.myshop.constant.StockMode;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
+import com.myshop.entity.PaymentAttempt;
 import com.myshop.exception.BusinessException;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.CardKeyRepository;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -59,6 +61,22 @@ class OrderAccessServiceImplTest {
         service = new OrderAccessServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
                 paymentAttemptRepository, orderService, paymentService, balanceOrderPaymentService,
                 cardKeyReclaimService, afterSaleService, new ObjectMapper(), transactionManager);
+    }
+
+    @Test
+    void disabledSupplierSalesHidePreviouslyIssuedPaymentAction() {
+        UUID orderId=UUID.randomUUID();
+        Order order=guestOrder(orderId,"session-a"); order.setStatus(OrderStatus.PENDING);
+        OrderItem item=item(UUID.randomUUID()); item.setStockMode(StockMode.SUPPLIER);
+        PaymentAttempt attempt=new PaymentAttempt(); attempt.setId(UUID.randomUUID());
+        attempt.setStatus(PaymentStatus.PENDING); attempt.setExpiresAt(LocalDateTime.now().plusMinutes(5));
+        attempt.setNextAction("{\"type\":\"qr_code\",\"value\":\"previous-link\"}");
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of());
+        when(paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId)).thenReturn(List.of(attempt));
+        Map<?,?> payment=(Map<?,?>)service.getOrder(orderId,null,"session-a").get("payment");
+        org.junit.jupiter.api.Assertions.assertNull(payment.get("next_action"));
     }
 
     @Test

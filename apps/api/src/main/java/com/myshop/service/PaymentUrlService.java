@@ -40,6 +40,16 @@ public class PaymentUrlService {
         }
         return publicSiteUrl + "/api/supplier-callback/" + requiredPathSegment(accountId,"accountId");
     }
+    public String supplierComplaintWebhookUrl(String accountId) {
+        String orderUrl=supplierWebhookUrl(accountId);
+        int cut=orderUrl.lastIndexOf('/');
+        return orderUrl.substring(0,cut) + "/complaint/" + requiredPathSegment(accountId,"accountId");
+    }
+    public String supplierGoodsWebhookUrl(String accountId) {
+        String orderUrl=supplierWebhookUrl(accountId);
+        int cut=orderUrl.lastIndexOf('/');
+        return orderUrl.substring(0,cut) + "/goods/" + requiredPathSegment(accountId,"accountId");
+    }
 
     public static String normalizePublicSiteUrl(String raw) {
         String value = raw == null ? "" : raw.trim();

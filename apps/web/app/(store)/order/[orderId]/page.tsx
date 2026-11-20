@@ -629,7 +629,11 @@ function DeliveryGroup({ group, startNumber, onCopy, copyLabel, countLabel }: { 
             <li key={`${startNumber + itemIndex}`} className="flex min-w-0 flex-col gap-3 rounded-control border border-border-subtle bg-surface-muted/40 p-3 sm:flex-row sm:items-start sm:gap-4">
               <div className="flex min-w-0 flex-1 items-start gap-3">
                 <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary" aria-hidden="true">{startNumber + itemIndex}</span>
-                <CardContentParts parts={item.content_parts} onCopy={onCopy} showCopyAll={false} className="flex-1" />
+                <div className="min-w-0 flex-1"><CardContentParts parts={item.content_parts} onCopy={onCopy} showCopyAll={false} />
+                  {item.supplier_card_status === 2 && <p className="mt-2 text-xs text-destructive">卡券已作废或已退款，具体退款金额以订单处理结果为准</p>}
+                  {item.supplier_card_status === 3 && <p className="mt-2 text-xs text-muted-foreground">卡券已使用</p>}
+                  {item.supplier_card_status === 4 && <p className="mt-2 text-xs text-muted-foreground">卡券作废处理中</p>}
+                </div>
               </div>
               {item.content_parts.length > 1 && <button type="button" onClick={() => onCopy(value)} className="inline-flex min-h-11 w-full shrink-0 items-center justify-center gap-1 rounded-control border border-border-subtle px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-surface hover:text-foreground sm:w-auto sm:self-start"><Copy className="h-3.5 w-3.5" aria-hidden="true" />{copyLabel}</button>}
             </li>

@@ -58,6 +58,7 @@ public class SecurityConfig {
                         // Private after-sale evidence is authorized again by
                         // the database ownership service before it is streamed.
                         .requestMatchers(HttpMethod.GET, "/after-sale-attachments/**").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/supplier-complaint-attachments/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/visit/track").permitAll()
                         // Authenticated user endpoints
                         .requestMatchers("/auth/logout").authenticated()

@@ -57,8 +57,7 @@ spring:
   servlet:
     multipart:
       # Preserve the existing public single-file limit. The after-sale
-      # endpoint accepts up to five independent 5MB files and enforces that
-      # narrower per-file image policy in the service.
+      # endpoint accepts up to five 10MB images subject to the total request limit.
       max-file-size: 10MB
       max-request-size: 30MB
 

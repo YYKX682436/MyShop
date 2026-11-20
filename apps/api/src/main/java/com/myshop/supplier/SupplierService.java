@@ -4,6 +4,7 @@ import com.myshop.entity.SupplierAccount;
 import com.myshop.entity.SupplierProductMapping;
 import com.myshop.repository.SupplierAccountRepository;
 import com.myshop.repository.SupplierProductMappingRepository;
+import com.myshop.service.PaymentUrlService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -26,6 +27,7 @@ public class SupplierService {
     private final SupplierSecretCipher cipher;
     private final List<SupplierProvider> providers;
     private final SupplierCatalogTransaction transactions;
+    private final PaymentUrlService urls;
     private final AtomicBoolean scheduledRunning = new AtomicBoolean();
     private final ExecutorService syncWorker = Executors.newFixedThreadPool(3, task -> {
         Thread thread = new Thread(task, "supplier-sync");
@@ -36,7 +38,7 @@ public class SupplierService {
     public record AccountRequest(String name,String providerType,String baseUrl,String appId,String secret,Boolean enabled) {
         @Override public String toString() { return "SupplierAccountRequest[redacted]"; }
     }
-    public record AccountView(UUID id,String name,String providerType,String baseUrl,String appId,String secretMask,boolean enabled) {}
+    public record AccountView(UUID id,String name,String providerType,String baseUrl,String appId,String secretMask,boolean enabled,String goodsCallbackUrl) {}
     public record MappingView(UUID id,String remoteGoodsId,String remoteSku,UUID productId,UUID specId,
                               int goodsType,int skuType,@com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) java.math.BigDecimal cost,long stock,int goodsStatus,int skuStatus,
                               int multiple,int minQuantity,int maxQuantity,LocalDateTime lastSyncedAt,
@@ -160,7 +162,12 @@ public class SupplierService {
         return value.strip();
     }
     private AccountView view(SupplierAccount a) {
-        return new AccountView(a.getId(),a.getName(),a.getProviderType(),a.getBaseUrl(),a.getAppId(),"••••••••",a.isEnabled());
+        String callback=null;
+        if ("KAYIXIN".equals(a.getProviderType())) {
+            try { callback=urls.supplierGoodsWebhookUrl(a.getId().toString()); }
+            catch (RuntimeException ignored) { /* public HTTPS is optional until notifications are configured */ }
+        }
+        return new AccountView(a.getId(),a.getName(),a.getProviderType(),a.getBaseUrl(),a.getAppId(),"••••••••",a.isEnabled(),callback);
     }
     private MappingView view(SupplierProductMapping m) {
         return new MappingView(m.getId(),m.getRemoteGoodsId(),m.getRemoteSku(),m.getProductId(),m.getSpecId(),m.getGoodsType(),m.getSkuType(),

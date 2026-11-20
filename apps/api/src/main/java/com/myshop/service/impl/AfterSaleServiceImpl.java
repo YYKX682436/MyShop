@@ -24,6 +24,8 @@ import com.myshop.service.AfterSaleAttachmentService;
 import com.myshop.service.AfterSaleService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderRefundService;
+import com.myshop.supplier.SupplierComplaintNotifications;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -53,6 +55,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     private final OperationLogService operationLogService;
     private final OrderRefundService orderRefundService;
     private final Clock clock;
+    private SupplierComplaintNotifications supplierComplaints;
+    @Autowired public void setSupplierComplaints(SupplierComplaintNotifications service) { this.supplierComplaints=service; }
 
     public AfterSaleServiceImpl(OrderRepository orderRepository,
                                 UserRepository userRepository,
@@ -480,6 +484,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         view.put("messages", (messages == null ? List.<AfterSaleMessage>of() : messages)
                 .stream().map(message -> messageView(message,
                         attachmentsByMessage.getOrDefault(message.getId(), List.of()))).toList());
+        view.put("supplier_updates",supplierComplaints==null ? List.of() : supplierComplaints.forAfterSale(request.getId()));
         return view;
     }
 

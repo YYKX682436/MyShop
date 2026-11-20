@@ -14,7 +14,7 @@ import java.util.UUID;
 public interface AfterSaleAttachmentService {
 
     int MAX_ATTACHMENTS = 5;
-    long MAX_ATTACHMENT_SIZE = 5L * 1024 * 1024;
+    long MAX_ATTACHMENT_SIZE = 10L * 1024 * 1024;
 
     List<ValidatedAttachment> validate(List<MultipartFile> files);
 

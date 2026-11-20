@@ -68,7 +68,7 @@ public class SupplierPurchaseWorker {
             if (List.of("SUBMITTING","UNKNOWN","UNPAID","PROCESSING","REFUNDING").contains(p.getStatus())) refresh(id);
             return;
         }
-        if (!purchaseEnabled) return;
+        if (!purchaseEnabled) { tx.blockPaidWhileDisabled(id); return; }
         Prepared ready;
         try { ready=preflight(p); }
         catch (RuntimeException e) { tx.blockBeforeClaim(id,kind(e)); return; }

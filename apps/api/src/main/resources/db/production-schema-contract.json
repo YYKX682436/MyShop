@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 46,
-  "latest_migration_version": "46",
+  "migration_count": 50,
+  "latest_migration_version": "50",
   "tables": {
     "users": ["id", "username", "role"],
     "products": ["id", "title", "retail_price", "card_content_column_count"],
@@ -23,7 +23,11 @@
     "supplier_product_mappings": ["id", "account_id", "remote_goods_id", "remote_sku", "product_id", "spec_id", "cost", "stock", "snapshot", "last_synced_at", "last_attempt_at", "sync_error"],
     "supplier_purchases": ["id", "order_id", "order_item_id", "account_id", "outer_number", "status", "safe_price"],
     "supplier_delivery_cards": ["id", "purchase_id", "account_id", "remote_card_id"],
-    "supplier_callback_events": ["id", "account_id", "purchase_id", "event_hash", "processed"]
+    "supplier_callback_events": ["id", "account_id", "purchase_id", "event_hash", "processed"],
+    "supplier_goods_notifications": ["id", "account_id", "remote_goods_id", "event_hash", "status", "last_attempt_at"],
+    "supplier_aftercare_operations": ["id", "account_id", "purchase_id", "kind", "status", "idempotency_key", "supplier_req_id"],
+    "supplier_complaint_events": ["id", "account_id", "operation_id", "supplier_req_id", "event_hash", "status"],
+    "supplier_complaint_attachments": ["id", "event_id", "storage_key", "content_type", "file_size"]
   },
   "indexes": [
     "uq_sales_channel_listing_generations_account_item",
@@ -41,6 +45,14 @@
     "uq_supplier_mapping_local",
     "uq_supplier_order_number",
     "uq_supplier_card",
-    "uq_supplier_callback_event"
+    "uq_supplier_callback_event",
+    "uq_supplier_goods_notification",
+    "uq_supplier_aftercare_request",
+    "uq_supplier_refund_once",
+    "uq_supplier_void_once",
+    "uq_supplier_complaint_unresolved",
+    "uq_supplier_complaint_req",
+    "uq_supplier_complaint_event",
+    "uq_supplier_complaint_event_status"
   ]
 }

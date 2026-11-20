@@ -5,7 +5,9 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentAttempt;
 import com.myshop.entity.PaymentChannel;
 import com.myshop.exception.BusinessException;
@@ -59,6 +61,19 @@ class PaymentServiceImplTest {
     @Mock private PaymentQueryTransactionService paymentQueryTransactionService;
 
     private PaymentServiceImpl service;
+
+    @Test
+    void disabledSupplierPurchaseBlocksBothPaymentAndRepayment() {
+        UUID orderId = UUID.randomUUID();
+        when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(pendingOrder(orderId, "10.00")));
+        OrderItem item = new OrderItem();
+        item.setStockMode(StockMode.SUPPLIER);
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+
+        assertThrows(BusinessException.class, () -> service.createPayment(orderId, "alipay", new BigDecimal("10.00"), "pc"));
+        assertThrows(BusinessException.class, () -> service.repay(orderId, "pc"));
+        verifyNoInteractions(provider, paymentChannelRepository, paymentAttemptRepository);
+    }
 
     @BeforeEach
     void setUp() {

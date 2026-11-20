@@ -25,6 +25,7 @@ public class SupplierPurchaseTransactions {
     private final SupplierPurchaseRepository purchases;
     private final SupplierDeliveryCardRepository cards;
     private final SupplierCallbackEventRepository events;
+    private final SupplierAftercareOperationRepository aftercare;
     private final SupplierAccountRepository accounts;
     private final SupplierProductMappingRepository mappings;
     private final ProductRepository products;
@@ -98,6 +99,17 @@ public class SupplierPurchaseTransactions {
         }
     }
 
+    /** A previously issued payment link may still settle after sales are disabled. */
+    @Transactional(propagation=Propagation.REQUIRES_NEW,timeout=5)
+    public void blockPaidWhileDisabled(UUID id) {
+        SupplierPurchase p=lockedWithOrder(id);
+        Order order=orders.findById(p.getOrderId()).orElseThrow();
+        if ("WAITING_PAYMENT".equals(p.getStatus()) && (order.getStatus()==OrderStatus.PAID
+                || order.getStatus()==OrderStatus.AFTER_SALE)) {
+            p.setStatus("BLOCKED"); p.setErrorCode("PURCHASE_DISABLED"); p.setLastCheckedAt(LocalDateTime.now());
+        }
+    }
+
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public void submissionUnknown(UUID id,String error) {
         SupplierPurchase p=purchases.findForUpdate(id).orElseThrow();
@@ -110,7 +122,7 @@ public class SupplierPurchaseTransactions {
         SupplierPurchase p=lockedWithOrder(id);
         if (p.getUpstreamOrderNumber()!=null && !p.getUpstreamOrderNumber().equals(created.orderNumber())) throw invalid();
         p.setUpstreamOrderNumber(created.orderNumber());
-        saveCards(p,created.cards(),false);
+        saveCards(p,created.cards(),false,null);
         if ("SUBMITTING".equals(p.getStatus()) || "UNKNOWN".equals(p.getStatus())) {
             p.setStatus("PROCESSING"); p.setErrorCode(null);
         }
@@ -130,7 +142,7 @@ public class SupplierPurchaseTransactions {
             // A signed completion may contain cards that a later detail omits.
             // It cannot itself advance fulfillment; a detail query confirms status.
             if (upstreamStatus==3 && (p.getUpstreamStatus()==null || !Set.of(4,5,8,9).contains(p.getUpstreamStatus()))) {
-                saveCards(p,received,false);
+                saveCards(p,received,false,null);
             }
         }
         return p.getId();
@@ -159,7 +171,7 @@ public class SupplierPurchaseTransactions {
         p.setResult(detail.result()==null ? null : detail.result().substring(0,Math.min(20_000,detail.result().length())));
         p.setStartCount(detail.startCount()); p.setNowCount(detail.nowCount()); p.setEndCount(detail.endCount());
         p.setLastCheckedAt(started); p.setErrorCode(null);
-        saveCards(p,detail.cards(),true);
+        saveCards(p,detail.cards(),true,started);
         switch (detail.status()) {
             case 0 -> p.setStatus("UNPAID");
             case 1,2,7 -> p.setStatus("PROCESSING");
@@ -167,6 +179,9 @@ public class SupplierPurchaseTransactions {
             case 5 -> p.setStatus("REFUNDED");
             case 8,9 -> p.setStatus("REFUNDING");
             case 3 -> {
+                if (aftercare.refundUnresolved(p.getId())) {
+                    p.setStatus("PROCESSING"); p.setErrorCode("REFUND_PENDING"); return;
+                }
                 if (detail.money().compareTo(p.getSafePrice())>0) {
                     p.setStatus("BLOCKED"); p.setErrorCode("COST_EXCEEDED"); return;
                 }
@@ -207,7 +222,7 @@ public class SupplierPurchaseTransactions {
         return purchases.findForUpdate(id).orElseThrow();
     }
 
-    private void saveCards(SupplierPurchase p,List<SupplierModels.Card> received,boolean updateExisting) {
+    private void saveCards(SupplierPurchase p,List<SupplierModels.Card> received,boolean updateExisting,LocalDateTime checkedAt) {
         for (var remote:received) {
             SupplierDeliveryCard c=cards.findByAccountIdAndRemoteCardId(p.getAccountId(),remote.id()).orElse(null);
             boolean isNew=c==null;
@@ -216,7 +231,12 @@ public class SupplierPurchaseTransactions {
                 c.setRemoteCardId(remote.id()); c.setCardNo(remote.number()); c.setCardPwd(remote.password());
             } else if (!c.getPurchaseId().equals(p.getId()) || !sameContent(c.getCardNo(),remote.number())
                     || !sameContent(c.getCardPwd(),remote.password())) throw invalid();
-            if (isNew || updateExisting) { c.setCardStatus(remote.status()); c.setCancelRequest(remote.cancelRequest()); }
+            if (isNew || (updateExisting && (c.getLastCheckedAt()==null || !c.getLastCheckedAt().isAfter(checkedAt))
+                    && (c.getCardStatus()!=2 || remote.status()==2)
+                    && (c.getCardStatus()!=3 || remote.status()==3))) {
+                c.setCardStatus(remote.status()); c.setCancelRequest(remote.cancelRequest());
+                if (checkedAt!=null) c.setLastCheckedAt(checkedAt);
+            }
             cards.save(c);
         }
         cards.flush();
@@ -231,7 +251,7 @@ public class SupplierPurchaseTransactions {
             case 1 -> Set.of(2,3,4,5,8,9).contains(next);
             case 2 -> Set.of(3,4,5,8,9).contains(next);
             case 7 -> Set.of(1,2,3,4,5,8,9).contains(next);
-            case 3 -> Set.of(5,9).contains(next);
+            case 3 -> Set.of(5,8,9).contains(next);
             case 8 -> Set.of(2,3,4,5,9).contains(next);
             case 9 -> Set.of(3,5).contains(next);
             default -> false;

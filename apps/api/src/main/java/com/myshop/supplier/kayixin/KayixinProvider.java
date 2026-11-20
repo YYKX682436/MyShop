@@ -197,6 +197,47 @@ public class KayixinProvider implements SupplierProvider {
                 integer(n,"count"), money(n,"money"), money(n,"retMoney"), optionalText(n,"result"),
                 optionalText(n,"startCount"), optionalText(n,"nowCount"), optionalText(n,"endCount"), cards(n.path("cards"), true));
     }
+    @Override public SupplierModels.RefundResult requestRefund(SupplierModels.Connection connection,String outerNumber) {
+        if (outerNumber==null || outerNumber.isBlank() || outerNumber.length()>100) throw invalid();
+        int status=integer(call(connection,"/api/v3/order/refunds",Map.of("outerNumber",outerNumber),false),"status");
+        if (!Set.of(0,1,2,3,4,5,7,8,9).contains(status)) throw invalid();
+        return new SupplierModels.RefundResult(status);
+    }
+    @Override public SupplierModels.ComplaintResult createComplaint(SupplierModels.Connection connection,SupplierModels.ComplaintRequest request) {
+        if (request==null || request.orderNumber()==null || request.orderNumber().isBlank()
+                || request.orderNumber().length()>120 || request.content()==null || request.content().isBlank()
+                || request.content().codePointCount(0,request.content().length())>500
+                || (request.topic()!=null && request.topic().codePointCount(0,request.topic().length())>50)
+                || request.images()==null || request.images().size()>5) throw invalid();
+        Map<String,Object> body=new LinkedHashMap<>();
+        body.put("orderNumber",request.orderNumber()); body.put("topic",request.topic());
+        body.put("content",request.content()); body.put("notifyUrl",request.notifyUrl());
+        body.put("base64Image",request.images());
+        JsonNode data=call(connection,"/api/v3/complaint/create",body,false);
+        JsonNode id=data.get("reqId");
+        if (id==null || !id.isIntegralNumber() || !id.canConvertToLong() || id.longValue()<1) throw invalid();
+        return new SupplierModels.ComplaintResult(id.longValue());
+    }
+    @Override public SupplierModels.CardDetail cardDetail(SupplierModels.Connection connection,String cardId) {
+        validateCardId(cardId);
+        JsonNode data=call(connection,"/api/v3/card/getDetail",Map.of("cardId",cardId));
+        String id=text(data,"cardId"); int status=cardStatus(data), cancel=integer(data,"cancelRequest");
+        if (!cardId.equals(id) || (cancel!=0 && cancel!=1)) throw invalid();
+        return new SupplierModels.CardDetail(id,status,cancel,optionalText(data,"result"));
+    }
+    @Override public SupplierModels.CardVoidResult voidCard(SupplierModels.Connection connection,String cardId) {
+        validateCardId(cardId);
+        JsonNode data=call(connection,"/api/v3/card/void",Map.of("cardId",cardId),false);
+        return new SupplierModels.CardVoidResult(cardStatus(data),optionalText(data,"result"));
+    }
+    private void validateCardId(String cardId) {
+        if (cardId==null || cardId.isBlank() || cardId.length()>120) throw invalid();
+    }
+    private int cardStatus(JsonNode data) {
+        int status=integer(data,"status");
+        if (status<0 || status>4) throw invalid();
+        return status;
+    }
     public List<SupplierModels.Card> cards(JsonNode nodes, boolean requireStatus) {
         if (nodes.isMissingNode() || nodes.isNull()) return List.of();
         if (!nodes.isArray()) throw invalid();

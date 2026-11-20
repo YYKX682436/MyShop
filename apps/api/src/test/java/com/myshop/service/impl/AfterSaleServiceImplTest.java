@@ -216,7 +216,7 @@ class AfterSaleServiceImplTest {
 
         BusinessException tooLarge = assertThrows(BusinessException.class,
                 () -> service.apply(orderId, USER_ID, "有效售后说明",
-                        List.of(image("large.png", "image/png", new byte[5 * 1024 * 1024 + 1]))));
+                        List.of(image("large.png", "image/png", new byte[10 * 1024 * 1024 + 1]))));
         assertEquals(ErrorCode.BAD_REQUEST, tooLarge.getCode());
 
         for (MultipartFile invalid : List.of(
@@ -228,6 +228,19 @@ class AfterSaleServiceImplTest {
             assertEquals(ErrorCode.BAD_REQUEST, exception.getCode());
         }
         verifyNoInteractions(orderRepository, requestRepository, attachmentRepository, privateUploadStorage);
+    }
+
+    @Test
+    void acceptsGifAndSafeSvgButRejectsScriptableSvg() {
+        var gif=image("proof.gif","image/gif",new byte[]{0x47,0x49,0x46,0x38,0x39,0x61});
+        var svg=image("proof.svg","image/svg+xml",("<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"1\" height=\"1\"/></svg>").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals(2,attachmentService.validate(List.of(gif,svg)).size());
+        for (String unsafe:List.of(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>",
+                "<!DOCTYPE svg [<!ENTITY x SYSTEM 'file:///etc/passwd'>]><svg xmlns=\"http://www.w3.org/2000/svg\">&x;</svg>")) {
+            assertThrows(BusinessException.class,() -> attachmentService.validate(List.of(image("bad.svg","image/svg+xml",unsafe.getBytes(java.nio.charset.StandardCharsets.UTF_8)))));
+        }
     }
 
     @Test

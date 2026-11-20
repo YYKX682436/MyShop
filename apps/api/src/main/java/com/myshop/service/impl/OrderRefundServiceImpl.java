@@ -30,6 +30,8 @@ import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderRefundService;
+import com.myshop.supplier.SupplierCustomerRefundGuard;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -70,6 +72,8 @@ public class OrderRefundServiceImpl implements OrderRefundService {
     private final OperationLogService operationLogService;
     private final CardKeyReclaimService cardKeyReclaimService;
     private final Clock clock;
+    private SupplierCustomerRefundGuard supplierRefundGuard;
+    @Autowired public void setSupplierRefundGuard(SupplierCustomerRefundGuard guard) { this.supplierRefundGuard=guard; }
 
     public OrderRefundServiceImpl(OrderRepository orderRepository,
                                   OrderItemRepository orderItemRepository,
@@ -213,8 +217,8 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         // from the existing local-card reclaim and customer refund path.
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         if (items.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
-            throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,
-                    "货源订单的退款需人工核实，上游退款尚未接入");
+            if (supplierRefundGuard==null) throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,"供应商退款核实不可用");
+            supplierRefundGuard.validate(items);
         }
         LocalDateTime refundedAt = LocalDateTime.now(clock);
         ReclaimPlan reclaimPlan = reclaimCardKeys

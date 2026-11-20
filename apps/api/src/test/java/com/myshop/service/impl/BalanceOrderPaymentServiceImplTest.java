@@ -4,10 +4,13 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.Order;
+import com.myshop.entity.OrderItem;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
+import com.myshop.repository.OrderItemRepository;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OrderPaymentCompletionService;
 import org.junit.jupiter.api.Test;
@@ -23,12 +26,29 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
 class BalanceOrderPaymentServiceImplTest {
 
     @Mock private BalanceTransactionService balanceTransactionService;
     @Mock private OrderPaymentCompletionService orderPaymentCompletionService;
+    @Mock private OrderItemRepository orderItemRepository;
+
+    @Test
+    void disabledSupplierPurchaseCannotDebitBalance() {
+        UUID userId = UUID.randomUUID();
+        Order order = balanceOrder(UUID.randomUUID(), userId, "10.00");
+        User user = user(userId, "20.00", UserRole.USER);
+        OrderItem item = new OrderItem();
+        item.setStockMode(StockMode.SUPPLIER);
+        when(orderItemRepository.findByOrderId(order.getId())).thenReturn(List.of(item));
+
+        assertThrows(BusinessException.class, () -> service().pay(order, user));
+        assertEquals(new BigDecimal("20.00"), user.getBalance());
+        verify(orderPaymentCompletionService, never()).completeFirstPayment(order);
+    }
 
     @Test
     void debitsTheLockedUserAndRecordsTheExactLedgerTransition() {
@@ -91,7 +111,7 @@ class BalanceOrderPaymentServiceImplTest {
 
     private BalanceOrderPaymentServiceImpl service() {
         return new BalanceOrderPaymentServiceImpl(
-                balanceTransactionService, orderPaymentCompletionService);
+                balanceTransactionService, orderPaymentCompletionService, orderItemRepository);
     }
 
     private Order balanceOrder(UUID orderId, UUID userId, String amount) {

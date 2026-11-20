@@ -123,6 +123,11 @@ function AfterSaleRequestTimeline({
             t={t}
           />
         ))}
+        {(item.supplier_updates ?? []).map((update, index) => <div key={`${update.created_at}-${index}`} className="rounded-control border border-border-subtle bg-surface px-3 py-3">
+          <div className="flex flex-wrap justify-between gap-2"><p className="text-xs font-semibold">供应商处理 · {({ 1: "等待处理", 2: "已受理", 3: "处理完成", 4: "审核终止" } as Record<number, string>)[update.status] || "处理中"}</p><time className="text-xs text-muted-foreground">{formatDateTime(update.created_at, locale)}</time></div>
+          {update.reply && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{update.reply}</p>}
+          {update.attachments.length > 0 && <div className="mt-2 flex flex-wrap gap-3">{update.attachments.map((attachment, i) => <a key={attachment.id} href={attachment.url} className="text-sm text-primary underline">处理凭证 {i + 1}</a>)}</div>}
+        </div>)}
       </div>
 
       {item.status === "PENDING" && (
@@ -200,7 +205,7 @@ function AttachmentGrid({ attachments, t }: { attachments: AfterSaleRequest["att
       <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-5">
         {attachments.map(attachment => (
           <a key={attachment.id} href={attachment.url} target="_blank" rel="noreferrer" className="group relative aspect-square overflow-hidden rounded-control border border-border-subtle bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Image src={attachment.url} alt={attachment.original_filename} fill unoptimized sizes="120px" className="object-cover transition-transform group-hover:scale-105" />
+            {attachment.content_type === "image/svg+xml" ? <span className="block break-all p-2 text-xs">{attachment.original_filename}</span> : <Image src={attachment.url} alt={attachment.original_filename} fill unoptimized sizes="120px" className="object-cover transition-transform group-hover:scale-105" />}
             <span className="sr-only">{attachment.original_filename}</span>
           </a>
         ))}

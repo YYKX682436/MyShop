@@ -572,6 +572,20 @@ export const adminOrderApi = {
     request<AdminOrderItem>(`/admin/orders/${id}`),
   refreshSupplier: (orderId: string, purchaseId: string) =>
     request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/refresh`, { method: "POST" }),
+  reviewSupplier: (orderId: string, purchaseId: string, outcome: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/reviews`, { method: "POST", body: JSON.stringify({ outcome }) }),
+  supplierRefund: (orderId: string, purchaseId: string, idempotencyKey: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/refunds`, { method: "POST", body: JSON.stringify({ idempotency_key: idempotencyKey, confirmed: true }) }),
+  supplierCardQuery: (orderId: string, purchaseId: string, cardId: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/cards/${encodeURIComponent(cardId)}/query`, { method: "POST" }),
+  supplierCardVoid: (orderId: string, purchaseId: string, cardId: string, idempotencyKey: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/cards/${encodeURIComponent(cardId)}/void`, { method: "POST", body: JSON.stringify({ idempotency_key: idempotencyKey, confirmed: true }) }),
+  supplierOperationRefresh: (orderId: string, purchaseId: string, operationId: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/operations/${encodeURIComponent(operationId)}/refresh`, { method: "POST" }),
+  supplierOperationReview: (orderId: string, purchaseId: string, operationId: string, outcome: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/operations/${encodeURIComponent(operationId)}/reviews`, { method: "POST", body: JSON.stringify({ outcome }) }),
+  supplierComplaint: (orderId: string, purchaseId: string, body: { idempotencyKey: string; confirmed: boolean; afterSaleId: string; topic: string; content: string; attachmentIds: string[] }) =>
+    request<{ status: string }>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/complaints`, { method: "POST", body: JSON.stringify({ idempotency_key: body.idempotencyKey, confirmed: body.confirmed, after_sale_id: body.afterSaleId, topic: body.topic, content: body.content, attachment_ids: body.attachmentIds }) }),
   markPaid: (id: string, reason: string) =>
     request<null>(`/admin/orders/${id}/mark-paid`, {
       method: "POST",
@@ -902,7 +916,7 @@ export function getApiErrorMessage(err: unknown, t: (key: any) => string): strin
 }
 
 // Supplier API is deliberately read-only toward providers in P1.
-export type SupplierAccount = { id: string; name: string; provider_type: string; base_url: string; app_id: string; secret_mask: string; enabled: boolean }
+export type SupplierAccount = { id: string; name: string; provider_type: string; base_url: string; app_id: string; secret_mask: string; enabled: boolean; goods_callback_url?: string | null }
 export type SupplierAccountInput = { name: string; provider_type: string; base_url: string; app_id: string; secret?: string; enabled: boolean }
 export type SupplierCategory = { id: string; name: string; children: SupplierCategory[] }
 export type SupplierSummary = { id: string; name: string; goods_type: number; status: number; sku_type: number; cost: string }

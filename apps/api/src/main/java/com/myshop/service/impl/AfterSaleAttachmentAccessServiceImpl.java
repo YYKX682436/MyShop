@@ -27,7 +27,7 @@ import java.util.UUID;
 public class AfterSaleAttachmentAccessServiceImpl implements AfterSaleAttachmentAccessService {
 
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
-            "image/jpeg", "image/png", "image/webp");
+            "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml");
 
     private final AfterSaleAttachmentRepository attachmentRepository;
     private final AfterSaleRequestRepository requestRepository;

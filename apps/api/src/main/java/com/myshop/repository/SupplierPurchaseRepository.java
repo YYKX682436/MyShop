@@ -10,6 +10,8 @@ import java.util.*;
 
 public interface SupplierPurchaseRepository extends JpaRepository<SupplierPurchase,UUID> {
     Optional<SupplierPurchase> findByOrderItemId(UUID id);
+    @Query("select p.id from SupplierPurchase p where p.orderItemId=:id")
+    Optional<UUID> findIdByOrderItemId(@Param("id") UUID id);
     Optional<SupplierPurchase> findByAccountIdAndOuterNumber(UUID accountId,String outerNumber);
     @Query("select p.id from SupplierPurchase p where p.accountId=:account and p.outerNumber=:outer")
     Optional<UUID> findIdByAccountAndOuter(@Param("account") UUID account,@Param("outer") String outer);
@@ -33,7 +35,8 @@ public interface SupplierPurchaseRepository extends JpaRepository<SupplierPurcha
         """,nativeQuery=true)
     int claim(@Param("id") UUID id,@Param("now") LocalDateTime now);
     @Query("select p.id from SupplierPurchase p, Order o where o.id=p.orderId " +
-            "and ((:allowCreate=true and p.status='WAITING_PAYMENT' and o.status=com.myshop.constant.OrderStatus.PAID) or " +
+            "and ((p.status='WAITING_PAYMENT' and (o.status=com.myshop.constant.OrderStatus.PAID or " +
+            "(:allowCreate=false and o.status=com.myshop.constant.OrderStatus.AFTER_SALE))) or " +
             "(p.status in ('SUBMITTING','UNKNOWN','UNPAID','PROCESSING','REFUNDING') and o.status in " +
             "(com.myshop.constant.OrderStatus.PAID,com.myshop.constant.OrderStatus.DELIVERED,com.myshop.constant.OrderStatus.AFTER_SALE))) " +
             "order by coalesce(p.lastCheckedAt,p.createdAt), p.createdAt")

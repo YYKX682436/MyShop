@@ -84,7 +84,7 @@ export function AfterSaleAttachmentPicker({
         id={inputId}
         type="file"
         multiple
-        accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+        accept=".jpg,.jpeg,.png,.gif,.webp,.svg,image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
         disabled={disabled || files.length >= AFTER_SALE_MAX_FILES}
         onChange={event => { void handleFiles(event.target.files); event.currentTarget.value = "" }}
         className="block w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground file:mr-3 file:rounded-control file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-primary-foreground"
@@ -95,7 +95,7 @@ export function AfterSaleAttachmentPicker({
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-5" aria-label={t("order.afterSaleUpload")}>
           {previews.map(preview => (
             <div key={fileKey(preview.file)} className="group relative aspect-square overflow-hidden rounded-control border border-border-subtle bg-surface-muted">
-              <Image src={preview.url} alt={preview.file.name} fill unoptimized sizes="120px" className="object-cover" />
+              {preview.file.type === "image/svg+xml" ? <span className="block break-all p-2 text-xs">{preview.file.name}</span> : <Image src={preview.url} alt={preview.file.name} fill unoptimized sizes="120px" className="object-cover" />}
               <button
                 type="button"
                 onClick={() => removeFile(preview.file)}

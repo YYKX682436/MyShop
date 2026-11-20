@@ -47,4 +47,15 @@ class AfterSaleAttachmentControllerTest {
 
         verify(accessService).open(eq(attachmentId));
     }
+    @Test
+    void svgEvidenceIsDownloadedAsNonExecutableContent() throws Exception {
+        UUID id=UUID.randomUUID(); byte[] bytes="<svg/>".getBytes(StandardCharsets.UTF_8);
+        when(accessService.open(id)).thenReturn(new AfterSaleAttachmentAccessService.AttachmentDownload(
+                new ByteArrayResource(bytes),"image/svg+xml",bytes.length,"proof.svg"));
+        MockMvcBuilders.standaloneSetup(new AfterSaleAttachmentController(accessService)).build()
+                .perform(get("/after-sale-attachments/{id}",id)).andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_OCTET_STREAM))
+                .andExpect(header().string("Content-Disposition",org.hamcrest.Matchers.containsString("attachment")))
+                .andExpect(header().string("X-Content-Type-Options","nosniff"));
+    }
 }

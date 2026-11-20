@@ -24,10 +24,14 @@ public class KayixinCallbackCodec {
 
     public void verify(SupplierModels.Connection connection, String appId, String version,
                        String timestamp, String signature, byte[] rawBody, Clock clock) {
+        verify(connection,appId,version,timestamp,signature,rawBody,clock,1_000_000);
+    }
+    public void verify(SupplierModels.Connection connection, String appId, String version,
+                       String timestamp, String signature, byte[] rawBody, Clock clock,int maxBytes) {
         if (!connection.appId().equals(appId) || !"3.0".equals(version)
                 || timestamp == null || !timestamp.matches("[0-9]{10}")
                 || signature == null || !signature.matches("[0-9a-fA-F]{32}")
-                || rawBody == null || rawBody.length > 1_000_000) throw invalid();
+                || rawBody == null || rawBody.length > maxBytes) throw invalid();
         long seconds;
         try { seconds=Long.parseLong(timestamp); }
         catch (NumberFormatException e) { throw invalid(); }

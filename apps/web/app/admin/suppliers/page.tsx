@@ -144,6 +144,7 @@ export default function SuppliersPage() {
         {active && <><Button type="button" variant="outline" onClick={() => editAccount(active)}>编辑</Button><Button type="button" variant="outline" disabled={busy} onClick={() => void toggleAccount()}>{active.enabled ? "停用" : "启用"}</Button><Button type="button" variant="outline" disabled={busy || !active.enabled} onClick={() => void testConnection()}>测试连接</Button></>}
       </div>
       {active && <div className="mt-4 flex flex-wrap items-center gap-3 text-sm"><StatusBadge label={active.enabled ? "启用" : "已停用"} tone={active.enabled ? "success" : "neutral"} /><span>{active.base_url}</span><span className="text-muted-foreground">客户编号 {active.app_id} · 密钥 {active.secret_mask}</span>{balance !== null && <strong>余额 ¥{balance}</strong>}</div>}
+      {active?.provider_type === "KAYIXIN" && <div className="mt-3 text-sm"><span className="text-muted-foreground">商品通知地址：</span>{active.goods_callback_url ? <code className="break-all">{active.goods_callback_url}</code> : <span>配置公开 HTTPS 站点后可用</span>}</div>}
     </section>
     {active && <>
       <section className="rounded-card border border-border-subtle bg-surface p-4 sm:p-5">

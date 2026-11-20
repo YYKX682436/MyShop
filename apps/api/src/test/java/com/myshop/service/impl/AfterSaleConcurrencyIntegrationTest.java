@@ -8,6 +8,7 @@ import com.myshop.service.EmailService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.OrderRefundService;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,9 +19,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -42,15 +41,22 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** PostgreSQL proof for the order-first after-sale lock protocol. */
-@Testcontainers(disabledWithoutDocker = true)
+@EnabledIf(value = "postgresAvailable", disabledReason = "Disposable PostgreSQL required")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class AfterSaleConcurrencyIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+    static boolean postgresAvailable() { return POSTGRES.available(); }
 
     private static final Path PRIVATE_UPLOAD_DIRECTORY = temporaryDirectory();
+
+    @AfterAll static void cleanup() throws IOException {
+        POSTGRES.close();
+        try (var files=Files.walk(PRIVATE_UPLOAD_DIRECTORY)) {
+            for (Path path:files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
+        }
+    }
 
     @Autowired
     private JdbcTemplate jdbcTemplate;

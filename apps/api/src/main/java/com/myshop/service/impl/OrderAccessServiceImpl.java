@@ -29,6 +29,7 @@ import com.myshop.service.OrderAccessService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -61,6 +62,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private final CardKeyReclaimService cardKeyReclaimService;
     private final AfterSaleService afterSaleService;
     private final ObjectMapper objectMapper;
+    @Value("${supplier.purchase-enabled:false}")
+    private boolean supplierPurchaseEnabled;
     private final TransactionTemplate transactions;
     private SupplierPurchaseRepository supplierPurchases;
     private SupplierDeliveryCardRepository supplierCards;
@@ -145,7 +148,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                     .map(key -> String.join("\n", key.getContentParts()))
                     .collect(Collectors.joining("\n\n"))).append("\n");
             if (!external.isEmpty() && !itemKeys.isEmpty()) result.append("\n");
-            if (!external.isEmpty()) result.append(external.stream().map(card -> String.join("\n",parts(card)))
+            if (!external.isEmpty()) result.append(external.stream().map(card -> cardStatusPrefix(card)+String.join("\n",parts(card)))
                     .collect(Collectors.joining("\n\n"))).append("\n");
         }
         if (!found) throw new BusinessException(ErrorCode.ORDER_NOT_PAID, "订单尚未产生卡密");
@@ -184,7 +187,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         }
         orderResult.putAll(afterSale);
         result.put("order", orderResult);
-        result.put("payment", paymentView(order));
+        result.put("payment", paymentView(order, items));
         result.put("delivery", deliveryView(order, items));
         // Keep the same top-level fields used by the admin order detail while
         // the nested order object remains self-contained for storefront code.
@@ -252,7 +255,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         return result;
     }
 
-    private Map<String, Object> paymentView(Order order) {
+    private Map<String, Object> paymentView(Order order, List<OrderItem> items) {
         if (order.getPaymentMethod() == OrderPaymentMethod.BALANCE) {
             return balanceOrderPaymentService.buildPaymentResult(order);
         }
@@ -276,7 +279,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
             result.put("payment_id", attempt.getId());
             result.put("payment_type", attempt.getPaymentType());
             if (order.getStatus() == OrderStatus.PENDING && attempt.getStatus() == PaymentStatus.PENDING
-                    && attempt.getExpiresAt() != null && attempt.getExpiresAt().isAfter(LocalDateTime.now())) {
+                    && attempt.getExpiresAt() != null && attempt.getExpiresAt().isAfter(LocalDateTime.now())
+                    && (supplierPurchaseEnabled || items.stream().noneMatch(item -> item.getStockMode() == StockMode.SUPPLIER))) {
                 result.put("expires_at", attempt.getExpiresAt());
                 result.put("remaining_seconds", remainingSeconds(attempt.getExpiresAt(), order.getStatus()));
                 result.put("next_action", PaymentNextActionPayload.from(readNextAction(attempt.getNextAction())));
@@ -339,7 +343,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
             group.put("fulfillment_status", item.getFulfillmentStatus());
             List<Map<String,Object>> deliveryItems=new ArrayList<>();
             itemKeys.forEach(key -> deliveryItems.add(Map.of("content_parts", List.copyOf(key.getContentParts()))));
-            external.forEach(card -> deliveryItems.add(Map.of("content_parts",parts(card))));
+            external.forEach(card -> deliveryItems.add(Map.of("content_parts",parts(card),"supplier_card_status",card.getCardStatus())));
             group.put("delivery_items",deliveryItems);
             groups.add(group);
         }
@@ -370,6 +374,14 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         if (card.getCardNo()!=null && !card.getCardNo().isBlank()) parts.add(card.getCardNo());
         if (card.getCardPwd()!=null && !card.getCardPwd().isBlank()) parts.add(card.getCardPwd());
         return List.copyOf(parts);
+    }
+    private String cardStatusPrefix(SupplierDeliveryCard card) {
+        return switch (card.getCardStatus()) {
+            case 2 -> "[卡券已作废或已退款，金额以供应商订单为准]\n";
+            case 3 -> "[卡券已使用]\n";
+            case 4 -> "[卡券作废处理中]\n";
+            default -> "";
+        };
     }
 
     private String clean(String value) {

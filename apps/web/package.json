@@ -15,6 +15,7 @@
     "test:card-ui": "node scripts/test-card-ui.mjs",
     "test:supplier-ui": "node scripts/test-supplier-ui.mjs",
     "test:supplier-order-ui": "node scripts/test-supplier-order-ui.mjs",
+    "test:supplier-aftercare-ui": "node scripts/test-supplier-aftercare-ui.mjs",
     "test:admin-refresh-ui": "node scripts/test-admin-refresh-ui.mjs",
     "test:admin-user-sync": "node scripts/test-admin-user-sync.mjs",
     "test:admin-product-list-sync": "node scripts/test-admin-product-list-sync.mjs",

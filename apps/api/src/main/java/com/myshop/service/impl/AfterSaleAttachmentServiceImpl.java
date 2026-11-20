@@ -6,6 +6,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.repository.AfterSaleAttachmentRepository;
 import com.myshop.service.AfterSaleAttachmentService;
 import com.myshop.service.PrivateUploadStorage;
+import com.myshop.service.PrivateSvgValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -47,7 +48,7 @@ public class AfterSaleAttachmentServiceImpl implements AfterSaleAttachmentServic
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "售后凭证不能为空");
             }
             if (file.getSize() > MAX_ATTACHMENT_SIZE) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "每张售后凭证不能超过 5MB");
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "每张售后凭证不能超过 10MB");
             }
             String extension = extensionOf(file.getOriginalFilename());
             String contentType = normalizedContentType(file);
@@ -55,11 +56,13 @@ public class AfterSaleAttachmentServiceImpl implements AfterSaleAttachmentServic
                 case "jpg", "jpeg" -> "image/jpeg";
                 case "png" -> "image/png";
                 case "webp" -> "image/webp";
+                case "gif" -> "image/gif";
+                case "svg" -> "image/svg+xml";
                 default -> null;
             };
             if (expectedType == null || !expectedType.equals(contentType)) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST,
-                        "售后凭证仅支持 JPG、PNG、WebP，且扩展名与 MIME 必须匹配");
+                        "售后凭证仅支持 JPG、PNG、GIF、WebP、SVG，且扩展名与 MIME 必须匹配");
             }
             validateMagic(file, extension);
             validated.add(new ValidatedAttachment(file, extension, contentType,
@@ -115,6 +118,11 @@ public class AfterSaleAttachmentServiceImpl implements AfterSaleAttachmentServic
     }
 
     private void validateMagic(MultipartFile file, String extension) {
+        if (extension.equals("svg")) {
+            try { if (PrivateSvgValidator.safe(file.getBytes())) return; }
+            catch (IOException ignored) { }
+            throw new BusinessException(ErrorCode.BAD_REQUEST,"SVG 凭证格式无效或含不安全内容");
+        }
         try (InputStream input = file.getInputStream()) {
             byte[] header = input.readNBytes(12);
             if (!magicMatches(extension, header)) {
@@ -138,6 +146,8 @@ public class AfterSaleAttachmentServiceImpl implements AfterSaleAttachmentServic
             case "webp" -> header.length >= 12
                     && startsWith(header, 0, "RIFF".getBytes(StandardCharsets.US_ASCII))
                     && startsWith(header, 8, "WEBP".getBytes(StandardCharsets.US_ASCII));
+            case "gif" -> startsWith(header,"GIF87a".getBytes(StandardCharsets.US_ASCII))
+                    || startsWith(header,"GIF89a".getBytes(StandardCharsets.US_ASCII));
             default -> false;
         };
     }
@@ -171,7 +181,7 @@ public class AfterSaleAttachmentServiceImpl implements AfterSaleAttachmentServic
         int dot = name.lastIndexOf('.');
         if (dot < 1 || dot == name.length() - 1) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
-                    "售后凭证必须带有 JPG、PNG 或 WebP 扩展名");
+                    "售后凭证必须带有受支持的图片扩展名");
         }
         return name.substring(dot + 1).toLowerCase(Locale.ROOT);
     }

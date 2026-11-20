@@ -1,11 +1,12 @@
 "use client"
 
-import { type ReactNode } from "react"
+import { type ReactNode, useId, useState } from "react"
 import { Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { AfterSaleHistoryCard } from "@/components/shared/after-sale-history-card"
+import { SupplierAftercarePanel } from "@/components/admin/orders/supplier-aftercare-panel"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { CardContentParts } from "@/components/shared/card-content-parts"
 import { getPaymentLabel, PaymentIcon } from "@/components/shared/payment-icon"
@@ -31,10 +32,47 @@ interface OrderDetailSheetProps {
   onReplyAfterSale?: (content: string, attachments: File[]) => Promise<void>
   afterSaleReplyLoading?: boolean
   onRefreshSupplier?: (purchaseId: string) => void
+  onReviewSupplier?: (purchaseId: string, outcome: string) => Promise<void>
+  onReloadSupplier?: () => Promise<void>
   refreshingSupplier?: string | null
 }
 
 type Translator = (key: TranslationKey) => string
+
+const reviewLabels: Record<string, string> = {
+  CONTACTED_SUPPLIER: "已联系供应商，等待核实",
+  ORDER_NOT_FOUND_UNCONFIRMED: "暂未查到订单，扣款情况未确认",
+  ORDER_FOUND_VERIFY_BY_QUERY: "已核实存在订单，需查询确认",
+  MANUAL_HANDLING: "已转人工处理",
+}
+
+function SupplierReview({ purchaseId, reviews, onReview }: {
+  purchaseId: string
+  reviews: { outcome: string; operator: string; created_at: string }[]
+  onReview: (purchaseId: string, outcome: string) => Promise<void>
+}) {
+  const id = useId()
+  const [busy, setBusy] = useState(false)
+  return <div className="mt-3 space-y-2">
+    {reviews.map((review, i) => <p key={`${review.created_at}-${i}`} className="text-xs text-muted-foreground">{reviewLabels[review.outcome] || review.outcome} · {review.operator} · {review.created_at}</p>)}
+    <form aria-label="记录采购核实结果" onSubmit={async event => {
+      event.preventDefault()
+      const outcome = String(new FormData(event.currentTarget).get("outcome") || "")
+      setBusy(true)
+      try { await onReview(purchaseId, outcome); toast.success("已记录核实结果") }
+      catch (error) { toast.error(error instanceof Error ? error.message : "记录失败") }
+      finally { setBusy(false) }
+    }} className="flex flex-wrap items-end gap-2">
+      <div className="min-w-48 flex-1"><label htmlFor={id} className="mb-1 block text-xs">核实结果</label>
+        <select id={id} name="outcome" required defaultValue="" className="h-10 w-full rounded-md border border-input bg-background px-3 text-base">
+          <option value="" disabled>请选择</option>
+          {Object.entries(reviewLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </div>
+      <Button type="submit" size="sm" disabled={busy}>{busy ? "保存中" : "记录结果"}</Button>
+    </form>
+  </div>
+}
 
 function fulfillmentLabel(item: OrderItemDetail, t: Translator) {
   if (item.fulfillment_status === "WAITING_MANUAL") return t("admin.fulfillmentWaitingManual")
@@ -137,6 +175,8 @@ export function OrderDetailSheet({
   onReplyAfterSale,
   afterSaleReplyLoading = false,
   onRefreshSupplier,
+  onReviewSupplier,
+  onReloadSupplier,
   refreshingSupplier,
 }: OrderDetailSheetProps) {
   const { t, locale } = useLocale()
@@ -304,7 +344,8 @@ export function OrderDetailSheet({
                       <DefinitionRow label="最近查询">{item.supplier_purchase.last_checked_at ? formatDateTime(item.supplier_purchase.last_checked_at, locale) : "—"}</DefinitionRow>
                     </dl>
                     {item.supplier_purchase.error_code && <p className="mt-2 text-xs text-destructive">{supplierErrorLabel(item.supplier_purchase.error_code)}</p>}
-                    <p className="mt-2 text-xs text-muted-foreground">上游退款尚未接入，退款需人工核实。</p>
+                    {onReviewSupplier && ["UNKNOWN", "SUBMITTING", "BLOCKED"].includes(item.supplier_purchase.status) && <SupplierReview purchaseId={item.supplier_purchase.id} reviews={item.supplier_purchase.reviews || []} onReview={onReviewSupplier} />}
+                    {onReloadSupplier && <SupplierAftercarePanel orderId={order.id} purchase={item.supplier_purchase} sale={order.after_sale_history?.[0] ?? null} onReload={onReloadSupplier} />}
                   </div>}
                     <div className="mt-4 rounded-card bg-surface-muted/70 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-medium text-foreground">{t("admin.customerInputs")}</h4>{inputText && <Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(inputText)}><Copy className="mr-1.5 size-3.5" />{t("admin.copyAll")}</Button>}</div>

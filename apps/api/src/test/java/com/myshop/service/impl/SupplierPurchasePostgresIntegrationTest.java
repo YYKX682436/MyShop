@@ -8,11 +8,15 @@ import com.myshop.repository.*;
 import com.myshop.supplier.*;
 import com.myshop.supplier.kayixin.KayixinCallbackController;
 import com.myshop.supplier.kayixin.KayixinProvider;
+import com.myshop.supplier.kayixin.KayixinCallbackCodec;
+import com.myshop.supplier.kayixin.KayixinComplaintCallbackController;
+import com.myshop.supplier.kayixin.KayixinGoodsCallbackController;
 import com.myshop.service.OrderService;
 import com.myshop.service.OrderAccessService;
 import com.myshop.service.OrderRefundService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.AdminProductService;
+import com.myshop.service.AfterSaleService;
 import com.myshop.service.PublicProductService;
 import com.myshop.model.request.AdminProductStatusRequest;
 import com.myshop.context.RequestContext;
@@ -29,6 +33,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -67,8 +72,17 @@ class SupplierPurchasePostgresIntegrationTest {
         volatile boolean unsupportedFields;
         volatile BigDecimal balance=BigDecimal.valueOf(100);
         final AtomicInteger creates=new AtomicInteger();
+        final AtomicInteger refunds=new AtomicInteger(), voids=new AtomicInteger(), complaints=new AtomicInteger();
+        final Map<String,Integer> cardStatuses=new ConcurrentHashMap<>();
+        volatile int nextRefundStatus=9, nextVoidStatus=2;
+        volatile int cardCancellationAllowed=1;
+        volatile boolean loseRefundResponse,loseVoidResponse;
+        volatile boolean rejectRefund;
+        volatile boolean loseComplaintResponse;
+        volatile BigDecimal returnedMoney=BigDecimal.ZERO;
         final Map<String,SupplierModels.PurchaseDetail> details=new ConcurrentHashMap<>();
         volatile SupplierModels.PurchaseRequest lastRequest;
+        volatile SupplierModels.ComplaintRequest lastComplaint;
         volatile boolean committedClaimObserved;
         @Override public String type(){return "PURCHASE_TEST";}
         @Override public SupplierModels.Account account(SupplierModels.Connection c){return new SupplierModels.Account(balance);}
@@ -97,6 +111,32 @@ class SupplierPurchasePostgresIntegrationTest {
             if (absent || !details.containsKey(outer)) throw new SupplierException("BUSINESS","模拟订单不存在");
             return details.get(outer);
         }
+        @Override public SupplierModels.RefundResult requestRefund(SupplierModels.Connection c,String outer) {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            refunds.incrementAndGet();
+            if (rejectRefund) throw new SupplierException("BUSINESS","模拟退款拒绝");
+            var old=details.get(outer);
+            details.put(outer,new SupplierModels.PurchaseDetail(old.orderNumber(),outer,nextRefundStatus,old.count(),old.money(),returnedMoney,
+                    "退款处理",null,null,null,old.cards()));
+            if (loseRefundResponse) throw new SupplierException("CONNECTION","模拟响应丢失");
+            return new SupplierModels.RefundResult(nextRefundStatus);
+        }
+        @Override public SupplierModels.CardDetail cardDetail(SupplierModels.Connection c,String card) {
+            return new SupplierModels.CardDetail(card,cardStatuses.getOrDefault(card,0),cardCancellationAllowed,"状态查询");
+        }
+        @Override public SupplierModels.CardVoidResult voidCard(SupplierModels.Connection c,String card) {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            voids.incrementAndGet(); cardStatuses.put(card,nextVoidStatus);
+            if (loseVoidResponse) throw new SupplierException("CONNECTION","模拟响应丢失");
+            return new SupplierModels.CardVoidResult(nextVoidStatus,"处理");
+        }
+        @Override public SupplierModels.ComplaintResult createComplaint(SupplierModels.Connection c,SupplierModels.ComplaintRequest request) {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            lastComplaint=request;
+            int n=complaints.incrementAndGet();
+            if (loseComplaintResponse) throw new SupplierException("CONNECTION","模拟申诉响应丢失");
+            return new SupplierModels.ComplaintResult(1000L+n);
+        }
     }
     @Autowired FakeProvider fake;
     @Autowired SupplierService suppliers;
@@ -119,10 +159,19 @@ class SupplierPurchasePostgresIntegrationTest {
     @Autowired AdminProductService adminProducts;
     @Autowired PublicProductService publicProducts;
     @Autowired SupplierAdminOrders adminOrders;
+    @Autowired AfterSaleService afterSale;
+    @Autowired SupplierGoodsNotifications goodsNotifications;
+    @Autowired SupplierAftercareService aftercare;
+    @Autowired SupplierAftercareOperationRepository aftercareOperations;
+    @Autowired SupplierAftercareTransactions aftercareTx;
+    @Autowired SupplierComplaintNotifications complaintNotifications;
+    @Autowired KayixinCallbackCodec callbackCodec;
+    @Autowired KayixinProvider kayixin;
+    @Autowired com.myshop.service.PrivateUploadStorage privateStorage;
     @Autowired WebApplicationContext webContext;
     @Autowired FilterChainProxy security;
 
-    @BeforeEach void reset(){fake.creates.set(0);fake.details.clear();fake.loseResponse=false;fake.absent=false;fake.unsupportedFields=false;fake.lastRequest=null;fake.balance=BigDecimal.valueOf(100);fake.committedClaimObserved=false;}
+    @BeforeEach void reset(){fake.creates.set(0);fake.refunds.set(0);fake.voids.set(0);fake.complaints.set(0);fake.cardStatuses.clear();fake.nextRefundStatus=9;fake.nextVoidStatus=2;fake.cardCancellationAllowed=1;fake.loseRefundResponse=false;fake.loseVoidResponse=false;fake.loseComplaintResponse=false;fake.rejectRefund=false;fake.returnedMoney=BigDecimal.ZERO;fake.details.clear();fake.loseResponse=false;fake.absent=false;fake.unsupportedFields=false;fake.lastRequest=null;fake.lastComplaint=null;fake.balance=BigDecimal.valueOf(100);fake.committedClaimObserved=false;}
 
     private Fixture fixture(int goodsType,int skuType) throws Exception {
         String goodsId=Long.toString(Math.abs(UUID.randomUUID().getMostSignificantBits()%1_000_000_000L)+1);
@@ -181,6 +230,423 @@ class SupplierPurchasePostgresIntegrationTest {
         assertEquals(1,fake.creates.get()); assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
         worker.process(f.purchase()); worker.refresh(f.purchase()); assertEquals(1,fake.creates.get());
     }
+    @Test void disabledPurchaseMarksLatePaymentForManualAttentionWithoutCreating() throws Exception {
+        Fixture f=fixture(1,0);
+        ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
+        try {
+            assertTrue(purchases.findRecoveryCandidates(false,org.springframework.data.domain.PageRequest.of(0,10000)).contains(f.purchase()));
+            worker.process(f.purchase());
+            SupplierPurchase saved=purchases.findById(f.purchase()).orElseThrow();
+            assertEquals("BLOCKED",saved.getStatus());
+            assertEquals("PURCHASE_DISABLED",saved.getErrorCode());
+            assertNull(saved.getSubmitStartedAt());
+            assertEquals(0,fake.creates.get());
+            assertEquals("PAID",value("select status from orders where id=?",f.order()));
+        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+    }
+    @Test void disabledPurchaseStillRecoversPreviouslySubmittedOrder() throws Exception {
+        Fixture f=fixture(3,0);
+        assertTrue(tx.claim(f.purchase()));
+        SupplierPurchase p=purchases.findById(f.purchase()).orElseThrow();
+        String outer=p.getOuterNumber();
+        jdbc.update("update supplier_purchases set submit_started_at=current_timestamp-interval '2 minutes' where id=?",f.purchase());
+        fake.details.put(outer,new SupplierModels.PurchaseDetail("UP-HISTORY",outer,3,1,
+                new BigDecimal("0.02"),BigDecimal.ZERO,"完成",null,null,null,List.of()));
+        ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
+        try {
+            worker.process(f.purchase());
+            assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+            assertEquals(outer,purchases.findById(f.purchase()).orElseThrow().getOuterNumber());
+            assertEquals(0,fake.creates.get());
+        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+    }
+    @Test void disabledPurchaseRecoveryIncludesPaidOrderAlreadyInAfterSale() throws Exception {
+        Fixture f=fixture(1,0);
+        jdbc.update("update orders set status='AFTER_SALE' where id=?",f.order());
+        ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
+        try {
+            assertTrue(purchases.findRecoveryCandidates(false,org.springframework.data.domain.PageRequest.of(0,10000)).contains(f.purchase()));
+            worker.process(f.purchase());
+            assertEquals("BLOCKED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+            assertEquals("PURCHASE_DISABLED",purchases.findById(f.purchase()).orElseThrow().getErrorCode());
+            assertEquals(0,fake.creates.get());
+        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+    }
+    @Test void productNotificationRefreshesOnlyItsAccountAndNeverRetailPrice() throws Exception {
+        Fixture f=fixture(1,0);
+        var first=purchases.findById(f.purchase()).orElseThrow();
+        String goods=first.getRemoteGoodsId();
+        UUID category=UUID.randomUUID();
+        jdbc.update("insert into product_categories(id,name,sort_order,is_deleted) values (?,?,0,0)",category,"other-"+category);
+        var second=suppliers.saveAccount(null,new SupplierService.AccountRequest("other","PURCHASE_TEST","https://other.invalid","other-id","test-secret",true));
+        UUID otherProduct=suppliers.importProduct(second.id(),goods,category).productId();
+        jdbc.update("update products set retail_price=88.88 where id=?",f.product());
+        var old=fake.product;
+        fake.product=new SupplierModels.Product(goods,old.name(),1,2,0,old.multiple(),old.minQuantity(),old.maxQuantity(),
+                List.of(new SupplierModels.Sku("","规格","",new BigDecimal("0.03"),3,1)),json.readTree("{}"));
+        UUID event=goodsNotifications.accept(f.account(),goods,"a".repeat(64));
+        assertEquals(event,goodsNotifications.accept(f.account(),goods,"a".repeat(64)));
+        goodsNotifications.process(event);
+        assertEquals("SYNCED",value("select status from supplier_goods_notifications where id=?",event));
+        assertEquals(0,new BigDecimal("88.88").compareTo(jdbc.queryForObject("select retail_price from products where id=?",BigDecimal.class,f.product())));
+        assertEquals(0,new BigDecimal("0.03").compareTo(jdbc.queryForObject("select cost from supplier_product_mappings where account_id=? and remote_goods_id=?",BigDecimal.class,f.account(),goods)));
+        assertEquals(0,new BigDecimal("0.01").compareTo(jdbc.queryForObject("select cost from supplier_product_mappings where product_id=?",BigDecimal.class,otherProduct)));
+        UUID unknown=goodsNotifications.accept(f.account(),"999999999999","b".repeat(64));
+        goodsNotifications.process(unknown);
+        assertEquals("IGNORED",value("select status from supplier_goods_notifications where id=?",unknown));
+    }
+    @Test void concurrentRefundRequestsSubmitOnceAndKeepCustomerMoneySeparate() throws Exception {
+        Fixture f=fixture(3,0); worker.process(f.purchase());
+        ExecutorService pool=Executors.newFixedThreadPool(8); CountDownLatch start=new CountDownLatch(1);
+        try {
+            List<Future<Map<String,Object>>> results=new ArrayList<>();
+            for(int i=0;i<8;i++) results.add(pool.submit(() -> {
+                RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+                try { start.await(); return aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true); }
+                finally { RequestContext.clear(); }
+            }));
+            start.countDown(); Set<Object> ids=new HashSet<>();
+            for(var future:results) ids.add(future.get(20,TimeUnit.SECONDS).get("id"));
+            assertEquals(1,ids.size()); assertEquals(1,fake.refunds.get());
+            assertEquals("REFUNDING",purchases.findById(f.purchase()).orElseThrow().getStatus());
+            assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+        } finally { pool.shutdownNow(); }
+    }
+    @Test void lostRefundResponseOnlyQueriesAndPreservesActualPartialRefund() throws Exception {
+        Fixture f=fixture(3,0); worker.process(f.purchase()); fake.loseRefundResponse=true;
+        fake.nextRefundStatus=5; fake.returnedMoney=new BigDecimal("0.01");
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try {
+            var result=aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+            assertEquals("COMPLETED",result.get("status"));
+            assertEquals(0,new BigDecimal("0.01").compareTo(purchases.findById(f.purchase()).orElseThrow().getRefundedAmount()));
+            aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+            assertEquals(1,fake.refunds.get());
+            assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+        } finally { RequestContext.clear(); }
+    }
+    @Test void explicitSupplierBusinessFailureIsRecordedWithoutRetry() throws Exception {
+        Fixture f=fixture(3,0); worker.process(f.purchase()); fake.rejectRefund=true;
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try {
+            assertEquals("REJECTED",aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true).get("status"));
+            aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+            assertEquals(1,fake.refunds.get());
+        } finally { RequestContext.clear(); }
+        assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+    }
+    @Test void voidLostResponseQueriesCardAndNeverSubmitsAgain() throws Exception {
+        Fixture f=fixture(1,0); worker.process(f.purchase());
+        UUID card=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? order by created_at limit 1",UUID.class,f.purchase());
+        fake.loseVoidResponse=true;
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try {
+            var result=aftercare.voidCard(f.order(),f.purchase(),card,UUID.randomUUID(),true);
+            assertEquals("COMPLETED",result.get("status"));
+            aftercare.voidCard(f.order(),f.purchase(),card,UUID.randomUUID(),true);
+            assertEquals(1,fake.voids.get());
+            assertEquals(2,jdbc.queryForObject("select card_status from supplier_delivery_cards where id=?",Integer.class,card));
+        } finally { RequestContext.clear(); }
+    }
+    private UUID registerOwner(Fixture f) {
+        UUID user=UUID.randomUUID();
+        Long number=jdbc.queryForObject("select coalesce(max(user_no),9999)+1 from users",Long.class);
+        UUID level=jdbc.queryForObject("select id from user_levels where is_default=true",UUID.class);
+        jdbc.update("""
+            insert into users(id,username,email,password_hash,role,is_deleted,user_no,user_level_id,balance)
+            values (?,?,?,'test-hash','USER',0,?,?,5.00)
+            """,user,"supplier-owner-"+user,user+"@example.invalid",number,level);
+        jdbc.update("update orders set user_id=?,session_token=null where id=?",user,f.order());
+        return user;
+    }
+    @Test void customerRefundRequiresVerifiedFullSupplierRefundAndIsNotRepeated() throws Exception {
+        Fixture f=fixture(3,0); UUID user=registerOwner(f); worker.process(f.purchase());
+        fake.nextRefundStatus=5; fake.returnedMoney=new BigDecimal("0.02");
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        try {
+            aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+            assertEquals(0,new BigDecimal("5.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+            refunds.refund(f.order(),"核实后退款",true,false);
+            assertEquals(0,new BigDecimal("15.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+            assertThrows(com.myshop.exception.BusinessException.class,()->refunds.refund(f.order(),"重复退款",true,false));
+            assertEquals(0,new BigDecimal("15.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+        } finally { RequestContext.clear(); }
+    }
+    @Test void partialOrZeroSupplierRefundCannotTriggerCustomerFullRefund() throws Exception {
+        for (String amount:List.of("0.00","0.01")) {
+            Fixture f=fixture(3,0); UUID user=registerOwner(f); worker.process(f.purchase());
+            fake.nextRefundStatus=5; fake.returnedMoney=new BigDecimal(amount);
+            RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+            try {
+                aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+                assertThrows(com.myshop.exception.BusinessException.class,()->refunds.refund(f.order(),"待核实",true,false));
+                assertEquals(0,new BigDecimal("5.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+            } finally { RequestContext.clear(); }
+        }
+    }
+    @Test void upstreamRefundSurvivesCustomerLedgerFailure() throws Exception {
+        Fixture f=fixture(3,0); UUID user=registerOwner(f); worker.process(f.purchase());
+        jdbc.update("update users set balance=9999999999.99 where id=?",user);
+        fake.nextRefundStatus=5; fake.returnedMoney=new BigDecimal("0.02");
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        try {
+            aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+            assertThrows(com.myshop.exception.BusinessException.class,()->refunds.refund(f.order(),"余额上限",true,false));
+            assertEquals("REFUNDED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+            assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+            assertEquals(0,new BigDecimal("9999999999.99").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+        } finally { RequestContext.clear(); }
+    }
+    @Test void mixedOrderAndGuestRefundsRespectPerItemSupplierEvidence() throws Exception {
+        Fixture guest=fixture(3,0); worker.process(guest.purchase());
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try { assertThrows(com.myshop.exception.BusinessException.class,() -> refunds.refund(guest.order(),"游客退款",true,false)); }
+        finally { RequestContext.clear(); }
+        Fixture f=fixture(3,0); UUID user=registerOwner(f),local=UUID.randomUUID(),line=UUID.randomUUID();
+        jdbc.update("""
+            insert into products(id,title,retail_price,cost_price,category_id,delivery_type,stock_mode,is_enabled)
+            values (?,'manual-mixed',10,1,(select category_id from products where id=?),'MANUAL','UNLIMITED',true)
+            """,local,f.product());
+        jdbc.update("""
+            insert into order_items(id,order_id,product_id,product_no,product_title,quantity,unit_price,cost_price_snapshot,
+                 retail_price_snapshot,pricing_source,subtotal,delivery_type,stock_mode,fulfillment_status)
+            values(?,?,?,(select product_no from products where id=?),'manual-mixed',1,10,1,10,'RETAIL',10,'MANUAL','UNLIMITED','PENDING')
+            """,line,f.order(),local,local);
+        jdbc.update("update orders set total_amount=20,actual_amount=20 where id=?",f.order());
+        worker.process(f.purchase()); fake.nextRefundStatus=5; fake.returnedMoney=new BigDecimal("0.01");
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        try {
+            aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+            assertThrows(com.myshop.exception.BusinessException.class,() -> refunds.refund(f.order(),"部分退款",true,false));
+            assertEquals(0,new BigDecimal("5.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+            SupplierPurchase p=purchases.findById(f.purchase()).orElseThrow();
+            var old=fake.details.get(p.getOuterNumber());
+            fake.details.put(p.getOuterNumber(),new SupplierModels.PurchaseDetail(old.orderNumber(),old.outerNumber(),5,old.count(),old.money(),
+                    old.money(),"全额退款",null,null,null,old.cards()));
+            worker.refresh(f.purchase());
+            refunds.refund(f.order(),"逐项核实",true,false);
+            assertEquals(0,new BigDecimal("25.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+            assertEquals("CANCELLED",value("select fulfillment_status from order_items where id=?",line));
+        } finally { RequestContext.clear(); }
+    }
+    @Test void unknownRefundOrVoidOnlyQueriesAndCannotSubmitAgain() throws Exception {
+        Fixture refund=fixture(3,0); worker.process(refund.purchase());
+        fake.nextRefundStatus=3; fake.loseRefundResponse=true;
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try {
+            assertEquals("UNKNOWN",aftercare.refund(refund.order(),refund.purchase(),UUID.randomUUID(),true).get("status"));
+            aftercare.refund(refund.order(),refund.purchase(),UUID.randomUUID(),true);
+            assertEquals(1,fake.refunds.get());
+        } finally { RequestContext.clear(); }
+        Fixture cardFixture=fixture(1,0); worker.process(cardFixture.purchase());
+        UUID card=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? order by created_at limit 1",UUID.class,cardFixture.purchase());
+        fake.nextVoidStatus=0; fake.loseVoidResponse=true;
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try {
+            assertEquals("UNKNOWN",aftercare.voidCard(cardFixture.order(),cardFixture.purchase(),card,UUID.randomUUID(),true).get("status"));
+            aftercare.voidCard(cardFixture.order(),cardFixture.purchase(),card,UUID.randomUUID(),true);
+            assertEquals(1,fake.voids.get());
+        } finally { RequestContext.clear(); }
+    }
+    @Test void crashedRefundClaimRecoversOnlyByQueryAndRemainsVisible() throws Exception {
+        Fixture f=fixture(3,0); worker.process(f.purchase()); UUID operator=UUID.randomUUID(),key=UUID.randomUUID();
+        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
+        UUID operation;
+        try { operation=aftercareTx.intent(f.order(),f.purchase(),"REFUND",key,null,null,operator,null,null,List.of()); }
+        finally { RequestContext.clear(); }
+        assertTrue(aftercareTx.claim(operation));
+        jdbc.update("update supplier_aftercare_operations set submitted_at=current_timestamp-interval '2 minutes' where id=?",operation);
+        aftercare.recover();
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
+        while (System.nanoTime()<deadline && !"UNKNOWN".equals(aftercareOperations.findById(operation).orElseThrow().getStatus())) Thread.sleep(20);
+        assertEquals("UNKNOWN",aftercareOperations.findById(operation).orElseThrow().getStatus());
+        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
+        try {
+            aftercare.recordReview(f.order(),f.purchase(),operation,"RESULT_UNCONFIRMED");
+            aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+            assertEquals("UNKNOWN",aftercareOperations.findById(operation).orElseThrow().getStatus());
+        } finally { RequestContext.clear(); }
+        assertEquals(0,fake.refunds.get());
+    }
+    @Test void cardStatesAndCancellationPermissionAreCheckedBeforeVoid() throws Exception {
+        for (int remoteStatus=0;remoteStatus<=4;remoteStatus++) {
+            Fixture f=fixture(1,0); worker.process(f.purchase());
+            UUID card=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? order by created_at limit 1",UUID.class,f.purchase());
+            String remote=jdbc.queryForObject("select remote_card_id from supplier_delivery_cards where id=?",String.class,card);
+            fake.cardStatuses.put(remote,remoteStatus);
+            RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+            try {
+                assertEquals(remoteStatus,aftercare.queryCard(f.order(),f.purchase(),card).get("status"));
+                if (remoteStatus>=2) assertThrows(com.myshop.exception.BusinessException.class,() -> aftercare.voidCard(f.order(),f.purchase(),card,UUID.randomUUID(),true));
+            } finally { RequestContext.clear(); }
+        }
+        Fixture blocked=fixture(1,0); worker.process(blocked.purchase());
+        UUID card=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? order by created_at limit 1",UUID.class,blocked.purchase());
+        fake.cardCancellationAllowed=0;
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try { assertThrows(com.myshop.exception.BusinessException.class,() -> aftercare.voidCard(blocked.order(),blocked.purchase(),card,UUID.randomUUID(),true)); }
+        finally { RequestContext.clear(); }
+        assertEquals(0,fake.voids.get());
+    }
+    @Test void identicalUpstreamOrderAndCardNumbersRemainIsolatedByAccount() throws Exception {
+        Fixture one=fixture(1,0); worker.process(one.purchase());
+        Fixture two=fixture(1,0); worker.process(two.purchase());
+        UUID c1=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? order by created_at limit 1",UUID.class,one.purchase());
+        UUID c2=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? order by created_at limit 1",UUID.class,two.purchase());
+        jdbc.update("update supplier_delivery_cards set remote_card_id='same-card' where id in (?,?)",c1,c2);
+        jdbc.update("update supplier_purchases set upstream_order_number='same-order' where id in (?,?)",one.purchase(),two.purchase());
+        aftercareTx.cardChecked(one.order(),one.purchase(),c1,new SupplierModels.CardDetail("same-card",2,0,"已作废"),LocalDateTime.now());
+        assertEquals(2,jdbc.queryForObject("select card_status from supplier_delivery_cards where id=?",Integer.class,c1));
+        assertEquals(0,jdbc.queryForObject("select card_status from supplier_delivery_cards where id=?",Integer.class,c2));
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try { assertThrows(com.myshop.exception.BusinessException.class,() -> aftercare.voidCard(one.order(),one.purchase(),c2,UUID.randomUUID(),true)); }
+        finally { RequestContext.clear(); }
+        assertEquals(0,fake.voids.get());
+    }
+    @Test void complaintUpdatesAreCorrelatedDeduplicatedAndNeverRegress() throws Exception {
+        Fixture f=fixture(3,0); UUID user=registerOwner(f); worker.process(f.purchase());
+        RequestContext.set(new RequestContext.UserInfo(user,"customer","USER"));
+        UUID sale;
+        try { sale=(UUID)((Map<?,?>)afterSale.apply(f.order(),user,"充值处理售后申请",List.of()).get("after_sale")).get("id"); }
+        finally { RequestContext.clear(); }
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        UUID operation;
+        try {
+            var result=aftercare.complaint(f.order(),f.purchase(),sale,UUID.randomUUID(),true,"申诉主题","说明内容",List.of());
+            operation=(UUID)result.get("id");
+        } finally { RequestContext.clear(); }
+        var p=purchases.findById(f.purchase()).orElseThrow();
+        complaintNotifications.accept(f.account(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),2,"已经受理","c".repeat(64),List.of());
+        complaintNotifications.accept(f.account(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),2,"已经受理","c".repeat(64),List.of());
+        complaintNotifications.accept(f.account(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),3,"处理完成","d".repeat(64),List.of());
+        complaintNotifications.accept(f.account(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),1,"旧消息","e".repeat(64),List.of());
+        assertEquals(2,complaintNotifications.forAfterSale(sale).size());
+        assertEquals(3,aftercareOperations.findById(operation).orElseThrow().getUpstreamStatus());
+        assertThrows(com.myshop.exception.BusinessException.class,() -> complaintNotifications.accept(UUID.randomUUID(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),3,"完成","f".repeat(64),List.of()));
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        try { assertThrows(com.myshop.exception.BusinessException.class,() -> aftercare.complaint(f.order(),f.purchase(),sale,UUID.randomUUID(),true,"","追加说明",List.of())); }
+        finally { RequestContext.clear(); }
+        assertEquals(1,fake.complaints.get());
+    }
+    @Test void complaintTimeoutCannotBeResubmittedAndAppendWorksOnlyAfterKnownAcceptance() throws Exception {
+        Fixture f=fixture(3,0); UUID user=registerOwner(f); worker.process(f.purchase());
+        RequestContext.set(new RequestContext.UserInfo(user,"customer","USER"));
+        UUID sale;
+        try { sale=(UUID)((Map<?,?>)afterSale.apply(f.order(),user,"充值处理售后申请",List.of()).get("after_sale")).get("id"); }
+        finally { RequestContext.clear(); }
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        try {
+            var first=aftercare.complaint(f.order(),f.purchase(),sale,UUID.randomUUID(),true,"主题","首次内容",List.of());
+            assertEquals("ACCEPTED",first.get("status"));
+            fake.loseComplaintResponse=true; UUID key=UUID.randomUUID();
+            var second=aftercare.complaint(f.order(),f.purchase(),sale,key,true,"","追加内容",List.of());
+            assertEquals("UNKNOWN",second.get("status"));
+            aftercare.complaint(f.order(),f.purchase(),sale,key,true,"","追加内容",List.of());
+            assertThrows(com.myshop.exception.BusinessException.class,() -> aftercare.complaint(f.order(),f.purchase(),sale,UUID.randomUUID(),true,"","重复内容",List.of()));
+            assertEquals(2,fake.complaints.get());
+        } finally { RequestContext.clear(); }
+    }
+    @Test void complaintReusesOwnedPrivateAttachmentAsBase64() throws Exception {
+        Fixture f=fixture(3,0); UUID user=registerOwner(f); worker.process(f.purchase());
+        var buffer=new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(1,1,java.awt.image.BufferedImage.TYPE_INT_RGB),"png",buffer);
+        byte[] png=buffer.toByteArray();
+        var gifBuffer=new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(1,1,java.awt.image.BufferedImage.TYPE_INT_RGB),"gif",gifBuffer);
+        byte[] gif=gifBuffer.toByteArray();
+        byte[] svg="<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"1\" height=\"1\"/></svg>".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var files=List.of(new org.springframework.mock.web.MockMultipartFile("attachments","proof.png","image/png",png),
+                new org.springframework.mock.web.MockMultipartFile("attachments","proof.gif","image/gif",gif),
+                new org.springframework.mock.web.MockMultipartFile("attachments","proof.svg","image/svg+xml",svg));
+        RequestContext.set(new RequestContext.UserInfo(user,"customer","USER"));
+        UUID sale;
+        try { sale=(UUID)((Map<?,?>)afterSale.apply(f.order(),user,"充值处理售后申请",new ArrayList<>(files)).get("after_sale")).get("id"); }
+        finally { RequestContext.clear(); }
+        List<UUID> attachmentIds=jdbc.queryForList("select id from after_sale_attachments where request_id=?",UUID.class,sale);
+        List<String> storageKeys=jdbc.queryForList("select storage_key from after_sale_attachments where request_id=?",String.class,sale);
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        try {
+            aftercare.complaint(f.order(),f.purchase(),sale,UUID.randomUUID(),true,"主题","附带凭证",attachmentIds);
+            assertEquals(Set.of(Base64.getEncoder().encodeToString(png),Base64.getEncoder().encodeToString(gif),Base64.getEncoder().encodeToString(svg)),new HashSet<>(fake.lastComplaint.images()));
+            assertFalse(fake.lastComplaint.toString().contains(fake.lastComplaint.images().getFirst()));
+            assertThrows(com.myshop.exception.BusinessException.class,() -> aftercare.complaint(f.order(),f.purchase(),UUID.randomUUID(),UUID.randomUUID(),true,"主题","错误关联",attachmentIds));
+        } finally { RequestContext.clear(); storageKeys.forEach(privateStorage::deleteManagedFile); }
+    }
+    @Test void supplierEvidenceValidatesSupportedFormatsAndRejectsMalformedData() throws Exception {
+        var pixel=new java.awt.image.BufferedImage(1,1,java.awt.image.BufferedImage.TYPE_INT_RGB);
+        var jpeg=new java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(pixel,"jpeg",jpeg);
+        var gif=new java.io.ByteArrayOutputStream(); javax.imageio.ImageIO.write(pixel,"gif",gif);
+        String webp="UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA=";
+        String svg=Base64.getEncoder().encodeToString("<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"1\" height=\"1\"/></svg>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        var types=complaintNotifications.validateImages(List.of(Base64.getEncoder().encodeToString(jpeg.toByteArray()),
+                Base64.getEncoder().encodeToString(gif.toByteArray()),webp,svg));
+        assertEquals(List.of("image/jpeg","image/gif","image/webp","image/svg+xml"),types);
+        assertThrows(com.myshop.exception.BusinessException.class,() -> complaintNotifications.validateImages(List.of(Base64.getEncoder().encodeToString(new byte[]{(byte)0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a}))));
+    }
+    @Test void signedComplaintCallbackStoresPrivateEvidenceAndRejectsReplayForgeryAndCrossAccount() throws Exception {
+        Fixture f=fixture(3,0); UUID user=registerOwner(f); worker.process(f.purchase());
+        RequestContext.set(new RequestContext.UserInfo(user,"customer","USER"));
+        UUID sale;
+        try { sale=(UUID)((Map<?,?>)afterSale.apply(f.order(),user,"充值处理售后申请",List.of()).get("after_sale")).get("id"); }
+        finally { RequestContext.clear(); }
+        RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
+        try { aftercare.complaint(f.order(),f.purchase(),sale,UUID.randomUUID(),true,"主题","申诉内容",List.of()); }
+        finally { RequestContext.clear(); }
+        SupplierPurchase p=purchases.findById(f.purchase()).orElseThrow();
+        String secret="01234567890123456789012345678901";
+        var connection=new SupplierModels.Connection("https://fake.invalid","test-id",secret);
+        SupplierService mock=org.mockito.Mockito.mock(SupplierService.class);
+        org.mockito.Mockito.when(mock.runtime(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq(false)))
+                .thenReturn(new SupplierService.RuntimeAccount(false,kayixin,connection));
+        var controller=new KayixinComplaintCallbackController(mock,complaintNotifications,callbackCodec);
+        var imageBuffer=new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(1,1,java.awt.image.BufferedImage.TYPE_INT_RGB),"png",imageBuffer);
+        String image=Base64.getEncoder().encodeToString(imageBuffer.toByteArray());
+        byte[] body=json.writeValueAsBytes(Map.of("orderNumber",p.getUpstreamOrderNumber(),"outerNumber",p.getOuterNumber(),
+                "reqId",1001,"status",2,"replay","已受理","base64Image",List.of(image)));
+        String time=Long.toString(java.time.Instant.now().getEpochSecond());
+        String signature=KayixinProvider.signature("test-id",secret,"3.0",time,body);
+        try {
+            byte[] invalid=json.writeValueAsBytes(Map.of("orderNumber",p.getUpstreamOrderNumber(),"outerNumber",p.getOuterNumber(),
+                    "reqId",1001,"status",2,"replay","无效凭证","base64Image",List.of(Base64.getEncoder().encodeToString(new byte[]{1,2,3}))));
+            assertEquals(400,controller.receive(f.account(),"test-id","3.0",time,KayixinProvider.signature("test-id",secret,"3.0",time,invalid),invalid).getStatusCode().value());
+            assertEquals(200,controller.receive(f.account(),"test-id","3.0",time,signature,body).getStatusCode().value());
+            assertEquals(200,controller.receive(f.account(),"test-id","3.0",time,signature,body).getStatusCode().value());
+            assertEquals(400,controller.receive(f.account(),"test-id","3.0",time,"0".repeat(32),body).getStatusCode().value());
+            String old=Long.toString(java.time.Instant.now().getEpochSecond()-600);
+            assertEquals(400,controller.receive(f.account(),"test-id","3.0",old,KayixinProvider.signature("test-id",secret,"3.0",old,body),body).getStatusCode().value());
+            assertEquals(400,controller.receive(UUID.randomUUID(),"test-id","3.0",time,signature,body).getStatusCode().value());
+            assertEquals(1,complaintNotifications.forAfterSale(sale).size());
+            UUID evidence=jdbc.queryForObject("select a.id from supplier_complaint_attachments a join supplier_complaint_events e on e.id=a.event_id where e.account_id=?",UUID.class,f.account());
+            RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"other","USER"));
+            try { assertThrows(com.myshop.exception.BusinessException.class,() -> complaintNotifications.download(evidence)); }
+            finally { RequestContext.clear(); }
+            RequestContext.set(new RequestContext.UserInfo(user,"owner","USER"));
+            try { assertEquals("image/png",complaintNotifications.download(evidence).contentType()); }
+            finally { RequestContext.clear(); }
+        } finally {
+            jdbc.queryForList("select a.storage_key from supplier_complaint_attachments a join supplier_complaint_events e on e.id=a.event_id where e.account_id=?",String.class,f.account()).forEach(privateStorage::deleteManagedFile);
+        }
+    }
+    @Test void productCallbackChecksSignatureAndStoresBeforeAcknowledging() throws Exception {
+        Fixture f=fixture(1,0);
+        var p=purchases.findById(f.purchase()).orElseThrow();
+        String secret="01234567890123456789012345678901";
+        var connection=new SupplierModels.Connection("https://fake.invalid","test-id",secret);
+        SupplierService mock=org.mockito.Mockito.mock(SupplierService.class);
+        org.mockito.Mockito.when(mock.runtime(f.account(),false)).thenReturn(new SupplierService.RuntimeAccount(true,kayixin,connection));
+        var controller=new KayixinGoodsCallbackController(mock,goodsNotifications,callbackCodec);
+        byte[] body=json.writeValueAsBytes(Map.of("goodsId",Long.parseLong(p.getRemoteGoodsId()),"money","0.01"));
+        String time=Long.toString(java.time.Instant.now().getEpochSecond());
+        String signature=KayixinProvider.signature("test-id",secret,"3.0",time,body);
+        assertEquals(400,controller.receive(f.account(),"test-id","3.0",time,"0".repeat(32),body).getStatusCode().value());
+        assertEquals(200,controller.receive(f.account(),"test-id","3.0",time,signature,body).getStatusCode().value());
+        assertEquals(200,controller.receive(f.account(),"test-id","3.0",time,signature,body).getStatusCode().value());
+        assertEquals(1,jdbc.queryForObject("select count(*) from supplier_goods_notifications where account_id=? and remote_goods_id=?",Integer.class,f.account(),p.getRemoteGoodsId()));
+        String later=Long.toString(Long.parseLong(time)+1);
+        assertEquals(200,controller.receive(f.account(),"test-id","3.0",later,KayixinProvider.signature("test-id",secret,"3.0",later,body),body).getStatusCode().value());
+        assertEquals(2,jdbc.queryForObject("select count(*) from supplier_goods_notifications where account_id=? and remote_goods_id=?",Integer.class,f.account(),p.getRemoteGoodsId()));
+    }
     @Test void queryNotFoundAfterCreateRemainsUnknownAndNeverRecreates() throws Exception {
         Fixture f=fixture(1,0); fake.absent=true; worker.process(f.purchase());
         assertEquals(1,fake.creates.get());
@@ -188,6 +654,27 @@ class SupplierPurchasePostgresIntegrationTest {
         worker.process(f.purchase()); assertEquals(1,fake.creates.get());
         fake.absent=false; worker.process(f.purchase());
         assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(1,fake.creates.get());
+    }
+    @Test void administratorCanRecordUnknownInvestigationWithoutChangingPurchase() throws Exception {
+        Fixture f=fixture(1,0); fake.absent=true; worker.process(f.purchase());
+        SupplierPurchase p=purchases.findById(f.purchase()).orElseThrow();
+        String outer=p.getOuterNumber();
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"test-user","USER"));
+        try {
+            assertThrows(com.myshop.exception.BusinessException.class,
+                    () -> adminOrders.recordReview(f.order(),f.purchase(),"MANUAL_HANDLING"));
+        } finally { RequestContext.clear(); }
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"test-admin","ADMIN"));
+        try {
+            assertThrows(com.myshop.exception.BusinessException.class,
+                    () -> adminOrders.recordReview(UUID.randomUUID(),f.purchase(),"MANUAL_HANDLING"));
+            var view=adminOrders.recordReview(f.order(),f.purchase(),"ORDER_NOT_FOUND_UNCONFIRMED");
+            assertEquals(1,((List<?>)view.get("reviews")).size());
+        } finally { RequestContext.clear(); }
+        assertEquals("UNKNOWN",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(outer,purchases.findById(f.purchase()).orElseThrow().getOuterNumber());
+        worker.process(f.purchase());
         assertEquals(1,fake.creates.get());
     }
     @Test void unknownPurchaseCannotUseLegacyCustomerRefund() throws Exception {
@@ -206,7 +693,7 @@ class SupplierPurchasePostgresIntegrationTest {
         try {
             RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"test-admin","ADMIN"));
             var e=assertThrows(com.myshop.exception.BusinessException.class,()->refunds.refund(f.order(),"核实",true,true));
-            assertTrue(e.getMessage().contains("上游退款尚未接入"));
+            assertTrue(e.getMessage().contains("核实"));
         } finally { RequestContext.clear(); }
         assertEquals("PAID",value("select status from orders where id=?",f.order()));
         assertEquals(0,new BigDecimal("5.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
@@ -275,6 +762,15 @@ class SupplierPurchasePostgresIntegrationTest {
         tx.applyDetail(p.getId(),new SupplierModels.PurchaseDetail(original.orderNumber(),p.getOuterNumber(),5,1,new BigDecimal("0.02"),new BigDecimal("0.01"),"部分退款",null,null,null,List.of()),LocalDateTime.now().plusSeconds(2));
         p=purchases.findById(p.getId()).orElseThrow(); assertEquals("REFUNDED",p.getStatus());
         assertEquals(0,new BigDecimal("0.01").compareTo(p.getRefundedAmount()));
+        assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+    }
+    @Test void completedUpstreamOrderCanEnterReturnProcessingWithoutCustomerRefund() throws Exception {
+        Fixture f=fixture(3,0); worker.process(f.purchase());
+        SupplierPurchase p=purchases.findById(f.purchase()).orElseThrow();
+        tx.applyDetail(p.getId(),new SupplierModels.PurchaseDetail(p.getUpstreamOrderNumber(),p.getOuterNumber(),8,1,
+                new BigDecimal("0.02"),BigDecimal.ZERO,"退单中",null,null,null,List.of()),LocalDateTime.now().plusSeconds(1));
+        var updated=purchases.findById(p.getId()).orElseThrow();
+        assertEquals(8,updated.getUpstreamStatus()); assertEquals("REFUNDING",updated.getStatus());
         assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
     }
     @Test void disabledAccountAllowsHistoryQueryButCannotClaimNewPurchase() throws Exception {
@@ -480,6 +976,47 @@ class SupplierPurchasePostgresIntegrationTest {
         tx.applyDetail(p.getId(),detail,LocalDateTime.now().plusSeconds(1));
         assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
     }
+    @Test void afterSaleAndCompletionSerializeAndTheResultSurvivesRejection() throws Exception {
+        Fixture f=fixture(3,0); assertTrue(tx.claim(f.purchase()));
+        UUID user=UUID.randomUUID();
+        Long number=jdbc.queryForObject("select coalesce(max(user_no),9999)+1 from users",Long.class);
+        UUID level=jdbc.queryForObject("select id from user_levels where is_default=true",UUID.class);
+        jdbc.update("""
+            insert into users(id,username,email,password_hash,role,is_deleted,user_no,user_level_id,balance)
+            values (?,?,?,'test-hash','USER',0,?,?,5.00)
+            """,user,"after-sale-"+user,user+"@example.invalid",number,level);
+        jdbc.update("update orders set user_id=?,session_token=null where id=?",user,f.order());
+        SupplierPurchase p=purchases.findById(f.purchase()).orElseThrow();
+        var detail=new SupplierModels.PurchaseDetail("UP-RACE",p.getOuterNumber(),3,1,
+                new BigDecimal("0.02"),BigDecimal.ZERO,"完成",null,null,null,List.of());
+        fake.details.put(p.getOuterNumber(),detail);
+        ExecutorService pool=Executors.newFixedThreadPool(2);
+        CountDownLatch saleLocked=new CountDownLatch(1),release=new CountDownLatch(1);
+        try {
+            Future<?> sale=pool.submit(() -> new TransactionTemplate(manager).execute(status -> {
+                try {
+                    RequestContext.set(new RequestContext.UserInfo(user,"customer","USER"));
+                    afterSale.apply(f.order(),user,"测试售后申请",List.of());
+                    saleLocked.countDown();
+                    if (!release.await(5,TimeUnit.SECONDS)) throw new IllegalStateException();
+                    return null;
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                finally { RequestContext.clear(); }
+            }));
+            assertTrue(saleLocked.await(5,TimeUnit.SECONDS));
+            Future<?> completion=pool.submit(() -> tx.applyDetail(f.purchase(),detail,LocalDateTime.now()));
+            Thread.sleep(100); assertFalse(completion.isDone());
+            release.countDown(); sale.get(5,TimeUnit.SECONDS); completion.get(5,TimeUnit.SECONDS);
+            assertEquals("AFTER_SALE",value("select status from orders where id=?",f.order()));
+            assertEquals("PENDING",value("select fulfillment_status from order_items where id=?",f.item()));
+            assertEquals("AFTER_SALE",purchases.findById(f.purchase()).orElseThrow().getErrorCode());
+            RequestContext.set(new RequestContext.UserInfo(user,"test-admin","ADMIN"));
+            try { afterSale.reject(f.order(),"已核实"); } finally { RequestContext.clear(); }
+            worker.refresh(f.purchase());
+            assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+            assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        } finally { release.countDown(); pool.shutdownNow(); }
+    }
     @Test void callbackEndpointAcceptsOnlySignedAccountAndAdministratorRefreshIsScoped() throws Exception {
         Fixture f=fixture(1,0); assertTrue(tx.claim(f.purchase()));
         String secret="0123456789abcdef0123456789abcdef";
@@ -518,6 +1055,20 @@ class SupplierPurchasePostgresIntegrationTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
         assertEquals(0,fake.creates.get()); assertEquals("COMPLETED",purchases.findById(p.getId()).orElseThrow().getStatus());
     }
+    @Test void supplierAftercareMutationEndpointsRequireAdministrator() throws Exception {
+        Fixture f=fixture(3,0); worker.process(f.purchase());
+        var mvc=MockMvcBuilders.webAppContextSetup(webContext).addFilters(security).build();
+        String path="/api/admin/orders/{order}/supplier-purchases/{purchase}/refunds";
+        String body="{\"idempotency_key\":\""+UUID.randomUUID()+"\",\"confirmed\":true}";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path,f.order(),f.purchase()).contextPath("/api")
+                .contentType("application/json").content(body))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path,f.order(),f.purchase()).contextPath("/api")
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("buyer").roles("USER"))
+                .contentType("application/json").content(body))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+        assertEquals(0,fake.refunds.get());
+    }
     private void runCheckout(int goodsType) throws Exception {
         Fixture f=fixture(goodsType,0);
         jdbc.update("update products set retail_price=10.00 where id=?",f.product());
@@ -552,7 +1103,7 @@ class SupplierPurchasePostgresIntegrationTest {
         try {
             RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"test-admin","ADMIN"));
             var error=assertThrows(com.myshop.exception.BusinessException.class,()->refunds.refund(orderId,"核实",true,true));
-            assertTrue(error.getMessage().contains("上游退款尚未接入"));
+            assertTrue(error.getMessage().contains("核实"));
         } finally { RequestContext.clear(); }
         assertEquals(0,new BigDecimal("10.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
         UUID again=(UUID)((Map<?,?>)orderService.createDirectOrder(request,user,"127.0.0.1",null).get("order")).get("id");

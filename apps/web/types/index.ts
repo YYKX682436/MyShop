@@ -310,6 +310,7 @@ export interface AfterSaleRequest {
   handled_at?: string | null
   attachments: AfterSaleAttachment[]
   messages: AfterSaleMessage[]
+  supplier_updates?: { status: number; reply: string; created_at: string; attachments: { id: string; url: string; content_type: string; file_size: number }[] }[]
 }
 
 export type AfterSaleSummary = Pick<AfterSaleRequest,
@@ -417,7 +418,7 @@ export interface OrderDeliveryGroup {
   quantity?: number
   delivery_type?: string
   fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
-  delivery_items: { content_parts: string[] }[]
+  delivery_items: { content_parts: string[]; supplier_card_status?: number }[]
 }
 
 export interface OrderDeliveryView {
@@ -768,6 +769,9 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
     last_checked_at: string | null
     error_code: string | null
     can_refresh: boolean
+    reviews?: { outcome: string; operator: string; created_at: string }[]
+    aftercare_operations?: { id: string; idempotency_key: string; kind: string; status: string; card_id: string | null; after_sale_id: string | null; supplier_req_id: number | null; upstream_status: number | null; result: string | null; error_code: string | null; topic: string | null; content: string | null; attachment_ids: string[]; created_at: string; last_checked_at: string | null; reviews: { outcome: string; operator: string; created_at: string }[] }[]
+    supplier_cards?: { id: string; remote_card_id: string; status: number; cancel_request: number; result: string | null; last_checked_at: string | null }[]
   } | null
 }
 

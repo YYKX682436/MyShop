@@ -4,14 +4,17 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
 import com.myshop.entity.Order;
 import com.myshop.entity.User;
 import com.myshop.exception.BusinessException;
+import com.myshop.repository.OrderItemRepository;
 import com.myshop.service.BalanceOrderPaymentService;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OrderPaymentCompletionService;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,11 +31,16 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
 
     private final BalanceTransactionService balanceTransactionService;
     private final OrderPaymentCompletionService orderPaymentCompletionService;
+    private final OrderItemRepository orderItemRepository;
+    @Value("${supplier.purchase-enabled:false}")
+    private boolean supplierPurchaseEnabled;
 
     public BalanceOrderPaymentServiceImpl(BalanceTransactionService balanceTransactionService,
-                                          OrderPaymentCompletionService orderPaymentCompletionService) {
+                                          OrderPaymentCompletionService orderPaymentCompletionService,
+                                          OrderItemRepository orderItemRepository) {
         this.balanceTransactionService = balanceTransactionService;
         this.orderPaymentCompletionService = orderPaymentCompletionService;
+        this.orderItemRepository = orderItemRepository;
     }
 
     @Override
@@ -51,6 +59,10 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
         }
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单状态不允许余额支付");
+        }
+        if (!supplierPurchaseEnabled && orderItemRepository.findByOrderId(order.getId()).stream()
+                .anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放付款，请联系客服");
         }
 
         BigDecimal amount = money(order.getActualAmount());

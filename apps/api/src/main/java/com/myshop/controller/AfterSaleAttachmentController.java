@@ -32,6 +32,8 @@ public class AfterSaleAttachmentController {
         } catch (IllegalArgumentException exception) {
             mediaType = MediaType.APPLICATION_OCTET_STREAM;
         }
+        boolean svg="image/svg+xml".equals(download.contentType());
+        if (svg) mediaType=MediaType.APPLICATION_OCTET_STREAM;
         String filename = download.filename() == null || download.filename().isBlank()
                 ? "attachment" : download.filename().replaceAll("[\\r\\n\"]", "_");
         return ResponseEntity.ok()
@@ -39,7 +41,8 @@ public class AfterSaleAttachmentController {
                 .contentLength(download.size())
                 .cacheControl(CacheControl.noStore().cachePrivate())
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        ContentDisposition.inline().filename(filename, StandardCharsets.UTF_8).build().toString())
+                        (svg ? ContentDisposition.attachment() : ContentDisposition.inline()).filename(filename, StandardCharsets.UTF_8).build().toString())
+                .header("X-Content-Type-Options","nosniff")
                 .body(download.resource());
     }
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
 import com.myshop.entity.PaymentAttempt;
@@ -23,6 +24,7 @@ import com.myshop.service.OrderExpiryService;
 import com.myshop.service.PaymentQueryTransactionService;
 import com.myshop.service.PaymentService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -47,6 +49,8 @@ public class PaymentServiceImpl implements PaymentService {
     private final ObjectMapper objectMapper;
     private final OrderExpiryService orderExpiryService;
     private final PaymentQueryTransactionService paymentQueryTransactionService;
+    @Value("${supplier.purchase-enabled:false}")
+    private boolean supplierPurchaseEnabled;
 
     @Autowired
     public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
@@ -84,6 +88,7 @@ public class PaymentServiceImpl implements PaymentService {
 
         validatePendingOrder(order);
         validateAmount(order, amount);
+        validateSupplierPaymentEnabled(order);
         PaymentAttempt active = findActiveAttempt(order.getId());
         if (active != null) return buildResult(order, active);
 
@@ -98,6 +103,7 @@ public class PaymentServiceImpl implements PaymentService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         validateOnlineOrder(order);
         validatePendingOrder(order);
+        validateSupplierPaymentEnabled(order);
         PaymentAttempt latest = paymentAttemptRepository.findFirstByOrderIdOrderByCreatedAtDesc(orderId)
                 .orElse(null);
         if (latest != null && latest.getCreatedAt() != null
@@ -185,6 +191,13 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付方式不受该提供商支持");
         }
         return new PaymentContext(channel, provider);
+    }
+
+    private void validateSupplierPaymentEnabled(Order order) {
+        if (!supplierPurchaseEnabled && orderItemRepository.findByOrderId(order.getId()).stream()
+                .anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放付款，请联系客服");
+        }
     }
 
     private PaymentAttempt findActiveAttempt(UUID orderId) {

@@ -37,4 +37,15 @@ public final class SupplierModels {
                                  String startCount, String nowCount, String endCount, List<Card> cards) {
         @Override public String toString() { return "PurchaseDetail[redacted]"; }
     }
+    public record RefundResult(int status) {}
+    public record ComplaintRequest(String orderNumber,String topic,String content,String notifyUrl,List<String> images) {
+        @Override public String toString() { return "ComplaintRequest[redacted]"; }
+    }
+    public record ComplaintResult(long requestId) {}
+    public record CardDetail(String id,int status,int cancelRequest,String result) {
+        @Override public String toString() { return "CardDetail[redacted]"; }
+    }
+    public record CardVoidResult(int status,String result) {
+        @Override public String toString() { return "CardVoidResult[redacted]"; }
+    }
 }
