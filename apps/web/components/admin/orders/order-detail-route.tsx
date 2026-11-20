@@ -106,6 +106,11 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     await load()
   }
 
+  const reviewPayment = async (attemptId: string, note: string) => {
+    await requestOrThrow(() => adminOrderApi.reviewPayment(orderId, attemptId, note))
+    await load()
+  }
+
   const close = useRouteOverlayClose(false, presentation === "inspector")
 
   const handleCompleteManualFulfillment = async (items: AdminManualFulfillmentItem[]) => {
@@ -277,6 +282,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           afterSaleReplyLoading={afterSaleMessageLoading}
           onRefreshSupplier={(id) => void refreshSupplier(id)}
           onReviewSupplier={reviewSupplier}
+          onReviewPayment={reviewPayment}
           onReloadSupplier={load}
           refreshingSupplier={refreshingSupplier}
         />

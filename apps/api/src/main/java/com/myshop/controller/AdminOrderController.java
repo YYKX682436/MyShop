@@ -36,6 +36,14 @@ public class AdminOrderController {
         return ApiResponse.success(adminOrderService.getOrderDetail(id));
     }
 
+    @PostMapping("/{id}/payment-reviews")
+    public ApiResponse<Void> recordPaymentReview(@PathVariable UUID id, @RequestBody PaymentReviewRequest request) {
+        adminOrderService.recordPaymentReview(id, request.attemptId(), request.note());
+        return ApiResponse.success();
+    }
+
+    public record PaymentReviewRequest(UUID attemptId, String note) { }
+
     @PostMapping("/{id}/mark-paid")
     public ApiResponse<Void> markPaid(@PathVariable UUID id, @Valid @RequestBody MarkPaidRequest request) {
         adminOrderService.markPaid(id, request.reason(), request.confirmed());

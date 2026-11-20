@@ -33,6 +33,7 @@ interface OrderDetailSheetProps {
   afterSaleReplyLoading?: boolean
   onRefreshSupplier?: (purchaseId: string) => void
   onReviewSupplier?: (purchaseId: string, outcome: string) => Promise<void>
+  onReviewPayment?: (attemptId: string, note: string) => Promise<void>
   onReloadSupplier?: () => Promise<void>
   refreshingSupplier?: string | null
 }
@@ -72,6 +73,25 @@ function SupplierReview({ purchaseId, reviews, onReview }: {
       <Button type="submit" size="sm" disabled={busy}>{busy ? "保存中" : "记录结果"}</Button>
     </form>
   </div>
+}
+
+function PaymentReview({ attemptId, onReview }: { attemptId: string; onReview: (attemptId: string, note: string) => Promise<void> }) {
+  const id = useId()
+  const [busy, setBusy] = useState(false)
+  return <form aria-label="记录支付核实结果" className="mt-3 flex flex-wrap items-end gap-2" onSubmit={async event => {
+    event.preventDefault()
+    const form = event.currentTarget
+    const note = String(new FormData(form).get("note") || "").trim()
+    setBusy(true)
+    try { await onReview(attemptId, note); form.reset(); toast.success("已记录核实结果") }
+    catch (error) { toast.error(error instanceof Error ? error.message : "记录失败") }
+    finally { setBusy(false) }
+  }}>
+    <div className="min-w-48 flex-1"><label htmlFor={id} className="mb-1 block text-xs">人工核实记录（勿填写密钥或卡密）</label>
+      <input id={id} name="note" minLength={3} maxLength={500} required className="min-h-12 w-full rounded-md border border-input bg-background px-3 text-base" />
+    </div>
+    <Button type="submit" size="sm" className="min-h-12" disabled={busy}>{busy ? "保存中" : "记录"}</Button>
+  </form>
 }
 
 function fulfillmentLabel(item: OrderItemDetail, t: Translator) {
@@ -176,6 +196,7 @@ export function OrderDetailSheet({
   afterSaleReplyLoading = false,
   onRefreshSupplier,
   onReviewSupplier,
+  onReviewPayment,
   onReloadSupplier,
   refreshingSupplier,
 }: OrderDetailSheetProps) {
@@ -253,6 +274,22 @@ export function OrderDetailSheet({
           </p>
         )}
       </header>
+
+      {((order.payment_attempts?.length ?? 0) > 0 || (order.late_payments?.length ?? 0) > 0) && (
+        <section className="content-surface space-y-3 rounded-surface p-5 sm:p-6" aria-labelledby="payment-attempts-title">
+          <h2 id="payment-attempts-title" className="text-base font-semibold">支付记录</h2>
+          {!!order.late_payments?.length && <p className="text-sm text-destructive" role="alert">存在需核实的迟到或冲突付款记录，请人工处理，勿重复发货或自动退款。</p>}
+          {order.payment_attempts?.map(attempt => <div key={attempt.id} className="rounded-control border border-border-subtle p-3 text-sm">
+            <div className="flex flex-wrap justify-between gap-2"><span>{attempt.channel} · {formatYuan(attempt.amount)}</span><span>{attempt.status} / {attempt.creation_status}</span></div>
+            <div className="mt-1 break-all text-xs text-muted-foreground">商户单号 {attempt.merchant_trade_no}</div>
+            {attempt.provider_trade_no && <div className="break-all text-xs text-muted-foreground">网关单号 {attempt.provider_trade_no}</div>}
+            {attempt.create_response_trade_no && attempt.create_response_trade_no !== attempt.provider_trade_no && <div className="break-all text-xs text-destructive">创建响应单号 {attempt.create_response_trade_no}（需核实）</div>}
+            {order.late_payments?.filter(event => event.attempt_id === attempt.id).map(event => <div key={event.id} className="mt-1 break-all text-xs text-destructive">{event.process_result === "LATE_PAID_CONFLICT" ? "签名通知的网关单号冲突" : event.process_result === "LATE_PAID_UNVERIFIED" ? "签名通知等待网关确认" : "迟到付款"} · 待人工核实 · {formatDateTime(event.recorded_at, locale)} · {event.reported_trade_no || event.event_id}</div>)}
+            {onReviewPayment && (attempt.creation_status === "UNKNOWN" || attempt.creation_status === "SUBMITTING" || order.late_payments?.some(event => event.attempt_id === attempt.id)) && <PaymentReview attemptId={attempt.id} onReview={onReviewPayment} />}
+          </div>)}
+          {order.payment_reviews?.map(review => <p key={review.id} className="break-all text-xs text-muted-foreground">{formatDateTime(review.created_at, locale)} · {review.operator} · {review.detail}</p>)}
+        </section>
+      )}
 
       {(afterSaleRequest || (order.after_sale_history?.length ?? 0) > 0) && (
         <AfterSaleHistoryCard

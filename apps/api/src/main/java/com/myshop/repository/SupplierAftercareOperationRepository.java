@@ -27,4 +27,6 @@ public interface SupplierAftercareOperationRepository extends JpaRepository<Supp
     List<UUID> staleComplaints(@Param("before") LocalDateTime before,Pageable page);
     @Query("select count(o)>0 from SupplierAftercareOperation o where o.purchaseId=:id and o.kind='REFUND' and o.status in ('INTENT','SUBMITTING','UNKNOWN','ACCEPTED')")
     boolean refundUnresolved(@Param("id") UUID purchaseId);
+    @Query("select count(o)>0 from SupplierAftercareOperation o where o.purchaseId=:id and o.kind='CARD_VOID' and o.status in ('INTENT','SUBMITTING','UNKNOWN','ACCEPTED')")
+    boolean cardVoidUnresolved(@Param("id") UUID purchaseId);
 }

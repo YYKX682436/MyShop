@@ -27,9 +27,9 @@ public class KayixinRechargeTemplates {
                 if (!nodes.isArray() || nodes.isEmpty() || nodes.size()>200) throw invalid();
                 options=new ArrayList<>(); Set<String> values=new HashSet<>();
                 for (JsonNode option:nodes) {
-                    String name=string(option,"name",true,255), value=string(option,"value",true,255);
-                    if (!values.add(value)) throw invalid();
-                    options.add(new CustomerInputField.Option(name,value));
+                    CustomerInputField.Option parsed=type==16 ? cascadeOption(option) : simpleOption(option,false);
+                    if (!values.add(parsed.value())) throw invalid();
+                    options.add(parsed);
                 }
                 options=List.copyOf(options);
             }
@@ -47,6 +47,44 @@ public class KayixinRechargeTemplates {
             fields.add(new CustomerInputField(id,title,normalized,required==1,placeholder,regex,options));
         }
         return List.copyOf(fields);
+    }
+
+    private CustomerInputField.Option cascadeOption(JsonNode node) {
+        var root=simpleOption(node,true);
+        List<CustomerInputField.Option> children=null;
+        JsonNode childNodes=node.get("children");
+        if (childNodes!=null && !childNodes.isNull()) children=simpleOptions(childNodes);
+        List<CustomerInputField.Expansion> expand=null;
+        JsonNode expansions=node.get("expand");
+        if (expansions!=null && !expansions.isNull()) {
+            if (!expansions.isArray() || expansions.size()>20) throw invalid();
+            expand=new ArrayList<>();
+            for (JsonNode entry:expansions) {
+                if (!entry.isObject() || !entry.path("type").isInt() || !Set.of(0,14).contains(entry.path("type").asInt())) throw invalid();
+                JsonNode nodes=entry.get("options");
+                List<CustomerInputField.Option> opts=nodes==null || nodes.isNull() ? null : simpleOptions(nodes);
+                if (entry.path("type").asInt()==14 && (opts==null || opts.isEmpty())) throw invalid();
+                expand.add(new CustomerInputField.Expansion(entry.path("type").asInt(),opts));
+            }
+            expand=List.copyOf(expand);
+        }
+        return new CustomerInputField.Option(root.name(),root.value(),children,expand);
+    }
+    private List<CustomerInputField.Option> simpleOptions(JsonNode nodes) {
+        if (!nodes.isArray() || nodes.size()>200) throw invalid();
+        List<CustomerInputField.Option> options=new ArrayList<>(); Set<String> values=new HashSet<>();
+        for (JsonNode node:nodes) {
+            var option=simpleOption(node,true);
+            if (!values.add(option.value())) throw invalid();
+            options.add(option);
+        }
+        return List.copyOf(options);
+    }
+    private CustomerInputField.Option simpleOption(JsonNode node,boolean allowEmptyValue) {
+        String name=string(node,"name",true,255);
+        String value=string(node,"value",!allowEmptyValue,255);
+        if (value==null) throw invalid();
+        return new CustomerInputField.Option(name,value);
     }
 
     private String string(JsonNode node,String key,boolean required,int max) {

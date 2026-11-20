@@ -47,3 +47,9 @@ test("a server action replaces the seed and a terminal status clears it", () => 
   assert.equal(terminal.nextAction, null)
   assert.equal(terminal.phase, "ready")
 })
+
+test("an authoritative missing action clears a stale browser payment link", () => {
+  const seeded = createPaymentPageActionState(qrCode)
+  const reconciled = applyPaymentStatus(seeded, "PENDING", null, true)
+  assert.equal(reconciled.nextAction, null)
+})

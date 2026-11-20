@@ -5,12 +5,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.entity.PaymentAttempt;
 import com.myshop.payment.PaymentQueryUnavailableException;
 import com.myshop.payment.PaymentProvider;
+import com.myshop.payment.PaymentEventIdentity;
 import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.WebhookEventRepository;
 import com.myshop.service.WebhookService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -42,6 +45,7 @@ public class WebhookServiceImpl implements WebhookService {
     }
 
     @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public PaymentProvider.WebhookAcknowledgement handleWebhook(
             String providerId, PaymentProvider.WebhookRequest request) {
         PaymentProvider provider = providerForPath(providerId);
@@ -79,9 +83,16 @@ public class WebhookServiceImpl implements WebhookService {
             return provider.failureAcknowledgement();
         }
 
-        if (webhookEventRepository.findByEventId(callback.eventId()).isPresent()) {
+        var legacyEvent = webhookEventRepository.findByEventId(callback.eventId()).orElse(null);
+        if (legacyEvent != null && attempt.getId().equals(legacyEvent.getPaymentAttemptId())) {
             return provider.successAcknowledgement();
         }
+        callback = new PaymentProvider.CallbackResult(
+                PaymentEventIdentity.scoped(provider.id(), merchantTradeNo, callback.eventId()),
+                callback.merchantTradeNo(), callback.providerTradeNo(), callback.status(), callback.amount());
+        var existing = webhookEventRepository.findByEventId(callback.eventId()).orElse(null);
+        if (existing != null && !PaymentConfirmationTransactionService.UNVERIFIED_RECEIPT.equals(existing.getProcessResult()))
+            return provider.successAcknowledgement();
 
         // A valid signed non-paid notification is acknowledged, but it does
         // not consume the event identity: a later PAID notification remains
@@ -90,18 +101,17 @@ public class WebhookServiceImpl implements WebhookService {
             return provider.successAcknowledgement();
         }
 
-        if (attempt.getStatus() == PaymentStatus.PAID) {
-            return provider.successAcknowledgement();
-        }
-        if (attempt.getStatus() != PaymentStatus.PENDING) {
-            return provider.failureAcknowledgement();
-        }
-        if (attempt.getExpiresAt() != null
-                && !attempt.getExpiresAt().isAfter(LocalDateTime.now())) {
-            return provider.failureAcknowledgement();
+        String storedTrade = clean(attempt.getProviderTradeNo());
+        String callbackTrade = clean(callback.providerTradeNo());
+        if (storedTrade != null && callbackTrade != null && !storedTrade.equals(callbackTrade)) {
+            // Preserve the signed but conflicting receipt for an operator;
+            // never treat it as a settled order or overwrite the first trade.
+            return "SUCCESS".equals(confirmationService.recordConflictingReceipt(attempt.getId(), callback))
+                    ? provider.successAcknowledgement() : provider.failureAcknowledgement();
         }
 
         if (provider.supportsServerSideQuery() && !queryMatches(provider, attempt, callback, config)) {
+            confirmationService.recordUnverifiedReceipt(attempt.getId(), callback);
             return provider.failureAcknowledgement();
         }
 
@@ -140,9 +150,7 @@ public class WebhookServiceImpl implements WebhookService {
                 || !sameAmount(callback.amount(), attempt.getAmount())) {
             return false;
         }
-        String storedTradeNo = clean(attempt.getProviderTradeNo());
-        String callbackTradeNo = clean(callback.providerTradeNo());
-        return storedTradeNo == null || callbackTradeNo == null || storedTradeNo.equals(callbackTradeNo);
+        return true;
     }
 
     private Map<String, String> parseConfigSnapshot(String raw) {
@@ -176,8 +184,9 @@ public class WebhookServiceImpl implements WebhookService {
         String queryTrade = clean(queried);
         String callbackTrade = clean(callback);
         String createdTrade = clean(created);
-        return queryTrade == null || callbackTrade == null || queryTrade.equals(callbackTrade)
-                || (createdTrade != null && queryTrade.equals(createdTrade));
+        if (queryTrade == null) return true;
+        if (callbackTrade != null) return queryTrade.equals(callbackTrade);
+        return createdTrade == null || queryTrade.equals(createdTrade);
     }
 
     private String clean(String value) {

@@ -2,6 +2,7 @@ package com.myshop.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.myshop.payment.PaymentStatus;
+import com.myshop.payment.PaymentCreationStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -61,8 +62,33 @@ public class PaymentAttempt extends BaseEntity {
     @Column(nullable = false, length = 16)
     private PaymentStatus status = PaymentStatus.PENDING;
 
-    @Column(name = "next_action", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "next_action", columnDefinition = "TEXT")
     private String nextAction;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "creation_status", nullable = false, length = 16)
+    private PaymentCreationStatus creationStatus = PaymentCreationStatus.READY;
+
+    @Column(name = "creation_started_at")
+    private LocalDateTime creationStartedAt;
+
+    @Column(name = "creation_device", length = 64)
+    private String creationDevice;
+
+    @Column(name = "product_name_snapshot", columnDefinition = "TEXT")
+    private String productNameSnapshot;
+
+    @Column(name = "client_ip_snapshot", length = 255)
+    private String clientIpSnapshot;
+
+    @Column(name = "notify_url_snapshot", columnDefinition = "TEXT")
+    private String notifyUrlSnapshot;
+
+    @Column(name = "return_url_snapshot", columnDefinition = "TEXT")
+    private String returnUrlSnapshot;
+
+    @Column(name = "create_response_trade_no", length = 255)
+    private String createResponseTradeNo;
 
     @Column(name = "expires_at")
     private LocalDateTime expiresAt;

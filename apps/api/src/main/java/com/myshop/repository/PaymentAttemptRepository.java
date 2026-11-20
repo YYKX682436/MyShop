@@ -28,6 +28,8 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
                                                           @Param("status") PaymentStatus status);
 
     Optional<PaymentAttempt> findByMerchantTradeNo(String merchantTradeNo);
+    @Query("select p.orderId from PaymentAttempt p where p.id=:id")
+    Optional<UUID> findOrderId(@Param("id") UUID id);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM PaymentAttempt p WHERE p.id = :id")

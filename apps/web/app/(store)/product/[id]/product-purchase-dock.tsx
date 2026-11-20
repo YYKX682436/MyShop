@@ -250,7 +250,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
       const action = result.payment.next_action
       if (!action) {
         clearPaymentAction(result.payment.order_id)
-        toast.error(t("payment.loadFailed"))
+        router.push(paymentHref)
         return
       }
 

@@ -29,6 +29,10 @@ import com.myshop.supplier.SupplierCheckout;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -56,6 +60,8 @@ public class OrderServiceImpl implements OrderService {
     private final AutoFulfillmentService autoFulfillmentService;
     private final PricingService pricingService;
     private SupplierCheckout supplierCheckout;
+    private TransactionTemplate transactions;
+    @Autowired public void setTransactionManager(PlatformTransactionManager manager) { transactions = new TransactionTemplate(manager); }
     @Value("${supplier.purchase-enabled:false}")
     private boolean supplierPurchaseEnabled;
 
@@ -92,8 +98,49 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
-    @Transactional(noRollbackFor = OrderExpiredException.class)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Map<String, Object> createDirectOrder(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
+        Map<String, Object> result;
+        try {
+            result = createOrderTransaction(req, userId, clientIp, sessionToken);
+        } catch (DataIntegrityViolationException exception) {
+            // A concurrent request may have committed the same idempotency key
+            // while this transaction was inserting. Re-read only after rollback.
+            String key = clean((String) req.get("idempotency_key"));
+            if (key == null || orderRepository.findByIdempotencyKey(key).isEmpty()) throw exception;
+            result = createOrderTransaction(req, userId, clientIp, sessionToken);
+        }
+        @SuppressWarnings("unchecked") Map<String, Object> payment = (Map<String, Object>) result.get("payment");
+        Object paymentId = payment.get("payment_id");
+        if (paymentId instanceof UUID id) {
+            Map<String, Object> dispatched;
+            try { dispatched = paymentService.dispatchPayment(id); }
+            catch (RuntimeException exception) {
+                // The order and intent already committed; keep them accessible
+                // even if the subsequent claim or status read cannot commit.
+                dispatched = new LinkedHashMap<>(payment);
+                dispatched.put("creation_status", "UNKNOWN");
+                dispatched.put("next_action", null);
+                dispatched.put("can_retry", false);
+            }
+            result.put("payment", dispatched);
+            @SuppressWarnings("unchecked") Map<String, Object> order = (Map<String, Object>) result.get("order");
+            if (dispatched.get("order_status") != null) order.put("status", dispatched.get("order_status").toString());
+        }
+        return result;
+    }
+
+    private Map<String, Object> createOrderTransaction(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
+        java.util.concurrent.atomic.AtomicReference<OrderExpiredException> expired = new java.util.concurrent.atomic.AtomicReference<>();
+        Map<String, Object> result = transactions.execute(status -> {
+            try { return createDirectOrderLocked(req, userId, clientIp, sessionToken); }
+            catch (OrderExpiredException exception) { expired.set(exception); return null; }
+        });
+        if (expired.get() != null) throw expired.get();
+        return result;
+    }
+
+    private Map<String, Object> createDirectOrderLocked(Map<String, Object> req, UUID userId, String clientIp, String sessionToken) {
         String device = (String) req.get("device");
         Object requestedPaymentMethod = req.get("payment_method");
         String guestSession = userId == null ? clean(sessionToken) : null;
@@ -113,7 +160,7 @@ public class OrderServiceImpl implements OrderService {
                     // matching refunds. Load it under the first lock so the
                     // persistence context cannot retain a stale payment state.
                     reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
-                    return buildOrderResult(existingOrder, device);
+                    return buildOrderResult(existingOrder, device, true);
                 }
                 throw new BusinessException(ErrorCode.FORBIDDEN, "幂等键不属于当前用户或会话");
             }
@@ -242,7 +289,7 @@ public class OrderServiceImpl implements OrderService {
             balanceOrderPaymentService.pay(order, currentUser);
         }
 
-        return buildOrderResult(order, device);
+        return buildOrderResult(order, device, false);
     }
 
     @Override
@@ -274,7 +321,7 @@ public class OrderServiceImpl implements OrderService {
         order.setUserLevelNameSnapshot(level.getName());
     }
 
-    private Map<String, Object> buildOrderResult(Order order, String device) {
+    private Map<String, Object> buildOrderResult(Order order, String device, boolean replay) {
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         Map<String, Object> payment;
         if (isAdminPickup(order)) {
@@ -288,9 +335,16 @@ public class OrderServiceImpl implements OrderService {
             triggerAdminPickupAfterCommit(order);
         } else if (order.getPaymentMethod() == OrderPaymentMethod.BALANCE) {
             payment = balanceOrderPaymentService.buildPaymentResult(order);
-        } else {
-            payment = paymentService.createPayment(
+        } else if (order.getStatus() == OrderStatus.PENDING) {
+            payment = replay ? paymentService.inspectPayment(order.getId()) : null;
+            if (payment == null) payment = paymentService.preparePayment(
                     order.getId(), order.getPaymentChannelCode(), order.getActualAmount(), device);
+        } else {
+            payment = new LinkedHashMap<>();
+            payment.put("order_id", order.getId());
+            payment.put("order_no", order.getOrderNo());
+            payment.put("status", order.getStatus());
+            payment.put("next_action", null);
         }
 
         Map<String, Object> result = new LinkedHashMap<>();

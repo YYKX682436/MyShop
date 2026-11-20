@@ -50,6 +50,8 @@ public class SupplierService {
     public AccountView saveAccount(UUID id,AccountRequest request) {
         if (request==null) throw invalid("货源账号参数不能为空");
         SupplierAccount a=id==null?new SupplierAccount():accounts.findForUpdate(id).orElseThrow(() -> invalid("货源账号不存在"));
+        if (id!=null && request.enabled()!=null && request.enabled()!=a.isEnabled())
+            throw invalid("请通过账号状态操作确认启用或停用");
         String name=required(request.name(),120,"名称");
         String providerType=required(request.providerType(),32,"供应商类型");
         provider(providerType);

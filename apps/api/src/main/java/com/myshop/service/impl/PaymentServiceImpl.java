@@ -16,18 +16,25 @@ import com.myshop.payment.PaymentNextAction;
 import com.myshop.payment.PaymentNextActionPayload;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.payment.PaymentStatus;
+import com.myshop.payment.PaymentCreationStatus;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.PaymentChannelRepository;
+import com.myshop.repository.WebhookEventRepository;
 import com.myshop.service.OrderExpiryService;
 import com.myshop.service.PaymentQueryTransactionService;
 import com.myshop.service.PaymentService;
+import com.myshop.service.PaymentUrlService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import java.util.concurrent.atomic.AtomicReference;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -49,6 +56,12 @@ public class PaymentServiceImpl implements PaymentService {
     private final ObjectMapper objectMapper;
     private final OrderExpiryService orderExpiryService;
     private final PaymentQueryTransactionService paymentQueryTransactionService;
+    private TransactionTemplate transactions;
+    @Autowired public void setTransactionManager(PlatformTransactionManager manager) { this.transactions = new TransactionTemplate(manager); }
+    private PaymentUrlService paymentUrls;
+    @Autowired public void setPaymentUrls(PaymentUrlService value) { paymentUrls = value; }
+    private WebhookEventRepository paymentEvents;
+    @Autowired public void setPaymentEvents(WebhookEventRepository paymentEvents) { this.paymentEvents=paymentEvents; }
     @Value("${supplier.purchase-enabled:false}")
     private boolean supplierPurchaseEnabled;
 
@@ -72,52 +85,247 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     @Override
-    @Transactional(noRollbackFor = OrderExpiredException.class)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Map<String, Object> createPayment(UUID orderId, String paymentChannelCode, BigDecimal amount) {
         return createPayment(orderId, paymentChannelCode, amount, null);
     }
 
     @Override
-    @Transactional(noRollbackFor = OrderExpiredException.class)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Map<String, Object> createPayment(UUID orderId, String paymentChannelCode,
                                               BigDecimal amount, String device) {
+        Map<String, Object> intent = inTransactionPreservingExpiry(
+                () -> preparePayment(orderId, paymentChannelCode, amount, device));
+        return dispatchPayment((UUID) intent.get("payment_id"));
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY, noRollbackFor = OrderExpiredException.class)
+    public Map<String, Object> preparePayment(UUID orderId, String paymentChannelCode,
+                                               BigDecimal amount, String device) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         validateOnlineOrder(order);
         validateRequestedChannel(order, paymentChannelCode);
-
         validatePendingOrder(order);
         validateAmount(order, amount);
         validateSupplierPaymentEnabled(order);
-        PaymentAttempt active = findActiveAttempt(order.getId());
-        if (active != null) return buildResult(order, active);
-
+        List<PaymentAttempt> pending = paymentAttemptRepository.findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING);
+        PaymentAttempt active = pending.stream().filter(this::creationUnresolved).findFirst().orElse(null);
+        if (active == null) active = findActiveAttempt(order.getId());
+        if (active != null) {
+            if (!java.util.Objects.equals(active.getChannelCodeSnapshot(), order.getPaymentChannelCode())
+                    || active.getAmount() == null || active.getAmount().compareTo(order.getActualAmount()) != 0)
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "支付记录与订单不一致，请联系客服");
+            return buildResult(order, active);
+        }
         PaymentContext context = resolveCreationContext(order.getPaymentChannelCode());
-        return createAttempt(order, context.channel(), context.provider(), device);
+        return createIntent(order, context.channel(), context.provider(), device);
     }
 
     @Override
-    @Transactional(noRollbackFor = OrderExpiredException.class)
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Map<String, Object> inspectPayment(UUID orderId) {
+        Order order = orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        List<PaymentAttempt> attempts = paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId);
+        PaymentAttempt attempt = attempts.stream().filter(value -> value.getStatus() == PaymentStatus.PENDING
+                && creationUnresolved(value)).findFirst()
+                .orElseGet(() -> attempts.stream().findFirst().orElse(null));
+        return attempt == null ? null : buildResult(order, attempt);
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Map<String, Object> repay(UUID orderId, String device) {
+        Map<String, Object> intent = inTransactionPreservingExpiry(() -> prepareRepayment(orderId, device));
+        return dispatchPayment((UUID) intent.get("payment_id"));
+    }
+
+    @Override
+    @Transactional(propagation = Propagation.MANDATORY, noRollbackFor = OrderExpiredException.class)
+    public Map<String, Object> prepareRepayment(UUID orderId, String device) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         validateOnlineOrder(order);
         validatePendingOrder(order);
         validateSupplierPaymentEnabled(order);
-        PaymentAttempt latest = paymentAttemptRepository.findFirstByOrderIdOrderByCreatedAtDesc(orderId)
-                .orElse(null);
+        List<PaymentAttempt> pending = paymentAttemptRepository.findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING);
+        if (pending.stream().anyMatch(attempt -> !java.util.Objects.equals(attempt.getChannelCodeSnapshot(), order.getPaymentChannelCode())
+                || attempt.getAmount() == null || attempt.getAmount().compareTo(order.getActualAmount()) != 0))
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "支付记录与订单不一致，请联系客服");
+        PaymentAttempt unresolved = pending.stream().filter(this::creationUnresolved).findFirst().orElse(null);
+        if (unresolved != null) {
+            markStaleUnknown(unresolved);
+            return buildResult(order, unresolved);
+        }
+        PaymentAttempt latest = paymentAttemptRepository.findFirstByOrderIdOrderByCreatedAtDesc(orderId).orElse(null);
         if (latest != null && latest.getCreatedAt() != null
                 && latest.getCreatedAt().plusSeconds(REPAY_COOLDOWN_SECONDS).isAfter(LocalDateTime.now())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "操作过于频繁，请稍后再试");
         }
-
-        // Resolve the current enabled channel before closing the old attempt.
-        // A repay is a new external transaction and must never use a disabled
-        // channel, while history remains usable by the webhook path.
         PaymentContext context = resolveCreationContext(order.getPaymentChannelCode());
-        closePendingAttempts(order.getId());
-        return createAttempt(order, context.channel(), context.provider(), device);
+        closePendingAttempts(pending);
+        return createIntent(order, context.channel(), context.provider(), device);
     }
+
+    private <T> T inTransactionPreservingExpiry(java.util.function.Supplier<T> operation) {
+        AtomicReference<OrderExpiredException> expired = new AtomicReference<>();
+        T result = transactions.execute(status -> {
+            try { return operation.get(); }
+            catch (OrderExpiredException exception) { expired.set(exception); return null; }
+        });
+        if (expired.get() != null) throw expired.get();
+        return result;
+    }
+
+    /** Only INTENT can be claimed. SUBMITTING survives a crash without being sent again. */
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public Map<String, Object> dispatchPayment(UUID paymentId) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("Payment creation requires a committed transaction boundary");
+        }
+        CreationRequest request = transactions.execute(status -> claim(paymentId));
+        if (request == null) return readPayment(paymentId);
+        PaymentProvider provider = paymentProviders.stream()
+                .filter(candidate -> candidate.id().equalsIgnoreCase(request.providerType()))
+                .findFirst().orElse(null);
+        if (provider == null) {
+            transactions.executeWithoutResult(status -> rejectUnsent(paymentId));
+            return readPayment(paymentId);
+        }
+        try {
+            PaymentProvider.PaymentResult result = provider.create(new PaymentProvider.PaymentRequest(
+                    request.merchantTradeNo(), request.paymentType(), request.productName(), request.amount(),
+                    request.clientIp(), request.device(), parseConfig(request.config()), request.orderId().toString(),
+                    request.notifyUrl(), request.returnUrl()));
+            if (result == null) throw new IllegalStateException("Missing response");
+            String action;
+            try { action = result.nextAction() == null ? null : serializeNextAction(result.nextAction()); }
+            catch (RuntimeException exception) { action = null; }
+            String returnedAction = action;
+            transactions.executeWithoutResult(status -> completeCreation(request, result.providerTradeNo(), returnedAction));
+        } catch (RuntimeException exception) {
+            // A provider exception or a failed result commit cannot establish that
+            // the gateway did not receive the request. Never submit it again.
+            try { transactions.executeWithoutResult(status -> unknown(paymentId)); }
+            catch (RuntimeException ignored) { /* SUBMITTING itself remains a durable no-retry state. */ }
+        }
+        try { return readPayment(paymentId); }
+        catch (RuntimeException exception) {
+            Map<String, Object> fallback = new LinkedHashMap<>();
+            fallback.put("payment_id", paymentId);
+            fallback.put("order_id", request.orderId());
+            fallback.put("order_no", request.orderNo());
+            fallback.put("status", PaymentStatus.PENDING);
+            fallback.put("creation_status", PaymentCreationStatus.UNKNOWN);
+            fallback.put("payment_method", OrderPaymentMethod.ONLINE.name());
+            fallback.put("payment_type", request.paymentType());
+            fallback.put("payment_channel_code", request.channelCode());
+            fallback.put("next_action", null);
+            fallback.put("expires_at", request.expiresAt());
+            fallback.put("remaining_seconds", remainingSeconds(request.expiresAt()));
+            fallback.put("can_retry", false);
+            return fallback;
+        }
+    }
+
+    private CreationRequest claim(UUID paymentId) {
+        UUID orderId = paymentAttemptRepository.findOrderId(paymentId).orElseThrow();
+        Order order = orderRepository.findByIdForUpdate(orderId).orElseThrow();
+        PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentId).orElseThrow();
+        if (attempt.getCreationStatus() != PaymentCreationStatus.INTENT) {
+            markStaleUnknown(attempt);
+            return null;
+        }
+        orderExpiryService.expireLockedOrder(order);
+        boolean supplierBlocked = orderItemRepository.findByOrderId(orderId).stream()
+                .anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER) && !supplierPurchaseEnabled;
+        boolean latePayment = paymentEvents != null
+                && paymentEvents.existsByOrderIdAndProcessResultStartingWith(orderId, "LATE_PAID_");
+        if (order.getStatus() != OrderStatus.PENDING || attempt.getStatus() != PaymentStatus.PENDING
+                || attempt.getExpiresAt() != null && !attempt.getExpiresAt().isAfter(LocalDateTime.now())
+                || supplierBlocked || latePayment
+                || !java.util.Objects.equals(order.getPaymentChannelCode(), attempt.getChannelCodeSnapshot())
+                || order.getActualAmount() == null || attempt.getAmount() == null
+                || order.getActualAmount().compareTo(attempt.getAmount()) != 0) {
+            attempt.setCreationStatus(PaymentCreationStatus.REJECTED);
+            return null;
+        }
+        attempt.setCreationStatus(PaymentCreationStatus.SUBMITTING);
+        attempt.setCreationStartedAt(LocalDateTime.now());
+        return new CreationRequest(attempt.getId(), orderId, order.getOrderNo(), attempt.getExpiresAt(), attempt.getMerchantTradeNo(), attempt.getProviderType(),
+                attempt.getChannelCodeSnapshot(), attempt.getPaymentType(), attempt.getProductNameSnapshot(), attempt.getAmount(),
+                attempt.getClientIpSnapshot(), attempt.getCreationDevice(), attempt.getProviderConfigSnapshot(),
+                attempt.getNotifyUrlSnapshot(), attempt.getReturnUrlSnapshot());
+    }
+
+    private void completeCreation(CreationRequest request, String providerTradeNo, String action) {
+        Order order = orderRepository.findByIdForUpdate(request.orderId()).orElseThrow();
+        PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(request.attemptId()).orElseThrow();
+        if (!request.orderId().equals(attempt.getOrderId())
+                || !request.merchantTradeNo().equals(attempt.getMerchantTradeNo())
+                || !request.providerType().equals(attempt.getProviderType())
+                || !request.channelCode().equals(attempt.getChannelCodeSnapshot())
+                || !request.paymentType().equals(attempt.getPaymentType())
+                || request.amount().compareTo(attempt.getAmount()) != 0
+                || !request.config().equals(attempt.getProviderConfigSnapshot())
+                || !java.util.Objects.equals(request.notifyUrl(), attempt.getNotifyUrlSnapshot())
+                || !java.util.Objects.equals(request.returnUrl(), attempt.getReturnUrlSnapshot())) {
+            throw new IllegalStateException("Payment intent snapshot mismatch");
+        }
+        String storedTrade = clean(attempt.getProviderTradeNo());
+        String receivedTrade = clean(providerTradeNo);
+        attempt.setCreateResponseTradeNo(receivedTrade);
+        if (storedTrade != null && receivedTrade != null && !storedTrade.equals(receivedTrade)) {
+            attempt.setNextAction(action);
+            attempt.setCreationStatus(PaymentCreationStatus.UNKNOWN);
+            return;
+        }
+        if (storedTrade == null) attempt.setProviderTradeNo(receivedTrade);
+        attempt.setNextAction(action);
+        boolean orderMatches = java.util.Objects.equals(order.getPaymentChannelCode(), request.channelCode())
+                && order.getActualAmount() != null && order.getActualAmount().compareTo(request.amount()) == 0;
+        attempt.setCreationStatus(orderMatches && action != null ? PaymentCreationStatus.READY : PaymentCreationStatus.UNKNOWN);
+        // Never change settlement status or revive a paid, expired or refunded order.
+    }
+
+    private void rejectUnsent(UUID paymentId) {
+        PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentId).orElseThrow();
+        if (attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING) {
+            attempt.setCreationStatus(PaymentCreationStatus.REJECTED);
+        }
+    }
+
+    private void unknown(UUID paymentId) {
+        PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentId).orElseThrow();
+        if (attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING) {
+            attempt.setCreationStatus(PaymentCreationStatus.UNKNOWN);
+        }
+    }
+
+    private void markStaleUnknown(PaymentAttempt attempt) {
+        if (attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING
+                && attempt.getCreationStartedAt() != null
+                && attempt.getCreationStartedAt().plusMinutes(2).isBefore(LocalDateTime.now())) {
+            attempt.setCreationStatus(PaymentCreationStatus.UNKNOWN);
+        }
+    }
+
+    private Map<String, Object> readPayment(UUID paymentId) {
+        return transactions.execute(status -> {
+            UUID orderId = paymentAttemptRepository.findOrderId(paymentId).orElseThrow();
+            Order order = orderRepository.findByIdForUpdate(orderId).orElseThrow();
+            PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentId).orElseThrow();
+            markStaleUnknown(attempt);
+            return buildResult(order, attempt);
+        });
+    }
+
+    private record CreationRequest(UUID attemptId, UUID orderId, Long orderNo, LocalDateTime expiresAt, String merchantTradeNo, String providerType, String channelCode,
+                                   String paymentType, String productName, BigDecimal amount, String clientIp,
+                                   String device, String config, String notifyUrl, String returnUrl) { }
 
     @Override
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -137,41 +345,27 @@ public class PaymentServiceImpl implements PaymentService {
         }
         // A callback, repay or expiry may have won during the provider call.
         // Complete only after reloading and locking the current rows.
-        paymentQueryTransactionService.complete(orderId, context.attemptId(), query);
+        paymentQueryTransactionService.complete(orderId, context, query);
     }
 
-    private Map<String, Object> createAttempt(Order order, PaymentChannel channel,
-                                              PaymentProvider provider, String device) {
-        String configSnapshot = requiredConfigSnapshot(channel.getConfigData());
-        Map<String, String> providerConfig = parseConfig(configSnapshot);
-        String merchantTradeNo = nextMerchantTradeNo();
-        String productName = buildProductName(order.getId());
-        PaymentProvider.PaymentResult providerResult = provider.create(
-                new PaymentProvider.PaymentRequest(
-                        merchantTradeNo,
-                        channel.getPaymentType(),
-                        productName,
-                        order.getActualAmount(),
-                        order.getClientIp(),
-                        device,
-                        providerConfig,
-                        order.getId().toString()));
-        if (providerResult == null || providerResult.nextAction() == null) {
-            throw new BusinessException(ErrorCode.CHANNEL_UNAVAILABLE, "支付提供商未返回有效支付动作");
-        }
-
+    private Map<String, Object> createIntent(Order order, PaymentChannel channel,
+                                             PaymentProvider provider, String device) {
         PaymentAttempt attempt = new PaymentAttempt();
         attempt.setOrderId(order.getId());
         attempt.setChannelId(channel.getId());
         attempt.setChannelCodeSnapshot(channel.getChannelCode());
         attempt.setProviderType(provider.id());
         attempt.setPaymentType(channel.getPaymentType());
-        attempt.setProviderConfigSnapshot(configSnapshot);
-        attempt.setMerchantTradeNo(merchantTradeNo);
-        attempt.setProviderTradeNo(providerResult.providerTradeNo());
+        attempt.setProviderConfigSnapshot(requiredConfigSnapshot(channel.getConfigData()));
+        attempt.setMerchantTradeNo(nextMerchantTradeNo());
         attempt.setAmount(order.getActualAmount());
         attempt.setStatus(PaymentStatus.PENDING);
-        attempt.setNextAction(serializeNextAction(providerResult.nextAction()));
+        attempt.setCreationStatus(PaymentCreationStatus.INTENT);
+        attempt.setCreationDevice(clean(device));
+        attempt.setProductNameSnapshot(buildProductName(order.getId()));
+        attempt.setClientIpSnapshot(order.getClientIp());
+        attempt.setNotifyUrlSnapshot(paymentUrls.webhookUrl(provider.id()));
+        attempt.setReturnUrlSnapshot(paymentUrls.paymentReturnUrl(order.getId().toString()));
         attempt.setExpiresAt(order.getExpiresAt());
         paymentAttemptRepository.save(attempt);
         return buildResult(order, attempt);
@@ -194,9 +388,12 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     private void validateSupplierPaymentEnabled(Order order) {
-        if (!supplierPurchaseEnabled && orderItemRepository.findByOrderId(order.getId()).stream()
-                .anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放付款，请联系客服");
+        if (paymentEvents != null && paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(), "LATE_PAID_"))
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单存在待核实的付款，请联系客服");
+        if (orderItemRepository.findByOrderId(order.getId()).stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
+            if (!supplierPurchaseEnabled) throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放付款，请联系客服");
+            if (paymentEvents==null || paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(),"LATE_PAID_"))
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "订单存在待核实的付款，请联系客服");
         }
     }
 
@@ -207,9 +404,13 @@ public class PaymentServiceImpl implements PaymentService {
                 .orElse(null);
     }
 
-    private void closePendingAttempts(UUID orderId) {
-        List<PaymentAttempt> attempts = paymentAttemptRepository
-                .findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING);
+    private boolean creationUnresolved(PaymentAttempt attempt) {
+        return attempt.getCreationStatus() == PaymentCreationStatus.INTENT
+                || attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING
+                || attempt.getCreationStatus() == PaymentCreationStatus.UNKNOWN;
+    }
+
+    private void closePendingAttempts(List<PaymentAttempt> attempts) {
         for (PaymentAttempt attempt : attempts) {
             attempt.setStatus(PaymentStatus.CLOSED);
             paymentAttemptRepository.save(attempt);
@@ -231,11 +432,23 @@ public class PaymentServiceImpl implements PaymentService {
         result.put("order_id", order.getId());
         result.put("order_no", order.getOrderNo());
         result.put("status", attempt.getStatus());
+        result.put("order_status", order.getStatus());
+        result.put("creation_status", attempt.getCreationStatus());
         result.put("payment_method", OrderPaymentMethod.ONLINE.name());
         result.put("payment_type", attempt.getPaymentType());
         result.put("payment_channel_code", order.getPaymentChannelCode());
-        result.put("next_action", PaymentNextActionPayload.from(
-                deserializeNextAction(attempt.getNextAction())));
+        boolean visible = order.getStatus() == OrderStatus.PENDING && attempt.getStatus() == PaymentStatus.PENDING
+                && java.util.Objects.equals(order.getPaymentChannelCode(), attempt.getChannelCodeSnapshot())
+                && order.getActualAmount() != null && attempt.getAmount() != null
+                && order.getActualAmount().compareTo(attempt.getAmount()) == 0
+                && (order.getExpiresAt() == null || order.getExpiresAt().isAfter(LocalDateTime.now()))
+                && attempt.getCreationStatus() == PaymentCreationStatus.READY
+                && attempt.getNextAction() != null && !attempt.getNextAction().isBlank()
+                && (attempt.getExpiresAt() == null || attempt.getExpiresAt().isAfter(LocalDateTime.now()))
+                && (paymentEvents == null || !paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(), "LATE_PAID_"))
+                && (supplierPurchaseEnabled || orderItemRepository.findByOrderId(order.getId()).stream()
+                        .noneMatch(item -> item.getStockMode() == StockMode.SUPPLIER));
+        result.put("next_action", visible ? PaymentNextActionPayload.from(deserializeNextAction(attempt.getNextAction())) : null);
         result.put("expires_at", attempt.getExpiresAt());
         result.put("remaining_seconds", remainingSeconds(attempt.getExpiresAt()));
         return result;

@@ -67,8 +67,10 @@ class OrderAccessServiceImplTest {
     void disabledSupplierSalesHidePreviouslyIssuedPaymentAction() {
         UUID orderId=UUID.randomUUID();
         Order order=guestOrder(orderId,"session-a"); order.setStatus(OrderStatus.PENDING);
+        order.setPaymentChannelCode("test-channel");
         OrderItem item=item(UUID.randomUUID()); item.setStockMode(StockMode.SUPPLIER);
         PaymentAttempt attempt=new PaymentAttempt(); attempt.setId(UUID.randomUUID());
+        attempt.setChannelCodeSnapshot("test-channel"); attempt.setAmount(java.math.BigDecimal.TEN);
         attempt.setStatus(PaymentStatus.PENDING); attempt.setExpiresAt(LocalDateTime.now().plusMinutes(5));
         attempt.setNextAction("{\"type\":\"qr_code\",\"value\":\"previous-link\"}");
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
@@ -92,7 +94,10 @@ class OrderAccessServiceImplTest {
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
         when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of(key));
         when(paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId)).thenReturn(List.of());
-        when(paymentService.repay(orderId, "mobile"))
+        UUID paymentId = UUID.randomUUID();
+        when(paymentService.prepareRepayment(orderId, "mobile"))
+                .thenReturn(Map.of("payment_id", paymentId, "order_id", orderId, "status", PaymentStatus.PENDING));
+        when(paymentService.dispatchPayment(paymentId))
                 .thenReturn(Map.of("order_id", orderId, "status", PaymentStatus.PENDING));
 
         Map<String, Object> view = service.getOrder(orderId, null, "session-a");

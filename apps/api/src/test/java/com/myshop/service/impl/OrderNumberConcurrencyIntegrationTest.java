@@ -13,9 +13,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -31,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Proves that concurrent JPA inserts read the PostgreSQL-generated business number back immediately. */
-@Testcontainers(disabledWithoutDocker = true)
+@org.junit.jupiter.api.condition.EnabledIf("postgresAvailable")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class OrderNumberConcurrencyIntegrationTest {
@@ -39,8 +36,9 @@ class OrderNumberConcurrencyIntegrationTest {
     private static final int ORDER_COUNT = 32;
     private static final long FIRST_ORDER_NO = 1_000_000_001L;
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+    static boolean postgresAvailable() { return POSTGRES.available(); }
+    @org.junit.jupiter.api.AfterAll static void stopPostgres() { POSTGRES.close(); }
 
     @Autowired
     private OrderRepository orderRepository;

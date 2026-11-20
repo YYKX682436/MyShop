@@ -104,7 +104,7 @@ test("the purchase Dock consumes create response actions instead of unconditiona
   assert.doesNotMatch(productPurchaseDockSource, /buildPaymentPageHref/)
 })
 
-test("missing create response action fails on the product page instead of opening a payment page", () => {
+test("a committed order without a carrier opens its recoverable order page", () => {
   const noActionStart = productPurchaseDockSource.indexOf("if (!action) {")
   const entryStart = productPurchaseDockSource.indexOf("const entry = resolvePaymentEntry", noActionStart)
   const noActionBranch = productPurchaseDockSource.slice(noActionStart, entryStart)
@@ -112,9 +112,9 @@ test("missing create response action fails on the product page instead of openin
   assert.notEqual(noActionStart, -1)
   assert.notEqual(entryStart, -1)
   assert.match(noActionBranch, /clearPaymentAction\(result\.payment\.order_id\)/)
-  assert.match(noActionBranch, /toast\.error\(t\("payment\.loadFailed"\)\)/)
+  assert.match(noActionBranch, /router\.push\(paymentHref\)/)
   assert.match(noActionBranch, /return/)
-  assert.doesNotMatch(noActionBranch, /router\.push|buildPaymentPageHref|savePaymentAction/)
+  assert.doesNotMatch(noActionBranch, /buildPaymentPageHref|savePaymentAction/)
 })
 
 test("checkout form_post response executes directly without a payment-page seed", () => {
@@ -143,18 +143,15 @@ test("checkout form_post response executes directly without a payment-page seed"
   assert.match(executeBranch, /return/)
 })
 
-test("lifecycle navigation is reachable only after a concrete payment-page action is seeded", () => {
+test("a concrete payment-page action is seeded before navigation", () => {
   const seedBranchStart = productPurchaseDockSource.indexOf("if (shouldSeedPaymentAction(entry))")
   const seedBranchEnd = productPurchaseDockSource.indexOf("clearPaymentAction(result.payment.order_id)", seedBranchStart)
   const seedBranch = productPurchaseDockSource.slice(seedBranchStart, seedBranchEnd)
-  const beforeSeed = productPurchaseDockSource.slice(productPurchaseDockSource.indexOf("const action = result.payment.next_action"), seedBranchStart)
 
   assert.notEqual(seedBranchStart, -1)
   assert.match(seedBranch, /savePaymentAction\(result\.payment\.order_id, action\)/)
   assert.match(seedBranch, /router\.push\(paymentHref\)/)
   assert.match(seedBranch, /return/)
-  assert.doesNotMatch(beforeSeed, /router\.push\(paymentHref\)/)
-  assert.equal((productPurchaseDockSource.match(/router\.push\(paymentHref\)/g) || []).length, 1)
 })
 
 test("direct-payment fallback retries the original browser action without linking to a separate payment page", () => {

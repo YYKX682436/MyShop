@@ -570,6 +570,8 @@ export const adminOrderApi = {
   },
   getDetail: (id: string) =>
     request<AdminOrderItem>(`/admin/orders/${id}`),
+  reviewPayment: (orderId: string, attemptId: string, note: string) =>
+    request<null>(`/admin/orders/${encodeURIComponent(orderId)}/payment-reviews`, { method: "POST", body: JSON.stringify({ attempt_id: attemptId, note }) }),
   refreshSupplier: (orderId: string, purchaseId: string) =>
     request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/refresh`, { method: "POST" }),
   reviewSupplier: (orderId: string, purchaseId: string, outcome: string) =>
@@ -915,7 +917,6 @@ export function getApiErrorMessage(err: unknown, t: (key: any) => string): strin
   return err instanceof Error ? err.message : t("common.error")
 }
 
-// Supplier API is deliberately read-only toward providers in P1.
 export type SupplierAccount = { id: string; name: string; provider_type: string; base_url: string; app_id: string; secret_mask: string; enabled: boolean; goods_callback_url?: string | null }
 export type SupplierAccountInput = { name: string; provider_type: string; base_url: string; app_id: string; secret?: string; enabled: boolean }
 export type SupplierCategory = { id: string; name: string; children: SupplierCategory[] }
@@ -923,11 +924,14 @@ export type SupplierSummary = { id: string; name: string; goods_type: number; st
 export type SupplierSku = { id: string; name: string; group: string; cost: string; stock: number; status: number }
 export type SupplierProduct = { id: string; name: string; goods_type: number; status: number; sku_type: number; multiple: number; min_quantity: number; max_quantity: number; skus: SupplierSku[]; snapshot: Record<string, unknown> }
 export type SupplierMapping = { id: string; remote_goods_id: string; remote_sku: string; product_id: string; spec_id?: string; goods_type: number; sku_type: number; cost: string; stock: number; goods_status: number; sku_status: number; multiple: number; min_quantity: number; max_quantity: number; last_synced_at: string; last_attempt_at: string; sync_error?: string }
+export type SupplierSensitiveCapabilities = { transfer_enabled: boolean; transfer_max_amount: string | number; cdkey_enabled: boolean; cdkey_max_count: number; cdkey_max_exposure: string | number }
+export type SupplierSensitiveOperation = { id: string; kind: "TRANSFER" | "CDKEY"; status: "INTENT" | "SUBMITTING" | "UNKNOWN" | "SUCCEEDED" | "REJECTED"; account_name: string; app_id: string; outer_number?: string; operator_id: string; created_at: string; parameters: Record<string, string | number>; error_code?: string; review_outcome?: string }
+export type SupplierCdkey = { pwd: string; url?: string | null }
 export const adminSupplierApi = {
   accounts: () => request<SupplierAccount[]>("/admin/suppliers"),
   create: (input: SupplierAccountInput) => request<SupplierAccount>("/admin/suppliers", { method: "POST", body: JSON.stringify(input) }),
   update: (id: string, input: SupplierAccountInput) => request<SupplierAccount>(`/admin/suppliers/${id}`, { method: "PUT", body: JSON.stringify(input) }),
-  status: (id: string, enabled: boolean) => request<void>(`/admin/suppliers/${id}/status`, { method: "POST", body: JSON.stringify({ enabled }) }),
+  status: (id: string, enabled: boolean) => request<void>(`/admin/suppliers/${id}/status`, { method: "POST", body: JSON.stringify({ enabled, confirmed: true }) }),
   test: (id: string) => request<{ balance: string }>(`/admin/suppliers/${id}/test`, { method: "POST" }),
   categories: (id: string) => request<SupplierCategory[]>(`/admin/suppliers/${id}/categories`),
   goods: (id: string, keyword: string, categoryId: string, page: number) => request<{ items: SupplierSummary[]; reported_count?: number; reported_pages?: number }>(`/admin/suppliers/${id}/goods?${buildQuery({ keyword, category_id: categoryId, page })}`),
@@ -935,4 +939,10 @@ export const adminSupplierApi = {
   import: (id: string, goodsId: string, categoryId: string) => request<{ product_id: string; created: boolean }>(`/admin/suppliers/${id}/goods/${encodeURIComponent(goodsId)}/import`, { method: "POST", body: JSON.stringify({ category_id: categoryId }) }),
   mappings: (id: string) => request<SupplierMapping[]>(`/admin/suppliers/${id}/mappings`),
   sync: (id: string, goodsId: string) => request<void>(`/admin/suppliers/${id}/goods/${encodeURIComponent(goodsId)}/sync`, { method: "POST" }),
+  capabilities: (id: string) => request<SupplierSensitiveCapabilities>(`/admin/suppliers/${id}/sensitive-capabilities`),
+  operations: (id: string, kind: "transfers" | "cdkeys") => request<SupplierSensitiveOperation[]>(`/admin/suppliers/${id}/${kind}`),
+  sensitiveCreate: (id: string, kind: "transfers" | "cdkeys", input: Record<string, unknown>) => request<SupplierSensitiveOperation>(`/admin/suppliers/${id}/${kind}`, { method: "POST", body: JSON.stringify(input) }),
+  sensitiveReview: (id: string, kind: "transfers" | "cdkeys", operation: string, outcome: string) => request<SupplierSensitiveOperation>(`/admin/suppliers/${id}/${kind}/${operation}/review`, { method: "POST", body: JSON.stringify({ outcome }) }),
+  sensitiveCancel: (id: string, kind: "transfers" | "cdkeys", operation: string) => request<SupplierSensitiveOperation>(`/admin/suppliers/${id}/${kind}/${operation}/cancel`, { method: "POST" }),
+  cdkeyResult: (id: string, operation: string) => request<SupplierCdkey[]>(`/admin/suppliers/${id}/cdkeys/${operation}/result`, { cache: "no-store" }),
 }

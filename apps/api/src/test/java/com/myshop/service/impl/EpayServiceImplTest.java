@@ -123,6 +123,18 @@ class EpayServiceImplTest {
     }
 
     @Test
+    void apiResponseWithoutCarrierRetainsTheGatewayTradeForManualRecovery() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.postForEntity(eq("https://pay.example.com/mapi.php"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"code\":1,\"trade_no\":\"fixture-trade\"}"));
+        EpayService.EpayCreateResult result = service(restTemplate).createPayment(
+                config("https://pay.example.com/mapi.php"), "merchant-1", "wxpay", "商品", BigDecimal.TEN,
+                "127.0.0.1", "pc", "https://shop.example/webhook", "https://shop.example/return");
+        assertEquals("fixture-trade", result.providerTradeNo());
+        org.junit.jupiter.api.Assertions.assertNull(result.nextAction());
+    }
+
+    @Test
     void explicitApiEndpointRejectsHtmlInsteadOfEmbeddingThePage() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         when(restTemplate.postForEntity(eq("https://pay.example.com/mapi.php"), any(), eq(String.class)))

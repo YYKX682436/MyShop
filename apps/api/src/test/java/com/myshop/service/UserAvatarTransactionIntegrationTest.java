@@ -15,9 +15,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.mock.web.MockMultipartFile;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
+import com.myshop.service.impl.IntegrationPostgres;
+import org.junit.jupiter.api.condition.EnabledIf;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -41,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * together. The image service is deliberately real so the callback checks
  * prove physical file cleanup rather than only Mockito call ordering.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@EnabledIf(value = "postgresAvailable", disabledReason = "PostgreSQL test database or Docker required")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class UserAvatarTransactionIntegrationTest {
@@ -54,8 +53,8 @@ class UserAvatarTransactionIntegrationTest {
     private static final Path UPLOAD_DIRECTORY = createUploadDirectory();
     private static final AtomicLong USER_NO = new AtomicLong(700_000_000L);
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+    static boolean postgresAvailable() { return POSTGRES.available(); }
 
     @Autowired
     private UserAvatarService userAvatarService;
@@ -100,6 +99,7 @@ class UserAvatarTransactionIntegrationTest {
 
     @AfterAll
     static void removeUploadDirectory() throws IOException {
+        POSTGRES.close();
         if (Files.exists(UPLOAD_DIRECTORY)) {
             try (var paths = Files.walk(UPLOAD_DIRECTORY)) {
                 paths.sorted(Comparator.reverseOrder()).forEach(path -> {

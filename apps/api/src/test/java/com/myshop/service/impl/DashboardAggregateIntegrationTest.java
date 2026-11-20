@@ -16,9 +16,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import com.myshop.utils.CardContentParser;
 
 import java.math.BigDecimal;
@@ -32,7 +29,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@Testcontainers(disabledWithoutDocker = true)
+@org.junit.jupiter.api.condition.EnabledIf("postgresAvailable")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 @Import(DashboardAggregateIntegrationTest.FixedDashboardClockConfiguration.class)
@@ -42,8 +39,9 @@ class DashboardAggregateIntegrationTest {
     private static final Clock CLOCK = Clock.fixed(
             Instant.parse("2026-08-27T04:00:00Z"), BUSINESS_ZONE);
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+    static boolean postgresAvailable() { return POSTGRES.available(); }
+    @org.junit.jupiter.api.AfterAll static void stopPostgres() { POSTGRES.close(); }
 
     @Autowired
     private JdbcTemplate jdbcTemplate;

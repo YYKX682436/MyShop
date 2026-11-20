@@ -20,6 +20,7 @@ public class AdminSupplierController {
     @LogOperation(action="supplier.status", targetType="SUPPLIER", targetId="#id", detail="'修改货源状态'")
     @PostMapping("/{id}/status") public ApiResponse<?> status(@PathVariable UUID id,@RequestBody Status request) {
         if (request.enabled()==null) throw new com.myshop.supplier.SupplierException("CONFIG","请选择账号状态");
+        if (!Boolean.TRUE.equals(request.confirmed())) throw new com.myshop.supplier.SupplierException("CONFIG","必须明确确认账号状态变更");
         suppliers.setEnabled(id,request.enabled()); return ApiResponse.success();
     }
     @PostMapping("/{id}/test") public ApiResponse<?> test(@PathVariable UUID id) { return ApiResponse.success(suppliers.test(id)); }
@@ -38,6 +39,6 @@ public class AdminSupplierController {
     @PostMapping("/{id}/goods/{goodsId}/sync") public ApiResponse<?> sync(@PathVariable UUID id,@PathVariable String goodsId) {
         suppliers.sync(id,goodsId); return ApiResponse.success();
     }
-    public record Status(Boolean enabled) {}
+    public record Status(Boolean enabled,Boolean confirmed) {}
     public record ImportRequest(UUID categoryId) {}
 }

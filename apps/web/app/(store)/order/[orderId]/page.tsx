@@ -64,14 +64,14 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       viewRef.current = result
       setView(result)
       setTimeLeft(result.payment?.remaining_seconds ?? 0)
-      setPaymentState(current => applyPaymentStatus(current, result.order.status, result.payment?.next_action))
+      setPaymentState(current => applyPaymentStatus(current, result.order.status, result.payment?.next_action, Boolean(result.payment?.creation_status)))
       if (result.order.status !== "PENDING") {
         clearPaymentAction(orderId)
         setCheckingReturn(false)
       } else if (result.payment?.next_action
         && shouldSeedPaymentAction(resolvePaymentEntry(result.payment.next_action, getPaymentActionEnvironment()))) {
         savePaymentAction(orderId, result.payment.next_action)
-      } else if (!initialAction) {
+      } else {
         clearPaymentAction(orderId)
       }
       return null
@@ -454,7 +454,15 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
           <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-surface px-6 pb-8 pt-6" style={{ backgroundColor: brandColor || "#374151" }}>
             <div className="flex items-center gap-2.5"><PaymentIcon method={paymentMethod} className="h-10 w-10" variant="plain" /><span className="text-xl font-bold text-white">{methodName}</span></div>
             <p className="text-sm font-medium text-white/90">{getPaymentScanHint(paymentMethod, t)}</p>
-            <PaymentActionRenderer action={paymentState.nextAction} loadState={paymentState.phase} statusError={paymentState.errorMessage} retryAction={retryButton} retryStatusAction={retryStatusButton} />
+            {!paymentState.nextAction && view.payment?.creation_status === "UNKNOWN" ? (
+              <div className="space-y-3 text-center text-sm text-white" role="status"><p>{t("payment.creationUnknown")}</p>{retryStatusButton}</div>
+            ) : !paymentState.nextAction && view.payment?.creation_status === "SUBMITTING" ? (
+              <div className="space-y-3 text-center text-sm text-white" role="status"><p>{t("payment.creating")}</p>{retryStatusButton}</div>
+            ) : !paymentState.nextAction && view.payment?.can_retry === false ? (
+              <div className="text-center text-sm text-white" role="status">{t("payment.creationBlocked")}</div>
+            ) : (
+              <PaymentActionRenderer action={paymentState.nextAction} loadState={paymentState.phase} statusError={paymentState.errorMessage} retryAction={retryButton} retryStatusAction={retryStatusButton} />
+            )}
           </div>
         )}
         {view.order.payment_method !== "ONLINE" && automaticCardItems.length > 0 && <p className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</p>}

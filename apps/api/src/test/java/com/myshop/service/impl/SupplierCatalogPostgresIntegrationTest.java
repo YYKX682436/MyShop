@@ -176,6 +176,15 @@ class SupplierCatalogPostgresIntegrationTest {
         assertTrue(json.readTree(mappingResponse).path("data").get(0).path("cost").isTextual());
         assertFalse(detail.contains("fixture-secret-never-in-output")); assertFalse(mappingResponse.contains("fixture-secret-never-in-output"));
         assertEquals(2,jdbc.queryForObject("select count(*) from operation_logs where user_id=? and action in ('supplier.create','supplier.import')",Integer.class,adminId));
+        mvc.perform(post("/api/admin/suppliers/"+accountId+"/status").contextPath("/api").cookie(auth,csrf).header("X-CSRF-Token","test-csrf")
+                .contentType("application/json").content("{\"enabled\":false}"))
+                .andExpect(status().isBadRequest());
+        String bypass="{\"name\":\"api-fixture\",\"provider_type\":\"FIXTURE\",\"base_url\":\"https://supplier.example\",\"app_id\":\"fixture-id\",\"enabled\":false}";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/admin/suppliers/"+accountId).contextPath("/api").cookie(auth,csrf).header("X-CSRF-Token","test-csrf")
+                .contentType("application/json").content(bypass)).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/suppliers/"+accountId+"/status").contextPath("/api").cookie(auth,csrf).header("X-CSRF-Token","test-csrf")
+                .contentType("application/json").content("{\"enabled\":false,\"confirmed\":true}"))
+                .andExpect(status().isOk());
         assertEquals(0,jdbc.queryForObject("select count(*) from operation_logs where detail like '%fixture-secret-never-in-output%'",Integer.class));
         assertFalse(output.getAll().contains("fixture-secret-never-in-output"));
     }

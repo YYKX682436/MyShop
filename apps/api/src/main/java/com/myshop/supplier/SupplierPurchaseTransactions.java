@@ -26,6 +26,7 @@ public class SupplierPurchaseTransactions {
     private final SupplierDeliveryCardRepository cards;
     private final SupplierCallbackEventRepository events;
     private final SupplierAftercareOperationRepository aftercare;
+    private final WebhookEventRepository paymentEvents;
     private final SupplierAccountRepository accounts;
     private final SupplierProductMappingRepository mappings;
     private final ProductRepository products;
@@ -69,6 +70,10 @@ public class SupplierPurchaseTransactions {
         if (order.getStatus()!=OrderStatus.PAID) return false;
         SupplierPurchase p=purchases.findForUpdate(id).orElseThrow();
         if (!"WAITING_PAYMENT".equals(p.getStatus())) return false;
+        if (paymentEvents.existsByOrderIdAndProcessResultStartingWith(orderId,"LATE_PAID_")) {
+            p.setStatus("BLOCKED"); p.setErrorCode("LATE_PAYMENT"); p.setLastCheckedAt(LocalDateTime.now());
+            return false;
+        }
         String problem=null;
         if (!product.isEnabled() || product.getIsDeleted()!=0 || product.getStockMode()!=StockMode.SUPPLIER) problem="PRODUCT_DISABLED";
         else if (item.getSpecId()!=null && specs.findById(item.getSpecId())
@@ -181,6 +186,12 @@ public class SupplierPurchaseTransactions {
             case 3 -> {
                 if (aftercare.refundUnresolved(p.getId())) {
                     p.setStatus("PROCESSING"); p.setErrorCode("REFUND_PENDING"); return;
+                }
+                // A void may already have reached the supplier even if the
+                // last card query still says it is usable. Both this method
+                // and creation of the void intent hold the order lock.
+                if (aftercare.cardVoidUnresolved(p.getId())) {
+                    p.setStatus("PROCESSING"); p.setErrorCode("CARD_VOID_PENDING"); return;
                 }
                 if (detail.money().compareTo(p.getSafePrice())>0) {
                     p.setStatus("BLOCKED"); p.setErrorCode("COST_EXCEEDED"); return;

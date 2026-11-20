@@ -54,12 +54,39 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
+    void v51PaymentAttemptsRetainTheirCarriersAndV52ProtectsUnresolvedIntents() {
+        flyway("51").migrate();
+        UUID orderId = UUID.randomUUID(), oldId = UUID.randomUUID();
+        String carrier = "{\"type\":\"qr_code\",\"value\":\"old-test-link\"}";
+        jdbcTemplate.update("""
+                INSERT INTO payment_attempts(id,order_id,channel_id,channel_code_snapshot,provider_type,
+                    payment_type,provider_config_snapshot,merchant_trade_no,amount,status,next_action)
+                VALUES (?,?,?,'test-channel','epay','alipay','{}','old-test-merchant',10,'PENDING',?)
+                """, oldId, orderId, UUID.randomUUID(), carrier);
+        flyway().migrate();
+        assertEquals("READY", jdbcTemplate.queryForObject("select creation_status from payment_attempts where id=?", String.class, oldId));
+        assertEquals(carrier, jdbcTemplate.queryForObject("select next_action from payment_attempts where id=?", String.class, oldId));
+        assertEquals("YES", nullableValue("payment_attempts", "next_action"));
+        assertTrue(indexExists("uq_payment_attempt_unresolved_creation"));
+        jdbcTemplate.update("""
+                INSERT INTO payment_attempts(id,order_id,channel_id,channel_code_snapshot,provider_type,
+                    payment_type,provider_config_snapshot,merchant_trade_no,amount,status,next_action,creation_status)
+                VALUES (?,?,?,'test-channel','epay','alipay','{}','test-intent-1',10,'PENDING',null,'INTENT')
+                """, UUID.randomUUID(), orderId, UUID.randomUUID());
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("""
+                INSERT INTO payment_attempts(id,order_id,channel_id,channel_code_snapshot,provider_type,
+                    payment_type,provider_config_snapshot,merchant_trade_no,amount,status,next_action,creation_status)
+                VALUES (?,?,?,'test-channel','epay','alipay','{}','test-intent-2',10,'PENDING',null,'UNKNOWN')
+                """, UUID.randomUUID(), orderId, UUID.randomUUID()));
+    }
+
+    @Test
     void freshDatabaseBuildsCompleteCurrentBaselineWithoutHistoricalColumns() {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("50", flyway.info().current().getVersion().getVersion());
-        assertEquals(50, flyway.info().all().length);
+        assertEquals("52", flyway.info().current().getVersion().getVersion());
+        assertEquals(52, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides",
@@ -542,7 +569,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         assertEquals("NO", jdbcTemplate.queryForObject("""
                 SELECT is_nullable FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = 'sales_channel_cutover_certifications'
@@ -778,7 +805,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("after_sale_requests", "admin_reply"));
         assertEquals("历史管理员说明", jdbcTemplate.queryForObject(
                 "SELECT rejection_reason FROM after_sale_requests WHERE id = ?", String.class,
@@ -851,7 +878,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
                 "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
         assertNull(jdbcTemplate.queryForObject(
@@ -881,7 +908,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -975,7 +1002,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -1176,7 +1203,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -1246,7 +1273,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -1295,7 +1322,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -1495,7 +1522,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1541,7 +1568,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("50", flyway().info().current().getVersion().getVersion());
+        assertEquals("52", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

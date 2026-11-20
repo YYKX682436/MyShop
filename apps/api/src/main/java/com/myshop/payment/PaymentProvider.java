@@ -66,7 +66,13 @@ public interface PaymentProvider {
 
     record PaymentRequest(String merchantTradeNo, String paymentType, String productName,
                           BigDecimal amount, String clientIp, String device,
-                          Map<String, String> config, String orderId) {
+                          Map<String, String> config, String orderId,
+                          String notifyUrl, String returnUrl) {
+        public PaymentRequest(String merchantTradeNo, String paymentType, String productName,
+                              BigDecimal amount, String clientIp, String device,
+                              Map<String, String> config, String orderId) {
+            this(merchantTradeNo, paymentType, productName, amount, clientIp, device, config, orderId, null, null);
+        }
         public PaymentRequest {
             config = immutableStringMap(config);
         }

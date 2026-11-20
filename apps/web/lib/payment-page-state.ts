@@ -25,8 +25,9 @@ export function applyPaymentStatus(
   state: PaymentPageActionState,
   status: OrderStatus,
   serverAction: PaymentNextAction | null | undefined,
+  trustServerAbsence = false,
 ): PaymentPageActionState {
-  const nextAction = status === "PENDING" ? (serverAction ?? state.nextAction) : null
+  const nextAction = status === "PENDING" ? (serverAction ?? (trustServerAbsence ? null : state.nextAction)) : null
   return {
     phase: "ready",
     nextAction,

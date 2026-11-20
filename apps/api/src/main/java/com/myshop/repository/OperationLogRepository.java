@@ -9,8 +9,11 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.List;
 
 public interface OperationLogRepository extends JpaRepository<OperationLog, UUID> {
+
+    List<OperationLog> findByTargetTypeAndTargetIdAndActionOrderByCreatedAtDesc(String targetType, String targetId, String action);
 
     Page<OperationLog> findByTargetTypeAndTargetIdOrderByCreatedAtDesc(
             String targetType, String targetId, Pageable pageable);

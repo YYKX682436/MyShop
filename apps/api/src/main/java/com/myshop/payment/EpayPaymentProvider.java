@@ -40,7 +40,8 @@ public class EpayPaymentProvider implements PaymentProvider {
         EpayService.EpayCreateResult result = epayService.createPayment(
                 channelConfig(request.config()), request.merchantTradeNo(), gatewayPaymentType(request.paymentType()),
                 request.productName(), request.amount(), request.clientIp(), request.device(),
-                paymentUrlService.webhookUrl(id()), paymentUrlService.paymentReturnUrl(request.orderId()));
+                request.notifyUrl() == null ? paymentUrlService.webhookUrl(id()) : request.notifyUrl(),
+                request.returnUrl() == null ? paymentUrlService.paymentReturnUrl(request.orderId()) : request.returnUrl());
         return new PaymentResult(result.providerTradeNo(), result.nextAction());
     }
 

@@ -395,6 +395,8 @@ export interface PaymentCreateResult {
   order_id: string
   order_no: number
   status: PaymentStatus
+  creation_status?: "INTENT" | "SUBMITTING" | "READY" | "REJECTED" | "UNKNOWN"
+  can_retry?: boolean
   payment_method?: OrderPaymentMethod | null
   payment_type?: string | null
   payment_channel_code?: string | null
@@ -771,12 +773,16 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
     can_refresh: boolean
     reviews?: { outcome: string; operator: string; created_at: string }[]
     aftercare_operations?: { id: string; idempotency_key: string; kind: string; status: string; card_id: string | null; after_sale_id: string | null; supplier_req_id: number | null; upstream_status: number | null; result: string | null; error_code: string | null; topic: string | null; content: string | null; attachment_ids: string[]; created_at: string; last_checked_at: string | null; reviews: { outcome: string; operator: string; created_at: string }[] }[]
+    late_payments?: { id: string; attempt_id: string; channel: string; recorded_at: string }[]
     supplier_cards?: { id: string; remote_card_id: string; status: number; cancel_request: number; result: string | null; last_checked_at: string | null }[]
   } | null
 }
 
 export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at" | "refunded_at" | "after_sale"> {
   items: AdminOrderItemDetail[]
+  payment_attempts?: { id: string; merchant_trade_no: string; provider_trade_no: string | null; create_response_trade_no?: string | null; channel: string; amount: number; status: string; creation_status: string; created_at: string }[]
+  late_payments?: { id: string; attempt_id: string; channel: string; event_id: string; reported_trade_no?: string | null; process_result: string; recorded_at: string }[]
+  payment_reviews?: { id: string; operator: string; detail: string; created_at: string }[]
   payment_method?: OrderPaymentMethod | null
   payment_channel_code: string | null
   expires_at?: string | null

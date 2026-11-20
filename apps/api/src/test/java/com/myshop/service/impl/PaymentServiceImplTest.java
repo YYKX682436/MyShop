@@ -91,6 +91,23 @@ class PaymentServiceImplTest {
         service = new PaymentServiceImpl(paymentChannelRepository, orderRepository, orderItemRepository,
                 paymentAttemptRepository, List.of(provider), new ObjectMapper(), orderExpiryService,
                 paymentQueryTransactionService);
+        var manager = org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
+        lenient().when(manager.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+        service.setTransactionManager(manager);
+        service.setPaymentUrls(new com.myshop.service.PaymentUrlService("https://shop.example"));
+        var stored = new java.util.HashMap<UUID, PaymentAttempt>();
+        lenient().when(paymentAttemptRepository.save(any(PaymentAttempt.class))).thenAnswer(invocation -> {
+            PaymentAttempt attempt = invocation.getArgument(0);
+            if (attempt.getId() == null) attempt.setId(UUID.randomUUID());
+            stored.put(attempt.getId(), attempt);
+            return attempt;
+        });
+        lenient().when(paymentAttemptRepository.findOrderId(any())).thenAnswer(invocation -> {
+            PaymentAttempt attempt = stored.get(invocation.getArgument(0));
+            return attempt == null ? Optional.empty() : Optional.of(attempt.getOrderId());
+        });
+        lenient().when(paymentAttemptRepository.findByIdForUpdate(any())).thenAnswer(invocation ->
+                Optional.ofNullable(stored.get(invocation.getArgument(0))));
     }
 
     @Test
@@ -229,6 +246,8 @@ class PaymentServiceImplTest {
         when(paymentAttemptRepository.findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
                 eq(orderId), eq(PaymentStatus.PENDING), any(LocalDateTime.class)))
                 .thenReturn(Optional.of(existing));
+        when(paymentAttemptRepository.findOrderId(existing.getId())).thenReturn(Optional.of(orderId));
+        when(paymentAttemptRepository.findByIdForUpdate(existing.getId())).thenReturn(Optional.of(existing));
 
         Map<String, Object> result = service.createPayment(orderId, "alipay", new BigDecimal("10.00"), "pc");
 
@@ -315,7 +334,7 @@ class PaymentServiceImplTest {
         assertThrows(BusinessException.class, () -> service.repay(orderId, "pc"));
 
         verify(provider, never()).create(any());
-        verify(paymentAttemptRepository, never()).findByOrderIdAndStatusForUpdate(any(), any());
+        verify(paymentAttemptRepository).findByOrderIdAndStatusForUpdate(orderId, PaymentStatus.PENDING);
     }
 
     private PaymentAttempt capturedAttempt() {

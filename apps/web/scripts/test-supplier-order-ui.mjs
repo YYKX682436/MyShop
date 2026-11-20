@@ -23,8 +23,11 @@ const order = { id: "fixture-order", order_no: 100001, total_amount: 10, actual_
   expires_at: null, paid_at: "2026-01-01T00:00:00", delivered_at: null, refunded_at: null, items: [item], after_sale_history: [] }
 const supplier = { id: "purchase-1", account_name: "模拟货源", outer_number: "outer-1", upstream_order_number: "upstream-1",
   status: "PROCESSING", upstream_status: 2, buyer_quantity: 1, actual_quantity: 2, safe_price: "0.02",
-  actual_cost: "0.02", refunded_amount: "0", last_checked_at: null, error_code: null, can_refresh: true }
+  actual_cost: "0.02", refunded_amount: "0", last_checked_at: null, error_code: null, can_refresh: true,
+  late_payments: [{ id: "mock-event", attempt_id: "mock-attempt", channel: "mock-channel", recorded_at: "2026-11-20 12:00:00" }] }
 const adminOrder = { ...order, customer_type: "GUEST", username: null, user_no: null, is_risk_flagged: false,
+  late_payments: [{ id: "mock-event", attempt_id: "mock-attempt", channel: "mock-channel", event_id: "mock-event", process_result: "LATE_PAID_CLOSED", recorded_at: "2026-11-20 12:00:00" }],
+  payment_attempts: [{ id: "mock-attempt", merchant_trade_no: "mock-merchant", provider_trade_no: "mock-trade", channel: "mock-channel", amount: 10, status: "CLOSED", creation_status: "READY", created_at: "2026-11-20 12:00:00" }],
   cost_total: 0.02, gross_profit_total: 9.98, gross_margin_total: 99.8, after_sale: null,
   items: [{ ...item, cost_price_snapshot: 0.02, retail_price_snapshot: 10, pricing_source: "RETAIL",
     gross_profit: 9.98, gross_margin: 99.8, supplier_purchase: supplier }] }
@@ -56,7 +59,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   page.setDefaultTimeout(8000)
   let payload = null
-  let admin = false, refreshed = 0
+  let admin = false, refreshed = 0, paymentReview = null
   await page.route("**/api/**", async route => {
     const url=new URL(route.request().url())
     if (url.pathname === "/api/orders" && route.request().method() === "POST") {
@@ -64,6 +67,11 @@ try {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 999, message: "模拟订单已拦截", data: null }) })
     }
     if (url.pathname === "/api/admin/orders/fixture-order/supplier-purchases/purchase-1/refresh") refreshed++
+    if (url.pathname === "/api/admin/orders/fixture-order/payment-reviews") {
+      paymentReview = route.request().postDataJSON()
+      adminOrder.payment_reviews = [{ id: "mock-review", operator: "admin", detail: paymentReview.note, created_at: "2026-11-20 12:01:00" }]
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(ok(null)) })
+    }
     const data = url.pathname === "/api/user/profile" ? (admin ? { id: "admin", username: "admin", role: "ADMIN", balance: 0 } : null)
       : url.pathname === "/api/orders/fixture-order" ? { order, payment: { order_id: order.id, status: "PAID", paid: true, expires_at: null }, delivery: { groups: [] } }
       : url.pathname === "/api/admin/orders/fixture-order" ? adminOrder
@@ -97,6 +105,12 @@ try {
   await page.goto(`${base}/admin/orders/fixture-order`)
   await page.getByText("模拟货源", { exact: true }).waitFor()
   await page.getByText("upstream-1", { exact: true }).waitFor()
+  await page.getByText("存在需核实的迟到或冲突付款记录，请人工处理，勿重复发货或自动退款。").waitFor()
+  const reviewForm = page.getByRole("form", { name: "记录支付核实结果" })
+  await reviewForm.getByLabel("人工核实记录（勿填写密钥或卡密）").fill("已联系网关核实")
+  await reviewForm.getByRole("button", { name: "记录", exact: true }).click()
+  await page.getByText("已联系网关核实").waitFor()
+  assert.deepEqual(paymentReview, { attempt_id: "mock-attempt", note: "已联系网关核实" })
   await page.getByRole("button", { name: "查询最新状态" }).click()
   await page.waitForFunction(() => document.body.innerText.includes("模拟货源"))
   assert.equal(refreshed,1)

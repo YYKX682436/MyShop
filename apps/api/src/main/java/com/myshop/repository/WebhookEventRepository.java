@@ -4,9 +4,13 @@ import com.myshop.entity.WebhookEvent;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 public interface WebhookEventRepository extends JpaRepository<WebhookEvent, UUID> {
 
     Optional<WebhookEvent> findByEventId(String eventId);
+    List<WebhookEvent> findByOrderIdAndProcessResultStartingWithOrderByCreatedAtDesc(UUID orderId,String prefix);
+    boolean existsByOrderIdAndProcessResultStartingWith(UUID orderId,String prefix);
+    boolean existsByPaymentAttemptId(UUID attemptId);
 }

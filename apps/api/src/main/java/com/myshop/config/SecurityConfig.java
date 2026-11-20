@@ -65,6 +65,7 @@ public class SecurityConfig {
                         .requestMatchers("/user/**").authenticated()
                         // Admin endpoints
                         .requestMatchers("/admin/administrators/**").hasRole("SUPER_ADMIN")
+                        .requestMatchers("/admin/suppliers/*/transfers", "/admin/suppliers/*/transfers/**").hasRole("SUPER_ADMIN")
                         .requestMatchers("/admin/**", "/upload/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                         // Default
                         .anyRequest().authenticated())

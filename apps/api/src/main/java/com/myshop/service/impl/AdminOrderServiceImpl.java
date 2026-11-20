@@ -62,6 +62,12 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final CardKeyReclaimService cardKeyReclaimService;
     private final AfterSaleService afterSaleService;
     private SupplierAdminOrders supplierAdminOrders;
+    private com.myshop.repository.WebhookEventRepository paymentEvents;
+    @Autowired public void setPaymentEvents(com.myshop.repository.WebhookEventRepository value) { paymentEvents=value; }
+    private com.myshop.repository.OperationLogRepository paymentReviews;
+    @Autowired public void setPaymentReviews(com.myshop.repository.OperationLogRepository value) { paymentReviews=value; }
+    private com.fasterxml.jackson.databind.ObjectMapper paymentJson;
+    @Autowired public void setPaymentJson(com.fasterxml.jackson.databind.ObjectMapper value) { paymentJson=value; }
     @Autowired public void setSupplierAdminOrders(SupplierAdminOrders value) { this.supplierAdminOrders=value; }
 
     @Autowired
@@ -151,6 +157,22 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                 ? null
                 : userRepository.findById(order.getUserId()).orElse(null);
         return toAdminOrder(order, orderItemRepository.findByOrderId(order.getId()), user, null, true);
+    }
+
+    @Override
+    @Transactional
+    public void recordPaymentReview(UUID orderId, UUID attemptId, String note) {
+        orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
+        if (attemptId == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "支付记录不存在");
+        PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(attemptId)
+                .filter(value -> orderId.equals(value.getOrderId()))
+                .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "支付记录不存在"));
+        String text = note == null ? "" : note.trim();
+        if (text.length() < 3 || text.length() > 500)
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "核实记录须为 3 至 500 个字符");
+        operationLogService.logCurrentRequest("order.payment_review", "ORDER", orderId.toString(),
+                "支付记录 " + attempt.getId() + "：" + text);
     }
 
     @Override
@@ -324,6 +346,36 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("gross_margin_total", grossMarginTotal(items));
 
         if (detail) {
+            map.put("payment_attempts", paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(o.getId()).stream().map(attempt -> {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("id", attempt.getId());
+                entry.put("merchant_trade_no", attempt.getMerchantTradeNo());
+                entry.put("provider_trade_no", attempt.getProviderTradeNo());
+                entry.put("create_response_trade_no", attempt.getCreateResponseTradeNo());
+                entry.put("channel", attempt.getChannelCodeSnapshot());
+                entry.put("amount", attempt.getAmount());
+                entry.put("status", attempt.getStatus());
+                entry.put("creation_status", attempt.getCreationStatus());
+                entry.put("created_at", attempt.getCreatedAt());
+                return entry;
+            }).toList());
+            map.put("payment_reviews", paymentReviews == null ? List.of() : paymentReviews
+                    .findByTargetTypeAndTargetIdAndActionOrderByCreatedAtDesc("ORDER", o.getId().toString(), "order.payment_review")
+                    .stream().map(review -> Map.of("id", review.getId(), "operator", review.getUsername(),
+                            "detail", review.getDetail(), "created_at", review.getCreatedAt())).toList());
+            map.put("late_payments", paymentEvents == null ? List.of() : paymentEvents
+                    .findByOrderIdAndProcessResultStartingWithOrderByCreatedAtDesc(o.getId(), "LATE_PAID_")
+                    .stream().map(event -> {
+                        Map<String, Object> entry = new LinkedHashMap<>();
+                        entry.put("id", event.getId());
+                        entry.put("attempt_id", event.getPaymentAttemptId());
+                        entry.put("channel", event.getChannelCode());
+                        entry.put("event_id", event.getEventId());
+                        entry.put("process_result", event.getProcessResult());
+                        entry.put("reported_trade_no", reportedTradeNo(event.getPayload()));
+                        entry.put("recorded_at", event.getCreatedAt());
+                        return entry;
+                    }).toList());
             map.put("user_id", o.getUserId());
             map.put("registered_email", user == null ? null : user.getEmail());
             map.put("phone", user == null ? null : user.getPhone());
@@ -355,6 +407,14 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             }
         }
         return map;
+    }
+
+    private String reportedTradeNo(String payload) {
+        if (paymentJson == null || payload == null) return null;
+        try {
+            var value = paymentJson.readTree(payload).path("provider_trade_no");
+            return value.isTextual() ? value.asText() : null;
+        } catch (Exception ignored) { return null; }
     }
 
     private String normalizeStatus(String value) {

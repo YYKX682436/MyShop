@@ -24,7 +24,7 @@ export function supplierErrorLabel(code: string): string {
     BUSINESS: "上游返回业务错误，采购结果需核实", DATA: "上游数据异常，采购结果需核实",
     CONFIG: "货源账号或密钥配置不可用", DELIVERY_INCOMPLETE: "上游交付内容不完整",
     AFTER_SALE: "售后处理中，发货暂缓", ORDER_STATE: "订单状态需要人工核实",
-    PURCHASE_DISABLED: "付款已到账，采购开关关闭，请人工处理", REFUND_PENDING: "供应商退款处理中，发货暂缓",
+    PURCHASE_DISABLED: "付款已到账，采购开关关闭，请人工处理", REFUND_PENDING: "供应商退款处理中，发货暂缓", CARD_VOID_PENDING: "卡券作废处理中，发货暂缓", LATE_PAYMENT: "存在迟到付款，请先人工核实",
   }
   return labels[code] ?? `采购状态需人工核实（${code}）`
 }

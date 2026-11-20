@@ -1208,6 +1208,7 @@ class PostgresDeliveryIntegrationTest {
         when(epayPaymentProvider.create(any(PaymentProvider.PaymentRequest.class)))
                 .thenAnswer(invocation -> {
                     assertEquals(1, providerCreateCalls.incrementAndGet());
+                    assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
                     providerEntered.countDown();
                     assertTrue(releaseProvider.await(10, TimeUnit.SECONDS));
                     return new PaymentProvider.PaymentResult(
@@ -1224,17 +1225,19 @@ class PostgresDeliveryIntegrationTest {
             assertTrue(ready.await(10, TimeUnit.SECONDS));
             start.countDown();
 
-            // The first transaction holds the PostgreSQL row lock while the
-            // provider call is paused. The second real Spring transaction must
-            // wait for that lock and then reuse the committed gateway result.
             assertTrue(providerEntered.await(10, TimeUnit.SECONDS));
+            assertEquals("SUBMITTING", scalar("select creation_status from payment_attempts where order_id = ?", String.class, orderId));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (!first.isDone() && !second.isDone() && System.nanoTime() < deadline) Thread.sleep(10);
+            assertTrue(first.isDone() || second.isDone(), "concurrent caller must finish while the provider is paused");
+            new TransactionTemplate(transactionManager).execute(status ->
+                    jdbcTemplate.queryForObject("select id from orders where id = ? for update nowait", UUID.class, orderId));
             releaseProvider.countDown();
 
             Map<String, Object> firstResult = first.get(20, TimeUnit.SECONDS);
             Map<String, Object> secondResult = second.get(20, TimeUnit.SECONDS);
-            assertEquals(firstResult.get("next_action"), secondResult.get("next_action"));
-            assertEquals(Map.of("type", "qr_code", "value", "qr-payment-concurrency"),
-                    firstResult.get("next_action"));
+            Map<String, String> action = Map.of("type", "qr_code", "value", "qr-payment-concurrency");
+            assertTrue(action.equals(firstResult.get("next_action")) || action.equals(secondResult.get("next_action")));
             assertEquals(1, providerCreateCalls.get(), "Provider.create must run once");
 
             Map<String, Object> stored = jdbcTemplate.queryForMap(
@@ -1248,6 +1251,571 @@ class PostgresDeliveryIntegrationTest {
             releaseProvider.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void simultaneousFirstCheckoutWithSameKeyCreatesOnlyOneOrderAndIntent() throws Exception {
+        UUID product = UUID.randomUUID(); insertUnlimitedProduct(product); insertPaymentChannel("first-checkout-race");
+        String key = "first-race-" + UUID.randomUUID();
+        Map<String, Object> request = directOrderRequest(product, "first-checkout-race");
+        request.put("idempotency_key", key); request.put("idempotency_fingerprint", "same-request");
+        configurePaymentCreation("first-race-trade");
+        jdbcTemplate.execute("create or replace function myshop_test_order_insert_gate() returns trigger language plpgsql as $$ begin perform pg_advisory_xact_lock(7362539); return NEW; end $$");
+        jdbcTemplate.execute("create trigger myshop_test_order_insert_gate before insert on orders for each row when (NEW.idempotency_key='" + key + "') execute function myshop_test_order_insert_gate()");
+        java.sql.Connection gate = webApplicationContext.getBean(javax.sql.DataSource.class).getConnection();
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            try (var statement = gate.createStatement()) { statement.execute("select pg_advisory_lock(7362539)"); }
+            Future<Map<String, Object>> a = workers.submit(() -> { start.await(); return orderService.createDirectOrder(request, null, "127.0.0.1", "first-race-owner"); });
+            Future<Map<String, Object>> b = workers.submit(() -> { start.await(); return orderService.createDirectOrder(request, null, "127.0.0.1", "first-race-owner"); });
+            start.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            String waiting = "select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%insert%orders%'";
+            while (System.nanoTime() < deadline && number(waiting) < 2) Thread.sleep(25);
+            assertTrue(number(waiting) >= 2, "both inserts must reach the database gate before either commits");
+            try (var statement = gate.createStatement()) { statement.execute("select pg_advisory_unlock(7362539)"); }
+            Map<?, ?> firstOrder = (Map<?, ?>) a.get(15, TimeUnit.SECONDS).get("order");
+            Map<?, ?> secondOrder = (Map<?, ?>) b.get(15, TimeUnit.SECONDS).get("order");
+            assertEquals(firstOrder.get("id"), secondOrder.get("id"));
+            assertEquals(1, number("select count(*) from orders where idempotency_key=?", key));
+            assertEquals(1, number("select count(*) from payment_attempts where order_id=?", firstOrder.get("id")));
+            verify(epayPaymentProvider).create(any());
+        } finally {
+            try (var statement = gate.createStatement()) { statement.execute("select pg_advisory_unlock(7362539)"); }
+            gate.close(); workers.shutdownNow();
+            jdbcTemplate.execute("drop trigger if exists myshop_test_order_insert_gate on orders");
+            jdbcTemplate.execute("drop function if exists myshop_test_order_insert_gate()");
+        }
+    }
+
+    @Test
+    void duplicateCheckoutSeesCommittedIntentWhileGatewayIsWaiting() throws Exception {
+        UUID product = UUID.randomUUID(); insertUnlimitedProduct(product); insertPaymentChannel("checkout-double");
+        Map<String, Object> request = directOrderRequest(product, "checkout-double");
+        String key = "checkout-double-" + UUID.randomUUID();
+        request.put("idempotency_key", key); request.put("idempotency_fingerprint", "same");
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        when(epayPaymentProvider.create(any())).thenAnswer(invocation -> {
+            PaymentProvider.PaymentRequest call = invocation.getArgument(0);
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals(1, number("select count(*) from orders where id=?", UUID.fromString(call.orderId())));
+            assertEquals(1, number("select count(*) from payment_attempts where merchant_trade_no=? and creation_status='SUBMITTING'", call.merchantTradeNo()));
+            entered.countDown(); assertTrue(release.await(10, TimeUnit.SECONDS));
+            return new PaymentProvider.PaymentResult("checkout-double-trade", new PaymentNextAction.QrCode("checkout-qr"));
+        });
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Future<Map<String, Object>> first = workers.submit(() -> orderService.createDirectOrder(request, null, "127.0.0.1", "checkout-owner"));
+            assertTrue(entered.await(10, TimeUnit.SECONDS));
+            Future<Map<String, Object>> second = workers.submit(() -> orderService.createDirectOrder(request, null, "127.0.0.1", "checkout-owner"));
+            Map<String, Object> duplicate = second.get(3, TimeUnit.SECONDS);
+            assertEquals(com.myshop.payment.PaymentCreationStatus.SUBMITTING, ((Map<?, ?>) duplicate.get("payment")).get("creation_status"));
+            release.countDown();
+            Map<String, Object> original = first.get(10, TimeUnit.SECONDS);
+            assertEquals(((Map<?, ?>) original.get("order")).get("id"), ((Map<?, ?>) duplicate.get("order")).get("id"));
+            assertEquals(1, number("select count(*) from orders where idempotency_key=?", key));
+            verify(epayPaymentProvider).create(any());
+        } finally { release.countDown(); workers.shutdownNow(); }
+    }
+
+    @Test
+    void doubleRepayDoesNotClaimAnotherIntentDuringGatewayCall() throws Exception {
+        UUID orderId = insertPendingOrder("repay-double"); insertPaymentChannel("repay-double");
+        jdbcTemplate.update("update orders set session_token='repay-owner' where id=?", orderId);
+        configurePaymentCreation("repay-old");
+        UUID oldId = (UUID) paymentService.createPayment(orderId, "repay-double", new BigDecimal("10.00"), "pc").get("payment_id");
+        jdbcTemplate.update("update payment_attempts set created_at=current_timestamp-interval '1 minute' where id=?", oldId);
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        when(epayPaymentProvider.create(any())).thenAnswer(invocation -> {
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            entered.countDown(); assertTrue(release.await(10, TimeUnit.SECONDS));
+            return new PaymentProvider.PaymentResult("repay-new", new PaymentNextAction.QrCode("repay-qr"));
+        });
+        var access = webApplicationContext.getBean(com.myshop.service.OrderAccessService.class);
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Future<Map<String, Object>> first = workers.submit(() -> access.repayOrder(orderId, "pc", null, "repay-owner"));
+            assertTrue(entered.await(10, TimeUnit.SECONDS));
+            Future<Map<String, Object>> second = workers.submit(() -> access.repayOrder(orderId, "pc", null, "repay-owner"));
+            Map<String, Object> duplicate = second.get(3, TimeUnit.SECONDS);
+            assertEquals(com.myshop.payment.PaymentCreationStatus.SUBMITTING, duplicate.get("creation_status"));
+            release.countDown();
+            assertEquals(duplicate.get("payment_id"), first.get(10, TimeUnit.SECONDS).get("payment_id"));
+            assertEquals(2, number("select count(*) from payment_attempts where order_id=?", orderId));
+            verify(epayPaymentProvider, times(2)).create(any());
+        } finally { release.countDown(); workers.shutdownNow(); }
+    }
+
+    @Test
+    void oldPaidLinkBeforeNewPaidLinkRequiresManualHandlingForBoth() {
+        UUID orderId = insertPendingOrder("old-first"); insertPaymentChannel("old-first");
+        UUID product = UUID.randomUUID(); insertProduct(product); insertOrderItem(orderId, product); insertCard(product, "old-first-card");
+        when(epayPaymentProvider.create(any())).thenReturn(
+                new PaymentProvider.PaymentResult("old-first-trade", new PaymentNextAction.QrCode("old")),
+                new PaymentProvider.PaymentResult("new-second-trade", new PaymentNextAction.QrCode("new")));
+        UUID oldId = (UUID) paymentService.createPayment(orderId, "old-first", new BigDecimal("10.00"), "pc").get("payment_id");
+        String oldMerchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, oldId);
+        jdbcTemplate.update("update payment_attempts set created_at=current_timestamp-interval '1 minute' where id=?", oldId);
+        UUID newId = (UUID) paymentService.repay(orderId, "pc").get("payment_id");
+        String newMerchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, newId);
+        when(epayPaymentProvider.extractMerchantTradeNo(any())).thenAnswer(inv -> inv.getArgument(0, PaymentProvider.WebhookRequest.class).parameter("out_trade_no"));
+        when(epayPaymentProvider.verifyAndParseCallback(any(), anyMap())).thenAnswer(inv -> {
+            PaymentProvider.WebhookRequest req = inv.getArgument(0);
+            return new PaymentProvider.CallbackResult("epay:" + req.parameter("trade_no"), req.parameter("out_trade_no"), req.parameter("trade_no"), PaymentStatus.PAID, new BigDecimal("10.00"));
+        });
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(oldMerchant, "old-first-trade")).body());
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(newMerchant, "new-second-trade")).body());
+        assertEquals(2, number("select count(*) from webhook_events where order_id=? and process_result like 'LATE_PAID_%'", orderId));
+        assertEquals(0, number("select count(*) from card_keys where order_id=? and status='SOLD'", orderId));
+        assertEquals("PENDING", scalar("select status from orders where id=?", String.class, orderId));
+    }
+
+    @Test
+    void paymentReviewRequiresAdministratorAndKeepsAuditWithTheOrder() throws Exception {
+        UUID orderId = insertPendingOrder("review-payment"); insertPaymentChannel("review-payment");
+        configurePaymentCreation("review-trade");
+        UUID paymentId = (UUID) paymentService.createPayment(orderId, "review-payment", new BigDecimal("10.00"), "pc").get("payment_id");
+        String username = "payment-review-admin-" + UUID.randomUUID();
+        UUID admin = insertAdminUser(username, UUID.randomUUID() + "@example.com");
+        int version = scalar("select auth_version from users where id=?", Integer.class, admin);
+        String token = jwtUtils.generateToken(admin, username, "ADMIN", version);
+        String csrf = UUID.randomUUID().toString();
+        String body = "{\"attempt_id\":\"" + paymentId + "\",\"note\":\"已联系网关核实\"}";
+        MockMvc mvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).addFilters(springSecurityFilterChain).build();
+        String path = "/api/admin/orders/{id}/payment-reviews";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path, orderId).contextPath("/api")
+                .contentType("application/json").content(body)).andExpect(status().isUnauthorized());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path, orderId).contextPath("/api")
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("buyer").roles("USER"))
+                .contentType("application/json").content(body)).andExpect(status().isForbidden());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path, orderId).contextPath("/api")
+                .cookie(new Cookie("myshop_access_token", token), new Cookie("myshop_csrf", csrf)).header("X-CSRF-Token", csrf)
+                .contentType("application/json").content(body)).andExpect(status().isOk());
+        assertEquals(1, number("select count(*) from operation_logs where user_id=? and action='order.payment_review' and target_id=?", admin, orderId.toString()));
+        Map<?, ?> detail = (Map<?, ?>) adminOrderService.getOrderDetail(orderId);
+        assertEquals(1, ((List<?>) detail.get("payment_reviews")).size());
+    }
+
+    @Test
+    void replayAfterLateReceiptStillReturnsTheExistingOrderWithoutAnotherPayment() {
+        UUID product = UUID.randomUUID(); insertUnlimitedProduct(product); insertPaymentChannel("late-replay");
+        Map<String, Object> request = directOrderRequest(product, "late-replay");
+        request.put("idempotency_key", "late-replay-" + UUID.randomUUID()); request.put("idempotency_fingerprint", "same-request");
+        configurePaymentCreation("late-replay-trade");
+        Map<String, Object> first = orderService.createDirectOrder(request, null, "127.0.0.1", "late-replay-owner");
+        UUID orderId = (UUID) ((Map<?, ?>) first.get("order")).get("id");
+        UUID attemptId = (UUID) ((Map<?, ?>) first.get("payment")).get("payment_id");
+        String merchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, attemptId);
+        jdbcTemplate.update("update payment_attempts set status='CLOSED' where id=?", attemptId);
+        configureSuccessfulCallback("late-replay-trade");
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "late-replay-trade")).body());
+        Map<String, Object> replay = orderService.createDirectOrder(request, null, "127.0.0.1", "late-replay-owner");
+        assertEquals(orderId, ((Map<?, ?>) replay.get("order")).get("id"));
+        assertNull(((Map<?, ?>) replay.get("payment")).get("next_action"));
+        assertEquals(1, number("select count(*) from payment_attempts where order_id=?", orderId));
+        verify(epayPaymentProvider).create(any());
+    }
+
+    @Test
+    void signedReceiptAwaitingQueryIsDurableAndLaterConfirmsOnce() {
+        UUID orderId = insertPendingOrder("pending-query"); insertPaymentChannel("pending-query");
+        UUID product = UUID.randomUUID(); insertProduct(product); insertOrderItem(orderId, product); insertCard(product, "pending-query-card");
+        configurePaymentCreation("pending-query-trade");
+        UUID id = (UUID) paymentService.createPayment(orderId, "pending-query", new BigDecimal("10.00"), "pc").get("payment_id");
+        String merchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, id);
+        configureSuccessfulCallback("pending-query-trade");
+        when(epayPaymentProvider.verifyAndParseCallback(any(), anyMap())).thenAnswer(inv -> {
+            PaymentProvider.WebhookRequest callback = inv.getArgument(0);
+            return new PaymentProvider.CallbackResult("epay:pending-query-trade", callback.parameter("out_trade_no"),
+                    "pending-query-trade", PaymentStatus.PAID, new BigDecimal("10.00"));
+        });
+        when(epayPaymentProvider.query(any())).thenReturn(null,
+                new PaymentProvider.PaymentQueryResult(PaymentStatus.PAID, new BigDecimal("10.00"), "pending-query-trade"));
+        var request = callback(merchant, "pending-query-trade");
+        assertEquals("FAIL", webhookService.handleWebhook("epay", request).body());
+        assertEquals(1, number("select count(*) from webhook_events where order_id=? and process_result='LATE_PAID_UNVERIFIED'", orderId));
+        assertEquals("PENDING", scalar("select status from orders where id=?", String.class, orderId));
+        assertEquals(0, number("select count(*) from card_keys where order_id=? and status='SOLD'", orderId));
+        assertThrows(BusinessException.class, () -> paymentService.repay(orderId, "pc"));
+        paymentService.refreshPayment(orderId);
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", request).body());
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", request).body());
+        assertEquals(1, number("select count(*) from webhook_events where order_id=? and process_result='SUCCESS'", orderId));
+        assertEquals(1, number("select count(*) from card_keys where order_id=? and status='SOLD'", orderId));
+        assertEquals("DELIVERED", scalar("select status from orders where id=?", String.class, orderId));
+    }
+
+    @Test
+    void identicalGatewayEventIdsForDifferentMerchantTradesDoNotLoseAReceipt() {
+        UUID one = insertPendingOrder("event-scope-one"), two = insertPendingOrder("event-scope-two");
+        insertPaymentChannel("event-scope-one"); insertPaymentChannel("event-scope-two");
+        when(epayPaymentProvider.create(any())).thenReturn(new PaymentProvider.PaymentResult("shared-trade", new PaymentNextAction.QrCode("mock")));
+        UUID first = (UUID) paymentService.createPayment(one, "event-scope-one", new BigDecimal("10.00"), "pc").get("payment_id");
+        UUID second = (UUID) paymentService.createPayment(two, "event-scope-two", new BigDecimal("10.00"), "pc").get("payment_id");
+        String merchantOne = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, first);
+        String merchantTwo = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, second);
+        when(epayPaymentProvider.extractMerchantTradeNo(any())).thenAnswer(inv -> inv.getArgument(0, PaymentProvider.WebhookRequest.class).parameter("out_trade_no"));
+        when(epayPaymentProvider.verifyAndParseCallback(any(), anyMap())).thenAnswer(inv -> {
+            PaymentProvider.WebhookRequest req = inv.getArgument(0);
+            return new PaymentProvider.CallbackResult("epay:shared-trade", req.parameter("out_trade_no"), "shared-trade", PaymentStatus.PAID, new BigDecimal("10.00"));
+        });
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchantOne, "shared-trade")).body());
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchantTwo, "shared-trade")).body());
+        assertEquals("PAID", scalar("select status from payment_attempts where id=?", String.class, first));
+        assertEquals("PAID", scalar("select status from payment_attempts where id=?", String.class, second));
+        assertEquals(2, number("select count(*) from webhook_events where payment_attempt_id in (?,?)", first, second));
+    }
+
+    @Test
+    void unresolvedAttemptCannotBeBypassedByNewerReadyHistory() {
+        UUID orderId = insertPendingOrder("unresolved-history"); insertPaymentChannel("unresolved-history");
+        jdbcTemplate.update("update orders set session_token='unresolved-owner' where id=?", orderId);
+        when(epayPaymentProvider.create(any())).thenThrow(new IllegalStateException("mock timeout"));
+        UUID unknownId = (UUID) paymentService.createPayment(orderId, "unresolved-history", new BigDecimal("10.00"), "pc").get("payment_id");
+        jdbcTemplate.update("update payment_attempts set created_at=current_timestamp-interval '1 minute' where id=?", unknownId);
+        jdbcTemplate.update("""
+                insert into payment_attempts(id,order_id,channel_id,channel_code_snapshot,provider_type,payment_type,
+                    provider_config_snapshot,merchant_trade_no,amount,status,next_action,creation_status,expires_at)
+                values (?,?,?,'unresolved-history','epay','wxpay','{}',?,10,'PENDING',
+                    '{"type":"qr_code","value":"stale-link"}','READY',current_timestamp+interval '10 minutes')
+                """, UUID.randomUUID(), orderId, UUID.randomUUID(), "stale-history-" + UUID.randomUUID());
+        Map<String, Object> repaid = paymentService.repay(orderId, "pc");
+        assertEquals(unknownId, repaid.get("payment_id"));
+        assertEquals(com.myshop.payment.PaymentCreationStatus.UNKNOWN, repaid.get("creation_status"));
+        Map<?, ?> view = (Map<?, ?>) webApplicationContext.getBean(com.myshop.service.OrderAccessService.class)
+                .getOrder(orderId, null, "unresolved-owner").get("payment");
+        assertEquals(unknownId, view.get("payment_id"));
+        assertNull(view.get("next_action"));
+        verify(epayPaymentProvider).create(any());
+    }
+
+    @Test
+    void missingCarrierPreservesReturnedGatewayNumberAsUnknown() {
+        UUID orderId = insertPendingOrder("missing-carrier"); insertPaymentChannel("missing-carrier");
+        when(epayPaymentProvider.create(any())).thenReturn(new PaymentProvider.PaymentResult("carrierless-trade", null));
+        Map<String, Object> result = paymentService.createPayment(orderId, "missing-carrier", new BigDecimal("10.00"), "pc");
+        UUID id = (UUID) result.get("payment_id");
+        assertEquals(com.myshop.payment.PaymentCreationStatus.UNKNOWN, result.get("creation_status"));
+        assertNull(result.get("next_action"));
+        assertEquals("carrierless-trade", scalar("select create_response_trade_no from payment_attempts where id=?", String.class, id));
+        assertEquals(id, paymentService.repay(orderId, "pc").get("payment_id"));
+        verify(epayPaymentProvider).create(any());
+    }
+
+    @Test
+    void conflictingCreateResponseAfterCallbackPreservesBothTradeNumbers() {
+        UUID orderId = insertPendingOrder("conflicting-response"); insertPaymentChannel("conflicting-response");
+        configureSuccessfulCallback("callback-trade");
+        when(epayPaymentProvider.create(any())).thenAnswer(invocation -> {
+            PaymentProvider.PaymentRequest request = invocation.getArgument(0);
+            assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(request.merchantTradeNo(), "callback-trade")).body());
+            return new PaymentProvider.PaymentResult("other-create-trade", new PaymentNextAction.QrCode("do-not-show"));
+        });
+        Map<String, Object> result = paymentService.createPayment(orderId, "conflicting-response", new BigDecimal("10.00"), "pc");
+        UUID id = (UUID) result.get("payment_id");
+        assertEquals(PaymentStatus.PAID, result.get("status"));
+        assertEquals(com.myshop.payment.PaymentCreationStatus.UNKNOWN, result.get("creation_status"));
+        assertNull(result.get("next_action"));
+        assertEquals("callback-trade", scalar("select provider_trade_no from payment_attempts where id=?", String.class, id));
+        assertEquals("other-create-trade", scalar("select create_response_trade_no from payment_attempts where id=?", String.class, id));
+    }
+
+    @Test
+    void aRealReceiptAfterManualMarkPaidIsRecordedWithoutAnotherFulfillment() {
+        UUID orderId = insertPendingOrder("manual-paid-receipt"); insertPaymentChannel("manual-paid-receipt");
+        configurePaymentCreation("manual-paid-trade");
+        UUID id = (UUID) paymentService.createPayment(orderId, "manual-paid-receipt", new BigDecimal("10.00"), "pc").get("payment_id");
+        String merchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, id);
+        jdbcTemplate.update("update orders set status='PAID',paid_at=current_timestamp where id=?", orderId);
+        jdbcTemplate.update("update payment_attempts set status='PAID' where id=?", id);
+        configureSuccessfulCallback("manual-paid-trade");
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "manual-paid-trade")).body());
+        assertEquals(1, number("select count(*) from webhook_events where payment_attempt_id=? and process_result='LATE_PAID_PAID'", id));
+        assertEquals("PAID", scalar("select status from orders where id=?", String.class, orderId));
+    }
+
+    @Test
+    void signedConflictingGatewayTradeIsPreservedForManualReview() {
+        UUID orderId = insertPendingOrder("conflicting-trade"); insertPaymentChannel("conflicting-trade");
+        configurePaymentCreation("first-trade");
+        UUID id = (UUID) paymentService.createPayment(orderId, "conflicting-trade", new BigDecimal("10.00"), "pc").get("payment_id");
+        String merchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, id);
+        configureSuccessfulCallback("different-trade");
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "different-trade")).body());
+        assertEquals(1, number("select count(*) from webhook_events where payment_attempt_id=? and process_result='LATE_PAID_CONFLICT'", id));
+        assertEquals("first-trade", scalar("select provider_trade_no from payment_attempts where id=?", String.class, id));
+        assertEquals("PENDING", scalar("select status from orders where id=?", String.class, orderId));
+        assertThrows(BusinessException.class, () -> paymentService.repay(orderId, "pc"));
+    }
+
+    @Test
+    void expiryDuringGatewayCallReleasesStockAndDoesNotReopenPayment() throws Exception {
+        UUID orderId = insertPendingOrder("expiry-in-flight"); insertPaymentChannel("expiry-in-flight");
+        UUID product = UUID.randomUUID(); insertManualProduct(product); insertManualStock(product, null, 0, 1);
+        insertOrderItem(orderId, product, "MANUAL", "MANUAL", 1, 1);
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        when(epayPaymentProvider.create(any())).thenAnswer(invocation -> {
+            entered.countDown(); assertTrue(release.await(10, TimeUnit.SECONDS));
+            return new PaymentProvider.PaymentResult("expiry-trade", new PaymentNextAction.QrCode("expiry-qr"));
+        });
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        try {
+            Future<Map<String, Object>> result = worker.submit(() -> paymentService.createPayment(orderId, "expiry-in-flight", new BigDecimal("10.00"), "pc"));
+            assertTrue(entered.await(10, TimeUnit.SECONDS));
+            jdbcTemplate.update("update orders set expires_at=current_timestamp-interval '1 minute' where id=?", orderId);
+            webApplicationContext.getBean(com.myshop.service.OrderExpiryService.class).expireById(orderId);
+            assertEquals("EXPIRED", scalar("select status from orders where id=?", String.class, orderId));
+            assertEquals(1, number("select available_quantity from manual_stocks where product_id=?", product));
+            assertEquals(0, number("select reserved_quantity from manual_stocks where product_id=?", product));
+            release.countDown();
+            Map<String, Object> payment = result.get(10, TimeUnit.SECONDS);
+            assertNull(payment.get("next_action"));
+            assertEquals(PaymentStatus.CLOSED, payment.get("status"));
+            assertEquals("READY", scalar("select creation_status from payment_attempts where order_id=?", String.class, orderId));
+            assertNotNull(scalar("select next_action from payment_attempts where order_id=?", String.class, orderId));
+            configureSuccessfulCallback("expiry-trade");
+            String merchant = scalar("select merchant_trade_no from payment_attempts where order_id=?", String.class, orderId);
+            assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "expiry-trade")).body());
+            assertEquals(1, number("select count(*) from webhook_events where order_id=? and process_result like 'LATE_PAID_%'", orderId));
+            assertEquals("EXPIRED", scalar("select status from orders where id=?", String.class, orderId));
+        } finally { release.countDown(); worker.shutdownNow(); }
+    }
+
+    @Test
+    void killedProcessAfterGatewayReceivedRequestNeverResubmits() throws Exception {
+        exerciseActualProcessCrash(false);
+    }
+
+    @Test
+    void killedProcessAfterGatewayResponseBeforeResultCommitNeverResubmits() throws Exception {
+        exerciseActualProcessCrash(true);
+    }
+
+    private void exerciseActualProcessCrash(boolean afterResponse) throws Exception {
+        UUID orderId = insertPendingOrder("crash-worker-" + UUID.randomUUID());
+        String channel = scalar("select payment_channel_code from orders where id=?", String.class, orderId);
+        insertPaymentChannel(channel);
+        CountDownLatch received = new CountDownLatch(1), respond = new CountDownLatch(1), sent = new CountDownLatch(1);
+        AtomicInteger requests = new AtomicInteger();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        ExecutorService gateway = Executors.newSingleThreadExecutor();
+        server.setExecutor(gateway);
+        server.createContext("/mapi.php", exchange -> {
+            requests.incrementAndGet(); received.countDown();
+            try {
+                if (respond.await(15, TimeUnit.SECONDS)) {
+                    byte[] body = "{\"code\":1,\"trade_no\":\"crash-test-trade\",\"qrcode\":\"crash-test-qr\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, body.length); exchange.getResponseBody().write(body); exchange.close();
+                    sent.countDown();
+                }
+            } catch (Exception ignored) { sent.countDown(); }
+        });
+        server.start();
+        String config = "{\"pid\":\"test-pid\",\"key\":\"test-key\",\"api_url\":\"http://127.0.0.1:" + server.getAddress().getPort() + "/mapi.php\"}";
+        jdbcTemplate.update("update payment_channels set config_data=? where channel_code=?", config, channel);
+        java.nio.file.Path childDir = java.nio.file.Files.createTempDirectory("myshop-payment-crash-");
+        java.nio.file.Path childLog = childDir.resolve("worker.log");
+        String classpath = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        Process child = new ProcessBuilder(System.getProperty("java.home") + "/bin/java", "-cp", classpath,
+                PaymentCrashWorker.class.getName(), POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword(),
+                orderId.toString(), channel, childDir.toString()).redirectErrorStream(true).redirectOutput(childLog.toFile()).start();
+        java.sql.Connection lock = null;
+        try {
+            assertTrue(received.await(40, TimeUnit.SECONDS), "child did not reach the mock gateway; worker log: " + childLog);
+            assertEquals(1, requests.get());
+            UUID attemptId = scalar("select id from payment_attempts where order_id=?", UUID.class, orderId);
+            assertEquals("SUBMITTING", scalar("select creation_status from payment_attempts where id=?", String.class, attemptId));
+            if (afterResponse) {
+                lock = webApplicationContext.getBean(javax.sql.DataSource.class).getConnection();
+                lock.setAutoCommit(false);
+                try (var statement = lock.prepareStatement("select id from orders where id=? for update nowait")) {
+                    statement.setObject(1, orderId); statement.executeQuery().close();
+                }
+                respond.countDown();
+                assertTrue(sent.await(5, TimeUnit.SECONDS));
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+                while (System.nanoTime() < deadline && number("select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%orders%'") == 0) Thread.sleep(25);
+                assertTrue(number("select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%orders%'") > 0, "child did not wait at the result transaction");
+            }
+            child.destroyForcibly(); assertTrue(child.waitFor(10, TimeUnit.SECONDS));
+            if (lock != null) { lock.rollback(); lock.close(); lock = null; }
+            jdbcTemplate.update("update payment_attempts set creation_started_at=current_timestamp-interval '3 minutes' where id=?", attemptId);
+            Map<String, Object> recovered = paymentService.dispatchPayment(attemptId);
+            assertEquals(com.myshop.payment.PaymentCreationStatus.UNKNOWN, recovered.get("creation_status"));
+            assertNull(recovered.get("next_action"));
+            verify(epayPaymentProvider, never()).create(any());
+            assertEquals(1, requests.get());
+        } finally {
+            respond.countDown();
+            if (lock != null) { lock.rollback(); lock.close(); }
+            child.destroyForcibly(); child.waitFor(10, TimeUnit.SECONDS);
+            server.stop(0); gateway.shutdownNow();
+            try (var paths = java.nio.file.Files.walk(childDir)) {
+                paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                    try { java.nio.file.Files.deleteIfExists(path); } catch (java.io.IOException ignored) { }
+                });
+            }
+        }
+    }
+
+    @Test
+    void committedIntentCanResumeButClaimedCrashNeverResubmits() {
+        UUID orderId = insertPendingOrder("intent-resume");
+        insertPaymentChannel("intent-resume");
+        Map<String, Object> intent = new TransactionTemplate(transactionManager).execute(status ->
+                paymentService.preparePayment(orderId, "intent-resume", new BigDecimal("10.00"), "pc"));
+        UUID paymentId = (UUID) intent.get("payment_id");
+        assertEquals("INTENT", scalar("select creation_status from payment_attempts where id = ?", String.class, paymentId));
+        verify(epayPaymentProvider, never()).create(any());
+        jdbcTemplate.update("update payment_attempts set creation_status='SUBMITTING', creation_started_at=current_timestamp-interval '3 minutes' where id=?", paymentId);
+        Map<String, Object> resumed = paymentService.dispatchPayment(paymentId);
+        assertEquals(com.myshop.payment.PaymentCreationStatus.UNKNOWN, resumed.get("creation_status"));
+        assertNull(resumed.get("next_action"));
+        paymentService.dispatchPayment(paymentId);
+        verify(epayPaymentProvider, never()).create(any());
+        assertEquals(1, number("select count(*) from payment_attempts where order_id = ?", orderId));
+    }
+
+    @Test
+    void committedUnclaimedIntentIsSentOnceWithItsOriginalSnapshot() {
+        UUID orderId = insertPendingOrder("intent-snapshot");
+        insertPaymentChannel("intent-snapshot");
+        Map<String, Object> intent = new TransactionTemplate(transactionManager).execute(status ->
+                paymentService.preparePayment(orderId, "intent-snapshot", new BigDecimal("10.00"), "mobile"));
+        UUID id = (UUID) intent.get("payment_id");
+        String original = scalar("select merchant_trade_no from payment_attempts where id = ?", String.class, id);
+        String notifyUrl = scalar("select notify_url_snapshot from payment_attempts where id = ?", String.class, id);
+        String returnUrl = scalar("select return_url_snapshot from payment_attempts where id = ?", String.class, id);
+        jdbcTemplate.update("update payment_channels set config_data='{}', is_enabled=false where channel_code='intent-snapshot'");
+        when(epayPaymentProvider.create(any())).thenAnswer(invocation -> {
+            PaymentProvider.PaymentRequest request = invocation.getArgument(0);
+            assertEquals(original, request.merchantTradeNo());
+            assertEquals("mobile", request.device());
+            assertEquals("pid", request.config().get("pid"));
+            assertEquals(notifyUrl, request.notifyUrl());
+            assertEquals(returnUrl, request.returnUrl());
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            return new PaymentProvider.PaymentResult("snapshot-trade", new PaymentNextAction.QrCode("snapshot-qr"));
+        });
+        assertEquals(com.myshop.payment.PaymentCreationStatus.READY, paymentService.dispatchPayment(id).get("creation_status"));
+        paymentService.dispatchPayment(id);
+        verify(epayPaymentProvider).create(any());
+    }
+
+    @Test
+    void lostCreateResponseStaysUnknownAndCanBeConfirmedByQuery() {
+        UUID orderId = insertPendingOrder("lost-create");
+        insertPaymentChannel("lost-create");
+        when(epayPaymentProvider.create(any())).thenThrow(new IllegalStateException("simulated timeout"));
+        Map<String, Object> result = paymentService.createPayment(orderId, "lost-create", new BigDecimal("10.00"), "pc");
+        UUID id = (UUID) result.get("payment_id");
+        assertEquals(com.myshop.payment.PaymentCreationStatus.UNKNOWN, result.get("creation_status"));
+        assertNull(result.get("next_action"));
+        assertEquals(id, paymentService.repay(orderId, "pc").get("payment_id"));
+        verify(epayPaymentProvider).create(any());
+        when(epayPaymentProvider.supportsServerSideQuery()).thenReturn(true);
+        when(epayPaymentProvider.query(any())).thenReturn(null,
+                new PaymentProvider.PaymentQueryResult(PaymentStatus.PAID, new BigDecimal("10.00"), "lost-trade"));
+        paymentService.refreshPayment(orderId);
+        assertEquals("UNKNOWN", scalar("select creation_status from payment_attempts where id=?", String.class, id));
+        assertEquals(id, paymentService.repay(orderId, "pc").get("payment_id"));
+        paymentService.refreshPayment(orderId);
+        assertEquals("PAID", scalar("select status from payment_attempts where id=?", String.class, id));
+        assertEquals(1, number("select count(*) from webhook_events where payment_attempt_id=?", id));
+        String merchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, id);
+        configureSuccessfulCallback("lost-trade");
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "lost-trade")).body());
+        assertEquals(1, number("select count(*) from webhook_events where payment_attempt_id=?", id));
+        verify(epayPaymentProvider).create(any());
+    }
+
+    @Test
+    void failedIntentCommitDoesNotContactGatewayAndRollsBackOrder() {
+        UUID product = UUID.randomUUID(); insertUnlimitedProduct(product); insertPaymentChannel("commit-fail");
+        Map<String, Object> request = directOrderRequest(product, "commit-fail");
+        String key = "commit-fail-" + UUID.randomUUID();
+        request.put("idempotency_key", key); request.put("device", "intent-commit-fail");
+        installPaymentCommitFailure("INSERT", "intent-commit-fail");
+        try {
+            assertThrows(RuntimeException.class, () -> orderService.createDirectOrder(request, null, "127.0.0.1", "commit-fail-session"));
+            assertEquals(0, number("select count(*) from orders where idempotency_key=?", key));
+            verify(epayPaymentProvider, never()).create(any());
+        } finally { removePaymentCommitFailure(); }
+    }
+
+    @Test
+    void resultCommitFailureLeavesUnknownAndNeverSendsTwice() {
+        UUID orderId = insertPendingOrder("result-commit-fail"); insertPaymentChannel("result-commit-fail");
+        when(epayPaymentProvider.create(any())).thenReturn(new PaymentProvider.PaymentResult("result-trade", new PaymentNextAction.QrCode("result-qr")));
+        installPaymentCommitFailure("UPDATE", "result-commit-fail");
+        try {
+            Map<String, Object> result = paymentService.createPayment(orderId, "result-commit-fail", new BigDecimal("10.00"), "result-commit-fail");
+            assertEquals(com.myshop.payment.PaymentCreationStatus.UNKNOWN, result.get("creation_status"));
+            assertNull(result.get("next_action"));
+            UUID id = (UUID) result.get("payment_id");
+            assertEquals("UNKNOWN", scalar("select creation_status from payment_attempts where id=?", String.class, id));
+            assertEquals(id, paymentService.repay(orderId, "pc").get("payment_id"));
+            verify(epayPaymentProvider).create(any());
+        } finally { removePaymentCommitFailure(); }
+    }
+
+    @Test
+    void callbackBeforeCreateResponseDoesNotReopenPaymentOrDeliverTwice() {
+        UUID orderId = insertPendingOrder("early-callback"); insertPaymentChannel("early-callback");
+        UUID product = UUID.randomUUID(); insertProduct(product); insertOrderItem(orderId, product); insertCard(product, "early-callback-card");
+        configureSuccessfulCallback("early-trade");
+        when(epayPaymentProvider.create(any())).thenAnswer(invocation -> {
+            PaymentProvider.PaymentRequest request = invocation.getArgument(0);
+            assertTrue(!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(request.merchantTradeNo(), "early-trade")).body());
+            return new PaymentProvider.PaymentResult("early-trade", new PaymentNextAction.QrCode("too-late-to-show"));
+        });
+        Map<String, Object> result = paymentService.createPayment(orderId, "early-callback", new BigDecimal("10.00"), "pc");
+        assertNull(result.get("next_action"));
+        assertEquals(PaymentStatus.PAID, result.get("status"));
+        assertEquals("DELIVERED", scalar("select status from orders where id=?", String.class, orderId));
+        assertEquals(1, number("select count(*) from card_keys where order_id=? and status='SOLD'", orderId));
+        String merchant = scalar("select merchant_trade_no from payment_attempts where order_id=?", String.class, orderId);
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "early-trade")).body());
+        assertEquals(1, number("select count(*) from webhook_events where order_id=?", orderId));
+    }
+
+    @Test
+    void oldAndNewPaidLinksBothLeaveEvidenceWithoutDoubleDelivery() {
+        UUID orderId = insertPendingOrder("old-link"); insertPaymentChannel("old-link");
+        UUID product = UUID.randomUUID(); insertProduct(product); insertOrderItem(orderId, product); insertCard(product, "old-link-card");
+        when(epayPaymentProvider.create(any())).thenReturn(
+                new PaymentProvider.PaymentResult("trade-old", new PaymentNextAction.QrCode("old")),
+                new PaymentProvider.PaymentResult("trade-new", new PaymentNextAction.QrCode("new")));
+        UUID oldId = (UUID) paymentService.createPayment(orderId, "old-link", new BigDecimal("10.00"), "pc").get("payment_id");
+        String oldMerchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, oldId);
+        jdbcTemplate.update("update payment_attempts set created_at=current_timestamp-interval '1 minute' where id=?", oldId);
+        UUID newId = (UUID) paymentService.repay(orderId, "pc").get("payment_id");
+        String newMerchant = scalar("select merchant_trade_no from payment_attempts where id=?", String.class, newId);
+        when(epayPaymentProvider.extractMerchantTradeNo(any())).thenAnswer(inv -> inv.getArgument(0, PaymentProvider.WebhookRequest.class).parameter("out_trade_no"));
+        when(epayPaymentProvider.verifyAndParseCallback(any(), anyMap())).thenAnswer(inv -> {
+            PaymentProvider.WebhookRequest req = inv.getArgument(0);
+            return new PaymentProvider.CallbackResult("epay:" + req.parameter("trade_no"), req.parameter("out_trade_no"), req.parameter("trade_no"), PaymentStatus.PAID, new BigDecimal("10.00"));
+        });
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(newMerchant, "trade-new")).body());
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(oldMerchant, "trade-old")).body());
+        assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(oldMerchant, "trade-old")).body());
+        assertEquals(2, number("select count(*) from webhook_events where order_id=?", orderId));
+        assertEquals(1, number("select count(*) from webhook_events where order_id=? and process_result like 'LATE_PAID_%'", orderId));
+        assertEquals(1, number("select count(*) from card_keys where order_id=? and status='SOLD'", orderId));
+        assertEquals("DELIVERED", scalar("select status from orders where id=?", String.class, orderId));
+    }
+
+    private void installPaymentCommitFailure(String event, String device) {
+        jdbcTemplate.execute("create or replace function myshop_test_payment_commit_failure() returns trigger language plpgsql as $$ begin raise exception 'simulated deferred commit failure'; end $$");
+        String condition = event.equals("UPDATE") ? " and NEW.creation_status = 'READY'" : "";
+        jdbcTemplate.execute("create constraint trigger myshop_test_payment_commit_failure after " + event + " on payment_attempts deferrable initially deferred for each row when (NEW.creation_device = '" + device + "'" + condition + ") execute function myshop_test_payment_commit_failure()");
+    }
+
+    private void removePaymentCommitFailure() {
+        jdbcTemplate.execute("drop trigger if exists myshop_test_payment_commit_failure on payment_attempts");
+        jdbcTemplate.execute("drop function if exists myshop_test_payment_commit_failure()");
     }
 
     @Test

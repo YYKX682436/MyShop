@@ -130,7 +130,7 @@ class WebhookServiceImplTest {
         when(provider.query(any(PaymentProvider.PaymentQueryRequest.class)))
                 .thenReturn(new PaymentProvider.PaymentQueryResult(
                         PaymentStatus.PAID, new BigDecimal("10.00"), "trade-3"));
-        when(paymentAttemptRepository.findById(attempt.getId())).thenReturn(Optional.of(attempt));
+        when(paymentAttemptRepository.findOrderId(attempt.getId())).thenReturn(Optional.of(attempt.getOrderId()));
         when(paymentAttemptRepository.findByIdForUpdate(attempt.getId())).thenReturn(Optional.of(attempt));
         when(orderRepository.findByIdForUpdate(attempt.getOrderId())).thenReturn(Optional.of(order));
         when(webhookEventRepository.findByEventId(anyString())).thenReturn(Optional.empty());
@@ -169,6 +169,7 @@ class WebhookServiceImplTest {
         PaymentAttempt attempt = pendingAttempt("merchant-history", "trade-history");
         Order order = pendingOrder(attempt.getOrderId());
         attempt.setChannelCodeSnapshot("history-channel");
+        order.setPaymentChannelCode("history-channel");
         stubSuccessfulConfirmation(attempt, order);
 
         PaymentProvider.WebhookAcknowledgement acknowledgement = service.handleWebhook(
@@ -204,8 +205,10 @@ class WebhookServiceImplTest {
                 .thenReturn("merchant-5");
         when(provider.verifyAndParseCallback(any(PaymentProvider.WebhookRequest.class), anyMap()))
                 .thenReturn(callback("event-5", "merchant-5", "trade-5", "10.00"));
+        WebhookEvent legacy = new WebhookEvent();
+        legacy.setPaymentAttemptId(attempt.getId());
         when(webhookEventRepository.findByEventId("event-5"))
-                .thenReturn(Optional.of(new WebhookEvent()));
+                .thenReturn(Optional.of(legacy));
 
         PaymentProvider.WebhookAcknowledgement acknowledgement = service.handleWebhook(
                 "epay", request("merchant-5", "trade-5"));
@@ -229,15 +232,17 @@ class WebhookServiceImplTest {
         when(provider.verifyAndParseCallback(any(PaymentProvider.WebhookRequest.class), anyMap()))
                 .thenReturn(callback("event-" + attempt.getMerchantTradeNo(),
                         attempt.getMerchantTradeNo(), attempt.getProviderTradeNo(), "10.00"));
+        when(paymentAttemptRepository.findOrderId(attempt.getId())).thenReturn(Optional.of(attempt.getOrderId()));
+        when(paymentAttemptRepository.findByIdForUpdate(attempt.getId())).thenReturn(Optional.of(attempt));
+        when(orderRepository.findByIdForUpdate(attempt.getOrderId())).thenReturn(Optional.of(order));
 
         PaymentProvider.WebhookAcknowledgement acknowledgement = service.handleWebhook(
                 "epay", request("merchant-manual-paid", "trade-manual-paid"));
 
         assertEquals("SUCCESS", acknowledgement.body());
         verify(paymentAttemptRepository, never()).save(any(PaymentAttempt.class));
-        verify(orderRepository, never()).findByIdForUpdate(any(UUID.class));
         verify(orderPaymentCompletionService, never()).completeFirstPayment(any(Order.class));
-        verify(webhookEventRepository, never()).save(any(WebhookEvent.class));
+        verify(webhookEventRepository).save(org.mockito.ArgumentMatchers.argThat(event -> "LATE_PAID_PAID".equals(event.getProcessResult())));
     }
 
     @Test
@@ -284,7 +289,7 @@ class WebhookServiceImplTest {
                 .thenReturn(callback("event-" + attempt.getMerchantTradeNo(),
                         attempt.getMerchantTradeNo(), attempt.getProviderTradeNo(), "10.00"));
         when(webhookEventRepository.findByEventId(anyString())).thenReturn(Optional.empty());
-        when(paymentAttemptRepository.findById(attempt.getId())).thenReturn(Optional.of(attempt));
+        when(paymentAttemptRepository.findOrderId(attempt.getId())).thenReturn(Optional.of(attempt.getOrderId()));
         when(paymentAttemptRepository.findByIdForUpdate(attempt.getId())).thenReturn(Optional.of(attempt));
         when(orderRepository.findByIdForUpdate(attempt.getOrderId())).thenReturn(Optional.of(order));
         when(webhookEventRepository.save(any(WebhookEvent.class)))

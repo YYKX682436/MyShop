@@ -17,6 +17,8 @@ public interface AdminOrderService {
 
     Object getOrderDetail(UUID id);
 
+    void recordPaymentReview(UUID orderId, UUID attemptId, String note);
+
     void markPaid(UUID id, String reason, boolean confirmed);
 
     AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed,

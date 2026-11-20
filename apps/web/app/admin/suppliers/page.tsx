@@ -7,6 +7,8 @@ import { AdminPage, PageHeader, StatusBadge } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { SupplierSensitivePanel } from "@/components/admin/suppliers/supplier-sensitive-panel"
+import { useAuth } from "@/lib/context"
 import { adminCategoryApi, adminSupplierApi, type SupplierAccount, type SupplierAccountInput, type SupplierCategory, type SupplierMapping, type SupplierProduct, type SupplierSummary } from "@/services/api"
 import type { Category } from "@/types"
 
@@ -19,6 +21,7 @@ function flatten<T extends { id: string; name: string; children?: T[] }>(items: 
 }
 
 export default function SuppliersPage() {
+  const { user } = useAuth()
   const [accounts, setAccounts] = useState<SupplierAccount[]>([])
   const [selected, setSelected] = useState("")
   const selectedRef = useRef("")
@@ -89,6 +92,7 @@ export default function SuppliersPage() {
   }
   async function toggleAccount() {
     if (!active) return
+    if (!window.confirm(active.enabled ? `停用 ${active.name} 后将停止新采购，确定继续？` : `确定启用 ${active.name}？`)) return
     setBusy(true)
     try { await adminSupplierApi.status(active.id, !active.enabled); setBalance(null); await loadAccounts(); toast.success(active.enabled ? "货源已停用" : "货源已启用") }
     catch (error) { toast.error(message(error)) } finally { setBusy(false) }
@@ -163,6 +167,7 @@ export default function SuppliersPage() {
           <div className="mt-4 flex flex-wrap items-end gap-3"><label className={`${fieldClass} min-w-48`}>本地分类<select className={selectClass} value={localCategory} onChange={event => setLocalCategory(event.target.value)}><option value="">选择分类</option>{flatten(localCategories).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><Button type="button" disabled={busy || !localCategory || !active.enabled} onClick={() => void importProduct()}>{importedIds.has(detail.id) ? "检查导入" : "导入商品"}</Button><span className="text-sm text-muted-foreground">导入后默认下架</span></div>
         </div>}
       </section>
+      {active.provider_type === "KAYIXIN" && <SupplierSensitivePanel key={active.id} account={active} product={detail} superAdmin={user?.role === "SUPER_ADMIN"} />}
       <section>
         <div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold">已导入与同步</h2><Button type="button" variant="ghost" size="sm" disabled={loadingMappings} onClick={() => void loadMappings(active.id)}><RefreshCw />刷新</Button></div>
         <section className="admin-table-region min-w-0"><div className="admin-table-scroll min-w-0 overflow-x-auto" role="region" aria-label="货源商品同步状态" tabIndex={0}><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-border-subtle"><th scope="col" className="p-3">上游商品 / SKU</th><th scope="col" className="p-3">本地商品 / 规格</th><th scope="col" className="p-3">成本</th><th scope="col" className="p-3">库存快照</th><th scope="col" className="p-3">状态</th><th scope="col" className="p-3">上次成功同步</th><th scope="col" className="p-3">操作</th></tr></thead><tbody>{mappings.map(row => <tr className="border-b border-border-subtle" key={row.id}><td className="p-3">{row.remote_goods_id}<br /><span className="text-xs text-muted-foreground">{row.remote_sku || "单规格"}</span></td><td className="p-3"><a className="text-primary underline" href={`/admin/products/${row.product_id}/edit`}>查看商品</a>{row.spec_id && <div className="text-xs text-muted-foreground">规格 {row.spec_id.slice(0, 8)}</div>}</td><td className="p-3">¥{row.cost}</td><td className="p-3">{row.stock}</td><td className="p-3">{row.goods_status === 1 && row.sku_status === 1 ? "可售" : "停售"}{row.sync_error && <div className="text-destructive">同步失败：{row.sync_error}</div>}</td><td className="p-3">{row.last_synced_at}</td><td className="p-3"><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled} onClick={() => void sync(row.remote_goods_id)}>同步</Button></td></tr>)}{!mappings.length && <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">暂无已导入商品</td></tr>}</tbody></table></div></section>

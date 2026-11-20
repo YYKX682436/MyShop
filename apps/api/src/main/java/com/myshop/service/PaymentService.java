@@ -17,6 +17,18 @@ public interface PaymentService {
      */
     Map<String, Object> createPayment(UUID orderId, String paymentChannelCode, java.math.BigDecimal amount, String device);
 
+    /** Join the caller's order transaction; no provider request is sent here. */
+    Map<String, Object> preparePayment(UUID orderId, String paymentChannelCode, java.math.BigDecimal amount, String device);
+
+    /** Read an existing attempt during an authorized idempotent order replay. */
+    Map<String, Object> inspectPayment(UUID orderId);
+
+    /** Join the authorized order transaction to prepare a repayment. */
+    Map<String, Object> prepareRepayment(UUID orderId, String device);
+
+    /** Claim an already committed intent and contact its provider outside transactions. */
+    Map<String, Object> dispatchPayment(UUID paymentId);
+
     /** Confirm the active attempt through its provider without changing authorization context. */
     void refreshPayment(UUID orderId);
 

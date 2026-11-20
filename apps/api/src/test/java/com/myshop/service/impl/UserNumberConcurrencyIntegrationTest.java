@@ -14,9 +14,6 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,15 +32,16 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 /** Proves the real PostgreSQL row lock, rather than a JVM-only counter, serializes registration. */
-@Testcontainers(disabledWithoutDocker = true)
+@org.junit.jupiter.api.condition.EnabledIf("postgresAvailable")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class UserNumberConcurrencyIntegrationTest {
 
     private static final int REGISTRATION_COUNT = 12;
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+    static boolean postgresAvailable() { return POSTGRES.available(); }
+    @org.junit.jupiter.api.AfterAll static void stopPostgres() { POSTGRES.close(); }
 
     @Autowired
     private AuthService authService;

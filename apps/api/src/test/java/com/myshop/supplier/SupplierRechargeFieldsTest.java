@@ -39,9 +39,12 @@ class SupplierRechargeFieldsTest {
     }
     @Test void unsafeOrUnverifiedWireFormatsAreNotSellable() throws Exception {
         var image=parser.parse(json.readTree("{\"rechargeTemplates\":[{\"type\":1,\"title\":\"图片\",\"required\":1}]}"));
-        var cascade=parser.parse(json.readTree("{\"rechargeTemplates\":[{\"type\":16,\"title\":\"地区\",\"required\":1,\"options\":[{\"name\":\"省\",\"value\":\"p\",\"children\":[{\"name\":\"市\",\"value\":\"c\"}]}]}]}"));
+        var cascade=parser.parse(json.readTree("{\"rechargeTemplates\":[{\"type\":16,\"title\":\"地区\",\"required\":1,\"options\":[{\"name\":\"省\",\"value\":\"p\",\"children\":[{\"name\":\"市\",\"value\":\"c\"}],\"expand\":[{\"type\":14,\"options\":[{\"name\":\"无\",\"value\":\"\"},{\"name\":\"证件\",\"value\":\"1\"}]}]}]}]}"));
         var unsafe=parser.parse(json.readTree("{\"rechargeTemplates\":[{\"type\":0,\"title\":\"账号\",\"required\":1,\"regex\":\"(a+)+\"}]}"));
         assertFalse(rules.supported(image)); assertFalse(rules.supported(cascade)); assertFalse(rules.supported(unsafe));
+        var parent=cascade.getFirst().options().getFirst();
+        assertEquals("p",parent.value()); assertEquals("c",parent.children().getFirst().value());
+        assertEquals("",parent.expand().getFirst().options().getFirst().value());
         assertThrows(BusinessException.class,()->rules.validate(image,List.of()));
     }
     @Test void fieldIdIsStableAcrossJsonObjectPropertyOrder() throws Exception {

@@ -27,6 +27,8 @@ bash scripts/dev-local.sh
 
 供应商售后位于后台订单详情的「货源采购」区域。上游退款和本地余额退款是独立的管理员操作，0 元、部分退款和无法核实的采购须人工处理；本地自动退款要求逐项核实上游全额退款和已交付卡券状态。卡券作废不会自动退款。申诉可选用现有售后工单中的 JPG、PNG、GIF、WebP、SVG 私有凭证（每张及总计均不超过 10 MB）；SVG 仅接受不含脚本和外部资源的安全子集，并作为附件下载。供应商通知凭证使用私有存储和鉴权下载。上游退款或作废每条采购或卡券只允许一个申请记录，网络结果不明时只查询并留下人工核实记录；已明确失败的再次申请仍需线下处理。
 
+账户转账与 CDKEY 生成位于货源管理，默认均不执行：`SUPPLIER_TRANSFER_ENABLED=false`、`SUPPLIER_CDKEY_ENABLED=false`。仅在隔离的模拟供应商测试中按需启用；限额通过 `SUPPLIER_TRANSFER_MAX_AMOUNT`、`SUPPLIER_CDKEY_MAX_COUNT` 和 `SUPPLIER_CDKEY_MAX_EXPOSURE` 配置。转账仅超级管理员可用；CDKEY 结果仅授权管理员可读取，独立加密保存，不进入本地库存。结果未知的操作不能自动重发，必须先联系供货站核实。详细状态和上线阻塞项见 [P4 验收记录](SUPPLIER-P4-ACCEPTANCE.md)。
+
 货源订单的移动端表单、订单进度和后台查询按钮可以使用纯本地模拟预览：先运行 `pnpm --filter @myshop/web build`，再运行 `pnpm --filter @myshop/web test:supplier-order-ui`。测试会启动并关闭临时本地服务，拦截订单请求，不连接真实支付或供应商。
 
 供应商退款、作废确认与申诉界面可用 `pnpm --filter @myshop/web test:supplier-aftercare-ui` 进行纯本地模拟验证。

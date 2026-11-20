@@ -15,6 +15,7 @@ import com.myshop.exception.OrderExpiredException;
 import com.myshop.payment.PaymentNextAction;
 import com.myshop.payment.PaymentNextActionPayload;
 import com.myshop.payment.PaymentStatus;
+import com.myshop.payment.PaymentCreationStatus;
 import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
@@ -67,6 +68,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private final TransactionTemplate transactions;
     private SupplierPurchaseRepository supplierPurchases;
     private SupplierDeliveryCardRepository supplierCards;
+    private com.myshop.repository.WebhookEventRepository paymentEvents;
+    @Autowired public void setPaymentEvents(com.myshop.repository.WebhookEventRepository events) { this.paymentEvents=events; }
     @Autowired public void setSupplierRepositories(SupplierPurchaseRepository purchases,SupplierDeliveryCardRepository cards) {
         this.supplierPurchases=purchases; this.supplierCards=cards;
     }
@@ -114,12 +117,25 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     }
 
     @Override
-    @Transactional(noRollbackFor = OrderExpiredException.class)
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public Map<String, Object> repayOrder(UUID orderId, String device,
                                           UUID requestUserId, String sessionToken) {
-        // This authorization check intentionally precedes the payment service.
-        authorizedOrder(orderId, requestUserId, sessionToken);
-        return paymentService.repay(orderId, device);
+        java.util.concurrent.atomic.AtomicReference<OrderExpiredException> expired = new java.util.concurrent.atomic.AtomicReference<>();
+        Map<String, Object> intent = transactions.execute(status -> {
+            try {
+                authorizedOrder(orderId, requestUserId, sessionToken);
+                return paymentService.prepareRepayment(orderId, device);
+            } catch (OrderExpiredException exception) { expired.set(exception); return null; }
+        });
+        if (expired.get() != null) throw expired.get();
+        try { return paymentService.dispatchPayment((UUID) intent.get("payment_id")); }
+        catch (RuntimeException exception) {
+            Map<String, Object> result = new LinkedHashMap<>(intent);
+            result.put("creation_status", "UNKNOWN");
+            result.put("next_action", null);
+            result.put("can_retry", false);
+            return result;
+        }
     }
 
     @Override
@@ -273,14 +289,37 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("next_action", null);
         result.put("expires_at", order.getExpiresAt());
         result.put("remaining_seconds", remainingSeconds(order.getExpiresAt(), order.getStatus()));
+        boolean paymentBlocked = paymentEvents != null
+                && paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(), "LATE_PAID_");
+        if (items.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER) && !supplierPurchaseEnabled)
+            paymentBlocked = true;
+        result.put("can_retry", !paymentBlocked && order.getStatus() == OrderStatus.PENDING);
 
         PaymentAttempt attempt = latestAttempt(order.getId());
         if (attempt != null) {
             result.put("payment_id", attempt.getId());
             result.put("payment_type", attempt.getPaymentType());
+            if (attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING
+                    && attempt.getCreationStartedAt() != null
+                    && attempt.getCreationStartedAt().plusMinutes(2).isBefore(LocalDateTime.now())) {
+                attempt.setCreationStatus(PaymentCreationStatus.UNKNOWN);
+            }
+            result.put("creation_status", attempt.getCreationStatus());
+            boolean snapshotMatches = java.util.Objects.equals(order.getPaymentChannelCode(), attempt.getChannelCodeSnapshot())
+                    && order.getActualAmount() != null && attempt.getAmount() != null
+                    && order.getActualAmount().compareTo(attempt.getAmount()) == 0;
+            if (!snapshotMatches) result.put("can_retry", false);
+            if (attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING
+                    || attempt.getCreationStatus() == PaymentCreationStatus.UNKNOWN) result.put("can_retry", false);
             if (order.getStatus() == OrderStatus.PENDING && attempt.getStatus() == PaymentStatus.PENDING
+                    && snapshotMatches
+                    && attempt.getCreationStatus() == PaymentCreationStatus.READY
+                    && attempt.getNextAction() != null && !attempt.getNextAction().isBlank()
                     && attempt.getExpiresAt() != null && attempt.getExpiresAt().isAfter(LocalDateTime.now())
-                    && (supplierPurchaseEnabled || items.stream().noneMatch(item -> item.getStockMode() == StockMode.SUPPLIER))) {
+                    && (paymentEvents == null || !paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(),"LATE_PAID_"))
+                    && (items.stream().noneMatch(item -> item.getStockMode() == StockMode.SUPPLIER)
+                        || supplierPurchaseEnabled && paymentEvents!=null
+                            && !paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(),"LATE_PAID_"))) {
                 result.put("expires_at", attempt.getExpiresAt());
                 result.put("remaining_seconds", remainingSeconds(attempt.getExpiresAt(), order.getStatus()));
                 result.put("next_action", PaymentNextActionPayload.from(readNextAction(attempt.getNextAction())));
@@ -302,8 +341,12 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     }
 
     private PaymentAttempt latestAttempt(UUID orderId) {
-        return paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId)
-                .stream().findFirst().orElse(null);
+        List<PaymentAttempt> attempts = paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId);
+        return attempts.stream().filter(attempt -> attempt.getStatus() == PaymentStatus.PENDING
+                && (attempt.getCreationStatus() == PaymentCreationStatus.INTENT
+                || attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING
+                || attempt.getCreationStatus() == PaymentCreationStatus.UNKNOWN)).findFirst()
+                .orElseGet(() -> attempts.stream().findFirst().orElse(null));
     }
 
     private PaymentNextAction readNextAction(String raw) {

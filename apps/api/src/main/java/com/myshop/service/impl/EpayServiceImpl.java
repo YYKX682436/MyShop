@@ -29,7 +29,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.TreeMap;
 
 @Slf4j
@@ -94,9 +93,11 @@ public class EpayServiceImpl implements EpayService {
                 String msg = value(body.get("msg"));
                 throw createFailure(msg == null ? "网关返回失败" : msg);
             }
-            PaymentNextAction action = nextAction(body, gatewayBaseUrl(config.gateway()), type);
-            log.info("Epay API created: merchantTradeNo={}, paymentType={}, endpoint={}, fields=[{}], action={}",
-                    tradeNo, type, endpoint, fieldNames(body), action.type());
+            PaymentNextAction action;
+            try { action = nextAction(body, gatewayBaseUrl(config.gateway()), type); }
+            catch (BusinessException invalidCarrier) { action = null; }
+            log.info("Epay API response received: merchantTradeNo={}, paymentType={}, action={}",
+                    tradeNo, type, action == null ? "missing" : action.type());
             return new EpayCreateResult(value(body.get("trade_no")), action);
         } catch (BusinessException e) {
             throw e;
@@ -250,10 +251,6 @@ public class EpayServiceImpl implements EpayService {
         if (raw == null) return null;
         String result = raw.toString().trim();
         return result.isEmpty() ? null : result;
-    }
-
-    private String fieldNames(Map<String, Object> body) {
-        return String.join(",", body.keySet().stream().filter(Objects::nonNull).map(Object::toString).sorted().toList());
     }
 
     private PaymentStatus mapStatus(String status) {

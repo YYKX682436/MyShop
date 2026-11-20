@@ -187,6 +187,9 @@ const zh = {
   "payment.copyFailed": "复制失败，请手动复制链接",
   "payment.submittingForm": "正在提交支付表单…",
   "payment.noAction": "未获取到支付动作，请重新获取",
+  "payment.creating": "支付信息正在创建，请稍后刷新。",
+  "payment.creationUnknown": "支付结果尚待核实，请刷新状态或联系客服，勿重复付款。",
+  "payment.creationBlocked": "该订单付款暂不可用，请联系客服。",
   "payment.wechatMobileScanHint": "请截图后打开微信扫一扫",
 
   // Maintenance
@@ -1556,6 +1559,9 @@ const en: Record<keyof typeof zh, string> = {
   "payment.copyFailed": "Copy failed; please copy the link manually",
   "payment.submittingForm": "Submitting payment form…",
   "payment.noAction": "No payment action was received. Please try again.",
+  "payment.creating": "Payment is being prepared. Refresh shortly.",
+  "payment.creationUnknown": "Payment creation needs verification. Refresh or contact support; do not pay again.",
+  "payment.creationBlocked": "Payment is unavailable for this order. Contact support.",
   "payment.wechatMobileScanHint": "Please screenshot and scan in WeChat",
 
   // Maintenance

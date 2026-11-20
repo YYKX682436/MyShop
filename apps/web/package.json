@@ -19,7 +19,8 @@
     "test:admin-refresh-ui": "node scripts/test-admin-refresh-ui.mjs",
     "test:admin-user-sync": "node scripts/test-admin-user-sync.mjs",
     "test:admin-product-list-sync": "node scripts/test-admin-product-list-sync.mjs",
-    "clean": "node scripts/clear-cache.mjs"
+    "clean": "node scripts/clear-cache.mjs",
+    "test:payment-recovery-ui": "node scripts/test-payment-recovery-ui.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "1.1.4",

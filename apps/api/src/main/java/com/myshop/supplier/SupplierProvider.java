@@ -26,4 +26,12 @@ public interface SupplierProvider {
     default SupplierModels.CardVoidResult voidCard(SupplierModels.Connection connection,String cardId) {
         throw new SupplierException("UNSUPPORTED","该供应商不支持卡券作废");
     }
+    default boolean supportsTransfer() { return false; }
+    default boolean supportsCdkeys() { return false; }
+    default void transfer(SupplierModels.Connection connection,SupplierModels.TransferRequest request) {
+        throw new SupplierException("UNSUPPORTED","该供应商不支持账户转账");
+    }
+    default List<SupplierModels.Cdkey> createCdkeys(SupplierModels.Connection connection,SupplierModels.CdkeyRequest request) {
+        throw new SupplierException("UNSUPPORTED","该供应商不支持生成 CDKEY");
+    }
 }

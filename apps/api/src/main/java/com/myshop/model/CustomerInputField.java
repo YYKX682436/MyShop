@@ -13,5 +13,10 @@ public record CustomerInputField(String id, String label, Type type, Boolean req
                                  String placeholder, String regex, List<Option> options) {
     public CustomerInputField(String id, String label) { this(id,label,null,null,null,null,null); }
     public enum Type { TEXT, IMAGE, NUMBER, SELECT, MULTILINE, CASCADE }
-    public record Option(String name,String value) {}
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record Option(String name,String value,List<Option> children,List<Expansion> expand) {
+        public Option(String name,String value) { this(name,value,null,null); }
+    }
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record Expansion(int type,List<Option> options) {}
 }

@@ -58,11 +58,34 @@ class SupplierPurchasePostgresIntegrationTest {
         r.add("SUPPLIER_MASTER_KEY",()->"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
         r.add("supplier.sync-initial-delay-ms",()->"3600000"); r.add("supplier.purchase-initial-delay-ms",()->"3600000");
         r.add("supplier.purchase-enabled",()->true);
+        r.add("supplier.transfer-enabled",()->true); r.add("supplier.cdkey-enabled",()->true);
         r.add("app.public-site-url",()->"https://shop.example");
         r.add("jwt.secret",()->"purchase-test-secret-at-least-64-bytes-long-2026-and-further-example-content");
         r.add("mail.enabled",()->false);
     }
-    @TestConfiguration static class Config { @Bean FakeProvider fakeProvider(JdbcTemplate jdbc){return new FakeProvider(jdbc);} }
+    @TestConfiguration static class Config {
+        @Bean FakeProvider fakeProvider(JdbcTemplate jdbc){return new FakeProvider(jdbc);}
+        @Bean FakePayment fakePayment(){return new FakePayment();}
+    }
+    static class FakePayment implements com.myshop.payment.PaymentProvider {
+        volatile boolean mismatch;
+        @Override public String id(){return "e2e-mock";}
+        @Override public String displayName(){return "模拟支付";}
+        @Override public List<String> paymentTypes(){return List.of("alipay");}
+        @Override public List<ConfigField> configSchema(){return List.of();}
+        @Override public PaymentResult create(PaymentRequest request){
+            return new PaymentResult("mock-"+request.merchantTradeNo(),new com.myshop.payment.PaymentNextAction.QrCode("mock-payment"));
+        }
+        @Override public boolean supportsServerSideQuery(){return true;}
+        @Override public PaymentQueryResult query(PaymentQueryRequest request){
+            return new PaymentQueryResult(com.myshop.payment.PaymentStatus.PAID,new BigDecimal(mismatch ? "9.99" : "10.00"),"mock-"+request.merchantTradeNo());
+        }
+        @Override public String extractMerchantTradeNo(WebhookRequest request){return request.parameter("merchant");}
+        @Override public CallbackResult verifyAndParseCallback(WebhookRequest request,Map<String,String> config){
+            String merchant=request.parameter("merchant");
+            return new CallbackResult("mock-event-"+merchant,merchant,"mock-"+merchant,com.myshop.payment.PaymentStatus.PAID,new BigDecimal("10.00"));
+        }
+    }
     static class FakeProvider implements SupplierProvider {
         final JdbcTemplate jdbc;
         FakeProvider(JdbcTemplate jdbc) { this.jdbc=jdbc; }
@@ -70,9 +93,13 @@ class SupplierPurchasePostgresIntegrationTest {
         volatile boolean loseResponse;
         volatile boolean absent;
         volatile boolean unsupportedFields;
+        volatile String rechargeLabel="充值账号", lastQuerySecret;
         volatile BigDecimal balance=BigDecimal.valueOf(100);
         final AtomicInteger creates=new AtomicInteger();
         final AtomicInteger refunds=new AtomicInteger(), voids=new AtomicInteger(), complaints=new AtomicInteger();
+        final AtomicInteger transfers=new AtomicInteger(), cdkeys=new AtomicInteger();
+        volatile boolean loseTransfer,loseCdkey,invalidCdkeys;
+        volatile SupplierModels.CdkeyRequest lastCdkey;
         final Map<String,Integer> cardStatuses=new ConcurrentHashMap<>();
         volatile int nextRefundStatus=9, nextVoidStatus=2;
         volatile int cardCancellationAllowed=1;
@@ -85,13 +112,30 @@ class SupplierPurchasePostgresIntegrationTest {
         volatile SupplierModels.ComplaintRequest lastComplaint;
         volatile boolean committedClaimObserved;
         @Override public String type(){return "PURCHASE_TEST";}
+        @Override public boolean supportsTransfer(){return true;}
+        @Override public boolean supportsCdkeys(){return true;}
+        @Override public void transfer(SupplierModels.Connection c,SupplierModels.TransferRequest req) {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            assertEquals("SUBMITTING",jdbc.queryForObject("select status from supplier_sensitive_operations where outer_number=?",String.class,req.outerNumber()));
+            transfers.incrementAndGet();
+            if (loseTransfer) throw new SupplierException("CONNECTION","模拟响应丢失");
+        }
+        @Override public List<SupplierModels.Cdkey> createCdkeys(SupplierModels.Connection c,SupplierModels.CdkeyRequest req) {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            cdkeys.incrementAndGet(); lastCdkey=req;
+            if (loseCdkey) throw new SupplierException("CONNECTION","模拟响应丢失");
+            int count=invalidCdkeys ? req.cardCount()-1 : req.cardCount();
+            List<SupplierModels.Cdkey> result=new ArrayList<>();
+            for (int i=0;i<count;i++) result.add(new SupplierModels.Cdkey(req.cardPrefix()+String.format("%010d",i),req.shortStatus()==1 ? "https://example.invalid/"+i : ""));
+            return result;
+        }
         @Override public SupplierModels.Account account(SupplierModels.Connection c){return new SupplierModels.Account(balance);}
         @Override public List<SupplierModels.Category> categories(SupplierModels.Connection c){return List.of();}
         @Override public SupplierModels.Page list(SupplierModels.Connection c,String k,String d,int p){return new SupplierModels.Page(List.of(),0,0);}
         @Override public SupplierModels.Product detail(SupplierModels.Connection c,String id){return product;}
         @Override public List<CustomerInputField> customerFields(JsonNode snapshot){
             if (unsupportedFields) return List.of(new CustomerInputField("image","图片",CustomerInputField.Type.IMAGE,true,null,null,null));
-            return product.goodsType()==3 ? List.of(new CustomerInputField("account","充值账号",CustomerInputField.Type.TEXT,true,null,null,null)) : List.of();
+            return product.goodsType()==3 ? List.of(new CustomerInputField("account",rechargeLabel,CustomerInputField.Type.TEXT,true,null,null,null)) : List.of();
         }
         @Override public SupplierModels.CreatedPurchase createPurchase(SupplierModels.Connection c,SupplierModels.PurchaseRequest request){
             assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
@@ -108,6 +152,7 @@ class SupplierPurchasePostgresIntegrationTest {
             return new SupplierModels.CreatedPurchase(detail.orderNumber(),cards);
         }
         @Override public SupplierModels.PurchaseDetail purchaseDetail(SupplierModels.Connection c,String outer){
+            lastQuerySecret=c.secret();
             if (absent || !details.containsKey(outer)) throw new SupplierException("BUSINESS","模拟订单不存在");
             return details.get(outer);
         }
@@ -165,13 +210,21 @@ class SupplierPurchasePostgresIntegrationTest {
     @Autowired SupplierAftercareOperationRepository aftercareOperations;
     @Autowired SupplierAftercareTransactions aftercareTx;
     @Autowired SupplierComplaintNotifications complaintNotifications;
+    @Autowired SupplierSensitiveService sensitive;
+    @Autowired SupplierSensitiveTransactions sensitiveTx;
+    @Autowired SupplierSensitiveOperationRepository sensitiveOperations;
+    @Autowired com.myshop.utils.JwtUtils jwt;
+    @Autowired com.myshop.service.PaymentService paymentService;
+    @Autowired com.myshop.service.WebhookService webhookService;
+    @Autowired FakePayment fakePayment;
+    @Autowired PaymentAttemptRepository paymentAttempts;
     @Autowired KayixinCallbackCodec callbackCodec;
     @Autowired KayixinProvider kayixin;
     @Autowired com.myshop.service.PrivateUploadStorage privateStorage;
     @Autowired WebApplicationContext webContext;
     @Autowired FilterChainProxy security;
 
-    @BeforeEach void reset(){fake.creates.set(0);fake.refunds.set(0);fake.voids.set(0);fake.complaints.set(0);fake.cardStatuses.clear();fake.nextRefundStatus=9;fake.nextVoidStatus=2;fake.cardCancellationAllowed=1;fake.loseRefundResponse=false;fake.loseVoidResponse=false;fake.loseComplaintResponse=false;fake.rejectRefund=false;fake.returnedMoney=BigDecimal.ZERO;fake.details.clear();fake.loseResponse=false;fake.absent=false;fake.unsupportedFields=false;fake.lastRequest=null;fake.lastComplaint=null;fake.balance=BigDecimal.valueOf(100);fake.committedClaimObserved=false;}
+    @BeforeEach void reset(){fakePayment.mismatch=false;fake.creates.set(0);fake.refunds.set(0);fake.voids.set(0);fake.complaints.set(0);fake.transfers.set(0);fake.cdkeys.set(0);fake.loseTransfer=false;fake.loseCdkey=false;fake.invalidCdkeys=false;fake.lastCdkey=null;fake.rechargeLabel="充值账号";fake.lastQuerySecret=null;fake.cardStatuses.clear();fake.nextRefundStatus=9;fake.nextVoidStatus=2;fake.cardCancellationAllowed=1;fake.loseRefundResponse=false;fake.loseVoidResponse=false;fake.loseComplaintResponse=false;fake.rejectRefund=false;fake.returnedMoney=BigDecimal.ZERO;fake.details.clear();fake.loseResponse=false;fake.absent=false;fake.unsupportedFields=false;fake.lastRequest=null;fake.lastComplaint=null;fake.balance=BigDecimal.valueOf(100);fake.committedClaimObserved=false;}
 
     private Fixture fixture(int goodsType,int skuType) throws Exception {
         String goodsId=Long.toString(Math.abs(UUID.randomUUID().getMostSignificantBits()%1_000_000_000L)+1);
@@ -206,6 +259,320 @@ class SupplierPurchasePostgresIntegrationTest {
     }
     private record Fixture(UUID account,UUID product,UUID order,UUID item,UUID purchase){}
     private String value(String sql,UUID id){return jdbc.queryForObject(sql,String.class,id);}
+
+    @Test void transferDoubleClickIsOneRequestAndPasswordNeverPersists() throws Exception {
+        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID(), key=UUID.randomUUID();
+        var input=new SupplierSensitiveService.TransferInput(key,true,"10001",new BigDecimal("1.25"),"mock-sale-password");
+        ExecutorService pool=Executors.newFixedThreadPool(6); CountDownLatch start=new CountDownLatch(1);
+        try {
+            List<Future<?>> futures=new ArrayList<>();
+            for(int i=0;i<6;i++) futures.add(pool.submit(() -> {
+                RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN"));
+                try { start.await(); sensitive.transfer(f.account(),input); return null; }
+                finally { RequestContext.clear(); }
+            }));
+            start.countDown(); for(var future:futures) future.get(15,TimeUnit.SECONDS);
+        } finally { pool.shutdownNow(); }
+        assertEquals(1,fake.transfers.get());
+        assertEquals("SUCCEEDED",jdbc.queryForObject("select status from supplier_sensitive_operations where account_id=? and kind='TRANSFER'",String.class,f.account()));
+        assertFalse(jdbc.queryForObject("select parameters::text from supplier_sensitive_operations where account_id=? and kind='TRANSFER'",String.class,f.account()).contains("mock-sale-password"));
+        assertEquals(0,jdbc.queryForObject("select count(*) from operation_logs where detail like '%mock-sale-password%'",Integer.class));
+        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
+        try { assertThrows(com.myshop.exception.BusinessException.class,() -> sensitive.transfer(f.account(),input)); }
+        finally { RequestContext.clear(); }
+    }
+    @Test void unknownTransferCannotBeResentOrReplacedBeforeManualReview() throws Exception {
+        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID(), key=UUID.randomUUID();
+        var input=new SupplierSensitiveService.TransferInput(key,true,"10001",new BigDecimal("1.25"),null);
+        RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN")); fake.loseTransfer=true;
+        try {
+            Map<String,Object> first=sensitive.transfer(f.account(),input); UUID id=(UUID)first.get("id");
+            assertEquals("UNKNOWN",first.get("status"));
+            assertEquals("UNKNOWN",sensitive.transfer(f.account(),input).get("status"));
+            assertThrows(SupplierException.class,() -> sensitive.transfer(f.account(),new SupplierSensitiveService.TransferInput(UUID.randomUUID(),true,"10001",new BigDecimal("1.25"),null)));
+            sensitive.review(f.account(),id,"TRANSFER","MANUAL_HANDLING");
+            assertEquals("UNKNOWN",sensitiveOperations.findById(id).orElseThrow().getStatus());
+            assertEquals(1,fake.transfers.get());
+        } finally { RequestContext.clear(); }
+    }
+    @Test void cdkeyResultsAreAtomicEncryptedAndUnknownNeverRegenerates() throws Exception {
+        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
+        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
+        try {
+            var request=cdkeyInput(UUID.randomUUID(),2);
+            Map<String,Object> created=sensitive.createCdkeys(f.account(),request); UUID id=(UUID)created.get("id");
+            assertEquals("SUCCEEDED",created.get("status")); assertEquals(1,fake.cdkeys.get());
+            assertEquals(2,fake.lastCdkey.cardCount()); assertEquals(1,fake.lastCdkey.count());
+            assertEquals(0,new BigDecimal("0.01").compareTo(fake.lastCdkey.safePrice())); assertEquals(-1,fake.lastCdkey.cardDay());
+            assertEquals(2,sensitive.result(f.account(),id).size());
+            assertFalse(sensitiveOperations.findById(id).orElseThrow().getEncryptedResult().contains("mock-key-0"));
+            assertEquals("SUCCEEDED",sensitive.createCdkeys(f.account(),request).get("status")); assertEquals(1,fake.cdkeys.get());
+            fake.invalidCdkeys=true;
+            var invalid=sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),2));
+            assertEquals("UNKNOWN",invalid.get("status"));
+            assertThrows(SupplierException.class,() -> sensitive.result(f.account(),(UUID)invalid.get("id")));
+            assertThrows(SupplierException.class,() -> sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),2)));
+            assertEquals(2,fake.cdkeys.get());
+        } finally { RequestContext.clear(); }
+    }
+    @Test void cdkeyDatabaseCommitFailureLeavesUnknownAndNeverRetries() throws Exception {
+        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
+        jdbc.execute("create function p4_fail_sensitive_success() returns trigger language plpgsql as $$ begin raise exception 'simulated commit failure'; end $$");
+        jdbc.execute("create constraint trigger p4_fail_sensitive_success after update on supplier_sensitive_operations deferrable initially deferred for each row when (new.status='SUCCEEDED' and new.account_id='"+f.account()+"'::uuid) execute function p4_fail_sensitive_success()");
+        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
+        try {
+            var request=cdkeyInput(UUID.randomUUID(),2);
+            Map<String,Object> result=sensitive.createCdkeys(f.account(),request);
+            assertEquals("UNKNOWN",result.get("status"));
+            assertNull(sensitiveOperations.findById((UUID)result.get("id")).orElseThrow().getEncryptedResult());
+            assertEquals("UNKNOWN",sensitive.createCdkeys(f.account(),request).get("status"));
+            assertEquals(1,fake.cdkeys.get());
+        } finally {
+            RequestContext.clear(); jdbc.execute("drop trigger p4_fail_sensitive_success on supplier_sensitive_operations");
+            jdbc.execute("drop function p4_fail_sensitive_success()");
+        }
+    }
+    private SupplierSensitiveService.CdkeyInput cdkeyInput(UUID key,int amount) {
+        return new SupplierSensitiveService.CdkeyInput(key,true,fake.product.id(),amount,0,"P",10,10,1,
+                BigDecimal.ZERO,new BigDecimal("0.01"),-1,"mock order");
+    }
+    @Test void registeredRechargeEndToEndSeparatesUpstreamAndCustomerRefund() throws Exception {
+        Fixture f=fixture(3,0); suppliers.sync(f.account(),fake.product.id());
+        adminProducts.updatePrices(f.product(),new com.myshop.model.request.AdminProductPricesUpdateRequest(new BigDecimal("0.02"),new BigDecimal("10.00"),List.of()));
+        UUID customer=UUID.randomUUID(); Long number=jdbc.queryForObject("select coalesce(max(user_no),9999)+1 from users",Long.class);
+        UUID level=jdbc.queryForObject("select id from user_levels where is_default=true",UUID.class);
+        jdbc.update("insert into users(id,username,email,password_hash,role,is_deleted,user_no,user_level_id,balance) values (?,?,?,'test-hash','USER',0,?,?,20.00)",
+                customer,"e2e-"+customer,customer+"@example.invalid",number,level);
+        Map<String,Object> request=new LinkedHashMap<>(); request.put("product_id",f.product().toString()); request.put("quantity",1);
+        request.put("payment_method","BALANCE"); request.put("expected_unit_price","10.00");
+        request.put("idempotency_key","registered-e2e-"+UUID.randomUUID()); request.put("idempotency_fingerprint","mock-fingerprint");
+        request.put("customer_inputs",List.of(Map.of("id","account","value","mock-recharge-account")));
+        UUID order=(UUID)((Map<?,?>)orderService.createDirectOrder(request,customer,"127.0.0.1",null).get("order")).get("id");
+        waitForDelivery(order);
+        assertEquals(order,((Map<?,?>)orderService.createDirectOrder(request,customer,"127.0.0.1",null).get("order")).get("id"));
+        assertEquals(1,fake.creates.get());
+        var purchase=purchases.findByOrderId(order).getFirst();
+        assertEquals("mock-recharge-account",purchase.getAttach().get(0).path("value").asText());
+        assertEquals("完成",purchase.getResult());
+        fake.rechargeLabel="更新后的充值字段";
+        assertEquals("充值账号",jdbc.queryForObject("select customer_inputs->0->>'label' from order_items where order_id=?",String.class,order));
+        assertEquals("mock-recharge-account",purchase.getAttach().get(0).path("value").asText());
+        assertEquals(0,new BigDecimal("10.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,customer)));
+        RequestContext.set(new RequestContext.UserInfo(customer,"buyer","USER"));
+        try { afterSale.apply(order,customer,"模拟售后申请",List.of()); }
+        finally { RequestContext.clear(); }
+        fake.nextRefundStatus=5; fake.returnedMoney=new BigDecimal("0.02");
+        UUID admin=UUID.randomUUID();
+        jdbc.update("insert into users(id,username,email,password_hash,role,is_deleted,user_no) values (?,?,?,'test-hash','ADMIN',0,null)",
+                admin,"e2e-admin-"+admin,admin+"@example.invalid");
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        try {
+            aftercare.refund(order,purchase.getId(),UUID.randomUUID(),true);
+            assertEquals("REFUNDED",purchases.findById(purchase.getId()).orElseThrow().getStatus());
+            assertEquals(0,new BigDecimal("10.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,customer)));
+            afterSale.approve(order,true,false);
+        } finally { RequestContext.clear(); }
+        assertEquals("REFUNDED",value("select status from orders where id=?",order));
+        assertEquals(0,new BigDecimal("20.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,customer)));
+        assertEquals(1,fake.refunds.get());
+    }
+    @Test void guestCardEndToEndUsesMockPaymentAndKeepsVoidAndRefundBoundaries() throws Exception {
+        Fixture f=fixture(1,0); suppliers.sync(f.account(),fake.product.id());
+        adminProducts.updatePrices(f.product(),new com.myshop.model.request.AdminProductPricesUpdateRequest(new BigDecimal("0.02"),new BigDecimal("10.00"),List.of()));
+        String channel="e2e-"+UUID.randomUUID();
+        jdbc.update("insert into payment_channels(id,channel_code,channel_name,provider_type,payment_type,config_data,is_enabled,sort_order,is_deleted) values (?,?,?,'e2e-mock','alipay','{}',true,0,0)",UUID.randomUUID(),channel,channel);
+        Map<String,Object> request=new LinkedHashMap<>(); request.put("product_id",f.product().toString()); request.put("quantity",1);
+        request.put("payment_method","ONLINE"); request.put("payment_channel_code",channel); request.put("expected_unit_price","10.00");
+        request.put("idempotency_key","guest-e2e-"+UUID.randomUUID()); request.put("idempotency_fingerprint","mock-fingerprint");
+        String session="mock-guest-session";
+        UUID order=(UUID)((Map<?,?>)orderService.createDirectOrder(request,null,"127.0.0.1",session).get("order")).get("id");
+        assertEquals(order,((Map<?,?>)orderService.createDirectOrder(request,null,"127.0.0.1",session).get("order")).get("id"));
+        assertEquals("PENDING",value("select status from orders where id=?",order));
+        paymentService.refreshPayment(order); waitForDelivery(order);
+        assertEquals(1,fake.creates.get());
+        assertTrue(orderAccess.exportCardKeys(order,null,session).contains("test-password"));
+        assertThrows(com.myshop.exception.BusinessException.class,() -> orderAccess.exportCardKeys(order,null,"other-session"));
+        assertThrows(com.myshop.exception.BusinessException.class,() -> afterSale.apply(order,null,"模拟游客售后",List.of()));
+        var purchase=purchases.findByOrderId(order).getFirst();
+        UUID card=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? order by created_at limit 1",UUID.class,purchase.getId());
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try {
+            aftercare.queryCard(order,purchase.getId(),card);
+            aftercare.voidCard(order,purchase.getId(),card,UUID.randomUUID(),true);
+            assertThrows(com.myshop.exception.BusinessException.class,() -> refunds.refund(order,"模拟",true,true));
+        } finally { RequestContext.clear(); }
+        assertEquals(1,fake.voids.get()); assertEquals("DELIVERED",value("select status from orders where id=?",order));
+        assertEquals(0,jdbc.queryForObject("select count(*) from card_keys where order_id=?",Integer.class,order));
+    }
+    private void waitForDelivery(UUID order) throws InterruptedException {
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
+        while (!"DELIVERED".equals(value("select status from orders where id=?",order)) && System.nanoTime()<deadline) Thread.sleep(20);
+        assertEquals("DELIVERED",value("select status from orders where id=?",order));
+    }
+    private record OnlineFixture(UUID order,UUID attempt,String merchant,UUID purchase,UUID item) {}
+    private OnlineFixture onlineSupplierOrder() throws Exception {
+        Fixture f=fixture(1,0); suppliers.sync(f.account(),fake.product.id());
+        adminProducts.updatePrices(f.product(),new com.myshop.model.request.AdminProductPricesUpdateRequest(new BigDecimal("0.02"),new BigDecimal("10.00"),List.of()));
+        String channel="late-"+UUID.randomUUID();
+        jdbc.update("insert into payment_channels(id,channel_code,channel_name,provider_type,payment_type,config_data,is_enabled,sort_order,is_deleted) values (?,?,?,'e2e-mock','alipay','{}',true,0,0)",UUID.randomUUID(),channel,channel);
+        Map<String,Object> request=new LinkedHashMap<>(); request.put("product_id",f.product().toString()); request.put("quantity",1);
+        request.put("payment_method","ONLINE"); request.put("payment_channel_code",channel); request.put("expected_unit_price","10.00");
+        request.put("idempotency_key","late-e2e-"+UUID.randomUUID()); request.put("idempotency_fingerprint","mock-fingerprint");
+        UUID order=(UUID)((Map<?,?>)orderService.createDirectOrder(request,null,"127.0.0.1","late-guest").get("order")).get("id");
+        var attempt=paymentAttempts.findFirstByOrderIdOrderByCreatedAtDesc(order).orElseThrow();
+        var purchase=purchases.findByOrderId(order).getFirst();
+        return new OnlineFixture(order,attempt.getId(),attempt.getMerchantTradeNo(),purchase.getId(),purchase.getOrderItemId());
+    }
+    private com.myshop.payment.PaymentProvider.WebhookRequest mockPaymentCallback(String merchant) {
+        return new com.myshop.payment.PaymentProvider.WebhookRequest("POST",Map.of(),Map.of("merchant",List.of(merchant)),Map.of(),"");
+    }
+    @Test void verifiedLateSupplierPaymentIsVisibleAndNeverRestartsProcurement() throws Exception {
+        OnlineFixture f=onlineSupplierOrder();
+        jdbc.update("update payment_attempts set status='CLOSED',expires_at=current_timestamp-interval '1 minute' where id=?",f.attempt());
+        jdbc.update("update orders set status='EXPIRED' where id=?",f.order());
+        fakePayment.mismatch=true;
+        assertEquals("FAIL",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body());
+        assertEquals(1,jdbc.queryForObject("select count(*) from webhook_events where order_id=? and process_result='LATE_PAID_UNVERIFIED'",Integer.class,f.order()));
+        fakePayment.mismatch=false;
+        assertEquals("SUCCESS",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body());
+        assertEquals("SUCCESS",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body());
+        assertEquals(1,jdbc.queryForObject("select count(*) from webhook_events where order_id=? and process_result='LATE_PAID_CLOSED'",Integer.class,f.order()));
+        assertEquals("CLOSED",value("select status from payment_attempts where id=?",f.attempt()));
+        assertEquals("EXPIRED",value("select status from orders where id=?",f.order()));
+        assertEquals("WAITING_PAYMENT",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(1,((List<?>)adminOrders.forItem(f.item()).get("late_payments")).size());
+        assertEquals(0,fake.creates.get());
+    }
+    @Test void lateCallbackAfterPurchaseIsDisabledKeepsPaymentAndBlocksNewProcurement() throws Exception {
+        OnlineFixture f=onlineSupplierOrder(); ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
+        try {
+            assertEquals("SUCCESS",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body());
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
+            while (!"BLOCKED".equals(purchases.findById(f.purchase()).orElseThrow().getStatus()) && System.nanoTime()<deadline) Thread.sleep(20);
+            assertEquals("PAID",value("select status from orders where id=?",f.order()));
+            assertEquals("PAID",value("select status from payment_attempts where id=?",f.attempt()));
+            assertEquals("PURCHASE_DISABLED",purchases.findById(f.purchase()).orElseThrow().getErrorCode());
+            assertEquals(0,fake.creates.get());
+        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+    }
+    @Test void verifiedPaymentAfterDeadlineIsRecordedWithoutRevivingOrder() throws Exception {
+        OnlineFixture f=onlineSupplierOrder();
+        jdbc.update("update payment_attempts set expires_at=current_timestamp-interval '1 minute' where id=?",f.attempt());
+        jdbc.update("update orders set expires_at=current_timestamp-interval '1 minute' where id=?",f.order());
+        assertEquals("SUCCESS",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body());
+        assertEquals(1,jdbc.queryForObject("select count(*) from webhook_events where order_id=? and process_result='LATE_PAID_PENDING'",Integer.class,f.order()));
+        assertEquals("PENDING",value("select status from orders where id=?",f.order()));
+        assertEquals("WAITING_PAYMENT",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(0,fake.creates.get());
+    }
+    @Test void knownLatePaymentHidesNewLinkAndBlocksLaterAutomaticPurchase() throws Exception {
+        OnlineFixture f=onlineSupplierOrder();
+        jdbc.update("update payment_attempts set created_at=current_timestamp-interval '1 minute' where id=?",f.attempt());
+        paymentService.repay(f.order(),"pc");
+        var next=paymentAttempts.findFirstByOrderIdOrderByCreatedAtDesc(f.order()).orElseThrow();
+        assertNotEquals(f.attempt(),next.getId());
+        assertEquals("CLOSED",value("select status from payment_attempts where id=?",f.attempt()));
+        assertEquals("SUCCESS",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body());
+        Map<?,?> payment=(Map<?,?>)orderAccess.getOrder(f.order(),null,"late-guest").get("payment");
+        assertNull(payment.get("next_action"));
+        assertThrows(com.myshop.exception.BusinessException.class,() -> paymentService.repay(f.order(),"pc"));
+        assertEquals("SUCCESS",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(next.getMerchantTradeNo())).body());
+        assertEquals(2,jdbc.queryForObject("select count(*) from webhook_events where order_id=? and process_result like 'LATE_PAID_%'",Integer.class,f.order()));
+        assertEquals("PENDING",value("select status from orders where id=?",f.order()));
+        assertEquals("WAITING_PAYMENT",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(0,fake.creates.get());
+    }
+    @Test void callbackWaitsForOrderLockAndSeesConcurrentlyClosedAttempt() throws Exception {
+        OnlineFixture f=onlineSupplierOrder(); ExecutorService pool=Executors.newFixedThreadPool(2);
+        CountDownLatch locked=new CountDownLatch(1), release=new CountDownLatch(1), started=new CountDownLatch(1);
+        try {
+            Future<?> close=pool.submit(() -> new TransactionTemplate(manager).execute(status -> {
+                orderRepository.findByIdForUpdate(f.order()).orElseThrow();
+                paymentAttempts.findByIdForUpdate(f.attempt()).orElseThrow().setStatus(com.myshop.payment.PaymentStatus.CLOSED);
+                locked.countDown();
+                try { if (!release.await(5,TimeUnit.SECONDS)) throw new IllegalStateException(); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(); }
+                return null;
+            }));
+            assertTrue(locked.await(5,TimeUnit.SECONDS));
+            Future<String> callback=pool.submit(() -> { started.countDown(); return webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body(); });
+            assertTrue(started.await(5,TimeUnit.SECONDS)); Thread.sleep(100); assertFalse(callback.isDone());
+            release.countDown(); close.get(5,TimeUnit.SECONDS); assertEquals("SUCCESS",callback.get(5,TimeUnit.SECONDS));
+            assertEquals("CLOSED",value("select status from payment_attempts where id=?",f.attempt()));
+            assertEquals("PENDING",value("select status from orders where id=?",f.order()));
+            assertEquals(1,jdbc.queryForObject("select count(*) from webhook_events where order_id=? and process_result='LATE_PAID_CLOSED'",Integer.class,f.order()));
+            assertEquals(0,fake.creates.get());
+        } finally { release.countDown(); pool.shutdownNow(); }
+    }
+    @Test void crashedTransferClaimRecoversAsUnknownWithoutSending() throws Exception {
+        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID(), key=UUID.randomUUID();
+        RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN"));
+        try {
+            UUID id=sensitiveTx.intent(f.account(),"TRANSFER",key,operator,json.readTree("{\"money\":\"1\",\"to_user_no\":\"10001\"}"));
+            assertTrue(sensitiveTx.claim(id,suppliers.runtime(f.account(),true)));
+            jdbc.update("update supplier_sensitive_operations set submitted_at=current_timestamp-interval '1 minute' where id=?",id);
+            sensitive.recover();
+            assertEquals("UNKNOWN",sensitiveOperations.findById(id).orElseThrow().getStatus());
+            assertEquals("UNKNOWN",sensitive.transfer(f.account(),new SupplierSensitiveService.TransferInput(key,true,"10001",BigDecimal.ONE,null)).get("status"));
+            assertEquals(0,fake.transfers.get());
+        } finally { RequestContext.clear(); }
+    }
+    @Test void cdkeyTimeoutAndRiskLimitsNeverCauseAutomaticResubmission() throws Exception {
+        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
+        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
+        try {
+            assertThrows(SupplierException.class,() -> sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),21)));
+            var tooLow=new SupplierSensitiveService.CdkeyInput(UUID.randomUUID(),true,fake.product.id(),1,0,"P",10,10,1,
+                    BigDecimal.ZERO,new BigDecimal("0.001"),-1,"");
+            assertEquals("REJECTED",sensitive.createCdkeys(f.account(),tooLow).get("status"));
+            assertEquals(0,fake.cdkeys.get());
+            fake.loseCdkey=true; var request=cdkeyInput(UUID.randomUUID(),2);
+            assertEquals("UNKNOWN",sensitive.createCdkeys(f.account(),request).get("status"));
+            assertEquals("UNKNOWN",sensitive.createCdkeys(f.account(),request).get("status"));
+            assertEquals(1,fake.cdkeys.get());
+        } finally { RequestContext.clear(); }
+    }
+    @Test void sensitiveOperationsDefaultOffAndHistoricalClaimsDetectCredentialChanges() throws Exception {
+        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
+        RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN"));
+        try {
+            var transfer=new SupplierSensitiveService.TransferInput(UUID.randomUUID(),true,"10001",BigDecimal.ONE,null);
+            ReflectionTestUtils.setField(sensitive,"transferEnabled",false);
+            ReflectionTestUtils.setField(sensitive,"cdkeyEnabled",false);
+            try {
+                assertThrows(SupplierException.class,() -> sensitive.transfer(f.account(),transfer));
+                assertThrows(SupplierException.class,() -> sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),1)));
+                assertEquals(0,fake.transfers.get()); assertEquals(0,fake.cdkeys.get());
+            } finally { ReflectionTestUtils.setField(sensitive,"transferEnabled",true); ReflectionTestUtils.setField(sensitive,"cdkeyEnabled",true); }
+            var snapshot=suppliers.runtime(f.account(),true);
+            UUID op=sensitiveTx.intent(f.account(),"TRANSFER",UUID.randomUUID(),operator,json.readTree("{\"money\":\"1\",\"to_user_no\":\"10001\"}"));
+            suppliers.saveAccount(f.account(),new SupplierService.AccountRequest("test","PURCHASE_TEST","https://test.invalid","test-id","changed-mock-secret",true));
+            assertFalse(sensitiveTx.claim(op,snapshot));
+            assertEquals("ACCOUNT_CHANGED",sensitiveOperations.findById(op).orElseThrow().getErrorCode());
+            assertEquals(0,fake.transfers.get());
+        } finally { RequestContext.clear(); }
+    }
+    @Test void sensitiveEndpointsEnforceRolesAndScopeCdkeyResults() throws Exception {
+        Fixture f=fixture(1,0); UUID admin=UUID.randomUUID(); String name="sensitive-"+admin;
+        jdbc.update("insert into users(id,username,email,password_hash,role,is_deleted,user_no) values (?,?,?,'fixture-hash','ADMIN',0,null)",admin,name,admin+"@example.invalid");
+        UUID op;
+        RequestContext.set(new RequestContext.UserInfo(admin,name,"ADMIN"));
+        try { op=(UUID)sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),2)).get("id"); }
+        finally { RequestContext.clear(); }
+        var mvc=MockMvcBuilders.webAppContextSetup(webContext).addFilters(security).build();
+        var get=org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/transfers",f.account()).contextPath("/api");
+        var auth=new jakarta.servlet.http.Cookie("myshop_access_token",jwt.generateToken(admin,name,"ADMIN",0));
+        mvc.perform(get.cookie(auth)).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/cdkeys/{id}/result",f.account(),op).contextPath("/api"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        var response=mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/cdkeys/{id}/result",f.account(),op).contextPath("/api").cookie(auth))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
+        assertTrue(response.getContentAsString().contains("P0000000000"));
+        assertTrue(response.getHeader("Cache-Control").contains("no-store"));
+        var other=suppliers.saveAccount(null,new SupplierService.AccountRequest("other","PURCHASE_TEST","https://other.invalid","other","fake-secret",true));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/cdkeys/{id}/result",other.id(),op).contextPath("/api").cookie(auth))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
+    }
 
     @Test void concurrentWorkersCreateOnlyOnceAndDeliverTwoCards() throws Exception {
         Fixture f=fixture(1,1);
@@ -467,6 +834,39 @@ class SupplierPurchasePostgresIntegrationTest {
             assertEquals("UNKNOWN",aftercareOperations.findById(operation).orElseThrow().getStatus());
         } finally { RequestContext.clear(); }
         assertEquals(0,fake.refunds.get());
+    }
+    @Test void pendingCardVoidPreventsConcurrentCompletionFromDelivering() throws Exception {
+        Fixture f=fixture(1,0);
+        assertTrue(tx.claim(f.purchase()));
+        var p=purchases.findById(f.purchase()).orElseThrow();
+        var remoteCards=List.of(new SupplierModels.Card("void-race-"+p.getId(),"test-card",null,0,1),
+                new SupplierModels.Card("other-"+p.getId(),"test-card-2",null,0,1));
+        var processing=new SupplierModels.PurchaseDetail("UP-"+p.getId(),p.getOuterNumber(),2,1,
+                new BigDecimal("0.02"),BigDecimal.ZERO,null,null,null,null,remoteCards);
+        tx.applyDetail(p.getId(),processing,LocalDateTime.now());
+        UUID card=jdbc.queryForObject("select id from supplier_delivery_cards where purchase_id=? and remote_card_id=?",
+                UUID.class,p.getId(),remoteCards.getFirst().id());
+        RequestContext.set(new RequestContext.UserInfo(UUID.randomUUID(),"admin","ADMIN"));
+        try {
+            aftercare.queryCard(f.order(),f.purchase(),card);
+            UUID op=aftercareTx.intent(f.order(),f.purchase(),"CARD_VOID",UUID.randomUUID(),card,null,
+                    RequestContext.getUserId(),null,null,List.of());
+            assertTrue(aftercareTx.claim(op));
+            var complete=new SupplierModels.PurchaseDetail(processing.orderNumber(),p.getOuterNumber(),3,1,
+                    processing.money(),BigDecimal.ZERO,null,null,null,null,remoteCards);
+            tx.applyDetail(p.getId(),complete,LocalDateTime.now().plusSeconds(1));
+            assertEquals("PENDING",value("select fulfillment_status from order_items where id=?",f.item()));
+            assertEquals("CARD_VOID_PENDING",purchases.findById(p.getId()).orElseThrow().getErrorCode());
+            aftercareTx.unknown(op,"CONNECTION");
+            tx.applyDetail(p.getId(),complete,LocalDateTime.now().plusSeconds(2));
+            assertEquals("PENDING",value("select fulfillment_status from order_items where id=?",f.item()));
+            aftercareTx.cardChecked(f.order(),f.purchase(),card,
+                    new SupplierModels.CardDetail(remoteCards.getFirst().id(),2,0,"已作废"),LocalDateTime.now().plusSeconds(3));
+            aftercareTx.reconcile(op);
+            tx.applyDetail(p.getId(),complete,LocalDateTime.now().plusSeconds(4));
+            assertEquals("PENDING",value("select fulfillment_status from order_items where id=?",f.item()));
+            assertEquals("DELIVERY_INCOMPLETE",purchases.findById(p.getId()).orElseThrow().getErrorCode());
+        } finally { RequestContext.clear(); }
     }
     @Test void cardStatesAndCancellationPermissionAreCheckedBeforeVoid() throws Exception {
         for (int remoteStatus=0;remoteStatus<=4;remoteStatus++) {
@@ -781,6 +1181,26 @@ class SupplierPurchasePostgresIntegrationTest {
         assertEquals("COMPLETED",purchases.findById(p.getId()).orElseThrow().getStatus()); assertEquals(0,fake.creates.get());
         Fixture another=fixture(1,0); suppliers.setEnabled(another.account(),false);
         assertFalse(tx.claim(another.purchase())); assertEquals(0,fake.creates.get());
+    }
+    @Test void historicalPurchaseUsesRotatedCredentialEvenWhenAccountDisabled() throws Exception {
+        Fixture f=fixture(1,0); worker.process(f.purchase());
+        suppliers.saveAccount(f.account(),new SupplierService.AccountRequest("test","PURCHASE_TEST","https://test.invalid","test-id","rotated-fake-secret",true));
+        suppliers.setEnabled(f.account(),false);
+        worker.refresh(f.purchase());
+        assertEquals("rotated-fake-secret",fake.lastQuerySecret);
+        assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(1,fake.creates.get());
+    }
+    @Test void changedRechargeTemplateBlocksPaidIntentAndPreservesOriginalSnapshot() throws Exception {
+        Fixture f=fixture(3,0); var before=purchases.findById(f.purchase()).orElseThrow();
+        assertEquals("充值账号",before.getAttach().get(0).path("name").asText());
+        fake.rechargeLabel="更新后的充值字段";
+        worker.process(f.purchase());
+        var after=purchases.findById(f.purchase()).orElseThrow();
+        assertEquals("BLOCKED",after.getStatus()); assertEquals("TEMPLATE_CHANGED",after.getErrorCode());
+        assertEquals("充值账号",after.getAttach().get(0).path("name").asText());
+        assertEquals("test-account",after.getAttach().get(0).path("value").asText());
+        assertEquals(0,fake.creates.get());
     }
     @Test void accountDisableSerializesWithThePurchaseClaim() throws Exception {
         Fixture f=fixture(1,0);

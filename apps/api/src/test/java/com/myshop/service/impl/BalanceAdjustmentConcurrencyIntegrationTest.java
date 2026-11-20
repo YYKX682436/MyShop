@@ -20,9 +20,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -42,13 +39,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 /** Proves that the real PostgreSQL row lock serializes balance adjustments. */
-@Testcontainers(disabledWithoutDocker = true)
+@org.junit.jupiter.api.condition.EnabledIf("postgresAvailable")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class BalanceAdjustmentConcurrencyIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+    static boolean postgresAvailable() { return POSTGRES.available(); }
+    @org.junit.jupiter.api.AfterAll static void stopPostgres() { POSTGRES.close(); }
 
     @Autowired
     private AdminUserService adminUserService;

@@ -1,0 +1,69 @@
+MyShop P4 原始本地测试结果摘录（2026-11-20；下方 P4-R1 记录了后续重跑）
+独立 PostgreSQL 16.16；模拟支付、供应商和凭据。
+
+API 全部测试: tests=643, failures=0, errors=0, skipped=204
+供应商采购与新操作 PostgreSQL: tests=71, failures=0, errors=0, skipped=0
+供应商目录 PostgreSQL: tests=11, failures=0, errors=0, skipped=0
+迁移链 PostgreSQL: tests=26, failures=0, errors=0, skipped=0
+发货及支付 PostgreSQL: tests=51, failures=0, errors=0, skipped=0
+售后并发 PostgreSQL: tests=8, failures=0, errors=0, skipped=0
+退款并发 PostgreSQL: tests=8, failures=0, errors=0, skipped=0
+会员价格 PostgreSQL: tests=4, failures=0, errors=0, skipped=0
+核心稳定性 PostgreSQL: tests=12, failures=0, errors=0, skipped=0
+余额变更 PostgreSQL: tests=1, failures=0, errors=0, skipped=0
+规格 UUID PostgreSQL: tests=6, failures=0, errors=0, skipped=0
+订单编号 PostgreSQL: tests=1, failures=0, errors=0, skipped=0
+用户编号 PostgreSQL: tests=1, failures=0, errors=0, skipped=0
+后台汇总 PostgreSQL: tests=2, failures=0, errors=0, skipped=0
+游客完整链路补充: tests=1, failures=0, errors=0, skipped=0
+
+前端逻辑: tests=234, failures=0, skipped=0
+Next.js build / TypeScript / targeted ESLint: passed
+浏览器: test:supplier-ui、test:supplier-order-ui、test:supplier-aftercare-ui 均通过（仅本地模拟）
+API 全部测试的 204 个跳过项中，202 项随后分别在独立 PostgreSQL 上通过；当时 2 项头像事务测试未运行；后续 P4-R1 已在隔离 PostgreSQL 通过。
+
+MyShop P4-R1 测试结果（2026-11-20，独立 PostgreSQL 16，本机模拟资金及密钥）
+
+最终后端整体回归：mvn -B test，tests=668, failures=0, errors=0, skipped=228。
+跳过原因：该次运行未启用 Docker；以下 228 项另在各自独立的 loopback PostgreSQL 数据库运行，均未跳过。
+PostgresDeliveryIntegrationTest: tests=74, failures=0, errors=0, skipped=0
+SupplierPurchasePostgresIntegrationTest: tests=71, failures=0, errors=0, skipped=0
+SupplierCatalogPostgresIntegrationTest: tests=11, failures=0, errors=0, skipped=0
+MigrationChainIntegrationTest: tests=27, failures=0, errors=0, skipped=0
+OrderRefundConcurrencyIntegrationTest: tests=8, failures=0, errors=0, skipped=0
+AfterSaleConcurrencyIntegrationTest: tests=8, failures=0, errors=0, skipped=0
+CoreStabilityPostgresIntegrationTest: tests=12, failures=0, errors=0, skipped=0
+UserLevelConcurrencyIntegrationTest: tests=4, failures=0, errors=0, skipped=0
+BalanceAdjustmentConcurrencyIntegrationTest: tests=1, failures=0, errors=0, skipped=0
+AdminProductAssignedUuidIntegrationTest: tests=6, failures=0, errors=0, skipped=0
+OrderNumberConcurrencyIntegrationTest: tests=1, failures=0, errors=0, skipped=0
+UserNumberConcurrencyIntegrationTest: tests=1, failures=0, errors=0, skipped=0
+DashboardAggregateIntegrationTest: tests=2, failures=0, errors=0, skipped=0
+UserAvatarTransactionIntegrationTest: tests=2, failures=0, errors=0, skipped=0
+
+付款关键证据：
+- 同一幂等键的两个首次 INSERT 使用 PostgreSQL advisory lock 门闩同时到达数据库；最终只有一个订单、一个意图和一次网关调用。
+- 模拟 Provider 检查调用时无活动事务；网关延迟期间 PostgreSQL 订单行可 NOWAIT 加锁，另一调用可返回创建中。
+- 延迟约束触发器分别让意图事务提交失败及网关响应后的结果事务提交失败：前者网关调用为零，后者 UNKNOWN 且不再次提交。
+- 在模拟 HTTP 网关收到请求后强制结束独立 Java 进程；以及网关响应已发出、结果事务被 PostgreSQL 订单行锁阻塞后结束进程；重启侧均只转 UNKNOWN、不重发。
+- 未认领意图沿用已提交的交易号、设备及渠道配置快照；已认领崩溃、超时、查无交易及不完整载体均不新建付款。
+- 回调早于创建响应、人工标付后真实回执、查询成功后重复回调、过期与库存释放、旧链接先后到账、两个商户复用网关事件号、网关单号冲突和签名通知待查询均有 PostgreSQL 回归。
+- 待查询的签名通知先持久化，阻止新付款；查询恢复后更新同一事件，完成一次交付。
+
+前端：逻辑测试 tests=235, failures=0, skipped=0；Next.js build、TypeScript、针对性 ESLint 通过。
+浏览器（全部本地模拟）：支付恢复流程 390px / 1440px、支付宝 / 微信、创建中 / UNKNOWN / 安全恢复 / 已付款和旧缓存；供应商管理、订单与人工核实、售后页面通过。
+支付协议单元覆盖根地址、submit.php、mapi.php、pay/apisubmit、二维码、跳转、DeepLink 与空载体。生产 schema 合约检查通过，最新迁移 V52。
+本轮未访问真实支付或供应商写接口，未部署、推送或修改生产数据库。
+
+实施过程中的失败及处理（均已在上面的最终结果中复跑）：
+- 初次测试编译因查询事务服务签名变化出现 4 个测试编译错误；更新旧测试后通过。
+- 首轮 49 项定向单测中 12 项失败、15 项报错，原因是旧测试未装配事务模板及仍使用旧支付入口；调整测试装配后只剩 1 项旧调用断言，修正后通过。
+- 曾复用已执行过的临时测试库导致 PostgreSQL 发货套件 10 项重复数据错误；后续每套使用新建独立库，通过。
+- PostgreSQL 行锁测试一次 NOWAIT 与第二个正常短事务瞬时争锁；等待并发调用结束后再检测网络期间的锁，复跑通过。另有一项旧渠道快照单测夹具与订单渠道不一致，修正夹具后通过。
+- 核心稳定性首次发现过期异常在嵌套事务中标记回滚，导致库存释放无法提交；已修复事务异常规则并通过复测。
+- 供应商旧回归预期迟到付款后另一笔付款仍自动完成订单；改为记录两笔并转人工处理，更新断言后通过。
+- 前端逻辑测试最初有 2 项仍要求无支付动作时停留商品页的旧断言；按已提交订单的恢复行为修正后通过。
+- 供应商浏览器脚本首次因本地预览未启动出现连接拒绝；启动仅监听 loopback 的模拟预览后通过。
+- 增加签名通知待查询记录后，供应商测试原先要求查询金额不一致时不留事件；实际安全行为是先保存未验证事件、等待后续确认。已更新该断言并复跑。
+
+本机保留逐组 PostgreSQL JUnit XML：apps/api/target/p4r1-postgres-reports/（构建目录不提交 Git）；本文件保留可提交的汇总与失败记录。

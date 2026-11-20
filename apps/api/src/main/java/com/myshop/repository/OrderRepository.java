@@ -20,6 +20,8 @@ import java.util.UUID;
 
 public interface OrderRepository extends JpaRepository<Order, UUID> {
 
+    Optional<Order> findByIdempotencyKey(String idempotencyKey);
+
     boolean existsByPaymentMethodAndStatusAndOrderType(OrderPaymentMethod paymentMethod,
                                                         OrderStatus status,
                                                         OrderType orderType);

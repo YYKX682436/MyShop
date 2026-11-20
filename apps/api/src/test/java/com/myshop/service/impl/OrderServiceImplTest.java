@@ -91,11 +91,14 @@ class OrderServiceImplTest {
                 balanceOrderPaymentService,
                 manualStockService, userRepository, userLevelRepository, autoFulfillmentService,
                 new PricingServiceImpl(userRepository, userLevelRepository, null, null));
+        var manager = org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
+        lenient().when(manager.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+        service.setTransactionManager(manager);
 
         lenient().when(siteConfigRepository.findByConfigKey(anyString())).thenReturn(Optional.empty());
         lenient().when(paymentChannelRepository.findByChannelCodeAndIsDeleted("alipay", 0))
                 .thenReturn(Optional.of(enabledChannel()));
-        lenient().when(paymentService.createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class)))
+        lenient().when(paymentService.preparePayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class)))
                 .thenReturn(Map.of("status", PaymentStatus.PENDING,
                         "next_action", new PaymentNextAction.Redirect("https://pay.example/1")));
         lenient().when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
@@ -445,7 +448,7 @@ class OrderServiceImplTest {
                 ((Map<?, ?>) result.get("payment")).get("next_action"));
         assertFalse(request.containsKey("email"));
         assertFalse(((Map<?, ?>) result.get("order")).containsKey("email"));
-        verify(paymentService).createPayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
+        verify(paymentService).preparePayment(any(), eq("alipay"), any(BigDecimal.class), nullable(String.class));
         verify(userRepository).findById(userId);
         verify(userRepository, never()).findByIdForUpdate(userId);
         verify(autoFulfillmentService, never()).trigger(any());

@@ -13,6 +13,8 @@ let accounts = []
 let mappings = []
 let listReads = 0
 let editsPreservedSecret = false
+let sensitiveOperations = { transfers: [], cdkeys: [] }
+let transferPosts = 0, cdkeyPosts = 0
 const ok = data => ({ status: 200, contentType: "application/json", body: JSON.stringify({ code: 0, message: "Success", data }) })
 const summary = { id: "31397", name: "本地模拟测试商品", goods_type: 1, status: 1, sku_type: 0, cost: "0.01000000" }
 const item = { ...summary, multiple: 1, min_quantity: 1, max_quantity: 1, skus: [{ id: "", name: "", group: "", cost: "0.01000000", stock: 12, status: 1 }], snapshot: {} }
@@ -22,7 +24,7 @@ try {
     const url = new URL(route.request().url())
     const path = url.pathname
     const method = route.request().method()
-    if (path === "/api/user/profile") return route.fulfill(ok({ id: "local-admin", username: "admin", role: "ADMIN", balance: 0 }))
+    if (path === "/api/user/profile") return route.fulfill(ok({ id: "local-admin", username: "admin", role: "SUPER_ADMIN", balance: 0 }))
     if (path === "/api/site/config") return route.fulfill(ok({}))
     if (path === "/api/admin/attention") return route.fulfill(ok({ after_sale_needs_attention: 0 }))
     if (path === "/api/admin/categories") return route.fulfill(ok([{ id: "local-category", name: "本地分类", parent_id: null, children: [] }]))
@@ -36,10 +38,23 @@ try {
       const body = route.request().postDataJSON(); editsPreservedSecret = body.secret === ""
       accounts[0] = { ...accounts[0], name: body.name }; return route.fulfill(ok(accounts[0]))
     }
-    if (path === "/api/admin/suppliers/account-1/status") { accounts[0].enabled = route.request().postDataJSON().enabled; return route.fulfill(ok(null)) }
+    if (path === "/api/admin/suppliers/account-1/status") { assert.equal(route.request().postDataJSON().confirmed, true); accounts[0].enabled = route.request().postDataJSON().enabled; return route.fulfill(ok(null)) }
     if (path === "/api/admin/suppliers/account-1/test") return route.fulfill(ok({ balance: "10.00" }))
     if (path === "/api/admin/suppliers/account-1/categories") return route.fulfill(ok([{ id: "7", name: "上游分类", children: [] }]))
     if (path === "/api/admin/suppliers/account-1/mappings") return route.fulfill(ok(mappings))
+    if (path === "/api/admin/suppliers/account-1/sensitive-capabilities") return route.fulfill(ok({ transfer_enabled: true, transfer_max_amount: "100", cdkey_enabled: true, cdkey_max_count: 20, cdkey_max_exposure: "100" }))
+    if (path === "/api/admin/suppliers/account-1/transfers" || path === "/api/admin/suppliers/account-1/cdkeys") {
+      const kind = path.endsWith("transfers") ? "transfers" : "cdkeys"
+      if (method === "GET") return route.fulfill(ok(sensitiveOperations[kind]))
+      const body = route.request().postDataJSON()
+      assert.equal(body.confirmed, true); assert.ok(body.idempotency_key)
+      if (kind === "transfers") { transferPosts++; assert.equal(body.to_user_no, "10001"); assert.equal(body.money, "1.25"); assert.equal(body.sale_pwd, "mock-password") }
+      else { cdkeyPosts++; assert.equal(body.goods_id, "31397"); assert.equal(body.card_count, 2); assert.equal(body.count, 1); assert.equal(body.card_day, -1); assert.equal(body.safe_price, "0.01") }
+      const op = { id: `${kind}-1`, kind: kind === "transfers" ? "TRANSFER" : "CDKEY", status: kind === "transfers" ? "UNKNOWN" : "SUCCEEDED", error_code: kind === "transfers" ? "CONNECTION" : null, account_name: "模拟货源", app_id: "fixture-id", created_at: "2026-11-20 14:00:00", operator_id: "admin", outer_number: "mock-outer", parameters: kind === "transfers" ? { to_user_no: body.to_user_no, money: body.money } : { goods_id: body.goods_id, card_count: body.card_count, count: body.count } }
+      sensitiveOperations[kind].unshift(op); return route.fulfill(ok(op))
+    }
+    if (path === "/api/admin/suppliers/account-1/transfers/transfers-1/review") { sensitiveOperations.transfers[0].review_outcome = "MANUAL_HANDLING"; return route.fulfill(ok(sensitiveOperations.transfers[0])) }
+    if (path === "/api/admin/suppliers/account-1/cdkeys/cdkeys-1/result") return route.fulfill(ok([{ pwd: "mock-cdkey-1", url: "" }, { pwd: "mock-cdkey-2", url: "" }]))
     if (path === "/api/admin/suppliers/account-1/goods") { listReads++; return route.fulfill(ok({ items: [summary], reported_count: 50, reported_pages: 1 })) }
     if (path === "/api/admin/suppliers/account-1/goods/31397" && method === "GET") return route.fulfill(ok(item))
     if (path === "/api/admin/suppliers/account-1/goods/31397/import") {
@@ -72,6 +87,32 @@ try {
   await page.getByLabel("商品名称或编号").fill("测试商品")
   await page.getByRole("button", { name: "搜索", exact: true }).click()
   await page.getByRole("button", { name: /本地模拟测试商品/ }).click()
+  await page.getByRole("button", { name: "账户转账" }).click()
+  await dialog.getByLabel("收款客户编号").fill("10001")
+  await dialog.getByLabel(/转账金额/).fill("1.25")
+  await dialog.getByLabel(/交易密码/).fill("mock-password")
+  await dialog.getByRole("button", { name: "核对参数" }).click()
+  await dialog.getByText(/向客户 10001 转账 ¥1.25/).waitFor()
+  await dialog.getByRole("button", { name: "确认提交" }).click()
+  await page.getByText("转账 · 结果未知").waitFor()
+  assert.equal(transferPosts, 1)
+  page.once("dialog", modal => modal.accept())
+  await page.getByRole("button", { name: "记录人工核实" }).click()
+  await page.getByText(/已人工核实并记录/).waitFor()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole("button", { name: "生成所选商品 CDKEY" }).click()
+  await dialog.getByLabel("生成张数").fill("2")
+  await dialog.getByLabel("成本安全单价").fill("0.01")
+  assert.ok(await page.locator("body").evaluate(el => el.scrollWidth <= window.innerWidth), "mobile dialog must not overflow")
+  await dialog.getByRole("button", { name: "核对参数" }).click()
+  await dialog.getByText(/成本风险上限/).waitFor()
+  await dialog.getByRole("button", { name: "确认提交" }).click()
+  await page.getByRole("button", { name: "查看兑换码" }).click()
+  await dialog.getByLabel("CDKEY 结果").waitFor()
+  assert.match(await dialog.getByLabel("CDKEY 结果").inputValue(), /mock-cdkey-2/)
+  await page.keyboard.press("Escape")
+  assert.equal(cdkeyPosts, 1)
+  await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByLabel("本地分类").selectOption("local-category")
   await page.getByRole("button", { name: "导入商品" }).click()
   await page.getByRole("button", { name: "同步", exact: true }).waitFor()
@@ -81,6 +122,7 @@ try {
   await page.getByRole("button", { name: "加载更多" }).waitFor({ state: "hidden" })
   assert.equal(listReads, 2)
   assert.equal(await page.getByRole("button", { name: /本地模拟测试商品/ }).count(), 1)
+  page.once("dialog", modal => modal.accept())
   await page.getByRole("button", { name: "停用", exact: true }).click()
   await page.getByRole("button", { name: "启用", exact: true }).waitFor()
   await page.setViewportSize({ width: 390, height: 844 })
@@ -88,5 +130,5 @@ try {
   await scrollRegion.focus()
   assert.ok(await scrollRegion.evaluate(element => document.activeElement === element), "table scroll region must be keyboard focusable")
   assert.ok(await page.locator("body").evaluate(el => el.scrollWidth <= window.innerWidth), "mobile page must not overflow")
-  console.log("Supplier UI: account, connection, catalog, import, sync, repeated-page stop and mobile layout passed")
+  console.log("Supplier UI: account, connection, catalog, import, sync, transfer review, CDKEY result and mobile layout passed")
 } finally { await browser.close() }

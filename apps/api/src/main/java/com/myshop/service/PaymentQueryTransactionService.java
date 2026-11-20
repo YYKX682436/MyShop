@@ -5,6 +5,9 @@ import com.myshop.entity.Order;
 import com.myshop.entity.PaymentAttempt;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.payment.PaymentStatus;
+import com.myshop.payment.PaymentCreationStatus;
+import com.myshop.payment.PaymentEventIdentity;
+import com.myshop.service.impl.PaymentConfirmationTransactionService;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +24,7 @@ public class PaymentQueryTransactionService {
     private final OrderRepository orderRepository;
     private final PaymentAttemptRepository paymentAttemptRepository;
     private final OrderExpiryService orderExpiryService;
-    private final OrderPaymentCompletionService orderPaymentCompletionService;
+    private final PaymentConfirmationTransactionService confirmationService;
 
     public record QueryContext(UUID attemptId, String providerType, String merchantTradeNo,
                                String providerConfigSnapshot) { }
@@ -31,38 +34,27 @@ public class PaymentQueryTransactionService {
         Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
         if (order == null) return null;
         orderExpiryService.expireLockedOrder(order);
-        if (order.getStatus() != OrderStatus.PENDING) return null;
-        return paymentAttemptRepository.findFirstByOrderIdAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
-                        orderId, PaymentStatus.PENDING, LocalDateTime.now())
-                .map(attempt -> new QueryContext(attempt.getId(), attempt.getProviderType(),
-                        attempt.getMerchantTradeNo(), attempt.getProviderConfigSnapshot()))
-                .orElse(null);
+        var attempts = paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId);
+        var target = attempts.stream().filter(attempt -> attempt.getStatus() != PaymentStatus.PAID
+                && (attempt.getCreationStatus() == PaymentCreationStatus.UNKNOWN
+                || attempt.getCreationStatus() == PaymentCreationStatus.SUBMITTING)).findFirst()
+                .orElseGet(() -> attempts.stream()
+                        .filter(attempt -> attempt.getCreationStatus() != PaymentCreationStatus.INTENT
+                                && attempt.getCreationStatus() != PaymentCreationStatus.REJECTED)
+                        .findFirst().orElse(null));
+        return target == null ? null : new QueryContext(target.getId(), target.getProviderType(),
+                target.getMerchantTradeNo(), target.getProviderConfigSnapshot());
     }
 
     @Transactional
-    public void complete(UUID orderId, UUID attemptId, PaymentProvider.PaymentQueryResult query) {
+    public void complete(UUID orderId, QueryContext context, PaymentProvider.PaymentQueryResult query) {
         if (query == null || query.status() != PaymentStatus.PAID) return;
-        Order order = orderRepository.findByIdForUpdate(orderId).orElse(null);
-        if (order == null) return;
-        orderExpiryService.expireLockedOrder(order);
-        if (order.getStatus() != OrderStatus.PENDING) return;
-        PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(attemptId).orElse(null);
-        if (attempt == null || !orderId.equals(attempt.getOrderId())
-                || attempt.getStatus() != PaymentStatus.PENDING
-                || attempt.getExpiresAt() == null || !attempt.getExpiresAt().isAfter(LocalDateTime.now())
-                || query.amount() == null || attempt.getAmount() == null
-                || query.amount().compareTo(attempt.getAmount()) != 0
-                || query.providerTradeNo() == null || query.providerTradeNo().isBlank()) {
-            return;
-        }
-        String storedTrade = attempt.getProviderTradeNo();
-        if (storedTrade != null && !storedTrade.isBlank()
-                && !storedTrade.trim().equals(query.providerTradeNo().trim())) {
-            return;
-        }
-        attempt.setProviderTradeNo(query.providerTradeNo());
-        attempt.setStatus(PaymentStatus.PAID);
-        paymentAttemptRepository.save(attempt);
-        orderPaymentCompletionService.completeFirstPayment(order);
+        UUID persistedOrderId = paymentAttemptRepository.findOrderId(context.attemptId()).orElse(null);
+        if (!orderId.equals(persistedOrderId) || query.amount() == null
+                || query.providerTradeNo() == null || query.providerTradeNo().isBlank()) return;
+        confirmationService.confirmPaid(context.attemptId(), new PaymentProvider.CallbackResult(
+                PaymentEventIdentity.scoped(context.providerType(), context.merchantTradeNo(),
+                        context.providerType() + ":" + query.providerTradeNo()),
+                context.merchantTradeNo(), query.providerTradeNo(), PaymentStatus.PAID, query.amount()));
     }
 }

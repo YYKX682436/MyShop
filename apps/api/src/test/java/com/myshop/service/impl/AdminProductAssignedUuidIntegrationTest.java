@@ -32,9 +32,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -51,13 +48,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
  * first-level persistence-context hit cannot hide an incorrect insert/update
  * decision.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@org.junit.jupiter.api.condition.EnabledIf("postgresAvailable")
 @ExtendWith(SpringExtension.class)
 @SpringBootTest
 class AdminProductAssignedUuidIntegrationTest {
 
-    @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+    static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
+    static boolean postgresAvailable() { return POSTGRES.available(); }
+    @org.junit.jupiter.api.AfterAll static void stopPostgres() { POSTGRES.close(); }
 
     @Autowired
     private EntityManager entityManager;

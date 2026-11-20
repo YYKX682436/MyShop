@@ -253,9 +253,11 @@ class CoreStabilityPostgresIntegrationTest {
 
         afterConcurrentWrite("update orders set status = 'PAID', paid_at = current_timestamp where id = ?",
                 List.of(order), "orders", () -> {
-                    assertThrows(BusinessException.class, () -> orders.createDirectOrder(
+                    Map<String, Object> replay = orders.createDirectOrder(
                             Map.of("idempotency_key", key, "idempotency_fingerprint", "same-request"),
-                            null, "203.0.113.1", "core-session"));
+                            null, "203.0.113.1", "core-session");
+                    assertEquals("PAID", ((Map<?, ?>) replay.get("order")).get("status"));
+                    assertNull(((Map<?, ?>) replay.get("payment")).get("next_action"));
                     return null;
                 });
 

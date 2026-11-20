@@ -6,6 +6,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.repository.SupplierAccountRepository;
 import com.myshop.repository.SupplierPurchaseRepository;
 import com.myshop.repository.OperationLogRepository;
+import com.myshop.repository.WebhookEventRepository;
 import com.myshop.service.OperationLogService;
 import com.myshop.context.RequestContext;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ public class SupplierAdminOrders {
     private final OperationLogRepository logs;
     private final OperationLogService audit;
     private final SupplierAftercareService aftercare;
+    private final WebhookEventRepository paymentEvents;
 
     public Map<String,Object> forItem(UUID itemId) {
         return purchases.findByOrderItemId(itemId).map(this::view).orElse(null);
@@ -66,6 +68,9 @@ public class SupplierAdminOrders {
         result.put("error_code",p.getErrorCode()); result.put("can_refresh",p.getSubmitStartedAt()!=null);
         result.put("aftercare_operations",aftercare.operations(p.getId()));
         result.put("supplier_cards",aftercare.cards(p.getId()));
+        result.put("late_payments",paymentEvents.findByOrderIdAndProcessResultStartingWithOrderByCreatedAtDesc(p.getOrderId(),"LATE_PAID_")
+                .stream().map(event -> Map.of("id",event.getId(),"attempt_id",event.getPaymentAttemptId(),"channel",event.getChannelCode(),
+                        "recorded_at",event.getCreatedAt())).toList());
         result.put("reviews",logs.findByTargetTypeAndTargetIdOrderByCreatedAtDesc(
                 "SUPPLIER_PURCHASE",p.getId().toString(),PageRequest.of(0,20)).getContent().stream()
                 .filter(log -> "supplier.purchase.review".equals(log.getAction()))
