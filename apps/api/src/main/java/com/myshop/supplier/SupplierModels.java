@@ -19,4 +19,22 @@ public final class SupplierModels {
     public record Product(String id, String name, int goodsType, int status, int skuType,
                           int multiple, int minQuantity, int maxQuantity, List<Sku> skus,
                           JsonNode snapshot) {}
+    public record Attachment(String name, String value) {
+        @Override public String toString() { return "Attachment[redacted]"; }
+    }
+    public record PurchaseRequest(String goodsId, int count, String notifyUrl, String outerNumber,
+                                  BigDecimal safePrice, String sku, List<Attachment> attach) {
+        @Override public String toString() { return "PurchaseRequest[redacted]"; }
+    }
+    public record Card(String id, String number, String password, int status, int cancelRequest) {
+        @Override public String toString() { return "Card[redacted]"; }
+    }
+    public record CreatedPurchase(String orderNumber, List<Card> cards) {
+        @Override public String toString() { return "CreatedPurchase[redacted]"; }
+    }
+    public record PurchaseDetail(String orderNumber, String outerNumber, int status, int count,
+                                 BigDecimal money, BigDecimal refunded, String result,
+                                 String startCount, String nowCount, String endCount, List<Card> cards) {
+        @Override public String toString() { return "PurchaseDetail[redacted]"; }
+    }
 }

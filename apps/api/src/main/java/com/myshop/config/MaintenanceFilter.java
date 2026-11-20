@@ -52,6 +52,7 @@ public class MaintenanceFilter implements Filter {
         // - /api/captcha/*      : login may require captcha verification
         if (path.startsWith("/api/admin")
                 || path.startsWith("/api/payments/webhook")
+                || path.startsWith("/api/supplier-callback/")
                 || path.equals("/api/site/config")
                 || path.startsWith("/api/auth/")
                 || path.startsWith("/api/captcha")) {

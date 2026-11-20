@@ -32,6 +32,14 @@ public class PaymentUrlService {
         return publicSiteUrl + "/order/" + requiredPathSegment(orderId, "orderId")
                 + "?paymentReturn=1";
     }
+    public String supplierWebhookUrl(String accountId) {
+        URI uri=URI.create(publicSiteUrl);
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || "localhost".equalsIgnoreCase(uri.getHost())
+                || "127.0.0.1".equals(uri.getHost()) || "::1".equals(uri.getHost())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请先配置可公开访问的 HTTPS 站点地址");
+        }
+        return publicSiteUrl + "/api/supplier-callback/" + requiredPathSegment(accountId,"accountId");
+    }
 
     public static String normalizePublicSiteUrl(String raw) {
         String value = raw == null ? "" : raw.trim();

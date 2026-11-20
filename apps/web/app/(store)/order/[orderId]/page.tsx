@@ -24,6 +24,7 @@ import { CardContentParts } from "@/components/shared/card-content-parts"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { ProductDescription } from "@/components/shared/product-description"
 import { isManualFulfillmentItem } from "@/lib/order-status"
+import { supplierStatusLabel } from "@/lib/supplier-order"
 import { getAfterSaleAnchorAction } from "@/lib/order-after-sale-anchor"
 import { getOrderStatusPollInterval, shouldPollOrderStatus } from "@/lib/order-polling"
 
@@ -298,6 +299,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     && item.fulfillment_status !== "DELIVERED"
     && item.fulfillment_status !== "CANCELLED"
   )
+  const supplierItems = orderItems.filter(item => item.stock_mode === "SUPPLIER")
   const itemsWithCustomerInputs = orderItems.filter(item => item.customer_inputs.length > 0)
   const hasCards = deliveredCardCount > 0
   const purchasedProducts = productIds
@@ -490,9 +492,14 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
         {status === "AFTER_SALE" && <div className="rounded-control border border-orange-300/50 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200"><p className="font-medium">{t("order.afterSaleDeliveryPaused")}</p></div>}
         {status !== "AFTER_SALE" && waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
         {status !== "AFTER_SALE" && pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
+        {supplierItems.map(item => <article key={item.id} className="rounded-control border border-border-subtle bg-surface-muted px-4 py-3 text-sm" aria-live="polite">
+          <div className="flex items-center justify-between gap-3"><span>{item.product_title}</span><span className="font-medium">{supplierStatusLabel(item.supplier_status)}</span></div>
+          {item.supplier_result && <p className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">{item.supplier_result}</p>}
+          {(item.supplier_start_count || item.supplier_now_count || item.supplier_end_count) && <p className="mt-2 text-xs text-muted-foreground">{[item.supplier_start_count, item.supplier_now_count, item.supplier_end_count].filter(Boolean).join(" → ")}</p>}
+        </article>)}
         {hasCards && <div className="space-y-3">{deliveredGroupsWithNumbers.map(({ group, startNumber }, index) => <DeliveryGroup key={`${group.product_no}-${group.spec_name || "no-spec"}-${index}`} group={group} startNumber={startNumber} onCopy={copy} copyLabel={t("order.copyKey")} countLabel={t("order.deliveredCount").replace("{count}", String(group.delivery_items.length))} />)}</div>}
         {deliveredManualItems.length > 0 && <div className="space-y-3">{deliveredManualItems.map(item => <ManualDeliveryItem key={item.id} item={item} statusLabel={t("status.DELIVERED")} emptyLabel={t("order.manualDeliveryEmpty")} contentTitle={t("order.manualDeliveryContentTitle")} />)}</div>}
-        {status !== "AFTER_SALE" && status !== "REFUNDED" && !hasCards && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
+        {status !== "AFTER_SALE" && status !== "REFUNDED" && !hasCards && supplierItems.length === 0 && waitingManualItems.length === 0 && deliveredManualItems.length === 0 && pendingAutomaticItems.length === 0 && <p className="text-sm text-muted-foreground">{t("order.deliveryEmpty")}</p>}
       </section>
     )}
 

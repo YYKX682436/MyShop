@@ -29,6 +29,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.myshop.constant.StockMode;
+import com.myshop.supplier.SupplierStockService;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -53,6 +56,8 @@ public class PublicProductServiceImpl implements PublicProductService {
     private final OrderItemRepository orderItemRepository;
     private final ProductInventoryBatchService inventoryBatchService;
     private final PricingService pricingService;
+    private SupplierStockService supplierStockService;
+    @Autowired public void setSupplierStockService(SupplierStockService value) { this.supplierStockService=value; }
 
     @Override
     @Transactional(readOnly = true)
@@ -182,9 +187,18 @@ public class PublicProductServiceImpl implements PublicProductService {
                 categoryPath.primaryCategoryName(), categoryPath.secondaryCategoryId(),
                 categoryPath.secondaryCategoryName(),
                 rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
-                ProductRules.currentFields(product), product.getStockMode().name(), salesCount,
+                customerFields(product,detail),
+                product.getStockMode().name(), salesCount,
                 product.getInitialSales(), product.isSpecEnabled(), specResponses,
                 product.getCreatedAt(), detail ? product.getUpdatedAt() : null);
+    }
+
+    private List<CustomerInputField> customerFields(Product product,boolean detail) {
+        if (product.getStockMode()!=StockMode.SUPPLIER || supplierStockService==null) return ProductRules.currentFields(product);
+        if (!detail) return List.of();
+        List<CustomerInputField> fields=new java.util.ArrayList<>(ProductRules.currentFields(product));
+        fields.addAll(supplierStockService.fields(product.getId()));
+        return List.copyOf(fields);
     }
 
     private PublicProductSpecResponse toSpecResponse(Product product, ProductSpec spec,

@@ -5,6 +5,7 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.FulfillmentStatus;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.CardKey;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
@@ -18,6 +19,9 @@ import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
+import com.myshop.repository.SupplierPurchaseRepository;
+import com.myshop.repository.SupplierDeliveryCardRepository;
+import com.myshop.entity.SupplierDeliveryCard;
 import com.myshop.service.BalanceOrderPaymentService;
 import com.myshop.service.AfterSaleService;
 import com.myshop.service.CardKeyReclaimService;
@@ -25,6 +29,7 @@ import com.myshop.service.OrderAccessService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -57,6 +62,11 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private final AfterSaleService afterSaleService;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactions;
+    private SupplierPurchaseRepository supplierPurchases;
+    private SupplierDeliveryCardRepository supplierCards;
+    @Autowired public void setSupplierRepositories(SupplierPurchaseRepository purchases,SupplierDeliveryCardRepository cards) {
+        this.supplierPurchases=purchases; this.supplierCards=cards;
+    }
 
     public OrderAccessServiceImpl(OrderRepository orderRepository,
                                   OrderItemRepository orderItemRepository,
@@ -114,28 +124,31 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     public String exportCardKeys(UUID orderId, UUID requestUserId, String sessionToken) {
         Order order = authorizedOrder(orderId, requestUserId, sessionToken);
         List<CardKey> keys = cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(order.getId());
-        if (keys.isEmpty()) {
-            throw new BusinessException(ErrorCode.ORDER_NOT_PAID, "订单尚未产生卡密");
-        }
-
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         Map<UUID, List<CardKey>> grouped = keys.stream()
                 .filter(key -> key.getOrderItemId() != null)
                 .collect(Collectors.groupingBy(CardKey::getOrderItemId,
                         LinkedHashMap::new, Collectors.toList()));
         StringBuilder result = new StringBuilder("MyShop 卡密\n");
+        boolean found=!keys.isEmpty();
         for (OrderItem item : items) {
             List<CardKey> itemKeys = grouped.getOrDefault(item.getId(), List.of());
-            if (itemKeys.isEmpty()) continue;
+            List<SupplierDeliveryCard> external=supplierCards(item);
+            if (itemKeys.isEmpty() && external.isEmpty()) continue;
+            found=true;
             result.append("\n").append(item.getProductTitle());
             if (item.getSpecName() != null && !item.getSpecName().isBlank()) {
                 result.append(" [").append(item.getSpecName()).append("]");
             }
             result.append("\n");
-            result.append(itemKeys.stream()
+            if (!itemKeys.isEmpty()) result.append(itemKeys.stream()
                     .map(key -> String.join("\n", key.getContentParts()))
                     .collect(Collectors.joining("\n\n"))).append("\n");
+            if (!external.isEmpty() && !itemKeys.isEmpty()) result.append("\n");
+            if (!external.isEmpty()) result.append(external.stream().map(card -> String.join("\n",parts(card)))
+                    .collect(Collectors.joining("\n\n"))).append("\n");
         }
+        if (!found) throw new BusinessException(ErrorCode.ORDER_NOT_PAID, "订单尚未产生卡密");
         return result.toString();
     }
 
@@ -224,6 +237,15 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("stock_mode", item.getStockMode());
         result.put("fulfillment_status", item.getFulfillmentStatus());
         result.put("delivered_at", item.getDeliveredAt());
+        if (item.getStockMode()==StockMode.SUPPLIER && supplierPurchases!=null) {
+            supplierPurchases.findByOrderItemId(item.getId()).ifPresent(p -> {
+                result.put("supplier_status",p.getStatus());
+                result.put("supplier_result",p.getResult());
+                result.put("supplier_start_count",p.getStartCount());
+                result.put("supplier_now_count",p.getNowCount());
+                result.put("supplier_end_count",p.getEndCount());
+            });
+        }
         if (item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED) {
             result.put("customer_delivery_content", item.getCustomerDeliveryContent());
         }
@@ -306,7 +328,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                 continue;
             }
             List<CardKey> itemKeys = byItem.getOrDefault(item.getId(), List.of());
-            if (itemKeys.isEmpty()) continue;
+            List<SupplierDeliveryCard> external=supplierCards(item);
+            if (itemKeys.isEmpty() && external.isEmpty()) continue;
             Map<String, Object> group = new LinkedHashMap<>();
             group.put("product_no", item.getProductNo());
             group.put("product_title", item.getProductTitle());
@@ -314,8 +337,10 @@ public class OrderAccessServiceImpl implements OrderAccessService {
             group.put("quantity", item.getQuantity());
             group.put("delivery_type", item.getDeliveryType());
             group.put("fulfillment_status", item.getFulfillmentStatus());
-            group.put("delivery_items", itemKeys.stream().map(key -> Map.of(
-                    "content_parts", List.copyOf(key.getContentParts()))).toList());
+            List<Map<String,Object>> deliveryItems=new ArrayList<>();
+            itemKeys.forEach(key -> deliveryItems.add(Map.of("content_parts", List.copyOf(key.getContentParts()))));
+            external.forEach(card -> deliveryItems.add(Map.of("content_parts",parts(card))));
+            group.put("delivery_items",deliveryItems);
             groups.add(group);
         }
 
@@ -331,6 +356,20 @@ public class OrderAccessServiceImpl implements OrderAccessService {
             return status;
         }).toList());
         return result;
+    }
+
+    private List<SupplierDeliveryCard> supplierCards(OrderItem item) {
+        if (item.getStockMode()!=StockMode.SUPPLIER || item.getFulfillmentStatus()!=FulfillmentStatus.DELIVERED
+                || supplierPurchases==null || supplierCards==null) return List.of();
+        return supplierPurchases.findByOrderItemId(item.getId())
+                .filter(p -> p.getGoodsType()==1).map(p -> supplierCards.findByPurchaseIdOrderByCreatedAtAsc(p.getId()))
+                .orElseGet(List::of);
+    }
+    private List<String> parts(SupplierDeliveryCard card) {
+        List<String> parts=new ArrayList<>();
+        if (card.getCardNo()!=null && !card.getCardNo().isBlank()) parts.add(card.getCardNo());
+        if (card.getCardPwd()!=null && !card.getCardPwd().isBlank()) parts.add(card.getCardPwd());
+        return List.copyOf(parts);
     }
 
     private String clean(String value) {

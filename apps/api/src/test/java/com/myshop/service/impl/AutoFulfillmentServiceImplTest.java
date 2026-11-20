@@ -17,6 +17,18 @@ import static org.mockito.Mockito.*;
 
 class AutoFulfillmentServiceImplTest {
 
+    @Test void supplierEnqueueFailureDoesNotBreakCommittedLocalFulfillment() {
+        var repository=mock(OrderRepository.class);
+        var fulfillment=mock(FulfillmentService.class);
+        var supplier=mock(com.myshop.supplier.SupplierPurchaseWorker.class);
+        UUID orderId=UUID.randomUUID();
+        doThrow(new IllegalStateException("unavailable")).when(supplier).enqueueOrder(orderId);
+        var service=new AutoFulfillmentServiceImpl(fulfillment,repository);
+        service.setSupplierWorker(supplier);
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> service.trigger(orderId));
+        verify(fulfillment).fulfillOrder(orderId);
+    }
+
     @Test
     void permanentlyShortFirstBatchDoesNotStarveLaterPaidOrders() {
         OrderRepository repository = mock(OrderRepository.class);

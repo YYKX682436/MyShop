@@ -8,6 +8,9 @@ import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -83,5 +86,61 @@ class KayixinProviderTest {
         assertEquals("DATA",assertThrows(SupplierException.class,()->p.account(new SupplierModels.Connection(base,"data","secret"))).kind());
         server.stop(0); server=null;
         assertEquals("CONNECTION",assertThrows(SupplierException.class,()->p.account(new SupplierModels.Connection(base,"id","secret"))).kind());
+    }
+
+    @Test void purchaseIsSentOnceEvenWhenResponseIsLostOrServerFails() throws Exception {
+        AtomicInteger count=new AtomicInteger(); AtomicBoolean signed=new AtomicBoolean(true);
+        server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/api/v3/order/create", exchange -> {
+            int n=count.incrementAndGet(); byte[] body=exchange.getRequestBody().readAllBytes();
+            String timestamp=exchange.getRequestHeaders().getFirst("X-Timestamp");
+            String text=new String(body,StandardCharsets.UTF_8);
+            signed.set(signed.get() && text.contains("\"safePrice\":0.06") && text.contains("\"count\":2")
+                    && text.contains("\"sku\":\"sku-1\"")
+                    && KayixinProvider.signature("test-id","test-secret","3.0",timestamp,body)
+                        .equals(exchange.getRequestHeaders().getFirst("X-Signature")));
+            if (n==1) { exchange.close(); return; }
+            exchange.sendResponseHeaders(503,-1); exchange.close();
+        });
+        server.start();
+        var p=new KayixinProvider(HttpClient.newHttpClient());
+        var c=new SupplierModels.Connection("http://127.0.0.1:"+server.getAddress().getPort(),"test-id","test-secret");
+        var req=new SupplierModels.PurchaseRequest("12",2,"https://shop.invalid/callback","fixed-outer",new BigDecimal("0.06"),"sku-1",List.of());
+        assertThrows(SupplierException.class,()->p.createPurchase(c,req));
+        assertEquals(1,count.get());
+        assertThrows(SupplierException.class,()->p.createPurchase(c,req));
+        assertEquals(2,count.get()); assertTrue(signed.get());
+    }
+
+    @Test void purchaseDetailPreservesPartialRefundAndCardWithOnlyOneContentPart() throws Exception {
+        server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/api/v3/order/getDetail", exchange -> {
+            byte[] data=("{\"code\":1000,\"data\":{\"orderNumber\":\"up-1\",\"outerNumber\":\"outer-1\",\"status\":5,\"count\":1,\"money\":0.06,\"retMoney\":0.02,\"result\":\"\",\"cards\":[{\"cardId\":\"c1\",\"cardNo\":\"\",\"cardPwd\":\"test-card\",\"status\":0,\"cancelRequest\":1}]}}").getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,data.length); exchange.getResponseBody().write(data); exchange.close();
+        }); server.start();
+        var p=new KayixinProvider(HttpClient.newHttpClient());
+        var c=new SupplierModels.Connection("http://127.0.0.1:"+server.getAddress().getPort(),"id","secret");
+        var detail=p.purchaseDetail(c,"outer-1");
+        assertEquals(5,detail.status()); assertEquals(0,new BigDecimal("0.02").compareTo(detail.refunded()));
+        assertEquals("",detail.cards().getFirst().number()); assertEquals("test-card",detail.cards().getFirst().password());
+        assertFalse(detail.toString().contains("test-card"));
+    }
+    @Test void localServerCanCreateThenLoseResponseAndBeQueriedByOriginalOuterNumber() throws Exception {
+        AtomicInteger creates=new AtomicInteger(); AtomicBoolean originalOuter=new AtomicBoolean();
+        server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        server.createContext("/api/v3/order/create", exchange -> {
+            creates.incrementAndGet(); exchange.getRequestBody().readAllBytes(); exchange.close();
+        });
+        server.createContext("/api/v3/order/getDetail", exchange -> {
+            originalOuter.set(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8).contains("fixed-outer"));
+            byte[] result="{\"code\":1000,\"data\":{\"orderNumber\":\"up-1\",\"outerNumber\":\"fixed-outer\",\"status\":3,\"count\":1,\"money\":0.01,\"retMoney\":0,\"result\":\"ok\",\"cards\":[]}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200,result.length); exchange.getResponseBody().write(result); exchange.close();
+        }); server.start();
+        var p=new KayixinProvider(HttpClient.newHttpClient());
+        var c=new SupplierModels.Connection("http://127.0.0.1:"+server.getAddress().getPort(),"id","secret");
+        var req=new SupplierModels.PurchaseRequest("12",1,"https://shop.invalid/callback","fixed-outer",new BigDecimal("0.01"),"",List.of());
+        assertThrows(SupplierException.class,()->p.createPurchase(c,req));
+        assertEquals(3,p.purchaseDetail(c,"fixed-outer").status());
+        assertEquals(1,creates.get()); assertTrue(originalOuter.get());
     }
 }

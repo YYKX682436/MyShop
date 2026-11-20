@@ -103,6 +103,11 @@ export type PricingSource = "RETAIL" | "LEVEL_MARKUP" | "LEVEL_OVERRIDE" | "USER
 export interface CustomerInputField {
   id: string
   label: string
+  type?: "TEXT" | "IMAGE" | "NUMBER" | "SELECT" | "MULTILINE" | "CASCADE"
+  required?: boolean
+  placeholder?: string | null
+  regex?: string | null
+  options?: { name: string; value: string }[] | null
 }
 
 export interface CustomerInputValue {
@@ -357,6 +362,11 @@ export interface OrderItemDetail extends OrderItemBrief {
   delivered_at?: string | null
   customer_delivery_content?: string | null
   manual_stock_reserved?: number
+  supplier_status?: string | null
+  supplier_result?: string | null
+  supplier_start_count?: string | null
+  supplier_now_count?: string | null
+  supplier_end_count?: string | null
 }
 
 export interface OrderDetail {
@@ -743,6 +753,22 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
   pricing_source: PricingSource
   gross_profit: number | null
   gross_margin: number | null
+  supplier_purchase?: {
+    id: string
+    account_name: string
+    outer_number: string
+    upstream_order_number: string | null
+    status: string
+    upstream_status: number | null
+    buyer_quantity: number
+    actual_quantity: number
+    safe_price: number | string
+    actual_cost: number | string | null
+    refunded_amount: number | string | null
+    last_checked_at: string | null
+    error_code: string | null
+    can_refresh: boolean
+  } | null
 }
 
 export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_method" | "expires_at" | "paid_at" | "delivered_at" | "refunded_at" | "after_sale"> {

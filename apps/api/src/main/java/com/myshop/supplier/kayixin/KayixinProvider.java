@@ -14,6 +14,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -23,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Flow;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 public class KayixinProvider implements SupplierProvider {
@@ -38,6 +41,9 @@ public class KayixinProvider implements SupplierProvider {
     KayixinProvider(HttpClient client) { this.client = client; }
 
     @Override public String type() { return "KAYIXIN"; }
+    @Override public List<com.myshop.model.CustomerInputField> customerFields(JsonNode snapshot) {
+        return new KayixinRechargeTemplates().parse(snapshot);
+    }
 
     public static String signature(String appId, String secret, String version, String timestamp, byte[] body) {
         try {
@@ -48,10 +54,14 @@ public class KayixinProvider implements SupplierProvider {
     }
 
     private JsonNode call(SupplierModels.Connection connection, String path, Map<String, Object> payload) {
+        return call(connection, path, payload, true);
+    }
+    private JsonNode call(SupplierModels.Connection connection, String path, Map<String, Object> payload, boolean retry) {
         final byte[] body;
         try { body = payload == null ? new byte[0] : json.writeValueAsBytes(payload); }
         catch (Exception ignored) { throw new SupplierException("DATA", "供应商请求数据无效"); }
-        for (int attempt = 0; attempt < 2; attempt++) {
+        int attempts = retry ? 2 : 1;
+        for (int attempt = 0; attempt < attempts; attempt++) {
             String timestamp = Long.toString(System.currentTimeMillis() / 1000);
             HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(connection.baseUrl() + path))
                     .timeout(Duration.ofSeconds(8))
@@ -61,11 +71,13 @@ public class KayixinProvider implements SupplierProvider {
                     .header("X-Signature", signature(connection.appId(), connection.secret(), VERSION, timestamp, body));
             if (payload != null) builder.header("Content-Type", "application/json; charset=utf-8");
             try {
-                HttpResponse<byte[]> response = client.send(builder.POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
+                HttpRequest.BodyPublisher publisher=HttpRequest.BodyPublishers.ofByteArray(body);
+                if (!retry) publisher=new SingleSubscriptionPublisher(publisher);
+                HttpResponse<byte[]> response = client.send(builder.POST(publisher).build(),
                         HttpResponse.BodyHandlers.ofByteArray());
                 int status = response.statusCode();
                 if (status < 200 || status >= 300) {
-                    if ((status == 429 || status >= 500) && attempt == 0) continue;
+                    if ((status == 429 || status >= 500) && attempt + 1 < attempts) continue;
                     throw new SupplierException("HTTP", "供应商 HTTP 请求失败（状态 " + status + "）");
                 }
                 if (response.body().length > 5_000_000) throw new SupplierException("DATA", "供应商响应过大");
@@ -83,7 +95,7 @@ public class KayixinProvider implements SupplierProvider {
                 Thread.currentThread().interrupt();
                 throw new SupplierException("CONNECTION", "供应商连接已中断");
             } catch (java.io.IOException e) {
-                if (attempt == 0) continue;
+                if (attempt + 1 < attempts) continue;
                 throw new SupplierException("CONNECTION", "无法连接供应商或请求超时");
             } catch (Exception e) {
                 throw new SupplierException("DATA", "供应商响应格式无效");
@@ -161,6 +173,52 @@ public class KayixinProvider implements SupplierProvider {
         return new SupplierModels.Product(id,text(n,"name"),goodsType,integer(n,"status"),skuType,
                 multiple,min,max,List.copyOf(skus),n.deepCopy());
     }
+    @Override public SupplierModels.CreatedPurchase createPurchase(SupplierModels.Connection connection, SupplierModels.PurchaseRequest request) {
+        if (!request.goodsId().matches("[0-9]{1,18}") || request.count() < 1 || request.safePrice().signum() < 0)
+            throw invalid();
+        Map<String,Object> body = new LinkedHashMap<>();
+        body.put("goodsId", Long.parseLong(request.goodsId()));
+        body.put("count", request.count());
+        body.put("notifyUrl", request.notifyUrl());
+        body.put("outerNumber", request.outerNumber());
+        body.put("safePrice", request.safePrice());
+        body.put("sku", request.sku());
+        body.put("attach", request.attach());
+        // No automatic retry: even a transport error can follow a successful debit.
+        JsonNode data = call(connection, "/api/v3/order/create", body, false);
+        return new SupplierModels.CreatedPurchase(text(data,"orderNumber"), cards(data.path("cards"), false));
+    }
+    @Override public SupplierModels.PurchaseDetail purchaseDetail(SupplierModels.Connection connection, String outerNumber) {
+        if (outerNumber == null || outerNumber.isBlank() || outerNumber.length() > 100) throw invalid();
+        JsonNode n = call(connection, "/api/v3/order/getDetail", Map.of("outerNumber", outerNumber));
+        int status = integer(n,"status");
+        if (!Set.of(0,1,2,3,4,5,7,8,9).contains(status)) throw invalid();
+        return new SupplierModels.PurchaseDetail(text(n,"orderNumber"), optionalText(n,"outerNumber"), status,
+                integer(n,"count"), money(n,"money"), money(n,"retMoney"), optionalText(n,"result"),
+                optionalText(n,"startCount"), optionalText(n,"nowCount"), optionalText(n,"endCount"), cards(n.path("cards"), true));
+    }
+    public List<SupplierModels.Card> cards(JsonNode nodes, boolean requireStatus) {
+        if (nodes.isMissingNode() || nodes.isNull()) return List.of();
+        if (!nodes.isArray()) throw invalid();
+        List<SupplierModels.Card> result = new ArrayList<>();
+        Set<String> ids = new HashSet<>();
+        for (JsonNode n : nodes) {
+            String id=text(n,"cardId");
+            String number=optionalText(n,"cardNo"), password=optionalText(n,"cardPwd");
+            int status=requireStatus ? integer(n,"status") : (n.has("status") ? integer(n,"status") : 0);
+            int cancel=integer(n,"cancelRequest");
+            if (id.length()>120 || !ids.add(id) || status<0 || status>4 || (cancel!=0 && cancel!=1)
+                    || ((number==null || number.isBlank()) && (password==null || password.isBlank()))) throw invalid();
+            result.add(new SupplierModels.Card(id,number,password,status,cancel));
+        }
+        return List.copyOf(result);
+    }
+    private String optionalText(JsonNode n,String field) {
+        JsonNode value=n.get(field);
+        if (value==null || value.isNull()) return null;
+        if (!value.isValueNode()) throw invalid();
+        return value.asText();
+    }
     private SupplierModels.Sku sku(JsonNode n, String name, String group) {
         String id = text(n,"sku");
         if (id.isBlank() || id.length() > 255) throw invalid();
@@ -194,4 +252,20 @@ public class KayixinProvider implements SupplierProvider {
         return result;
     }
     private SupplierException invalid() { return new SupplierException("DATA", "供应商商品数据不完整或格式无效"); }
+
+    /** Even transport-level retry cannot replay the body of a money-changing request. */
+    private static class SingleSubscriptionPublisher implements HttpRequest.BodyPublisher {
+        private final HttpRequest.BodyPublisher delegate;
+        private final AtomicBoolean subscribed=new AtomicBoolean();
+        private SingleSubscriptionPublisher(HttpRequest.BodyPublisher delegate) { this.delegate=delegate; }
+        @Override public long contentLength() { return delegate.contentLength(); }
+        @Override public void subscribe(Flow.Subscriber<? super ByteBuffer> subscriber) {
+            if (subscribed.compareAndSet(false,true)) { delegate.subscribe(subscriber); return; }
+            subscriber.onSubscribe(new Flow.Subscription() {
+                @Override public void request(long n) { }
+                @Override public void cancel() { }
+            });
+            subscriber.onError(new IllegalStateException("request body already sent"));
+        }
+    }
 }

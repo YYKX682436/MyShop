@@ -15,6 +15,7 @@ import { formatAdminOrderCustomer } from "@/lib/admin-order-display"
 import { formatCardContent, formatCardContents } from "@/lib/card-display"
 import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
 import { isManualFulfillmentItem } from "@/lib/order-status"
+import { supplierErrorLabel, supplierStatusLabel } from "@/lib/supplier-order"
 import type { TranslationKey } from "@/lib/i18n"
 import type { AdminOrderItem, AdminOrderItemDetail, OrderCardKey, OrderItemDetail } from "@/types"
 
@@ -29,6 +30,8 @@ interface OrderDetailSheetProps {
   onRetryCardKeys?: () => void
   onReplyAfterSale?: (content: string, attachments: File[]) => Promise<void>
   afterSaleReplyLoading?: boolean
+  onRefreshSupplier?: (purchaseId: string) => void
+  refreshingSupplier?: string | null
 }
 
 type Translator = (key: TranslationKey) => string
@@ -133,6 +136,8 @@ export function OrderDetailSheet({
   onRetryCardKeys,
   onReplyAfterSale,
   afterSaleReplyLoading = false,
+  onRefreshSupplier,
+  refreshingSupplier,
 }: OrderDetailSheetProps) {
   const { t, locale } = useLocale()
   const empty = t("admin.systemNoData")
@@ -284,6 +289,23 @@ export function OrderDetailSheet({
                     <DefinitionRow label={t("admin.marginAmount")}><span>{formatMoney(item.gross_profit, empty)}</span></DefinitionRow>
                     <DefinitionRow label={t("admin.marginRate")}><span>{item.gross_margin === null ? empty : `${item.gross_margin.toFixed(2)}%`}</span></DefinitionRow>
                   </dl>
+                  {item.supplier_purchase && <div className="mt-4 rounded-card border border-border-subtle p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-medium">货源采购 · {supplierStatusLabel(item.supplier_purchase.status)}</h4>
+                      {onRefreshSupplier && <Button type="button" variant="outline" size="sm" disabled={!item.supplier_purchase.can_refresh || Boolean(refreshingSupplier)} onClick={() => onRefreshSupplier(item.supplier_purchase!.id)}>{refreshingSupplier === item.supplier_purchase.id ? "查询中" : "查询最新状态"}</Button>}
+                    </div>
+                    <dl className="mt-2 grid gap-x-5 gap-y-1 sm:grid-cols-2">
+                      <DefinitionRow label="供货账号">{item.supplier_purchase.account_name}</DefinitionRow>
+                      <DefinitionRow label="上游订单号">{item.supplier_purchase.upstream_order_number || "—"}</DefinitionRow>
+                      <DefinitionRow label="采购单号">{item.supplier_purchase.outer_number}</DefinitionRow>
+                      <DefinitionRow label="上游状态">{item.supplier_purchase.upstream_status ?? "—"}</DefinitionRow>
+                      <DefinitionRow label="采购数量">{item.supplier_purchase.actual_quantity}</DefinitionRow>
+                      <DefinitionRow label="采购成本">{item.supplier_purchase.actual_cost == null ? "—" : `¥${item.supplier_purchase.actual_cost}`}</DefinitionRow>
+                      <DefinitionRow label="上游已退款">{item.supplier_purchase.refunded_amount == null ? "—" : `¥${item.supplier_purchase.refunded_amount}`}</DefinitionRow>
+                      <DefinitionRow label="最近查询">{item.supplier_purchase.last_checked_at ? formatDateTime(item.supplier_purchase.last_checked_at, locale) : "—"}</DefinitionRow>
+                    </dl>
+                    {item.supplier_purchase.error_code && <p className="mt-2 text-xs text-destructive">{supplierErrorLabel(item.supplier_purchase.error_code)}</p>}
+                    <p className="mt-2 text-xs text-muted-foreground">上游退款尚未接入，退款需人工核实。</p>
+                  </div>}
                     <div className="mt-4 rounded-card bg-surface-muted/70 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-medium text-foreground">{t("admin.customerInputs")}</h4>{inputText && <Button type="button" variant="ghost" size="sm" onClick={() => copyToClipboard(inputText)}><Copy className="mr-1.5 size-3.5" />{t("admin.copyAll")}</Button>}</div>
                     {inputs.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">{empty}</p> : <div className="mt-2 divide-y divide-border-subtle/70">{inputs.map(input => <div key={input.id} className="flex min-w-0 items-start justify-between gap-3 py-2 first:pt-0 last:pb-0"><span className="shrink-0 text-xs text-muted-foreground">{input.label}</span><span className="flex min-w-0 items-start gap-1 text-right text-sm text-foreground"><span className="break-all whitespace-pre-wrap">{input.value}</span><CopyButton value={input.value} label={input.label} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} /></span></div>)}</div>}

@@ -570,6 +570,8 @@ export const adminOrderApi = {
   },
   getDetail: (id: string) =>
     request<AdminOrderItem>(`/admin/orders/${id}`),
+  refreshSupplier: (orderId: string, purchaseId: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/refresh`, { method: "POST" }),
   markPaid: (id: string, reason: string) =>
     request<null>(`/admin/orders/${id}/mark-paid`, {
       method: "POST",

@@ -49,6 +49,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [afterSaleApproveOpen, setAfterSaleApproveOpen] = useState(false)
   const [afterSaleApproveLoading, setAfterSaleApproveLoading] = useState(false)
   const [afterSaleMessageLoading, setAfterSaleMessageLoading] = useState(false)
+  const [refreshingSupplier, setRefreshingSupplier] = useState<string | null>(null)
   const startRequest = useRequestGuard()
 
   const load = useCallback(async () => {
@@ -90,6 +91,15 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   }, [orderId, startRequest])
 
   useEffect(() => { void load() }, [load])
+
+  const refreshSupplier = async (purchaseId: string) => {
+    setRefreshingSupplier(purchaseId)
+    try {
+      await requestOrThrow(() => adminOrderApi.refreshSupplier(orderId, purchaseId))
+      await load()
+    } catch (error) { toast.error(error instanceof Error ? error.message : "查询失败") }
+    finally { setRefreshingSupplier(null) }
+  }
 
   const close = useRouteOverlayClose(false, presentation === "inspector")
 
@@ -260,6 +270,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           onRetryCardKeys={retryCardKeys}
           onReplyAfterSale={sendAfterSaleMessage}
           afterSaleReplyLoading={afterSaleMessageLoading}
+          onRefreshSupplier={(id) => void refreshSupplier(id)}
+          refreshingSupplier={refreshingSupplier}
         />
       )}
     </>
@@ -277,7 +289,8 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     </Button>
   ) : null
 
-  const canRefund = order?.customer_type === "REGISTERED"
+  const hasSupplierItems = order?.items.some(item => item.stock_mode === "SUPPLIER") ?? false
+  const canRefund = !hasSupplierItems && order?.customer_type === "REGISTERED"
     && order.order_type === "NORMAL"
     && (order.status === "PAID" || order.status === "DELIVERED")
   const reclaimableCardKeyCount = order
@@ -317,7 +330,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       {t("admin.afterSaleReject")}
     </Button>
   ) : null
-  const afterSaleApproveButton = canReviewAfterSale ? (
+  const afterSaleApproveButton = canReviewAfterSale && !hasSupplierItems ? (
     <Button type="button" variant="destructive" onClick={() => { setAfterSaleApproveOpen(true); setReclaimCardKeys(false) }} disabled={afterSaleApproveLoading || afterSaleRejectLoading}>
       <ShieldAlert className="size-4" aria-hidden="true" />
       {t("admin.afterSaleApprove")}

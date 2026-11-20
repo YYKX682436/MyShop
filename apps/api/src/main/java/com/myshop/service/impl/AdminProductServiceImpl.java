@@ -52,6 +52,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.myshop.supplier.SupplierCheckout;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -91,6 +93,8 @@ public class AdminProductServiceImpl implements AdminProductService {
     private final ProductInventoryBatchService inventoryBatchService;
     private final PricingService pricingService;
     private final com.myshop.service.ManualStockService manualStockService;
+    private SupplierCheckout supplierCheckout;
+    @Autowired public void setSupplierCheckout(SupplierCheckout value) { this.supplierCheckout=value; }
 
     @Override
     @Transactional(readOnly = true)
@@ -149,7 +153,8 @@ public class AdminProductServiceImpl implements AdminProductService {
                 .filter(candidate -> candidate.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
         if (request.enabled() && product.getStockMode() == StockMode.SUPPLIER) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售");
+            if (supplierCheckout==null) throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售");
+            supplierCheckout.validateActivation(product);
         }
         if (request.enabled() && !product.isEnabled() && product.isSpecEnabled()) {
             validateVisibleSpecRequirement(product.isSpecEnabled(), request.enabled(),
@@ -543,11 +548,14 @@ public class AdminProductServiceImpl implements AdminProductService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品只能通过货源管理导入");
         }
         if (!creating && product.getStockMode() == StockMode.SUPPLIER) {
-            if (Boolean.TRUE.equals(request.isEnabled()) ||
-                    (request.stockMode() != null && request.stockMode() != StockMode.SUPPLIER) ||
+            if (Boolean.TRUE.equals(request.isEnabled())) {
+                if (supplierCheckout==null) throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售");
+                supplierCheckout.validateActivation(product);
+            }
+            if ((request.stockMode() != null && request.stockMode() != StockMode.SUPPLIER) ||
                     (request.deliveryType() != null && !"AUTO".equalsIgnoreCase(request.deliveryType())) ||
                     (request.specEnabled() != null && request.specEnabled() != product.isSpecEnabled())) {
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售，不能更换库存或规格模式");
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品不能更换库存或规格模式");
             }
             if (request.specs() != null) {
                 Set<UUID> currentIds = existingSpecs.stream().map(ProductSpec::getId).collect(Collectors.toSet());

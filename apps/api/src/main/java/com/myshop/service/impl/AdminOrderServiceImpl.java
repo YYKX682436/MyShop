@@ -29,6 +29,7 @@ import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderPaymentCompletionService;
 import com.myshop.service.OrderRefundService;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.myshop.supplier.SupplierAdminOrders;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -60,6 +61,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final BalanceTransactionRepository balanceTransactionRepository;
     private final CardKeyReclaimService cardKeyReclaimService;
     private final AfterSaleService afterSaleService;
+    private SupplierAdminOrders supplierAdminOrders;
+    @Autowired public void setSupplierAdminOrders(SupplierAdminOrders value) { this.supplierAdminOrders=value; }
 
     @Autowired
     public AdminOrderServiceImpl(OrderRepository orderRepository,
@@ -311,6 +314,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             im.put("delivered_at", i.getDeliveredAt());
             im.put("customer_delivery_content", i.getCustomerDeliveryContent());
             im.put("manual_stock_reserved", i.getManualStockReserved());
+            if (detail && supplierAdminOrders!=null && i.getStockMode()==com.myshop.constant.StockMode.SUPPLIER)
+                im.put("supplier_purchase",supplierAdminOrders.forItem(i.getId()));
             return im;
         }).toList();
         map.put("items", itemMaps);

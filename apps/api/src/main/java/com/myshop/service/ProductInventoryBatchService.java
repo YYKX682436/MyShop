@@ -8,6 +8,8 @@ import com.myshop.repository.CardKeyRepository;
 import com.myshop.repository.ManualStockRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.myshop.supplier.SupplierStockService;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
@@ -23,6 +25,8 @@ public class ProductInventoryBatchService {
 
     private final CardKeyRepository cardKeyRepository;
     private final ManualStockRepository manualStockRepository;
+    private SupplierStockService supplierStockService;
+    @Autowired public void setSupplierStockService(SupplierStockService value) { this.supplierStockService=value; }
 
     @Transactional(readOnly = true)
     public Map<PriceTarget, StockSnapshot> load(Collection<Product> products,
@@ -39,13 +43,18 @@ public class ProductInventoryBatchService {
         }
 
         Map<PriceTarget, StockSnapshot> result = new HashMap<>();
+        List<UUID> supplierIds=products.stream().filter(p -> p.getStockMode()==StockMode.SUPPLIER).map(Product::getId).toList();
+        Map<PriceTarget,Long> supplierCounts=supplierStockService==null ? Map.of() : supplierStockService.available(supplierIds);
         for (Product product : products) {
             if (product.getStockMode() == StockMode.SUPPLIER) {
-                // Remote stock is a separate supplier snapshot, not fulfillable inventory in P1.
-                result.put(new PriceTarget(product.getId(), null), new StockSnapshot(0L, false));
+                long total=0;
                 for (ProductSpec spec : specsByProduct.getOrDefault(product.getId(), List.of())) {
-                    result.put(new PriceTarget(product.getId(), spec.getId()), new StockSnapshot(0L, false));
+                    long count=supplierCounts.getOrDefault(new PriceTarget(product.getId(),spec.getId()),0L);
+                    total=total>Long.MAX_VALUE-count ? Long.MAX_VALUE : total+count;
+                    result.put(new PriceTarget(product.getId(), spec.getId()), new StockSnapshot(count, false));
                 }
+                if (!product.isSpecEnabled()) total=supplierCounts.getOrDefault(new PriceTarget(product.getId(),null),0L);
+                result.put(new PriceTarget(product.getId(), null), new StockSnapshot(total, false));
                 continue;
             }
             if (product.getStockMode() == StockMode.UNLIMITED) {

@@ -209,7 +209,13 @@ public class OrderRefundServiceImpl implements OrderRefundService {
                     "退款后账户余额超出系统支持范围");
         }
 
+        // Before any accounting or inventory writes, isolate supplier refunds
+        // from the existing local-card reclaim and customer refund path.
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+        if (items.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
+            throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,
+                    "货源订单的退款需人工核实，上游退款尚未接入");
+        }
         LocalDateTime refundedAt = LocalDateTime.now(clock);
         ReclaimPlan reclaimPlan = reclaimCardKeys
                 ? prepareReclaimPlan(order, items, operatorId, refundedAt)

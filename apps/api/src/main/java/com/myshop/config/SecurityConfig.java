@@ -53,6 +53,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/orders/*/refresh").permitAll()
                         .requestMatchers(HttpMethod.POST, "/orders/*/repay").permitAll()
                         .requestMatchers("/payments/webhook/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/supplier-callback/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/uploads/**").permitAll()
                         // Private after-sale evidence is authorized again by
                         // the database ownership service before it is streamed.

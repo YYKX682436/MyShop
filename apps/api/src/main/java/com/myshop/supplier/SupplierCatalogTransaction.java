@@ -48,8 +48,8 @@ public class SupplierCatalogTransaction {
         product.setStockMode(StockMode.SUPPLIER);
         product.setEnabled(false);
         product.setSpecEnabled(remote.skuType()!=0);
-        BigDecimal first=localCost(remote.skus().getFirst().cost());
-        BigDecimal initialRetail=remote.skus().stream().map(s -> localCost(s.cost()))
+        BigDecimal first=localCost(remote.skus().getFirst().cost(),remote.multiple());
+        BigDecimal initialRetail=remote.skus().stream().map(s -> localCost(s.cost(),remote.multiple()))
                 .min(BigDecimal::compareTo).orElse(first);
         product.setRetailPrice(initialRetail.max(new BigDecimal("0.01")));
         product.setCostPrice(product.isSpecEnabled() ? null : first);
@@ -60,7 +60,7 @@ public class SupplierCatalogTransaction {
         for (SupplierModels.Sku sku:remote.skus()) {
             ProductSpec spec=null;
             if (product.isSpecEnabled()) {
-                spec=newSpec(product,sku,names,order++, true);
+                spec=newSpec(product,sku,remote.multiple(),names,order++, true);
                 specs.saveAndFlush(spec);
             }
             SupplierProductMapping mapping=new SupplierProductMapping();
@@ -120,7 +120,7 @@ public class SupplierCatalogTransaction {
             SupplierProductMapping mapping=bySku.get(sku.id());
             if (mapping==null) {
                 if (!product.isSpecEnabled()) throw error("上游单规格标识已变化，需要人工检查");
-                ProductSpec spec=newSpec(product,sku,names,order++,false);
+                ProductSpec spec=newSpec(product,sku,remote.multiple(),names,order++,false);
                 specs.saveAndFlush(spec);
                 mapping=new SupplierProductMapping();
                 mapping.setAccountId(accountId);
@@ -131,10 +131,10 @@ public class SupplierCatalogTransaction {
             } else if (mapping.getSpecId()!=null) {
                 ProductSpec spec=specs.findById(mapping.getSpecId()).filter(s -> s.getIsDeleted()==0)
                         .orElseThrow(() -> error("本地规格已删除，需要人工检查"));
-                spec.setCostPrice(localCost(sku.cost()));
+                spec.setCostPrice(localCost(sku.cost(),remote.multiple()));
                 specs.save(spec);
             } else {
-                product.setCostPrice(localCost(sku.cost()));
+                product.setCostPrice(localCost(sku.cost(),remote.multiple()));
                 products.save(product);
             }
             update(mapping,remote,sku,now);
@@ -158,7 +158,7 @@ public class SupplierCatalogTransaction {
         m.setMinQuantity(p.minQuantity()); m.setMaxQuantity(p.maxQuantity()); m.setSnapshot(p.snapshot());
         m.setLastSyncedAt(now); m.setLastAttemptAt(now); m.setSyncError(null);
     }
-    private ProductSpec newSpec(Product p,SupplierModels.Sku sku,Set<String> names,int order,boolean visible) {
+    private ProductSpec newSpec(Product p,SupplierModels.Sku sku,int multiple,Set<String> names,int order,boolean visible) {
         String label=(sku.group().isBlank() ? "" : sku.group()+" / ")+sku.name();
         if (label.isBlank()) label=sku.id();
         if (label.length()>200) label=label.substring(0,200);
@@ -169,12 +169,12 @@ public class SupplierCatalogTransaction {
             if (!names.add(candidate.toLowerCase(java.util.Locale.ROOT))) throw error("上游规格名称重复且无法安全映射");
         }
         ProductSpec s=new ProductSpec(); s.setId(UUID.randomUUID()); s.setProductId(p.getId());
-        s.setName(candidate); s.setCostPrice(localCost(sku.cost()));
+        s.setName(candidate); s.setCostPrice(localCost(sku.cost(),multiple));
         s.setRetailPrice(s.getCostPrice().max(new BigDecimal("0.01"))); s.setVisible(visible);
         s.setSortOrder(order); return s;
     }
-    private BigDecimal localCost(BigDecimal cost) {
-        BigDecimal value=cost.setScale(2, RoundingMode.CEILING);
+    private BigDecimal localCost(BigDecimal cost,int multiple) {
+        BigDecimal value=cost.multiply(BigDecimal.valueOf(multiple)).setScale(2, RoundingMode.CEILING);
         if (value.compareTo(new BigDecimal("99999999.99"))>0) throw error("上游成本超出本地商品支持范围");
         return value;
     }

@@ -45,3 +45,17 @@ test("customer input changes rotate the direct-order intent fingerprint", () => 
   ) }
   assert.notEqual(fingerprintPayload(base), fingerprintPayload(changed))
 })
+
+test("supplier recharge validates option values, numeric input and optional multiline text", () => {
+  const fields = [
+    { id: "account", label: "账号", type: "TEXT", required: true, regex: "^[a-z]{2,5}$" },
+    { id: "count", label: "数量", type: "NUMBER", required: true },
+    { id: "zone", label: "区服", type: "SELECT", required: true, options: [{ name: "一区", value: "zone-1" }] },
+    { id: "note", label: "备注", type: "MULTILINE", required: false },
+  ]
+  assert.equal(validateCustomerInputs(fields, { account: "abc", count: "12", zone: "zone-1", note: "first\nsecond" }).ok, true)
+  assert.equal(validateCustomerInputs(fields, { account: "abc", count: "12", zone: "一区", note: "" }).field, "zone")
+  assert.equal(validateCustomerInputs(fields, { account: "abc", count: "abc", zone: "zone-1", note: "" }).field, "count")
+  assert.equal(validateCustomerInputs(fields, { account: "ABC", count: "12", zone: "zone-1", note: "" }).field, "account")
+  assert.equal(validateCustomerInputs([{ id: "image", label: "图片", type: "IMAGE" }], { image: "test" }).ok, false)
+})

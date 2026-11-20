@@ -85,7 +85,7 @@ public class FulfillmentTransactionService implements FulfillmentService {
         List<UUID> newlyCompletedAutoItems = new ArrayList<>();
         LocalDateTime deliveryAttemptAt = LocalDateTime.now();
         for (OrderItem item : items) {
-            if (!isManual(item)
+            if (!isManual(item) && item.getStockMode() != StockMode.SUPPLIER
                     && item.getFulfillmentStatus() == FulfillmentStatus.DELIVERED
                     && item.getDeliveryNotifiedAt() == null) {
                 item.setDeliveryNotifiedAt(deliveryAttemptAt);
@@ -108,6 +108,9 @@ public class FulfillmentTransactionService implements FulfillmentService {
                 item.setFulfillmentStatus(FulfillmentStatus.WAITING_MANUAL);
                 continue;
             }
+
+            // Supplier deliveries have their own purchase and recovery lane.
+            if (item.getStockMode() == StockMode.SUPPLIER) continue;
 
             if (item.getStockMode() != StockMode.CARD_KEY) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "自动发货订单的库存模式无效");
@@ -136,7 +139,8 @@ public class FulfillmentTransactionService implements FulfillmentService {
         Map<StockPoolKey, Integer> poolOffsets = new LinkedHashMap<>();
         for (OrderItem item : items) {
             FulfillmentStatus status = item.getFulfillmentStatus();
-            if (status == FulfillmentStatus.DELIVERED || status == FulfillmentStatus.CANCELLED || isManual(item)) {
+            if (status == FulfillmentStatus.DELIVERED || status == FulfillmentStatus.CANCELLED
+                    || isManual(item) || item.getStockMode() == StockMode.SUPPLIER) {
                 continue;
             }
             StockPoolKey pool = new StockPoolKey(item.getProductId(), item.getSpecId());

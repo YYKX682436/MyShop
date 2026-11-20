@@ -736,7 +736,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 </div>
                 <label className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 lg:col-span-2">
                   <span className="text-sm font-medium">{t("admin.listingStatus")}</span>
-                  <Switch disabled={product?.stock_mode === "SUPPLIER"} checked={draft.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
+                  <Switch checked={draft.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
                 </label>
               </div>
             </FormSection>
@@ -877,7 +877,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 <label className="flex flex-col gap-1.5 text-sm font-medium">
                   {t("admin.stockMode")}
                   <select disabled={product?.stock_mode === "SUPPLIER"} className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={draft.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
-                    {draft.stock_mode === "SUPPLIER" && <option value="SUPPLIER">供应商库存（未开放销售）</option>}
+                    {draft.stock_mode === "SUPPLIER" && <option value="SUPPLIER">供应商库存</option>}
                     {draft.delivery_type === "AUTO" && <option value="CARD_KEY">{t("admin.cardKeyStock")}</option>}
                     {draft.delivery_type === "MANUAL" && <><option value="MANUAL">{t("admin.manualStock")}</option><option value="UNLIMITED">{t("admin.unlimitedStock")}</option></>}
                   </select>

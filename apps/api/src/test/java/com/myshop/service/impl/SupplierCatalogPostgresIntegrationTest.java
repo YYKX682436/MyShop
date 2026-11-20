@@ -78,6 +78,9 @@ class SupplierCatalogPostgresIntegrationTest {
         }
         @Override public List<SupplierModels.Category> categories(SupplierModels.Connection c) { return List.of(); }
         @Override public SupplierModels.Page list(SupplierModels.Connection c,String k,String category,int page) { return new SupplierModels.Page(List.of(),0,0); }
+        @Override public List<com.myshop.model.CustomerInputField> customerFields(com.fasterxml.jackson.databind.JsonNode snapshot) { return List.of(); }
+        @Override public SupplierModels.CreatedPurchase createPurchase(SupplierModels.Connection c,SupplierModels.PurchaseRequest r) { throw new UnsupportedOperationException(); }
+        @Override public SupplierModels.PurchaseDetail purchaseDetail(SupplierModels.Connection c,String outerNumber) { throw new UnsupportedOperationException(); }
         @Override public SupplierModels.Product detail(SupplierModels.Connection c,String id) {
             if (offline || failedGoods.contains(id)) throw new SupplierException("CONNECTION","无法连接供应商或请求超时");
             if (id.equals(blockedGoods)) {
@@ -277,7 +280,7 @@ class SupplierCatalogPostgresIntegrationTest {
         assertEquals(new BigDecimal("0.07543210"),refreshed.cost()); assertEquals(7,refreshed.stock()); assertNull(refreshed.syncError());
         var edited=products.findById(row.productId()).orElseThrow();
         assertEquals("本地名称",edited.getTitle()); assertEquals("本地描述",edited.getDescription());
-        assertEquals(new BigDecimal("9.99"),edited.getRetailPrice()); assertEquals(new BigDecimal("0.08"),edited.getCostPrice());
+        assertEquals(new BigDecimal("9.99"),edited.getRetailPrice()); assertEquals(new BigDecimal("0.16"),edited.getCostPrice());
         fixture.offline=true;
         assertThrows(SupplierException.class,()->service.sync(a.id(),"20"));
         var failed=service.mappings(a.id()).stream().filter(m->m.remoteGoodsId().equals("20")).findFirst().orElseThrow();
@@ -353,7 +356,7 @@ class SupplierCatalogPostgresIntegrationTest {
         adminProducts.updateProduct(id,edited);
         var product=products.findById(id).orElseThrow();
         assertEquals("本地标题",product.getTitle()); assertEquals(new BigDecimal("8.00"),product.getRetailPrice());
-        assertEquals(new BigDecimal("0.02"),product.getCostPrice());
+        assertEquals(new BigDecimal("0.03"),product.getCostPrice());
         var changeSource=new com.myshop.model.request.AdminProductUpsertRequest("本地标题",null,null,null,
                 new BigDecimal("0.02"),new BigDecimal("8.00"),category,10,false,false,0,0,
                 "AUTO",List.of(),StockMode.CARD_KEY,null,List.of(),List.of());

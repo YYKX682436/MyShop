@@ -24,6 +24,8 @@ import com.myshop.service.ProductRules;
 import com.myshop.service.PricingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import com.myshop.supplier.SupplierCheckout;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,6 +55,12 @@ public class OrderServiceImpl implements OrderService {
     private final UserLevelRepository userLevelRepository;
     private final AutoFulfillmentService autoFulfillmentService;
     private final PricingService pricingService;
+    private SupplierCheckout supplierCheckout;
+    @Value("${supplier.purchase-enabled:false}")
+    private boolean supplierPurchaseEnabled;
+
+    @Autowired
+    public void setSupplierCheckout(SupplierCheckout supplierCheckout) { this.supplierCheckout=supplierCheckout; }
 
     @Autowired
     public OrderServiceImpl(OrderRepository orderRepository, OrderItemRepository orderItemRepository,
@@ -139,14 +147,15 @@ public class OrderServiceImpl implements OrderService {
                 .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
 
-        if (product.getStockMode() == StockMode.SUPPLIER) {
+        boolean supplierProduct=product.getStockMode() == StockMode.SUPPLIER;
+        if (supplierProduct && (!supplierPurchaseEnabled || supplierCheckout==null || adminPickup)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "该货源商品暂未开放购买");
         }
 
         ProductSpec spec = resolveSellableSpec(product, specId);
 
-        List<com.myshop.model.CustomerInputValue> customerInputs =
-                ProductRules.normalizeCustomerInputs(product, req);
+        List<com.myshop.model.CustomerInputValue> customerInputs = supplierProduct ? null
+                : ProductRules.normalizeCustomerInputs(product, req);
 
         UserLevel userLevel = null;
         if (!adminPickup && currentUser != null && currentUser.getRole() == UserRole.USER) {
@@ -168,14 +177,20 @@ public class OrderServiceImpl implements OrderService {
         }
 
         StockMode stockMode = product.getStockMode();
-        StockView stock = getStock(product, specId);
-        if (!stock.unlimited() && stock.available() < quantity) {
-            throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "库存不足",
-                    Map.of("available", stock.available()));
-        }
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
+        }
+        SupplierCheckout.Prepared supplierPrepared=null;
+        if (supplierProduct) {
+            supplierPrepared=supplierCheckout.prepare(product,specId,quantity,totalAmount,req.get("customer_inputs"));
+            customerInputs=supplierPrepared.inputs().values();
+        } else {
+            StockView stock = getStock(product, specId);
+            if (!stock.unlimited() && stock.available() < quantity) {
+                throw new BusinessException(ErrorCode.INSUFFICIENT_STOCK, "库存不足",
+                        Map.of("available", stock.available()));
+            }
         }
         reserveManualStock(product, specId, stockMode, quantity);
         int expireMinutes = getConfigInt("order_expire_minutes", 15);
@@ -218,7 +233,10 @@ public class OrderServiceImpl implements OrderService {
         item.setPricingSource(price.pricingSource());
         item.setSubtotal(totalAmount);
         setItemSnapshot(item, product, customerInputs, quantity, stockMode);
-        orderItemRepository.save(item);
+        if (supplierProduct) {
+            orderItemRepository.saveAndFlush(item);
+            supplierCheckout.persist(item,supplierPrepared);
+        } else orderItemRepository.save(item);
 
         if (!adminPickup && paymentMethod == OrderPaymentMethod.BALANCE) {
             balanceOrderPaymentService.pay(order, currentUser);

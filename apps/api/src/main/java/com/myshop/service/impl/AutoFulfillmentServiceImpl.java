@@ -10,6 +10,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.myshop.supplier.SupplierPurchaseWorker;
 
 import java.util.UUID;
 import java.time.LocalDateTime;
@@ -24,6 +26,10 @@ public class AutoFulfillmentServiceImpl implements AutoFulfillmentService {
 
     private final FulfillmentService fulfillmentService;
     private final OrderRepository orderRepository;
+    private SupplierPurchaseWorker supplierWorker;
+
+    @Autowired
+    public void setSupplierWorker(SupplierPurchaseWorker supplierWorker) { this.supplierWorker=supplierWorker; }
 
     @Override
     public void trigger(UUID orderId) {
@@ -37,6 +43,13 @@ public class AutoFulfillmentServiceImpl implements AutoFulfillmentService {
             // Do not include provider credentials or card content in a retry
             // log. The scheduler will retry safely.
             log.warn("Automatic fulfillment failed for order {}", orderId);
+        }
+        if (supplierWorker != null) {
+            try { supplierWorker.enqueueOrder(orderId); }
+            catch (RuntimeException ignored) {
+                // Payment is already committed; the independent recovery scan will retry safely.
+                log.warn("Supplier fulfillment enqueue deferred for order {}",orderId);
+            }
         }
     }
 

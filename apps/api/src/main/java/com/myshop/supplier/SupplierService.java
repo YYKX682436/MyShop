@@ -126,6 +126,19 @@ public class SupplierService {
         if (!a.isEnabled()) throw invalid("货源账号已停用");
         return a;
     }
+    /** Historical purchases remain queryable after the account is disabled. */
+    public RuntimeAccount runtime(UUID id, boolean requireEnabled) {
+        SupplierAccount a=accounts.findById(id).orElseThrow(() -> invalid("货源账号不存在"));
+        if (requireEnabled && !a.isEnabled()) throw invalid("货源账号已停用");
+        return new RuntimeAccount(a.isEnabled(), provider(a.getProviderType()), connection(a));
+    }
+    public List<com.myshop.model.CustomerInputField> customerFields(UUID id,com.fasterxml.jackson.databind.JsonNode snapshot) {
+        SupplierAccount a=accounts.findById(id).orElseThrow(() -> invalid("货源账号不存在"));
+        return provider(a.getProviderType()).customerFields(snapshot);
+    }
+    public record RuntimeAccount(boolean enabled,SupplierProvider provider,SupplierModels.Connection connection) {
+        @Override public String toString() { return "SupplierRuntimeAccount[redacted]"; }
+    }
     private SupplierModels.Connection connection(SupplierAccount a) {
         return new SupplierModels.Connection(a.getBaseUrl(),a.getAppId(),cipher.decrypt(a.getEncryptedSecret()));
     }

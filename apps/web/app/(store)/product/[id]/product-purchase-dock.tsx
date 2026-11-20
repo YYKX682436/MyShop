@@ -71,7 +71,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
   const { t } = useLocale()
   const { user, setUser, authLoaded } = useAuth()
   const router = useRouter()
-  const customerInputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const customerInputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>>({})
   const [open, setOpen] = useState(false)
   const [selectedSpec, setSelectedSpec] = useState<ProductSpec | null>(() => (
     firstPurchasableSpec(product.specs ?? [])
@@ -451,37 +451,35 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                   {customerInputFields.map((field) => {
                     const error = customerInputErrors[field.id]
                     const errorId = `customer-input-error-${field.id}`
+                    const change = (value: string) => {
+                      setCustomerInputs((current) => ({ ...current, [field.id]: value }))
+                      if (error && !validateCustomerInputValue(value, field)) {
+                        setCustomerInputErrors((current) => ({ ...current, [field.id]: "" }))
+                      }
+                    }
+                    const blur = () => {
+                      const nextError = validateCustomerInputValue(customerInputs[field.id] ?? "", field)
+                      if (nextError) setCustomerInputErrors((current) => ({ ...current, [field.id]: `${field.label}：${nextError}` }))
+                    }
+                    const className = cn(
+                      "w-full rounded-control border bg-surface px-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40",
+                      field.type === "MULTILINE" ? "min-h-24 py-2" : "h-11",
+                      error ? "border-destructive" : "border-input",
+                    )
+                    const common = { id: `customer-input-${field.id}`, value: customerInputs[field.id] ?? "",
+                      required: field.required !== false, "aria-invalid": Boolean(error),
+                      "aria-describedby": error ? errorId : undefined, className, onBlur: blur }
                     return (
                       <div key={field.id}>
                         <label htmlFor={`customer-input-${field.id}`} className="mb-1.5 block text-sm font-medium text-foreground">
-                          {field.label} <span className="text-destructive">*</span>
+                          {field.label} {field.required !== false && <span className="text-destructive" aria-hidden="true">*</span>}
                         </label>
-                        <input
-                          id={`customer-input-${field.id}`}
-                          ref={(element) => { customerInputRefs.current[field.id] = element }}
-                          type="text"
-                          value={customerInputs[field.id] ?? ""}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            setCustomerInputs((current) => ({ ...current, [field.id]: value }))
-                            if (error) {
-                              const nextError = validateCustomerInputValue(value)
-                              setCustomerInputErrors((current) => ({ ...current, [field.id]: nextError ?? "" }))
-                            }
-                          }}
-                          onBlur={() => {
-                            const nextError = validateCustomerInputValue(customerInputs[field.id] ?? "")
-                            if (nextError) setCustomerInputErrors((current) => ({ ...current, [field.id]: `${field.label}：${nextError}` }))
-                          }}
-                          placeholder={t("product.customerInputPlaceholder").replace("{label}", field.label)}
-                          aria-invalid={Boolean(error)}
-                          aria-describedby={error ? errorId : undefined}
-                          className={cn(
-                            "h-11 w-full rounded-control border bg-surface px-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40",
-                            error ? "border-destructive" : "border-input",
-                          )}
-                        />
-                        {error && <p id={errorId} className="mt-1 text-xs text-destructive">{error}</p>}
+                        {field.type === "SELECT" ? <select {...common} ref={(element) => { customerInputRefs.current[field.id] = element }} onChange={(event) => change(event.target.value)}>
+                          <option value="">请选择</option>{field.options?.map(option => <option value={option.value} key={option.value}>{option.name}</option>)}
+                        </select> : field.type === "MULTILINE" ? <textarea {...common} ref={(element) => { customerInputRefs.current[field.id] = element }} onChange={(event) => change(event.target.value)} placeholder={field.placeholder || ""} />
+                          : <input {...common} ref={(element) => { customerInputRefs.current[field.id] = element }} type="text" inputMode={field.type === "NUMBER" ? "decimal" : "text"} disabled={field.type === "IMAGE" || field.type === "CASCADE"} onChange={(event) => change(event.target.value)} placeholder={field.placeholder || t("product.customerInputPlaceholder").replace("{label}", field.label)} />}
+                        {(field.type === "IMAGE" || field.type === "CASCADE") && <p className="mt-1 text-xs text-muted-foreground">此字段暂不支持购买</p>}
+                        {error && <p id={errorId} role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
                       </div>
                     )
                   })}
