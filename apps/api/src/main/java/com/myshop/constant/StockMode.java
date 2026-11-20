@@ -4,5 +4,6 @@ package com.myshop.constant;
 public enum StockMode {
     CARD_KEY,
     MANUAL,
-    UNLIMITED
+    UNLIMITED,
+    SUPPLIER
 }

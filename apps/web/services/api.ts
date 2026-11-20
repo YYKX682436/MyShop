@@ -623,7 +623,7 @@ export interface AdminProductUpsertPayload {
   sort_weight?: number | null
   delivery_type: "AUTO" | "MANUAL"
   customer_input_fields?: { id?: string; label: string }[]
-  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
   manual_stock?: number
   specs: {
     id?: string
@@ -897,4 +897,26 @@ export function getApiErrorMessage(err: unknown, t: (key: any) => string): strin
     return err.message
   }
   return err instanceof Error ? err.message : t("common.error")
+}
+
+// Supplier API is deliberately read-only toward providers in P1.
+export type SupplierAccount = { id: string; name: string; provider_type: string; base_url: string; app_id: string; secret_mask: string; enabled: boolean }
+export type SupplierAccountInput = { name: string; provider_type: string; base_url: string; app_id: string; secret?: string; enabled: boolean }
+export type SupplierCategory = { id: string; name: string; children: SupplierCategory[] }
+export type SupplierSummary = { id: string; name: string; goods_type: number; status: number; sku_type: number; cost: string }
+export type SupplierSku = { id: string; name: string; group: string; cost: string; stock: number; status: number }
+export type SupplierProduct = { id: string; name: string; goods_type: number; status: number; sku_type: number; multiple: number; min_quantity: number; max_quantity: number; skus: SupplierSku[]; snapshot: Record<string, unknown> }
+export type SupplierMapping = { id: string; remote_goods_id: string; remote_sku: string; product_id: string; spec_id?: string; goods_type: number; sku_type: number; cost: string; stock: number; goods_status: number; sku_status: number; multiple: number; min_quantity: number; max_quantity: number; last_synced_at: string; last_attempt_at: string; sync_error?: string }
+export const adminSupplierApi = {
+  accounts: () => request<SupplierAccount[]>("/admin/suppliers"),
+  create: (input: SupplierAccountInput) => request<SupplierAccount>("/admin/suppliers", { method: "POST", body: JSON.stringify(input) }),
+  update: (id: string, input: SupplierAccountInput) => request<SupplierAccount>(`/admin/suppliers/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+  status: (id: string, enabled: boolean) => request<void>(`/admin/suppliers/${id}/status`, { method: "POST", body: JSON.stringify({ enabled }) }),
+  test: (id: string) => request<{ balance: string }>(`/admin/suppliers/${id}/test`, { method: "POST" }),
+  categories: (id: string) => request<SupplierCategory[]>(`/admin/suppliers/${id}/categories`),
+  goods: (id: string, keyword: string, categoryId: string, page: number) => request<{ items: SupplierSummary[]; reported_count?: number; reported_pages?: number }>(`/admin/suppliers/${id}/goods?${buildQuery({ keyword, category_id: categoryId, page })}`),
+  detail: (id: string, goodsId: string) => request<SupplierProduct>(`/admin/suppliers/${id}/goods/${encodeURIComponent(goodsId)}`),
+  import: (id: string, goodsId: string, categoryId: string) => request<{ product_id: string; created: boolean }>(`/admin/suppliers/${id}/goods/${encodeURIComponent(goodsId)}/import`, { method: "POST", body: JSON.stringify({ category_id: categoryId }) }),
+  mappings: (id: string) => request<SupplierMapping[]>(`/admin/suppliers/${id}/mappings`),
+  sync: (id: string, goodsId: string) => request<void>(`/admin/suppliers/${id}/goods/${encodeURIComponent(goodsId)}/sync`, { method: "POST" }),
 }

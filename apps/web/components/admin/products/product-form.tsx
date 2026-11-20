@@ -35,7 +35,7 @@ import type {
 } from "@/types"
 
 type DeliveryType = "AUTO" | "MANUAL"
-type StockMode = "CARD_KEY" | "MANUAL" | "UNLIMITED"
+type StockMode = "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
 type CategoryLoadStatus = "loading" | "ready" | "error"
 
 const MarkdownEditor = lazy(() => import("@/components/admin/markdown-editor").then((module) => ({ default: module.MarkdownEditor })))
@@ -736,7 +736,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 </div>
                 <label className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 lg:col-span-2">
                   <span className="text-sm font-medium">{t("admin.listingStatus")}</span>
-                  <Switch checked={draft.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
+                  <Switch disabled={product?.stock_mode === "SUPPLIER"} checked={draft.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
                 </label>
               </div>
             </FormSection>
@@ -746,7 +746,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
             <FormSection title={t("admin.productSpecs")} description={t("admin.specsHint")}>
               <div className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5">
                 <span className="text-sm font-medium">{t("admin.enableMultiSpec")}</span>
-                <Switch ref={registerField("spec-mode")} checked={draft.spec_enabled} onCheckedChange={toggleSpecMode} aria-label={t("admin.enableMultiSpec")} />
+                <Switch disabled={product?.stock_mode === "SUPPLIER"} ref={registerField("spec-mode")} checked={draft.spec_enabled} onCheckedChange={toggleSpecMode} aria-label={t("admin.enableMultiSpec")} />
               </div>
               <div className={cn("admin-table-region mt-4", !draft.spec_enabled && "opacity-70")}>
                 <table className="w-full min-w-[640px] text-sm">
@@ -770,13 +770,13 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                         </td>
                         <td className="px-3 py-2"><Input ref={registerField(`spec-name-${spec.id}`)} value={spec.name} onChange={(event) => updateSpec(index, { name: event.target.value })} placeholder={t("admin.specNamePlaceholder")} /></td>
                         <td className="px-3 py-2"><Switch checked={spec.visible} onCheckedChange={(checked) => updateSpec(index, { visible: checked })} aria-label={`${t("admin.specVisible")} ${spec.name || index + 1}`} /></td>
-                        <td className="px-3 py-2 text-right"><Button type="button" variant="ghost" size="icon" onClick={() => removeSpec(index)} aria-label={t("admin.removeSpec")} title={t("admin.removeSpec")}><Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" /></Button></td>
+                        <td className="px-3 py-2 text-right"><Button type="button" variant="ghost" size="icon" onClick={() => removeSpec(index)} disabled={product?.stock_mode === "SUPPLIER"} aria-label={t("admin.removeSpec")} title={t("admin.removeSpec")}><Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" /></Button></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 {draft.specs.length === 0 && <p className="border-t border-border-subtle px-3 py-4 text-sm text-muted-foreground">{t("admin.noSpecs")}</p>}
-                <div className="border-t border-border-subtle bg-surface-muted/45 p-3"><Button type="button" variant="outline" onClick={addSpec}><Plus className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.addSpec")}</Button></div>
+                <div className="border-t border-border-subtle bg-surface-muted/45 p-3"><Button type="button" variant="outline" onClick={addSpec} disabled={product?.stock_mode === "SUPPLIER"}><Plus className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.addSpec")}</Button></div>
               </div>
               {!draft.spec_enabled && draft.specs.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{t("admin.storedSpecsHint")}</p>}
             </FormSection>
@@ -798,7 +798,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                   <tbody>
                     {!draft.spec_enabled && <tr className="border-t border-border-subtle">
                       <td className="px-3 py-2 font-medium">{t("admin.product")}</td>
-                      <td className="px-3 py-2"><Input ref={registerField("cost_price")} type="number" min="0" step="0.01" value={draft.cost_price} onChange={(event) => setField("cost_price", event.target.value)} placeholder="0.00" /></td>
+                      <td className="px-3 py-2"><Input disabled={product?.stock_mode === "SUPPLIER"} ref={registerField("cost_price")} type="number" min="0" step="0.01" value={draft.cost_price} onChange={(event) => setField("cost_price", event.target.value)} placeholder="0.00" /></td>
                       <td className="px-3 py-2"><Input ref={registerField("retail_price")} type="number" min="0" step="0.01" value={draft.retail_price} onChange={(event) => setField("retail_price", event.target.value)} placeholder="0.00" /></td>
                       <td className={cn("whitespace-nowrap px-3 py-2 font-medium", (formatMargin(draft.cost_price, draft.retail_price) ?? 0) < 0 && "text-amber-600")}>{formatMargin(draft.cost_price, draft.retail_price) === null ? "—" : formatYuan(formatMargin(draft.cost_price, draft.retail_price) || 0)}</td>
                       <td className="whitespace-nowrap px-3 py-2">{formatMarginRate(draft.cost_price, draft.retail_price) === null ? "—" : `${formatMarginRate(draft.cost_price, draft.retail_price)?.toFixed(2)}%`}</td>
@@ -808,7 +808,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                       const marginRate = formatMarginRate(spec.cost_price, spec.retail_price)
                       return <tr key={spec.id} className="border-t border-border-subtle">
                         <td className="px-3 py-2 font-medium">{spec.name || t("admin.unnamed")}</td>
-                        <td className="px-3 py-2"><Input ref={registerField(`spec-cost-${spec.id}`)} type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { cost_price: event.target.value })} placeholder="0.00" /></td>
+                        <td className="px-3 py-2"><Input disabled={product?.stock_mode === "SUPPLIER"} ref={registerField(`spec-cost-${spec.id}`)} type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { cost_price: event.target.value })} placeholder="0.00" /></td>
                         <td className="px-3 py-2"><Input ref={registerField(`spec-retail-${spec.id}`)} type="number" min="0" step="0.01" value={spec.retail_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { retail_price: event.target.value })} placeholder="0.00" /></td>
                         <td className={cn("whitespace-nowrap px-3 py-2 font-medium", margin !== null && margin < 0 && "text-amber-600")}>{margin === null ? "—" : formatYuan(margin)}</td>
                         <td className="whitespace-nowrap px-3 py-2">{marginRate === null ? "—" : `${marginRate.toFixed(2)}%`}</td>
@@ -871,12 +871,13 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 <div className="flex flex-col gap-1.5 text-sm font-medium">
                   {t("admin.deliveryMethod")}
                   <div className="grid grid-cols-2 gap-2">
-                    {(["AUTO", "MANUAL"] as const).map((deliveryType) => <Button key={deliveryType} type="button" variant={draft.delivery_type === deliveryType ? "default" : "outline"} onClick={() => handleDeliveryChange(deliveryType)}>{deliveryType === "AUTO" ? t("admin.autoDelivery") : t("admin.manualDelivery")}</Button>)}
+                    {(["AUTO", "MANUAL"] as const).map((deliveryType) => <Button key={deliveryType} type="button" variant={draft.delivery_type === deliveryType ? "default" : "outline"} onClick={() => handleDeliveryChange(deliveryType)} disabled={product?.stock_mode === "SUPPLIER"}>{deliveryType === "AUTO" ? t("admin.autoDelivery") : t("admin.manualDelivery")}</Button>)}
                   </div>
                 </div>
                 <label className="flex flex-col gap-1.5 text-sm font-medium">
                   {t("admin.stockMode")}
-                  <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={draft.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
+                  <select disabled={product?.stock_mode === "SUPPLIER"} className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={draft.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
+                    {draft.stock_mode === "SUPPLIER" && <option value="SUPPLIER">供应商库存（未开放销售）</option>}
                     {draft.delivery_type === "AUTO" && <option value="CARD_KEY">{t("admin.cardKeyStock")}</option>}
                     {draft.delivery_type === "MANUAL" && <><option value="MANUAL">{t("admin.manualStock")}</option><option value="UNLIMITED">{t("admin.unlimitedStock")}</option></>}
                   </select>

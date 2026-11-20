@@ -36,6 +36,7 @@ services:
       DB_USERNAME: ${DB_USERNAME:-myshop}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in the private environment file}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in the private environment file}
+      SUPPLIER_MASTER_KEY: ${SUPPLIER_MASTER_KEY:-}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}

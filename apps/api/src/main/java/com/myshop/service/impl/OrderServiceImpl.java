@@ -139,6 +139,10 @@ public class OrderServiceImpl implements OrderService {
                 .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
 
+        if (product.getStockMode() == StockMode.SUPPLIER) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "该货源商品暂未开放购买");
+        }
+
         ProductSpec spec = resolveSellableSpec(product, specId);
 
         List<com.myshop.model.CustomerInputValue> customerInputs =

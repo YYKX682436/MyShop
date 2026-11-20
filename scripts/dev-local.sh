@@ -47,6 +47,7 @@ fi
   exec env -i HOME="$HOME" PATH="$PATH" JAVA_HOME="$myshop_java_home" \
     DB_URL="jdbc:postgresql://127.0.0.1:$pg_port/myshop_local" DB_USERNAME=myshop_local DB_PASSWORD=localonly \
     JWT_SECRET='local-preview-only-change-before-any-real-deployment-0123456789-abcdefghijklmnopqrstuvwxyz' \
+    SUPPLIER_MASTER_KEY="${SUPPLIER_MASTER_KEY:-}" \
     PUBLIC_SITE_URL=http://localhost:3000 AUTH_COOKIE_SECURE=false MAIL_ENABLED=false SERVER_ADDRESS=127.0.0.1 \
     BOOTSTRAP_SUPER_ADMIN_USERNAME=muchen-admin BOOTSTRAP_SUPER_ADMIN_PASSWORD=LocalPreview123! \
     UPLOAD_PATH="$data/uploads" PRIVATE_UPLOAD_PATH="$data/private-uploads" mvn -q spring-boot:run

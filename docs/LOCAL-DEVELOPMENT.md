@@ -19,6 +19,8 @@ bash scripts/dev-local.sh
 
 正常提交和推送不会运行 Actions。正式发布由 Codex 在你明确要求后手动运行 GitHub Actions，生成固定 SHA 镜像和发布清单，再按共享服务器部署流程执行。共享服务器说明见 [DEPLOYMENT-SHARED-SERVER.md](DEPLOYMENT-SHARED-SERVER.md)。
 
+货源账号的密钥使用 AES-GCM 保存。需要使用货源管理时，启动前设置环境变量 `SUPPLIER_MASTER_KEY`，值为随机生成的 32 字节密钥的 Base64 编码；该值应保存在仓库外的私有环境配置中，并在后续启动时保持一致。缺少或更换此值会导致货源密钥无法保存或解密，但不影响本地商品和支付。导入的货源商品在采购功能验收前保持下架。
+
 卡券浏览器回归可在本地预览运行时，另开终端执行：
 
 ```bash

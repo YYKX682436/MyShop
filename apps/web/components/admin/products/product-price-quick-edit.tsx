@@ -40,7 +40,7 @@ export function ProductPriceQuickEdit({
   const focusPriceInput = useCallback(() => {
     const focusTarget = getAdminProductPriceFocusTarget(product, target)
     if (!focusTarget) return
-    const ref = focusTarget.target === "cost"
+    const ref = focusTarget.target === "cost" && product.stock_mode !== "SUPPLIER"
       ? costInputRefs.current[focusTarget.key]
       : retailInputRefs.current[focusTarget.key]
     ref?.focus()
@@ -158,7 +158,7 @@ export function ProductPriceQuickEdit({
                 onChange={(event) => updateRootPrice("cost_price", event.target.value)}
                 onKeyDown={handlePriceKeyDown}
                 aria-label={t("admin.costPriceShort")}
-                disabled={saving}
+                disabled={saving || product.stock_mode === "SUPPLIER"}
               />
             </label>
             <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
@@ -199,7 +199,7 @@ export function ProductPriceQuickEdit({
                         onChange={(event) => updateSpecPrice(spec.id, "cost_price", event.target.value)}
                         onKeyDown={handlePriceKeyDown}
                         aria-label={`${t("admin.costPriceShort")}: ${spec.name}`}
-                        disabled={saving}
+                        disabled={saving || product.stock_mode === "SUPPLIER"}
                       />
                     </label>
                     <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">

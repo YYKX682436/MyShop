@@ -40,6 +40,14 @@ public class ProductInventoryBatchService {
 
         Map<PriceTarget, StockSnapshot> result = new HashMap<>();
         for (Product product : products) {
+            if (product.getStockMode() == StockMode.SUPPLIER) {
+                // Remote stock is a separate supplier snapshot, not fulfillable inventory in P1.
+                result.put(new PriceTarget(product.getId(), null), new StockSnapshot(0L, false));
+                for (ProductSpec spec : specsByProduct.getOrDefault(product.getId(), List.of())) {
+                    result.put(new PriceTarget(product.getId(), spec.getId()), new StockSnapshot(0L, false));
+                }
+                continue;
+            }
             if (product.getStockMode() == StockMode.UNLIMITED) {
                 result.put(new PriceTarget(product.getId(), null), new StockSnapshot(null, true));
                 for (ProductSpec spec : specsByProduct.getOrDefault(product.getId(), List.of())) {

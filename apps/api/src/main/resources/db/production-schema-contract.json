@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 44,
-  "latest_migration_version": "44",
+  "migration_count": 45,
+  "latest_migration_version": "45",
   "tables": {
     "users": ["id", "username", "role"],
     "products": ["id", "title", "retail_price", "card_content_column_count"],
@@ -18,7 +18,9 @@
     "sales_channel_recovery_permit_events": ["event_id", "permit_id", "generation", "event_type", "previous_generation", "previous_state", "new_state", "operator", "reason", "event_at", "recorded_at", "execution_fence", "identity_fingerprint", "evidence_json"],
     "sales_channel_orders": ["id", "sales_channel_account_id", "sales_channel_listing_id", "sales_channel_listing_generation_id", "order_id", "ingest_status", "delivery_status"],
     "sales_channel_delivery_operations": ["id", "sales_channel_order_id", "card_key_id", "status"],
-    "user_secret_prices": ["id", "user_id", "product_id", "spec_id", "price", "created_at", "updated_at"]
+    "user_secret_prices": ["id", "user_id", "product_id", "spec_id", "price", "created_at", "updated_at"],
+    "supplier_accounts": ["id", "provider_type", "base_url", "app_id", "encrypted_secret", "enabled"],
+    "supplier_product_mappings": ["id", "account_id", "remote_goods_id", "remote_sku", "product_id", "spec_id", "cost", "stock", "snapshot", "last_synced_at", "last_attempt_at", "sync_error"]
   },
   "indexes": [
     "uq_sales_channel_listing_generations_account_item",
@@ -31,6 +33,8 @@
     "idx_sales_channel_delivery_worker",
     "idx_sales_channel_recovery_event_generation",
     "uq_user_secret_price_product",
-    "uq_user_secret_price_spec"
+    "uq_user_secret_price_spec",
+    "uq_supplier_mapping_remote",
+    "uq_supplier_mapping_local"
   ]
 }

@@ -148,6 +148,9 @@ public class AdminProductServiceImpl implements AdminProductService {
         Product product = productRepository.findByIdForUpdate(id)
                 .filter(candidate -> candidate.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
+        if (request.enabled() && product.getStockMode() == StockMode.SUPPLIER) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售");
+        }
         if (request.enabled() && !product.isEnabled() && product.isSpecEnabled()) {
             validateVisibleSpecRequirement(product.isSpecEnabled(), request.enabled(),
                     productSpecRepository.existsByProductIdAndIsDeletedAndVisible(product.getId(), 0, true));
@@ -206,6 +209,7 @@ public class AdminProductServiceImpl implements AdminProductService {
         }
 
         BigDecimal costPrice = ProductRules.validateMoney(request.costPrice(), false, "成本价");
+        if (product.getStockMode() == StockMode.SUPPLIER) costPrice = product.getCostPrice();
         BigDecimal retailPrice = ProductRules.validateMoney(request.retailPrice(), true, "零售价");
         validateExistingOverridePrices(product, Map.of(), retailPrice);
         validateSecretPrices(product, false, Map.of(), retailPrice);
@@ -246,6 +250,7 @@ public class AdminProductServiceImpl implements AdminProductService {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "规格价格参数不能重复");
             }
             BigDecimal costPrice = ProductRules.validateMoney(requested.costPrice(), false, "规格成本价");
+            if (product.getStockMode() == StockMode.SUPPLIER) costPrice = spec.getCostPrice();
             BigDecimal retailPrice = ProductRules.validateMoney(requested.retailPrice(), true, "规格零售价");
             nextCostBySpec.put(spec.getId(), costPrice);
             nextRetailBySpec.put(spec.getId(), retailPrice);
@@ -534,11 +539,36 @@ public class AdminProductServiceImpl implements AdminProductService {
         if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "商品参数不能为空");
         List<ProductSpec> existingSpecs = creating ? List.of()
                 : productSpecRepository.findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(), 0);
+        if ((creating || product.getStockMode() != StockMode.SUPPLIER) && request.stockMode() == StockMode.SUPPLIER) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品只能通过货源管理导入");
+        }
+        if (!creating && product.getStockMode() == StockMode.SUPPLIER) {
+            if (Boolean.TRUE.equals(request.isEnabled()) ||
+                    (request.stockMode() != null && request.stockMode() != StockMode.SUPPLIER) ||
+                    (request.deliveryType() != null && !"AUTO".equalsIgnoreCase(request.deliveryType())) ||
+                    (request.specEnabled() != null && request.specEnabled() != product.isSpecEnabled())) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售，不能更换库存或规格模式");
+            }
+            if (request.specs() != null) {
+                Set<UUID> currentIds = existingSpecs.stream().map(ProductSpec::getId).collect(Collectors.toSet());
+                Set<UUID> requestedIds = request.specs().stream().filter(Objects::nonNull)
+                        .map(AdminProductSpecRequest::id).collect(Collectors.toSet());
+                if (requestedIds.contains(null) || !currentIds.equals(requestedIds)
+                        || requestedIds.size() != request.specs().size()) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "货源规格由上游同步，不能增删规格");
+                }
+            }
+        }
         boolean specEnabled = request.specEnabled() != null
                 ? request.specEnabled() : (!creating && product.isSpecEnabled());
         List<PreparedSpec> preparedSpecs = prepareSpecs(request.specs(), existingSpecs, specEnabled, creating);
+        if (!creating && product.getStockMode() == StockMode.SUPPLIER) {
+            preparedSpecs = preparedSpecs.stream().map(s -> new PreparedSpec(s.request(), s.id(), s.existing(),
+                    s.name(), s.existing().getCostPrice(), s.retailPrice())).toList();
+        }
         BigDecimal retailPrice = resolveRetailPrice(product, request, preparedSpecs, specEnabled, creating);
         BigDecimal costPrice = resolveCostPrice(product, request, specEnabled, creating);
+        if (!creating && product.getStockMode() == StockMode.SUPPLIER && !specEnabled) costPrice = product.getCostPrice();
         if (specEnabled) costPrice = null;
 
         String title = ProductRules.normalizeProductTitle(request.title());

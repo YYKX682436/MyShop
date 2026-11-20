@@ -90,7 +90,7 @@ export interface ProductSpec {
   retail_price: number
   stock_available: number | null
   unlimited?: boolean
-  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
   manual_stock?: number | null
   card_key_count?: number
   is_visible?: boolean
@@ -130,7 +130,7 @@ export interface ProductCard {
   has_specs: boolean
   delivery_type?: string
   customer_input_fields: CustomerInputField[]
-  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
   sales_count?: number
   initial_sales?: number
   is_enabled?: boolean
@@ -226,7 +226,7 @@ export interface AdminProductDetail {
   has_specs: boolean
   delivery_type: "AUTO" | "MANUAL"
   customer_input_fields: CustomerInputField[]
-  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
   /** null: unconfigured; 0: conflicting historical formats; positive: fixed column count. */
   card_content_column_count: number | null
   card_content_column_counts: number[]
@@ -334,7 +334,7 @@ export interface OrderItemBrief {
   quantity: number
   unit_price: number
   delivery_type: string
-  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  stock_mode: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
   fulfillment_status: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED"
 }
 
@@ -681,7 +681,7 @@ export interface CardKeyStockSummary {
   invalid: number
   reserved?: number
   unlimited?: boolean
-  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED"
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
 }
 
 export interface CardKeyListItem {
@@ -843,7 +843,7 @@ export interface AdminUserOrderItem {
   unit_price: number
   subtotal: number
   delivery_type?: string | null
-  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED" | string | null
+  stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER" | string | null
   fulfillment_status?: "PENDING" | "WAITING_MANUAL" | "DELIVERED" | "CANCELLED" | string | null
 }
 

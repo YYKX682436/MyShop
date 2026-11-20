@@ -147,10 +147,10 @@ public final class ProductRules {
     }
 
     public static StockMode validateStockMode(String deliveryType, StockMode requested) {
-        if ("AUTO".equals(deliveryType) && requested != StockMode.CARD_KEY) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "自动发货商品只能使用卡券库存");
+        if ("AUTO".equals(deliveryType) && requested != StockMode.CARD_KEY && requested != StockMode.SUPPLIER) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "自动发货商品库存模式无效");
         }
-        if ("MANUAL".equals(deliveryType) && requested == StockMode.CARD_KEY) {
+        if ("MANUAL".equals(deliveryType) && (requested == StockMode.CARD_KEY || requested == StockMode.SUPPLIER)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "人工商品只能使用手动库存或无限库存");
         }
         return requested;

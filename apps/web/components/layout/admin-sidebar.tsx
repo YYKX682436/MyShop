@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Package,
   ScrollText,
+  Truck,
   Settings,
   ShieldAlert,
   ShieldCheck,
@@ -60,6 +61,7 @@ const navGroups: AdminNavGroup[] = [
     items: [
       { labelKey: "admin.products", href: "/admin/products", icon: Package },
       { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
+      { labelKey: "admin.suppliers", href: "/admin/suppliers", icon: Truck },
       { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
     ],
   },

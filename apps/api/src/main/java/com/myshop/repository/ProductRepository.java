@@ -82,6 +82,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
                    p.low_stock_threshold,
                    CASE
                        WHEN p.stock_mode = 'UNLIMITED' THEN NULL
+                       WHEN p.stock_mode = 'SUPPLIER' THEN 0
                        WHEN p.stock_mode = 'MANUAL' THEN COALESCE(ms.available_stock, 0)
                        ELSE COALESCE(cs.available_stock, 0)
                    END AS available_stock
@@ -101,6 +102,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
               AND p.is_enabled = true
             ORDER BY CASE
                          WHEN p.stock_mode = 'UNLIMITED' THEN 1
+                         WHEN p.stock_mode = 'SUPPLIER' THEN 0
                          WHEN p.stock_mode = 'MANUAL' THEN COALESCE(ms.available_stock, 0)
                          ELSE COALESCE(cs.available_stock, 0)
                      END ASC,
