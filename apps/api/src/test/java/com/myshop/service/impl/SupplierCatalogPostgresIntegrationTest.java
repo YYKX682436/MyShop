@@ -786,7 +786,8 @@ class SupplierCatalogPostgresIntegrationTest {
         jdbc.update("update products set is_enabled=true where id=?",id);
         long before=jdbc.queryForObject("select count(*) from orders",Long.class);
         String expectedPrice=products.findById(id).orElseThrow().getRetailPrice().toPlainString();
-        var req=Map.<String,Object>of("product_id",id.toString(),"quantity",1,"expected_unit_price",expectedPrice);
+        var req=Map.<String,Object>of("product_id",id.toString(),"quantity",1,"payment_method","BALANCE",
+                "expected_unit_price",expectedPrice);
         BusinessException ex=assertThrows(BusinessException.class,()->orders.createDirectOrder(req,null,"127.0.0.1","guest-session"));
         assertTrue(ex.getMessage().contains("停用"));
         assertEquals(before,jdbc.queryForObject("select count(*) from orders",Long.class));
