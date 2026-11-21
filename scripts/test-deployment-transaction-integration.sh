@@ -215,6 +215,17 @@ if [[ "$mode" == retention ]]; then
 fi
 
 case "${1:-}" in
+  create)
+    ref=${!#}
+    printf 'inspection-%s\n' "${ref##*:}"
+    ;;
+  cp)
+    source=${2:-}; destination=${3:-}
+    count=55
+    [[ "${FAKE_RECOVERY_CONTRACT_MISMATCH:-0}" != 1 || "$source" != *"$candidate_sha"* ]] || count=54
+    printf '{"version":1,"migration_count":%s,"latest_migration_version":"55","tables":{},"indexes":[]}\n' "$count" >"$destination"
+    ;;
+  rm) ;;
   pull)
     [[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || exit 1
     printf '%s\n' "${2:-}" >>"${FAKE_PULL_LOG:?}"
@@ -297,6 +308,11 @@ case "${1:-}" in
     ;;
   exec)
     [[ "${2:-}" == -i ]] || exit 99
+    sql=$(cat)
+    if [[ "$sql" == *'COUNT(*) FILTER'* ]]; then
+      if [[ "${FAKE_RECOVERY_DB_MISMATCH:-0}" == 1 ]]; then printf '54|54|0\n'; else printf '55|55|0\n'; fi
+      exit 0
+    fi
     if [[ "${FAKE_SCHEMA_MODE:-}" == unreadable && "$stage" == stopped ]]; then exit 1; fi
     if [[ "${FAKE_SCHEMA_MODE:-}" == changed && "$stage" == stopped ]]; then
       printf '%032d\n' 1
@@ -572,6 +588,41 @@ grep -Fq 'forward recovery preflight failed' <<<"$recovery_output" || fail 'fail
 [[ ! -s "$case_root/backup.log" && ! -s "$case_root/compose.log" ]] || fail 'failed recovery preflight reached mutation'
 cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'failed recovery preflight changed accepted state'
 pass 'failed forward recovery preflight blocks before mutation'
+
+reset_case
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+printf 'stopped\n' >"$case_root/running"
+saved_manifest=$manifest
+manifest="$tmp_dir/old-recovery-manifest.json"
+python3 - "$saved_manifest" "$manifest" "$old_sha" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1])); old = sys.argv[3]
+data['source_sha'] = old
+for service in ('api', 'web'):
+    data['images'][service]['ref'] = f'ghcr.io/yykx682436/myshop-{service}:{old}'
+json.dump(data, open(sys.argv[2], 'w'))
+PY
+if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+manifest=$saved_manifest
+(( recovery_status != 0 )) || fail 'forward recovery accepted the older baseline API'
+[[ ! -s "$case_root/backup.log" && ! -s "$case_root/compose.log" ]] || fail 'older baseline API reached mutation during recovery'
+pass 'forward recovery rejects the older accepted release'
+
+for mismatch in contract database; do
+  reset_case
+  printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+  printf 'stopped\n' >"$case_root/running"
+  if [[ "$mismatch" == contract ]]; then
+    if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_CONTRACT_MISMATCH=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+  else
+    if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_DB_MISMATCH=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+  fi
+  (( recovery_status == 2 )) || fail "forward recovery accepted mismatched $mismatch schema"
+  grep -Fq 'reason=schema-compatibility' <<<"$recovery_output" || fail "forward recovery did not report mismatched $mismatch schema"
+  ! grep -Fxq up "$case_root/compose.log" || fail "mismatched $mismatch schema started an API"
+  cmp -s "$base_state" "$case_root/deploy-state.json" || fail "mismatched $mismatch schema changed accepted state"
+done
+pass 'forward recovery refuses mismatched image contracts and database migration history'
 deploy_script=$normal_deploy_script
 
 reset_case

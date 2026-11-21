@@ -61,6 +61,8 @@ failed release; set `MYSHOP_FORWARD_RECOVERY_FAILED_SHA` to its full SHA and run
 `deploy-production.sh` with the new release manifest and its verified offline
 bundle. The deploy script repeats the recovery preflight under its lock, creates
 a new recovery point, and keeps the old API stopped if the new release fails.
+Before starting anything, it compares the new API image's schema contract to the
+failed migrated image and checks it against the current Flyway history.
 After acceptance, update the original private environment's release references
 to the newly accepted SHA and remove the temporary environment copy.
 

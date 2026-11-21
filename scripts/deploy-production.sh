@@ -102,7 +102,11 @@ state_existed=0
 candidate_started=0
 committed=0
 shared_bootstrap=0
-cleanup_tmp() { rm -rf -- "$tmp_dir"; }
+inspection_id=
+cleanup_tmp() {
+  [[ -z "$inspection_id" ]] || docker rm "$inspection_id" >/dev/null 2>&1 || true
+  rm -rf -- "$tmp_dir"
+}
 trap cleanup_tmp EXIT
 exec 9>"$HOST_LOCK"
 flock -n 9 || die 'another deployment or storage lifecycle operation is active'
@@ -195,7 +199,7 @@ forward_recovery=0
 recovery_failed_sha=${MYSHOP_FORWARD_RECOVERY_FAILED_SHA:-}
 if [[ -n "$recovery_failed_sha" ]]; then
   (( shared_server_mode && state_existed )) || die 'forward recovery requires an accepted shared-server deployment'
-  [[ "$offline_images" == 1 && "$recovery_failed_sha" =~ ^[0-9a-f]{40}$ && "$recovery_failed_sha" != "$candidate_sha" ]] \
+  [[ "$offline_images" == 1 && "$recovery_failed_sha" =~ ^[0-9a-f]{40}$ && "$recovery_failed_sha" != "$candidate_sha" && "$candidate_sha" != "$active_sha" ]] \
     || die 'forward recovery requires a new candidate and a verified failed offline release'
   [[ -x "$SCRIPT_DIR/preflight-shared-server.sh" ]] || die 'forward recovery preflight is unavailable'
   MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" MYSHOP_COMPOSE_FILE="$COMPOSE_FILE" \
@@ -330,6 +334,42 @@ SQL
   ) || return 1
   [[ "$fingerprint" =~ ^[0-9a-f]{32}$ ]] || return 1
   printf '%s\n' "$fingerprint"
+}
+
+verify_recovery_contracts() {
+  local service_ref destination db_id actual expected
+  for service_ref in "$approved_registry/myshop-api:$recovery_failed_sha" "${candidate_ref[api]}"; do
+    destination="$tmp_dir/contract-${service_ref##*:}.json"
+    # Create an isolated, never-started container solely to read the immutable
+    # image's contract; no production volume or network is attached.
+    inspection_id=$(docker create --network none --entrypoint /bin/false "$service_ref") || return 1
+    docker cp "$inspection_id:/app/production-schema-contract.json" "$destination" >/dev/null || return 1
+    docker rm "$inspection_id" >/dev/null || return 1
+    inspection_id=
+  done
+  expected=$(python3 - "$tmp_dir/contract-$recovery_failed_sha.json" "$tmp_dir/contract-$candidate_sha.json" <<'PY'
+import json, re, sys
+old, new = (json.load(open(path, encoding='utf-8')) for path in sys.argv[1:])
+if old != new or new.get('version') != 1:
+    raise SystemExit('candidate schema contract differs from the failed migrated release')
+count, latest = new.get('migration_count'), str(new.get('latest_migration_version', ''))
+if not isinstance(count, int) or count < 1 or not re.fullmatch(r'[0-9]+', latest):
+    raise SystemExit('candidate schema migration contract is invalid')
+print(f'{count}|{latest}|0')
+PY
+  ) || return 1
+  db_id=$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+    --filter 'label=com.docker.compose.service=db' -q \
+    | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') || return 1
+  actual=$(docker exec -i "$db_id" sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atq' <<'SQL'
+SELECT COUNT(*) FILTER (WHERE type = 'SQL'),
+       COALESCE(MAX(version::bigint) FILTER (WHERE type = 'SQL'), 0),
+       COUNT(*) FILTER (WHERE NOT success)
+FROM flyway_schema_history;
+SQL
+  ) || return 1
+  [[ "$actual" == "$expected" ]] || return 1
 }
 
 prepare_prospective_state() {
@@ -607,6 +647,9 @@ if (( shared_bootstrap )); then
 fi
 [[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || pre_commit_fail pull
 pull_candidate || pre_commit_fail pull
+if (( forward_recovery )); then
+  verify_recovery_contracts || pre_commit_fail schema-compatibility
+fi
 # Later releases already have an accepted running version, so pull and digest
 # verification first to avoid backup churn for an unavailable candidate.
 if (( ! shared_bootstrap )); then
