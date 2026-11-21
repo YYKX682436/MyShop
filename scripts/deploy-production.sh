@@ -191,7 +191,22 @@ verify_baseline() {
       | grep -F "@${before_digest[$service]}" >/dev/null || return 1
   done
 }
-if (( ! shared_bootstrap )); then
+forward_recovery=0
+recovery_failed_sha=${MYSHOP_FORWARD_RECOVERY_FAILED_SHA:-}
+if [[ -n "$recovery_failed_sha" ]]; then
+  (( shared_server_mode && state_existed )) || die 'forward recovery requires an accepted shared-server deployment'
+  [[ "$offline_images" == 1 && "$recovery_failed_sha" =~ ^[0-9a-f]{40}$ && "$recovery_failed_sha" != "$candidate_sha" ]] \
+    || die 'forward recovery requires a new candidate and a verified failed offline release'
+  [[ -x "$SCRIPT_DIR/preflight-shared-server.sh" ]] || die 'forward recovery preflight is unavailable'
+  MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" MYSHOP_COMPOSE_FILE="$COMPOSE_FILE" \
+    MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$recovery_failed_sha" \
+    MYSHOP_API_IMAGE="$approved_registry/myshop-api:$recovery_failed_sha" \
+    MYSHOP_WEB_IMAGE="$approved_registry/myshop-web:$recovery_failed_sha" \
+    "$SCRIPT_DIR/preflight-shared-server.sh" --mode forward-recovery \
+    || die 'forward recovery preflight failed'
+  forward_recovery=1
+  printf 'FORWARD_RECOVERY_VERIFIED failed=%s candidate=%s\n' "$recovery_failed_sha" "$candidate_sha"
+elif (( ! shared_bootstrap )); then
   verify_baseline || die 'running production does not match the accepted baseline image refs/digests'
 fi
 
@@ -504,6 +519,12 @@ PY
 restore_old() {
   local current_schema
   rollback_state || return 1
+  if (( forward_recovery )); then
+    # The accepted older API was never validated against this migrated schema.
+    # A failed forward recovery must leave all app-facing services stopped.
+    run_compose stop api web caddy || return 1
+    return 2
+  fi
   if (( shared_bootstrap )); then
     # There is no accepted application version to restore. Stop only this
     # candidate's app-facing services; preserve the imported DB and its backup.

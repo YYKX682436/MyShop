@@ -517,6 +517,63 @@ for schema_mode in changed unreadable; do
 done
 pass 'changed or unreadable Flyway history blocks old API rollback and preserves recovery data'
 
+# Exercise the production deployment transaction with a separately tested
+# preflight stub: forward recovery may only proceed after that gate succeeds,
+# and it must never start the older API if the new candidate fails.
+recovery_scripts="$tmp_dir/recovery-scripts"
+mkdir -p "$recovery_scripts"
+cp "$deploy_script" "$recovery_scripts/deploy-production.sh"
+cp "$repo_dir/scripts/validate-release-manifest.py" "$recovery_scripts/validate-release-manifest.py"
+cat >"$recovery_scripts/preflight-shared-server.sh" <<'RECOVERY_PREFLIGHT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$*" == '--mode forward-recovery' ]]
+[[ "${MYSHOP_FORWARD_RECOVERY_FAILED_SHA:-}" == "$ROLLBACK1_SHA" ]]
+[[ "${MYSHOP_API_IMAGE:-}" == "$FAKE_REGISTRY/myshop-api:$ROLLBACK1_SHA" ]]
+[[ "${MYSHOP_WEB_IMAGE:-}" == "$FAKE_REGISTRY/myshop-web:$ROLLBACK1_SHA" ]]
+printf 'recovery-preflight\n' >>"$FAKE_ROOT/recovery-preflight.log"
+[[ "${FAKE_RECOVERY_PREFLIGHT_FAIL:-0}" != 1 ]]
+RECOVERY_PREFLIGHT
+chmod +x "$recovery_scripts/preflight-shared-server.sh"
+normal_deploy_script=$deploy_script
+deploy_script="$recovery_scripts/deploy-production.sh"
+
+reset_case
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+printf 'stopped\n' >"$case_root/running"
+if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+(( recovery_status == 0 )) || { printf '%s\n' "$recovery_output" >&2; fail 'forward recovery candidate failed'; }
+grep -Fq 'FORWARD_RECOVERY_VERIFIED' <<<"$recovery_output" || fail 'forward recovery gate was not recorded'
+grep -Fxq 'recovery-preflight' "$case_root/recovery-preflight.log" || fail 'forward recovery skipped preflight'
+[[ "$(<"$case_root/running")" == candidate && -f "$case_root/recovery-point.dump" ]] || fail 'forward recovery did not back up and start the candidate'
+python3 - "$case_root/deploy-state.json" "$candidate_sha" <<'PY'
+import json, sys
+assert json.load(open(sys.argv[1]))['active']['source_sha'] == sys.argv[2]
+PY
+pass 'forward recovery verifies its gate and promotes only the healthy new candidate'
+
+reset_case
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+printf 'stopped\n' >"$case_root/running"
+if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" DEPLOY_TEST_FAIL=health-after-start run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+(( recovery_status == 2 )) || fail 'failed forward recovery did not block rollback'
+grep -Fq 'CRITICAL_SCHEMA_ROLLBACK_BLOCKED' <<<"$recovery_output" || fail 'failed forward recovery was not reported'
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'failed forward recovery changed accepted state'
+[[ "$(<"$case_root/running")" == stopped && "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail 'failed forward recovery restarted the older API'
+[[ -f "$case_root/recovery-point.dump" ]] || fail 'failed forward recovery lost its recovery point'
+pass 'failed forward recovery stops the candidate and never starts the older API'
+
+reset_case
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+printf 'stopped\n' >"$case_root/running"
+if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_PREFLIGHT_FAIL=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+(( recovery_status != 0 )) || fail 'failed recovery preflight was ignored'
+grep -Fq 'forward recovery preflight failed' <<<"$recovery_output" || fail 'failed recovery preflight was not reported'
+[[ ! -s "$case_root/backup.log" && ! -s "$case_root/compose.log" ]] || fail 'failed recovery preflight reached mutation'
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'failed recovery preflight changed accepted state'
+pass 'failed forward recovery preflight blocks before mutation'
+deploy_script=$normal_deploy_script
+
 reset_case
 set +e
 stop_output=$(FAKE_STOP_FAIL=1 DEPLOY_TEST_FAIL=health-after-start run_deploy 2>&1)

@@ -50,6 +50,20 @@ the stack, restore a database from another host, or change DNS or TLS.
    and `/api/site/config`. Verify the changed feature and report the version
    deployed. Do not use the disabled candidate site for acceptance.
 
+If a release reports `CRITICAL_SCHEMA_ROLLBACK_BLOCKED`, keep the old API
+stopped. A subsequent, fully validated release may use forward recovery:
+the `forward-recovery` preflight requires the failed release's stopped
+containers, verified offline bundle, failure log, intact predeploy database dump,
+healthy database, and readable Flyway history. Use a root-only copy of the
+private environment whose image, bundle, and manifest references identify that
+failed release; set `MYSHOP_FORWARD_RECOVERY_FAILED_SHA` to its full SHA and run
+`preflight-shared-server.sh --mode forward-recovery`. Then run the normal
+`deploy-production.sh` with the new release manifest and its verified offline
+bundle. The deploy script repeats the recovery preflight under its lock, creates
+a new recovery point, and keeps the old API stopped if the new release fails.
+After acceptance, update the original private environment's release references
+to the newly accepted SHA and remove the temporary environment copy.
+
 Use the currently configured loopback port, confirmed on the host. The example
 below uses `8082`; if it differs, match the verified production binding.
 `PUBLIC_SITE_URL` in the existing private configuration remains

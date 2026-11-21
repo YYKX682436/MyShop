@@ -19,7 +19,7 @@ while (( $# )); do
       *) die "unknown argument: $1" ;;
   esac
 done
-[[ "$MODE" == first-install || "$MODE" == bootstrap-retry || "$MODE" == upgrade ]] || die '--mode must be first-install, bootstrap-retry, or upgrade'
+[[ "$MODE" == first-install || "$MODE" == bootstrap-retry || "$MODE" == upgrade || "$MODE" == forward-recovery ]] || die '--mode must be first-install, bootstrap-retry, upgrade, or forward-recovery'
 
 command -v docker >/dev/null 2>&1 || die 'docker is unavailable'
 docker compose version >/dev/null 2>&1 || die 'Docker Compose v2 is unavailable'
@@ -38,6 +38,7 @@ python3 - "$tmp_dir/compose.json" "$ENV_FILE" "$PROJECT_NAME" "$MODE" "$PROJECT_
 from __future__ import annotations
 
 import ipaddress
+import hashlib
 import json
 import os
 import re
@@ -90,6 +91,59 @@ def assert_no_symlink_components(path: Path, label: str) -> Path:
     if resolved != normalized:
         fail(f"{label} resolves outside its configured path: {resolved}")
     return resolved
+
+
+def verify_recovery_records(runtime_root: Path, backup_root: Path, project: str, active_sha: str, failed_sha: str, database_identity: str) -> None:
+    """Require the recorded schema-blocked attempt and its intact recovery point."""
+    if not re.fullmatch(r"[0-9a-f]{40}", failed_sha) or failed_sha == active_sha:
+        fail("forward recovery requires a distinct full failed-candidate SHA")
+    marker_path = assert_no_symlink_components(runtime_root / "candidates" / f"{failed_sha}.failed.json", "failed candidate marker")
+    log_path = assert_no_symlink_components(runtime_root / f"deploy-{failed_sha}.log", "failed candidate log")
+    for path in (marker_path, log_path):
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            fail("forward recovery records must be regular files owned by the operator")
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        fail(f"failed candidate marker is invalid: {exc}")
+    if marker.get("version") != 1 or marker.get("status") != "FAILED" or marker.get("source_sha") != failed_sha:
+        fail("failed candidate marker does not match forward recovery")
+    reason = marker.get("reason")
+    if not isinstance(reason, str) or not re.fullmatch(r"[a-z0-9-]+", reason):
+        fail("failed candidate reason is invalid")
+    expected = f"CRITICAL_SCHEMA_ROLLBACK_BLOCKED source={failed_sha} reason={reason}; database and recovery point preserved, application services stopped"
+    if expected not in log_path.read_text(encoding="utf-8").splitlines():
+        fail("failed candidate log does not confirm a schema-blocked rollback")
+    backup_root = assert_no_symlink_components(backup_root, "recovery backup directory")
+    found = False
+    for manifest_path in backup_root.glob(f"{project}-predeploy-*-{failed_sha}.dump.manifest.json"):
+        try:
+            assert_no_symlink_components(manifest_path, "recovery backup manifest")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            dump = Path(manifest["filename"])
+            if dump.parent != backup_root or dump.name + ".manifest.json" != manifest_path.name:
+                continue
+            assert_no_symlink_components(dump, "recovery backup")
+            if any(not stat.S_ISREG(path.stat().st_mode) or path.stat().st_uid != os.geteuid() for path in (manifest_path, dump)):
+                continue
+            if (manifest.get("version") != 1 or manifest.get("project") != project
+                    or manifest.get("candidate_sha") != failed_sha or manifest.get("source_active_sha") != active_sha
+                    or manifest.get("database_identity") != database_identity
+                    or manifest.get("validation", {}).get("pg_restore_list") != "passed"
+                    or dump.stat().st_size != manifest.get("size") or dump.stat().st_size <= 0):
+                continue
+            digest = hashlib.sha256()
+            with dump.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() == manifest.get("sha256"):
+                found = True
+                break
+        except (OSError, ValueError, KeyError, TypeError, SystemExit):
+            continue
+    if not found:
+        fail("forward recovery has no intact predeploy database recovery point")
 
 
 if os.geteuid() != 0:
@@ -220,6 +274,8 @@ for line in data_root_raw.splitlines():
 offline_images = env_values.get("MYSHOP_OFFLINE_IMAGES", "0")
 if offline_images not in {"0", "1"}:
     fail("MYSHOP_OFFLINE_IMAGES must be 0 or 1")
+if mode == "forward-recovery" and offline_images != "1":
+    fail("forward recovery requires the verified offline image bundle")
 for service_name, image in ((name, str(services[name].get("image", ""))) for name in expected_digest_refs):
     if image == expected_digest_refs[service_name]:
         continue
@@ -364,10 +420,39 @@ else:
         active_sha = active["source_sha"]
         if state.get("version") != 1 or not re.fullmatch(r"[0-9a-f]{40}", active_sha):
             raise ValueError("invalid accepted state")
-        for service in ("api", "web"):
-            expected_ref = active["images"][service]["ref"]
-            if rows_by_service[service][0][2] != expected_ref:
-                fail(f"running {service} image does not match the accepted deployment state")
+        if mode == "forward-recovery":
+            failed_sha = os.environ.get("MYSHOP_FORWARD_RECOVERY_FAILED_SHA", "")
+            if app_shas != {failed_sha}:
+                fail("forward recovery Compose images must identify the failed candidate")
+            for service in ("api", "web"):
+                record = active["images"][service]
+                if (record.get("ref") != f"ghcr.io/yykx682436/myshop-{service}:{active_sha}"
+                        or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(record.get("digest", "")))):
+                    fail("forward recovery requires a complete accepted baseline")
+            if (rows_by_service["caddy"][0][3] != "exited" or rows_by_service["db"][0][3] != "running"
+                    or rows_by_service["node-exporter"][0][3] != "running"):
+                fail("forward recovery requires stopped Caddy and running database and metrics services")
+            db_id = rows_by_service["db"][0][0]
+            if run("docker", "inspect", "--format", "{{.State.Health.Status}}", db_id) != "healthy":
+                fail("forward recovery requires a healthy database")
+            database_identity = run("docker", "exec", db_id, "sh", "-c", 'printf "%s@%s/%s" "$POSTGRES_USER" "${POSTGRES_HOSTNAME:-db}" "$POSTGRES_DB"')
+            verify_recovery_records(runtime_root, Path(env_values.get("MYSHOP_BACKUP_DIR", "")), expected_project, active_sha, failed_sha, database_identity)
+            for service in ("api", "web"):
+                container_id, _name, image, state = rows_by_service[service][0]
+                expected_ref = f"ghcr.io/yykx682436/myshop-{service}:{failed_sha}"
+                if state != "exited" or image != expected_ref:
+                    fail(f"forward recovery requires the failed {service} container to be stopped")
+                expected_id = run(sys.executable, str(script_dir / "verify-offline-image-bundle.py"), str(bundle_path), "--get-loaded-image-id", service)
+                if run("docker", "inspect", "--format", "{{.Image}}", container_id) != expected_id:
+                    fail(f"failed {service} container image differs from the verified bundle")
+            failures = run("docker", "exec", db_id, "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atq -c "SELECT COUNT(*) FROM flyway_schema_history WHERE NOT success"')
+            if failures != "0":
+                fail("forward recovery requires a readable Flyway history without failures")
+        else:
+            for service in ("api", "web"):
+                expected_ref = active["images"][service]["ref"]
+                if rows_by_service[service][0][2] != expected_ref:
+                    fail(f"running {service} image does not match the accepted deployment state")
     except Exception as exc:
         fail(f"upgrade mode requires a valid accepted deployment state: {exc}")
 
@@ -379,7 +464,7 @@ for network_id in network_ids:
         fail(f"could not inspect an existing Docker network: {exc}")
     for item in rows:
         name = item.get("Name", "unknown")
-        if mode in {"upgrade", "bootstrap-retry"} and name in expected_networks:
+        if mode in {"upgrade", "bootstrap-retry", "forward-recovery"} and name in expected_networks:
             if name == f"{expected_project}_edge":
                 actual_configs = item.get("IPAM", {}).get("Config", []) or []
                 actual_pairs = {
@@ -420,7 +505,7 @@ for route in routes:
         existing = ipaddress.ip_network(destination, strict=False)
     except ValueError:
         continue
-    if mode in {"upgrade", "bootstrap-retry"} and existing == edge_network:
+    if mode in {"upgrade", "bootstrap-retry", "forward-recovery"} and existing == edge_network:
         continue
     conflict = overlap_message(edge_network, existing, "host route")
     if conflict:
@@ -430,7 +515,7 @@ try:
     listeners = run("ss", "-H", "-lnt", f"sport = :{published}").splitlines()
 except Exception as exc:
     fail(f"could not inspect listeners on the candidate port: {exc}")
-if mode in {"first-install", "bootstrap-retry"}:
+if mode in {"first-install", "bootstrap-retry", "forward-recovery"}:
     if listeners:
         fail(f"loopback candidate port {published} already has a TCP listener")
     try:
