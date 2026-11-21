@@ -61,7 +61,7 @@ class SupplierPurchasePostgresIntegrationTest {
         r.add("mail.enabled",()->false);
     }
     @TestConfiguration static class Config {
-        @Bean FakeProvider fakeProvider(){return new FakeProvider();}
+        @Bean FakeProvider fakeProvider(JdbcTemplate jdbc){return new FakeProvider(jdbc);}
         @Bean FakePayment fakePayment(){return new FakePayment();}
     }
     static class FakePayment implements com.myshop.payment.PaymentProvider {
@@ -84,6 +84,8 @@ class SupplierPurchasePostgresIntegrationTest {
         }
     }
     static class FakeProvider implements SupplierProvider {
+        final JdbcTemplate jdbc;
+        FakeProvider(JdbcTemplate jdbc) { this.jdbc=jdbc; }
         volatile SupplierModels.Product product;
         volatile boolean loseResponse;
         volatile boolean absent;
