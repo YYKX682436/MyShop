@@ -19,6 +19,7 @@ import type {
 } from "@/types"
 import { cookies } from "next/headers"
 import { requestSiteUrl } from "@/lib/request-site"
+import { getServerHttpResponse } from "@/lib/server-http"
 
 // 后端直连地址（Docker 内部网络或本地开发）
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8083"
@@ -33,16 +34,15 @@ async function serverRequest<T>(path: string, accessToken?: string): Promise<T> 
   headers.Host = new URL(await requestSiteUrl()).host
   // Forward only the authentication cookie; unrelated browser cookies stay private.
   if (accessToken) headers.Cookie = `myshop_access_token=${accessToken}`
-  const res = await fetch(`${BACKEND_URL}/api${path}`, {
-    headers,
-    cache: "no-store",
-  })
+  // Node's fetch rewrites Host to the backend URL, even when a Host header is
+  // supplied. The native HTTP client preserves the validated storefront host.
+  const res = await getServerHttpResponse(`${BACKEND_URL}/api${path}`, headers)
 
-  if (!res.ok) {
+  if (res.status < 200 || res.status >= 300) {
     throw new Error(`Server API error: ${res.status} ${res.statusText} [${path}]`)
   }
 
-  const body: ApiResponse<T> = await res.json()
+  const body: ApiResponse<T> = JSON.parse(res.body)
 
   if (body.code !== 0) {
     throw new Error(body.message || `API error code: ${body.code}`)
