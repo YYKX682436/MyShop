@@ -555,10 +555,16 @@ export const adminProductApi = {
 
 export type MediaItem = { name: string; url: string; size: number; format: string; uploaded_at: number }
 export type MediaPage = { items: MediaItem[]; total: number; page: number; page_size: number }
+export type MediaInspection = { size: number; format: string; width?: number; height?: number; optimizable: boolean; references: { table: string; source: string; count: number }[] }
+export type MediaOptimization = { url: string; original_size: number; optimized_size: number; replaced_covers: number }
 
 export const adminMediaApi = {
   getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc"; qr_only: boolean }, signal?: AbortSignal) =>
     request<MediaPage>(`/admin/media?${buildQuery(params)}`, { signal }),
+  inspect: (filename: string, signal?: AbortSignal) =>
+    request<MediaInspection>(`/admin/media/inspection?${buildQuery({ filename })}`, { signal }),
+  delete: (filename: string) => request<void>(`/admin/media?${buildQuery({ filename })}`, { method: "DELETE" }),
+  optimize: (filename: string) => request<MediaOptimization>(`/admin/media/optimize?${buildQuery({ filename })}`, { method: "POST" }),
 }
 
 // ============================================================

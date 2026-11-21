@@ -1,17 +1,18 @@
 "use client"
 
 import Link from "next/link"
-import Image from "next/image"
 import { Package } from "lucide-react"
+import { ProductImage } from "@/components/store/product-image"
 import type { ProductCard as ProductCardType } from "@/types"
 import { useLocale } from "@/lib/context"
 import { formatYuan } from "@/lib/utils"
 
 interface ProductCardProps {
   product: ProductCardType
+  priority?: boolean
 }
 
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product, priority = false }: ProductCardProps) {
   const { t } = useLocale()
   const inStock = product.unlimited || (product.stock_available ?? 0) > 0
   const productUrl = `/product/${product.id}`
@@ -24,12 +25,11 @@ export function ProductCard({ product }: ProductCardProps) {
     >
       <div className={`product-image-stage product-image-stage--card ${!inStock ? "opacity-75" : ""}`}>
         {product.cover_url ? (
-          <Image
+          <ProductImage
             src={product.cover_url}
             alt=""
-            fill
-            unoptimized
-            sizes="(min-width: 1536px) 16vw, (min-width: 1280px) 20vw, (min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+            priority={priority}
+            sizes="(min-width: 1536px) 220px, (min-width: 1280px) calc(20vw - 26px), (min-width: 1024px) calc(25vw - 28px), (min-width: 640px) calc(33.333vw - 24px), calc(50vw - 22px)"
             className="product-image-stage-image"
           />
         ) : (

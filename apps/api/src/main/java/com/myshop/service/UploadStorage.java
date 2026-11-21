@@ -188,6 +188,23 @@ public class UploadStorage {
         } catch (IOException | SecurityException ignored) { return fallback; }
     }
 
+    /** Remove only metadata for an orphaned content hash; never follow links. */
+    public void forgetMediaName(String identifier) throws IOException {
+        if (!identifier.matches("[0-9a-f]{64}")) return;
+        try (var files = Files.list(uploadDirectory)) {
+            if (files.anyMatch(path -> path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).startsWith(identifier + ".")
+                    && isSafePublicFile(path.getFileName().toString()))) return;
+        }
+        Path metadata = uploadDirectory.resolve(".media-info");
+        if (!Files.exists(metadata, LinkOption.NOFOLLOW_LINKS)) return;
+        if (Files.isSymbolicLink(metadata) || !Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS)
+                || !metadata.toRealPath().startsWith(uploadDirectory.toRealPath())) throw new IOException("Invalid media metadata directory");
+        Path file = metadata.resolve(identifier + ".txt");
+        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return;
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Invalid media metadata");
+        Files.delete(file);
+    }
+
     /** Reject hidden paths, symlink components and files outside the actual root. */
     public boolean isSafePublicFile(String relativePath) {
         try {

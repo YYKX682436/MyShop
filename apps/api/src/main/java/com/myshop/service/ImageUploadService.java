@@ -4,6 +4,7 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -55,12 +56,21 @@ public class ImageUploadService {
     private final UploadStorage uploadStorage;
     private final ImageProcessor imageProcessor;
     private final String urlPrefix;
+    private final MediaFileGuard mediaFileGuard;
 
+    @Autowired
     public ImageUploadService(UploadStorage uploadStorage, ImageProcessor imageProcessor,
-                              @Value("${upload.url-prefix:/api/uploads}") String urlPrefix) {
+                              @Value("${upload.url-prefix:/api/uploads}") String urlPrefix,
+                              MediaFileGuard mediaFileGuard) {
         this.uploadStorage = uploadStorage;
         this.imageProcessor = imageProcessor;
         this.urlPrefix = normalizeUrlPrefix(urlPrefix);
+        this.mediaFileGuard = mediaFileGuard;
+    }
+
+    // Directly constructed unit tests do not use the production database.
+    public ImageUploadService(UploadStorage uploadStorage, ImageProcessor imageProcessor, String urlPrefix) {
+        this(uploadStorage, imageProcessor, urlPrefix, null);
     }
 
     public UploadedImage uploadAdminImage(MultipartFile file) {
@@ -106,19 +116,30 @@ public class ImageUploadService {
         String relativePath = avatar ? policy.directoryPrefix + policy.filenamePrefix + UUID.randomUUID() + extension
                 : identifier + canonicalExtension;
         try {
-            uploadStorage.publish(relativePath, processed, !avatar);
+            if (!avatar && mediaFileGuard != null) {
+                mediaFileGuard.exclusive(false, connection -> {
+                    uploadStorage.publish(relativePath, processed, true);
+                    MediaFileGuard.restorePublishedFile(connection, relativePath);
+                    rememberName(identifier, file.getOriginalFilename(), relativePath);
+                    return null;
+                });
+            } else {
+                uploadStorage.publish(relativePath, processed, !avatar);
+                if (!avatar) rememberName(identifier, file.getOriginalFilename(), relativePath);
+            }
         } catch (IOException | RuntimeException exception) {
             log.error("Image upload failed: {}", exception.getClass().getSimpleName());
             throw new BusinessException(ErrorCode.SERVER_ERROR, "文件上传失败");
         }
-        if (!avatar) {
-            try {
-                uploadStorage.rememberMediaName(identifier, safeName(file.getOriginalFilename(), relativePath));
-            } catch (IOException | RuntimeException exception) {
-                log.warn("Image uploaded, but its resource name metadata could not be saved; using the filename fallback");
-            }
-        }
         return new UploadedImage(urlPrefix + "/" + relativePath, relativePath);
+    }
+
+    private void rememberName(String identifier, String originalFilename, String relativePath) {
+        try {
+            uploadStorage.rememberMediaName(identifier, safeName(originalFilename, relativePath));
+        } catch (IOException | RuntimeException exception) {
+            log.warn("Image uploaded, but its resource name metadata could not be saved; using the filename fallback");
+        }
     }
 
     private static String safeName(String name, String fallback) {

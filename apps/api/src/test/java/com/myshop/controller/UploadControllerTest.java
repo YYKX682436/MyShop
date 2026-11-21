@@ -175,6 +175,8 @@ class UploadControllerTest {
 
         mockMvc.perform(get("/api/uploads/" + filename).contextPath("/api"))
                 .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", containsString("max-age=31536000")))
+                .andExpect(header().string("Cache-Control", containsString("immutable")))
                 .andExpect(content().contentType(MediaType.parseMediaType(contentType)))
                 .andExpect(content().bytes(stored));
     }

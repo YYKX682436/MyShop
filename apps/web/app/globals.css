@@ -1565,3 +1565,12 @@ select:-webkit-autofill {
 /* Native confirmation dialogs remain on the top layer without scrolling the page behind them. */
 dialog:modal { overscroll-behavior: contain; }
 dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: rgb(0 0 0 / 0.5); }
+dialog.media-manage-dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog.media-manage-dialog::backdrop {
+  background: rgb(0 0 0 / 0.55);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}

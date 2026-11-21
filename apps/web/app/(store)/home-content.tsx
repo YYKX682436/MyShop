@@ -223,9 +223,9 @@ export function HomeContent({ initialProducts, categories, siteSlogan, siteDescr
         </div>
       ) : catalog.list.length > 0 ? (
         <div id="products" className={cn("store-product-grid", loading && "pointer-events-none opacity-50")}>
-          {catalog.list.map((product) => (
+          {catalog.list.map((product, index) => (
             <div key={product.id} className="min-w-0">
-              <ProductCard product={product} />
+              <ProductCard product={product} priority={index === catalog.list.findIndex((item) => !!item.cover_url)} />
             </div>
           ))}
         </div>

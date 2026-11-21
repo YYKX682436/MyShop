@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation"
-import Image from "next/image"
+import { ProductImage } from "@/components/store/product-image"
 import { Package } from "lucide-react"
 import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels } from "@/services/api-server"
 import { ProductPurchaseDock } from "./product-purchase-dock"
@@ -99,11 +99,10 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         <div className="product-visual-column min-w-0">
           <div className="product-image-stage product-image-stage--detail">
             {product.cover_url ? (
-              <Image
+              <ProductImage
                 src={product.cover_url}
                 alt={product.title}
-                fill
-                unoptimized
+                priority
                 sizes="(min-width: 1024px) 60vw, 100vw"
                 className="product-image-stage-image"
               />

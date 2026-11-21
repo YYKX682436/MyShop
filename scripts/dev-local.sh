@@ -63,12 +63,12 @@ INSERT INTO product_categories (id, name) VALUES ('5ce00000-0000-4000-8000-00000
 INSERT INTO products (id, title, description, detail_md, retail_price, cost_price, category_id, stock_mode, delivery_type)
 VALUES ('5ce00000-0000-4000-8000-000000000002', '演示商品', '本地预览数据', '用于预览的示例商品。', 9.90, 5.00, '5ce00000-0000-4000-8000-000000000001', 'UNLIMITED', 'MANUAL') ON CONFLICT (id) DO NOTHING;
 SQL
-(cd "$root"; exec env -i HOME="$HOME" PATH="$PATH" BACKEND_URL=http://127.0.0.1:8083 PUBLIC_SITE_URL=http://localhost:3000 NEXT_TELEMETRY_DISABLED=1 pnpm --filter @myshop/web dev --hostname 127.0.0.1) >"$data/web.log" 2>&1 & web_pid=$!
+(cd "$root"; exec env -i HOME="$HOME" PATH="$PATH" BACKEND_URL=http://localhost:8083 PUBLIC_SITE_URL=http://localhost:3000 NEXT_TELEMETRY_DISABLED=1 pnpm --filter @myshop/web dev --hostname 127.0.0.1) >"$data/web.log" 2>&1 & web_pid=$!
 for _ in $(seq 1 90); do
-  if curl -fsS http://127.0.0.1:3000/ >/dev/null 2>&1; then break; fi
+  if curl -fsS http://localhost:3000/ >/dev/null 2>&1; then break; fi
   kill -0 "$web_pid" 2>/dev/null || { echo "Web failed; see $data/web.log" >&2; exit 1; }
   sleep 1
 done
-curl -fsS http://127.0.0.1:3000/ >/dev/null || { echo "Web did not start; see $data/web.log" >&2; exit 1; }
+curl -fsS http://localhost:3000/ >/dev/null || { echo "Web did not start; see $data/web.log" >&2; exit 1; }
 echo 'Preview: http://localhost:3000  |  Ctrl-C to stop'
 wait "$web_pid"

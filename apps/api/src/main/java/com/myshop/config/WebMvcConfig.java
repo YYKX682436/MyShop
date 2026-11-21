@@ -5,18 +5,28 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.CacheControl;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.resource.PathResourceResolver;
+import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.core.io.Resource;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.time.Duration;
+import java.util.regex.Pattern;
 
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
+
+    private static final Pattern IMMUTABLE_MEDIA = Pattern.compile(
+            "(?i)(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.(?:jpg|jpeg|png|gif|webp|bmp)");
 
     /** CORS 允许的来源列表，逗号分隔。默认允许 localhost 开发环境。 */
     @Value("${cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
@@ -70,6 +80,27 @@ public class WebMvcConfig implements WebMvcConfigurer {
                     .allowCredentials(true)
                     .maxAge(3600);
         }
+    }
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(new HandlerInterceptor() {
+            @Override
+            public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+                String uri = request.getRequestURI();
+                String context = request.getContextPath();
+                String path = uri.startsWith(context) ? uri.substring(context.length()) : "";
+                if (("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod()))
+                        && path.startsWith("/uploads/")) {
+                    String filename = path.substring("/uploads/".length());
+                    if (IMMUTABLE_MEDIA.matcher(filename).matches() && uploadStorage.isSafePublicFile(filename)) {
+                        response.setHeader("Cache-Control", CacheControl.maxAge(Duration.ofDays(365))
+                                .cachePublic().immutable().getHeaderValue());
+                    }
+                }
+                return true;
+            }
+        }).addPathPatterns("/uploads/**");
     }
 
     @Override
