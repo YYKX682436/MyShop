@@ -140,7 +140,7 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
           />
         ) : normalizedValue ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-sm text-muted-foreground">
-            <AlertCircle className="h-7 w-7 text-amber-500" />
+            <AlertCircle className="h-7 w-7 text-amber-700 dark:text-amber-400" />
             <span className="font-medium text-foreground">{t("admin.previewFailed")}</span>
             <span className="max-w-full break-words text-xs">{t("admin.previewFailedHint")}</span>
           </div>
@@ -180,7 +180,7 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
           {t("admin.imageUrl")}
           <input
             type="text"
-            className="h-11 w-full rounded-control border border-input bg-surface px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="h-10 w-full rounded-control border border-input bg-surface px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             placeholder="https://..."
             value={value}
             onChange={(event) => handleUrlChange(event.target.value)}

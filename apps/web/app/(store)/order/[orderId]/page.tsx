@@ -450,7 +450,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       <section className="order-detail-section content-surface space-y-4 p-4 sm:p-5" aria-labelledby="order-payment-title">
         <h2 id="order-payment-title" className="text-base font-semibold text-foreground">{t("payment.title")}</h2>
         {checkingReturn && <div className="rounded-control border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary" role="status">{t("order.paymentReturn")}</div>}
-        {returnTimedOut && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200" role="status">{t("order.paymentReturnTimeout")}</div>}
+        {returnTimedOut && <div className="rounded-control border border-amber-600/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200" role="status">{t("order.paymentReturnTimeout")}</div>}
         <div className="flex items-center justify-between gap-3 text-sm"><span className="text-muted-foreground">{t("payment.remaining")}</span><span className={cn("inline-flex items-center gap-1 font-mono text-lg font-bold", timeLeft >= 0 && timeLeft < 120 && "text-destructive")}><Clock className="h-4 w-4" />{timeLeft < 0 ? "--:--" : formatTime(timeLeft)}</span></div>
         {view.order.payment_method === "ONLINE" && (
           <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4 rounded-surface px-6 pb-8 pt-6" style={{ backgroundColor: brandColor || "#374151" }}>
@@ -485,7 +485,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
         </div>
 
         {status === "REFUNDED" && (
-          <div className="rounded-control border border-violet-300/50 bg-violet-50/70 px-4 py-3 text-sm dark:border-violet-500/30 dark:bg-violet-950/20" role="status">
+          <div className="rounded-control border border-slate-300/80 bg-slate-500/10 px-4 py-3 text-sm dark:border-slate-700/80 dark:bg-slate-500/15" role="status">
             <p className="font-medium text-foreground">{t("order.refunded")}</p>
             <p className="mt-1 text-muted-foreground">{t("order.refundedDescription")}</p>
             <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
@@ -495,12 +495,12 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
             </div>
             {(view.order.reclaimed_card_key_count ?? 0) > 0
               ? <p className="mt-3 rounded-control border border-emerald-300/50 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-200">{t("order.reclaimedCardKeys").replace("{count}", String(view.order.reclaimed_card_key_count))}</p>
-              : (hasCards || deliveredManualItems.length > 0) && <p className="mt-3 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("order.deliveredRefundNotice")}</p>}
+              : (hasCards || deliveredManualItems.length > 0) && <p className="mt-3 rounded-control border border-amber-600/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">{t("order.deliveredRefundNotice")}</p>}
           </div>
         )}
 
-        {status === "AFTER_SALE" && <div className="rounded-control border border-orange-300/50 bg-orange-50 px-4 py-3 text-sm text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200"><p className="font-medium">{t("order.afterSaleDeliveryPaused")}</p></div>}
-        {status !== "AFTER_SALE" && waitingManualItems.length > 0 && <div className="rounded-control border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
+        {status === "AFTER_SALE" && <div className="rounded-control border border-amber-600/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200"><p className="font-medium">{t("order.afterSaleDeliveryPaused")}</p></div>}
+        {status !== "AFTER_SALE" && waitingManualItems.length > 0 && <div className="rounded-control border border-amber-600/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200"><p className="font-medium">{t("order.deliveryWaitingManual")}</p></div>}
         {status !== "AFTER_SALE" && pendingAutomaticItems.length > 0 && <div className="rounded-control bg-surface-muted px-4 py-3 text-sm text-muted-foreground">{t("order.deliveryPreparing")}</div>}
         {supplierItems.map(item => <article key={item.id} className="rounded-control border border-border-subtle bg-surface-muted px-4 py-3 text-sm" aria-live="polite">
           <div className="flex items-center justify-between gap-3"><span>{item.product_title}</span><span className="font-medium">{supplierStatusLabel(item.supplier_status)}</span></div>

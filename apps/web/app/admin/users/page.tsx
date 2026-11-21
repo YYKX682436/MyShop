@@ -230,7 +230,7 @@ export default function AdminUsersPage() {
             aria-label={t("admin.searchUser")}
           />
           <select
-            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
+            className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
             value={statusFilter}
             onChange={(event) => { setStatusFilter(event.target.value as "" | "0" | "1"); setPage(1) }}
             aria-label={t("admin.statusLabel")}
@@ -240,7 +240,7 @@ export default function AdminUsersPage() {
             <option value="1">{t("admin.banned")}</option>
           </select>
           <select
-            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
+            className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
             value={levelFilter}
             onChange={(event) => { setLevelFilter(event.target.value); setPage(1) }}
             aria-label={t("admin.userLevel")}
@@ -324,7 +324,7 @@ export default function AdminUsersPage() {
             <div className={`rounded-card border border-border-subtle p-3 ${previewBalanceCents < 0 ? "bg-destructive/10 text-destructive" : "bg-primary/10"}`}><p className="text-xs text-muted-foreground">{t("admin.balancePreview")}</p><p className="mt-1 text-xl font-semibold">{formatYuanFromCents(previewBalanceCents)}</p></div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAdjustmentType")}</span><select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={balanceType} onChange={(event) => setBalanceType(event.target.value as "INCREASE" | "DECREASE")}><option value="INCREASE">{t("admin.balanceIncrease")}</option><option value="DECREASE">{t("admin.balanceDecrease")}</option></select></label>
+            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAdjustmentType")}</span><select className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={balanceType} onChange={(event) => setBalanceType(event.target.value as "INCREASE" | "DECREASE")}><option value="INCREASE">{t("admin.balanceIncrease")}</option><option value="DECREASE">{t("admin.balanceDecrease")}</option></select></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAmount")}</span><Input type="text" inputMode="decimal" value={balanceAmount} onChange={(event) => setBalanceAmount(event.target.value)} placeholder="0.00" /></label>
           </div>
           <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceReason")}</span><Textarea value={balanceReason} onChange={(event) => setBalanceReason(event.target.value)} placeholder={t("admin.balanceReasonPlaceholder")} maxLength={500} rows={4} /></label>

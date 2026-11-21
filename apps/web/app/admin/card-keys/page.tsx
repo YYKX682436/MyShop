@@ -579,7 +579,7 @@ export default function AdminCardKeysPage() {
 
         <TabsContent value="stock" className="flex flex-col gap-4">
           <PageToolbar>
-            <select className="h-11 w-full max-w-xs rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring" value={filterProductId} onChange={(event) => setFilterProductId(event.target.value)} disabled={productsError} aria-label={t("admin.allProducts")}>
+            <select className="h-10 w-full max-w-xs rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring" value={filterProductId} onChange={(event) => setFilterProductId(event.target.value)} disabled={productsError} aria-label={t("admin.allProducts")}>
               <option value="">{t("admin.allProducts")}</option>
               {products.map((product) => <option key={product.id} value={product.id}>{product.title}</option>)}
             </select>
@@ -607,7 +607,7 @@ export default function AdminCardKeysPage() {
                   return (
                     <tr key={`${item.product_id}-${item.spec_id || "default"}-${index}`} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                       <td data-label={t("admin.productName2")} className="px-4 py-3 font-medium text-foreground">{item.product_title}</td>
-                      <td data-label={t("admin.specLabel")} className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-600">· {t("admin.disabled")}</span>}</td>
+                      <td data-label={t("admin.specLabel")} className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-800 dark:text-amber-300">· {t("admin.disabled")}</span>}</td>
                       <td data-label={t("admin.inventoryMode")} className="px-4 py-3"><StatusBadge label={stockModeLabel(item)} tone={item.stock_mode === "MANUAL" ? "warning" : item.stock_mode === "UNLIMITED" || item.unlimited ? "success" : "info"} /></td>
                       <td data-label={t("admin.totalKeys")} className="px-4 py-3">{item.unlimited ? t("admin.unlimited") : item.total ?? 0}</td>
                       <td data-label={t("admin.soldKeys")} className="px-4 py-3">{item.sold}</td>
@@ -650,7 +650,7 @@ export default function AdminCardKeysPage() {
                     <td data-label={t("admin.columnCount")} className="px-4 py-3">{batch.column_count ?? 1}</td>
                     <td data-label={t("admin.importCount")} className="px-4 py-3">{batch.total_count}</td>
                     <td data-label={t("admin.successCount")} className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
-                    <td data-label={t("admin.duplicateCount")} className="px-4 py-3 text-amber-600">{batch.duplicate_count}</td>
+                    <td data-label={t("admin.duplicateCount")} className="px-4 py-3 text-amber-800 dark:text-amber-300">{batch.duplicate_count}</td>
                     <td data-label={t("admin.failCount")} className={batch.fail_count > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{batch.fail_count}</td>
                     <td data-label={t("admin.time")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(batch.created_at, locale)}</td>
                   </tr>
@@ -671,7 +671,7 @@ export default function AdminCardKeysPage() {
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectProductReq")}
               <select
-                className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={batchImportProductId}
                 onChange={(event) => setBatchImportProductId(event.target.value)}
                 disabled={batchImportProductLoading}
@@ -708,7 +708,7 @@ export default function AdminCardKeysPage() {
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectProductReq")}
               <select
-                className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={pickupProductId}
                 onChange={(event) => void handlePickupProductChange(event.target.value)}
                 disabled={batchPickingUp}
@@ -724,7 +724,7 @@ export default function AdminCardKeysPage() {
               <label className="flex flex-col gap-1.5 text-sm font-medium">
                 {t("admin.selectSpec")}
                 <select
-                  className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   value={pickupSpecId}
                   onChange={(event) => setPickupSpecId(event.target.value)}
                   disabled={batchPickingUp}
@@ -744,7 +744,7 @@ export default function AdminCardKeysPage() {
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.pickupQuantity")}
               <input
-                className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 type="number"
                 min={1}
                 max={pickupAvailable ?? undefined}

@@ -161,8 +161,8 @@ export default function AdminCategoriesPage() {
         <TableCell data-label={t("admin.category")}>
           <div className={isRoot ? "flex items-center gap-3" : "flex items-center gap-3 pl-10"}>
             <span className={isRoot
-              ? "flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10"
-              : "flex h-8 w-8 items-center justify-center rounded-lg bg-surface-muted text-muted-foreground"}>
+              ? "flex h-9 w-9 items-center justify-center rounded-control bg-primary/10"
+              : "flex h-8 w-8 items-center justify-center rounded-control bg-surface-muted text-muted-foreground"}>
               {isRoot
                 ? <FolderTree className="h-4 w-4 text-primary" aria-hidden="true" />
                 : <CornerDownRight className="h-4 w-4" aria-hidden="true" />}
@@ -247,7 +247,7 @@ export default function AdminCategoriesPage() {
               <label className="flex flex-col gap-1.5 text-sm font-medium">
                 {t("admin.categoryParent")}
                 <select
-                  className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-10 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60"
                   value={formData.parentId}
                   onChange={(event) => setFormData((current) => ({ ...current, parentId: event.target.value }))}
                   disabled={movingRootWithChildren}

@@ -39,6 +39,10 @@ const config: Config = {
           danger: 'hsl(var(--danger))',
           info: 'hsl(var(--info))',
         },
+        warning: {
+          DEFAULT: 'hsl(var(--warning))',
+          foreground: 'hsl(var(--foreground))',
+        },
         'text-primary': 'hsl(var(--text-primary))',
         'text-secondary': 'hsl(var(--text-secondary))',
         'border-subtle': 'hsl(var(--border-subtle))',

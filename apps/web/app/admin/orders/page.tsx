@@ -205,7 +205,7 @@ export default function AdminOrdersPage() {
       <PageToolbar>
         <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:flex-wrap">
           <Input className="min-w-0 lg:max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("admin.searchOrder")} aria-label={t("admin.searchOrder")} />
-          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label={t("admin.timeRangeLabel")}>
+          <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label={t("admin.timeRangeLabel")}>
             <option value="all">{t("admin.allTime")}</option>
             <option value="today">{t("admin.today")}</option>
             <option value="yesterday">{t("admin.yesterday")}</option>
@@ -213,7 +213,7 @@ export default function AdminOrdersPage() {
             <option value="30d">{t("admin.last30Days")}</option>
             <option value="custom">{t("admin.custom")}</option>
           </select>
-          <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={sortDirection} onChange={(event) => { setSortDirection(event.target.value as "asc" | "desc"); setPage(1) }} aria-label={t("admin.timeSortLabel")}>
+          <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={sortDirection} onChange={(event) => { setSortDirection(event.target.value as "asc" | "desc"); setPage(1) }} aria-label={t("admin.timeSortLabel")}>
             <option value="desc">{t("admin.newestFirst")}</option>
             <option value="asc">{t("admin.oldestFirst")}</option>
           </select>

@@ -25,7 +25,7 @@ interface AdminPageProps {
 
 export function AdminPage({ children, className }: AdminPageProps) {
   return (
-    <div className={cn("admin-page mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-8", className)}>
+    <div className={cn("admin-page mx-auto flex w-full max-w-[1600px] min-w-0 flex-col gap-5 sm:gap-6", className)}>
       {children}
     </div>
   )
@@ -59,7 +59,7 @@ export function PageHeader({ title, description, actions, className, onRefresh, 
 export function PageRefreshButton({ onRefresh, refreshing = false, disabled = false }: { onRefresh: () => void; refreshing?: boolean; disabled?: boolean }) {
   const { t } = useLocale()
   const label = refreshing ? t("admin.refreshing") : t("admin.refresh")
-  return <Button type="button" variant="ghost" size="icon" className="h-11 w-11 shrink-0" onClick={onRefresh} disabled={refreshing || disabled} title={label} aria-label={label}>
+  return <Button type="button" variant="ghost" size="icon" className="h-10 w-10 shrink-0" onClick={onRefresh} disabled={refreshing || disabled} title={label} aria-label={label}>
     <RefreshCw className={cn("h-4 w-4", refreshing && "motion-safe:animate-spin")} aria-hidden="true" />
   </Button>
 }
@@ -213,19 +213,20 @@ export function AdminPagination({
   )
 }
 
-type StatusTone = "neutral" | "success" | "info" | "warning" | "danger" | "purple"
+export type StatusTone = "neutral" | "success" | "info" | "warning" | "danger" | "refunded" | "purple"
 
 const statusToneClasses: Record<StatusTone, string> = {
-  neutral: "bg-surface-muted text-muted-foreground ring-1 ring-inset ring-border-subtle",
-  success: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  info: "bg-blue-500/10 text-blue-700 dark:text-blue-300",
-  warning: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  danger: "bg-destructive/10 text-destructive",
-  purple: "bg-purple-500/10 text-purple-700 dark:text-purple-300",
+  neutral: "border border-border-subtle bg-surface-muted text-muted-foreground",
+  success: "border border-emerald-500/20 bg-emerald-500/10 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300",
+  info: "border border-blue-500/20 bg-blue-500/10 text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-300",
+  warning: "border border-amber-600/20 bg-amber-500/10 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200",
+  danger: "border border-destructive/20 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/15 dark:text-red-300",
+  refunded: "border border-slate-300/80 bg-slate-500/10 text-slate-700 dark:border-slate-700/80 dark:bg-slate-500/15 dark:text-slate-300",
+  purple: "border border-slate-300/80 bg-slate-500/10 text-slate-700 dark:border-slate-700/80 dark:bg-slate-500/15 dark:text-slate-300",
 }
 
 export function StatusBadge({ label, tone = "neutral" }: { label: ReactNode; tone?: StatusTone }) {
-  return <span className={cn("inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium", statusToneClasses[tone])}>{label}</span>
+  return <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium", statusToneClasses[tone])}>{label}</span>
 }
 
 export function FormSection({ title, description, children, className }: { title: ReactNode; description?: ReactNode; children: ReactNode; className?: string }) {

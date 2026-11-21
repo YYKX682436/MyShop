@@ -16,16 +16,16 @@ import type { AdminProductDetail, Category } from "@/types"
 function ProductEditorSkeleton({ loadingLabel }: { loadingLabel: string }) {
   return (
     <div className="space-y-5" role="status" aria-label={loadingLabel}>
-      <div className="h-11 rounded-control border border-border-subtle bg-surface-muted" />
+      <div className="h-10 rounded-control border border-border-subtle bg-surface-muted" />
       <div className="content-surface p-5 sm:p-6">
         <div className="mb-5 h-5 w-40 rounded-control bg-surface-muted" />
         <div className="grid gap-5 lg:grid-cols-2">
-          <div className="h-11 rounded-control bg-surface-muted lg:col-span-2" />
-          <div className="h-11 rounded-control bg-surface-muted lg:col-span-2" />
-          <div className="h-11 rounded-control bg-surface-muted" />
-          <div className="h-11 rounded-control bg-surface-muted" />
-          <div className="h-11 rounded-control bg-surface-muted" />
-          <div className="h-11 rounded-control bg-surface-muted" />
+          <div className="h-10 rounded-control bg-surface-muted lg:col-span-2" />
+          <div className="h-10 rounded-control bg-surface-muted lg:col-span-2" />
+          <div className="h-10 rounded-control bg-surface-muted" />
+          <div className="h-10 rounded-control bg-surface-muted" />
+          <div className="h-10 rounded-control bg-surface-muted" />
+          <div className="h-10 rounded-control bg-surface-muted" />
         </div>
       </div>
     </div>

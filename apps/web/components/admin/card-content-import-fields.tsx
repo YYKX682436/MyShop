@@ -30,7 +30,7 @@ export function CardContentImportFields({ columns, onChange, disabled = false, l
           type="button"
           disabled={disabled}
           onClick={() => onChange([...columns, ""])}
-          className="inline-flex min-h-11 items-center gap-1 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted disabled:opacity-50"
+          className="inline-flex h-9 items-center gap-1 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted disabled:opacity-50"
         >
           <Plus className="h-3.5 w-3.5" />{t("admin.addColumn")}
         </button>}
@@ -47,7 +47,7 @@ export function CardContentImportFields({ columns, onChange, disabled = false, l
                 disabled={disabled || columns.length <= 1}
                 onClick={() => onChange(columns.filter((_, current) => current !== index))}
                 aria-label={t("admin.removeColumn").replace("{index}", String(index + 1))}
-                className="inline-flex size-11 items-center justify-center rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"
+                className="inline-flex size-8 items-center justify-center rounded-control text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>}

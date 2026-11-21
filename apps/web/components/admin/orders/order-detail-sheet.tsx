@@ -5,6 +5,7 @@ import { Copy, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
+import { StatusBadge } from "@/components/admin/shared"
 import { AfterSaleHistoryCard } from "@/components/shared/after-sale-history-card"
 import { SupplierAftercarePanel } from "@/components/admin/orders/supplier-aftercare-panel"
 import { MarkdownContent } from "@/components/shared/markdown-content"
@@ -14,7 +15,7 @@ import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
 import { formatAdminOrderCustomer } from "@/lib/admin-order-display"
 import { formatCardContent, formatCardContents } from "@/lib/card-display"
-import { formatDateTime, formatYuan, stripInvisible } from "@/lib/utils"
+import { formatDateTime, formatYuan, stripInvisible, cn } from "@/lib/utils"
 import { isManualFulfillmentItem } from "@/lib/order-status"
 import { supplierErrorLabel, supplierStatusLabel } from "@/lib/supplier-order"
 import type { TranslationKey } from "@/lib/i18n"
@@ -256,7 +257,7 @@ export function OrderDetailSheet({
               <span className="font-mono text-lg font-semibold tracking-tight text-foreground">{order.order_no}</span>
               <CopyButton value={String(order.order_no)} label={t("admin.orderNo")} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} />
               <OrderStatusBadge status={order.status} items={order.items} />
-              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${order.is_risk_flagged ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"}`}>
+              <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border", order.is_risk_flagged ? "border-destructive/20 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/15 dark:text-red-300" : "border-emerald-500/20 bg-emerald-500/10 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300")}>
                 {order.is_risk_flagged ? t("admin.riskFlagged") : t("admin.riskNormal")}
               </span>
             </div>
@@ -270,7 +271,7 @@ export function OrderDetailSheet({
           <DefinitionRow label={t("admin.createdAt")}><span>{formatDateTime(order.created_at, locale)}</span></DefinitionRow>
         </dl>
         {order.customer_type === "GUEST" && (
-          <p className="mt-4 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">
+          <p className="mt-4 rounded-control border border-amber-600/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
             {t("admin.guestRefundUnsupported")}
           </p>
         )}
@@ -304,8 +305,11 @@ export function OrderDetailSheet({
       )}
 
       {order.status === "REFUNDED" && (
-        <section className="rounded-surface border border-violet-300/50 bg-violet-50/70 p-5 shadow-sm dark:border-violet-500/30 dark:bg-violet-950/20 sm:p-6" aria-labelledby="order-refund-title">
-          <h2 id="order-refund-title" className="text-base font-semibold text-foreground">{t("admin.refund")}</h2>
+        <section className="rounded-surface border border-slate-300/80 bg-slate-500/[0.06] p-5 shadow-sm dark:border-slate-700/80 dark:bg-slate-500/10 sm:p-6" aria-labelledby="order-refund-title">
+          <div className="flex items-center gap-2">
+            <h2 id="order-refund-title" className="text-base font-semibold text-foreground">{t("admin.refund")}</h2>
+            <StatusBadge label={t("status.REFUNDED")} tone="refunded" />
+          </div>
           <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
             <DefinitionRow label={t("admin.refundStatus")}><span>{t("status.REFUNDED")}</span></DefinitionRow>
             <DefinitionRow label={t("admin.refundAmount")}><span className="font-semibold">{formatMoney(order.refund_amount ?? order.actual_amount, empty)}</span></DefinitionRow>
@@ -314,7 +318,7 @@ export function OrderDetailSheet({
             <DefinitionRow label={t("admin.refundCardHandling")}><span>{reclaimedCardKeyCount > 0 ? t("admin.refundReclaimed").replace("{count}", String(reclaimedCardKeyCount)) : t("admin.refundNotReclaimed")}</span></DefinitionRow>
           </dl>
           {(order.refund_reason || order.refund_operator_username || order.status === "REFUNDED") && (
-            <dl className="mt-3 grid gap-x-6 gap-y-2 border-t border-violet-300/30 pt-3 text-sm dark:border-violet-500/20 sm:grid-cols-2">
+            <dl className="mt-3 grid gap-x-6 gap-y-2 border-t border-slate-200 dark:border-slate-800 pt-3 text-sm sm:grid-cols-2">
               <DefinitionRow label={t("admin.refundReason")}><span className="whitespace-pre-wrap">{order.refund_reason?.trim() || t("admin.refundReasonNotProvided")}</span></DefinitionRow>
               {order.refund_operator_username && <DefinitionRow label={t("admin.refundOperator")}><span>{order.refund_operator_username}</span></DefinitionRow>}
             </dl>

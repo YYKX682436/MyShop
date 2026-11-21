@@ -116,7 +116,7 @@ export function CardKeyImportDialog({ product, initialSpecId = null, open, onOpe
             <label className="flex flex-col gap-1.5 text-sm font-medium">
               {t("admin.selectSpec")}
               <select
-                className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="h-10 rounded-control border border-input bg-surface px-3 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={specId}
                 onChange={(event) => setSpecId(event.target.value)}
                 disabled={importing}

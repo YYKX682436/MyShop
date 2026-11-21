@@ -14,7 +14,7 @@ import type { AdminProductDetail, Category } from "@/types"
 
 const blank: SupplierAccountInput = { name: "", provider_type: "KAYIXIN", base_url: "https://", app_id: "", secret: "", enabled: true }
 const fieldClass = "flex flex-col gap-1.5 text-sm font-medium"
-const selectClass = "h-11 w-full rounded-control border border-input bg-surface px-3 text-sm"
+const selectClass = "h-10 w-full rounded-control border border-input bg-surface px-3 text-sm"
 function message(error: unknown) { return error instanceof Error ? error.message : "操作失败，请重试" }
 function syncError(row: SupplierMapping) {
   if (row.local_state === "PRODUCT_DELETED") return "本地商品已删除，可解除关联后重新导入"

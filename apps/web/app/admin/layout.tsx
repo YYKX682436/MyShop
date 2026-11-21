@@ -19,7 +19,7 @@ export default function AdminLayout({ children, modal }: { children: React.React
         <SidebarInset className="admin-workspace-main min-w-0 overflow-x-hidden bg-transparent">
           <AdminHeader />
           <div className="admin-scroll-region">
-            <main className="admin-page-main min-w-0 px-4 pb-8 pt-5 sm:px-6 sm:pb-10 sm:pt-7 lg:px-10 lg:pb-12 lg:pt-9">{children}</main>
+            <main className="admin-page-main min-w-0 px-4 pb-6 pt-5 sm:px-6 sm:pb-8 sm:pt-6 lg:px-8 lg:pb-10 lg:pt-8">{children}</main>
           </div>
         </SidebarInset>
         {modal}

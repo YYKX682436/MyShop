@@ -398,7 +398,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundAmount")}</dt><dd className="font-semibold">{formatYuan(order.actual_amount ?? 0)}</dd></div>
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundDestination")}</dt><dd>{t(order.actual_amount === 0 ? "admin.zeroRefund" : "admin.refundBalance")}</dd></div>
         </dl>
-        {hasDeliveredItems && <p className="flex items-start gap-2 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{t("admin.refundDeliveredWarning")}</p>}
+        {hasDeliveredItems && <p className="flex items-start gap-2 rounded-control border border-amber-600/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden="true" />{t("admin.refundDeliveredWarning")}</p>}
         <div className="space-y-2 rounded-control border border-border-subtle bg-surface px-3 py-3">
           <p className="font-medium text-foreground">{t("admin.refundCardHandling")}</p>
           <label className={`flex items-start gap-3 ${reclaimCardKeysEnabled && !refundLoading ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`} htmlFor="admin-refund-reclaim-card-keys">
@@ -413,7 +413,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           </label>
         </div>
         {reclaimCardKeys && <p className="rounded-control border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{t("admin.refundReclaimRiskWarning")}</p>}
-        {hasDeliveredManualItems && <p className="rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">{t("admin.refundManualContentWarning")}</p>}
+        {hasDeliveredManualItems && <p className="rounded-control border border-amber-600/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">{t("admin.refundManualContentWarning")}</p>}
         <label className="block text-sm font-medium text-foreground" htmlFor="admin-refund-reason">{t("admin.refundReason")}</label>
         <Textarea id="admin-refund-reason" value={refundReason} onChange={(event) => setRefundReason(event.target.value)} placeholder={t("admin.refundReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.refundReason")} />
       </div>}

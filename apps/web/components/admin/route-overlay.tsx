@@ -118,17 +118,17 @@ export function WorkspaceSheet({ children, title, description, headerActions, di
           }
         }}
       >
-        <SheetHeader className="flex-row items-start justify-between border-b border-border-subtle px-5 py-5 pr-14 sm:px-7">
+        <SheetHeader className="flex-row items-start justify-between border-b border-border-subtle px-5 py-5 pr-14 sm:px-6">
           <div className="min-w-0">
             <SheetTitle className="tracking-tight">{title}</SheetTitle>
             {description && <SheetDescription className="mt-2 max-w-2xl">{description}</SheetDescription>}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {headerActions}
-            {dirty && <span className="hidden rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300 sm:inline-flex">{t("admin.unsavedChanges")}</span>}
+            {dirty && <span className="hidden rounded-full border border-amber-600/25 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200 sm:inline-flex">{t("admin.unsavedChanges")}</span>}
           </div>
         </SheetHeader>
-        <div className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-7", contentClassName)}>{children}</div>
+        <div className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6", contentClassName)}>{children}</div>
       </SheetContent>
     </Sheet>
   )

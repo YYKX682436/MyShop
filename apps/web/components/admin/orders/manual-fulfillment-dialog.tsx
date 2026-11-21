@@ -66,7 +66,7 @@ export function ManualFulfillmentDialog({
         </DialogHeader>
 
         <div className="space-y-5">
-          <div className="rounded-card border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-100">
+          <div className="rounded-card border border-amber-600/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-100">
             <p className="font-medium">{t("admin.manualFulfillmentItems")}</p>
             <p className="mt-1 text-xs opacity-80">{items.length}</p>
           </div>
@@ -80,7 +80,7 @@ export function ManualFulfillmentDialog({
                     #{item.product_no} · {item.spec_name || t("admin.systemNoData")} · ×{item.quantity}
                   </p>
                 </div>
-                <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                <span className="rounded-full border border-amber-600/25 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
                   {t("admin.fulfillmentWaitingManual")}
                 </span>
               </div>

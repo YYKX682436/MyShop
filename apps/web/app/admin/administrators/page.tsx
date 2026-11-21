@@ -266,7 +266,7 @@ export default function AdministratorsPage() {
             aria-label={t("admin.searchUser")}
           />
           <select
-            className="h-11 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
+            className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
             value={statusFilter}
             onChange={(event) => {
               setStatusFilter(event.target.value as "" | "0" | "1")
@@ -309,7 +309,7 @@ export default function AdministratorsPage() {
                   <td data-label={t("admin.administratorRole")} className="px-4 py-3">
                     <StatusBadge
                       label={isSuperAdmin ? t("admin.administratorSuperAdmin") : t("admin.administratorOrdinary")}
-                      tone={isSuperAdmin ? "purple" : "info"}
+                      tone="info"
                     />
                   </td>
                   <td data-label={t("admin.administratorStatus")} className="px-4 py-3"><StatusBadge label={enabled ? t("admin.normal") : t("admin.banned")} tone={enabled ? "success" : "danger"} /></td>

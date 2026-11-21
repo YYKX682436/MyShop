@@ -12,11 +12,11 @@ import type { OperationLog } from "@/types"
 
 const PAGE_SIZE = 20
 
-const ACTIONS: Record<string, { key: TranslationKey; tone: "success" | "info" | "danger" | "warning" | "purple" }> = {
+const ACTIONS: Record<string, { key: TranslationKey; tone: "success" | "info" | "danger" | "warning" | "refunded" }> = {
   "product.create": { key: "admin.actionProductCreate", tone: "success" },
   "product.update": { key: "admin.actionProductUpdate", tone: "info" },
   "product.delete": { key: "admin.actionProductDelete", tone: "danger" },
-  "cardkey.import": { key: "admin.actionCardImport", tone: "purple" },
+  "cardkey.import": { key: "admin.actionCardImport", tone: "info" },
   "cardkey.invalidate": { key: "admin.actionCardInvalidate", tone: "danger" },
   "order.mark_paid": { key: "admin.actionOrderMarkPaid", tone: "warning" },
   "order.manual_deliver": { key: "admin.actionOrderManualDeliver", tone: "success" },
@@ -80,7 +80,7 @@ export default function AdminOperationLogsPage() {
   return (
     <AdminPage>
       <PageHeader title={t("admin.logs")} description={t("admin.logsDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
-      <PageToolbar><select className="h-11 w-full max-w-xs rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={actionFilter} onChange={(event) => { setActionFilter(event.target.value); setPage(1) }} aria-label={t("admin.allActionTypes")}><option value="">{t("admin.allActionTypes")}</option><option value="product">{t("admin.productOps")}</option><option value="cardkey">{t("admin.cardKeyOps")}</option><option value="order">{t("admin.orderOps")}</option><option value="user">{t("admin.userOps")}</option><option value="secret_price">{t("admin.secretPriceOps")}</option><option value="config">{t("admin.configOps")}</option><option value="category">{t("admin.categoryOps")}</option><option value="payment">{t("admin.paymentOps")}</option></select></PageToolbar>
+      <PageToolbar><select className="h-10 w-full max-w-xs rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={actionFilter} onChange={(event) => { setActionFilter(event.target.value); setPage(1) }} aria-label={t("admin.allActionTypes")}><option value="">{t("admin.allActionTypes")}</option><option value="product">{t("admin.productOps")}</option><option value="cardkey">{t("admin.cardKeyOps")}</option><option value="order">{t("admin.orderOps")}</option><option value="user">{t("admin.userOps")}</option><option value="secret_price">{t("admin.secretPriceOps")}</option><option value="config">{t("admin.configOps")}</option><option value="category">{t("admin.categoryOps")}</option><option value="payment">{t("admin.paymentOps")}</option></select></PageToolbar>
 
       <DataTableShell footer={<AdminPagination page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />}>
         <table className="w-full min-w-[1000px] text-sm"><thead><tr className="border-b border-border-subtle bg-surface-muted"><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.time")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.operator")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.actionType")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.targetLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.detailLabel")}</th><th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.ipLabel")}</th></tr></thead><tbody>

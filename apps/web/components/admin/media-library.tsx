@@ -127,7 +127,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   return (
     <div className="min-w-0 space-y-4">
-      {showHeader && <PageHeader title={t("admin.media")} onRefresh={() => { setLoading(true); setRevision((value) => value + 1) }} refreshing={loading} className="mb-8" />}
+      {showHeader && <PageHeader title={t("admin.media")} onRefresh={() => { setLoading(true); setRevision((value) => value + 1) }} refreshing={loading} className="mb-5 sm:mb-6" />}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-40 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />

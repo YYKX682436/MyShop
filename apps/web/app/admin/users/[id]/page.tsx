@@ -376,7 +376,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
             <div className={`rounded-card border border-border-subtle p-3 ${previewBalanceCents < 0 ? "bg-destructive/10 text-destructive" : "bg-primary/10"}`}><p className="text-xs text-muted-foreground">{t("admin.balancePreview")}</p><p className="mt-1 text-xl font-semibold">{formatYuanFromCents(previewBalanceCents)}</p></div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAdjustmentType")}</span><select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={balanceType} onChange={(event) => setBalanceType(event.target.value as "INCREASE" | "DECREASE")}><option value="INCREASE">{t("admin.balanceIncrease")}</option><option value="DECREASE">{t("admin.balanceDecrease")}</option></select></label>
+            <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAdjustmentType")}</span><select className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={balanceType} onChange={(event) => setBalanceType(event.target.value as "INCREASE" | "DECREASE")}><option value="INCREASE">{t("admin.balanceIncrease")}</option><option value="DECREASE">{t("admin.balanceDecrease")}</option></select></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceAmount")}</span><Input type="text" inputMode="decimal" value={balanceAmount} onChange={(event) => setBalanceAmount(event.target.value)} placeholder="0.00" /></label>
           </div>
           <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.balanceReason")}</span><Textarea value={balanceReason} onChange={(event) => setBalanceReason(event.target.value)} placeholder={t("admin.balanceReasonPlaceholder")} maxLength={500} rows={4} /></label>
@@ -409,7 +409,7 @@ export default function AdminUserDetailPage({ embedded = false, onDirtyChange }:
       <Dialog open={resetResult !== null} onOpenChange={(open) => { if (!open) setResetResult(null) }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{t("admin.passwordResetResultTitle")}</DialogTitle><DialogDescription>{t("admin.passwordResetResultDescription")}</DialogDescription></DialogHeader>
-          <div className="rounded-card border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="rounded-card border border-amber-600/25 bg-amber-500/10 p-4 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
             <CopyableValue value={resetResult?.password || ""} label={t("admin.temporaryPassword")} mono className="w-full text-base font-semibold" />
           </div>
           <pre className="whitespace-pre-wrap rounded-card border border-border-subtle bg-surface-muted p-4 text-sm leading-6 text-foreground">{resetResult?.text}</pre>

@@ -234,7 +234,7 @@ export default function AdminUserLevelsPage() {
         refreshing={refreshing}
       />
 
-      <p className="rounded-card border border-amber-500/20 bg-amber-500/[0.07] px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+      <p className="rounded-card border border-amber-600/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
         {t("admin.levelLifecycleHint")}
       </p>
 
@@ -265,7 +265,7 @@ export default function AdminUserLevelsPage() {
               <tr key={level.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                 <td data-label={t("admin.levelName")} className="px-4 py-3">
                   <div className="flex items-center gap-2 font-medium">
-                    {level.is_default && <Star className="h-4 w-4 fill-amber-400 text-amber-500" aria-label={t("admin.defaultLabel")} />}
+                    {level.is_default && <Star className="h-4 w-4 fill-amber-500/70 text-amber-700 dark:fill-amber-400/80 dark:text-amber-400" aria-label={t("admin.defaultLabel")} />}
                     <span>{level.name}</span>
                     {level.is_default && <StatusBadge label={t("admin.defaultLabel")} tone="warning" />}
                   </div>
@@ -300,7 +300,7 @@ export default function AdminUserLevelsPage() {
           <div className="grid gap-4">
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.levelName")}<Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} maxLength={100} autoFocus /></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.pricingType")}
-              <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={form.pricing_type} onChange={(event) => setForm((current) => ({ ...current, pricing_type: event.target.value as PricingType, markup_rate: event.target.value === "RETAIL" ? "" : current.markup_rate }))}>
+              <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={form.pricing_type} onChange={(event) => setForm((current) => ({ ...current, pricing_type: event.target.value as PricingType, markup_rate: event.target.value === "RETAIL" ? "" : current.markup_rate }))}>
                 <option value="RETAIL">{t("admin.retailPricing")}</option>
                 <option value="COST_MARKUP">{t("admin.costMarkup")}</option>
               </select>
@@ -321,7 +321,7 @@ export default function AdminUserLevelsPage() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{t("admin.migrateUsersTitle")}</DialogTitle><DialogDescription>{t("admin.migrateUsersDescription")}</DialogDescription></DialogHeader>
           <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.migrateTarget")}
-            <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={migrateTargetId} onChange={(event) => setMigrateTargetId(event.target.value)}>
+            <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={migrateTargetId} onChange={(event) => setMigrateTargetId(event.target.value)}>
               <option value="">{t("admin.migrateTargetRequired")}</option>
               {migrationTargets.map((level) => <option key={level.id} value={level.id}>{level.name}</option>)}
             </select>

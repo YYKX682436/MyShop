@@ -153,9 +153,9 @@ function AfterSaleRequestTimeline({
       )}
 
       {item.status === "REJECTED" && item.rejection_reason && (
-        <div className="mt-4 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-950/20">
-          <p className="text-xs text-amber-800 dark:text-amber-200">{t("order.afterSaleRejectionReason")}</p>
-          <p className="mt-1 whitespace-pre-wrap break-words text-sm text-amber-900 dark:text-amber-100">{item.rejection_reason}</p>
+        <div className="mt-4 rounded-control border border-amber-600/25 bg-amber-500/10 px-3 py-2 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
+          <p className="text-xs text-amber-800 dark:text-amber-300">{t("order.afterSaleRejectionReason")}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words text-sm font-medium text-amber-950 dark:text-amber-100">{item.rejection_reason}</p>
         </div>
       )}
       {item.status !== "PENDING" && (
@@ -185,7 +185,7 @@ function TimelineEntry({
 }) {
   return (
     <div className={`rounded-control border px-3 py-3 ${tone === "admin"
-      ? "border-violet-200/70 bg-violet-50/60 dark:border-violet-500/20 dark:bg-violet-950/15"
+      ? "border-primary/20 bg-primary/5 dark:border-primary/25 dark:bg-primary/10"
       : "border-border-subtle bg-surface"}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <p className="text-xs font-semibold text-foreground">{label}</p>

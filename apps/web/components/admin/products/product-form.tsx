@@ -801,7 +801,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:col-span-2">
                   <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
                     {t("admin.categoryRootLevel")} *
-                    <select ref={registerField("category_id")} data-testid="product-category-select" className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.primaryId} onChange={(event) => setField("category_id", event.target.value)} disabled={categoryStatus !== "ready" || rootCategories.length === 0}>
+                    <select ref={registerField("category_id")} data-testid="product-category-select" className="h-10 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.primaryId} onChange={(event) => setField("category_id", event.target.value)} disabled={categoryStatus !== "ready" || rootCategories.length === 0}>
                       <option value="">{categoryStatus === "loading" ? t("common.loading") : t("admin.categoryPlaceholder")}</option>
                       {rootCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                     </select>
@@ -810,7 +810,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                   </label>
                   <label className="flex min-w-0 flex-col gap-1.5 text-sm font-medium">
                     {t("admin.categoryChildLevel")}
-                  <select className="h-11 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.secondaryId} onChange={(event) => setField("category_id", event.target.value || categorySelection.primaryId)} disabled={categoryStatus !== "ready" || !categorySelection.primaryId || secondaryCategories.length === 0} aria-label={t("admin.categoryChildLevel")}>
+                  <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm font-normal disabled:cursor-not-allowed disabled:opacity-60" value={categorySelection.secondaryId} onChange={(event) => setField("category_id", event.target.value || categorySelection.primaryId)} disabled={categoryStatus !== "ready" || !categorySelection.primaryId || secondaryCategories.length === 0} aria-label={t("admin.categoryChildLevel")}>
                       <option value="">{secondaryCategories.length === 0 ? t("admin.categoryNoChildren") : t("admin.categoryRootOption")}</option>
                       {secondaryCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                     </select>
@@ -900,7 +900,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                       <td className="px-3 py-2 font-medium">{t("admin.product")}</td>
                       <td className="px-3 py-2"><Input disabled={draft.stock_mode === "SUPPLIER"} ref={registerField("cost_price")} type="number" min="0" step="0.01" value={draft.cost_price} onChange={(event) => setField("cost_price", event.target.value)} placeholder="0.00" /></td>
                       <td className="px-3 py-2"><Input ref={registerField("retail_price")} type="number" min="0" step="0.01" value={draft.retail_price} onChange={(event) => setField("retail_price", event.target.value)} placeholder="0.00" /></td>
-                      <td className={cn("whitespace-nowrap px-3 py-2 font-medium", (formatMargin(draft.cost_price, draft.retail_price) ?? 0) < 0 && "text-amber-600")}>{formatMargin(draft.cost_price, draft.retail_price) === null ? "—" : formatYuan(formatMargin(draft.cost_price, draft.retail_price) || 0)}</td>
+                      <td className={cn("whitespace-nowrap px-3 py-2 font-medium", (formatMargin(draft.cost_price, draft.retail_price) ?? 0) < 0 && "text-amber-800 dark:text-amber-300")}>{formatMargin(draft.cost_price, draft.retail_price) === null ? "—" : formatYuan(formatMargin(draft.cost_price, draft.retail_price) || 0)}</td>
                       <td className="whitespace-nowrap px-3 py-2">{formatMarginRate(draft.cost_price, draft.retail_price) === null ? "—" : `${formatMarginRate(draft.cost_price, draft.retail_price)?.toFixed(2)}%`}</td>
                     </tr>}
                     {draft.spec_enabled && draft.specs.map((spec) => {
@@ -910,7 +910,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                         <td className="px-3 py-2 font-medium">{spec.name || t("admin.unnamed")}</td>
                         <td className="px-3 py-2"><Input disabled={draft.stock_mode === "SUPPLIER"} ref={registerField(`spec-cost-${spec.id}`)} type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { cost_price: event.target.value })} placeholder="0.00" /></td>
                         <td className="px-3 py-2"><Input ref={registerField(`spec-retail-${spec.id}`)} type="number" min="0" step="0.01" value={spec.retail_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { retail_price: event.target.value })} placeholder="0.00" /></td>
-                        <td className={cn("whitespace-nowrap px-3 py-2 font-medium", margin !== null && margin < 0 && "text-amber-600")}>{margin === null ? "—" : formatYuan(margin)}</td>
+                        <td className={cn("whitespace-nowrap px-3 py-2 font-medium", margin !== null && margin < 0 && "text-amber-800 dark:text-amber-300")}>{margin === null ? "—" : formatYuan(margin)}</td>
                         <td className="whitespace-nowrap px-3 py-2">{marginRate === null ? "—" : `${marginRate.toFixed(2)}%`}</td>
                       </tr>
                     })}
@@ -946,7 +946,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                           <td className="px-3 py-2">{isMarkup ? `${t("admin.costMarkup")} ${level.markup_rate ?? 0}%` : t("admin.retailPricing")}</td>
                           <td className="whitespace-nowrap px-3 py-2">{row?.rule_price == null ? <StatusBadge tone="neutral" label={pendingLabel} /> : formatYuan(row.rule_price)}</td>
                           <td className="px-3 py-2"><Input ref={registerField(overrideField)} className="w-36" type="number" min="0.01" step="0.01" value={overrideValue(level.id, target.id)} onChange={(event) => updateOverride(level.id, target.id, event.target.value)} placeholder={t("admin.noCustomPrice")} /></td>
-                          <td className={cn("whitespace-nowrap px-3 py-2 font-medium", row?.below_cost && "text-amber-600")}>
+                          <td className={cn("whitespace-nowrap px-3 py-2 font-medium", row?.below_cost && "text-amber-800 dark:text-amber-300")}>
                             {row?.final_price == null ? <StatusBadge tone="neutral" label={pendingLabel} /> : <span>{formatYuan(row.final_price)}</span>}
                             <span className="ml-2 inline-flex gap-1 align-middle">
                               {row?.retail_capped && <StatusBadge tone="info" label={t("admin.retailCap")} />}
@@ -959,8 +959,8 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                   </div>
                 )}
                 {previewLoading && <p className="mt-2 text-xs text-muted-foreground">{t("admin.previewUpdating")}</p>}
-                {previewError && <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">{t("admin.pricingPreviewFailed")}</p>}
-                {preview?.warnings.map((warning) => <div key={warning} className="mt-3 flex items-start gap-2 rounded-card border border-amber-500/20 bg-amber-500/[0.07] p-3 text-sm text-amber-800 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />{warning}</div>)}
+                {previewError && <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">{t("admin.pricingPreviewFailed")}</p>}
+                {preview?.warnings.map((warning) => <div key={warning} className="mt-3 flex items-start gap-2 rounded-card border border-amber-600/25 bg-amber-500/10 p-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden="true" />{warning}</div>)}
               </div>
             </FormSection>
         </TabsContent>
@@ -976,7 +976,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 </div>
                 <label className="flex flex-col gap-1.5 text-sm font-medium">
                   {t("admin.stockMode")}
-                  <select disabled={draft.stock_mode === "SUPPLIER"} className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={draft.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
+                  <select disabled={draft.stock_mode === "SUPPLIER"} className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={draft.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
                     {draft.stock_mode === "SUPPLIER" && <option value="SUPPLIER">供应商库存</option>}
                     {draft.delivery_type === "AUTO" && <option value="CARD_KEY">{t("admin.cardKeyStock")}</option>}
                     {draft.delivery_type === "MANUAL" && <><option value="MANUAL">{t("admin.manualStock")}</option><option value="UNLIMITED">{t("admin.unlimitedStock")}</option></>}

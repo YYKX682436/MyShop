@@ -295,7 +295,7 @@ export function LowStockPanel({ products }: { products: LowStockProduct[] }) {
                   {t("admin.lowStockProducts")} · {formatNumber(product.threshold, locale)}
                 </p>
               </div>
-              <span className="shrink-0 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+              <span className="shrink-0 rounded-full border border-amber-600/25 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
                 {t("admin.remaining")} {formatNumber(product.available_stock, locale)}
               </span>
             </div>
@@ -388,9 +388,9 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
   }
   const visible = items.slice(0, 5)
   return (
-    <div className="dashboard-attention-strip min-w-0 bg-amber-500/[0.06] px-4 py-3" role="status">
+    <div className="dashboard-attention-strip min-w-0 border border-amber-600/20 bg-amber-500/[0.06] px-4 py-3 text-amber-950 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-100" role="status">
       <div className="flex items-center gap-2">
-        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden="true" />
         <h2 className="font-semibold text-foreground">{t("admin.needAttention")}</h2>
       </div>
       <ul className="mt-2 grid gap-1 text-sm text-foreground sm:grid-cols-2">
@@ -398,7 +398,7 @@ export function AttentionStrip({ items, loading = false, unavailable = false }: 
           <li key={item.id} className="flex min-w-0 items-start gap-2">
             <span className={cn(
               "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-              item.severity === "critical" ? "bg-destructive" : "bg-amber-500",
+              item.severity === "critical" ? "bg-destructive" : "bg-amber-600 dark:bg-amber-400",
             )} aria-hidden="true" />
             <span className="min-w-0">
               <span className="mr-1 font-medium">{item.severity === "critical" ? t("admin.systemCritical") : t("admin.systemWarning")}:</span>
@@ -487,7 +487,7 @@ function ResourceMetric({
   const barClass = severity === "critical"
     ? "bg-destructive"
     : severity === "warning"
-      ? "bg-amber-500"
+      ? "bg-amber-600 dark:bg-amber-500"
       : "bg-primary"
   return (
     <div className="dashboard-resource min-w-0 px-3 py-3">
@@ -559,13 +559,13 @@ function SystemLevelBadge({ level }: { level: SystemStatusLevel }) {
         ? t("admin.systemCritical")
         : t("admin.systemMonitorUnavailable")
   const style = level === "normal"
-    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300"
     : level === "warning"
-      ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+      ? "border-amber-600/25 bg-amber-500/10 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200"
       : level === "critical"
         ? "border-destructive/30 bg-destructive/10 text-destructive"
         : "border-border-subtle bg-surface-muted text-muted-foreground"
-  return <span className={cn("shrink-0 rounded-full border px-2 py-1 text-xs font-medium", style)}>{label}</span>
+  return <span className={cn("shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-medium", style)}>{label}</span>
 }
 
 function formatUptime(seconds: number | null, t: (key: TranslationKey) => string): string {
