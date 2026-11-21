@@ -23,8 +23,7 @@ public final class PaymentCrashWorker {
                 "--upload.path=" + args[5] + "/uploads",
                 "--private-upload.path=" + args[5] + "/private-uploads",
                 "--jwt.secret=crash-worker-fake-secret-with-at-least-64-characters-for-local-tests-only",
-                "--fulfillment.retry-initial-delay-ms=3600000",
-                "--supplier.purchase-enabled=false")) {
+                "--fulfillment.retry-initial-delay-ms=3600000")) {
             context.getBean(PaymentService.class).createPayment(UUID.fromString(args[3]), args[4], new BigDecimal("10.00"), "pc");
         }
     }

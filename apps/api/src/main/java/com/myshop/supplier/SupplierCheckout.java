@@ -12,7 +12,6 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -32,7 +31,6 @@ public class SupplierCheckout {
     private final SupplierPurchasePolicy policy;
     private final SupplierPurchaseTransactions transactions;
     private final ProductSpecRepository specs;
-    @Value("${supplier.purchase-enabled:false}") private boolean purchaseEnabled;
 
     public void validateVisibleBindings(Product product, List<UUID> visibleSpecIds) {
         var rows=mappings.findByProductId(product.getId());
@@ -45,7 +43,6 @@ public class SupplierCheckout {
     }
 
     public void validateActivation(Product product) {
-        if (!purchaseEnabled) throw new SupplierException("DISABLED","货源商品暂未开放销售");
         var rows=mappings.findByProductId(product.getId());
         if (rows.isEmpty()) throw new SupplierException("MAPPING","货源商品映射不存在");
         validateVisibleBindings(product,specs.findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(),0).stream()

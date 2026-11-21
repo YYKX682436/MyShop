@@ -14,8 +14,8 @@ import com.myshop.service.BalanceOrderPaymentService;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OrderPaymentCompletionService;
 import com.myshop.service.SubsiteFreeOrder;
+import com.myshop.supplier.SupplierOrderAvailability;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,15 +33,16 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
     private final BalanceTransactionService balanceTransactionService;
     private final OrderPaymentCompletionService orderPaymentCompletionService;
     private final OrderItemRepository orderItemRepository;
-    @Value("${supplier.purchase-enabled:false}")
-    private boolean supplierPurchaseEnabled;
+    private final SupplierOrderAvailability supplierOrderAvailability;
 
     public BalanceOrderPaymentServiceImpl(BalanceTransactionService balanceTransactionService,
                                           OrderPaymentCompletionService orderPaymentCompletionService,
-                                          OrderItemRepository orderItemRepository) {
+                                          OrderItemRepository orderItemRepository,
+                                          SupplierOrderAvailability supplierOrderAvailability) {
         this.balanceTransactionService = balanceTransactionService;
         this.orderPaymentCompletionService = orderPaymentCompletionService;
         this.orderItemRepository = orderItemRepository;
+        this.supplierOrderAvailability = supplierOrderAvailability;
     }
 
     @Override
@@ -61,13 +62,14 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单状态不允许余额支付");
         }
-        if (!supplierPurchaseEnabled && orderItemRepository.findByOrderId(order.getId()).stream()
-                .anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放付款，请联系客服");
+        var orderItems = orderItemRepository.findByOrderId(order.getId());
+        if (orderItems.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)
+                && !supplierOrderAvailability.allowsPayment(order.getId(), orderItems)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "货源账号已停用或采购记录缺失，暂不能付款，请联系客服");
         }
 
         BigDecimal amount = money(order.getActualAmount());
-        if (amount.signum() == 0 && SubsiteFreeOrder.isFreeOrder(order, orderItemRepository.findByOrderId(order.getId()))) {
+        if (amount.signum() == 0 && SubsiteFreeOrder.isFreeOrder(order, orderItems)) {
             order.setExpiresAt(null);
             orderPaymentCompletionService.completeFirstPayment(order);
             return;

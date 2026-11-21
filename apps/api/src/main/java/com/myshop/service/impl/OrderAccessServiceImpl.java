@@ -29,8 +29,8 @@ import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.OrderAccessService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
+import com.myshop.supplier.SupplierOrderAvailability;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -63,8 +63,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     private final CardKeyReclaimService cardKeyReclaimService;
     private final AfterSaleService afterSaleService;
     private final ObjectMapper objectMapper;
-    @Value("${supplier.purchase-enabled:false}")
-    private boolean supplierPurchaseEnabled;
+    private final SupplierOrderAvailability supplierOrderAvailability;
     private final TransactionTemplate transactions;
     private SupplierPurchaseRepository supplierPurchases;
     private SupplierDeliveryCardRepository supplierCards;
@@ -84,7 +83,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                                   CardKeyReclaimService cardKeyReclaimService,
                                   AfterSaleService afterSaleService,
                                   ObjectMapper objectMapper,
-                                  PlatformTransactionManager transactionManager) {
+                                  PlatformTransactionManager transactionManager,
+                                  SupplierOrderAvailability supplierOrderAvailability) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.cardKeyRepository = cardKeyRepository;
@@ -96,6 +96,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         this.afterSaleService = afterSaleService;
         this.objectMapper = objectMapper;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.supplierOrderAvailability = supplierOrderAvailability;
     }
 
     @Override
@@ -294,7 +295,9 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         result.put("remaining_seconds", remainingSeconds(order.getExpiresAt(), order.getStatus()));
         boolean paymentBlocked = paymentEvents != null
                 && paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(), "LATE_PAID_");
-        if (items.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER) && !supplierPurchaseEnabled)
+        boolean supplierItems = items.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER);
+        boolean supplierPaymentAvailable = !supplierItems || supplierOrderAvailability.allowsPayment(order.getId(), items);
+        if (!supplierPaymentAvailable)
             paymentBlocked = true;
         result.put("can_retry", !paymentBlocked && order.getStatus() == OrderStatus.PENDING);
 
@@ -320,9 +323,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                     && attempt.getNextAction() != null && !attempt.getNextAction().isBlank()
                     && attempt.getExpiresAt() != null && attempt.getExpiresAt().isAfter(LocalDateTime.now())
                     && (paymentEvents == null || !paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(),"LATE_PAID_"))
-                    && (items.stream().noneMatch(item -> item.getStockMode() == StockMode.SUPPLIER)
-                        || supplierPurchaseEnabled && paymentEvents!=null
-                            && !paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(),"LATE_PAID_"))) {
+                    && supplierPaymentAvailable) {
                 result.put("expires_at", attempt.getExpiresAt());
                 result.put("remaining_seconds", remainingSeconds(attempt.getExpiresAt(), order.getStatus()));
                 result.put("next_action", PaymentNextActionPayload.from(readNextAction(attempt.getNextAction())));

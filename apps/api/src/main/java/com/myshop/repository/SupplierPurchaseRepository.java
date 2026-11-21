@@ -46,10 +46,9 @@ public interface SupplierPurchaseRepository extends JpaRepository<SupplierPurcha
         """,nativeQuery=true)
     int claim(@Param("id") UUID id,@Param("now") LocalDateTime now);
     @Query("select p.id from SupplierPurchase p, Order o where o.id=p.orderId " +
-            "and ((p.status='WAITING_PAYMENT' and (o.status=com.myshop.constant.OrderStatus.PAID or " +
-            "(:allowCreate=false and o.status=com.myshop.constant.OrderStatus.AFTER_SALE))) or " +
+            "and ((p.status='WAITING_PAYMENT' and o.status=com.myshop.constant.OrderStatus.PAID) or " +
             "(p.status in ('SUBMITTING','UNKNOWN','UNPAID','PROCESSING','REFUNDING') and o.status in " +
             "(com.myshop.constant.OrderStatus.PAID,com.myshop.constant.OrderStatus.DELIVERED,com.myshop.constant.OrderStatus.AFTER_SALE))) " +
             "order by coalesce(p.lastCheckedAt,p.createdAt), p.createdAt")
-    List<UUID> findRecoveryCandidates(@Param("allowCreate") boolean allowCreate,Pageable page);
+    List<UUID> findRecoveryCandidates(Pageable page);
 }

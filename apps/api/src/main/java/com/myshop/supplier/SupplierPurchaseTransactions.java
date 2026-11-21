@@ -111,17 +111,6 @@ public class SupplierPurchaseTransactions {
         }
     }
 
-    /** A previously issued payment link may still settle after sales are disabled. */
-    @Transactional(propagation=Propagation.REQUIRES_NEW,timeout=5)
-    public void blockPaidWhileDisabled(UUID id) {
-        SupplierPurchase p=lockedWithOrder(id);
-        Order order=orders.findById(p.getOrderId()).orElseThrow();
-        if ("WAITING_PAYMENT".equals(p.getStatus()) && (order.getStatus()==OrderStatus.PAID
-                || order.getStatus()==OrderStatus.AFTER_SALE)) {
-            p.setStatus("BLOCKED"); p.setErrorCode("PURCHASE_DISABLED"); p.setLastCheckedAt(LocalDateTime.now());
-        }
-    }
-
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public void submissionUnknown(UUID id,String error) {
         SupplierPurchase p=purchases.findForUpdate(id).orElseThrow();

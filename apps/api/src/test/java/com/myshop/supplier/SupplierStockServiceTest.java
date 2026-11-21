@@ -19,7 +19,6 @@ class SupplierStockServiceTest {
         var suppliers=mock(SupplierService.class);
         var provider=mock(SupplierProvider.class);
         var service=new SupplierStockService(mappings,suppliers,new SupplierRechargeFields());
-        ReflectionTestUtils.setField(service,"purchaseEnabled",true);
         UUID account=UUID.randomUUID(), broken=UUID.randomUUID(), good=UUID.randomUUID();
         var json=new ObjectMapper();
         var a=mapping(account,broken); a.setSnapshot(json.readTree("{\"broken\":true}"));
@@ -37,7 +36,6 @@ class SupplierStockServiceTest {
         var mappings=mock(SupplierProductMappingRepository.class);
         var suppliers=mock(SupplierService.class);
         var service=new SupplierStockService(mappings,suppliers,new SupplierRechargeFields());
-        ReflectionTestUtils.setField(service,"purchaseEnabled",true);
         UUID product=UUID.randomUUID(),first=UUID.randomUUID(),second=UUID.randomUUID(),missing=UUID.randomUUID();
         UUID siteA=UUID.randomUUID(),siteB=UUID.randomUUID();
         var json=new ObjectMapper(); var a=mapping(siteA,product); var b=mapping(siteB,product);

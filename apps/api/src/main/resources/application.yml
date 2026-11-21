@@ -10,7 +10,6 @@ app:
   public-site-url: ${PUBLIC_SITE_URL:http://localhost:3000}
 
 supplier:
-  purchase-enabled: ${SUPPLIER_PURCHASE_ENABLED:false}
   transfer-enabled: ${SUPPLIER_TRANSFER_ENABLED:false}
   transfer-max-amount: ${SUPPLIER_TRANSFER_MAX_AMOUNT:100}
   cdkey-enabled: ${SUPPLIER_CDKEY_ENABLED:false}

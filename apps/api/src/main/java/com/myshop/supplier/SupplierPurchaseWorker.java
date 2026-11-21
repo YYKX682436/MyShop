@@ -11,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
@@ -36,7 +35,6 @@ public class SupplierPurchaseWorker {
     private final SupplierPurchaseTransactions tx;
     private final PaymentUrlService urls;
     private final ObjectMapper json;
-    @Value("${supplier.purchase-enabled:false}") private boolean purchaseEnabled;
     private final AtomicBoolean scanning=new AtomicBoolean();
     private final ExecutorService workers=Executors.newFixedThreadPool(3, r -> {
         Thread t=new Thread(r,"supplier-purchase"); t.setDaemon(true); return t;
@@ -51,7 +49,7 @@ public class SupplierPurchaseWorker {
     public void recover() {
         if (!scanning.compareAndSet(false,true)) return;
         try {
-            List<UUID> ids=purchases.findRecoveryCandidates(purchaseEnabled,PageRequest.of(0,20));
+            List<UUID> ids=purchases.findRecoveryCandidates(PageRequest.of(0,20));
             CompletableFuture<?>[] tasks=ids.stream().map(id -> CompletableFuture.runAsync(() -> process(id),workers)
                     .exceptionally(ignored -> null)).toArray(CompletableFuture[]::new);
             CompletableFuture.allOf(tasks).whenComplete((done,error) -> scanning.set(false));
@@ -68,7 +66,6 @@ public class SupplierPurchaseWorker {
             if (List.of("SUBMITTING","UNKNOWN","UNPAID","PROCESSING","REFUNDING").contains(p.getStatus())) refresh(id);
             return;
         }
-        if (!purchaseEnabled) { tx.blockPaidWhileDisabled(id); return; }
         Prepared ready;
         try { ready=preflight(p); }
         catch (RuntimeException e) { tx.blockBeforeClaim(id,kind(e)); return; }

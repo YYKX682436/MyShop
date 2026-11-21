@@ -5,7 +5,6 @@ import com.myshop.model.CustomerInputField;
 import com.myshop.model.pricing.PriceTarget;
 import com.myshop.repository.SupplierProductMappingRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -17,10 +16,9 @@ public class SupplierStockService {
     private final SupplierProductMappingRepository mappings;
     private final SupplierService suppliers;
     private final SupplierRechargeFields inputs;
-    @Value("${supplier.purchase-enabled:false}") private boolean purchaseEnabled;
 
     public Map<PriceTarget,Long> available(List<UUID> ids) {
-        if (!purchaseEnabled || ids.isEmpty()) return Map.of();
+        if (ids.isEmpty()) return Map.of();
         Map<UUID,SupplierService.RuntimeAccount> accounts=new HashMap<>(); Set<UUID> invalidAccounts=new HashSet<>();
         Map<PriceTarget,Long> result=new HashMap<>(); LocalDateTime now=LocalDateTime.now();
         for (SupplierProductMapping m:mappings.findByProductIdIn(ids)) {

@@ -13,6 +13,7 @@ import com.myshop.exception.BusinessException;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OrderPaymentCompletionService;
+import com.myshop.supplier.SupplierOrderAvailability;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -35,15 +36,17 @@ class BalanceOrderPaymentServiceImplTest {
     @Mock private BalanceTransactionService balanceTransactionService;
     @Mock private OrderPaymentCompletionService orderPaymentCompletionService;
     @Mock private OrderItemRepository orderItemRepository;
+    @Mock private SupplierOrderAvailability supplierOrderAvailability;
 
     @Test
-    void disabledSupplierPurchaseCannotDebitBalance() {
+    void disabledSupplierAccountCannotDebitBalance() {
         UUID userId = UUID.randomUUID();
         Order order = balanceOrder(UUID.randomUUID(), userId, "10.00");
         User user = user(userId, "20.00", UserRole.USER);
         OrderItem item = new OrderItem();
         item.setStockMode(StockMode.SUPPLIER);
         when(orderItemRepository.findByOrderId(order.getId())).thenReturn(List.of(item));
+        when(supplierOrderAvailability.allowsPayment(order.getId(),List.of(item))).thenReturn(false);
 
         assertThrows(BusinessException.class, () -> service().pay(order, user));
         assertEquals(new BigDecimal("20.00"), user.getBalance());
@@ -111,7 +114,7 @@ class BalanceOrderPaymentServiceImplTest {
 
     private BalanceOrderPaymentServiceImpl service() {
         return new BalanceOrderPaymentServiceImpl(
-                balanceTransactionService, orderPaymentCompletionService, orderItemRepository);
+                balanceTransactionService, orderPaymentCompletionService, orderItemRepository, supplierOrderAvailability);
     }
 
     private Order balanceOrder(UUID orderId, UUID userId, String amount) {

@@ -26,8 +26,8 @@ import com.myshop.service.OrderExpiryService;
 import com.myshop.service.PaymentQueryTransactionService;
 import com.myshop.service.PaymentService;
 import com.myshop.service.PaymentUrlService;
+import com.myshop.supplier.SupplierOrderAvailability;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
@@ -64,8 +64,7 @@ public class PaymentServiceImpl implements PaymentService {
     @Autowired public void setPaymentUrls(PaymentUrlService value) { paymentUrls = value; }
     private WebhookEventRepository paymentEvents;
     @Autowired public void setPaymentEvents(WebhookEventRepository paymentEvents) { this.paymentEvents=paymentEvents; }
-    @Value("${supplier.purchase-enabled:false}")
-    private boolean supplierPurchaseEnabled;
+    private final SupplierOrderAvailability supplierOrderAvailability;
 
     @Autowired
     public PaymentServiceImpl(PaymentChannelRepository paymentChannelRepository,
@@ -75,7 +74,8 @@ public class PaymentServiceImpl implements PaymentService {
                               List<PaymentProvider> paymentProviders,
                               ObjectMapper objectMapper,
                               OrderExpiryService orderExpiryService,
-                              PaymentQueryTransactionService paymentQueryTransactionService) {
+                              PaymentQueryTransactionService paymentQueryTransactionService,
+                              SupplierOrderAvailability supplierOrderAvailability) {
         this.paymentChannelRepository = paymentChannelRepository;
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
@@ -84,6 +84,7 @@ public class PaymentServiceImpl implements PaymentService {
         this.objectMapper = objectMapper;
         this.orderExpiryService = orderExpiryService;
         this.paymentQueryTransactionService = paymentQueryTransactionService;
+        this.supplierOrderAvailability = supplierOrderAvailability;
     }
 
     @Override
@@ -242,8 +243,9 @@ public class PaymentServiceImpl implements PaymentService {
             return null;
         }
         orderExpiryService.expireLockedOrder(order);
-        boolean supplierBlocked = orderItemRepository.findByOrderId(orderId).stream()
-                .anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER) && !supplierPurchaseEnabled;
+        List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
+        boolean supplierBlocked = orderItems.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)
+                && !supplierOrderAvailability.allowsPayment(orderId, orderItems);
         boolean latePayment = paymentEvents != null
                 && paymentEvents.existsByOrderIdAndProcessResultStartingWith(orderId, "LATE_PAID_");
         if (order.getStatus() != OrderStatus.PENDING || attempt.getStatus() != PaymentStatus.PENDING
@@ -398,11 +400,19 @@ public class PaymentServiceImpl implements PaymentService {
     private void validateSupplierPaymentEnabled(Order order) {
         if (paymentEvents != null && paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(), "LATE_PAID_"))
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单存在待核实的付款，请联系客服");
-        if (orderItemRepository.findByOrderId(order.getId()).stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
-            if (!supplierPurchaseEnabled) throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放付款，请联系客服");
+        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+        if (items.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
+            if (!supplierOrderAvailability.allowsPayment(order.getId(), items))
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "货源账号已停用或采购记录缺失，暂不能付款，请联系客服");
             if (paymentEvents==null || paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(),"LATE_PAID_"))
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "订单存在待核实的付款，请联系客服");
         }
+    }
+
+    private boolean allowsSupplierPayment(UUID orderId) {
+        List<OrderItem> items=orderItemRepository.findByOrderId(orderId);
+        return items.stream().noneMatch(item -> item.getStockMode()==StockMode.SUPPLIER)
+                || supplierOrderAvailability.allowsPayment(orderId,items);
     }
 
     private PaymentAttempt findActiveAttempt(UUID orderId) {
@@ -454,8 +464,7 @@ public class PaymentServiceImpl implements PaymentService {
                 && attempt.getNextAction() != null && !attempt.getNextAction().isBlank()
                 && (attempt.getExpiresAt() == null || attempt.getExpiresAt().isAfter(LocalDateTime.now()))
                 && (paymentEvents == null || !paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(), "LATE_PAID_"))
-                && (supplierPurchaseEnabled || orderItemRepository.findByOrderId(order.getId()).stream()
-                        .noneMatch(item -> item.getStockMode() == StockMode.SUPPLIER));
+                && allowsSupplierPayment(order.getId());
         result.put("next_action", visible ? PaymentNextActionPayload.from(deserializeNextAction(attempt.getNextAction())) : null);
         result.put("expires_at", attempt.getExpiresAt());
         result.put("remaining_seconds", remainingSeconds(attempt.getExpiresAt()));

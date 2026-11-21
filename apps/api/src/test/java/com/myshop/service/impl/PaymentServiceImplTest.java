@@ -20,6 +20,7 @@ import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.OrderExpiryService;
 import com.myshop.service.PaymentQueryTransactionService;
+import com.myshop.supplier.SupplierOrderAvailability;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,16 +60,18 @@ class PaymentServiceImplTest {
     @Mock private PaymentProvider provider;
     @Mock private OrderExpiryService orderExpiryService;
     @Mock private PaymentQueryTransactionService paymentQueryTransactionService;
+    @Mock private SupplierOrderAvailability supplierOrderAvailability;
 
     private PaymentServiceImpl service;
 
     @Test
-    void disabledSupplierPurchaseBlocksBothPaymentAndRepayment() {
+    void disabledSupplierAccountBlocksBothPaymentAndRepayment() {
         UUID orderId = UUID.randomUUID();
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(pendingOrder(orderId, "10.00")));
         OrderItem item = new OrderItem();
         item.setStockMode(StockMode.SUPPLIER);
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(supplierOrderAvailability.allowsPayment(eq(orderId), any())).thenReturn(false);
 
         assertThrows(BusinessException.class, () -> service.createPayment(orderId, "alipay", new BigDecimal("10.00"), "pc"));
         assertThrows(BusinessException.class, () -> service.repay(orderId, "pc"));
@@ -90,7 +93,7 @@ class PaymentServiceImplTest {
         lenient().when(paymentAttemptRepository.existsByMerchantTradeNo(anyString())).thenReturn(false);
         service = new PaymentServiceImpl(paymentChannelRepository, orderRepository, orderItemRepository,
                 paymentAttemptRepository, List.of(provider), new ObjectMapper(), orderExpiryService,
-                paymentQueryTransactionService);
+                paymentQueryTransactionService, supplierOrderAvailability);
         var manager = org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
         lenient().when(manager.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
         service.setTransactionManager(manager);

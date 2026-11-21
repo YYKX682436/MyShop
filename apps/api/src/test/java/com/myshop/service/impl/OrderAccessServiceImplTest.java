@@ -19,6 +19,7 @@ import com.myshop.service.AfterSaleService;
 import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.OrderService;
 import com.myshop.service.PaymentService;
+import com.myshop.supplier.SupplierOrderAvailability;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,7 @@ class OrderAccessServiceImplTest {
     @Mock private CardKeyReclaimService cardKeyReclaimService;
     @Mock private AfterSaleService afterSaleService;
     @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Mock private SupplierOrderAvailability supplierOrderAvailability;
 
     private OrderAccessServiceImpl service;
 
@@ -60,11 +62,12 @@ class OrderAccessServiceImplTest {
     void setUp() {
         service = new OrderAccessServiceImpl(orderRepository, orderItemRepository, cardKeyRepository,
                 paymentAttemptRepository, orderService, paymentService, balanceOrderPaymentService,
-                cardKeyReclaimService, afterSaleService, new ObjectMapper(), transactionManager);
+                cardKeyReclaimService, afterSaleService, new ObjectMapper(), transactionManager,
+                supplierOrderAvailability);
     }
 
     @Test
-    void disabledSupplierSalesHidePreviouslyIssuedPaymentAction() {
+    void disabledSupplierAccountHidesPreviouslyIssuedPaymentAction() {
         UUID orderId=UUID.randomUUID();
         Order order=guestOrder(orderId,"session-a"); order.setStatus(OrderStatus.PENDING);
         order.setPaymentChannelCode("test-channel");
@@ -75,6 +78,7 @@ class OrderAccessServiceImplTest {
         attempt.setNextAction("{\"type\":\"qr_code\",\"value\":\"previous-link\"}");
         when(orderRepository.findByIdForUpdate(orderId)).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(supplierOrderAvailability.allowsPayment(orderId,List.of(item))).thenReturn(false);
         when(cardKeyRepository.findByOrderIdOrderByCreatedAtAsc(orderId)).thenReturn(List.of());
         when(paymentAttemptRepository.findByOrderIdOrderByCreatedAtDesc(orderId)).thenReturn(List.of(attempt));
         Map<?,?> payment=(Map<?,?>)service.getOrder(orderId,null,"session-a").get("payment");

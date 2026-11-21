@@ -57,7 +57,6 @@ class SupplierPurchasePostgresIntegrationTest {
         r.add("spring.jpa.hibernate.ddl-auto",()->"validate");
         r.add("SUPPLIER_MASTER_KEY",()->"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
         r.add("supplier.sync-initial-delay-ms",()->"3600000"); r.add("supplier.purchase-initial-delay-ms",()->"3600000");
-        r.add("supplier.purchase-enabled",()->true);
         r.add("supplier.transfer-enabled",()->true); r.add("supplier.cdkey-enabled",()->true);
         r.add("app.public-site-url",()->"https://shop.example");
         r.add("jwt.secret",()->"purchase-test-secret-at-least-64-bytes-long-2026-and-further-example-content");
@@ -443,17 +442,19 @@ class SupplierPurchasePostgresIntegrationTest {
         assertEquals(1,((List<?>)adminOrders.forItem(f.item()).get("late_payments")).size());
         assertEquals(0,fake.creates.get());
     }
-    @Test void lateCallbackAfterPurchaseIsDisabledKeepsPaymentAndBlocksNewProcurement() throws Exception {
-        OnlineFixture f=onlineSupplierOrder(); ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
+    @Test void lateCallbackAfterSupplierAccountDisableKeepsPaymentAndBlocksProcurement() throws Exception {
+        OnlineFixture f=onlineSupplierOrder();
+        UUID accountId=purchases.findById(f.purchase()).orElseThrow().getAccountId();
+        jdbc.update("update supplier_accounts set enabled=false where id=?",accountId);
         try {
             assertEquals("SUCCESS",webhookService.handleWebhook("e2e-mock",mockPaymentCallback(f.merchant())).body());
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
             while (!"BLOCKED".equals(purchases.findById(f.purchase()).orElseThrow().getStatus()) && System.nanoTime()<deadline) Thread.sleep(20);
             assertEquals("PAID",value("select status from orders where id=?",f.order()));
             assertEquals("PAID",value("select status from payment_attempts where id=?",f.attempt()));
-            assertEquals("PURCHASE_DISABLED",purchases.findById(f.purchase()).orElseThrow().getErrorCode());
+            assertEquals("CONFIG",purchases.findById(f.purchase()).orElseThrow().getErrorCode());
             assertEquals(0,fake.creates.get());
-        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+        } finally { jdbc.update("update supplier_accounts set enabled=true where id=?",accountId); }
     }
     @Test void verifiedPaymentAfterDeadlineIsRecordedWithoutRevivingOrder() throws Exception {
         OnlineFixture f=onlineSupplierOrder();
@@ -597,21 +598,21 @@ class SupplierPurchasePostgresIntegrationTest {
         assertEquals(1,fake.creates.get()); assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
         worker.process(f.purchase()); worker.refresh(f.purchase()); assertEquals(1,fake.creates.get());
     }
-    @Test void disabledPurchaseMarksLatePaymentForManualAttentionWithoutCreating() throws Exception {
+    @Test void disabledSupplierAccountMarksPaidOrderForManualAttentionWithoutCreating() throws Exception {
         Fixture f=fixture(1,0);
-        ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
+        jdbc.update("update supplier_accounts set enabled=false where id=?",f.account());
         try {
-            assertTrue(purchases.findRecoveryCandidates(false,org.springframework.data.domain.PageRequest.of(0,10000)).contains(f.purchase()));
+            assertTrue(purchases.findRecoveryCandidates(org.springframework.data.domain.PageRequest.of(0,10000)).contains(f.purchase()));
             worker.process(f.purchase());
             SupplierPurchase saved=purchases.findById(f.purchase()).orElseThrow();
             assertEquals("BLOCKED",saved.getStatus());
-            assertEquals("PURCHASE_DISABLED",saved.getErrorCode());
+            assertEquals("CONFIG",saved.getErrorCode());
             assertNull(saved.getSubmitStartedAt());
             assertEquals(0,fake.creates.get());
             assertEquals("PAID",value("select status from orders where id=?",f.order()));
-        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+        } finally { jdbc.update("update supplier_accounts set enabled=true where id=?",f.account()); }
     }
-    @Test void disabledPurchaseStillRecoversPreviouslySubmittedOrder() throws Exception {
+    @Test void previouslySubmittedOrderRecoveryDoesNotDependOnGlobalPurchaseSwitch() throws Exception {
         Fixture f=fixture(3,0);
         assertTrue(tx.claim(f.purchase()));
         SupplierPurchase p=purchases.findById(f.purchase()).orElseThrow();
@@ -619,25 +620,21 @@ class SupplierPurchasePostgresIntegrationTest {
         jdbc.update("update supplier_purchases set submit_started_at=current_timestamp-interval '2 minutes' where id=?",f.purchase());
         fake.details.put(outer,new SupplierModels.PurchaseDetail("UP-HISTORY",outer,3,1,
                 new BigDecimal("0.02"),BigDecimal.ZERO,"完成",null,null,null,List.of()));
-        ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
-        try {
-            worker.process(f.purchase());
-            assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
-            assertEquals(outer,purchases.findById(f.purchase()).orElseThrow().getOuterNumber());
-            assertEquals(0,fake.creates.get());
-        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+        worker.process(f.purchase());
+        assertEquals("COMPLETED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(outer,purchases.findById(f.purchase()).orElseThrow().getOuterNumber());
+        assertEquals(0,fake.creates.get());
     }
-    @Test void disabledPurchaseRecoveryIncludesPaidOrderAlreadyInAfterSale() throws Exception {
+    @Test void disabledSupplierAccountBlocksPaidOrderAlreadyInAfterSale() throws Exception {
         Fixture f=fixture(1,0);
         jdbc.update("update orders set status='AFTER_SALE' where id=?",f.order());
-        ReflectionTestUtils.setField(worker,"purchaseEnabled",false);
+        jdbc.update("update supplier_accounts set enabled=false where id=?",f.account());
         try {
-            assertTrue(purchases.findRecoveryCandidates(false,org.springframework.data.domain.PageRequest.of(0,10000)).contains(f.purchase()));
             worker.process(f.purchase());
             assertEquals("BLOCKED",purchases.findById(f.purchase()).orElseThrow().getStatus());
-            assertEquals("PURCHASE_DISABLED",purchases.findById(f.purchase()).orElseThrow().getErrorCode());
+            assertEquals("CONFIG",purchases.findById(f.purchase()).orElseThrow().getErrorCode());
             assertEquals(0,fake.creates.get());
-        } finally { ReflectionTestUtils.setField(worker,"purchaseEnabled",true); }
+        } finally { jdbc.update("update supplier_accounts set enabled=true where id=?",f.account()); }
     }
     @Test void productNotificationRefreshesOnlyItsAccountAndNeverRetailPrice() throws Exception {
         Fixture f=fixture(1,0);

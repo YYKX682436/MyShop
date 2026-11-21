@@ -27,7 +27,6 @@ import com.myshop.service.SubsitePricingService;
 import com.myshop.service.SubsiteAccess;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import com.myshop.supplier.SupplierCheckout;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -71,8 +70,6 @@ public class OrderServiceImpl implements OrderService {
     @Autowired public void setSubsiteRepository(SubsiteRepository repository) { this.subsiteRepository = repository; }
     private TransactionTemplate transactions;
     @Autowired public void setTransactionManager(PlatformTransactionManager manager) { transactions = new TransactionTemplate(manager); }
-    @Value("${supplier.purchase-enabled:false}")
-    private boolean supplierPurchaseEnabled;
 
     @Autowired
     public void setSupplierCheckout(SupplierCheckout supplierCheckout) { this.supplierCheckout=supplierCheckout; }
@@ -237,7 +234,7 @@ public class OrderServiceImpl implements OrderService {
         }
 
         boolean supplierProduct=product.getStockMode() == StockMode.SUPPLIER;
-        if (supplierProduct && (!supplierPurchaseEnabled || supplierCheckout==null || adminPickup)) {
+        if (supplierProduct && (supplierCheckout==null || adminPickup)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "该货源商品暂未开放购买");
         }
 
