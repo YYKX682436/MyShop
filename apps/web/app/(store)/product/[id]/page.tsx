@@ -10,7 +10,7 @@ import { ScrollToTop } from "./scroll-to-top"
 import type { Metadata } from "next"
 import type { PublicPaymentChannel } from "@/types"
 import { serializeJsonLd } from "@/lib/json-ld"
-import { getPublicSiteUrl } from "@/lib/site-url"
+import { requestSiteUrl } from "@/lib/request-site"
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -50,7 +50,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   if (!product) notFound()
 
   const inStock = product.unlimited || product.specs?.some(spec => spec.unlimited || (spec.stock_available ?? 0) > 0) || (product.stock_available ?? 0) > 0
-  const baseUrl = getPublicSiteUrl()
+  const baseUrl = await requestSiteUrl()
   const categoryPath = [product.primary_category_name, product.secondary_category_name]
     .filter((name): name is string => Boolean(name))
 

@@ -6,6 +6,8 @@ import com.myshop.constant.OrderStatus;
 import com.myshop.constant.StockMode;
 import com.myshop.entity.*;
 import com.myshop.repository.*;
+import com.myshop.service.impl.SubsiteSettlementService;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -36,6 +38,8 @@ public class SupplierPurchaseTransactions {
     private final OrderRepository orders;
     private final OrderItemRepository items;
     private final ObjectMapper json;
+    private SubsiteSettlementService subsiteSettlementService;
+    @Autowired public void setSubsiteSettlementService(SubsiteSettlementService service) { this.subsiteSettlementService=service; }
 
     /** Joins checkout so the purchase intent commits atomically with the order item. */
     @Transactional(propagation=Propagation.MANDATORY)
@@ -85,8 +89,11 @@ public class SupplierPurchaseTransactions {
                         || !m.getRemoteSku().equals(p.getRemoteSku()) || m.getGoodsType()!=p.getGoodsType()
                         || m.getMultiple()!=p.getMultiple()) problem="MAPPING_CHANGED";
                 else {
-                    var quote=policy.quote(m,true,p.getBuyerQuantity(),item.getSubtotal(),LocalDateTime.now());
-                    if (quote.actualQuantity()!=p.getActualQuantity() || quote.totalCost().compareTo(p.getSafePrice())>0) problem="COST_EXCEEDED";
+                    BigDecimal revenue = item.getSubsiteSupplyPriceSnapshot() == null ? item.getSubtotal()
+                            : item.getSubsiteSupplyPriceSnapshot().multiply(BigDecimal.valueOf(item.getQuantity()));
+                    var quote=policy.quote(m,true,p.getBuyerQuantity(),revenue,LocalDateTime.now());
+                    if (order.getSubsiteId()!=null && quote.totalCost().signum()==0) problem="COST_EXCEEDED";
+                    else if (quote.actualQuantity()!=p.getActualQuantity() || quote.totalCost().compareTo(p.getSafePrice())>0) problem="COST_EXCEEDED";
                     else if (!json.valueToTree(suppliers.customerFields(accountId,m.getSnapshot())).equals(p.getRechargeTemplate())) problem="TEMPLATE_CHANGED";
                 }
             } catch (SupplierException e) { problem=safeError(e.kind()); }
@@ -219,6 +226,10 @@ public class SupplierPurchaseTransactions {
                 List<OrderItem> orderItems=items.findByOrderId(order.getId());
                 if (order.getStatus()==OrderStatus.PAID && !orderItems.isEmpty() && orderItems.stream()
                         .allMatch(i -> i.getFulfillmentStatus()==FulfillmentStatus.DELIVERED)) {
+                    if (order.getSubsiteId()!=null) {
+                        if (subsiteSettlementService==null) throw new IllegalStateException("分站结算服务不可用");
+                        subsiteSettlementService.settle(order);
+                    }
                     order.setStatus(OrderStatus.DELIVERED); order.setDeliveredAt(now); orders.save(order);
                 }
             }

@@ -13,6 +13,7 @@ import com.myshop.repository.OrderItemRepository;
 import com.myshop.service.BalanceOrderPaymentService;
 import com.myshop.service.BalanceTransactionService;
 import com.myshop.service.OrderPaymentCompletionService;
+import com.myshop.service.SubsiteFreeOrder;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Propagation;
@@ -66,6 +67,11 @@ public class BalanceOrderPaymentServiceImpl implements BalanceOrderPaymentServic
         }
 
         BigDecimal amount = money(order.getActualAmount());
+        if (amount.signum() == 0 && SubsiteFreeOrder.isFreeOrder(order, orderItemRepository.findByOrderId(order.getId()))) {
+            order.setExpiresAt(null);
+            orderPaymentCompletionService.completeFirstPayment(order);
+            return;
+        }
         if (amount.signum() <= 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常");
         }

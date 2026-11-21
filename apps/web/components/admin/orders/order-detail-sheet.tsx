@@ -102,6 +102,7 @@ function fulfillmentLabel(item: OrderItemDetail, t: Translator) {
 }
 
 function pricingSourceLabel(source: AdminOrderItemDetail["pricing_source"], t: Translator) {
+  if (source === "SUBSITE") return t("admin.pricingSourceSubsite")
   if (source === "SALES_CHANNEL") return t("admin.pricingSourceChannel")
   if (source === "USER_SECRET") return t("admin.pricingSourceSecret")
   if (source === "LEVEL_OVERRIDE") return t("admin.pricingSourceOverride")
@@ -308,7 +309,7 @@ export function OrderDetailSheet({
           <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
             <DefinitionRow label={t("admin.refundStatus")}><span>{t("status.REFUNDED")}</span></DefinitionRow>
             <DefinitionRow label={t("admin.refundAmount")}><span className="font-semibold">{formatMoney(order.refund_amount ?? order.actual_amount, empty)}</span></DefinitionRow>
-            <DefinitionRow label={t("admin.refundDestination")}><span>{t("admin.refundBalance")}</span></DefinitionRow>
+            <DefinitionRow label={t("admin.refundDestination")}><span>{t(order.actual_amount === 0 ? "admin.zeroRefund" : "admin.refundBalance")}</span></DefinitionRow>
             <DefinitionRow label={t("admin.refundedAt")}><span>{order.refunded_at ? formatDateTime(order.refunded_at, locale) : empty}</span></DefinitionRow>
             <DefinitionRow label={t("admin.refundCardHandling")}><span>{reclaimedCardKeyCount > 0 ? t("admin.refundReclaimed").replace("{count}", String(reclaimedCardKeyCount)) : t("admin.refundNotReclaimed")}</span></DefinitionRow>
           </dl>
@@ -360,10 +361,11 @@ export function OrderDetailSheet({
                     <div><p className="text-xs text-muted-foreground">{t("admin.deliveryMethod")}</p><p className="mt-1">{manual ? t("admin.manualDeliveryLabel") : t("admin.autoDeliveryLabel")}</p></div>
                   </div>
                   <dl className="grid gap-x-5 gap-y-2 border-b border-border-subtle/70 pb-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
-                    <DefinitionRow label={t("admin.unitPrice")}><span>{formatMoney(item.unit_price, empty)}</span></DefinitionRow>
+                    <DefinitionRow label={t(item.subsite_supply_price_snapshot != null ? "admin.subsiteSalePrice" : "admin.unitPrice")}><span>{formatMoney(item.unit_price, empty)}</span></DefinitionRow>
+                    {item.subsite_supply_price_snapshot != null && <DefinitionRow label={t("admin.subsiteSupplyPrice")}><span>{formatMoney(item.subsite_supply_price_snapshot, empty)}</span></DefinitionRow>}
                     <DefinitionRow label={t("admin.subtotal")}><span>{formatMoney(item.subtotal, empty)}</span></DefinitionRow>
                     <DefinitionRow label={t("admin.costPriceSnapshot")}><span>{formatMoney(item.cost_price_snapshot, empty)}</span></DefinitionRow>
-                    <DefinitionRow label={t("admin.marginAmount")}><span>{formatMoney(item.gross_profit, empty)}</span></DefinitionRow>
+                    <DefinitionRow label={t(item.subsite_supply_price_snapshot != null ? "admin.subsiteMainProfit" : "admin.marginAmount")}><span>{formatMoney(item.gross_profit, empty)}</span></DefinitionRow>
                     <DefinitionRow label={t("admin.marginRate")}><span>{item.gross_margin === null ? empty : `${item.gross_margin.toFixed(2)}%`}</span></DefinitionRow>
                   </dl>
                   {item.supplier_purchase && <div className="mt-4 rounded-card border border-border-subtle p-4">
@@ -415,8 +417,9 @@ export function OrderDetailSheet({
 
           <Panel title={t("admin.amount")}>
             <DefinitionRow label={t("admin.actualPaid")}><span className="font-semibold">{formatMoney(order.actual_amount, empty)}</span></DefinitionRow>
-            <DefinitionRow label={t("admin.cost")}><span>{formatMoney(order.cost_total, empty)}</span></DefinitionRow>
-            <DefinitionRow label={t("admin.profit")}><span>{formatMoney(order.gross_profit_total, empty)}</span></DefinitionRow>
+            <DefinitionRow label={t(order.subsite_profit != null ? "admin.subsiteCostSnapshot" : "admin.cost")}><span>{formatMoney(order.cost_total, empty)}</span></DefinitionRow>
+            <DefinitionRow label={t(order.subsite_profit != null ? "admin.subsiteMainProfit" : "admin.profit")}><span>{formatMoney(order.gross_profit_total, empty)}</span></DefinitionRow>
+            {order.subsite_profit != null && <DefinitionRow label={t("admin.subsiteOwnerProfit")}><span>{formatMoney(order.subsite_profit, empty)} · {t(order.subsite_profit_state === "CANCELED" ? "admin.subsiteProfitCanceled" : order.subsite_profit_state === "REVERSED" ? "admin.subsiteProfitReversed" : order.subsite_profit_state === "SETTLED" ? "admin.subsiteProfitSettled" : order.subsite_profit_state === "PENDING" ? "admin.subsiteProfitPending" : order.status === "PAID" ? "admin.subsiteProfitEstimated" : "admin.subsiteProfitUnsettled")}</span></DefinitionRow>}
             <DefinitionRow label={t("admin.marginRate")}><span>{order.gross_margin_total === null ? empty : `${order.gross_margin_total.toFixed(2)}%`}</span></DefinitionRow>
           </Panel>
 

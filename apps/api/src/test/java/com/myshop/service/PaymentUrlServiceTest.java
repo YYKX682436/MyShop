@@ -24,4 +24,11 @@ class PaymentUrlServiceTest {
         assertThrows(RuntimeException.class,
                 () -> new PaymentUrlService("http://"));
     }
+    @org.junit.jupiter.api.Test
+    void subsiteReturnUsesValidatedPersistedPrefix() {
+        PaymentUrlService service = new PaymentUrlService("https://mc.mc520.top");
+        org.junit.jupiter.api.Assertions.assertEquals("https://alice.mc520.top/order/123?paymentReturn=1", service.paymentReturnUrl("123", "alice"));
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () -> service.paymentReturnUrl("123", "evil.example"));
+        org.junit.jupiter.api.Assertions.assertEquals("https://mc.mc520.top/api/payments/webhook/epay", service.webhookUrl("epay"));
+    }
 }

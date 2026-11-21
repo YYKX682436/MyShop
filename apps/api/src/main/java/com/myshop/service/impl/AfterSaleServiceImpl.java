@@ -90,7 +90,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         // The order row is the first lock for every after-sale transition.
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
-        if (order.getUserId() == null || !order.getUserId().equals(userId)
+        if (!com.myshop.service.SubsiteOrderAccess.permits(order, userId)
+                || order.getUserId() == null || !order.getUserId().equals(userId)
                 || order.getOrderType() != OrderType.NORMAL) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能为自己的注册用户订单申请售后");
         }
@@ -288,7 +289,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         if (senderType == AfterSaleMessageSenderType.CUSTOMER
-                && (order.getUserId() == null || !order.getUserId().equals(senderId)
+                && (!com.myshop.service.SubsiteOrderAccess.permits(order, senderId)
+                || order.getUserId() == null || !order.getUserId().equals(senderId)
                 || order.getOrderType() != OrderType.NORMAL
                 || userRepository.findById(senderId).map(User::getRole).orElse(null) != UserRole.USER)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能回复自己的注册用户订单售后");

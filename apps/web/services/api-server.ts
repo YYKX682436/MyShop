@@ -18,6 +18,7 @@ import type {
   SiteConfig,
 } from "@/types"
 import { cookies } from "next/headers"
+import { requestSiteUrl } from "@/lib/request-site"
 
 // 后端直连地址（Docker 内部网络或本地开发）
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8083"
@@ -28,6 +29,8 @@ const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8083"
 
 async function serverRequest<T>(path: string, accessToken?: string): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" }
+  // Preserve the validated storefront host for the API's site resolution.
+  headers.Host = new URL(await requestSiteUrl()).host
   // Forward only the authentication cookie; unrelated browser cookies stay private.
   if (accessToken) headers.Cookie = `myshop_access_token=${accessToken}`
   const res = await fetch(`${BACKEND_URL}/api${path}`, {

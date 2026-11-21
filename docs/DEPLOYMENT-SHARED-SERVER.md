@@ -101,7 +101,17 @@ assign it to an API container first.
 The browser sends `/api/*` to the same origin. Caddy forwards the path unchanged
 to Spring, including uploads and payment webhooks. Baota must overwrite
 `X-Real-IP` and `X-Forwarded-For` with `$remote_addr`, and set
-`X-Forwarded-Proto` to `$scheme`; Caddy trusts forwarded headers only from the
+`X-Forwarded-Proto` to `$scheme`; for the Baota reverse proxy use these
+header directives alongside its existing upstream configuration:
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+Caddy trusts forwarded headers only from the
 single audited source address configured as `MYSHOP_BAOTA_NGINX_PROXY_CIDR`
 (`/32` or `/128`) and passes the resolved client IP to the API. Do not fill this
 value from an assumed Docker gateway. Observe the address Caddy receives from

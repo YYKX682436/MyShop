@@ -58,6 +58,8 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentQueryTransactionService paymentQueryTransactionService;
     private TransactionTemplate transactions;
     @Autowired public void setTransactionManager(PlatformTransactionManager manager) { this.transactions = new TransactionTemplate(manager); }
+    private com.myshop.repository.SubsiteRepository subsites;
+    @Autowired public void setSubsites(com.myshop.repository.SubsiteRepository value) { subsites = value; }
     private PaymentUrlService paymentUrls;
     @Autowired public void setPaymentUrls(PaymentUrlService value) { paymentUrls = value; }
     private WebhookEventRepository paymentEvents;
@@ -365,7 +367,13 @@ public class PaymentServiceImpl implements PaymentService {
         attempt.setProductNameSnapshot(buildProductName(order.getId()));
         attempt.setClientIpSnapshot(order.getClientIp());
         attempt.setNotifyUrlSnapshot(paymentUrls.webhookUrl(provider.id()));
-        attempt.setReturnUrlSnapshot(paymentUrls.paymentReturnUrl(order.getId().toString()));
+        String subsitePrefix = null;
+        if (order.getSubsiteId() != null) {
+            if (subsites == null) throw new IllegalStateException("分站服务不可用");
+            subsitePrefix = subsites.findById(order.getSubsiteId())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "订单所属分站不存在")).getPrefix();
+        }
+        attempt.setReturnUrlSnapshot(paymentUrls.paymentReturnUrl(order.getId().toString(), subsitePrefix));
         attempt.setExpiresAt(order.getExpiresAt());
         paymentAttemptRepository.save(attempt);
         return buildResult(order, attempt);

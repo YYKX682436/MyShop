@@ -52,6 +52,9 @@ public class OrderItem extends BaseEntity {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal unitPrice;
 
+    @Column(name = "subsite_supply_price_snapshot", precision = 10, scale = 2, updatable = false)
+    private BigDecimal subsiteSupplyPriceSnapshot;
+
     @Column(name = "cost_price_snapshot", nullable = false, precision = 10, scale = 2)
     private BigDecimal costPriceSnapshot;
 

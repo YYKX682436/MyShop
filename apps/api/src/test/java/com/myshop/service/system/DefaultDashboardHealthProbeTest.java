@@ -47,7 +47,7 @@ class DefaultDashboardHealthProbeTest {
 
         assertEquals(ServiceStatus.UP, status);
         assertEquals("GET", requestMethod.get());
-        assertEquals("/robots.txt", requestPath.get());
+        assertEquals("/icon.svg", requestPath.get());
     }
 
     @Test
@@ -58,7 +58,7 @@ class DefaultDashboardHealthProbeTest {
 
         assertEquals(ServiceStatus.DOWN, status);
         assertEquals("GET", requestMethod.get());
-        assertEquals("/robots.txt", requestPath.get());
+        assertEquals("/icon.svg", requestPath.get());
     }
 
     @Test
@@ -81,7 +81,7 @@ class DefaultDashboardHealthProbeTest {
     private DefaultDashboardHealthProbe probeWeb() {
         return new DefaultDashboardHealthProbe(
                 mock(JdbcTemplate.class),
-                "http://127.0.0.1:%d/robots.txt".formatted(server.getAddress().getPort()),
+                "http://127.0.0.1:%d/icon.svg".formatted(server.getAddress().getPort()),
                 "127.0.0.1",
                 1,
                 1000);

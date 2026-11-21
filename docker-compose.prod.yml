@@ -132,7 +132,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      test: ["CMD-SHELL", "TASK_HEALTH_AUTHORITY=$${PUBLIC_SITE_URL#*://}; TASK_HEALTH_AUTHORITY=$${TASK_HEALTH_AUTHORITY%%/*}; wget -q -O /dev/null --header=\"Host: $$TASK_HEALTH_AUTHORITY\" http://127.0.0.1:3000/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20

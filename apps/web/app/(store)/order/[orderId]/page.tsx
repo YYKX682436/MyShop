@@ -27,6 +27,8 @@ import { isManualFulfillmentItem } from "@/lib/order-status"
 import { supplierStatusLabel } from "@/lib/supplier-order"
 import { getAfterSaleAnchorAction } from "@/lib/order-after-sale-anchor"
 import { getOrderStatusPollInterval, shouldPollOrderStatus } from "@/lib/order-polling"
+import { canApplyForAfterSale } from "@/lib/guest-order"
+import { safeHomeSiteUrl } from "@/lib/safe-navigation"
 
 const PAYMENT_RETURN_TIMEOUT = 20000
 const MANUAL_REFRESH_COOLDOWN = 10
@@ -349,7 +351,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
           <h2 id="order-purchase-summary-title" className="text-base font-semibold text-foreground">{t("order.purchaseSummary")}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{t("order.itemsCount").replace("{count}", String(orderItems.length))}</p>
         </div>
-        {(status === "PAID" || status === "DELIVERED") && (
+        {canApplyForAfterSale(status, view.order.guest) && (
           <button
             type="button"
             onClick={() => setAfterSaleOpen(true)}
@@ -488,7 +490,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
             <p className="mt-1 text-muted-foreground">{t("order.refundedDescription")}</p>
             <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
               <span>{t("order.refundAmount")}: <strong className="font-semibold text-foreground">{formatYuan(view.order.actual_amount ?? view.order.total_amount)}</strong></span>
-              <span>{t("order.refundDestination")}: <strong className="font-semibold text-foreground">{t("order.refundToBalance")}</strong></span>
+              <span>{t("order.refundDestination")}: <strong className="font-semibold text-foreground">{t(view.order.actual_amount === 0 ? "order.zeroRefund" : "order.refundToBalance")}</strong></span>
               {view.order.refunded_at && <span>{t("order.refundedAt")}: <strong className="font-semibold text-foreground">{formatDateTime(view.order.refunded_at, locale)}</strong></span>}
             </div>
             {(view.order.reclaimed_card_key_count ?? 0) > 0
@@ -513,7 +515,8 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
 
     {purchasedProducts.map(product => <ProductDescription key={product.id} product={product} />)}
 
-    <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} emailLabel={t("payment.contactSupport")} />
+    <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} customerService={config?.customer_service} emailLabel={t("payment.contactSupport")} />
+    {view.order.guest && <div className="space-y-2 text-center text-sm"><p className="text-muted-foreground">{t("order.guestAfterSale")}</p>{config?.main_site_has_contact && typeof window !== "undefined" && safeHomeSiteUrl(config?.main_site_url, window.location.origin) ? <a href={safeHomeSiteUrl(config?.main_site_url, window.location.origin) ?? undefined} className="text-primary underline">{t("order.mainSiteSupport")}</a> : <p className="text-muted-foreground">{t("order.mainSiteSupportUnavailable")}</p>}</div>}
 
     <AfterSaleRequestDialog
       open={afterSaleOpen}

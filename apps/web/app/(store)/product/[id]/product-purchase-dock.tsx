@@ -43,6 +43,7 @@ import {
   getBalancePaymentAvailability,
   getDefaultPaymentMethod,
   isImmediateBalancePaymentSuccess,
+  isZeroPricePurchaseAllowed,
   paymentMethodForRequest,
   reconcilePaymentMethod,
 } from "@/lib/payment-method"
@@ -110,6 +111,8 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
 
   const adminPickup = isAdminRole(user?.role)
   const currentPrice = selectedSpec?.price ?? product.price
+  const zeroPricePurchase = isZeroPricePurchaseAllowed(currentPrice, selectedSpec ? selectedSpec.zero_price_purchase_allowed : product.zero_price_purchase_allowed)
+  const zeroPriceUnavailable = currentPrice === 0 && !zeroPricePurchase && !adminPickup
   const totalPrice = currentPrice * quantity
   const unlimited = selectedSpec?.unlimited ?? product.unlimited ?? false
   const finiteStock = selectedSpec?.stock_available ?? product.stock_available ?? 0
@@ -121,8 +124,9 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
     totalPrice,
   ), [totalPrice, user])
   const onlineAvailable = channels.length > 0 && Boolean(selectedPaymentChannelCode)
-  const paymentReady = adminPickup
+  const paymentReady = !zeroPriceUnavailable && (adminPickup || zeroPricePurchase
     || (selectedPaymentMethod === "BALANCE" ? balanceAvailability.selectable : onlineAvailable)
+  )
 
   useEffect(() => {
     if (!open) return
@@ -173,7 +177,8 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
     const normalizedCustomerInputs = validateCustomerInputsForAction()
     if (!normalizedCustomerInputs) return
 
-    if (!adminPickup) {
+    if (zeroPriceUnavailable) { toast.error(t("product.zeroUnavailable")); return }
+    if (!adminPickup && !zeroPricePurchase) {
       if (selectedPaymentMethod === "BALANCE" && !balanceAvailability.selectable) {
         toast.error(balanceAvailability.reason === "login_required"
           ? t("product.balanceLoginRequired")
@@ -196,9 +201,11 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
     setPaymentFallbackAction(null)
     const requestPaymentIntent = adminPickup
       ? {}
+      : zeroPricePurchase ? { payment_method: "BALANCE" as const }
       : paymentMethodForRequest(selectedPaymentMethod, selectedPaymentChannelCode)
     const fingerprintPaymentIntent = adminPickup
       ? { payment_method: null, payment_channel_code: null }
+      : zeroPricePurchase ? { payment_method: "BALANCE" as const, payment_channel_code: null }
       : {
           payment_method: selectedPaymentMethod,
           payment_channel_code: selectedPaymentMethod === "ONLINE" ? selectedPaymentChannelCode : null,
@@ -496,6 +503,10 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                   <div className="rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-sm font-medium text-primary">
                     {t("payment.adminPickup")}
                   </div>
+                ) : zeroPricePurchase ? (
+                  <p className="rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-sm font-medium text-primary">{t("product.zeroPrice")}</p>
+                ) : zeroPriceUnavailable ? (
+                  <p className="rounded-control border border-destructive/30 px-3 py-3 text-sm text-destructive">{t("product.zeroUnavailable")}</p>
                 ) : (
                   <>
                     <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("product.paymentMethod")}>

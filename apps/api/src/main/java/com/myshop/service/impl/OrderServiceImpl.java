@@ -9,6 +9,7 @@ import com.myshop.constant.OrderType;
 import com.myshop.constant.PricingSource;
 import com.myshop.constant.StockMode;
 import com.myshop.constant.UserRole;
+import com.myshop.context.SiteRequestContext;
 import com.myshop.entity.*;
 import com.myshop.exception.BusinessException;
 import com.myshop.exception.OrderExpiredException;
@@ -22,6 +23,8 @@ import com.myshop.service.ManualStockService;
 import com.myshop.service.PaymentService;
 import com.myshop.service.ProductRules;
 import com.myshop.service.PricingService;
+import com.myshop.service.SubsitePricingService;
+import com.myshop.service.SubsiteAccess;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -60,6 +63,12 @@ public class OrderServiceImpl implements OrderService {
     private final AutoFulfillmentService autoFulfillmentService;
     private final PricingService pricingService;
     private SupplierCheckout supplierCheckout;
+    private SubsitePricingService subsitePricingService;
+    private SubsiteRepository subsiteRepository;
+    private com.myshop.service.SiteConfigService siteConfigService;
+    @Autowired public void setSiteConfigService(com.myshop.service.SiteConfigService service) { this.siteConfigService = service; }
+    @Autowired public void setSubsitePricingService(SubsitePricingService service) { this.subsitePricingService = service; }
+    @Autowired public void setSubsiteRepository(SubsiteRepository repository) { this.subsiteRepository = repository; }
     private TransactionTemplate transactions;
     @Autowired public void setTransactionManager(PlatformTransactionManager manager) { transactions = new TransactionTemplate(manager); }
     @Value("${supplier.purchase-enabled:false}")
@@ -153,21 +162,34 @@ public class OrderServiceImpl implements OrderService {
             Optional<Order> existing = orderRepository.findByIdempotencyKeyForUpdate(idempotencyKey);
             if (existing.isPresent()) {
                 Order existingOrder = existing.get();
+                if (!Objects.equals(existingOrder.getSubsiteId(), SiteRequestContext.getSiteId()))
+                    throw new BusinessException(ErrorCode.FORBIDDEN, "订单不属于当前站点");
                 boolean sameOwner = sameIdempotencyOwner(existingOrder, userId, sessionToken);
                 if (sameOwner) {
                     verifyIdempotencyFingerprint(existingOrder, idempotencyFingerprint);
                     // Existing-order mutations always lock order before user,
                     // matching refunds. Load it under the first lock so the
                     // persistence context cannot retain a stale payment state.
-                    reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
+                    User replayUser = reloadAuthenticatedUser(userId,
+                            isBalancePaymentRequested(requestedPaymentMethod) || SiteRequestContext.getSiteId() != null);
+                    if (replayUser != null && !SubsiteAccess.permits(replayUser))
+                        throw new BusinessException(ErrorCode.FORBIDDEN, "账号不属于当前站点");
                     return buildOrderResult(existingOrder, device, true);
                 }
                 throw new BusinessException(ErrorCode.FORBIDDEN, "幂等键不属于当前用户或会话");
             }
         }
-        User currentUser = reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod));
-        boolean adminPickup = isEnabledAdministrator(currentUser);
-
+        Subsite site = SiteRequestContext.getSite();
+        if (site != null) {
+            if (subsiteRepository == null || subsitePricingService == null) throw new IllegalStateException("分站服务不可用");
+            site = subsiteRepository.findByIdForUpdate(site.getId())
+                    .filter(Subsite::isEnabled)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN, "分站已停用，暂不能下单"));
+        }
+        // Existing guest orders remain accessible; only creation of a new
+        // subsite guest order requires configured main-site support.
+        if (site != null && userId == null && (siteConfigService == null || !siteConfigService.hasMainSiteContact()))
+            throw new BusinessException(ErrorCode.FORBIDDEN, "主站暂未配置游客售后联系方式，请联系管理员后再购买");
         UUID productId = UUID.fromString((String) req.get("product_id"));
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
         int quantity = ((Number) req.get("quantity")).intValue();
@@ -179,21 +201,40 @@ public class OrderServiceImpl implements OrderService {
                     Map.of("max", maxQuantity));
         }
 
+        // Guests can never be administrators, so preserve the existing payment
+        // validation errors before looking up inventory. Authenticated users
+        // must first be reloaded under the appropriate lock to recognize admin pickup.
+        OrderPaymentMethod guestPaymentMethod = null;
+        String guestPaymentChannel = null;
+        if (userId == null) {
+            guestPaymentMethod = parsePaymentMethod(requestedPaymentMethod);
+            guestPaymentChannel = clean(asString(req.get("payment_channel_code")));
+            validatePaymentRequest(req, guestPaymentMethod, guestPaymentChannel);
+        }
+
+        // The supplier claim path locks Product -> Order; refunds and delivery
+        // lock Order -> User. Taking Product before User prevents the cycle
+        // User -> Product -> Order -> User across independent orders.
+        Product product = productRepository.findByIdForUpdate(productId)
+                .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
+                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
+        if (site != null && subsitePricingService.isHidden(site.getId(), productId))
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架");
+        User currentUser = reloadAuthenticatedUser(userId, isBalancePaymentRequested(requestedPaymentMethod) || site != null);
+        if (currentUser != null && !SubsiteAccess.permits(currentUser))
+            throw new BusinessException(ErrorCode.FORBIDDEN, "账号不属于当前站点");
+        boolean adminPickup = isEnabledAdministrator(currentUser);
+
         OrderPaymentMethod paymentMethod = null;
         String paymentChannelCode = null;
         if (adminPickup) {
             // ADMIN_PICKUP is expressed only by order_type. Both payment
             // columns remain null regardless of client-supplied values.
         } else {
-            paymentMethod = parsePaymentMethod(req.get("payment_method"));
-            paymentChannelCode = clean(asString(req.get("payment_channel_code")));
-            validatePaymentRequest(req, paymentMethod, paymentChannelCode);
+            paymentMethod = userId == null ? guestPaymentMethod : parsePaymentMethod(req.get("payment_method"));
+            paymentChannelCode = userId == null ? guestPaymentChannel : clean(asString(req.get("payment_channel_code")));
+            if (userId != null) validatePaymentRequest(req, paymentMethod, paymentChannelCode);
         }
-
-        // Serialize checkout snapshots with inventory-mode and supplier binding changes.
-        Product product = productRepository.findByIdForUpdate(productId)
-                .filter(p -> p.getIsDeleted() == 0 && p.isEnabled())
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
 
         boolean supplierProduct=product.getStockMode() == StockMode.SUPPLIER;
         if (supplierProduct && (!supplierPurchaseEnabled || supplierCheckout==null || adminPickup)) {
@@ -209,12 +250,27 @@ public class OrderServiceImpl implements OrderService {
         if (!adminPickup && currentUser != null && currentUser.getRole() == UserRole.USER) {
             userLevel = pricingService.requireActiveLevel(currentUser);
         }
-        PriceResolution price = userLevel != null
-                ? pricingService.resolveForUser(product, spec, userLevel, currentUser.getId())
-                : pricingService.resolve(product, spec, userLevel);
+        BigDecimal supplyPrice = null;
+        PriceResolution price;
+        if (site != null) {
+            var subsitePrice = subsitePricingService.resolve(site, product, spec, userLevel, userId);
+            supplyPrice = subsitePrice.supplyPrice();
+            if (supplyPrice == null || supplyPrice.signum() < 0 || subsitePrice.unitPrice().compareTo(supplyPrice) < 0)
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "分站售价低于拿货价，请联系站长调整");
+            price = new PriceResolution(subsitePrice.unitPrice(), subsitePrice.costPrice(), subsitePrice.retailPrice(),
+                    subsitePrice.pricingSource(), false, subsitePrice.unitPrice(),
+                    userLevel == null ? null : userLevel.getId(), userLevel == null ? null : userLevel.getName());
+        } else {
+            price = userLevel != null
+                    ? pricingService.resolveForUser(product, spec, userLevel, currentUser.getId())
+                    : pricingService.resolve(product, spec, userLevel);
+        }
         BigDecimal unitPrice = price.price();
+        boolean freeOrder = site != null && userId != null && price.pricingSource() == PricingSource.SUBSITE
+                && supplyPrice != null && supplyPrice.signum() == 0 && unitPrice.signum() == 0
+                && paymentMethod == OrderPaymentMethod.BALANCE && !supplierProduct;
         if (!adminPickup) {
-            BigDecimal expectedUnitPrice = parseExpectedUnitPrice(req.get("expected_unit_price"));
+            BigDecimal expectedUnitPrice = parseExpectedUnitPrice(req.get("expected_unit_price"), freeOrder);
             if (expectedUnitPrice == null) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "expected_unit_price 必填");
             }
@@ -226,12 +282,13 @@ public class OrderServiceImpl implements OrderService {
 
         StockMode stockMode = product.getStockMode();
         BigDecimal totalAmount = unitPrice.multiply(BigDecimal.valueOf(quantity));
-        if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
+        if (totalAmount.signum() < 0 || (totalAmount.signum() == 0 && !freeOrder)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单金额异常，请联系客服");
         }
         SupplierCheckout.Prepared supplierPrepared=null;
         if (supplierProduct) {
-            supplierPrepared=supplierCheckout.prepare(product,specId,quantity,totalAmount,req.get("customer_inputs"));
+            BigDecimal supplierRevenue = site == null ? totalAmount : supplyPrice.multiply(BigDecimal.valueOf(quantity));
+            supplierPrepared=supplierCheckout.prepare(product,specId,quantity,supplierRevenue,req.get("customer_inputs"));
             customerInputs=supplierPrepared.inputs().values();
         } else {
             StockView stock = getStock(product, specId);
@@ -245,6 +302,11 @@ public class OrderServiceImpl implements OrderService {
 
         Order order = new Order();
         order.setUserId(userId);
+        if (site != null) {
+            order.setSubsiteId(site.getId());
+            order.setSubsiteOwnerIdSnapshot(site.getOwnerId());
+            order.setSubsiteProfit(unitPrice.subtract(supplyPrice).multiply(BigDecimal.valueOf(quantity)));
+        }
         order.setTotalAmount(totalAmount);
         order.setActualAmount(adminPickup ? BigDecimal.ZERO.setScale(2) : totalAmount);
         order.setOrderType(adminPickup ? OrderType.ADMIN_PICKUP : OrderType.NORMAL);
@@ -276,6 +338,7 @@ public class OrderServiceImpl implements OrderService {
         item.setSpecName(specName);
         item.setQuantity(quantity);
         item.setUnitPrice(unitPrice);
+        item.setSubsiteSupplyPriceSnapshot(supplyPrice);
         item.setCostPriceSnapshot(price.costPrice());
         item.setRetailPriceSnapshot(price.retailPrice());
         item.setPricingSource(price.pricingSource());
@@ -418,13 +481,13 @@ public class OrderServiceImpl implements OrderService {
         }
     }
 
-    private BigDecimal parseExpectedUnitPrice(Object raw) {
+    private BigDecimal parseExpectedUnitPrice(Object raw, boolean allowZero) {
         if (raw == null) return null;
         String text = String.valueOf(raw).trim();
         if (text.isBlank()) return null;
         try {
             BigDecimal value = new BigDecimal(text);
-            if (value.signum() <= 0 || value.scale() > 2) throw new NumberFormatException();
+            if (value.signum() < 0 || (value.signum() == 0 && !allowZero) || value.scale() > 2) throw new NumberFormatException();
             return value.setScale(2);
         } catch (NumberFormatException exception) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "expected_unit_price 无效");
@@ -472,9 +535,9 @@ public class OrderServiceImpl implements OrderService {
     }
 
     /**
-     * Loads the authenticated shopper before any price or balance decision. A
-     * balance order must acquire the user's row lock on this first read and
-     * pass that same managed instance through pricing and payment.
+     * Loads the authenticated shopper before any price or balance decision.
+     * Balance orders and subsite orders lock this row so balance changes,
+     * customer transfer and level changes serialize with the checkout.
      */
     private User reloadAuthenticatedUser(UUID userId, boolean lockForBalance) {
         if (userId == null) return null;

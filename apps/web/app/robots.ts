@@ -1,10 +1,10 @@
 import type { MetadataRoute } from "next"
-import { getPublicSiteUrl } from "@/lib/site-url"
+import { requestSiteUrl } from "@/lib/request-site"
 
 export const dynamic = "force-dynamic"
 
-export default function robots(): MetadataRoute.Robots {
-  const baseUrl = getPublicSiteUrl()
+export default async function robots(): Promise<MetadataRoute.Robots> {
+  const baseUrl = await requestSiteUrl()
   return {
     rules: [
       {

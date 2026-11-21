@@ -77,7 +77,8 @@ public class AfterSaleAttachmentAccessServiceImpl implements AfterSaleAttachment
         }
         boolean admin = UserRole.ADMIN.name().equals(current.getRole())
                 || UserRole.SUPER_ADMIN.name().equals(current.getRole());
-        boolean owner = UserRole.USER.name().equals(current.getRole())
+        boolean owner = com.myshop.service.SubsiteOrderAccess.permits(order, current.getUserId())
+                && UserRole.USER.name().equals(current.getRole())
                 && current.getUserId().equals(request.getUserId())
                 && current.getUserId().equals(order.getUserId());
         if (!admin && !owner) {

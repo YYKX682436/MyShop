@@ -117,6 +117,10 @@ public class UserServiceImpl implements UserService {
     }
 
     private Page<Order> findOrderPage(UUID userId, OrderStatus status, PageRequest pageable) {
+        UUID siteId = com.myshop.context.SiteRequestContext.getSiteId();
+        if (siteId != null) return status == null
+                ? orderRepository.findByUserIdAndSubsiteIdOrderByCreatedAtDesc(userId, siteId, pageable)
+                : orderRepository.findByUserIdAndSubsiteIdAndStatusOrderByCreatedAtDesc(userId, siteId, status, pageable);
         return status == null
                 ? orderRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable)
                 : orderRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, status, pageable);

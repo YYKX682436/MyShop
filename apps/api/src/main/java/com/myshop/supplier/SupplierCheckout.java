@@ -59,6 +59,8 @@ public class SupplierCheckout {
     public Prepared prepare(Product product,UUID specId,int quantity,BigDecimal customerTotal,Object rawInputs) {
         SupplierProductMapping m=mappings.findLocal(product.getId(),specId)
                 .orElseThrow(() -> new SupplierException("MAPPING","货源商品映射不存在"));
+        if (com.myshop.context.SiteRequestContext.getSite() != null && m.getCost() != null && m.getCost().signum() == 0)
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "零成本货源暂不支持分站购买，请联系站长");
         var runtime=suppliers.runtime(m.getAccountId(),true);
         var quote=policy.quote(m,runtime.enabled(),quantity,customerTotal,LocalDateTime.now());
         List<CustomerInputField> fields=runtime.provider().customerFields(m.getSnapshot());

@@ -39,6 +39,9 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
     private String turnstileSiteKey;
 
+    @org.springframework.beans.factory.annotation.Value("${app.public-site-url:http://localhost:3000}")
+    private String publicSiteUrl = "http://localhost:3000";
+
     private static final List<String> PUBLIC_KEYS = List.of(
             "site_name", "site_slogan", "site_description", "logo_url", "favicon_url",
             "announcement_enabled", "announcement", "popup_enabled", "popup_content",
@@ -94,6 +97,8 @@ public class SiteConfigServiceImpl implements SiteConfigService {
                 }
             });
         }
+        result.put("main_site_url", publicSiteUrl);
+        result.put("main_site_has_contact", hasMainSiteContact());
         // Keep the public type stable while an empty database is initializing.
         result.putIfAbsent("contact_items", List.of());
         // F15: 对 custom_css 进行安全过滤，防止存储型 XSS
@@ -107,7 +112,33 @@ public class SiteConfigServiceImpl implements SiteConfigService {
         if (turnstileEnabled && turnstileSiteKey != null && !turnstileSiteKey.isBlank()) {
             result.put("turnstile_site_key", turnstileSiteKey);
         }
+        var subsite = com.myshop.context.SiteRequestContext.getSite();
+        if (subsite != null) {
+            result.put("site_name", subsite.getName());
+            result.put("logo_url", subsite.getLogoUrl());
+            result.put("announcement", subsite.getAnnouncement());
+            result.put("announcement_enabled", subsite.getAnnouncement() != null && !subsite.getAnnouncement().isBlank());
+            result.put("customer_service", subsite.getCustomerService());
+            result.put("popup_enabled", false);
+            result.put("popup_content", "");
+            if (subsite.getCustomerService() != null && !subsite.getCustomerService().isBlank()) {
+                result.put("contact_email", null);
+                result.put("contact_items", List.of());
+            }
+        }
         return result;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean hasMainSiteContact() {
+        String email = siteConfigRepository.findByConfigKey("contact_email")
+                .map(SiteConfig::getConfigValue).orElse("");
+        if (email != null && email.trim().matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) return true;
+        String items = siteConfigRepository.findByConfigKey("contact_items")
+                .map(SiteConfig::getConfigValue).orElse(null);
+        try { return items != null && !normalizeContactItems(items).isEmpty(); }
+        catch (BusinessException exception) { return false; }
     }
 
     @Override

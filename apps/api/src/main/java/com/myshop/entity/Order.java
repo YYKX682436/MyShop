@@ -26,6 +26,23 @@ public class Order extends BaseEntity {
 
     private UUID userId;
 
+    /** Immutable origin and owner captured at checkout. */
+    @Column(name = "subsite_id", updatable = false)
+    private UUID subsiteId;
+    @Column(name = "subsite_owner_id_snapshot", updatable = false)
+    private UUID subsiteOwnerIdSnapshot;
+    @Column(name = "subsite_profit", precision = 12, scale = 2, updatable = false)
+    private BigDecimal subsiteProfit;
+    /** Null until delivery; thereafter PENDING, SETTLED, CANCELED or REVERSED. */
+    @Column(name = "subsite_profit_state", length = 16)
+    private String subsiteProfitState;
+    @Column(name = "subsite_profit_canceled_at")
+    private LocalDateTime subsiteProfitCanceledAt;
+    @Column(name = "subsite_profit_settled_at")
+    private LocalDateTime subsiteProfitSettledAt;
+    @Column(name = "subsite_profit_reversed_at")
+    private LocalDateTime subsiteProfitReversedAt;
+
     /**
      * Human-facing business identity. PostgreSQL owns generation through the
      * order_no_sequence default; Hibernate reads it back after INSERT.

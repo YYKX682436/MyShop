@@ -12,6 +12,7 @@ public record PublicProductSpecResponse(
         UUID id,
         String name,
         BigDecimal price,
+        boolean zeroPricePurchaseAllowed,
         BigDecimal retailPrice,
         Long stockAvailable,
         boolean unlimited,

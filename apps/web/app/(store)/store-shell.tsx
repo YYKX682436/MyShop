@@ -4,12 +4,13 @@ import { StoreShellClient } from "./store-shell-client"
 
 interface StoreShellProps {
   siteName: string
+  logoUrl?: string
   children: React.ReactNode
 }
 
-export function StoreShell({ siteName, children }: StoreShellProps) {
+export function StoreShell({ siteName, logoUrl, children }: StoreShellProps) {
   return (
-    <StoreShellClient header={<StoreHeader siteName={siteName} />}>
+    <StoreShellClient header={<StoreHeader siteName={siteName} logoUrl={logoUrl} />}>
       {children}
     </StoreShellClient>
   )

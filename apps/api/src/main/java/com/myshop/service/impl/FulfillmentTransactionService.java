@@ -47,6 +47,10 @@ public class FulfillmentTransactionService implements FulfillmentService {
     private final EmailService emailService;
     private final ManualStockService manualStockService;
     private final ManualFulfillmentPreparationService manualFulfillmentPreparationService;
+    private SubsiteSettlementService subsiteSettlementService;
+
+    @Autowired
+    public void setSubsiteSettlementService(SubsiteSettlementService service) { this.subsiteSettlementService = service; }
 
     @Autowired
     public FulfillmentTransactionService(OrderRepository orderRepository,
@@ -296,6 +300,10 @@ public class FulfillmentTransactionService implements FulfillmentService {
 
     private void markOrderDelivered(Order order, LocalDateTime deliveredAt) {
         if (order.getStatus() == OrderStatus.DELIVERED) return;
+        if (order.getSubsiteId() != null) {
+            if (subsiteSettlementService == null) throw new IllegalStateException("分站结算服务不可用");
+            subsiteSettlementService.settle(order);
+        }
         order.setStatus(OrderStatus.DELIVERED);
         order.setDeliveredAt(deliveredAt);
         orderRepository.save(order);

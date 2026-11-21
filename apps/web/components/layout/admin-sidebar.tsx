@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ClipboardList,
   Users,
+  Store,
   type LucideIcon,
 } from "lucide-react"
 
@@ -77,6 +78,7 @@ const navGroups: AdminNavGroup[] = [
     items: [
       { labelKey: "admin.users", href: "/admin/users", icon: Users },
       { labelKey: "admin.userLevels", href: "/admin/user-levels", icon: ShieldCheck },
+      { labelKey: "admin.subsites", href: "/admin/subsites", icon: Store },
     ],
   },
   {

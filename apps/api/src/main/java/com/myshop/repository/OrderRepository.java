@@ -47,6 +47,8 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
             @Param("scanStartedAt") LocalDateTime scanStartedAt,
             Pageable pageable);
 
+    Page<Order> findByUserIdAndSubsiteIdOrderByCreatedAtDesc(UUID userId, UUID subsiteId, Pageable pageable);
+    Page<Order> findByUserIdAndSubsiteIdAndStatusOrderByCreatedAtDesc(UUID userId, UUID subsiteId, OrderStatus status, Pageable pageable);
     Page<Order> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 
     Page<Order> findByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, OrderStatus status, Pageable pageable);
@@ -55,6 +57,17 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
 
     @Query("SELECT o.id FROM Order o WHERE o.status = com.myshop.constant.OrderStatus.PENDING AND o.expiresAt <= :now")
     List<UUID> findExpiredOrderIds(@Param("now") LocalDateTime now);
+
+    /** Cursor avoids an old failing entry starving later eligible earnings. */
+    @Query(value = """
+            SELECT o.id FROM orders o JOIN users u ON u.id = o.subsite_owner_id_snapshot
+            WHERE o.subsite_profit_state = 'PENDING' AND o.delivered_at IS NOT NULL
+              AND o.status IN ('DELIVERED', 'AFTER_SALE')
+              AND u.balance + o.subsite_profit <= 9999999999.99
+              AND (CAST(:afterId AS uuid) IS NULL OR o.id > CAST(:afterId AS uuid))
+            ORDER BY o.id
+            """, nativeQuery = true)
+    List<UUID> findEligiblePendingProfitIds(@Param("afterId") UUID afterId, Pageable pageable);
 
     /** One aggregate query supplies successful-order metrics for a user page. */
     @Query("""

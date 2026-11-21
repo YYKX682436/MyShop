@@ -18,7 +18,7 @@ export function StoreFooter({ reserveForDock = false }: { reserveForDock?: boole
             {config.footer_text}
           </p>
         )}
-        <ContactMethods email={config?.contact_email} items={config?.contact_items} />
+        <ContactMethods email={config?.contact_email} items={config?.contact_items} customerService={config?.customer_service} />
       </div>
     </footer>
   )

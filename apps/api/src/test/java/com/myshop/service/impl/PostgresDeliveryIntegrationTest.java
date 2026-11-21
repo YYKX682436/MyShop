@@ -127,6 +127,9 @@ class PostgresDeliveryIntegrationTest {
     @Autowired
     private ManualStockService manualStockService;
 
+    @Autowired private com.myshop.service.OrderRefundService orderRefundService;
+    @Autowired private com.myshop.service.AfterSaleService afterSaleService;
+
     @MockitoBean
     private com.myshop.service.EmailService emailService;
 
@@ -152,6 +155,7 @@ class PostgresDeliveryIntegrationTest {
         registry.add("spring.flyway.enabled", () -> true);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
         registry.add("jwt.secret", () -> "integration-test-secret-with-at-least-64-bytes-and-random-looking-value-2026");
+        registry.add("app.public-site-url", () -> "https://mc.mc520.top");
         registry.add("mail.enabled", () -> false);
         registry.add("bootstrap.admin.username", () -> "");
         registry.add("bootstrap.admin.email", () -> "");
@@ -235,6 +239,177 @@ class PostgresDeliveryIntegrationTest {
         secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("5.00")));
         jdbcTemplate.update("update products set is_deleted = 1 where id = ?", product);
         assertEquals(0, number("select count(*) from user_secret_prices where product_id = ?", product));
+    }
+
+    @Test
+    void subsiteCustomerCanBuyActivelyConfiguredZeroPriceAndReceiveRefund() {
+        UUID owner=insertUser("zero-owner-guard-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        UUID customer=insertUser("zero-buyer-guard-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        com.myshop.entity.Subsite site=zeroSupplySite(owner);
+        jdbcTemplate.update("update users set subsite_id=? where id=?",site.getId(),customer);
+        UUID level=scalar("select user_level_id from users where id=?",UUID.class,customer);
+        jdbcTemplate.update("insert into subsite_level_markups(subsite_id,user_level_id,markup_rate) values (?,?,0)",site.getId(),level);
+        UUID product=UUID.randomUUID(); insertManualProduct(product);
+        jdbcTemplate.update("update products set cost_price=0 where id=?",product);
+        insertManualStock(product,null,1,0);
+        Map<String,Object> request=balanceOrderRequest(product,"zero-guard-"+UUID.randomUUID(),"same");
+        request.put("expected_unit_price","0.00");
+        com.myshop.context.SiteRequestContext.set(site);
+        UUID id;
+        try { id=(UUID)((Map<?,?>)orderService.createDirectOrder(request,customer,"127.0.0.1",null).get("order")).get("id"); }
+        finally { com.myshop.context.SiteRequestContext.clear(); }
+        UUID item=scalar("select id from order_items where order_id=?",UUID.class,id);
+        fulfillmentService.completeManualItems(id,List.of(new FulfillmentService.ManualFulfillmentItem(item,"完成")));
+        UUID admin=insertAdminUser("zero-buyer-admin-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        com.myshop.context.RequestContext.set(new com.myshop.context.RequestContext.UserInfo(admin,"admin","ADMIN"));
+        try { assertEquals(0,orderRefundService.refund(id,"测试售后",true,false).refundAmount().signum()); }
+        finally { com.myshop.context.RequestContext.clear(); }
+        assertEquals("REFUNDED",scalar("select status from orders where id=?",String.class,id));
+        assertEquals(0,number("select count(*) from balance_transactions where order_id=?",id));
+    }
+
+    @Test
+    void zeroPriceOwnerOrderDeliversOnceAndRefundsWithoutBalanceEntry() throws Exception {
+        UUID owner=insertUser("zero-owner-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        com.myshop.entity.Subsite site=zeroSupplySite(owner);
+        UUID product=UUID.randomUUID(); insertProduct(product);
+        jdbcTemplate.update("update products set cost_price=0 where id=?",product);
+        UUID card=insertCard(product,"zero-order-test-card");
+        String key="zero-"+UUID.randomUUID();
+        Map<String,Object> request=balanceOrderRequest(product,key,"same"); request.put("expected_unit_price","0.00");
+        ExecutorService workers=Executors.newFixedThreadPool(2);
+        CountDownLatch start=new CountDownLatch(1);
+        try {
+            java.util.concurrent.Callable<Map<String,Object>> buy=() -> {
+                com.myshop.context.SiteRequestContext.set(site);
+                try { start.await(); return orderService.createDirectOrder(request,owner,"127.0.0.1",null); }
+                finally { com.myshop.context.SiteRequestContext.clear(); }
+            };
+            Future<Map<String,Object>> first=workers.submit(buy), second=workers.submit(buy);
+            start.countDown();
+            Map<String,Object> one=first.get(20,TimeUnit.SECONDS), two=second.get(20,TimeUnit.SECONDS);
+            UUID orderId=(UUID)((Map<?,?>)one.get("order")).get("id");
+            assertEquals(orderId,((Map<?,?>)two.get("order")).get("id"));
+            assertEquals(true,((Map<?,?>)one.get("payment")).get("paid"));
+            fulfillmentService.fulfillOrder(orderId);
+            assertEquals("DELIVERED",scalar("select status from orders where id=?",String.class,orderId));
+            assertEquals("SOLD",scalar("select status from card_keys where id=?",String.class,card));
+            assertEquals(1,number("select count(*) from orders where idempotency_key=?",key));
+            assertEquals(0,number("select count(*) from balance_transactions where order_id=?",orderId));
+            assertEquals(0,number("select count(*) from payment_attempts where order_id=?",orderId));
+            UUID operator=insertAdminUser("zero-admin-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+            com.myshop.context.RequestContext.set(new com.myshop.context.RequestContext.UserInfo(operator,"admin","ADMIN"));
+            try {
+                var result=orderRefundService.refund(orderId,"零元订单售后",true,true);
+                assertEquals(0,result.refundAmount().signum());
+                assertThrows(BusinessException.class,() -> orderRefundService.refund(orderId,"repeat",true,true));
+            } finally { com.myshop.context.RequestContext.clear(); }
+            assertEquals("REFUNDED",scalar("select status from orders where id=?",String.class,orderId));
+            assertEquals("AVAILABLE",scalar("select status from card_keys where id=?",String.class,card));
+            assertEquals(0,number("select count(*) from balance_transactions where order_id=?",orderId));
+        } finally { start.countDown(); workers.shutdownNow(); }
+    }
+
+    @Test
+    void zeroPriceManualOrderSupportsAfterSaleApproval() {
+        UUID owner=insertUser("zero-manual-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        com.myshop.entity.Subsite site=zeroSupplySite(owner);
+        UUID product=UUID.randomUUID(); insertManualProduct(product);
+        jdbcTemplate.update("update products set cost_price=0 where id=?",product);
+        insertManualStock(product,null,1,0);
+        Map<String,Object> request=balanceOrderRequest(product,"zero-manual-"+UUID.randomUUID(),"same");
+        request.put("expected_unit_price","0.00");
+        com.myshop.context.SiteRequestContext.set(site);
+        UUID orderId;
+        try { orderId=(UUID)((Map<?,?>)orderService.createDirectOrder(request,owner,"127.0.0.1",null).get("order")).get("id"); }
+        finally { com.myshop.context.SiteRequestContext.clear(); }
+        UUID item=scalar("select id from order_items where order_id=?",UUID.class,orderId);
+        fulfillmentService.completeManualItems(orderId,List.of(new FulfillmentService.ManualFulfillmentItem(item,"完成")));
+        com.myshop.context.SiteRequestContext.set(site);
+        com.myshop.context.RequestContext.set(new com.myshop.context.RequestContext.UserInfo(owner,"owner","USER"));
+        try { afterSaleService.apply(orderId,owner,"需要售后处理",List.of()); }
+        finally { com.myshop.context.SiteRequestContext.clear(); com.myshop.context.RequestContext.clear(); }
+        UUID admin=insertAdminUser("zero-manual-admin-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        com.myshop.context.RequestContext.set(new com.myshop.context.RequestContext.UserInfo(admin,"admin","ADMIN"));
+        try { assertEquals(0,orderRefundService.approveAfterSale(orderId,true,false).refundAmount().signum()); }
+        finally { com.myshop.context.RequestContext.clear(); }
+        assertEquals("REFUNDED",scalar("select status from orders where id=?",String.class,orderId));
+        assertEquals("REFUNDED",scalar("select status from after_sale_requests where order_id=?",String.class,orderId));
+        assertEquals(0,number("select count(*) from balance_transactions where order_id=?",orderId));
+    }
+
+    private com.myshop.entity.Subsite zeroSupplySite(UUID owner) {
+        UUID siteId=UUID.randomUUID(), level=UUID.randomUUID();
+        jdbcTemplate.update("insert into user_levels(id,name,pricing_type,markup_rate,enabled,is_default) values (?,?,'COST_MARKUP',0,true,false)",level,"zero-level-"+level);
+        jdbcTemplate.update("update subsite_settings set supply_level_id=? where id=1",level);
+        jdbcTemplate.update("insert into subsites(id,owner_id,prefix,name) values (?,?,?,?)",siteId,owner,"z"+siteId.toString().replace("-",""),"zero");
+        com.myshop.entity.Subsite site=new com.myshop.entity.Subsite(); site.setId(siteId); site.setOwnerId(owner); return site;
+    }
+
+    @Test
+    void onlineSubsiteCheckoutRejectsCustomerTransferredWhileWaitingForLock() throws Exception {
+        UUID owner=insertUser("transfer-owner-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        UUID buyer=insertUser("transfer-buyer-"+UUID.randomUUID(),UUID.randomUUID()+"@example.invalid");
+        UUID siteId=UUID.randomUUID(), product=UUID.randomUUID();
+        jdbcTemplate.update("insert into subsites(id,owner_id,prefix,name) values (?,?,?,?)",siteId,owner,"transfer-test","transfer test");
+        jdbcTemplate.update("update users set subsite_id=? where id=?",siteId,buyer);
+        insertUnlimitedProduct(product);
+        com.myshop.entity.Subsite site=new com.myshop.entity.Subsite(); site.setId(siteId); site.setOwnerId(owner); site.setPrefix("transfer-test");
+        ExecutorService workers=Executors.newSingleThreadExecutor();
+        try (var gate=jdbcTemplate.getDataSource().getConnection()) {
+            gate.setAutoCommit(false);
+            try (var update=gate.prepareStatement("update users set subsite_id=null,auth_version=auth_version+1 where id=?")) {
+                update.setObject(1,buyer); update.executeUpdate();
+            }
+            Future<Integer> checkout=workers.submit(() -> {
+                com.myshop.context.SiteRequestContext.set(site);
+                try {
+                    orderService.createDirectOrder(directOrderRequest(product,"unused"),buyer,"127.0.0.1",null);
+                    return 0;
+                } catch (BusinessException exception) { return exception.getCode(); }
+                finally { com.myshop.context.SiteRequestContext.clear(); }
+            });
+            try {
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+                String waiting="select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%users%'";
+                while (System.nanoTime()<deadline && number(waiting)<1) Thread.sleep(25);
+                assertTrue(number(waiting)>0,"online checkout must lock customer before checking ownership");
+            } finally { gate.commit(); }
+            assertEquals(ErrorCode.FORBIDDEN,checkout.get(15,TimeUnit.SECONDS));
+            assertEquals(0,number("select count(*) from orders where user_id=?",buyer));
+        } finally { workers.shutdownNow(); }
+    }
+
+    @Test
+    void balanceCheckoutLocksProductBeforeUser() throws Exception {
+        UUID buyer = insertUser("lock-order-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        setBalance(buyer, new BigDecimal("100.00"));
+        UUID product = UUID.randomUUID(); insertUnlimitedProduct(product);
+        ExecutorService workers = Executors.newSingleThreadExecutor();
+        try (var gate = jdbcTemplate.getDataSource().getConnection()) {
+            gate.setAutoCommit(false);
+            try (var lock = gate.prepareStatement("select id from users where id=? for update")) {
+                lock.setObject(1, buyer); lock.executeQuery().close();
+            }
+            Future<Map<String, Object>> checkout = workers.submit(() -> orderService.createDirectOrder(
+                    balanceOrderRequest(product, "lock-order-" + UUID.randomUUID(), "fingerprint"),
+                    buyer, "127.0.0.1", "unused"));
+            try {
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                String waiting = "select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%users%'";
+                while (System.nanoTime() < deadline && number(waiting) < 1) Thread.sleep(25);
+                assertTrue(number(waiting) >= 1, "checkout must be waiting for the user lock");
+                try (var probe = jdbcTemplate.getDataSource().getConnection()) {
+                    probe.setAutoCommit(false);
+                    try (var lock = probe.prepareStatement("select id from products where id=? for update nowait")) {
+                        lock.setObject(1, product);
+                        assertThrows(java.sql.SQLException.class, lock::executeQuery,
+                                "checkout must already hold the product lock while waiting for user");
+                    } finally { probe.rollback(); }
+                }
+            } finally { gate.rollback(); }
+            assertNotNull(checkout.get(15, TimeUnit.SECONDS).get("order"));
+        } finally { workers.shutdownNow(); }
     }
 
     @Test
@@ -1558,8 +1733,58 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
+    void subsiteGuestCheckoutRequiresSupportAndProtectsOrderSession() {
+        UUID owner=insertUser("guest-site-"+UUID.randomUUID(),UUID.randomUUID()+"@example.com");
+        UUID siteId=UUID.randomUUID(), product=UUID.randomUUID();
+        String prefix="guest"+siteId.toString().replace("-", "");
+        jdbcTemplate.update("insert into subsites(id,owner_id,prefix,name) values (?,?,?,?)",siteId,owner,prefix,"Guest");
+        UUID level=scalar("select user_level_id from users where id=?",UUID.class,owner);
+        jdbcTemplate.update("update subsite_settings set supply_level_id=? where id=1",level);
+        insertManualProduct(product); insertManualStock(product,null,2,0);
+        jdbcTemplate.update("insert into user_secret_prices(user_id,product_id,price) values (?,?,5.00)",owner,product);
+        String channel="guest-site-"+UUID.randomUUID(); insertPaymentChannel(channel);
+        configurePaymentCreation("guest-site-trade");
+        var site=new com.myshop.entity.Subsite(); site.setId(siteId); site.setOwnerId(owner); site.setPrefix(prefix); site.setEnabled(true);
+        jdbcTemplate.update("insert into site_configs(config_key,config_value,config_group) values ('contact_email','','basic') on conflict(config_key) do update set config_value=''");
+        jdbcTemplate.update("update site_configs set config_value='[]' where config_key='contact_items'");
+        com.myshop.context.SiteRequestContext.set(site);
+        try {
+            Map<String,Object> request=directOrderRequest(product,channel);
+            BusinessException unavailable=assertThrows(BusinessException.class,()->orderService.createDirectOrder(request,null,"127.0.0.1","guest-token"));
+            assertTrue(unavailable.getMessage().contains("售后联系方式"));
+            jdbcTemplate.update("update site_configs set config_value='support@example.com' where config_key='contact_email'");
+            var result=orderService.createDirectOrder(request,null,"127.0.0.1","guest-token");
+            UUID orderId=(UUID)((Map<?,?>)result.get("order")).get("id");
+            assertEquals(siteId,scalar("select subsite_id from orders where id=?",UUID.class,orderId));
+            assertEquals(0,new BigDecimal("5.00").compareTo(scalar("select subsite_profit from orders where id=?",BigDecimal.class,orderId)));
+            var access=webApplicationContext.getBean(com.myshop.service.OrderAccessService.class);
+            assertNotNull(access.getOrder(orderId,null,"guest-token"));
+            assertThrows(BusinessException.class,()->access.getOrder(orderId,null,"other-token"));
+            com.myshop.context.SiteRequestContext.clear();
+            assertThrows(BusinessException.class,()->access.getOrder(orderId,null,"guest-token"));
+            assertTrue(scalar("select return_url_snapshot from payment_attempts where order_id=?",String.class,orderId).startsWith("https://"+prefix+".mc520.top/"));
+            String merchant=scalar("select merchant_trade_no from payment_attempts where order_id=?",String.class,orderId);
+            configureSuccessfulCallback("guest-site-trade");
+            assertEquals("SUCCESS",webhookService.handleWebhook("epay",callback(merchant,"guest-site-trade")).body());
+            assertEquals("PAID",scalar("select status from orders where id=?",String.class,orderId));
+            UUID item=scalar("select id from order_items where order_id=?",UUID.class,orderId);
+            fulfillmentService.completeManualItems(orderId,List.of(new FulfillmentService.ManualFulfillmentItem(item,"guest delivery")));
+            assertEquals("DELIVERED",scalar("select status from orders where id=?",String.class,orderId));
+            assertEquals(0,new BigDecimal("5.00").compareTo(scalar("select balance from users where id=?",BigDecimal.class,owner)));
+            assertEquals(1,number("select count(*) from balance_transactions where order_id=? and type='SUBSITE_PROFIT'",orderId));
+        } finally {
+            com.myshop.context.SiteRequestContext.clear();
+            jdbcTemplate.update("update site_configs set config_value='' where config_key='contact_email'");
+            jdbcTemplate.update("update subsite_settings set supply_level_id=null where id=1");
+        }
+    }
+
+    @Test
     void expiryDuringGatewayCallReleasesStockAndDoesNotReopenPayment() throws Exception {
         UUID orderId = insertPendingOrder("expiry-in-flight"); insertPaymentChannel("expiry-in-flight");
+        UUID owner = insertUser("late-site-" + UUID.randomUUID(), UUID.randomUUID() + "@example.com");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("insert into subsites(id,owner_id,prefix,name) values (?,?,?,?)", site, owner, "late" + site.toString().replace("-", ""), "Late");
         UUID product = UUID.randomUUID(); insertManualProduct(product); insertManualStock(product, null, 0, 1);
         insertOrderItem(orderId, product, "MANUAL", "MANUAL", 1, 1);
         CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
@@ -1571,6 +1796,7 @@ class PostgresDeliveryIntegrationTest {
         try {
             Future<Map<String, Object>> result = worker.submit(() -> paymentService.createPayment(orderId, "expiry-in-flight", new BigDecimal("10.00"), "pc"));
             assertTrue(entered.await(10, TimeUnit.SECONDS));
+            jdbcTemplate.update("update orders set subsite_id=?,subsite_owner_id_snapshot=?,subsite_profit=5.00 where id=?", site, owner, orderId);
             jdbcTemplate.update("update orders set expires_at=current_timestamp-interval '1 minute' where id=?", orderId);
             webApplicationContext.getBean(com.myshop.service.OrderExpiryService.class).expireById(orderId);
             assertEquals("EXPIRED", scalar("select status from orders where id=?", String.class, orderId));
@@ -1586,7 +1812,12 @@ class PostgresDeliveryIntegrationTest {
             String merchant = scalar("select merchant_trade_no from payment_attempts where order_id=?", String.class, orderId);
             assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "expiry-trade")).body());
             assertEquals(1, number("select count(*) from webhook_events where order_id=? and process_result like 'LATE_PAID_%'", orderId));
+            assertEquals("SUCCESS", webhookService.handleWebhook("epay", callback(merchant, "expiry-trade")).body());
+            assertEquals(1, number("select count(*) from webhook_events where order_id=? and process_result like 'LATE_PAID_%'", orderId));
             assertEquals("EXPIRED", scalar("select status from orders where id=?", String.class, orderId));
+            assertNull(scalar("select subsite_profit_state from orders where id=?", String.class, orderId));
+            assertEquals(0, number("select count(*) from balance_transactions where order_id=? and type='SUBSITE_PROFIT'", orderId));
+            assertEquals(0, new BigDecimal("0.00").compareTo(scalar("select balance from users where id=?", BigDecimal.class, owner)));
         } finally { release.countDown(); worker.shutdownNow(); }
     }
 

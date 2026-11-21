@@ -67,6 +67,33 @@ class AdminOrderServiceImplTest {
     @Mock private AfterSaleService afterSaleService;
 
     @Test
+    void subsiteOrderSeparatesSupplyMarginFromOwnerProfit() {
+        UUID orderId = UUID.randomUUID(), userId = UUID.randomUUID();
+        Order order = order(orderId, userId);
+        UUID siteId = UUID.randomUUID(), ownerId = UUID.randomUUID();
+        order.setSubsiteId(siteId); order.setSubsiteOwnerIdSnapshot(ownerId);
+        order.setSubsiteProfit(new BigDecimal("5.00"));
+        OrderItem item = item(orderId, new BigDecimal("15.00"), new BigDecimal("8.00"), new BigDecimal("15.00"), 1);
+        item.setSubsiteSupplyPriceSnapshot(new BigDecimal("10.00"));
+        when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+        when(orderItemRepository.findByOrderId(orderId)).thenReturn(List.of(item));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(new User()));
+        Map<String, Object> result = (Map<String, Object>) fullService().getOrderDetail(orderId);
+        assertEquals(siteId, result.get("subsite_id"));
+        assertEquals(ownerId, result.get("subsite_owner_id_snapshot"));
+        assertEquals(new BigDecimal("5.00"), result.get("subsite_profit"));
+        assertEquals(new BigDecimal("8.00"), result.get("cost_total"));
+        assertEquals(new BigDecimal("2.00"), result.get("gross_profit_total"));
+        assertEquals(new BigDecimal("20.00"), result.get("gross_margin_total"));
+        Map<?, ?> row = (Map<?, ?>) ((List<?>) result.get("items")).get(0);
+        assertEquals(new BigDecimal("15.00"), row.get("unit_price"));
+        assertEquals(new BigDecimal("10.00"), row.get("subsite_supply_price_snapshot"));
+        assertEquals(new BigDecimal("8.00"), row.get("cost_price_snapshot"));
+        assertEquals(new BigDecimal("2.00"), row.get("gross_profit"));
+        assertEquals(new BigDecimal("20.00"), row.get("gross_margin"));
+    }
+
+    @Test
     void adminOrderUsesHistoricalSnapshotsForProfitAndLevelContext() {
         UUID orderId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();

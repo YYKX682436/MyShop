@@ -30,6 +30,7 @@ import com.myshop.service.CardKeyReclaimService;
 import com.myshop.service.ManualStockService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderRefundService;
+import com.myshop.service.SubsiteFreeOrder;
 import com.myshop.supplier.SupplierCustomerRefundGuard;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -73,7 +74,9 @@ public class OrderRefundServiceImpl implements OrderRefundService {
     private final CardKeyReclaimService cardKeyReclaimService;
     private final Clock clock;
     private SupplierCustomerRefundGuard supplierRefundGuard;
+    private SubsiteSettlementService subsiteSettlementService;
     @Autowired public void setSupplierRefundGuard(SupplierCustomerRefundGuard guard) { this.supplierRefundGuard=guard; }
+    @Autowired public void setSubsiteSettlementService(SubsiteSettlementService service) { this.subsiteSettlementService=service; }
 
     public OrderRefundServiceImpl(OrderRepository orderRepository,
                                   OrderItemRepository orderItemRepository,
@@ -179,9 +182,20 @@ public class OrderRefundServiceImpl implements OrderRefundService {
 
         // Keep the business lock order stable: Order -> User. Do not move this
         // read above the order lock even if a caller already knows the user id.
+        UUID ownerId = order.getSubsiteProfitSettledAt() != null && order.getSubsiteProfit() != null
+                && order.getSubsiteProfit().signum() > 0 ? order.getSubsiteOwnerIdSnapshot() : null;
+        User owner = null;
+        if (ownerId != null && ownerId.toString().compareTo(order.getUserId().toString()) < 0) {
+            owner = userRepository.findByIdForUpdate(ownerId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED, "分站站长账户不存在"));
+        }
         User user = userRepository.findByIdForUpdate(order.getUserId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,
                         "退款目标账户不存在"));
+        if (ownerId != null && owner == null) {
+            owner = ownerId.equals(order.getUserId()) ? user : userRepository.findByIdForUpdate(ownerId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED, "分站站长账户不存在"));
+        }
         if (user.getRole() != UserRole.USER) {
             throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,
                     "只有注册普通用户订单支持退款");
@@ -194,9 +208,8 @@ public class OrderRefundServiceImpl implements OrderRefundService {
                 .findByOrderIdAndStatusForUpdate(order.getId(), PaymentStatus.PENDING);
 
         BigDecimal refundAmount = money(order.getActualAmount(), "订单退款金额异常");
-        if (refundAmount.signum() <= 0) {
-            throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED, "订单退款金额必须大于 0");
-        }
+        if (refundAmount.signum() < 0)
+            throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED, "订单退款金额无效");
         BigDecimal balanceBefore = money(user.getBalance(), "账户余额异常");
         if (balanceBefore.signum() < 0) {
             throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED, "账户余额不能为负数");
@@ -216,6 +229,8 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         // Before any accounting or inventory writes, isolate supplier refunds
         // from the existing local-card reclaim and customer refund path.
         List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
+        if (refundAmount.signum() == 0 && !SubsiteFreeOrder.isFreeOrder(order, items))
+            throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED, "订单退款金额无效");
         if (items.stream().anyMatch(item -> item.getStockMode() == StockMode.SUPPLIER)) {
             if (supplierRefundGuard==null) throw new BusinessException(ErrorCode.ORDER_REFUND_NOT_ALLOWED,"供应商退款核实不可用");
             supplierRefundGuard.validate(items);
@@ -224,6 +239,11 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         ReclaimPlan reclaimPlan = reclaimCardKeys
                 ? prepareReclaimPlan(order, items, operatorId, refundedAt)
                 : ReclaimPlan.empty();
+
+        if (order.getSubsiteId() != null) {
+            if (subsiteSettlementService == null) throw new IllegalStateException("分站结算服务不可用");
+            subsiteSettlementService.reverse(order, owner);
+        }
 
         // Persist the immutable proof before releasing any key. A later
         // failure still rolls the whole transaction back, while a committed
@@ -255,9 +275,11 @@ public class OrderRefundServiceImpl implements OrderRefundService {
         order.setRefundedAt(refundedAt);
         orderRepository.save(order);
 
-        balanceTransactionService.recordRefund(
-                user.getId(), refundAmount, balanceBefore, balanceAfter, order.getId(),
-                normalizedReason, operatorId);
+        if (refundAmount.signum() > 0) {
+            balanceTransactionService.recordRefund(
+                    user.getId(), refundAmount, balanceBefore, balanceAfter, order.getId(),
+                    normalizedReason, operatorId);
+        }
 
         return new RefundResult(
                 new AdminOrderRefundResponse(

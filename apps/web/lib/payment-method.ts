@@ -1,5 +1,10 @@
 import type { CreateOrderResult, OrderPaymentMethod } from "@/types"
 
+/** A zero price is purchasable only when the server explicitly authorizes it. */
+export function isZeroPricePurchaseAllowed(price: number, allowed: boolean | undefined): boolean {
+  return price === 0 && allowed === true
+}
+
 export interface BalancePaymentAvailability {
   selectable: boolean
   reason: "available" | "login_required" | "insufficient"

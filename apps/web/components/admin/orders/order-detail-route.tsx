@@ -396,7 +396,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundUser")}</dt><dd>{order.username || t("admin.guest")}</dd></div>
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundPaidAmount")}</dt><dd className="font-semibold">{formatYuan(order.actual_amount ?? 0)}</dd></div>
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundAmount")}</dt><dd className="font-semibold">{formatYuan(order.actual_amount ?? 0)}</dd></div>
-          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundDestination")}</dt><dd>{t("admin.refundBalance")}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundDestination")}</dt><dd>{t(order.actual_amount === 0 ? "admin.zeroRefund" : "admin.refundBalance")}</dd></div>
         </dl>
         {hasDeliveredItems && <p className="flex items-start gap-2 rounded-control border border-amber-300/50 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200"><ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{t("admin.refundDeliveredWarning")}</p>}
         <div className="space-y-2 rounded-control border border-border-subtle bg-surface px-3 py-3">
@@ -458,9 +458,9 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         <dl className="divide-y divide-border-subtle/70">
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.refundOrderNo")}</dt><dd className="font-mono">{order.order_no}</dd></div>
           <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.afterSaleApproveAmount")}</dt><dd className="font-semibold">{formatYuan(order.actual_amount ?? 0)}</dd></div>
-          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.afterSaleApproveDestination")}</dt><dd>{t("admin.refundBalance")}</dd></div>
+          <div className="flex items-center justify-between gap-4 py-2"><dt className="text-muted-foreground">{t("admin.afterSaleApproveDestination")}</dt><dd>{t(order.actual_amount === 0 ? "admin.zeroRefund" : "admin.refundBalance")}</dd></div>
         </dl>
-        <p className="rounded-control border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary">{t("admin.afterSaleApproveBalanceNotice")}</p>
+        <p className="rounded-control border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary">{t(order.actual_amount === 0 ? "admin.zeroRefund" : "admin.afterSaleApproveBalanceNotice")}</p>
         <div className="space-y-2 rounded-control border border-border-subtle bg-surface px-3 py-3">
           <p className="font-medium text-foreground">{t("admin.refundCardHandling")}</p>
           <label className={`flex items-start gap-3 ${reclaimCardKeysEnabled && !afterSaleApproveLoading ? "cursor-pointer" : "cursor-not-allowed opacity-70"}`} htmlFor="admin-after-sale-reclaim-card-keys">

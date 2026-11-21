@@ -5,5 +5,8 @@ public enum BalanceTransactionType {
     ADMIN_ADJUSTMENT,
     RECHARGE,
     ORDER_PAYMENT,
-    REFUND
+    REFUND,
+    SUBSITE_PROFIT,
+    SUBSITE_PROFIT_REVERSAL,
+    SUBSITE_OPENING
 }

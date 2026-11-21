@@ -1,6 +1,9 @@
 package com.myshop.service.impl;
 
 import com.myshop.common.PageResult;
+import com.myshop.context.SiteRequestContext;
+import com.myshop.service.SubsitePricingService;
+import org.springframework.jdbc.core.JdbcTemplate;
 import com.myshop.constant.ErrorCode;
 import com.myshop.entity.Product;
 import com.myshop.entity.ProductCategory;
@@ -57,6 +60,10 @@ public class PublicProductServiceImpl implements PublicProductService {
     private final ProductInventoryBatchService inventoryBatchService;
     private final PricingService pricingService;
     private SupplierStockService supplierStockService;
+    private SubsitePricingService subsitePricingService;
+    private JdbcTemplate jdbc;
+    @Autowired public void setSubsitePricingService(SubsitePricingService value) { this.subsitePricingService = value; }
+    @Autowired public void setJdbcTemplate(JdbcTemplate value) { this.jdbc = value; }
     @Autowired public void setSupplierStockService(SupplierStockService value) { this.supplierStockService=value; }
 
     @Override
@@ -84,7 +91,7 @@ public class PublicProductServiceImpl implements PublicProductService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "价格筛选范围无效");
         }
         Sort databaseSort = ProductListSort.resolve("new".equals(requestedSort) ? "created_at" : "sort_weight", "desc");
-        boolean computedFilter = inStock || priceMin != null || priceMax != null
+        boolean computedFilter = SiteRequestContext.getSite() != null || inStock || priceMin != null || priceMax != null
                 || List.of("hot", "price_low", "price_high").contains(requestedSort);
         // Default/new/category/search requests use database pagination. Computed
         // filters use the same batch pricing and stock rules as product detail,
@@ -97,7 +104,12 @@ public class PublicProductServiceImpl implements PublicProductService {
         Page<Product> productPage = normalizedKeyword != null && !normalizedKeyword.isBlank()
                 ? productRepository.findPublicProductsByKeyword(categoryId, "%" + normalizedKeyword.toLowerCase(Locale.ROOT) + "%", productNo, pageable)
                 : productRepository.findPublicProducts(categoryId, pageable);
-        List<PublicProductResponse> products = buildResponses(productPage.getContent(), requestUserId, false);
+        List<Product> visibleProducts = productPage.getContent();
+        if (SiteRequestContext.getSite() != null) {
+            List<UUID> hidden = jdbc.queryForList("SELECT product_id FROM subsite_hidden_products WHERE subsite_id = ?", UUID.class, SiteRequestContext.getSiteId());
+            visibleProducts = visibleProducts.stream().filter(product -> !hidden.contains(product.getId())).toList();
+        }
+        List<PublicProductResponse> products = buildResponses(visibleProducts, requestUserId, false);
         if (!computedFilter) return PageResult.of(productPage, products);
 
         var filtered = products.stream()
@@ -127,6 +139,11 @@ public class PublicProductServiceImpl implements PublicProductService {
         Product product = productRepository.findById(id)
                 .filter(candidate -> candidate.getIsDeleted() == 0 && candidate.isEnabled())
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架"));
+        if (SiteRequestContext.getSite() != null && Boolean.TRUE.equals(jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM subsite_hidden_products WHERE subsite_id = ? AND product_id = ?)",
+                Boolean.class, SiteRequestContext.getSiteId(), id))) {
+            throw new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在或已下架");
+        }
         return buildResponses(List.of(product), requestUserId, true).get(0);
     }
 
@@ -143,6 +160,20 @@ public class PublicProductServiceImpl implements PublicProductService {
         Map<PriceTarget, PriceResolution> prices = requestUserId != null && level != null
                 ? pricingService.resolveBatchForUser(products, specsByProduct, level, requestUserId)
                 : pricingService.resolveBatch(products, specsByProduct, level);
+        if (SiteRequestContext.getSite() != null) {
+            prices = new HashMap<>();
+            for (Product product : products) {
+                List<ProductSpec> productSpecs = specsByProduct.getOrDefault(product.getId(), List.of());
+                if (product.isSpecEnabled() && !productSpecs.isEmpty()) {
+                    for (ProductSpec spec : productSpecs) {
+                        prices.put(new PriceTarget(product.getId(), spec.getId()), subsitePrice(product, spec, level, requestUserId));
+                    }
+                } else {
+                    prices.put(new PriceTarget(product.getId(), null), subsitePrice(product, null, level, requestUserId));
+                }
+            }
+        }
+        final Map<PriceTarget, PriceResolution> resolvedPrices = prices;
         Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock =
                 inventoryBatchService.load(products, specsByProduct);
         Map<UUID, Long> sales = loadSales(productIds);
@@ -153,17 +184,24 @@ public class PublicProductServiceImpl implements PublicProductService {
         return products.stream().map(product -> {
                     ProductCategory category = categories.get(product.getCategoryId());
                     return toResponse(product, specsByProduct.getOrDefault(product.getId(), List.of()),
-                            prices, stock, sales.getOrDefault(product.getId(), 0L), category,
-                            ProductCategoryPath.from(category, categories), detail);
+                            resolvedPrices, stock, sales.getOrDefault(product.getId(), 0L), category,
+                            ProductCategoryPath.from(category, categories), detail,
+                            SiteRequestContext.getSite() != null && requestUserId != null);
                 })
                 .toList();
+    }
+
+    private PriceResolution subsitePrice(Product product, ProductSpec spec, UserLevel level, UUID userId) {
+        var result = subsitePricingService.resolve(SiteRequestContext.getSite(), product, spec, level, userId);
+        return new PriceResolution(result.unitPrice(), result.costPrice(), result.retailPrice(), result.pricingSource(),
+                false, null, level == null ? null : level.getId(), level == null ? null : level.getName());
     }
 
     private PublicProductResponse toResponse(Product product, List<ProductSpec> specs,
                                               Map<PriceTarget, PriceResolution> prices,
                                               Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock,
                                              long salesCount, ProductCategory category,
-                                             ProductCategoryPath categoryPath, boolean detail) {
+                                             ProductCategoryPath categoryPath, boolean detail, boolean siteCustomer) {
         boolean hasSpecs = product.isSpecEnabled() && !specs.isEmpty();
         PriceResolution effectivePrice = hasSpecs
                 ? specs.stream()
@@ -177,12 +215,12 @@ public class PublicProductServiceImpl implements PublicProductService {
         ProductInventoryBatchService.StockSnapshot rootStock = stock.getOrDefault(
                 new PriceTarget(product.getId(), null), new ProductInventoryBatchService.StockSnapshot(0L, false));
         List<PublicProductSpecResponse> specResponses = detail && hasSpecs
-                ? specs.stream().map(spec -> toSpecResponse(product, spec, prices, stock)).toList()
+                ? specs.stream().map(spec -> toSpecResponse(product, spec, prices, stock, siteCustomer)).toList()
                 : List.of();
         return new PublicProductResponse(
                 product.getId(), product.getTitle(), product.getDescription(),
                 detail ? product.getDetailMd() : null, product.getCoverUrl(),
-                effectivePrice.price(), retailStartingPrice, product.getCategoryId(),
+                effectivePrice.price(), siteCustomer && product.getStockMode() != StockMode.SUPPLIER && effectivePrice.pricingSource() == com.myshop.constant.PricingSource.SUBSITE && effectivePrice.price().signum() == 0, retailStartingPrice, product.getCategoryId(),
                 category == null ? null : category.getName(), categoryPath.primaryCategoryId(),
                 categoryPath.primaryCategoryName(), categoryPath.secondaryCategoryId(),
                 categoryPath.secondaryCategoryName(),
@@ -203,11 +241,12 @@ public class PublicProductServiceImpl implements PublicProductService {
 
     private PublicProductSpecResponse toSpecResponse(Product product, ProductSpec spec,
                                                      Map<PriceTarget, PriceResolution> prices,
-                                                     Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock) {
+                                                     Map<PriceTarget, ProductInventoryBatchService.StockSnapshot> stock,
+                                                     boolean siteCustomer) {
         PriceResolution price = prices.get(new PriceTarget(product.getId(), spec.getId()));
         ProductInventoryBatchService.StockSnapshot stockSnapshot = stock.getOrDefault(
                 new PriceTarget(product.getId(), spec.getId()), new ProductInventoryBatchService.StockSnapshot(0L, false));
-        return new PublicProductSpecResponse(spec.getId(), spec.getName(), price.price(), spec.getRetailPrice(),
+        return new PublicProductSpecResponse(spec.getId(), spec.getName(), price.price(), siteCustomer && product.getStockMode() != StockMode.SUPPLIER && price.pricingSource() == com.myshop.constant.PricingSource.SUBSITE && price.price().signum() == 0, spec.getRetailPrice(),
                 stockSnapshot.available(), stockSnapshot.unlimited(), product.getStockMode().name(),
                 product.getStockMode()==StockMode.SUPPLIER && supplierStockService!=null
                         ? supplierStockService.fields(product.getId(),spec.getId()) : null);

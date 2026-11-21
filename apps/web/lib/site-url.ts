@@ -16,3 +16,21 @@ export function getPublicSiteUrl(env: SiteEnvironment = process.env): string {
   }
   return url.origin
 }
+
+/** Validate the request Host against the configured storefront and its sibling sites. */
+export function getRequestSiteUrl(host: string | null, env: SiteEnvironment = process.env): string {
+  const main = new URL(getPublicSiteUrl(env))
+  if (!host || !/^[a-z0-9.-]+(?::[0-9]{1,5})?$/i.test(host)) {
+    throw new Error("Invalid storefront Host")
+  }
+  const request = new URL(`${main.protocol}//${host}`)
+  const hostname = request.hostname.toLowerCase()
+  const mainHost = main.hostname.toLowerCase()
+  const suffix = mainHost.includes(".") ? mainHost.slice(mainHost.indexOf(".")) : ""
+  const prefix = suffix && hostname.endsWith(suffix) ? hostname.slice(0, -suffix.length) : ""
+  const isSibling = !!prefix && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(prefix)
+  if ((hostname !== mainHost && !isSibling) || request.port !== main.port) {
+    throw new Error("Invalid storefront Host")
+  }
+  return request.origin
+}

@@ -1,6 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { safeLoginRedirect } from "./safe-navigation.ts"
+import { safeHomeSiteUrl, safeLoginRedirect } from "./safe-navigation.ts"
+
+test("home-site links allow only validated sibling shop origins", () => {
+  const current = "https://a.mc520.top"
+  assert.equal(safeHomeSiteUrl("https://mc.mc520.top/login", current), "https://mc.mc520.top")
+  assert.equal(safeHomeSiteUrl("https://b.mc520.top", current), "https://b.mc520.top")
+  for (const value of ["https://a.mc520.top.evil.test", "https://a.b.mc520.top", "https://evil.test", "http://mc.mc520.top", "https://u@mc.mc520.top", "https://mc.mc520.top:444"]) {
+    assert.equal(safeHomeSiteUrl(value, current), null)
+  }
+})
 import { serializeJsonLd } from "./json-ld.ts"
 
 test("login returns to a local order or admin page with its query and anchor", () => {

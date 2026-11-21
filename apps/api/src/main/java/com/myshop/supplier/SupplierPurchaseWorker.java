@@ -107,7 +107,10 @@ public class SupplierPurchaseWorker {
                 || !m.getRemoteSku().equals(p.getRemoteSku()) || m.getGoodsType()!=p.getGoodsType()
                 || m.getMultiple()!=p.getMultiple()) throw issue("MAPPING_CHANGED");
         var account=suppliers.runtime(p.getAccountId(),true);
-        policy.quote(m,account.enabled(),p.getBuyerQuantity(),item.getSubtotal(),LocalDateTime.now());
+        BigDecimal revenue = item.getSubsiteSupplyPriceSnapshot() == null ? item.getSubtotal()
+                : item.getSubsiteSupplyPriceSnapshot().multiply(BigDecimal.valueOf(item.getQuantity()));
+        var quote=policy.quote(m,account.enabled(),p.getBuyerQuantity(),revenue,LocalDateTime.now());
+        if (item.getSubsiteSupplyPriceSnapshot()!=null && quote.totalCost().signum()==0) throw issue("COST_EXCEEDED");
         String notifyUrl;
         try { notifyUrl=urls.supplierWebhookUrl(p.getAccountId().toString()); }
         catch (RuntimeException e) { throw issue("CALLBACK_CONFIG"); }
@@ -118,7 +121,8 @@ public class SupplierPurchaseWorker {
         var sku=remote.skus().stream().filter(s -> s.id().equals(p.getRemoteSku())).findFirst().orElseThrow(() -> issue("SKU_CHANGED"));
         if (sku.status()!=1 || sku.stock()<p.getActualQuantity()) throw issue("STOCK");
         BigDecimal cost=sku.cost().multiply(BigDecimal.valueOf(p.getActualQuantity()));
-        if (cost.compareTo(p.getSafePrice())>0 || cost.compareTo(item.getSubtotal())>=0) throw issue("COST_EXCEEDED");
+        if ((item.getSubsiteSupplyPriceSnapshot()!=null && cost.signum()==0)
+                || cost.compareTo(p.getSafePrice())>0 || cost.compareTo(revenue)>=0) throw issue("COST_EXCEEDED");
         var fields=account.provider().customerFields(remote.snapshot());
         if (!inputRules.supported(fields) || !json.valueToTree(fields).equals(p.getRechargeTemplate())) throw issue("TEMPLATE_CHANGED");
         if (account.provider().account(account.connection()).balance().compareTo(cost)<0) throw issue("BALANCE");

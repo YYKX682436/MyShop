@@ -87,6 +87,7 @@ export interface ProductSpec {
   id: string
   name: string
   price: number
+  zero_price_purchase_allowed?: boolean
   retail_price: number
   stock_available: number | null
   unlimited?: boolean
@@ -99,7 +100,7 @@ export interface ProductSpec {
 }
 
 export type PricingType = "RETAIL" | "COST_MARKUP"
-export type PricingSource = "RETAIL" | "LEVEL_MARKUP" | "LEVEL_OVERRIDE" | "USER_SECRET" | "SALES_CHANNEL"
+export type PricingSource = "RETAIL" | "LEVEL_MARKUP" | "LEVEL_OVERRIDE" | "USER_SECRET" | "SALES_CHANNEL" | "SUBSITE"
 
 export interface CustomerInputField {
   id: string
@@ -124,6 +125,7 @@ export interface ProductCard {
   description?: string
   cover_url?: string
   price: number
+  zero_price_purchase_allowed?: boolean
   retail_price: number
   category_id: string
   category_name?: string | null
@@ -373,6 +375,7 @@ export interface OrderItemDetail extends OrderItemBrief {
 
 export interface OrderDetail {
   id: string
+  guest?: boolean
   order_no: number
   total_amount: number
   actual_amount: number
@@ -553,6 +556,9 @@ export interface SiteConfig {
   popup_content?: string
   contact_email?: string
   contact_items?: ContactItem[]
+  customer_service?: string
+  main_site_has_contact?: boolean
+  main_site_url?: string
   maintenance_enabled: boolean
   maintenance_message?: string
   footer_text?: string
@@ -753,6 +759,7 @@ export interface OrderCardKey {
 
 export interface AdminOrderItemDetail extends OrderItemDetail {
   cost_price_snapshot: number
+  subsite_supply_price_snapshot?: number | null
   retail_price_snapshot: number
   pricing_source: PricingSource
   gross_profit: number | null
@@ -811,6 +818,11 @@ export interface AdminOrderItem extends Omit<OrderDetail, "items" | "payment_met
   cost_total: number
   gross_profit_total: number
   gross_margin_total: number | null
+  subsite_profit?: number | null
+  subsite_profit_state?: "PENDING" | "SETTLED" | "CANCELED" | "REVERSED" | null
+  subsite_profit_canceled_at?: string | null
+  subsite_profit_settled_at?: string | null
+  subsite_profit_reversed_at?: string | null
 }
 
 export interface AdminOrderRefundResponse {
@@ -926,7 +938,7 @@ export interface AdministratorOperationLog {
   created_at: string
 }
 
-export type BalanceTransactionType = 'ADMIN_ADJUSTMENT' | 'RECHARGE' | 'ORDER_PAYMENT' | 'REFUND'
+export type BalanceTransactionType = 'ADMIN_ADJUSTMENT' | 'RECHARGE' | 'ORDER_PAYMENT' | 'REFUND' | 'SUBSITE_OPENING' | 'SUBSITE_PROFIT' | 'SUBSITE_PROFIT_REVERSAL'
 
 export interface BalanceTransaction {
   id: string

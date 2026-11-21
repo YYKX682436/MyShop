@@ -5,10 +5,18 @@ import {
   getDefaultPaymentMethod,
   getBalancePaymentAvailability,
   isImmediateBalancePaymentSuccess,
+  isZeroPricePurchaseAllowed,
   paymentMethodForRequest,
   reconcilePaymentMethod,
 } from "./payment-method.ts"
 import { fingerprintPayload } from "./idempotency.ts"
+
+test("zero-price purchase requires an explicit server authorization", () => {
+  assert.equal(isZeroPricePurchaseAllowed(0, true), true)
+  assert.equal(isZeroPricePurchaseAllowed(0, false), false)
+  assert.equal(isZeroPricePurchaseAllowed(0, undefined), false)
+  assert.equal(isZeroPricePurchaseAllowed(0.01, true), false)
+})
 
 test("balance payment is available only to regular users with enough balance", () => {
   assert.deepEqual(getBalancePaymentAvailability(true, "USER", 10, 10), {

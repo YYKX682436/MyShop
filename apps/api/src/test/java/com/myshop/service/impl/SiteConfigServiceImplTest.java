@@ -55,6 +55,34 @@ class SiteConfigServiceImplTest {
     }
 
     @Test
+    void supportAvailabilityRejectsMissingAndMalformedContacts() {
+        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
+            String key=invocation.getArgument(0);
+            return switch (key) {
+                case "contact_email" -> Optional.of(configValue("not-an-email"));
+                case "contact_items" -> Optional.of(configValue("[{\"name\":\"客服\",\"url\":\"javascript:bad\"}]"));
+                default -> Optional.empty();
+            };
+        });
+        assertFalse(service.hasMainSiteContact());
+        assertEquals(false, service.getPublicConfig().get("main_site_has_contact"));
+    }
+
+    @Test
+    void supportAvailabilityAcceptsConfiguredEmailOrValidatedContactItem() {
+        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
+            String key=invocation.getArgument(0);
+            return switch (key) {
+                case "contact_email" -> Optional.of(configValue("support@example.com"));
+                case "contact_items" -> Optional.of(configValue("[]"));
+                default -> Optional.empty();
+            };
+        });
+        assertTrue(service.hasMainSiteContact());
+        assertEquals(true, service.getPublicConfig().get("main_site_has_contact"));
+    }
+
+    @Test
     void acceptsZeroContactItemsAndStoresCanonicalJson() {
         saveContactItems("[]");
     }
@@ -96,6 +124,30 @@ class SiteConfigServiceImplTest {
         assertNotNull(value);
         assertInstanceOf(List.class, value);
         assertEquals(List.of(Map.of("name", "客服", "url", "https://example.com")), value);
+    }
+
+    @Test
+    void subsiteDoesNotExposeMainSitePopupAndUsesItsOwnAnnouncement() {
+        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            return switch (key) {
+                case "popup_enabled" -> Optional.of(configValue("true"));
+                case "popup_content" -> Optional.of(configValue("主站内容"));
+                case "announcement" -> Optional.of(configValue("主站公告"));
+                default -> Optional.empty();
+            };
+        });
+        var site = new com.myshop.entity.Subsite();
+        site.setName("分站"); site.setAnnouncement("分站公告");
+        com.myshop.context.SiteRequestContext.set(site);
+        try {
+            var result = service.getPublicConfig();
+            assertEquals(false, result.get("popup_enabled"));
+            assertEquals("", result.get("popup_content"));
+            assertEquals("分站公告", result.get("announcement"));
+            assertEquals("分站", result.get("site_name"));
+            assertEquals("http://localhost:3000", result.get("main_site_url"));
+        } finally { com.myshop.context.SiteRequestContext.clear(); }
     }
 
     @Test

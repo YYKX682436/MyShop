@@ -69,6 +69,9 @@ class OrderRefundConcurrencyIntegrationTest {
     @Autowired
     private FulfillmentService fulfillmentService;
 
+    @Autowired
+    private SubsiteSettlementService subsiteSettlementService;
+
     @MockitoBean
     private AutoFulfillmentService autoFulfillmentService;
 
@@ -99,12 +102,218 @@ class OrderRefundConcurrencyIntegrationTest {
         jdbcTemplate.update("DELETE FROM after_sale_attachments");
         jdbcTemplate.update("DELETE FROM after_sale_requests");
         jdbcTemplate.update("DELETE FROM orders");
+        jdbcTemplate.update("UPDATE users SET subsite_id = NULL WHERE subsite_id IS NOT NULL");
+        jdbcTemplate.update("DELETE FROM subsite_opening_records");
+        jdbcTemplate.update("DELETE FROM subsites");
         jdbcTemplate.update("DELETE FROM users");
     }
 
     @AfterEach
     void clearContext() {
         RequestContext.clear();
+    }
+
+    @Test
+    void manualDeliverySettlesSubsiteProfitOnlyOnce() {
+        UUID buyer = insertUser("subsite-manual-buyer", "0.00");
+        UUID owner = insertUser("subsite-manual-owner", "0.00");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, ?, ?)", site, owner, "manual-test", "Manual");
+        PendingCardOrder fixture = insertPendingCardOrder(buyer);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00, delivery_type='MANUAL', stock_mode='MANUAL', fulfillment_status='WAITING_MANUAL' WHERE id=?", fixture.itemId());
+        fulfillmentService.completeManualItems(fixture.orderId(), List.of(new FulfillmentService.ManualFulfillmentItem(fixture.itemId(), "complete")));
+        org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class, () -> fulfillmentService.completeManualItems(fixture.orderId(), List.of(new FulfillmentService.ManualFulfillmentItem(fixture.itemId(), "again"))));
+        assertMoney("5.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+        assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId()));
+    }
+
+    @Test
+    void manualDeliveryWithFullBalanceRemainsDeliveredAndPending() {
+        UUID buyer = insertUser("manual-full-buyer", "0.00");
+        UUID owner = insertUser("manual-full-owner", "9999999999.99");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, 'manual-full', 'Manual full')", site, owner);
+        PendingCardOrder fixture = insertPendingCardOrder(buyer);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00, delivery_type='MANUAL', stock_mode='MANUAL', fulfillment_status='WAITING_MANUAL' WHERE id=?", fixture.itemId());
+        fulfillmentService.completeManualItems(fixture.orderId(), List.of(new FulfillmentService.ManualFulfillmentItem(fixture.itemId(), "complete")));
+        assertEquals("DELIVERED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertEquals("PENDING", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));
+        jdbcTemplate.update("UPDATE users SET balance=9999999994.99 WHERE id=?", owner);
+        subsiteSettlementService.retryPendingProfit();
+        assertEquals("SETTLED", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId()));
+    }
+
+    @Test
+    void subsiteDeliverySettlesOnceAndInsufficientRefundRollsBack() {
+        UUID operatorId = insertAdmin("subsite-refund-admin");
+        UUID buyerId = insertUser("subsite-refund-buyer", "0.00");
+        UUID ownerId = insertUser("subsite-refund-owner", "0.00");
+        UUID siteId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, ?, ?)",
+                siteId, ownerId, "refund-test", "Refund test");
+        PendingCardOrder fixture = insertPendingCardOrder(buyerId);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?",
+                siteId, ownerId, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00 WHERE id=?", fixture.itemId());
+        fulfillmentService.fulfillOrder(fixture.orderId());
+        fulfillmentService.fulfillOrder(fixture.orderId());
+        assertMoney("5.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, ownerId));
+        assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId()));
+        jdbcTemplate.update("UPDATE users SET balance=1.00 WHERE id=?", ownerId);
+        RequestContext.set(new RequestContext.UserInfo(operatorId, "subsite-refund-admin", "ADMIN"));
+        BusinessException failure = org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class,
+                () -> orderRefundService.refund(fixture.orderId(), "refund", true, false));
+        assertTrue(failure.getMessage().contains("4.00"));
+        assertMoney("1.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, ownerId));
+        assertMoney("0.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, buyerId));
+        assertEquals("DELIVERED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertEquals(0, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type IN ('REFUND','SUBSITE_PROFIT_REVERSAL')", Integer.class, fixture.orderId()));
+        jdbcTemplate.update("UPDATE users SET balance=5.00 WHERE id=?", ownerId);
+        orderRefundService.refund(fixture.orderId(), "refund", true, false);
+        assertMoney("0.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, ownerId));
+        assertMoney("15.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, buyerId));
+        assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT_REVERSAL'", Integer.class, fixture.orderId()));
+    }
+
+    @Test
+    void fullOwnerBalanceDoesNotBlockDeliveryAndRetryCreditsExactlyOnce() {
+        UUID buyer = insertUser("pending-capacity-buyer", "0.00");
+        UUID owner = insertUser("pending-capacity-owner", "9999999999.99");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, 'capacity', 'Capacity')", site, owner);
+        PendingCardOrder fixture = insertPendingCardOrder(buyer);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00 WHERE id=?", fixture.itemId());
+        fulfillmentService.fulfillOrder(fixture.orderId());
+        assertEquals("DELIVERED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertEquals("PENDING", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertMoney("9999999999.99", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+        assertEquals(0, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId()));
+        jdbcTemplate.update("UPDATE users SET balance=9999999994.99 WHERE id=?", owner);
+        // A scheduled scan also recovers a record left pending by a process restart.
+        subsiteSettlementService.retryPendingProfit();
+        subsiteSettlementService.retryPendingProfit();
+        assertEquals("SETTLED", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertMoney("9999999999.99", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+        assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId()));
+    }
+
+    @Test
+    void failedCreditTransactionLeavesDeliveryAndPendingRecordRecoverable() {
+        UUID buyer = insertUser("credit-failure-buyer", "0.00");
+        UUID owner = insertUser("credit-failure-owner", "0.00");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, 'credit-failure', 'Credit failure')", site, owner);
+        PendingCardOrder fixture = insertPendingCardOrder(buyer);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00 WHERE id=?", fixture.itemId());
+        jdbcTemplate.execute("CREATE FUNCTION test_fail_profit_credit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'simulated credit failure'; END $$");
+        jdbcTemplate.execute("CREATE TRIGGER test_fail_profit_credit BEFORE INSERT ON balance_transactions FOR EACH ROW WHEN (NEW.type='SUBSITE_PROFIT') EXECUTE FUNCTION test_fail_profit_credit()");
+        try {
+            fulfillmentService.fulfillOrder(fixture.orderId());
+            assertEquals("DELIVERED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
+            assertEquals("PENDING", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));
+            assertMoney("0.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER test_fail_profit_credit ON balance_transactions");
+            jdbcTemplate.execute("DROP FUNCTION test_fail_profit_credit()");
+        }
+        subsiteSettlementService.retryPendingProfit();
+        assertEquals("SETTLED", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertMoney("5.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+        assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId()));
+    }
+
+    @Test
+    void refundCancelsPendingProfitAndRetryCannotCreditIt() {
+        UUID operator = insertAdmin("pending-refund-admin");
+        UUID buyer = insertUser("pending-refund-buyer", "0.00");
+        UUID owner = insertUser("pending-refund-owner", "9999999999.99");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, 'pending-refund', 'Pending refund')", site, owner);
+        PendingCardOrder fixture = insertPendingCardOrder(buyer);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00 WHERE id=?", fixture.itemId());
+        fulfillmentService.fulfillOrder(fixture.orderId());
+        RequestContext.set(new RequestContext.UserInfo(operator, "pending-refund-admin", "ADMIN"));
+        orderRefundService.refund(fixture.orderId(), "申请退款", true, false);
+        assertEquals("REFUNDED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertEquals("CANCELED", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));
+        assertMoney("15.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, buyer));
+        jdbcTemplate.update("UPDATE users SET balance=0 WHERE id=?", owner);
+        subsiteSettlementService.retryPendingProfit();
+        assertMoney("0.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+        assertEquals(0, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type IN ('SUBSITE_PROFIT','SUBSITE_PROFIT_REVERSAL')", Integer.class, fixture.orderId()));
+    }
+
+    @Test
+    void concurrentRetryAndRefundCannotCreditAfterRefund() throws Exception {
+        UUID operator = insertAdmin("pending-race-admin");
+        UUID buyer = insertUser("pending-race-buyer", "0.00");
+        UUID owner = insertUser("pending-race-owner", "9999999999.99");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, 'pending-race', 'Pending race')", site, owner);
+        PendingCardOrder fixture = insertPendingCardOrder(buyer);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00 WHERE id=?", fixture.itemId());
+        fulfillmentService.fulfillOrder(fixture.orderId());
+        jdbcTemplate.update("UPDATE users SET balance=0 WHERE id=?", owner);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> retry = workers.submit(() -> { start.await(); subsiteSettlementService.retryPendingProfit(); return null; });
+            Future<?> refund = workers.submit(() -> {
+                start.await(); RequestContext.set(new RequestContext.UserInfo(operator, "pending-race-admin", "ADMIN"));
+                try { orderRefundService.refund(fixture.orderId(), "并发退款", true, false); }
+                finally { RequestContext.clear(); }
+                return null;
+            });
+            start.countDown(); retry.get(15, TimeUnit.SECONDS); refund.get(15, TimeUnit.SECONDS);
+            subsiteSettlementService.retryPendingProfit();
+            assertEquals("REFUNDED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
+            String state = scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId());
+            assertTrue(List.of("CANCELED", "REVERSED").contains(state), state);
+            assertMoney("0.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+            assertMoney("15.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, buyer));
+            int credited = scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId());
+            int reversed = scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT_REVERSAL'", Integer.class, fixture.orderId());
+            assertEquals(credited, reversed);
+        } finally { workers.shutdownNow(); }
+    }
+
+    @Test
+    void deliveryRetryAndRefundRaceLeavesNoUnreversedProfit() throws Exception {
+        UUID operator = insertAdmin("triple-race-admin");
+        UUID buyer = insertUser("triple-race-buyer", "0.00");
+        UUID owner = insertUser("triple-race-owner", "0.00");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, 'triple-race', 'Triple race')", site, owner);
+        PendingCardOrder fixture = insertPendingCardOrder(buyer);
+        jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00 WHERE id=?", fixture.itemId());
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService workers = Executors.newFixedThreadPool(3);
+        try {
+            Future<?> delivery = workers.submit(() -> { start.await(); fulfillmentService.fulfillOrder(fixture.orderId()); return null; });
+            Future<?> retry = workers.submit(() -> { start.await(); subsiteSettlementService.retryPendingProfit(); return null; });
+            Future<?> refund = workers.submit(() -> {
+                start.await(); RequestContext.set(new RequestContext.UserInfo(operator, "triple-race-admin", "ADMIN"));
+                try { orderRefundService.refund(fixture.orderId(), "并发退款", true, false); }
+                finally { RequestContext.clear(); }
+                return null;
+            });
+            start.countDown(); delivery.get(30, TimeUnit.SECONDS); retry.get(30, TimeUnit.SECONDS); refund.get(30, TimeUnit.SECONDS);
+            subsiteSettlementService.retryPendingProfit();
+            assertEquals("REFUNDED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
+            assertMoney("0.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
+            assertMoney("15.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, buyer));
+            int credited = scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT'", Integer.class, fixture.orderId());
+            int reversed = scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT_REVERSAL'", Integer.class, fixture.orderId());
+            assertEquals(credited, reversed);
+        } finally { workers.shutdownNow(); }
     }
 
     @Test

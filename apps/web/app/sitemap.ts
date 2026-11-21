@@ -1,12 +1,12 @@
 import type { MetadataRoute } from "next"
 import { getAnonymousProducts } from "@/services/api-server"
 import { getSitemapProducts } from "@/lib/product-pages"
-import { getPublicSiteUrl } from "@/lib/site-url"
+import { requestSiteUrl } from "@/lib/request-site"
 
 export const dynamic = "force-dynamic"
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = getPublicSiteUrl()
+  const baseUrl = await requestSiteUrl()
 
   const staticRoutes: MetadataRoute.Sitemap = [
     { url: baseUrl, lastModified: new Date(), changeFrequency: "daily", priority: 1.0 },

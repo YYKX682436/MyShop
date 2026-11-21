@@ -11,6 +11,7 @@ import {
   ReceiptText,
   Settings,
   ShieldCheck,
+  Store,
   UserPlus,
   WalletCards,
   type LucideIcon,
@@ -252,6 +253,8 @@ export default function MyPage() {
 
       <section className="settings-group overflow-hidden rounded-card" aria-label={t("my.title")}>
         <AccountLink href="/my/orders" icon={ReceiptText} label={t("my.orders")} />
+        <Divider />
+        <AccountLink href="/my/subsite" icon={Store} label="我的分站" />
         <Divider />
         <AccountLink href="/my/security" icon={ShieldCheck} label={t("my.security")} />
         <Divider />

@@ -44,6 +44,12 @@ public class AuthServiceImpl implements AuthService {
     private final JwtUtils jwtUtils;
     private final CaptchaUtils captchaUtils;
 
+    @org.springframework.beans.factory.annotation.Value("${app.public-site-url:http://localhost:3000}")
+    private String publicSiteUrl = "http://localhost:3000";
+    private com.myshop.repository.SubsiteRepository subsites;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setSubsites(com.myshop.repository.SubsiteRepository subsites) { this.subsites = subsites; }
+
     @Override
     public CaptchaResponse generateCaptcha() {
         CaptchaUtils.CaptchaResult result = captchaUtils.generate();
@@ -53,6 +59,11 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public AuthResult register(RegisterRequest request, String clientIp) {
+        var site = com.myshop.context.SiteRequestContext.getSite();
+        if (site != null) {
+            site = subsites.findByIdForUpdate(site.getId()).orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN, "分站不存在"));
+            if (!site.isEnabled()) throw new BusinessException(ErrorCode.FORBIDDEN, "该分站已停用，暂不能注册");
+        }
         if (!captchaUtils.verify(request.getCaptchaId(), request.getCaptcha())) {
             throw new BusinessException(ErrorCode.CAPTCHA_INVALID, "验证码错误或已过期");
         }
@@ -115,6 +126,7 @@ public class AuthServiceImpl implements AuthService {
         user.setRole(UserRole.USER);
         user.setUserNo(userNo);
         user.setUserLevelId(defaultLevel.getId());
+        user.setSubsiteId(com.myshop.context.SiteRequestContext.getSiteId());
         recordSuccessfulLogin(user, clientIp);
         userRepository.saveAndFlush(user);
 
@@ -179,6 +191,17 @@ public class AuthServiceImpl implements AuthService {
             }
             userRepository.save(user);
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误");
+        }
+
+        if (!com.myshop.service.SubsiteAccess.permits(user)) {
+            String home = publicSiteUrl;
+            if (user.getSubsiteId() != null && subsites != null) {
+                var homeSite = subsites.findById(user.getSubsiteId()).orElse(null);
+                String host = java.net.URI.create(publicSiteUrl).getHost();
+                if (homeSite != null && host != null && host.contains("."))
+                    home = "https://" + homeSite.getPrefix() + host.substring(host.indexOf('.'));
+            }
+            throw new BusinessException(ErrorCode.FORBIDDEN, "请前往账号归属站点登录", java.util.Map.of("home_url", home));
         }
 
         // 登录成功：重置失败计数和锁定状态

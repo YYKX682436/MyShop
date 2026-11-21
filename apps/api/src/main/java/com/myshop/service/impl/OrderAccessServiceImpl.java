@@ -178,6 +178,8 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     }
 
     private Order authorize(Order order, UUID requestUserId, String sessionToken) {
+        if (!com.myshop.service.SubsiteOrderAccess.permits(order, requestUserId))
+            throw new BusinessException(ErrorCode.FORBIDDEN, "订单不属于当前站点");
         if (order.getUserId() != null) {
             if (requestUserId == null || !requestUserId.equals(order.getUserId())) {
                 throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问此订单");
@@ -222,6 +224,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", order.getId());
         result.put("order_no", order.getOrderNo());
+        result.put("guest", order.getUserId() == null);
         result.put("total_amount", order.getTotalAmount());
         result.put("actual_amount", order.getActualAmount());
         result.put("status", order.getStatus().name());

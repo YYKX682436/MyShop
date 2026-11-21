@@ -16,6 +16,7 @@ public record PublicProductResponse(
         String detailMd,
         String coverUrl,
         BigDecimal price,
+        boolean zeroPricePurchaseAllowed,
         BigDecimal retailPrice,
         UUID categoryId,
         String categoryName,

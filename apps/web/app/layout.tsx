@@ -5,14 +5,14 @@ import { AppProviders } from "@/lib/context"
 import { MotionProvider } from "@/components/ui/motion"
 import { ThemeScript } from "./theme-script"
 import { DynamicFavicon } from "@/components/dynamic-favicon"
-import { getPublicSiteUrl } from "@/lib/site-url"
+import { requestSiteUrl } from "@/lib/request-site"
 import "./globals.css"
 
 export const dynamic = "force-dynamic"
 
-export function generateMetadata(): Metadata {
+export async function generateMetadata(): Promise<Metadata> {
   return {
-    metadataBase: new URL(getPublicSiteUrl()),
+    metadataBase: new URL(await requestSiteUrl()),
     title: {
       template: "%s | MyShop",
       default: "MyShop - Auto Card Delivery",

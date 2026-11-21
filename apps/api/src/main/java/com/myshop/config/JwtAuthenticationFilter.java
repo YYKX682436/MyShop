@@ -73,7 +73,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             User user = userRepository.findById(userId).orElse(null);
             if (user == null || user.getIsDeleted() != 0
                     || !user.getRole().name().equals(tokenRole)
-                    || user.getAuthVersion() != tokenAuthVersion) {
+                    || user.getAuthVersion() != tokenAuthVersion
+                    || !com.myshop.service.SubsiteAccess.permits(user)) {
                 log.debug("JWT rejected by current user authority");
                 return;
             }

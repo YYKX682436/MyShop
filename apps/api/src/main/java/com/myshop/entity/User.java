@@ -43,6 +43,9 @@ public class User extends BaseEntity {
     @Column(name = "user_no", updatable = false)
     private Long userNo;
 
+    @Column(name = "subsite_id")
+    private UUID subsiteId;
+
     @Column(name = "user_level_id")
     private UUID userLevelId;
 

@@ -296,6 +296,13 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         map.put("order_no", o.getOrderNo());
         map.put("total_amount", o.getTotalAmount());
         map.put("actual_amount", o.getActualAmount());
+        map.put("subsite_id", o.getSubsiteId());
+        map.put("subsite_owner_id_snapshot", o.getSubsiteOwnerIdSnapshot());
+        map.put("subsite_profit", o.getSubsiteProfit());
+        map.put("subsite_profit_state", o.getSubsiteProfitState());
+        map.put("subsite_profit_canceled_at", o.getSubsiteProfitCanceledAt());
+        map.put("subsite_profit_settled_at", o.getSubsiteProfitSettledAt());
+        map.put("subsite_profit_reversed_at", o.getSubsiteProfitReversedAt());
         map.put("status", o.getStatus().name());
         if (!detail && o.getStatus() == OrderStatus.AFTER_SALE) {
             map.put("after_sale", afterSaleSummary);
@@ -325,6 +332,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             im.put("unit_price", i.getUnitPrice());
             im.put("subtotal", i.getSubtotal());
             im.put("cost_price_snapshot", i.getCostPriceSnapshot());
+            im.put("subsite_supply_price_snapshot", i.getSubsiteSupplyPriceSnapshot());
             im.put("retail_price_snapshot", i.getRetailPriceSnapshot());
             im.put("pricing_source", i.getPricingSource());
             im.put("gross_profit", grossProfit(i));
@@ -482,26 +490,32 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
     private BigDecimal grossMarginTotal(List<OrderItem> items) {
         BigDecimal revenue = items.stream()
-                .filter(item -> item.getUnitPrice() != null)
-                .map(item -> item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())))
+                .filter(item -> supplyRevenueUnit(item) != null)
+                .map(item -> supplyRevenueUnit(item).multiply(BigDecimal.valueOf(item.getQuantity())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         if (revenue.signum() <= 0) return null;
         return grossProfitTotal(items).multiply(ONE_HUNDRED)
                 .divide(revenue, 2, RoundingMode.HALF_UP);
     }
 
+    private BigDecimal supplyRevenueUnit(OrderItem item) {
+        return item.getSubsiteSupplyPriceSnapshot() != null ? item.getSubsiteSupplyPriceSnapshot() : item.getUnitPrice();
+    }
+
     private BigDecimal grossProfit(OrderItem item) {
-        if (item.getUnitPrice() == null || item.getCostPriceSnapshot() == null) return null;
-        return item.getUnitPrice().subtract(item.getCostPriceSnapshot())
+        BigDecimal revenueUnit = supplyRevenueUnit(item);
+        if (revenueUnit == null || item.getCostPriceSnapshot() == null) return null;
+        return revenueUnit.subtract(item.getCostPriceSnapshot())
                 .multiply(BigDecimal.valueOf(item.getQuantity()))
                 .setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal grossMargin(OrderItem item) {
-        if (item.getUnitPrice() == null || item.getCostPriceSnapshot() == null
-                || item.getUnitPrice().signum() <= 0) return null;
-        return item.getUnitPrice().subtract(item.getCostPriceSnapshot())
+        BigDecimal revenueUnit = supplyRevenueUnit(item);
+        if (revenueUnit == null || item.getCostPriceSnapshot() == null
+                || revenueUnit.signum() <= 0) return null;
+        return revenueUnit.subtract(item.getCostPriceSnapshot())
                 .multiply(ONE_HUNDRED)
-                .divide(item.getUnitPrice(), 2, RoundingMode.HALF_UP);
+                .divide(revenueUnit, 2, RoundingMode.HALF_UP);
     }
 }

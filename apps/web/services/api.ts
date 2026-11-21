@@ -76,6 +76,10 @@ class ApiError extends Error {
   }
 }
 
+export function getHomeSiteFromError(error: unknown): unknown {
+  return error instanceof ApiError ? error.params?.home_url : null
+}
+
 /**
  * JWT 过期/无效时：跳转登录页；HttpOnly 登录 Cookie 由服务端控制
  * 使用防抖避免多个并发请求同时触发多次跳转
@@ -409,6 +413,55 @@ export const orderApi = {
 export const siteApi = {
   getConfig: () =>
     request<SiteConfig>("/site/config"),
+}
+
+export interface SubsiteInfo {
+  id: string; owner_id: string; prefix: string; name: string; enabled: boolean
+  logo_url: string | null; customer_service: string | null; announcement: string | null
+  url: string | null; user_count: number
+  owner_username?: string; owner_user_no?: number | null; order_count?: number; settled_profit?: number
+}
+export interface SubsiteSettings {
+  self_service_enabled: boolean; opening_price: number; supply_level_id: string | null; allowed_level_ids: string[]
+}
+export interface SubsiteCustomer {
+  id: string; user_no: number | null; username: string; user_level_id: string | null; created_at: string
+}
+export interface SubsiteLevel { id: string; name: string }
+export interface SubsiteProduct {
+  id: string; title: string; spec_enabled: boolean; retail_price: number; supply_price: number | null; underpriced_levels: string[]
+  specs: { id: string; name: string; retail_price: number; supply_price: number; underpriced_levels: string[] }[]
+}
+export interface SubsitePrice { spec_id: string | null; user_level_id: string | null; price: number }
+export interface SubsiteProductPricing { hidden: boolean; prices: SubsitePrice[] }
+export interface SubsiteLevelMarkup { user_level_id: string; markup_rate: number }
+export interface SubsiteOrder { id: string; order_no: string; actual_amount: number; status: string; created_at: string; subsite_profit: number; subsite_profit_state: "PENDING" | "SETTLED" | "CANCELED" | "REVERSED" | null; subsite_profit_settled_at: string | null; subsite_profit_reversed_at: string | null }
+
+export const subsiteApi = {
+  mine: () => request<SubsiteInfo | null>("/subsite/mine"),
+  opening: () => request<{ enabled: boolean; opening_price: number; eligible: boolean }>("/subsite/opening"),
+  open: (data: { prefix: string; name: string }) => request<SubsiteInfo>("/subsite/open", { method: "POST", body: JSON.stringify(data) }),
+  update: (data: Pick<SubsiteInfo, "name" | "logo_url" | "customer_service" | "announcement">) => request<SubsiteInfo>("/subsite/mine", { method: "PUT", body: JSON.stringify(data) }),
+  customers: (page: number) => request<{ content: SubsiteCustomer[]; total_pages: number }>(`/subsite/customers?page=${page}&size=20`),
+  overview: () => request<{ order_count: number; estimated_profit: number; pending_profit: number; settled_profit: number }>("/subsite/overview"),
+  orders: (page: number) => request<{ content: SubsiteOrder[]; total_pages: number }>(`/subsite/orders?page=${page}&size=20`),
+  setCustomerLevel: (id: string, level_id: string) => request<void>(`/subsite/customers/${encodeURIComponent(id)}/level`, { method: "PUT", body: JSON.stringify({ level_id }) }),
+  levels: () => request<SubsiteLevel[]>("/subsite/pricing/levels/available"),
+  products: (page: number) => request<PaginatedData<SubsiteProduct>>(`/subsite/pricing/products?page=${page}&page_size=20`),
+  productPricing: (id: string) => request<SubsiteProductPricing>(`/subsite/pricing/products/${encodeURIComponent(id)}`),
+  updateProductPricing: (id: string, data: SubsiteProductPricing) => request<SubsiteProductPricing>(`/subsite/pricing/products/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(data) }),
+  markups: () => request<SubsiteLevelMarkup[]>("/subsite/pricing/levels"),
+  updateMarkups: (data: SubsiteLevelMarkup[]) => request<SubsiteLevelMarkup[]>("/subsite/pricing/levels", { method: "PUT", body: JSON.stringify(data) }),
+}
+
+export const adminSubsiteApi = {
+  list: () => request<SubsiteInfo[]>("/admin/subsites"),
+  settings: () => request<SubsiteSettings>("/admin/subsites/settings"),
+  updateSettings: (data: SubsiteSettings) => request<SubsiteSettings>("/admin/subsites/settings", { method: "PUT", body: JSON.stringify(data) }),
+  open: (data: { owner_id: string; prefix: string; name: string }) => request<SubsiteInfo>("/admin/subsites", { method: "POST", body: JSON.stringify(data) }),
+  status: (id: string, enabled: boolean) => request<SubsiteInfo>(`/admin/subsites/${encodeURIComponent(id)}/status`, { method: "PUT", body: JSON.stringify({ enabled }) }),
+  transfer: (id: string, user_id: string, level_id: string) => request<void>(`/admin/subsites/${encodeURIComponent(id)}/transfer`, { method: "POST", body: JSON.stringify({ user_id, level_id }) }),
+  customers: (id: string, page: number) => request<{ content: SubsiteCustomer[]; total_pages: number }>(`/admin/subsites/${encodeURIComponent(id)}/customers?page=${page}&size=20`),
 }
 
 // ============================================================

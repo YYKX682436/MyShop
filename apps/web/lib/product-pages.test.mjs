@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { getSitemapProducts } from "./product-pages.ts"
-import { getPublicSiteUrl } from "./site-url.ts"
+import { getPublicSiteUrl, getRequestSiteUrl } from "./site-url.ts"
 
 test("sitemap traverses all API pages without exceeding the 100 item limit", async () => {
   const calls = []
@@ -33,4 +33,13 @@ test("public URLs prefer runtime config, retain the old fallback, and refuse a p
   assert.equal(getPublicSiteUrl({ NODE_ENV: "development" }), "http://localhost:3000")
   assert.throws(() => getPublicSiteUrl({ NODE_ENV: "production" }), /PUBLIC_SITE_URL/)
   assert.throws(() => getPublicSiteUrl({ PUBLIC_SITE_URL: "javascript:alert(1)" }), /HTTP/)
+})
+
+test("request URLs accept only the main host or one valid sibling label", () => {
+  const env = { PUBLIC_SITE_URL: "https://mc.mc520.top", NODE_ENV: "production" }
+  assert.equal(getRequestSiteUrl("mc.mc520.top", env), "https://mc.mc520.top")
+  assert.equal(getRequestSiteUrl("Xiaoming.mc520.top", env), "https://xiaoming.mc520.top")
+  for (const host of [null, "mc.mc520.top.evil.test", "a.b.mc520.top", "-bad.mc520.top", "mc.mc520.top:8443", "mc.mc520.top,evil.test", "mc.mc520.top@evil.test"]) {
+    assert.throws(() => getRequestSiteUrl(host, env), /Invalid storefront Host/)
+  }
 })

@@ -6,9 +6,9 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Eye, EyeOff, LogIn } from "lucide-react"
 import { toast } from "sonner"
 import { useLocale, useAuth } from "@/lib/context"
-import { authApi, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
+import { authApi, getApiErrorMessage, getHomeSiteFromError, setTurnstileHeaders } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
-import { safeLoginRedirect } from "@/lib/safe-navigation"
+import { safeHomeSiteUrl, safeLoginRedirect } from "@/lib/safe-navigation"
 
 export default function LoginPage() {
   const { t } = useLocale()
@@ -21,6 +21,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [homeSite, setHomeSite] = useState<string | null>(null)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -28,6 +29,7 @@ export default function LoginPage() {
     if (!account.trim() || !password.trim()) return
 
     setIsLoading(true)
+    setHomeSite(null)
     try {
       setTurnstileHeaders(turnstileToken)
       const result = await authApi.login({ account: account.trim(), password })
@@ -37,6 +39,7 @@ export default function LoginPage() {
       toast.success(t("auth.loginSuccess"))
       router.push(redirectTo)
     } catch (err: unknown) {
+      setHomeSite(safeHomeSiteUrl(getHomeSiteFromError(err), window.location.origin))
       toast.error(getApiErrorMessage(err, t))
       handleTurnstileReset()
     } finally {
@@ -55,6 +58,7 @@ export default function LoginPage() {
       </header>
 
       <section className="auth-form-panel">
+          {homeSite && <p role="status" className="mb-4 text-sm">请前往账号归属站点登录： <a className="break-all text-primary underline" href={`${homeSite}/login`}>{homeSite}</a></p>}
 
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
             {/* Username or Email */}

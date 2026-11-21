@@ -1135,6 +1135,79 @@ class SupplierPurchasePostgresIntegrationTest {
         assertEquals("COST_EXCEEDED",p.getErrorCode()); assertEquals(0,fake.creates.get());
         assertEquals("PAID",value("select status from orders where id=?",f.order()));
     }
+    private UUID attachSubsite(Fixture f, String supply, String profit) {
+        UUID owner=UUID.randomUUID(), site=UUID.randomUUID();
+        Long number=jdbc.queryForObject("select coalesce(max(user_no),9999)+1 from users",Long.class);
+        UUID level=jdbc.queryForObject("select id from user_levels where is_default=true",UUID.class);
+        jdbc.update("insert into users(id,username,email,password_hash,role,is_deleted,user_no,user_level_id,balance) values (?,?,?,'test-hash','USER',0,?,?,0.00)",
+                owner,"subsite-owner-"+owner,owner+"@example.invalid",number,level);
+        jdbc.update("insert into subsites(id,owner_id,prefix,name) values (?,?,?,?)",site,owner,"s"+site.toString().replace("-",""),"supplier test");
+        jdbc.update("update orders set subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=? where id=?",site,owner,new BigDecimal(profit),f.order());
+        jdbc.update("update order_items set subsite_supply_price_snapshot=? where id=?",new BigDecimal(supply),f.item());
+        return owner;
+    }
+
+    @Test void subsiteSupplierCompletionSettlesGuestProfitOnlyOnce() throws Exception {
+        Fixture f=fixture(3,0); UUID owner=attachSubsite(f,"5.00","5.00");
+        worker.process(f.purchase());
+        var p=purchases.findById(f.purchase()).orElseThrow();
+        assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+        worker.refresh(f.purchase());
+        assertEquals(0,new BigDecimal("5.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,owner)));
+        assertEquals(1,jdbc.queryForObject("select count(*) from balance_transactions where order_id=? and type='SUBSITE_PROFIT'",Integer.class,f.order()));
+        assertEquals("COMPLETED",p.getStatus());
+    }
+
+    @Test void zeroCostSupplierIsRejectedAtSubsiteCheckoutButStillAllowedOnMainSite() throws Exception {
+        Fixture f=fixture(1,0); UUID owner=attachSubsite(f,"5.00","5.00");
+        UUID siteId=jdbc.queryForObject("select subsite_id from orders where id=?", UUID.class, f.order());
+        UUID level=jdbc.queryForObject("select id from user_levels where is_default=true",UUID.class);
+        jdbc.update("update subsite_settings set supply_level_id=? where id=1",level);
+        jdbc.update("update supplier_product_mappings set cost=0 where product_id=?",f.product());
+        String channel="zero-cost-"+UUID.randomUUID();
+        jdbc.update("insert into payment_channels(id,channel_code,channel_name,provider_type,payment_type,config_data,is_enabled,sort_order,is_deleted) values (?,?,?,'e2e-mock','alipay','{}',true,0,0)",UUID.randomUUID(),channel,channel);
+        var site=new Subsite(); site.setId(siteId); site.setOwnerId(owner); site.setEnabled(true);
+        var request=new LinkedHashMap<String,Object>(); request.put("product_id",f.product().toString()); request.put("quantity",1);
+        request.put("payment_method","ONLINE"); request.put("payment_channel_code",channel); request.put("expected_unit_price","0.02");
+        com.myshop.context.SiteRequestContext.set(site);
+        try {
+            var error=assertThrows(com.myshop.exception.BusinessException.class, () -> orderService.createDirectOrder(request,owner,"127.0.0.1",null));
+            assertTrue(error.getMessage().contains("零成本货源"), error.getMessage());
+        } finally { com.myshop.context.SiteRequestContext.clear(); }
+        var prepared=checkout.prepare(products.findById(f.product()).orElseThrow(),null,1,BigDecimal.TEN,null);
+        assertEquals(0,prepared.quote().totalCost().signum());
+    }
+
+    @Test void subsiteSupplierCostDroppingToZeroBeforePurchaseIsBlocked() throws Exception {
+        Fixture f=fixture(1,0); attachSubsite(f,"5.00","5.00");
+        jdbc.update("update supplier_product_mappings set cost=0 where product_id=?",f.product());
+        worker.process(f.purchase());
+        assertEquals("BLOCKED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(0,fake.creates.get());
+    }
+
+    @Test void fullOwnerBalanceKeepsSupplierDeliveryPendingUntilRetry() throws Exception {
+        Fixture f=fixture(3,0); UUID owner=attachSubsite(f,"5.00","5.00");
+        jdbc.update("update users set balance=9999999999.99 where id=?",owner);
+        worker.process(f.purchase());
+        assertEquals("DELIVERED",value("select status from orders where id=?",f.order()));
+        assertEquals("PENDING",value("select subsite_profit_state from orders where id=?",f.order()));
+        assertEquals(0,jdbc.queryForObject("select count(*) from balance_transactions where order_id=? and type='SUBSITE_PROFIT'",Integer.class,f.order()));
+        jdbc.update("update users set balance=9999999994.99 where id=?",owner);
+        webContext.getBean(SubsiteSettlementService.class).retryPendingProfit();
+        worker.refresh(f.purchase());
+        assertEquals("SETTLED",value("select subsite_profit_state from orders where id=?",f.order()));
+        assertEquals(1,jdbc.queryForObject("select count(*) from balance_transactions where order_id=? and type='SUBSITE_PROFIT'",Integer.class,f.order()));
+    }
+
+    @Test void supplierWorkerRejectsCostAboveSubsiteSupplyRevenue() throws Exception {
+        Fixture f=fixture(3,0); attachSubsite(f,"0.01","9.99");
+        worker.process(f.purchase());
+        assertEquals("BLOCKED",purchases.findById(f.purchase()).orElseThrow().getStatus());
+        assertEquals(0,fake.creates.get());
+        assertEquals("PAID",value("select status from orders where id=?",f.order()));
+    }
+
     @Test void claimRechecksLocalCostAndStockChangesWithoutCreating() throws Exception {
         Fixture price=fixture(1,0);
         jdbc.update("update supplier_product_mappings set cost=0.02 where product_id=?",price.product());
@@ -1202,6 +1275,45 @@ class SupplierPurchasePostgresIntegrationTest {
         assertEquals("test-account",after.getAttach().get(0).path("value").asText());
         assertEquals(0,fake.creates.get());
     }
+    @Test void purchaseInsertDoesNotDeadlockWithAccountThenProductClaim() throws Exception {
+        Fixture f=fixture(1,0);
+        ExecutorService pool=Executors.newFixedThreadPool(2);
+        CountDownLatch productLocked=new CountDownLatch(1), allowInsert=new CountDownLatch(1);
+        try {
+            Future<?> checkoutFuture=pool.submit(() -> new TransactionTemplate(manager).execute(status -> {
+                var product=products.findByIdForUpdate(f.product()).orElseThrow();
+                UUID item=UUID.randomUUID();
+                jdbc.update("""
+                    insert into order_items(id,order_id,product_id,product_no,product_title,quantity,unit_price,
+                        cost_price_snapshot,retail_price_snapshot,pricing_source,subtotal,delivery_type,stock_mode,fulfillment_status)
+                    values(?,?,?,(select product_no from products where id=?),'parallel',1,10,0.01,10,'RETAIL',10,'AUTO','SUPPLIER','PENDING')
+                    """,item,f.order(),f.product(),f.product());
+                productLocked.countDown();
+                try { if (!allowInsert.await(10,TimeUnit.SECONDS)) throw new IllegalStateException("gate timeout"); }
+                catch (InterruptedException ex) { Thread.currentThread().interrupt(); throw new IllegalStateException(ex); }
+                var line=items.findById(item).orElseThrow();
+                checkout.persist(line,checkout.prepare(product,null,1,BigDecimal.TEN,null));
+                return null;
+            }));
+            assertTrue(productLocked.await(5,TimeUnit.SECONDS));
+            Future<Boolean> claim=pool.submit(() -> tx.claim(f.purchase()));
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);
+            String waiting="select count(*) from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike '%products%'";
+            while (System.nanoTime()<deadline && jdbc.queryForObject(waiting,Integer.class)==0) Thread.sleep(25);
+            assertTrue(jdbc.queryForObject(waiting,Integer.class)>0,"claim must hold the account lock and wait for product");
+            // PostgreSQL foreign-key checks require KEY SHARE on the account.
+            // This probe confirms the ORM's account lock remains compatible.
+            try (var probe=jdbc.getDataSource().getConnection();
+                 var lock=probe.prepareStatement("select id from supplier_accounts where id=? for key share nowait")) {
+                lock.setObject(1,f.account());
+                try (var row=lock.executeQuery()) { assertTrue(row.next()); }
+            }
+            allowInsert.countDown();
+            checkoutFuture.get(15,TimeUnit.SECONDS);
+            assertTrue(claim.get(15,TimeUnit.SECONDS));
+        } finally { allowInsert.countDown(); pool.shutdownNow(); }
+    }
+
     @Test void accountDisableSerializesWithThePurchaseClaim() throws Exception {
         Fixture f=fixture(1,0);
         ExecutorService pool=Executors.newFixedThreadPool(2);

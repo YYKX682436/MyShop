@@ -47,6 +47,7 @@ function MaintenancePage() {
           title={t("maintenance.needHelp")}
           email={config?.contact_email}
           items={config?.contact_items}
+          customerService={config?.customer_service}
           emailLabel={t("maintenance.contactSupport")}
         />
       </div>

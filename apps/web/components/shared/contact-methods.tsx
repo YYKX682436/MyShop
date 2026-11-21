@@ -159,6 +159,7 @@ export function ContactItems({ items, variant = "footer", className }: ContactIt
 interface ContactMethodsProps {
   email?: string | null
   items?: readonly ContactItem[] | null
+  customerService?: string | null
   variant?: ContactMethodsVariant
   emailLabel?: string
   className?: string
@@ -168,6 +169,7 @@ interface ContactMethodsProps {
 export function ContactMethods({
   email,
   items,
+  customerService,
   variant = "footer",
   emailLabel,
   className,
@@ -175,11 +177,13 @@ export function ContactMethods({
   const normalizedEmail = email?.trim()
   const displayItems = getDisplayContactItems(items)
 
-  if (!hasContactMethods(normalizedEmail, displayItems)) return null
+  const serviceText = customerService?.trim()
+  if (!serviceText && !hasContactMethods(normalizedEmail, displayItems)) return null
 
   if (variant === "support") {
     return (
       <div className={cn("flex flex-wrap items-center justify-center gap-2", className)}>
+        {serviceText && <span className="max-w-full break-words text-sm">{serviceText}</span>}
         {normalizedEmail && (
           <a
             href={`mailto:${normalizedEmail}`}
@@ -196,6 +200,7 @@ export function ContactMethods({
 
   return (
     <div className={cn("flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2", className)}>
+      {serviceText && <span className="max-w-full break-words text-xs text-muted-foreground">{serviceText}</span>}
       {normalizedEmail && (
         <a
           href={`mailto:${normalizedEmail}`}
@@ -213,13 +218,14 @@ interface ContactSupportProps {
   title: string
   email?: string | null
   items?: readonly ContactItem[] | null
+  customerService?: string | null
   emailLabel: string
   className?: string
 }
 
 /** Shared help section for payment and maintenance pages. */
-export function ContactSupport({ title, email, items, emailLabel, className }: ContactSupportProps) {
-  if (!hasContactMethods(email, items)) return null
+export function ContactSupport({ title, email, items, customerService, emailLabel, className }: ContactSupportProps) {
+  if (!customerService?.trim() && !hasContactMethods(email, items)) return null
 
   return (
     <section className={cn("flex flex-col items-center gap-2 text-sm", className)}>
@@ -227,7 +233,7 @@ export function ContactSupport({ title, email, items, emailLabel, className }: C
         <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
         <span>{title}</span>
       </div>
-      <ContactMethods email={email} items={items} variant="support" emailLabel={emailLabel} />
+      <ContactMethods email={email} items={items} customerService={customerService} variant="support" emailLabel={emailLabel} />
     </section>
   )
 }

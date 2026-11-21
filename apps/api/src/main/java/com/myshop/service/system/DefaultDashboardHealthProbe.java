@@ -34,12 +34,12 @@ public class DefaultDashboardHealthProbe implements DashboardHealthProbe {
 
     public DefaultDashboardHealthProbe(
             JdbcTemplate jdbcTemplate,
-            @Value("${dashboard.system.web-url:http://web:3000/robots.txt}") String webUrl,
+            @Value("${dashboard.system.web-url:http://web:3000/icon.svg}") String webUrl,
             @Value("${dashboard.system.caddy-host:caddy}") String caddyHost,
             @Value("${dashboard.system.caddy-port:80}") int caddyPort,
             @Value("${dashboard.system.timeout-ms:1500}") long timeoutMillis) {
         this.jdbcTemplate = jdbcTemplate;
-        this.webUri = safeUri(webUrl, "http://web:3000/robots.txt");
+        this.webUri = safeUri(webUrl, "http://web:3000/icon.svg");
         this.caddyHost = caddyHost == null || caddyHost.isBlank() ? "caddy" : caddyHost;
         this.caddyPort = caddyPort;
         this.timeoutMillis = Math.max(250, Math.min((int) timeoutMillis, 5000));
@@ -73,9 +73,8 @@ public class DefaultDashboardHealthProbe implements DashboardHealthProbe {
     @Override
     public ServiceHealth probeWeb() {
         try {
-            // Probe the existing static robots route instead of the server-rendered
-            // homepage. This checks that the Web process can serve an HTTP response
-            // without downloading a full Dashboard refresh on every poll.
+            // This static asset needs no storefront Host and checks that the Web
+            // process serves HTTP without weakening request-host validation.
             HttpRequest request = HttpRequest.newBuilder(webUri)
                     .timeout(Duration.ofMillis(timeoutMillis))
                     .GET()
