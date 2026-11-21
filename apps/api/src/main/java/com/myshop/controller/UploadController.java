@@ -18,9 +18,8 @@ public class UploadController {
     }
 
     @PostMapping("/image")
-    public ApiResponse<?> uploadImage(@RequestParam("file") MultipartFile file,
-                                      @RequestParam(name = "preserve_qr", defaultValue = "false") boolean preserveQr) {
-        var result = imageUploadService.uploadAdminImage(file, preserveQr);
+    public ApiResponse<?> uploadImage(@RequestParam("file") MultipartFile file) {
+        var result = imageUploadService.uploadAdminImage(file);
         return ApiResponse.success(Map.of("url", result.url(), "original_size", result.originalSize(),
                 "stored_size", result.storedSize(), "reason", result.reason()));
     }

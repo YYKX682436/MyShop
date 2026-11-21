@@ -75,12 +75,10 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
     if (error) { toast.error(error); return }
     setUploading(true)
     try {
-      const uploaded = await adminProductApi.uploadImage(file, qrOnly)
+      const uploaded = await adminProductApi.uploadImage(file)
       setSearch(""); setQuery(""); setPage(1); setOrder("desc"); setRevision((value) => value + 1)
-      const reason = uploaded.reason === "qr_preserved" ? t("admin.mediaQrPreserved")
-        : uploaded.reason === "transparency_preserved" ? t("admin.mediaAlphaPreserved")
+      const reason = uploaded.reason === "transparency_preserved" ? t("admin.mediaAlphaPreserved")
         : uploaded.reason === "metadata_preserved" ? t("admin.mediaMetadataPreserved")
-        : uploaded.reason === "contrast_preserved" ? t("admin.mediaContrastPreserved")
         : uploaded.reason === "quality_preserved" ? t("admin.mediaQualityPreserved")
         : uploaded.reason === "format_preserved" ? t("admin.mediaFormatPreserved")
         : uploaded.reason === "size_preserved" ? t("admin.mediaSizePreserved")

@@ -546,10 +546,9 @@ export const adminProductApi = {
       signal,
     }),
   // Image upload
-  uploadImage: (file: File, preserveQr = false) => {
+  uploadImage: (file: File) => {
     const formData = new FormData()
     formData.append("file", file)
-    if (preserveQr) formData.append("preserve_qr", "true")
     return uploadRequest<{ url: string; original_size: number; stored_size: number; reason: string }>("/upload/image", formData)
   },
 }

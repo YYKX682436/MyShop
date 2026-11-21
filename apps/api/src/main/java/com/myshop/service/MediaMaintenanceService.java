@@ -195,8 +195,6 @@ public class MediaMaintenanceService {
         try { processed = processor.processForStorage(original, extension); }
         catch (IOException exception) { throw new BusinessException(ErrorCode.BAD_REQUEST, "图片无法安全优化"); }
         byte[] optimized = processed.bytes();
-        if (processed.reason().equals("qr_preserved"))
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "二维码需要保持可识别，已保留原图");
         if (optimized.length >= original.length
                 || (processed.extension().equals(".png") && !samePixels(original, optimized))
                 || (!extension.equals(".png") && !ImageProcessor.acceptableJpeg(original, optimized)))
@@ -339,7 +337,7 @@ public class MediaMaintenanceService {
                 && dimensions.width() > 0 && dimensions.height() > 0
                 && dimensions.width() <= ImageProcessor.MAX_DIMENSION && dimensions.height() <= ImageProcessor.MAX_DIMENSION
                 && (long) dimensions.width() * dimensions.height() <= MAX_OPTIMIZE_PIXELS
-                && ImageProcessor.eligibleOldJpeg(bytes);
+                && ImageProcessor.eligibleOldJpeg(bytes, dimensions.width(), dimensions.height());
     }
 
     private static boolean samePixels(byte[] before, byte[] after) {

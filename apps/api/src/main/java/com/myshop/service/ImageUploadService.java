@@ -74,15 +74,11 @@ public class ImageUploadService {
     }
 
     public UploadedImage uploadAdminImage(MultipartFile file) {
-        return upload(file, ADMIN_POLICY, false, false);
-    }
-
-    public UploadedImage uploadAdminImage(MultipartFile file, boolean preserveQr) {
-        return upload(file, ADMIN_POLICY, false, preserveQr);
+        return upload(file, ADMIN_POLICY, false);
     }
 
     public UploadedImage uploadAvatar(MultipartFile file) {
-        return upload(file, AVATAR_POLICY, true, false);
+        return upload(file, AVATAR_POLICY, true);
     }
 
     /**
@@ -106,7 +102,7 @@ public class ImageUploadService {
         return relativePath;
     }
 
-    private UploadedImage upload(MultipartFile file, UploadPolicy policy, boolean avatar, boolean preserveQr) {
+    private UploadedImage upload(MultipartFile file, UploadPolicy policy, boolean avatar) {
         validate(file, policy, avatar);
         String extension = extensionOf(file.getOriginalFilename());
         final byte[] processed;
@@ -116,11 +112,6 @@ public class ImageUploadService {
             if (avatar) {
                 processed = imageProcessor.process(file, extension);
                 canonicalExtension = extension.equals(".jpeg") ? ".jpg" : extension;
-            } else if (preserveQr) {
-                imageProcessor.process(file, extension); // Validate dimensions and structure before retaining bytes.
-                processed = file.getBytes();
-                canonicalExtension = extension.equals(".jpeg") ? ".jpg" : extension;
-                reason = "qr_preserved";
             } else {
                 var result = imageProcessor.processForStorage(file.getBytes(), extension);
                 processed = result.bytes();

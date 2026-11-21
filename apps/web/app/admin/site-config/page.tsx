@@ -170,7 +170,7 @@ export default function AdminSiteConfigPage() {
     if (validationError) { toast.error(validationError); return }
     setQrUploadingIndex(index)
     try {
-      const result = await adminProductApi.uploadImage(file, true)
+      const result = await adminProductApi.uploadImage(file)
       updateContactItems((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, qr_url: result.url } : item))
       toast.success(t("admin.uploadSuccess"))
     } catch (requestError: unknown) {

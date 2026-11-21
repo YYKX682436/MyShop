@@ -5,13 +5,6 @@ import com.drew.lang.ByteArrayReader;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.exif.ExifIFD0Directory;
 import com.drew.metadata.exif.ExifReader;
-import com.google.zxing.BarcodeFormat;
-import com.google.zxing.BinaryBitmap;
-import com.google.zxing.DecodeHintType;
-import com.google.zxing.MultiFormatReader;
-import com.google.zxing.NotFoundException;
-import com.google.zxing.RGBLuminanceSource;
-import com.google.zxing.common.HybridBinarizer;
 import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -26,10 +19,10 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Semaphore;
 
 /** Bounded decoding and format-preserving processing for untrusted uploads. */
@@ -43,22 +36,28 @@ public class ImageProcessor {
 
     public record ProcessedImage(byte[] bytes, String extension, String reason) { }
 
-    /** Preserve machine-readable codes and transparency; convert eligible
-     * opaque PNGs only when high-quality JPEG produces a substantial saving. */
+    /** Compress eligible images using bounded decoding and visual quality checks. */
     public ProcessedImage processForStorage(byte[] input, String extension) throws IOException {
         acquire();
         try {
             byte[] base = processBounded(input, extension);
             String ext = extension.equals(".jpeg") ? ".jpg" : extension;
             if (!ext.equals(".png") && !ext.equals(".jpg")) return new ProcessedImage(base, ext, "format_preserved");
-            // Thumbnailator does not preserve JPEG APP metadata. Keep the
-            // validated source intact when it carries EXIF, ICC, or vendor
-            // application segments rather than silently stripping them.
-            if (ext.equals(".jpg") && hasPreservableJpegMetadata(input))
-                return new ProcessedImage(input, ext, "metadata_preserved");
             BufferedImage original = ImageIO.read(new ByteArrayInputStream(input));
             if (original == null) throw new IOException("Invalid image");
-            if (containsQrCode(original) || containsDenseContrast(original)) return new ProcessedImage(input, ext, "qr_preserved");
+            boolean jpegMetadata = ext.equals(".jpg") && hasPreservableJpegMetadata(input);
+            boolean resized = Math.max(original.getWidth(), original.getHeight()) > OUTPUT_DIMENSION;
+            // EXIF pixel dimensions and embedded thumbnails become stale when
+            // the image is resized. Preserve such a source intact in that case.
+            if (jpegMetadata && resized) return new ProcessedImage(input, ext, "metadata_preserved");
+            if (jpegMetadata && !Arrays.equals(base, input)) {
+                byte[] withMetadata = copyJpegApplicationSegments(input, base);
+                if (withMetadata == null || withMetadata.length >= input.length)
+                    return new ProcessedImage(input, ext, "metadata_preserved");
+                base = withMetadata;
+            } else if (jpegMetadata) {
+                return new ProcessedImage(input, ext, "metadata_preserved");
+            }
             if ((long) original.getWidth() * original.getHeight() > 4_000_000L) {
                 if (!ext.equals(".png")) {
                     BufferedImage result = ImageIO.read(new ByteArrayInputStream(base));
@@ -67,7 +66,6 @@ public class ImageProcessor {
                 }
                 return new ProcessedImage(base, ext, Arrays.equals(base, input) ? "size_preserved" : "compressed");
             }
-            if (nearlyMonochrome(original)) return new ProcessedImage(input, ext, "contrast_preserved");
             if (!ext.equals(".png")) {
                 BufferedImage result = ImageIO.read(new ByteArrayInputStream(base));
                 if (result != null && !acceptableJpeg(original, result))
@@ -91,56 +89,11 @@ public class ImageProcessor {
         } finally { decodePermit.release(); }
     }
 
-    private static boolean containsQrCode(BufferedImage image) {
-        int w = image.getWidth(), h = image.getHeight();
-        int[] pixels = image.getRGB(0, 0, w, h, null, 0, w);
-        try {
-            var bitmap = new BinaryBitmap(new HybridBinarizer(new RGBLuminanceSource(w, h, pixels)));
-            new MultiFormatReader().decode(bitmap, Map.of(
-                    DecodeHintType.POSSIBLE_FORMATS, List.of(BarcodeFormat.QR_CODE),
-                    DecodeHintType.TRY_HARDER, Boolean.TRUE));
-            return true;
-        } catch (NotFoundException ignored) { return false; }
-    }
-
     private static boolean hasTransparency(BufferedImage image) {
         if (!image.getColorModel().hasAlpha()) return false;
         for (int y = 0; y < image.getHeight(); y++)
             for (int x = 0; x < image.getWidth(); x++)
                 if ((image.getRGB(x, y) >>> 24) != 255) return true;
-        return false;
-    }
-
-    private static boolean nearlyMonochrome(BufferedImage image) {
-        long dark = 0, light = 0, count = (long) image.getWidth() * image.getHeight();
-        for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
-            int c = image.getRGB(x, y), r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
-            if (r < 32 && g < 32 && b < 32) dark++;
-            else if (r > 223 && g > 223 && b > 223) light++;
-        }
-        return dark * 100 > count && light * 100 > count && (dark + light) * 100 > count * 96;
-    }
-
-    // Conservatively preserve dense black/white patterns even if the decoder
-    // cannot read a small or partially obscured code in a larger composition.
-    private static boolean containsDenseContrast(BufferedImage image) {
-        for (int top = 0; top < image.getHeight(); top += 32) for (int left = 0; left < image.getWidth(); left += 32) {
-            int w = Math.min(64, image.getWidth() - left), h = Math.min(64, image.getHeight() - top);
-            if (w < 32 || h < 32) continue;
-            int dark = 0, light = 0, changes = 0;
-            for (int y = top; y < top + h; y++) {
-                int previous = 0;
-                for (int x = left; x < left + w; x++) {
-                    int c = image.getRGB(x, y), r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
-                    int value = r < 60 && g < 60 && b < 60 ? -1 : r > 220 && g > 220 && b > 220 ? 1 : 0;
-                    if (value < 0) dark++; else if (value > 0) light++;
-                    if (x > left && value != 0 && previous == -value) changes++;
-                    previous = value;
-                }
-            }
-            int area = w * h;
-            if (dark * 100 > area * 8 && light * 100 > area * 8 && changes * 1000 > area * 45) return true;
-        }
         return false;
     }
 
@@ -190,31 +143,78 @@ public class ImageProcessor {
         } catch (IOException | RuntimeException ignored) { return false; }
     }
 
-    static boolean eligibleOldJpeg(byte[] bytes) {
+    static boolean eligibleOldJpeg(byte[] bytes, int width, int height) {
         try {
-            // Optimizing would drop APP metadata because the JPEG encoder
-            // cannot round-trip EXIF, ICC, and camera-specific segments.
-            return !hasPreservableJpegMetadata(bytes) && orientation(bytes, null) == 1;
+            if (orientation(bytes, null) != 1) return false;
+            return !hasPreservableJpegMetadata(bytes)
+                    || (width <= OUTPUT_DIMENSION && height <= OUTPUT_DIMENSION);
         } catch (IOException | RuntimeException ignored) { return false; }
     }
 
     private static boolean hasPreservableJpegMetadata(byte[] bytes) {
-        if (bytes.length < 4 || (bytes[0] & 0xff) != 0xff || (bytes[1] & 0xff) != 0xd8) return true;
+        try {
+            return jpegApplicationSegments(bytes).stream().anyMatch(segment -> {
+                int marker = segment[1] & 0xff;
+                return marker >= 0xe1 && marker <= 0xef;
+            });
+        } catch (IOException ignored) { return true; }
+    }
+
+    private static byte[] copyJpegApplicationSegments(byte[] source, byte[] encoded) {
+        try {
+            var metadata = jpegApplicationSegments(source);
+            ByteArrayOutputStream output = new ByteArrayOutputStream(encoded.length + metadata.stream().mapToInt(a -> a.length).sum());
+            output.write(encoded, 0, 2);
+            for (byte[] segment : metadata) output.write(segment);
+            int position = 2;
+            while (position < encoded.length) {
+                int start = position;
+                if ((encoded[position++] & 0xff) != 0xff) return null;
+                while (position < encoded.length && (encoded[position] & 0xff) == 0xff) position++;
+                if (position >= encoded.length) return null;
+                int marker = encoded[position++] & 0xff;
+                if (marker == 0xda || marker == 0xd9) {
+                    output.write(encoded, start, encoded.length - start);
+                    return output.toByteArray();
+                }
+                if (marker == 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+                    if (marker < 0xe0) output.write(encoded, start, position - start);
+                    continue;
+                }
+                if (position + 2 > encoded.length) return null;
+                int length = ((encoded[position] & 0xff) << 8) | (encoded[position + 1] & 0xff);
+                int end = position + length;
+                if (length < 2 || end > encoded.length) return null;
+                if (!((marker >= 0xe0 && marker <= 0xef) || marker == 0xfe))
+                    output.write(encoded, start, end - start);
+                position = end;
+            }
+            return null;
+        } catch (IOException | RuntimeException ignored) { return null; }
+    }
+
+    private static List<byte[]> jpegApplicationSegments(byte[] bytes) throws IOException {
+        if (bytes.length < 4 || (bytes[0] & 0xff) != 0xff || (bytes[1] & 0xff) != 0xd8)
+            throw new IOException("Invalid JPEG header");
+        List<byte[]> segments = new ArrayList<>();
         int position = 2;
         while (position < bytes.length) {
-            if ((bytes[position++] & 0xff) != 0xff) return true;
+            int start = position;
+            if ((bytes[position++] & 0xff) != 0xff) throw new IOException("Invalid JPEG marker");
             while (position < bytes.length && (bytes[position] & 0xff) == 0xff) position++;
-            if (position >= bytes.length) return true;
+            if (position >= bytes.length) throw new IOException("Truncated JPEG marker");
             int marker = bytes[position++] & 0xff;
-            if (marker == 0xda || marker == 0xd9) return false;
+            if (marker == 0xda || marker == 0xd9) return segments;
             if (marker == 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-            if (position + 2 > bytes.length) return true;
+            if (position + 2 > bytes.length) throw new IOException("Truncated JPEG segment");
             int length = ((bytes[position] & 0xff) << 8) | (bytes[position + 1] & 0xff);
-            if (length < 2 || position + length > bytes.length) return true;
-            if (marker >= 0xe1 && marker <= 0xef) return true;
-            position += length;
+            int end = position + length;
+            if (length < 2 || end > bytes.length) throw new IOException("Invalid JPEG segment length");
+            if ((marker >= 0xe0 && marker <= 0xef) || marker == 0xfe)
+                segments.add(Arrays.copyOfRange(bytes, start, end));
+            position = end;
         }
-        return true;
+        throw new IOException("JPEG scan marker missing");
     }
 
     public byte[] process(byte[] input, String extension) throws IOException {

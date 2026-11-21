@@ -158,19 +158,27 @@ class UploadControllerTest {
     }
 
     @Test
-    void explicitQrUploadRetainsOriginalBytes() throws Exception {
-        byte[] bytes = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGP4z8DQAMIMMAYAOOgF/REzMMkAAAAASUVORK5CYII=");
+    void legacyQrPreservationFlagCannotBypassStandardCompression() throws Exception {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(800, 800, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.util.Random random = new java.util.Random(42);
+        for (int y = 0; y < 800; y++) for (int x = 0; x < 800; x++) {
+            int n = random.nextInt(12);
+            image.setRGB(x, y, new java.awt.Color(210 + n, 220 + n, 230 + n).getRGB());
+        }
+        java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", png);
+        byte[] bytes = png.toByteArray();
         var result = mockMvc.perform(multipart("/api/upload/image").contextPath("/api")
                         .file(new MockMultipartFile("file", "qr.png", "image/png", bytes))
                         .param("preserve_qr", "true"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.reason").value("qr_preserved"))
+                .andExpect(jsonPath("$.data.reason").value("compressed"))
+                .andExpect(jsonPath("$.data.stored_size").value(org.hamcrest.Matchers.lessThan(bytes.length)))
                 .andReturn();
         String url = objectMapper.readTree(result.getResponse().getContentAsString()).path("data").path("url").asText();
         mockMvc.perform(get(url).contextPath("/api"))
                 .andExpect(status().isOk())
-                .andExpect(content().contentType(MediaType.IMAGE_PNG))
-                .andExpect(content().bytes(bytes));
+                .andExpect(content().contentType(MediaType.IMAGE_JPEG));
     }
 
     private void assertUploadedAndReadable(String originalFilename, String contentType, byte[] bytes) throws Exception {
