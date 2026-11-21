@@ -776,15 +776,19 @@ class SupplierCatalogPostgresIntegrationTest {
         assertTrue(service.mappings(a.id()).getFirst().lastSyncedAt().isAfter(before));
     }
 
-    @Test void externalProductCannotBeEnabledOrOrderedEvenIfDatabaseStatusIsForced() throws Exception {
+    @Test void supplierProductActivationAndOrdersFollowSupplierAccountState() throws Exception {
         var a=account("guard","fake-secret-a"); fixture.goods.put("30",product("30",1,0,"0.01",9));
         UUID id=service.importProduct(a.id(),"30",category).productId();
+        assertTrue(adminProducts.setStatus(id,new AdminProductStatusRequest(true)).enabled());
+        adminProducts.setStatus(id,new AdminProductStatusRequest(false));
+        service.setEnabled(a.id(),false);
         assertThrows(BusinessException.class,()->adminProducts.setStatus(id,new AdminProductStatusRequest(true)));
         jdbc.update("update products set is_enabled=true where id=?",id);
         long before=jdbc.queryForObject("select count(*) from orders",Long.class);
-        var req=Map.<String,Object>of("product_id",id.toString(),"quantity",1,"payment_method","BALANCE");
+        String expectedPrice=products.findById(id).orElseThrow().getRetailPrice().toPlainString();
+        var req=Map.<String,Object>of("product_id",id.toString(),"quantity",1,"expected_unit_price",expectedPrice);
         BusinessException ex=assertThrows(BusinessException.class,()->orders.createDirectOrder(req,null,"127.0.0.1","guest-session"));
-        assertTrue(ex.getMessage().contains("暂未开放"));
+        assertTrue(ex.getMessage().contains("停用"));
         assertEquals(before,jdbc.queryForObject("select count(*) from orders",Long.class));
         assertEquals(0,jdbc.queryForObject("select count(*) from card_keys where product_id=?",Integer.class,id));
     }
