@@ -285,19 +285,31 @@ public class SupplierCatalogTransaction {
         List<SupplierProductMapping> rows=mappings.findByAccountIdAndRemoteGoodsIdOrderByRemoteSku(accountId,remote.id());
         if (rows.isEmpty()) throw error("商品尚未导入");
         if (rows.stream().anyMatch(m -> !m.getLastAttemptAt().equals(attempt))) return;
-        if (rows.stream().anyMatch(m -> m.getSkuType()!=remote.skuType() || m.getGoodsType()!=remote.goodsType()))
-            throw new SupplierException("DATA", "上游商品类型或规格模式已变化，需要人工检查");
         Map<UUID,Product> locked=new HashMap<>();
         for (UUID id:rows.stream().map(SupplierProductMapping::getProductId).distinct().sorted().toList()) {
             Product product=products.findByIdForUpdate(id).orElseThrow(() -> error("本地商品不存在"));
-            if (product.getStockMode()!=StockMode.SUPPLIER || product.getIsDeleted()!=0)
-                throw error("本地商品状态已变化，需要人工检查");
             locked.put(id,product);
         }
+        List<SupplierProductMapping> valid=new ArrayList<>();
+        for (SupplierProductMapping mapping:rows) {
+            Product product=locked.get(mapping.getProductId());
+            String localError=null;
+            if (product.getIsDeleted()!=0) localError="LOCAL_DELETED";
+            else if (product.getStockMode()!=StockMode.SUPPLIER) localError="LOCAL_CHANGED";
+            else if ((mapping.getSpecId()==null && product.isSpecEnabled()) ||
+                    (mapping.getSpecId()!=null && (!product.isSpecEnabled() || specs.findById(mapping.getSpecId())
+                            .filter(s -> s.getIsDeleted()==0 && s.getProductId().equals(product.getId())).isEmpty())))
+                localError="LOCAL_SPEC_MISSING";
+            if (localError==null) valid.add(mapping);
+            else { mapping.setSyncError(localError); mappings.save(mapping); }
+        }
+        if (valid.isEmpty()) throw error("本地商品已删除或规格已失效，请先解除关联");
+        if (valid.stream().anyMatch(m -> m.getSkuType()!=remote.skuType() || m.getGoodsType()!=remote.goodsType()))
+            throw new SupplierException("DATA", "上游商品类型或规格模式已变化，需要人工检查");
         Map<String,SupplierModels.Sku> bySku=new HashMap<>();
         remote.skus().forEach(s -> bySku.put(s.id(),s));
         LocalDateTime now=LocalDateTime.now();
-        for (SupplierProductMapping mapping:rows) {
+        for (SupplierProductMapping mapping:valid) {
             SupplierModels.Sku sku=bySku.get(mapping.getRemoteSku());
             if (sku==null) {
                 mapping.setSkuStatus(0); mapping.setGoodsStatus(remote.status()); mapping.setStock(0);

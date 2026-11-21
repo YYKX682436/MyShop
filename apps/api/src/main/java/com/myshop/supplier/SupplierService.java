@@ -200,7 +200,8 @@ public class SupplierService {
         return rows.stream().map(m -> {
             var p=localProducts.get(m.getProductId()); var s=localSpecs.get(m.getSpecId());
             String state=p==null || p.getIsDeleted()!=0 ? "PRODUCT_DELETED" :
-                    m.getSpecId()!=null && (s==null || s.getIsDeleted()!=0 || !s.getProductId().equals(m.getProductId())) ? "SPEC_DELETED" : null;
+                    p.getStockMode()!=com.myshop.constant.StockMode.SUPPLIER ? "PRODUCT_CHANGED" :
+                    (m.getSpecId()==null && p.isSpecEnabled()) || (m.getSpecId()!=null && (!p.isSpecEnabled() || s==null || s.getIsDeleted()!=0 || !s.getProductId().equals(m.getProductId()))) ? "SPEC_DELETED" : null;
             String name=m.getSnapshot().path("name").asText("");
             return view(m,name.isBlank() ? "上游商品 "+m.getRemoteGoodsId() : name,skuName(m),
                     p==null ? "本地商品不存在" : p.getTitle(),s==null ? null : s.getName(),state);

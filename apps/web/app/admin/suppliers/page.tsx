@@ -19,6 +19,7 @@ const selectClass = "h-11 w-full rounded-control border border-input bg-surface 
 function message(error: unknown) { return error instanceof Error ? error.message : "操作失败，请重试" }
 function syncError(row: SupplierMapping) {
   if (row.local_state === "PRODUCT_DELETED") return "本地商品已删除，可解除关联后重新导入"
+  if (row.local_state === "PRODUCT_CHANGED") return "本地库存方式已变更，请解除关联后重新配置"
   if (row.local_state === "SPEC_DELETED") return "本地规格不存在，请解除关联并重新选择规格"
   switch (row.sync_error) {
     case "DATA": return "上游资料或规格不兼容，请检查后重新同步"
@@ -175,8 +176,8 @@ export default function SuppliersPage() {
     const target=targetMappings.find(row => (row.spec_id || "") === targetSpec)
     const source=mappings.find(row => row.remote_goods_id===detail.id && row.remote_sku===remoteSku)
     const moving=Boolean(source && (source.product_id!==targetProduct.id || (source.spec_id || "")!==targetSpec))
-    const oldTarget=target ? `当前规格绑定：${accounts.find(a => a.id===target.account_id)?.name || target.account_id} / 商品 ${target.remote_goods_id} / SKU ${target.remote_sku || "单规格"}。` : "当前规格尚未绑定货源。"
-    const oldSource=moving && source ? `该上游规格已绑定商品 ${source.product_id}${source.spec_id ? ` / 规格 ${source.spec_id}` : ""}，确认后将移动绑定，原商品不会删除。` : ""
+    const oldTarget=target ? `当前规格绑定：${accounts.find(a => a.id===target.account_id)?.name || "货源"} / ${target.remote_goods_name || target.remote_goods_id} / ${target.remote_sku_name || target.remote_sku || "单规格"}。` : "当前规格尚未绑定货源。"
+    const oldSource=moving && source ? `该上游规格已绑定「${source.product_name || "其他商品"}」${source.spec_name ? ` / ${source.spec_name}` : ""}${source.local_state === "PRODUCT_DELETED" ? "（已删除）" : ""}，确认后将移动绑定。` : ""
     const conversion=targetProduct.stock_mode!=="SUPPLIER" ? "整个商品将转换为供应商库存，其他未绑定规格将无库存；存在本地库存或未完成订单时不能转换。" : ""
     if (!window.confirm(`绑定到「${targetProduct.title}」${targetSpec ? ` / ${targetProduct.specs.find(s => s.id===targetSpec)?.name || targetSpec}` : ""}？\n${oldTarget}\n${oldSource}\n${conversion}\n将更新供应关系、成本和库存，保留名称及售价。`)) return
     const id=active.id; setBusy(true)
@@ -251,8 +252,8 @@ export default function SuppliersPage() {
             <label className={fieldClass}>本地商品<select className={selectClass} value={targetProduct?.id || ""} onChange={event => void selectLocal(event.target.value)}><option value="">选择商品</option>{localProducts.map(p => <option key={p.id} value={p.id}>{p.title} #{p.product_no}</option>)}</select></label>
             {targetProduct?.spec_enabled && <label className={fieldClass}>本地规格<select className={selectClass} value={targetSpec} onChange={event => setTargetSpec(event.target.value)}><option value="">选择规格</option>{targetProduct.specs.filter(s => s.is_deleted===0).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>}
             {detail.sku_type!==0 && <label className={fieldClass}>上游规格<select className={selectClass} value={remoteSku ?? ""} onChange={event => setRemoteSku(event.target.value || null)}><option value="">选择上游 SKU</option>{detail.skus.map(s => <option key={s.id} value={s.id}>{[s.group,s.name].filter(Boolean).join(" / ")} · {s.id}</option>)}</select></label>}
-            {targetProduct && <div className="text-sm text-muted-foreground">当前绑定：{(() => { const row=targetMappings.find(m => (m.spec_id || "")===targetSpec); return row ? `${accounts.find(a => a.id===row.account_id)?.name || row.account_id} / 商品 ${row.remote_goods_id} / SKU ${row.remote_sku || "单规格"}` : "无" })()}</div>}
-            {remoteSku!==null && mappings.filter(m => m.remote_goods_id===detail.id && m.remote_sku===remoteSku).map(m => <div className="text-sm text-muted-foreground" key={m.id}>上游规格已绑定 <a className="text-primary underline" href={`/admin/products/${m.product_id}/edit`}>商品 {m.product_id.slice(0,8)}</a>{m.spec_id ? ` / 规格 ${m.spec_id.slice(0,8)}` : ""}</div>)}
+            {targetProduct && <div className="text-sm text-muted-foreground">当前绑定：{(() => { const row=targetMappings.find(m => (m.spec_id || "")===targetSpec); return row ? `${accounts.find(a => a.id===row.account_id)?.name || "货源"} / ${row.remote_goods_name || row.remote_goods_id} / ${row.remote_sku_name || row.remote_sku || "单规格"}` : "无" })()}</div>}
+            {remoteSku!==null && mappings.filter(m => m.remote_goods_id===detail.id && m.remote_sku===remoteSku).map(m => <div className="text-sm text-muted-foreground" key={m.id}>上游规格已绑定 {m.local_state === "PRODUCT_DELETED" ? `${m.product_name || "原商品"}（已删除，可解除或移动关联）` : <a className="text-primary underline" href={`/admin/products/${m.product_id}/edit`}>{m.product_name || "查看商品"}</a>}{m.spec_name ? ` / ${m.spec_name}` : ""}</div>)}
             <p className="text-sm text-muted-foreground">绑定会更新供应关系、成本和库存；名称、售价及分类保持不变。商品资料可单独同步。</p>
             {targetProduct && targetProduct.stock_mode!=="SUPPLIER" && <p className="text-sm text-muted-foreground">整个商品将改为供应商库存；其他未绑定规格无库存。本地库存或未完成订单需先处理。</p>}
             <Button type="button" disabled={busy || !active.enabled || !targetProduct || remoteSku===null || Boolean(targetProduct.spec_enabled && !targetSpec)} onClick={() => void bindProduct()}>确认绑定</Button>

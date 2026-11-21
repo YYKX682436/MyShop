@@ -24,8 +24,12 @@ public interface SupplierProductMappingRepository extends JpaRepository<Supplier
     List<UUID> findAccountsByProductId(@Param("productId") UUID productId);
     @Query("select m.accountId, m.productId from SupplierProductMapping m where m.id=:id")
     List<Object[]> findCoordinates(@Param("id") UUID id);
-    @Query("select m.accountId, m.remoteGoodsId from SupplierProductMapping m, SupplierAccount a " +
-           "where m.accountId = a.id and a.enabled = true group by m.accountId, m.remoteGoodsId " +
+    @Query("select m.accountId, m.remoteGoodsId from SupplierProductMapping m, SupplierAccount a, Product p " +
+           "where m.accountId = a.id and a.enabled = true and p.id=m.productId and p.isDeleted=0 " +
+           "and p.stockMode=com.myshop.constant.StockMode.SUPPLIER and " +
+           "((m.specId is null and p.specEnabled=false) or (m.specId is not null and p.specEnabled=true and exists " +
+           "(select s.id from ProductSpec s where s.id=m.specId and s.productId=p.id and s.isDeleted=0))) " +
+           "group by m.accountId, m.remoteGoodsId " +
            "order by min(m.lastAttemptAt) asc")
     List<Object[]> findDue(Pageable pageable);
 }

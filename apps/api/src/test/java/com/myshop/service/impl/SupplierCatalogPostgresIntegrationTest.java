@@ -213,6 +213,22 @@ class SupplierCatalogPostgresIntegrationTest {
         assertNotEquals(deleted,service.importProduct(a.id(),"203",category).productId());
     }
 
+    @Test void deletedLegacyMappingDoesNotBlockSyncOfAnotherBoundSku() throws Exception {
+        var a=account("stale-sync","fake-secret-a"); fixture.goods.put("204",product("204",1,2,"0.10",20));
+        UUID first=localProduct(true),second=localProduct(true),month=localSpec(first,"月卡",10),year=localSpec(second,"年卡",20);
+        bind(a.id(),"204",first,month,"A",false,null,null);
+        bind(a.id(),"204",second,year,"B",false,null,null);
+        jdbc.update("update products set is_deleted=1,is_enabled=false where id=?",first);
+        fixture.goods.put("204",product("204",1,2,"0.30",35));
+        service.sync(a.id(),"204");
+        var rows=service.mappings(a.id());
+        assertEquals("PRODUCT_DELETED",rows.stream().filter(m -> m.productId().equals(first)).findFirst().orElseThrow().localState());
+        assertEquals("LOCAL_DELETED",rows.stream().filter(m -> m.productId().equals(first)).findFirst().orElseThrow().syncError());
+        assertEquals(new BigDecimal("0.60"),jdbc.queryForObject("select cost_price from product_specs where id=?",BigDecimal.class,year));
+        jdbc.update("update products set is_deleted=1,is_enabled=false where id=?",second);
+        assertTrue(mappings.findDue(org.springframework.data.domain.PageRequest.of(0,20)).stream().noneMatch(r -> "204".equals(r[1])));
+    }
+
     @Test void editorCreatedProductBindsThreeIndependentSourcesAndStaysDownUntilComplete() throws Exception {
         var a=account("editor-create-a","fake-secret-a"); var b=account("editor-create-b","fake-secret-b");
         for (String id:List.of("210","211","212","213")) fixture.goods.put(id,product(id,1,0,"0.10",20));
