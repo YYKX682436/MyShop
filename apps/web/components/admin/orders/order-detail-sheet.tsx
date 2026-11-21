@@ -66,12 +66,12 @@ function SupplierReview({ purchaseId, reviews, onReview }: {
       finally { setBusy(false) }
     }} className="flex flex-wrap items-end gap-2">
       <div className="min-w-48 flex-1"><label htmlFor={id} className="mb-1 block text-xs">核实结果</label>
-        <select id={id} name="outcome" required defaultValue="" className="h-10 w-full rounded-md border border-input bg-background px-3 text-base">
+        <select id={id} name="outcome" required defaultValue="" className="h-10 w-full rounded-control border border-input bg-surface px-3 text-sm text-foreground">
           <option value="" disabled>请选择</option>
           {Object.entries(reviewLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </div>
-      <Button type="submit" size="sm" disabled={busy}>{busy ? "保存中" : "记录结果"}</Button>
+      <Button type="submit" disabled={busy}>{busy ? "保存中" : "记录结果"}</Button>
     </form>
   </div>
 }
@@ -89,9 +89,9 @@ function PaymentReview({ attemptId, onReview }: { attemptId: string; onReview: (
     finally { setBusy(false) }
   }}>
     <div className="min-w-48 flex-1"><label htmlFor={id} className="mb-1 block text-xs">人工核实记录（勿填写密钥或卡密）</label>
-      <input id={id} name="note" minLength={3} maxLength={500} required className="min-h-12 w-full rounded-md border border-input bg-background px-3 text-base" />
+      <input id={id} name="note" minLength={3} maxLength={500} required className="h-10 w-full rounded-control border border-input bg-surface px-3 text-sm text-foreground" />
     </div>
-    <Button type="submit" size="sm" className="min-h-12" disabled={busy}>{busy ? "保存中" : "记录"}</Button>
+    <Button type="submit" disabled={busy}>{busy ? "保存中" : "记录"}</Button>
   </form>
 }
 
@@ -271,7 +271,7 @@ export function OrderDetailSheet({
           <DefinitionRow label={t("admin.createdAt")}><span>{formatDateTime(order.created_at, locale)}</span></DefinitionRow>
         </dl>
         {order.customer_type === "GUEST" && (
-          <p className="mt-4 rounded-control border border-amber-600/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
+          <p className="admin-warning-callout mt-4 rounded-control px-3 py-2 text-sm">
             {t("admin.guestRefundUnsupported")}
           </p>
         )}

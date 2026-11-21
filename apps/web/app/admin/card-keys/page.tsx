@@ -607,7 +607,7 @@ export default function AdminCardKeysPage() {
                   return (
                     <tr key={`${item.product_id}-${item.spec_id || "default"}-${index}`} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                       <td data-label={t("admin.productName2")} className="px-4 py-3 font-medium text-foreground">{item.product_title}</td>
-                      <td data-label={t("admin.specLabel")} className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-amber-800 dark:text-amber-300">· {t("admin.disabled")}</span>}</td>
+                      <td data-label={t("admin.specLabel")} className="px-4 py-3 text-muted-foreground">{item.spec_name || t("admin.defaultSpec")}{item.spec_enabled === false && <span className="ml-1 text-xs text-warning">· {t("admin.disabled")}</span>}</td>
                       <td data-label={t("admin.inventoryMode")} className="px-4 py-3"><StatusBadge label={stockModeLabel(item)} tone={item.stock_mode === "MANUAL" ? "warning" : item.stock_mode === "UNLIMITED" || item.unlimited ? "success" : "info"} /></td>
                       <td data-label={t("admin.totalKeys")} className="px-4 py-3">{item.unlimited ? t("admin.unlimited") : item.total ?? 0}</td>
                       <td data-label={t("admin.soldKeys")} className="px-4 py-3">{item.sold}</td>
@@ -650,7 +650,7 @@ export default function AdminCardKeysPage() {
                     <td data-label={t("admin.columnCount")} className="px-4 py-3">{batch.column_count ?? 1}</td>
                     <td data-label={t("admin.importCount")} className="px-4 py-3">{batch.total_count}</td>
                     <td data-label={t("admin.successCount")} className="px-4 py-3 text-emerald-600">{batch.success_count}</td>
-                    <td data-label={t("admin.duplicateCount")} className="px-4 py-3 text-amber-800 dark:text-amber-300">{batch.duplicate_count}</td>
+                    <td data-label={t("admin.duplicateCount")} className="px-4 py-3 text-warning">{batch.duplicate_count}</td>
                     <td data-label={t("admin.failCount")} className={batch.fail_count > 0 ? "px-4 py-3 text-destructive" : "px-4 py-3"}>{batch.fail_count}</td>
                     <td data-label={t("admin.time")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(batch.created_at, locale)}</td>
                   </tr>

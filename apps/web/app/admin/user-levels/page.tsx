@@ -234,7 +234,7 @@ export default function AdminUserLevelsPage() {
         refreshing={refreshing}
       />
 
-      <p className="rounded-card border border-amber-600/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
+      <p className="admin-warning-callout rounded-card px-4 py-3 text-sm">
         {t("admin.levelLifecycleHint")}
       </p>
 
@@ -265,7 +265,7 @@ export default function AdminUserLevelsPage() {
               <tr key={level.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                 <td data-label={t("admin.levelName")} className="px-4 py-3">
                   <div className="flex items-center gap-2 font-medium">
-                    {level.is_default && <Star className="h-4 w-4 fill-amber-500/70 text-amber-700 dark:fill-amber-400/80 dark:text-amber-400" aria-label={t("admin.defaultLabel")} />}
+                    {level.is_default && <Star className="h-4 w-4 fill-warning/70 text-warning" aria-label={t("admin.defaultLabel")} />}
                     <span>{level.name}</span>
                     {level.is_default && <StatusBadge label={t("admin.defaultLabel")} tone="warning" />}
                   </div>

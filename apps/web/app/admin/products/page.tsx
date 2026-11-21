@@ -323,7 +323,7 @@ export default function AdminProductsPage() {
             {!loading && !error && products.map((product) => {
               const unlimited = isUnlimited(product)
               const lowStock = !unlimited && product.stock_available != null && product.stock_available > 0 && product.stock_available <= (product.low_stock_threshold ?? 10)
-              const stockClass = cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-amber-800 dark:text-amber-300" : "text-foreground")
+              const stockClass = cn("font-medium", unlimited ? "text-emerald-600" : product.stock_available === 0 ? "text-destructive" : lowStock ? "text-warning" : "text-foreground")
               return (
                 <TableRow key={product.id}>
                   <TableCell data-label={t("admin.product")} className="min-w-0">
@@ -341,7 +341,7 @@ export default function AdminProductsPage() {
                             <Copy className="h-3 w-3" aria-hidden="true" />
                           </button>
                         </div>
-                        {lowStock && <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-amber-800 dark:text-amber-300"><AlertCircle className="h-3 w-3" aria-hidden="true" />{t("admin.lowStock")}</span>}
+                        {lowStock && <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-warning"><AlertCircle className="h-3 w-3" aria-hidden="true" />{t("admin.lowStock")}</span>}
                       </div>
                     </div>
                   </TableCell>

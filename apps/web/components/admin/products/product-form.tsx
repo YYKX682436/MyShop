@@ -900,7 +900,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                       <td className="px-3 py-2 font-medium">{t("admin.product")}</td>
                       <td className="px-3 py-2"><Input disabled={draft.stock_mode === "SUPPLIER"} ref={registerField("cost_price")} type="number" min="0" step="0.01" value={draft.cost_price} onChange={(event) => setField("cost_price", event.target.value)} placeholder="0.00" /></td>
                       <td className="px-3 py-2"><Input ref={registerField("retail_price")} type="number" min="0" step="0.01" value={draft.retail_price} onChange={(event) => setField("retail_price", event.target.value)} placeholder="0.00" /></td>
-                      <td className={cn("whitespace-nowrap px-3 py-2 font-medium", (formatMargin(draft.cost_price, draft.retail_price) ?? 0) < 0 && "text-amber-800 dark:text-amber-300")}>{formatMargin(draft.cost_price, draft.retail_price) === null ? "—" : formatYuan(formatMargin(draft.cost_price, draft.retail_price) || 0)}</td>
+                      <td className={cn("whitespace-nowrap px-3 py-2 font-medium", (formatMargin(draft.cost_price, draft.retail_price) ?? 0) < 0 && "text-warning")}>{formatMargin(draft.cost_price, draft.retail_price) === null ? "—" : formatYuan(formatMargin(draft.cost_price, draft.retail_price) || 0)}</td>
                       <td className="whitespace-nowrap px-3 py-2">{formatMarginRate(draft.cost_price, draft.retail_price) === null ? "—" : `${formatMarginRate(draft.cost_price, draft.retail_price)?.toFixed(2)}%`}</td>
                     </tr>}
                     {draft.spec_enabled && draft.specs.map((spec) => {
@@ -910,7 +910,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                         <td className="px-3 py-2 font-medium">{spec.name || t("admin.unnamed")}</td>
                         <td className="px-3 py-2"><Input disabled={draft.stock_mode === "SUPPLIER"} ref={registerField(`spec-cost-${spec.id}`)} type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { cost_price: event.target.value })} placeholder="0.00" /></td>
                         <td className="px-3 py-2"><Input ref={registerField(`spec-retail-${spec.id}`)} type="number" min="0" step="0.01" value={spec.retail_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { retail_price: event.target.value })} placeholder="0.00" /></td>
-                        <td className={cn("whitespace-nowrap px-3 py-2 font-medium", margin !== null && margin < 0 && "text-amber-800 dark:text-amber-300")}>{margin === null ? "—" : formatYuan(margin)}</td>
+                        <td className={cn("whitespace-nowrap px-3 py-2 font-medium", margin !== null && margin < 0 && "text-warning")}>{margin === null ? "—" : formatYuan(margin)}</td>
                         <td className="whitespace-nowrap px-3 py-2">{marginRate === null ? "—" : `${marginRate.toFixed(2)}%`}</td>
                       </tr>
                     })}
@@ -946,7 +946,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                           <td className="px-3 py-2">{isMarkup ? `${t("admin.costMarkup")} ${level.markup_rate ?? 0}%` : t("admin.retailPricing")}</td>
                           <td className="whitespace-nowrap px-3 py-2">{row?.rule_price == null ? <StatusBadge tone="neutral" label={pendingLabel} /> : formatYuan(row.rule_price)}</td>
                           <td className="px-3 py-2"><Input ref={registerField(overrideField)} className="w-36" type="number" min="0.01" step="0.01" value={overrideValue(level.id, target.id)} onChange={(event) => updateOverride(level.id, target.id, event.target.value)} placeholder={t("admin.noCustomPrice")} /></td>
-                          <td className={cn("whitespace-nowrap px-3 py-2 font-medium", row?.below_cost && "text-amber-800 dark:text-amber-300")}>
+                          <td className={cn("whitespace-nowrap px-3 py-2 font-medium", row?.below_cost && "text-warning")}>
                             {row?.final_price == null ? <StatusBadge tone="neutral" label={pendingLabel} /> : <span>{formatYuan(row.final_price)}</span>}
                             <span className="ml-2 inline-flex gap-1 align-middle">
                               {row?.retail_capped && <StatusBadge tone="info" label={t("admin.retailCap")} />}
@@ -959,8 +959,8 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                   </div>
                 )}
                 {previewLoading && <p className="mt-2 text-xs text-muted-foreground">{t("admin.previewUpdating")}</p>}
-                {previewError && <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">{t("admin.pricingPreviewFailed")}</p>}
-                {preview?.warnings.map((warning) => <div key={warning} className="mt-3 flex items-start gap-2 rounded-card border border-amber-600/25 bg-amber-500/10 p-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden="true" />{warning}</div>)}
+                {previewError && <p className="mt-2 text-xs text-warning">{t("admin.pricingPreviewFailed")}</p>}
+                {preview?.warnings.map((warning) => <div key={warning} className="admin-warning-callout mt-3 flex items-start gap-2 rounded-card p-3 text-sm"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />{warning}</div>)}
               </div>
             </FormSection>
         </TabsContent>

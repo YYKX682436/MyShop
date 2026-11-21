@@ -36,6 +36,7 @@
     --tint-foreground: 0 0% 100%;
     --success: 142 71% 36%;
     --warning: 28 75% 38%;
+    --warning-foreground: 28 75% 22%;
     --danger: 0 72% 51%;
     --info: 211 100% 50%;
 
@@ -142,6 +143,7 @@
     --tint-foreground: 222 22% 6%;
     --success: 142 60% 50%;
     --warning: 32 80% 64%;
+    --warning-foreground: 32 80% 88%;
     --danger: 0 72% 63%;
     --info: 211 100% 65%;
 
@@ -219,6 +221,29 @@
 }
 
 @layer components {
+  /* Admin warning callouts, badges and states */
+  .admin-warning-callout {
+    border: 1px solid hsl(var(--warning) / 0.25);
+    background-color: hsl(var(--warning) / 0.10);
+    color: hsl(var(--warning-foreground));
+  }
+  .dark .admin-warning-callout {
+    border: 1px solid hsl(var(--warning) / 0.30);
+    background-color: hsl(var(--warning) / 0.15);
+    color: hsl(var(--warning-foreground));
+  }
+
+  .admin-warning-badge {
+    border: 1px solid hsl(var(--warning) / 0.20);
+    background-color: hsl(var(--warning) / 0.10);
+    color: hsl(var(--warning-foreground));
+  }
+  .dark .admin-warning-badge {
+    border: 1px solid hsl(var(--warning) / 0.30);
+    background-color: hsl(var(--warning) / 0.15);
+    color: hsl(var(--warning-foreground));
+  }
+
   /* Opaque content surfaces: never apply backdrop-filter here. */
   .content-surface {
     border: 1px solid hsl(var(--border-subtle));

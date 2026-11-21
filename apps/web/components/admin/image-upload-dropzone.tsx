@@ -140,7 +140,7 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
           />
         ) : normalizedValue ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-sm text-muted-foreground">
-            <AlertCircle className="h-7 w-7 text-amber-700 dark:text-amber-400" />
+            <AlertCircle className="h-7 w-7 text-warning" />
             <span className="font-medium text-foreground">{t("admin.previewFailed")}</span>
             <span className="max-w-full break-words text-xs">{t("admin.previewFailedHint")}</span>
           </div>

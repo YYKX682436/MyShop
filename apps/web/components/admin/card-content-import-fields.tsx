@@ -30,7 +30,7 @@ export function CardContentImportFields({ columns, onChange, disabled = false, l
           type="button"
           disabled={disabled}
           onClick={() => onChange([...columns, ""])}
-          className="inline-flex h-9 items-center gap-1 rounded-control border border-input bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted disabled:opacity-50"
+          className="inline-flex min-h-11 sm:min-h-9 h-11 sm:h-9 items-center gap-1.5 rounded-control border border-input bg-surface px-3 sm:px-2.5 py-2 sm:py-1.5 text-xs font-medium text-foreground hover:bg-surface-muted disabled:opacity-50 touch-manipulation"
         >
           <Plus className="h-3.5 w-3.5" />{t("admin.addColumn")}
         </button>}
@@ -47,9 +47,9 @@ export function CardContentImportFields({ columns, onChange, disabled = false, l
                 disabled={disabled || columns.length <= 1}
                 onClick={() => onChange(columns.filter((_, current) => current !== index))}
                 aria-label={t("admin.removeColumn").replace("{index}", String(index + 1))}
-                className="inline-flex size-8 items-center justify-center rounded-control text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30"
+                className="inline-flex size-11 sm:size-9 items-center justify-center rounded-control text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-30 touch-manipulation"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-4 w-4" />
               </button>}
             </div>
             <textarea

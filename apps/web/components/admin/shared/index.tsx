@@ -213,16 +213,15 @@ export function AdminPagination({
   )
 }
 
-export type StatusTone = "neutral" | "success" | "info" | "warning" | "danger" | "refunded" | "purple"
+export type StatusTone = "neutral" | "success" | "info" | "warning" | "danger" | "refunded"
 
 const statusToneClasses: Record<StatusTone, string> = {
   neutral: "border border-border-subtle bg-surface-muted text-muted-foreground",
   success: "border border-emerald-500/20 bg-emerald-500/10 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300",
   info: "border border-blue-500/20 bg-blue-500/10 text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-300",
-  warning: "border border-amber-600/20 bg-amber-500/10 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200",
+  warning: "admin-warning-badge",
   danger: "border border-destructive/20 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/15 dark:text-red-300",
   refunded: "border border-slate-300/80 bg-slate-500/10 text-slate-700 dark:border-slate-700/80 dark:bg-slate-500/15 dark:text-slate-300",
-  purple: "border border-slate-300/80 bg-slate-500/10 text-slate-700 dark:border-slate-700/80 dark:bg-slate-500/15 dark:text-slate-300",
 }
 
 export function StatusBadge({ label, tone = "neutral" }: { label: ReactNode; tone?: StatusTone }) {
