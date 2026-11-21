@@ -546,17 +546,18 @@ export const adminProductApi = {
       signal,
     }),
   // Image upload
-  uploadImage: (file: File) => {
+  uploadImage: (file: File, preserveQr = false) => {
     const formData = new FormData()
     formData.append("file", file)
-    return uploadRequest<{ url: string }>("/upload/image", formData)
+    if (preserveQr) formData.append("preserve_qr", "true")
+    return uploadRequest<{ url: string; original_size: number; stored_size: number; reason: string }>("/upload/image", formData)
   },
 }
 
 export type MediaItem = { name: string; url: string; size: number; format: string; uploaded_at: number }
 export type MediaPage = { items: MediaItem[]; total: number; page: number; page_size: number }
 export type MediaInspection = { size: number; format: string; width?: number; height?: number; optimizable: boolean; references: { table: string; source: string; count: number }[] }
-export type MediaOptimization = { url: string; original_size: number; optimized_size: number; replaced_covers: number }
+export type MediaOptimization = { url: string; original_size: number; optimized_size: number; replaced_covers: number; changed_products: { id: string; title: string }[]; retained_references: { table: string; source: string; count: number }[] }
 
 export const adminMediaApi = {
   getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc"; qr_only: boolean }, signal?: AbortSignal) =>

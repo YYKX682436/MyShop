@@ -5,6 +5,7 @@ import com.myshop.service.ImageProcessor;
 import com.myshop.service.ImageUploadService;
 import com.myshop.service.MediaFileGuard;
 import com.myshop.service.MediaMaintenanceService;
+import com.myshop.service.PublicImageResolver;
 import com.myshop.service.UploadStorage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +68,7 @@ class MediaMaintenancePostgresIntegrationTest {
     @Autowired MediaFileGuard guard;
     @Autowired ImageUploadService upload;
     @Autowired UploadStorage storage;
+    @Autowired PublicImageResolver imageResolver;
     @Autowired JdbcTemplate jdbc;
     @Autowired DataSource dataSource;
     @Autowired WebApplicationContext webContext;
@@ -89,7 +91,7 @@ class MediaMaintenancePostgresIntegrationTest {
         }
     }
 
-    @Test void referencesAndEncodedUrlsBlockDeletionAndStaleWrites() throws Exception {
+    @Test void deletionClearsProductCoverAndPreservesOtherReferencesWhileBlockingStaleWrites() throws Exception {
         String filename = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png";
         Files.write(UPLOADS.resolve(filename), pngWithAncillaryText());
         UUID product = product("/api/uploads/" + filename, "");
@@ -99,12 +101,11 @@ class MediaMaintenancePostgresIntegrationTest {
         var inspection = service.inspect(filename);
         assertTrue(inspection.references().stream().anyMatch(ref -> ref.table().equals("products")));
         assertTrue(inspection.references().stream().anyMatch(ref -> ref.table().equals("site_configs")));
-        assertThrows(BusinessException.class, () -> service.delete(filename));
-        assertTrue(Files.exists(UPLOADS.resolve(filename)));
-        jdbc.update("DELETE FROM products WHERE id=?", product);
-        jdbc.update("DELETE FROM site_configs WHERE config_key='media_test_qr'");
         service.delete(filename);
         assertFalse(Files.exists(UPLOADS.resolve(filename)));
+        assertNull(jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, product));
+        assertTrue(jdbc.queryForObject("SELECT config_value FROM site_configs WHERE config_key='media_test_qr'", String.class).contains(encoded));
+        jdbc.update("UPDATE site_configs SET config_group='other' WHERE config_key='media_test_qr'");
         assertThrows(DataAccessException.class, () -> product("/api/uploads/" + filename, ""));
         assertThrows(DataAccessException.class, () -> jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?,?,?)",
                 UUID.randomUUID(), "media_test_stale", "/api/uploads/" + encoded));
@@ -116,7 +117,8 @@ class MediaMaintenancePostgresIntegrationTest {
                 UUID.randomUUID(), "body { background: url(/api/uploads/\\31 file.png) }");
         try {
             assertTrue(service.inspect(filename).references().stream().anyMatch(ref -> ref.table().equals("site_configs")));
-            assertThrows(BusinessException.class, () -> service.delete(filename));
+            service.delete(filename);
+            assertFalse(Files.exists(UPLOADS.resolve(filename)));
         } finally { jdbc.update("DELETE FROM site_configs WHERE config_key='custom_css'"); }
     }
 
@@ -148,7 +150,9 @@ class MediaMaintenancePostgresIntegrationTest {
     @Test void mixedReferencesAndUnsafePathsAreRejected() throws Exception {
         String filename = fixturePng();
         product("/api/uploads/" + filename, "![image](/api/uploads/" + filename + ")");
-        assertThrows(BusinessException.class, () -> service.optimize(filename));
+        var optimized = service.optimize(filename);
+        assertEquals(1, optimized.replacedCovers());
+        assertTrue(optimized.retainedReferences().stream().anyMatch(ref -> ref.table().equals("products")));
         assertThrows(BusinessException.class, () -> service.delete("../" + filename));
         Path outside = Files.createTempFile("myshop-media-outside-", ".png");
         try {
@@ -159,28 +163,97 @@ class MediaMaintenancePostgresIntegrationTest {
         } finally { Files.deleteIfExists(outside); }
     }
 
-    @Test void immutableOrderSnapshotsBlockBothDeletionAndReplacement() throws Exception {
+    @Test void immutableOrderSnapshotsSurviveOptimizationDeletionAndUnrelatedUpdates() throws Exception {
         String filename = fixturePng();
+        UUID productId = product("/api/uploads/" + filename, "");
+        UUID orderItem = UUID.randomUUID();
         jdbc.update("""
                 INSERT INTO order_items(id,order_id,product_id,product_no,product_title,product_cover_url,quantity,
                   unit_price,cost_price_snapshot,retail_price_snapshot,pricing_source,subtotal)
                 VALUES (?,?,?,1,'snapshot',?,1,1,0.5,1,'RETAIL',1)
-                """, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "/api/uploads/" + filename);
+                """, orderItem, UUID.randomUUID(), UUID.randomUUID(), "/api/uploads/" + filename);
         assertTrue(service.inspect(filename).references().stream().anyMatch(ref -> ref.table().equals("order_items")));
-        assertThrows(BusinessException.class, () -> service.delete(filename));
-        assertThrows(BusinessException.class, () -> service.optimize(filename));
+        var result = service.optimize(filename);
+        assertEquals(1, result.replacedCovers());
+        assertTrue(result.retainedReferences().stream().anyMatch(ref -> ref.table().equals("order_items")));
+        service.delete(filename);
+        assertEquals(result.url(), jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, productId));
+        assertEquals("/api/uploads/" + filename, jdbc.queryForObject("SELECT product_cover_url FROM order_items WHERE id=?", String.class, orderItem));
+        assertNull(imageResolver.visible("/api/uploads/" + filename));
+        jdbc.update("UPDATE order_items SET customer_delivery_content='delivered' WHERE id=?", orderItem);
+        assertThrows(DataAccessException.class, () -> jdbc.update("UPDATE order_items SET product_cover_url='/other' WHERE id=?", orderItem));
+    }
+
+    @Test void deletingSharedProductAndOrderImageClearsCoverAndPreservesSnapshot() throws Exception {
+        String filename = fixturePng(), url = "/api/uploads/" + filename;
+        UUID productId = product(url, "Details remain");
+        UUID itemId = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO order_items(id,order_id,product_id,product_no,product_title,product_cover_url,quantity,
+                  unit_price,cost_price_snapshot,retail_price_snapshot,pricing_source,subtotal)
+                VALUES (?,?,?,1,'snapshot',?,1,1,0.5,1,'RETAIL',1)
+                """, itemId, UUID.randomUUID(), productId, url);
+        service.delete(filename);
+        assertNull(jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, productId));
+        assertEquals(url, jdbc.queryForObject("SELECT product_cover_url FROM order_items WHERE id=?", String.class, itemId));
+        assertNull(imageResolver.visible(url));
+        assertNull(imageResolver.visible(url + "?v=1"));
+        assertEquals("https://elsewhere.example" + url, imageResolver.visible("https://elsewhere.example" + url));
+        jdbc.update("UPDATE order_items SET customer_delivery_content='safe update' WHERE id=?", itemId);
+        assertThrows(DataAccessException.class, () -> jdbc.update("UPDATE products SET cover_url=? WHERE id=?", url, productId));
+    }
+
+    @Test void deletingRecognizesLocalUrlVariantsWithoutChangingExternalImages() throws Exception {
+        String filename = fixturePng();
+        UUID local = product("/api/uploads/" + filename + "?v=1", "");
+        String externalUrl = "https://external.example/" + filename;
+        UUID external = product(externalUrl, "");
+        service.delete(filename);
+        assertNull(jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, local));
+        assertEquals(externalUrl, jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, external));
+    }
+
+    @Test void siteLogoAndContactQrAreClearedButOtherContentIsPreserved() throws Exception {
+        String filename = fixturePng(), url = "/api/uploads/" + filename;
+        jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?, 'logo_url', ?) ON CONFLICT(config_key) DO UPDATE SET config_value=EXCLUDED.config_value", UUID.randomUUID(), url);
+        jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?, 'contact_items', ?) ON CONFLICT(config_key) DO UPDATE SET config_value=EXCLUDED.config_value",
+                UUID.randomUUID(), "[{\"name\":\"test\",\"url\":\"https://example.com\",\"qr_url\":\"" + url + "\"}]");
+        service.delete(filename);
+        assertEquals("", jdbc.queryForObject("SELECT config_value FROM site_configs WHERE config_key='logo_url'", String.class));
+        String contacts = jdbc.queryForObject("SELECT config_value FROM site_configs WHERE config_key='contact_items'", String.class);
+        assertTrue(contacts.contains("https://example.com"));
+        assertFalse(contacts.contains(filename));
+    }
+
+    @Test void subsiteLogoIsClearedWithoutChangingOtherSettings() throws Exception {
+        String filename = fixturePng(), url = "/api/uploads/" + filename;
+        UUID owner = UUID.randomUUID(), subsite = UUID.randomUUID();
+        String suffix = owner.toString().substring(0, 8);
+        jdbc.update("INSERT INTO users(id,username,password_hash,role) VALUES (?,?,?,'ADMIN')", owner, "u" + suffix, "test");
+        jdbc.update("INSERT INTO subsites(id,owner_id,prefix,name,logo_url,announcement) VALUES (?,?,?,?,?,?)",
+                subsite, owner, "s" + suffix, "media fixture", url, "unchanged");
+        try {
+            service.delete(filename);
+            assertNull(jdbc.queryForObject("SELECT logo_url FROM subsites WHERE id=?", String.class, subsite));
+            assertEquals("unchanged", jdbc.queryForObject("SELECT announcement FROM subsites WHERE id=?", String.class, subsite));
+        } finally {
+            jdbc.update("DELETE FROM subsites WHERE id=?", subsite);
+            jdbc.update("DELETE FROM users WHERE id=?", owner);
+        }
     }
 
     @Test void markdownEscapesAndNestedJsonAreNotMistakenForUnused() throws Exception {
         String filename = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png";
         Files.write(UPLOADS.resolve(filename), pngWithAncillaryText());
         product(null, "![image](/api/uploads/" + filename.replace(".png", "\\.png") + ")");
-        assertThrows(BusinessException.class, () -> service.delete(filename));
-        jdbc.update("DELETE FROM products");
         jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?,?,?)", UUID.randomUUID(),
                 "media_test_nested", "{\"url\":\"/api/uploads/\\u0061" + filename.substring(1) + "\"}");
         assertTrue(service.inspect(filename).references().stream().anyMatch(ref -> ref.table().equals("site_configs")));
-        assertThrows(BusinessException.class, () -> service.delete(filename));
+        service.delete(filename);
+        assertFalse(Files.exists(UPLOADS.resolve(filename)));
+        assertTrue(jdbc.queryForObject("SELECT detail_md FROM products LIMIT 1", String.class).contains(filename.replace(".png", "\\.png")));
+        assertThrows(DataAccessException.class, () -> jdbc.update("UPDATE site_configs SET config_value=? WHERE config_key='media_test_nested'",
+                "/api/uploads/" + filename));
     }
 
     @Test void optimizationSkipsAProductLockedByAnotherEditor() throws Exception {
@@ -198,15 +271,17 @@ class MediaMaintenancePostgresIntegrationTest {
         assertTrue(Files.exists(UPLOADS.resolve(filename)));
     }
 
-    @Test void failedFileDeletionLeavesTheOriginalUsable() throws Exception {
+    @Test void failedFileDeletionIsGuardedAndRetryable() throws Exception {
         String filename = fixturePng();
         UploadStorage failing = spy(storage);
         doReturn(false).when(failing).deleteManagedFile(filename);
         var failingService = new MediaMaintenanceService(failing, guard, new ImageProcessor(), "/api/uploads");
         assertThrows(BusinessException.class, () -> failingService.delete(filename));
         assertTrue(Files.exists(UPLOADS.resolve(filename)));
-        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM media_deleted_files WHERE filename=?", Integer.class, filename));
-        product("/api/uploads/" + filename, "");
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM media_deleted_files WHERE filename=?", Integer.class, filename));
+        assertThrows(DataAccessException.class, () -> product("/api/uploads/" + filename, ""));
+        service.delete(filename);
+        assertFalse(Files.exists(UPLOADS.resolve(filename)));
     }
 
     @Test void concurrentReferenceCannotSlipThroughDeletion() throws Exception {
@@ -222,7 +297,8 @@ class MediaMaintenancePostgresIntegrationTest {
             assertTrue(Files.exists(UPLOADS.resolve(filename)));
             connection.commit();
         }
-        assertThrows(BusinessException.class, () -> service.delete(filename));
+        service.delete(filename);
+        assertFalse(Files.exists(UPLOADS.resolve(filename)));
     }
 
     @Test void reuploadOfIdenticalContentClearsTheTombstone() throws Exception {

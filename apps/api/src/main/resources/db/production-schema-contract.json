@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 57,
-  "latest_migration_version": "57",
+  "migration_count": 58,
+  "latest_migration_version": "58",
   "tables": {
     "media_deleted_files": ["filename", "deleted_at"],
     "users": ["id", "username", "role", "subsite_id"],

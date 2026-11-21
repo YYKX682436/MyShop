@@ -74,11 +74,15 @@ public class ImageUploadService {
     }
 
     public UploadedImage uploadAdminImage(MultipartFile file) {
-        return upload(file, ADMIN_POLICY, false);
+        return upload(file, ADMIN_POLICY, false, false);
+    }
+
+    public UploadedImage uploadAdminImage(MultipartFile file, boolean preserveQr) {
+        return upload(file, ADMIN_POLICY, false, preserveQr);
     }
 
     public UploadedImage uploadAvatar(MultipartFile file) {
-        return upload(file, AVATAR_POLICY, true);
+        return upload(file, AVATAR_POLICY, true, false);
     }
 
     /**
@@ -102,36 +106,54 @@ public class ImageUploadService {
         return relativePath;
     }
 
-    private UploadedImage upload(MultipartFile file, UploadPolicy policy, boolean avatar) {
+    private UploadedImage upload(MultipartFile file, UploadPolicy policy, boolean avatar, boolean preserveQr) {
         validate(file, policy, avatar);
         String extension = extensionOf(file.getOriginalFilename());
         final byte[] processed;
+        final String canonicalExtension;
+        String reason = "compressed";
         try {
-            processed = imageProcessor.process(file, extension);
+            if (avatar) {
+                processed = imageProcessor.process(file, extension);
+                canonicalExtension = extension.equals(".jpeg") ? ".jpg" : extension;
+            } else if (preserveQr) {
+                imageProcessor.process(file, extension); // Validate dimensions and structure before retaining bytes.
+                processed = file.getBytes();
+                canonicalExtension = extension.equals(".jpeg") ? ".jpg" : extension;
+                reason = "qr_preserved";
+            } else {
+                var result = imageProcessor.processForStorage(file.getBytes(), extension);
+                processed = result.bytes();
+                canonicalExtension = result.extension();
+                reason = result.reason();
+            }
         } catch (IOException exception) {
             throw invalidFormat(avatar, "图片损坏或尺寸超过限制");
         }
-        String canonicalExtension = extension.equals(".jpeg") ? ".jpg" : extension;
         String identifier = UploadStorage.identifier(processed);
         String relativePath = avatar ? policy.directoryPrefix + policy.filenamePrefix + UUID.randomUUID() + extension
                 : identifier + canonicalExtension;
+        String displayName = file.getOriginalFilename();
+        if (!avatar && !canonicalExtension.equals(extension) && displayName != null && displayName.lastIndexOf('.') >= 0)
+            displayName = displayName.substring(0, displayName.lastIndexOf('.')) + canonicalExtension;
+        final String outputName = displayName;
         try {
             if (!avatar && mediaFileGuard != null) {
                 mediaFileGuard.exclusive(false, connection -> {
                     uploadStorage.publish(relativePath, processed, true);
                     MediaFileGuard.restorePublishedFile(connection, relativePath);
-                    rememberName(identifier, file.getOriginalFilename(), relativePath);
+                    rememberName(identifier, outputName, relativePath);
                     return null;
                 });
             } else {
                 uploadStorage.publish(relativePath, processed, !avatar);
-                if (!avatar) rememberName(identifier, file.getOriginalFilename(), relativePath);
+                if (!avatar) rememberName(identifier, outputName, relativePath);
             }
         } catch (IOException | RuntimeException exception) {
             log.error("Image upload failed: {}", exception.getClass().getSimpleName());
             throw new BusinessException(ErrorCode.SERVER_ERROR, "文件上传失败");
         }
-        return new UploadedImage(urlPrefix + "/" + relativePath, relativePath);
+        return new UploadedImage(urlPrefix + "/" + relativePath, relativePath, file.getSize(), processed.length, reason);
     }
 
     private void rememberName(String identifier, String originalFilename, String relativePath) {
@@ -248,6 +270,7 @@ public class ImageUploadService {
                                 String filenamePrefix) {
     }
 
-    public record UploadedImage(String url, String relativePath) {
+    public record UploadedImage(String url, String relativePath, long originalSize, long storedSize, String reason) {
+        public UploadedImage(String url, String relativePath) { this(url, relativePath, 0, 0, ""); }
     }
 }

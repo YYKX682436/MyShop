@@ -5,6 +5,13 @@ import com.drew.lang.ByteArrayReader;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.exif.ExifIFD0Directory;
 import com.drew.metadata.exif.ExifReader;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.MultiFormatReader;
+import com.google.zxing.NotFoundException;
+import com.google.zxing.RGBLuminanceSource;
+import com.google.zxing.common.HybridBinarizer;
 import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -22,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Semaphore;
 
 /** Bounded decoding and format-preserving processing for untrusted uploads. */
@@ -32,6 +40,142 @@ public class ImageProcessor {
     static final int OUTPUT_DIMENSION = 2560;
     // A single decode prevents a burst of small compressed images exhausting the heap.
     private final Semaphore decodePermit = new Semaphore(1, true);
+
+    public record ProcessedImage(byte[] bytes, String extension, String reason) { }
+
+    /** Preserve machine-readable codes and transparency; convert eligible
+     * opaque PNGs only when high-quality JPEG produces a substantial saving. */
+    public ProcessedImage processForStorage(byte[] input, String extension) throws IOException {
+        acquire();
+        try {
+            byte[] base = processBounded(input, extension);
+            String ext = extension.equals(".jpeg") ? ".jpg" : extension;
+            if (!ext.equals(".png") && !ext.equals(".jpg")) return new ProcessedImage(base, ext, "format_preserved");
+            BufferedImage original = ImageIO.read(new ByteArrayInputStream(input));
+            if (original == null) throw new IOException("Invalid image");
+            if ((long) original.getWidth() * original.getHeight() > 4_000_000L)
+                return new ProcessedImage(base, ext, Arrays.equals(base, input) ? "size_preserved" : "compressed");
+            if (containsQrCode(original) || containsDenseContrast(original)) return new ProcessedImage(input, ext, "qr_preserved");
+            if (nearlyMonochrome(original)) return new ProcessedImage(input, ext, "contrast_preserved");
+            if (!ext.equals(".png")) {
+                BufferedImage result = ImageIO.read(new ByteArrayInputStream(base));
+                if (result != null && original.getWidth() == result.getWidth() && original.getHeight() == result.getHeight()
+                        && !acceptableJpeg(original, result))
+                    return new ProcessedImage(input, ext, "quality_preserved");
+                return new ProcessedImage(base, ext, Arrays.equals(base, input) ? "no_saving" : "compressed");
+            }
+            if (!safePngForConversion(input)) return new ProcessedImage(input, ext, "metadata_preserved");
+            BufferedImage image = ImageIO.read(new ByteArrayInputStream(base));
+            if (image == null || hasTransparency(image)) return new ProcessedImage(base, ext, "transparency_preserved");
+            BufferedImage rgb = new BufferedImage(image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = rgb.createGraphics();
+            try { g.drawImage(image, 0, 0, null); } finally { g.dispose(); }
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            Thumbnails.of(rgb).scale(1.0).outputFormat("jpg").outputQuality(0.95).toOutputStream(output);
+            byte[] jpeg = output.toByteArray();
+            BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(jpeg));
+            if (jpeg.length + 12_000 < base.length && jpeg.length * 4L <= base.length * 3L
+                    && decoded != null && acceptableJpeg(rgb, decoded))
+                return new ProcessedImage(jpeg, ".jpg", "compressed");
+            return new ProcessedImage(base, ext, Arrays.equals(base, input) ? "no_saving" : "compressed");
+        } finally { decodePermit.release(); }
+    }
+
+    private static boolean containsQrCode(BufferedImage image) {
+        int w = image.getWidth(), h = image.getHeight();
+        int[] pixels = image.getRGB(0, 0, w, h, null, 0, w);
+        try {
+            var bitmap = new BinaryBitmap(new HybridBinarizer(new RGBLuminanceSource(w, h, pixels)));
+            new MultiFormatReader().decode(bitmap, Map.of(
+                    DecodeHintType.POSSIBLE_FORMATS, List.of(BarcodeFormat.QR_CODE),
+                    DecodeHintType.TRY_HARDER, Boolean.TRUE));
+            return true;
+        } catch (NotFoundException ignored) { return false; }
+    }
+
+    private static boolean hasTransparency(BufferedImage image) {
+        if (!image.getColorModel().hasAlpha()) return false;
+        for (int y = 0; y < image.getHeight(); y++)
+            for (int x = 0; x < image.getWidth(); x++)
+                if ((image.getRGB(x, y) >>> 24) != 255) return true;
+        return false;
+    }
+
+    private static boolean nearlyMonochrome(BufferedImage image) {
+        long dark = 0, light = 0, count = (long) image.getWidth() * image.getHeight();
+        for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
+            int c = image.getRGB(x, y), r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
+            if (r < 32 && g < 32 && b < 32) dark++;
+            else if (r > 223 && g > 223 && b > 223) light++;
+        }
+        return dark * 100 > count && light * 100 > count && (dark + light) * 100 > count * 96;
+    }
+
+    // Conservatively preserve dense black/white patterns even if the decoder
+    // cannot read a small or partially obscured code in a larger composition.
+    private static boolean containsDenseContrast(BufferedImage image) {
+        for (int top = 0; top < image.getHeight(); top += 32) for (int left = 0; left < image.getWidth(); left += 32) {
+            int w = Math.min(64, image.getWidth() - left), h = Math.min(64, image.getHeight() - top);
+            if (w < 32 || h < 32) continue;
+            int dark = 0, light = 0, changes = 0;
+            for (int y = top; y < top + h; y++) {
+                int previous = 0;
+                for (int x = left; x < left + w; x++) {
+                    int c = image.getRGB(x, y), r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255;
+                    int value = r < 60 && g < 60 && b < 60 ? -1 : r > 220 && g > 220 && b > 220 ? 1 : 0;
+                    if (value < 0) dark++; else if (value > 0) light++;
+                    if (x > left && value != 0 && previous == -value) changes++;
+                    previous = value;
+                }
+            }
+            int area = w * h;
+            if (dark * 100 > area * 8 && light * 100 > area * 8 && changes * 1000 > area * 45) return true;
+        }
+        return false;
+    }
+
+    private static boolean safePngForConversion(byte[] bytes) throws IOException {
+        PngInfo info = inspectPng(bytes);
+        if (info.animated() || info.exif() != null) return false;
+        for (int pos = 8; pos + 12 <= bytes.length;) {
+            int length = (int) be32(bytes, pos);
+            String type = new String(bytes, pos + 4, 4, StandardCharsets.US_ASCII);
+            if (List.of("iCCP", "gAMA", "cHRM").contains(type)) return false;
+            pos += length + 12;
+            if (type.equals("IEND")) return pos == bytes.length;
+        }
+        return false;
+    }
+
+    private static boolean acceptableJpeg(BufferedImage original, BufferedImage result) {
+        if (original.getWidth() != result.getWidth() || original.getHeight() != result.getHeight()) return false;
+        long error = 0, large = 0, channels = (long) original.getWidth() * original.getHeight() * 3;
+        for (int y = 0; y < original.getHeight(); y++) for (int x = 0; x < original.getWidth(); x++) {
+            int a = original.getRGB(x, y), b = result.getRGB(x, y);
+            for (int shift = 0; shift <= 16; shift += 8) {
+                int d = Math.abs((a >> shift & 255) - (b >> shift & 255));
+                error += d;
+                if (d > 20) large++;
+            }
+        }
+        return error <= channels * 4L && large * 100L <= channels;
+    }
+
+    static boolean acceptableJpeg(byte[] before, byte[] after) {
+        try {
+            BufferedImage original = ImageIO.read(new ByteArrayInputStream(before));
+            BufferedImage result = ImageIO.read(new ByteArrayInputStream(after));
+            return original != null && result != null && acceptableJpeg(original, result);
+        } catch (IOException | RuntimeException ignored) { return false; }
+    }
+
+    static boolean eligibleOldJpeg(byte[] bytes) {
+        try {
+            // Preserve embedded color profiles and nontrivial EXIF orientation.
+            if (new String(bytes, StandardCharsets.ISO_8859_1).contains("ICC_PROFILE")) return false;
+            return orientation(bytes, null) == 1;
+        } catch (IOException | RuntimeException ignored) { return false; }
+    }
 
     public byte[] process(byte[] input, String extension) throws IOException {
         acquire();
@@ -86,7 +230,7 @@ public class ImageProcessor {
                     boolean resized = Math.max(width, height) > OUTPUT_DIMENSION;
                     var builder = (resized ? Thumbnails.of(image).size(OUTPUT_DIMENSION, OUTPUT_DIMENSION)
                             : Thumbnails.of(image).scale(1.0)).outputFormat(extension.equals(".png") ? "png" : "jpg");
-                    if (!extension.equals(".png")) builder.outputQuality(0.85);
+                    if (!extension.equals(".png")) builder.outputQuality(0.92);
                     ByteArrayOutputStream output = new ByteArrayOutputStream();
                     builder.toOutputStream(output);
                     byte[] optimized = output.toByteArray();

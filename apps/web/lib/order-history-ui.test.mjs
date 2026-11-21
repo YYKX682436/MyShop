@@ -109,7 +109,7 @@ test("order history API and browser types separate brief items from detail items
   assert.doesNotMatch(apiSource, /map\.put\("payment_method"/)
   assert.doesNotMatch(apiSource, /map\.put\("product_id", item\.getProductId\(\)\)/)
   assert.doesNotMatch(apiSource, /map\.put\("subtotal", item\.getSubtotal\(\)\)/)
-  assert.match(apiSource, /map\.put\("product_cover_url", item\.getProductCoverUrl\(\)\)/)
+  assert.match(apiSource, /publicImageResolver\.visible\(item\.getProductCoverUrl\(\)\)/)
 })
 
 test("order history copy is localized in both storefront dictionaries", () => {

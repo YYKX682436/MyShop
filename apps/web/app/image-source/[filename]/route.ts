@@ -5,13 +5,14 @@ import { Readable } from "node:stream"
 // Next's internal image fetch cannot follow an external rewrite to Spring.
 // This narrow route serves only generated, public top-level media and never
 // forwards client headers or accepts a client-supplied destination.
-const managedImage = /^(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:jpe?g|png|webp|bmp)$/i
+const managedImage = /^(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:jpe?g|png|gif|webp|bmp)$/i
 
 export const dynamic = "force-dynamic"
 
-export async function GET(_request: Request, { params }: { params: Promise<{ filename: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ filename: string }> }) {
   const { filename } = await params
-  if (!managedImage.test(filename)) return new Response(null, { status: 404 })
+  const live = new URL(request.url).searchParams.has("live")
+  if (!managedImage.test(filename)) return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } })
 
   try {
     const backend = new URL(process.env.BACKEND_URL || "http://localhost:8083")
@@ -27,16 +28,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
     })
     if (response.statusCode !== 200) {
       response.resume()
-      return new Response(null, { status: 404 })
+      return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } })
     }
     return new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
       headers: {
         "Content-Type": response.headers["content-type"] || "application/octet-stream",
-        "Cache-Control": response.headers["cache-control"] || "no-store",
+        "Cache-Control": live ? "no-store" : response.headers["cache-control"] || "no-store",
         "X-Content-Type-Options": "nosniff",
       },
     })
   } catch {
-    return new Response(null, { status: 502 })
+    return new Response(null, { status: 502, headers: { "Cache-Control": "no-store" } })
   }
 }

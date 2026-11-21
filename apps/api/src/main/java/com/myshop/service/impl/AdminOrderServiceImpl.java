@@ -47,6 +47,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class AdminOrderServiceImpl implements AdminOrderService {
+    @Autowired private com.myshop.service.PublicImageResolver publicImageResolver;
 
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
 
@@ -325,7 +326,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
             im.put("product_id", i.getProductId());
             im.put("product_no", i.getProductNo());
             im.put("product_title", i.getProductTitle());
-            im.put("product_cover_url", i.getProductCoverUrl());
+            im.put("product_cover_url", publicImageResolver == null ? i.getProductCoverUrl() : publicImageResolver.visible(i.getProductCoverUrl()));
             im.put("spec_id", i.getSpecId());
             im.put("spec_name", i.getSpecName());
             im.put("quantity", i.getQuantity());

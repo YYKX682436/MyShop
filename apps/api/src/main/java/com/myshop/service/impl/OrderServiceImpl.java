@@ -45,6 +45,7 @@ import java.util.*;
 @Slf4j
 @Service
 public class OrderServiceImpl implements OrderService {
+    @Autowired private com.myshop.service.PublicImageResolver publicImageResolver;
 
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
@@ -438,7 +439,7 @@ public class OrderServiceImpl implements OrderService {
             im.put("product_id", i.getProductId());
             im.put("product_no", i.getProductNo());
             im.put("product_title", i.getProductTitle());
-            im.put("product_cover_url", i.getProductCoverUrl());
+            im.put("product_cover_url", publicImageResolver == null ? i.getProductCoverUrl() : publicImageResolver.visible(i.getProductCoverUrl()));
             im.put("spec_name", i.getSpecName());
             im.put("quantity", i.getQuantity());
             im.put("unit_price", i.getUnitPrice());

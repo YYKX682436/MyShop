@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import Image from "next/image"
 import { Copy, ImagePlus, Loader2, Search, Trash2, Upload, WandSparkles } from "lucide-react"
 import { toast } from "sonner"
 
@@ -11,7 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input"
 import { useLocale } from "@/lib/context"
 import { ALLOWED_IMAGE_ACCEPT, QR_ALLOWED_IMAGE_ACCEPT, validateImageFile, validateQrImageFile } from "@/lib/image-upload"
-import { adminMediaApi, adminProductApi, type MediaInspection, type MediaItem } from "@/services/api"
+import { adminMediaApi, adminProductApi, type MediaInspection, type MediaItem, type MediaOptimization } from "@/services/api"
+import { ProductImage } from "@/components/store/product-image"
 
 const PAGE_SIZE = 24
 
@@ -30,6 +30,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
   const [preview, setPreview] = useState<MediaItem | null>(null)
   const [managed, setManaged] = useState<MediaItem | null>(null)
   const [inspection, setInspection] = useState<MediaInspection | null>(null)
+  const [optimization, setOptimization] = useState<MediaOptimization | null>(null)
   const [inspectionFailed, setInspectionFailed] = useState(false)
   const [inspectionRevision, setInspectionRevision] = useState(0)
   const [working, setWorking] = useState(false)
@@ -74,9 +75,17 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
     if (error) { toast.error(error); return }
     setUploading(true)
     try {
-      await adminProductApi.uploadImage(file)
+      const uploaded = await adminProductApi.uploadImage(file, qrOnly)
       setSearch(""); setQuery(""); setPage(1); setOrder("desc"); setRevision((value) => value + 1)
-      toast.success(t("admin.uploadSuccess"))
+      const reason = uploaded.reason === "qr_preserved" ? t("admin.mediaQrPreserved")
+        : uploaded.reason === "transparency_preserved" ? t("admin.mediaAlphaPreserved")
+        : uploaded.reason === "metadata_preserved" ? t("admin.mediaMetadataPreserved")
+        : uploaded.reason === "contrast_preserved" ? t("admin.mediaContrastPreserved")
+        : uploaded.reason === "quality_preserved" ? t("admin.mediaQualityPreserved")
+        : uploaded.reason === "format_preserved" ? t("admin.mediaFormatPreserved")
+        : uploaded.reason === "size_preserved" ? t("admin.mediaSizePreserved")
+        : uploaded.reason === "no_saving" ? t("admin.mediaNoSaving") : t("admin.mediaCompressed")
+      toast.success(`${t("admin.uploadSuccess")} · ${formatSize(uploaded.original_size)} → ${formatSize(uploaded.stored_size)} · ${reason}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("admin.uploadFailed"))
     } finally { setUploading(false); if (inputRef.current) inputRef.current.value = "" }
@@ -91,6 +100,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
 
   const manage = (item: MediaItem) => {
     setPreview(null)
+    setOptimization(null)
     setManaged(item)
   }
 
@@ -104,9 +114,10 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
         toast.success(t("admin.mediaDeleted"))
       } else {
         const result = await adminMediaApi.optimize(filename)
-        toast.success(`${t("admin.mediaOptimized")} · ${formatSize(result.original_size)} → ${formatSize(result.optimized_size)}`)
+        setOptimization(result)
+        toast.success(t("admin.mediaOptimized"))
       }
-      manageDialog.current?.close()
+      if (action === "delete") manageDialog.current?.close()
       setRevision((value) => value + 1)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("admin.mediaInspectFailed"))
@@ -138,7 +149,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
             : <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
               {items.map((item) => <li key={item.url} className="min-w-0 overflow-hidden rounded-card border border-border-subtle bg-surface">
                 <button type="button" aria-label={`${t("admin.mediaPreview")}: ${item.name}`} onClick={() => setPreview(item)} className="relative block aspect-square w-full bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                  <Image src={item.url} alt="" fill unoptimized sizes="(max-width: 640px) 50vw, 240px" className="object-contain" />
+                  <ProductImage src={item.url} alt="" sizes="(max-width: 640px) 50vw, 240px" className="object-contain" />
                 </button>
                 <div className="space-y-1 p-3">
                   <p className="truncate text-sm font-medium" title={item.name}>{item.name}</p>
@@ -161,7 +172,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
       <Dialog open={!!preview} onOpenChange={(open) => { if (!open) setPreview(null) }}>
         <DialogContent className="flex max-h-[90dvh] max-w-4xl flex-col overflow-hidden">
           <DialogHeader><DialogTitle>{t("admin.mediaPreview")}</DialogTitle><DialogDescription className="break-all">{preview?.name}</DialogDescription></DialogHeader>
-          {preview && <><div className="relative min-h-48 h-[min(60dvh,40rem)] w-full overflow-hidden rounded-card bg-surface-muted"><Image src={preview.url} alt={preview.name} fill unoptimized sizes="90vw" className="object-contain" /></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => void copy(preview)}>{t("admin.mediaCopy")}</Button>{showHeader && <Button type="button" variant="outline" onClick={() => manage(preview)}>{t("admin.mediaOptimize")}</Button>}{showHeader && <Button type="button" variant="destructive" onClick={() => manage(preview)}>{t("admin.mediaDelete")}</Button>}{onSelect && <Button type="button" onClick={() => { onSelect(preview); setPreview(null) }}>{t("admin.mediaUse")}</Button>}</div></>}
+          {preview && <><div className="relative min-h-48 h-[min(60dvh,40rem)] w-full overflow-hidden rounded-card bg-surface-muted"><ProductImage src={preview.url} alt={preview.name} sizes="(max-width: 768px) 90vw, 768px" className="object-contain" /></div><div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => void copy(preview)}>{t("admin.mediaCopy")}</Button>{showHeader && <Button type="button" variant="outline" onClick={() => manage(preview)}>{t("admin.mediaOptimize")}</Button>}{showHeader && <Button type="button" variant="destructive" onClick={() => manage(preview)}>{t("admin.mediaDelete")}</Button>}{onSelect && <Button type="button" onClick={() => { onSelect(preview); setPreview(null) }}>{t("admin.mediaUse")}</Button>}</div></>}
         </DialogContent>
       </Dialog>
       <dialog ref={manageDialog} aria-labelledby="media-manage-title" onClose={() => setManaged(null)}
@@ -169,18 +180,23 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
         className="media-manage-dialog myshop-dialog static-material max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-surface p-6 text-foreground">
         <div className="space-y-4">
           <div><h2 id="media-manage-title" className="text-lg font-semibold">{t("admin.mediaInspect")}</h2><p className="break-all text-sm text-muted-foreground">{managed?.name}</p></div>
-          {inspectionFailed ? <div role="alert" className="space-y-2 text-sm text-destructive"><p>{t("admin.mediaInspectFailed")}</p><Button type="button" size="sm" variant="outline" onClick={() => setInspectionRevision((value) => value + 1)}>{t("common.retry")}</Button></div>
+          {optimization ? <div className="space-y-3 text-sm" role="status">
+            <p>{formatSize(optimization.original_size)} → {formatSize(optimization.optimized_size)}</p>
+            <div><p className="font-medium">{t("admin.mediaChangedCovers")} · {optimization.replaced_covers}</p><ul className="mt-1 text-muted-foreground">{optimization.changed_products.map((product) => <li key={product.id}>{product.title}</li>)}</ul></div>
+            <div><p className="font-medium">{t("admin.mediaRetained")}</p>{optimization.retained_references.length ? <ul className="mt-1 text-muted-foreground">{optimization.retained_references.map((ref) => <li key={ref.table}>{ref.source} · {ref.count}</li>)}</ul> : <p className="mt-1 text-muted-foreground">{t("admin.mediaUnused")}</p>}</div>
+          </div> : inspectionFailed ? <div role="alert" className="space-y-2 text-sm text-destructive"><p>{t("admin.mediaInspectFailed")}</p><Button type="button" size="sm" variant="outline" onClick={() => setInspectionRevision((value) => value + 1)}>{t("common.retry")}</Button></div>
             : !inspection ? <div role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div>
               : <div className="space-y-3 text-sm">
                 <p>{inspection.format.toUpperCase()} · {formatSize(inspection.size)}{inspection.width && inspection.height ? ` · ${inspection.width} × ${inspection.height}` : ""}</p>
                 <div><p className="font-medium">{t("admin.mediaReferences")}</p>{inspection.references.length ? <ul className="mt-1 space-y-1 text-muted-foreground">{inspection.references.map((ref) => <li key={ref.table}>{ref.source} · {ref.count}</li>)}</ul> : <p className="mt-1 text-muted-foreground">{t("admin.mediaUnused")}</p>}</div>
+                <p>{t("admin.mediaDeleteImpact")}</p>
                 <p className="text-muted-foreground">{t("admin.mediaExternalWarning")}</p>
                 <p className="text-muted-foreground">{t(inspection.optimizable ? "admin.mediaOptimizationReady" : "admin.mediaOptimizationSkipped")}</p>
               </div>}
           <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="outline" autoFocus disabled={working} onClick={() => manageDialog.current?.close()}>{t("common.cancel")}</Button>
-            <Button type="button" variant="outline" disabled={working || !inspection?.optimizable || inspection.references.some((ref) => ref.table !== "products")} onClick={() => void perform("optimize")}>{t("admin.mediaConfirmOptimize")}</Button>
-            <Button type="button" variant="destructive" disabled={working || !inspection || inspection.references.length > 0} onClick={() => void perform("delete")}>{t("admin.mediaConfirmDelete")}</Button>
+            <Button type="button" variant="outline" autoFocus disabled={working} onClick={() => manageDialog.current?.close()}>{t(optimization ? "common.close" : "common.cancel")}</Button>
+            {!optimization && <Button type="button" variant="outline" disabled={working || !inspection?.optimizable} onClick={() => void perform("optimize")}>{t("admin.mediaConfirmOptimize")}</Button>}
+            {!optimization && <Button type="button" variant="destructive" disabled={working || !inspection} onClick={() => void perform("delete")}>{t("admin.mediaConfirmDelete")}</Button>}
           </div>
         </div>
       </dialog>

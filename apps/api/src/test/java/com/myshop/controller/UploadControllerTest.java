@@ -157,6 +157,22 @@ class UploadControllerTest {
         } finally { Files.deleteIfExists(outside); }
     }
 
+    @Test
+    void explicitQrUploadRetainsOriginalBytes() throws Exception {
+        byte[] bytes = java.util.Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGP4z8DQAMIMMAYAOOgF/REzMMkAAAAASUVORK5CYII=");
+        var result = mockMvc.perform(multipart("/api/upload/image").contextPath("/api")
+                        .file(new MockMultipartFile("file", "qr.png", "image/png", bytes))
+                        .param("preserve_qr", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reason").value("qr_preserved"))
+                .andReturn();
+        String url = objectMapper.readTree(result.getResponse().getContentAsString()).path("data").path("url").asText();
+        mockMvc.perform(get(url).contextPath("/api"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.IMAGE_PNG))
+                .andExpect(content().bytes(bytes));
+    }
+
     private void assertUploadedAndReadable(String originalFilename, String contentType, byte[] bytes) throws Exception {
         MockMultipartFile file = new MockMultipartFile("file", originalFilename, contentType, bytes);
 

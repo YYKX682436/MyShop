@@ -121,6 +121,7 @@ class ImageProcessingTest {
         byte[] bytes = animatedPng();
         assertNotNull(ImageIO.read(new ByteArrayInputStream(bytes)));
         assertArrayEquals(bytes, new ImageProcessor().process(bytes, ".png"));
+        assertArrayEquals(bytes, new ImageProcessor().processForStorage(bytes, ".png").bytes());
     }
 
     @Test

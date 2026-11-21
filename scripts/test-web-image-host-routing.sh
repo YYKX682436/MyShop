@@ -65,6 +65,10 @@ for attempt in 1 2; do
   grep -Eiq '^cache-control:.*max-age=31536000' "$tmp_dir/image-$attempt.headers"
 done
 grep -Eiq '^x-nextjs-cache: HIT' "$tmp_dir/image-2.headers"
+curl --fail --silent --max-time 15 -H 'Host: mc.mc520.top' \
+  -D "$tmp_dir/live.headers" -o /dev/null \
+  'http://127.0.0.1:18932/image-source/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png?live=1'
+grep -Eiq '^cache-control:.*no-store' "$tmp_dir/live.headers"
 status=$(curl --silent --max-time 15 -o /dev/null -w '%{http_code}' -H 'Host: mc.mc520.top' \
   'http://127.0.0.1:18932/_next/image?url=http%3A%2F%2F127.0.0.1%3A18931%2Fapi%2Fsite%2Fconfig&w=384&q=75')
 [[ "$status" == 400 ]] || { printf 'remote optimizer request returned %s, expected 400\n' "$status" >&2; exit 1; }

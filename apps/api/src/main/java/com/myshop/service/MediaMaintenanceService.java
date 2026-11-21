@@ -2,6 +2,9 @@ package com.myshop.service;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -34,6 +37,9 @@ public class MediaMaintenanceService {
     private final ImageProcessor processor;
     private final String prefix;
     private final Semaphore optimizePermit = new Semaphore(1, true);
+    @org.springframework.beans.factory.annotation.Value("${app.public-site-url:http://localhost:3000}")
+    private String publicSiteUrl = "http://localhost:3000";
+    private final ObjectMapper json = new ObjectMapper();
 
     public MediaMaintenanceService(UploadStorage storage, MediaFileGuard guard, ImageProcessor processor,
                                    @org.springframework.beans.factory.annotation.Value("${upload.url-prefix:/api/uploads}") String prefix) {
@@ -51,30 +57,122 @@ public class MediaMaintenanceService {
     public void delete(String filename) {
         validate(filename);
         guard.exclusive(true, connection -> {
-            Inspection state = inspection(connection, filename);
-            if (!state.references().isEmpty())
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "图片正在被业务数据引用，不能删除", HttpStatus.CONFLICT);
+            if (!storage.isSafePublicFile(filename))
+                throw new BusinessException(ErrorCode.NOT_FOUND, "资源不存在", HttpStatus.NOT_FOUND);
+            // Verify guard coverage and reportable references before changing anything.
+            inspection(connection, filename);
+            String oldUrl = prefix + "/" + filename;
+            String absoluteUrl = publicSiteUrl.replaceAll("/+$", "") + oldUrl;
+            clearProductCovers(connection, filename);
+            try (var statement = connection.prepareStatement(
+                    "UPDATE site_configs SET config_value = '' WHERE config_key IN ('logo_url', 'favicon_url') AND config_value IN (?, ?)")) {
+                statement.setString(1, oldUrl);
+                statement.setString(2, absoluteUrl);
+                statement.executeUpdate();
+            }
+            try (var statement = connection.prepareStatement("UPDATE subsites SET logo_url = NULL WHERE logo_url IN (?, ?)")) {
+                statement.setString(1, oldUrl);
+                statement.setString(2, absoluteUrl);
+                statement.executeUpdate();
+            }
+            clearContactQr(connection, oldUrl, absoluteUrl);
             try (var query = connection.prepareStatement("INSERT INTO media_deleted_files(filename) VALUES (?) ON CONFLICT DO NOTHING")) {
                 query.setString(1, filename.toLowerCase(Locale.ROOT));
                 query.executeUpdate();
             }
-            // Commit the guard before removing the file. A crash in between can
-            // leave an unused file, but cannot allow a missing image reference.
+            // Commit the tombstone and field updates before deleting the file.
+            // If cleanup fails, the guarded file remains listed and a retry can
+            // finish deletion without allowing stale forms to recreate a reference.
             connection.commit();
-            if (!storage.isSafePublicFile(filename) || !storage.deleteManagedFile(filename)) {
-                if (storage.isSafePublicFile(filename)) {
-                    MediaFileGuard.restorePublishedFile(connection, filename);
-                    connection.commit();
-                }
-                throw new BusinessException(ErrorCode.SERVER_ERROR, "图片删除失败，请刷新后重试", HttpStatus.CONFLICT);
-            }
             try {
-                storage.forgetMediaName(filename.substring(0, filename.lastIndexOf('.')).toLowerCase(Locale.ROOT));
+                storage.forgetMediaNameExcept(filename.substring(0, filename.lastIndexOf('.')).toLowerCase(Locale.ROOT), filename);
             } catch (IOException exception) {
-                throw new BusinessException(ErrorCode.SERVER_ERROR, "图片已删除，但名称清理失败，请刷新资源列表");
+                throw new BusinessException(ErrorCode.SERVER_ERROR, "图片清理未完成，请刷新后重试", HttpStatus.CONFLICT);
             }
+            if (!storage.isSafePublicFile(filename) || !storage.deleteManagedFile(filename))
+                throw new BusinessException(ErrorCode.SERVER_ERROR, "图片清理未完成，请刷新后重试", HttpStatus.CONFLICT);
             return null;
         });
+    }
+
+    private void clearProductCovers(Connection connection, String filename) throws Exception {
+        for (ProductCover cover : findProductCovers(connection, filename)) {
+            try (var update = connection.prepareStatement("UPDATE products SET cover_url = NULL WHERE id = ? AND cover_url = ?")) {
+                update.setObject(1, cover.id());
+                update.setString(2, cover.url());
+                if (update.executeUpdate() != 1)
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "商品封面已变化，请重试", HttpStatus.CONFLICT);
+            }
+        }
+    }
+
+    private List<ProductCover> findProductCovers(Connection connection, String filename) throws Exception {
+        String target = prefix + "/" + filename;
+        var origin = java.net.URI.create(publicSiteUrl);
+        List<ProductCover> covers = new ArrayList<>();
+        try (var query = connection.prepareStatement("""
+                SELECT id, title, cover_url FROM products
+                WHERE cover_url IS NOT NULL AND
+                  (public.myshop_media_normalize(cover_url) IS NULL
+                    OR position(? IN public.myshop_media_normalize(cover_url)) > 0)
+                FOR UPDATE NOWAIT
+                """)) {
+            query.setString(1, filename.toLowerCase(Locale.ROOT));
+            try (var result = query.executeQuery()) {
+                while (result.next()) {
+                    String value = result.getString(3);
+                    final java.net.URI uri;
+                    try { uri = java.net.URI.create(value); }
+                    catch (IllegalArgumentException exception) {
+                        throw new BusinessException(ErrorCode.BAD_REQUEST, "商品封面引用格式不明确，未执行删除", HttpStatus.CONFLICT);
+                    }
+                    boolean local = !uri.isAbsolute() && uri.getRawAuthority() == null;
+                    if (uri.isAbsolute()) local = ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                            && uri.getUserInfo() == null && origin.getHost() != null && origin.getHost().equalsIgnoreCase(uri.getHost())
+                            && uri.getPort() == origin.getPort();
+                    if (!local) continue;
+                    if (!target.equals(uri.getPath()))
+                        throw new BusinessException(ErrorCode.BAD_REQUEST, "商品封面引用格式不明确，未执行删除", HttpStatus.CONFLICT);
+                    covers.add(new ProductCover(result.getObject(1), result.getString(2), value));
+                }
+            }
+        }
+        return covers;
+    }
+
+    private void clearContactQr(Connection connection, String relative, String absolute) throws Exception {
+        String value;
+        try (var query = connection.prepareStatement("SELECT config_value FROM site_configs WHERE config_key = 'contact_items' FOR UPDATE NOWAIT")) {
+            try (var result = query.executeQuery()) {
+                if (!result.next()) return;
+                value = result.getString(1);
+            }
+        }
+        if (value == null) return;
+        final JsonNode root;
+        try { root = json.readTree(value); }
+        catch (IOException ignored) { return; } // Preserve unknown or malformed historical content.
+        if (root == null || !root.isArray()) return;
+        boolean changed = false;
+        for (JsonNode item : root) {
+            if (item instanceof ObjectNode object && object.path("qr_url").isTextual()
+                    && (relative.equals(object.path("qr_url").asText()) || absolute.equals(object.path("qr_url").asText()))) {
+                object.remove("qr_url");
+                changed = true;
+            }
+        }
+        if (!changed) return;
+        String updated = json.writeValueAsString(root);
+        // Existing historical references elsewhere in the same JSON column may
+        // not be reintroduced by a column update; leave that JSON unchanged.
+        try (var query = connection.prepareStatement("SELECT EXISTS (SELECT 1 FROM media_deleted_files WHERE position(filename IN public.myshop_media_normalize(?)) > 0)")) {
+            query.setString(1, updated);
+            try (var result = query.executeQuery()) { result.next(); if (result.getBoolean(1)) return; }
+        }
+        try (var update = connection.prepareStatement("UPDATE site_configs SET config_value = ? WHERE config_key = 'contact_items'")) {
+            update.setString(1, updated);
+            update.executeUpdate();
+        }
     }
 
     public Optimization optimize(String filename) {
@@ -90,48 +188,47 @@ public class MediaMaintenanceService {
         // checked again under the lock before any reference can change.
         byte[] original = readImage(filename);
         Dimensions dimensions = dimensions(original);
-        if (!eligiblePng(filename, original, dimensions))
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅支持无动画、无颜色配置且尺寸不超过 400 万像素的 PNG 无损优化");
-        final byte[] optimized;
-        try { optimized = processor.process(original, ".png"); }
+        String extension = filename.substring(filename.lastIndexOf('.')).toLowerCase(Locale.ROOT);
+        if (!eligible(filename, original, dimensions))
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅支持尺寸合适、无动画或复杂色彩配置的 PNG/JPEG");
+        final ImageProcessor.ProcessedImage processed;
+        try { processed = processor.processForStorage(original, extension); }
         catch (IOException exception) { throw new BusinessException(ErrorCode.BAD_REQUEST, "图片无法安全优化"); }
-        if (optimized.length >= original.length || !samePixels(original, optimized))
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片没有可验证的无损压缩收益，已跳过");
+        byte[] optimized = processed.bytes();
+        if (processed.reason().equals("qr_preserved"))
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "二维码需要保持可识别，已保留原图");
+        if (optimized.length >= original.length
+                || (processed.extension().equals(".png") && !samePixels(original, optimized))
+                || (!extension.equals(".png") && !ImageProcessor.acceptableJpeg(original, optimized)))
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片没有符合质量要求的压缩收益，已跳过");
 
         return guard.exclusive(true, connection -> {
             if (!Arrays.equals(original, readImage(filename)))
                 throw new BusinessException(ErrorCode.BAD_REQUEST, "图片已变化，已跳过", HttpStatus.CONFLICT);
-            List<Reference> references = references(connection, filename);
-            if (references.stream().anyMatch(reference -> !reference.table().equals("products")))
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "图片被商品封面以外的数据引用，已跳过", HttpStatus.CONFLICT);
-            String oldUrl = prefix + "/" + filename;
-            long covers;
-            try (var statement = connection.prepareStatement("SELECT id FROM products WHERE cover_url = ? FOR UPDATE NOWAIT")) {
-                statement.setString(1, oldUrl);
-                try (ResultSet result = statement.executeQuery()) {
-                    covers = 0;
-                    while (result.next()) covers++;
-                }
-            }
-            long rows = references.stream().mapToLong(Reference::count).sum();
-            if (covers != rows || productHasOtherReference(connection, filename))
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "图片引用不明确，已跳过", HttpStatus.CONFLICT);
-
-            String newFilename = UploadStorage.identifier(optimized) + ".png";
+            references(connection, filename);
+            List<ProductCover> covers = findProductCovers(connection, filename);
+            String newFilename = UploadStorage.identifier(optimized) + processed.extension();
             storage.publish(newFilename, optimized, true);
             MediaFileGuard.restorePublishedFile(connection, newFilename);
             try {
-                storage.rememberMediaName(newFilename.substring(0, 64),
-                        storage.mediaName(filename.substring(0, filename.lastIndexOf('.')), filename));
+                String name = storage.mediaName(filename.substring(0, filename.lastIndexOf('.')), filename);
+                if (!processed.extension().equalsIgnoreCase(filename.substring(filename.lastIndexOf('.'))) && name.lastIndexOf('.') >= 0)
+                    name = name.substring(0, name.lastIndexOf('.')) + processed.extension();
+                storage.rememberMediaName(newFilename.substring(0, 64), name);
             } catch (IOException ignored) { /* Display name is optional. */ }
-            int changed;
-            try (var statement = connection.prepareStatement("UPDATE products SET cover_url = ? WHERE cover_url = ?")) {
-                statement.setString(1, prefix + "/" + newFilename);
-                statement.setString(2, oldUrl);
-                changed = statement.executeUpdate();
+            List<ChangedProduct> products = new ArrayList<>();
+            for (ProductCover cover : covers) {
+                try (var statement = connection.prepareStatement("UPDATE products SET cover_url = ? WHERE id = ? AND cover_url = ?")) {
+                    statement.setString(1, prefix + "/" + newFilename);
+                    statement.setObject(2, cover.id());
+                    statement.setString(3, cover.url());
+                    if (statement.executeUpdate() != 1)
+                        throw new BusinessException(ErrorCode.BAD_REQUEST, "商品引用已变化，已跳过", HttpStatus.CONFLICT);
+                    products.add(new ChangedProduct(cover.id().toString(), cover.title()));
+                }
             }
-            if (changed != covers) throw new BusinessException(ErrorCode.BAD_REQUEST, "商品引用已变化，已跳过", HttpStatus.CONFLICT);
-            return new Optimization(prefix + "/" + newFilename, original.length, optimized.length, changed);
+            return new Optimization(prefix + "/" + newFilename, original.length, optimized.length, products.size(),
+                    products, references(connection, filename));
         });
     }
 
@@ -140,10 +237,10 @@ public class MediaMaintenanceService {
         long size = Files.size(storage.resolve(filename));
         Dimensions dimensions = null;
         boolean eligible = false;
-        if (filename.toLowerCase(Locale.ROOT).endsWith(".png") && size <= MAX_BYTES) {
+        if (size <= MAX_BYTES) {
             byte[] bytes = readImage(filename);
             dimensions = dimensions(bytes);
-            eligible = eligiblePng(filename, bytes, dimensions);
+            eligible = eligible(filename, bytes, dimensions);
         }
         return new Inspection(size, filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT),
                 dimensions == null ? null : dimensions.width(), dimensions == null ? null : dimensions.height(),
@@ -198,17 +295,6 @@ public class MediaMaintenanceService {
         return references;
     }
 
-    private boolean productHasOtherReference(Connection connection, String filename) throws Exception {
-        try (var statement = connection.prepareStatement("""
-                SELECT EXISTS (SELECT 1 FROM products p
-                WHERE public.myshop_media_normalize((to_jsonb(p) - 'cover_url')::text) IS NULL
-                   OR position(? IN public.myshop_media_normalize((to_jsonb(p) - 'cover_url')::text)) > 0)
-                """)) {
-            statement.setString(1, filename.toLowerCase(Locale.ROOT));
-            try (var result = statement.executeQuery()) { result.next(); return result.getBoolean(1); }
-        }
-    }
-
     private byte[] readImage(String filename) {
         if (!storage.isSafePublicFile(filename)) throw new BusinessException(ErrorCode.NOT_FOUND, "资源不存在", HttpStatus.NOT_FOUND);
         try (var input = Files.newInputStream(storage.resolve(filename), LinkOption.NOFOLLOW_LINKS)) {
@@ -246,6 +332,16 @@ public class MediaMaintenanceService {
         return false;
     }
 
+    private static boolean eligible(String filename, byte[] bytes, Dimensions dimensions) {
+        if (eligiblePng(filename, bytes, dimensions)) return true;
+        String lower = filename.toLowerCase(Locale.ROOT);
+        return (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) && dimensions != null
+                && dimensions.width() > 0 && dimensions.height() > 0
+                && dimensions.width() <= ImageProcessor.OUTPUT_DIMENSION && dimensions.height() <= ImageProcessor.OUTPUT_DIMENSION
+                && (long) dimensions.width() * dimensions.height() <= MAX_OPTIMIZE_PIXELS
+                && ImageProcessor.eligibleOldJpeg(bytes);
+    }
+
     private static boolean samePixels(byte[] before, byte[] after) {
         try {
             BufferedImage a = ImageIO.read(new ByteArrayInputStream(before));
@@ -277,7 +373,10 @@ public class MediaMaintenanceService {
     }
 
     private record Dimensions(int width, int height) { }
+    private record ProductCover(Object id, String title, String url) { }
     public record Reference(String table, String source, long count) { }
+    public record ChangedProduct(String id, String title) { }
     public record Inspection(long size, String format, Integer width, Integer height, boolean optimizable, List<Reference> references) { }
-    public record Optimization(String url, long originalSize, long optimizedSize, int replacedCovers) { }
+    public record Optimization(String url, long originalSize, long optimizedSize, int replacedCovers,
+                               List<ChangedProduct> changedProducts, List<Reference> retainedReferences) { }
 }

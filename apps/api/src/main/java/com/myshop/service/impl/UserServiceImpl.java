@@ -33,6 +33,8 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.myshop.service.PublicImageResolver publicImageResolver;
 
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
@@ -145,7 +147,7 @@ public class UserServiceImpl implements UserService {
         Map<String, Object> map = new HashMap<>();
         map.put("id", item.getId());
         map.put("product_title", item.getProductTitle());
-        map.put("product_cover_url", item.getProductCoverUrl());
+        map.put("product_cover_url", publicImageResolver == null ? item.getProductCoverUrl() : publicImageResolver.visible(item.getProductCoverUrl()));
         map.put("spec_name", item.getSpecName());
         map.put("quantity", item.getQuantity());
         map.put("unit_price", item.getUnitPrice());

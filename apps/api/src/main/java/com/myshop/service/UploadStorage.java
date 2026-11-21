@@ -190,9 +190,15 @@ public class UploadStorage {
 
     /** Remove only metadata for an orphaned content hash; never follow links. */
     public void forgetMediaName(String identifier) throws IOException {
+        forgetMediaNameExcept(identifier, null);
+    }
+
+    /** Used under the media lock before removing the named file. */
+    public void forgetMediaNameExcept(String identifier, String excludedFilename) throws IOException {
         if (!identifier.matches("[0-9a-f]{64}")) return;
         try (var files = Files.list(uploadDirectory)) {
             if (files.anyMatch(path -> path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).startsWith(identifier + ".")
+                    && !path.getFileName().toString().equals(excludedFilename)
                     && isSafePublicFile(path.getFileName().toString()))) return;
         }
         Path metadata = uploadDirectory.resolve(".media-info");
