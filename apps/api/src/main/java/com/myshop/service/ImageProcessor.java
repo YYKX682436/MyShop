@@ -51,16 +51,26 @@ public class ImageProcessor {
             byte[] base = processBounded(input, extension);
             String ext = extension.equals(".jpeg") ? ".jpg" : extension;
             if (!ext.equals(".png") && !ext.equals(".jpg")) return new ProcessedImage(base, ext, "format_preserved");
+            // Thumbnailator does not preserve JPEG APP metadata. Keep the
+            // validated source intact when it carries EXIF, ICC, or vendor
+            // application segments rather than silently stripping them.
+            if (ext.equals(".jpg") && hasPreservableJpegMetadata(input))
+                return new ProcessedImage(input, ext, "metadata_preserved");
             BufferedImage original = ImageIO.read(new ByteArrayInputStream(input));
             if (original == null) throw new IOException("Invalid image");
-            if ((long) original.getWidth() * original.getHeight() > 4_000_000L)
-                return new ProcessedImage(base, ext, Arrays.equals(base, input) ? "size_preserved" : "compressed");
             if (containsQrCode(original) || containsDenseContrast(original)) return new ProcessedImage(input, ext, "qr_preserved");
+            if ((long) original.getWidth() * original.getHeight() > 4_000_000L) {
+                if (!ext.equals(".png")) {
+                    BufferedImage result = ImageIO.read(new ByteArrayInputStream(base));
+                    if (result == null || !acceptableJpeg(original, result))
+                        return new ProcessedImage(input, ext, "quality_preserved");
+                }
+                return new ProcessedImage(base, ext, Arrays.equals(base, input) ? "size_preserved" : "compressed");
+            }
             if (nearlyMonochrome(original)) return new ProcessedImage(input, ext, "contrast_preserved");
             if (!ext.equals(".png")) {
                 BufferedImage result = ImageIO.read(new ByteArrayInputStream(base));
-                if (result != null && original.getWidth() == result.getWidth() && original.getHeight() == result.getHeight()
-                        && !acceptableJpeg(original, result))
+                if (result != null && !acceptableJpeg(original, result))
                     return new ProcessedImage(input, ext, "quality_preserved");
                 return new ProcessedImage(base, ext, Arrays.equals(base, input) ? "no_saving" : "compressed");
             }
@@ -148,7 +158,18 @@ public class ImageProcessor {
     }
 
     private static boolean acceptableJpeg(BufferedImage original, BufferedImage result) {
-        if (original.getWidth() != result.getWidth() || original.getHeight() != result.getHeight()) return false;
+        if (result.getWidth() > original.getWidth() || result.getHeight() > original.getHeight()) return false;
+        if (original.getWidth() != result.getWidth() || original.getHeight() != result.getHeight()) {
+            double originalRatio = (double) original.getWidth() / original.getHeight();
+            double resultRatio = (double) result.getWidth() / result.getHeight();
+            if (Math.abs(originalRatio - resultRatio) / originalRatio > 0.005) return false;
+            try {
+                ByteArrayOutputStream scaled = new ByteArrayOutputStream();
+                Thumbnails.of(original).size(result.getWidth(), result.getHeight()).outputFormat("png").toOutputStream(scaled);
+                BufferedImage reference = ImageIO.read(new ByteArrayInputStream(scaled.toByteArray()));
+                return reference != null && acceptableJpeg(reference, result);
+            } catch (IOException | RuntimeException ignored) { return false; }
+        }
         long error = 0, large = 0, channels = (long) original.getWidth() * original.getHeight() * 3;
         for (int y = 0; y < original.getHeight(); y++) for (int x = 0; x < original.getWidth(); x++) {
             int a = original.getRGB(x, y), b = result.getRGB(x, y);
@@ -171,10 +192,29 @@ public class ImageProcessor {
 
     static boolean eligibleOldJpeg(byte[] bytes) {
         try {
-            // Preserve embedded color profiles and nontrivial EXIF orientation.
-            if (new String(bytes, StandardCharsets.ISO_8859_1).contains("ICC_PROFILE")) return false;
-            return orientation(bytes, null) == 1;
+            // Optimizing would drop APP metadata because the JPEG encoder
+            // cannot round-trip EXIF, ICC, and camera-specific segments.
+            return !hasPreservableJpegMetadata(bytes) && orientation(bytes, null) == 1;
         } catch (IOException | RuntimeException ignored) { return false; }
+    }
+
+    private static boolean hasPreservableJpegMetadata(byte[] bytes) {
+        if (bytes.length < 4 || (bytes[0] & 0xff) != 0xff || (bytes[1] & 0xff) != 0xd8) return true;
+        int position = 2;
+        while (position < bytes.length) {
+            if ((bytes[position++] & 0xff) != 0xff) return true;
+            while (position < bytes.length && (bytes[position] & 0xff) == 0xff) position++;
+            if (position >= bytes.length) return true;
+            int marker = bytes[position++] & 0xff;
+            if (marker == 0xda || marker == 0xd9) return false;
+            if (marker == 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+            if (position + 2 > bytes.length) return true;
+            int length = ((bytes[position] & 0xff) << 8) | (bytes[position + 1] & 0xff);
+            if (length < 2 || position + length > bytes.length) return true;
+            if (marker >= 0xe1 && marker <= 0xef) return true;
+            position += length;
+        }
+        return true;
     }
 
     public byte[] process(byte[] input, String extension) throws IOException {
@@ -266,7 +306,9 @@ public class ImageProcessor {
             if (directory != null && directory.hasErrors()) throw new IOException("Invalid image EXIF");
             Integer value = directory == null ? null : directory.getInteger(ExifIFD0Directory.TAG_ORIENTATION);
             if (value == null) return 1;
-            if (value < 1 || value > 8) throw new IOException("Invalid image orientation");
+            // Some editors write Orientation=0. Treat that invalid optional
+            // hint as the encoded pixel order; the JPEG is still decodable.
+            if (value < 1 || value > 8) return 1;
             return value;
         } catch (com.drew.imaging.ImageProcessingException e) {
             throw new IOException("Invalid image metadata", e);

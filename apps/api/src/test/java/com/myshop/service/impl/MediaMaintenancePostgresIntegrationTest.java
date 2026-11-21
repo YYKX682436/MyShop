@@ -7,6 +7,7 @@ import com.myshop.service.MediaFileGuard;
 import com.myshop.service.MediaMaintenanceService;
 import com.myshop.service.PublicImageResolver;
 import com.myshop.service.UploadStorage;
+import net.coobird.thumbnailator.Thumbnails;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -145,6 +146,34 @@ class MediaMaintenancePostgresIntegrationTest {
         assertEquals(result.url(), jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, first));
         assertEquals(result.url(), jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, second));
         service.delete(filename);
+    }
+
+    @Test void largeLegacyJpegCanBeDownscaledAndItsCoverReplaced() throws Exception {
+        String filename = UUID.randomUUID() + ".jpg";
+        BufferedImage image = new BufferedImage(4134, 1280, BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
+            int red = x * 255 / image.getWidth();
+            int green = y * 255 / image.getHeight();
+            int blue = (red + green) / 2;
+            image.setRGB(x, y, (red << 16) | (green << 8) | blue);
+        }
+        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        Thumbnails.of(image).scale(1).outputFormat("jpg").outputQuality(0.99).toOutputStream(encoded);
+        byte[] original = encoded.toByteArray();
+        Files.write(UPLOADS.resolve(filename), original);
+        UUID productId = product("/api/uploads/" + filename, "details stay unchanged");
+
+        assertTrue(service.inspect(filename).optimizable());
+        var result = service.optimize(filename);
+
+        assertEquals(1, result.replacedCovers());
+        assertTrue(result.optimizedSize() < result.originalSize());
+        assertArrayEquals(original, Files.readAllBytes(UPLOADS.resolve(filename)));
+        assertEquals(result.url(), jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, productId));
+        BufferedImage optimized = ImageIO.read(UPLOADS.resolve(result.url().substring(result.url().lastIndexOf('/') + 1)).toFile());
+        assertEquals(2560, optimized.getWidth());
+        assertTrue(Math.abs((double) image.getWidth() / image.getHeight() - (double) optimized.getWidth() / optimized.getHeight()) < 0.01);
+        assertEquals("details stay unchanged", jdbc.queryForObject("SELECT detail_md FROM products WHERE id=?", String.class, productId));
     }
 
     @Test void mixedReferencesAndUnsafePathsAreRejected() throws Exception {

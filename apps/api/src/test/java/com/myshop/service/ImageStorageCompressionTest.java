@@ -12,6 +12,7 @@ import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -74,6 +75,41 @@ class ImageStorageCompressionTest {
         var result = new ImageProcessor().processForStorage(png(alpha), ".png");
         assertEquals(".png", result.extension());
         assertEquals(0x77ff00ff, ImageIO.read(new ByteArrayInputStream(result.bytes())).getRGB(1, 1));
+    }
+
+    @Test void invalidExifOrientationDoesNotBlockUploadAndJpegMetadataIsPreserved() throws Exception {
+        BufferedImage image = new BufferedImage(96, 64, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics = image.createGraphics();
+        graphics.setColor(new Color(35, 115, 210)); graphics.fillRect(0, 0, 96, 64);
+        graphics.setColor(Color.WHITE); graphics.drawString("metadata fixture", 8, 34); graphics.dispose();
+        ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
+        assertTrue(ImageIO.write(image, "jpg", jpeg));
+
+        byte[] exifOrientationZero = {
+                (byte) 0xff, (byte) 0xe1, 0, 34, 'E', 'x', 'i', 'f', 0, 0,
+                'I', 'I', 42, 0, 8, 0, 0, 0, 1, 0,
+                0x12, 1, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0
+        };
+        byte[] icc = new byte[20];
+        byte[] iccHeader = {'I','C','C','_','P','R','O','F','I','L','E',0,1,1};
+        System.arraycopy(iccHeader, 0, icc, 0, iccHeader.length);
+        ByteArrayOutputStream source = new ByteArrayOutputStream();
+        source.write(jpeg.toByteArray(), 0, 2);
+        source.write(exifOrientationZero);
+        var segment = new DataOutputStream(source);
+        segment.writeByte(0xff); segment.writeByte(0xe2); segment.writeShort(icc.length + 2); segment.write(icc);
+        source.write(jpeg.toByteArray(), 2, jpeg.size() - 2);
+        byte[] inputBytes = source.toByteArray();
+
+        UploadStorage storage = new UploadStorage(directory.resolve("metadata-upload").toString());
+        storage.initialize();
+        ImageUploadService service = new ImageUploadService(storage, new ImageProcessor(), "/api/uploads");
+        var uploaded = service.uploadAdminImage(new MockMultipartFile("file", "retouch.jpg", "image/jpeg", inputBytes));
+        assertEquals("metadata_preserved", uploaded.reason());
+        assertEquals(inputBytes.length, uploaded.storedSize());
+        assertArrayEquals(inputBytes, Files.readAllBytes(storage.resolve(uploaded.relativePath())));
+        assertTrue(uploaded.url().endsWith(".jpg"));
     }
 
     private static byte[] png(BufferedImage image) throws Exception {

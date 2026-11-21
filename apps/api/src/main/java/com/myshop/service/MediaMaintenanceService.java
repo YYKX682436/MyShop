@@ -31,7 +31,7 @@ import java.util.regex.Pattern;
 public class MediaMaintenanceService {
     private static final Pattern FILENAME = Pattern.compile("(?i)(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.(?:jpg|jpeg|png|gif|webp|bmp)");
     private static final int MAX_BYTES = 10 * 1024 * 1024;
-    private static final long MAX_OPTIMIZE_PIXELS = 4_000_000;
+    private static final long MAX_OPTIMIZE_PIXELS = 8_000_000;
     private final UploadStorage storage;
     private final MediaFileGuard guard;
     private final ImageProcessor processor;
@@ -337,7 +337,7 @@ public class MediaMaintenanceService {
         String lower = filename.toLowerCase(Locale.ROOT);
         return (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) && dimensions != null
                 && dimensions.width() > 0 && dimensions.height() > 0
-                && dimensions.width() <= ImageProcessor.OUTPUT_DIMENSION && dimensions.height() <= ImageProcessor.OUTPUT_DIMENSION
+                && dimensions.width() <= ImageProcessor.MAX_DIMENSION && dimensions.height() <= ImageProcessor.MAX_DIMENSION
                 && (long) dimensions.width() * dimensions.height() <= MAX_OPTIMIZE_PIXELS
                 && ImageProcessor.eligibleOldJpeg(bytes);
     }
