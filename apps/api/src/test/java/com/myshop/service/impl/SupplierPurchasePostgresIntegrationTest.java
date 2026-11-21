@@ -1174,6 +1174,24 @@ class SupplierPurchasePostgresIntegrationTest {
             var error=assertThrows(com.myshop.exception.BusinessException.class, () -> orderService.createDirectOrder(request,owner,"127.0.0.1",null));
             assertTrue(error.getMessage().contains("零成本货源"), error.getMessage());
         } finally { com.myshop.context.SiteRequestContext.clear(); }
+
+        // Exercise the public order endpoint with a real site host and owner
+        // cookie, so omitting the storefront UI cannot bypass the guard.
+        String prefix=jdbc.queryForObject("select prefix from subsites where id=?",String.class,siteId);
+        int existingOrders=jdbc.queryForObject("select count(*) from orders where subsite_id=?",Integer.class,siteId);
+        var mvc=MockMvcBuilders.webAppContextSetup(webContext)
+                .addFilters(webContext.getBean(com.myshop.config.SubsiteHostFilter.class),security).build();
+        var auth=new jakarta.servlet.http.Cookie("myshop_access_token",jwt.generateToken(owner,"subsite-owner-"+owner,"USER",0));
+        var csrf=new jakarta.servlet.http.Cookie("myshop_csrf","test-csrf-token");
+        var response=mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/orders")
+                .contextPath("/api").header("Host",prefix+".example").header("X-CSRF-Token","test-csrf-token").cookie(auth,csrf)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(json.writeValueAsBytes(request)))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest())
+                .andReturn().getResponse();
+        assertTrue(json.readTree(response.getContentAsString(java.nio.charset.StandardCharsets.UTF_8)).path("message").asText().contains("零成本货源"));
+        assertEquals(existingOrders,jdbc.queryForObject("select count(*) from orders where subsite_id=?",Integer.class,siteId));
+        assertEquals(0,fake.creates.get());
+
         var prepared=checkout.prepare(products.findById(f.product()).orElseThrow(),null,1,BigDecimal.TEN,null);
         assertEquals(0,prepared.quote().totalCost().signum());
     }
