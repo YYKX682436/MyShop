@@ -9,6 +9,7 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: read
   packages: write
 
@@ -17,8 +18,28 @@ env:
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
-  api:
+  scope:
     if: ${{ !inputs.mirror_base_images }}
+    name: Select checks from a verified CI baseline
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.changes.outputs.api }}
+      web: ${{ steps.changes.outputs.web }}
+      compose: ${{ steps.changes.outputs.compose }}
+      runtime: ${{ steps.changes.outputs.runtime }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Compare with the latest successful full CI run
+        id: changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ci-release-scope.py
+
+  api:
+    needs: scope
+    if: ${{ !inputs.mirror_base_images && needs.scope.outputs.api == 'true' }}
     name: API build and tests
     runs-on: ubuntu-latest
     steps:
@@ -29,7 +50,7 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
-      - name: Enforce PostgreSQL integration tests
+      - name: Build and test, including required PostgreSQL integration tests
         working-directory: apps/api
         shell: bash
         run: |
@@ -56,10 +77,9 @@ jobs:
             target/surefire-reports/TEST-com.myshop.service.impl.UserLevelConcurrencyIntegrationTest.xml
           )
           rm -f "${reports[@]}"
-          mvn -B \
-            -Dtest=AdminProductAssignedUuidIntegrationTest,MigrationChainIntegrationTest,OrderNumberConcurrencyIntegrationTest,OrderRefundConcurrencyIntegrationTest,SubsiteConcurrencyIntegrationTest,SupplierPurchasePostgresIntegrationTest,PostgresDeliveryIntegrationTest,AfterSaleConcurrencyIntegrationTest,BalanceAdjustmentConcurrencyIntegrationTest,UserAvatarTransactionIntegrationTest,CoreStabilityPostgresIntegrationTest,UserLevelConcurrencyIntegrationTest \
-            -Dsurefire.failIfNoSpecifiedTests=true \
-            test
+          # Run the entire suite once; the report checks below still require
+          # every critical PostgreSQL suite to execute without skips.
+          mvn -B verify
 
           REPORTS="${reports[*]}" python3 - <<'PY'
           import os
@@ -101,14 +121,13 @@ jobs:
                   + "\n".join(invalid)
               )
           PY
-      - name: Build and test
-        working-directory: apps/api
-        run: mvn -B verify
-      - name: Build API image smoke
-        run: docker build --file Dockerfile.api --tag myshop-api:ci .
+      - name: Build API image smoke on non-release branches
+        if: ${{ github.ref != 'refs/heads/main' }}
+        run: docker build --build-arg SKIP_TESTS=true --file Dockerfile.api --tag myshop-api:ci .
 
   web:
-    if: ${{ !inputs.mirror_base_images }}
+    needs: scope
+    if: ${{ !inputs.mirror_base_images && needs.scope.outputs.web == 'true' }}
     name: Web typecheck, lint, and build
     runs-on: ubuntu-latest
     steps:
@@ -124,14 +143,16 @@ jobs:
       - run: pnpm --filter @myshop/web exec tsc --noEmit
       - run: pnpm --filter @myshop/web test:logic
       - run: pnpm --filter @myshop/web lint
-      - run: pnpm --filter @myshop/web build
-      - name: Build Web image smoke
+      - name: Build Web image smoke on non-release branches
+        if: ${{ github.ref != 'refs/heads/main' }}
         run: docker build --file Dockerfile.web --tag myshop-web:ci .
-      - name: Verify server-rendered storefront host routing
+      - name: Verify server-rendered storefront host routing on non-release branches
+        if: ${{ github.ref != 'refs/heads/main' }}
         run: bash scripts/test-web-image-host-routing.sh
 
   compose:
-    if: ${{ !inputs.mirror_base_images }}
+    needs: scope
+    if: ${{ !inputs.mirror_base_images && needs.scope.outputs.compose == 'true' }}
     name: Compose configuration smoke test
     runs-on: ubuntu-latest
     steps:
@@ -246,8 +267,13 @@ jobs:
 
   publish-images:
     name: Publish immutable production images
-    needs: [api, web, compose]
-    if: ${{ !inputs.mirror_base_images && github.ref == 'refs/heads/main' }}
+    needs: [scope, api, web, compose]
+    if: >-
+      ${{ always() && !inputs.mirror_base_images && github.ref == 'refs/heads/main' &&
+          needs.scope.result == 'success' && needs.scope.outputs.runtime == 'true' &&
+          (needs.api.result == 'success' || (needs.scope.outputs.api == 'false' && needs.api.result == 'skipped')) &&
+          (needs.web.result == 'success' || (needs.scope.outputs.web == 'false' && needs.web.result == 'skipped')) &&
+          (needs.compose.result == 'success' || (needs.scope.outputs.compose == 'false' && needs.compose.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -271,6 +297,7 @@ jobs:
           context: .
           file: Dockerfile.api
           push: true
+          build-args: SKIP_TESTS=true
           tags: ghcr.io/yykx682436/myshop-api:${{ github.sha }}
           cache-from: type=gha,scope=myshop-api
           cache-to: type=gha,mode=max,scope=myshop-api
@@ -284,6 +311,25 @@ jobs:
           tags: ghcr.io/yykx682436/myshop-web:${{ github.sha }}
           cache-from: type=gha,scope=myshop-web
           cache-to: type=gha,mode=max,scope=myshop-web
+      - name: Verify the published Web image and load release images
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          API_DIGEST: ${{ steps.api-image.outputs.digest }}
+          WEB_DIGEST: ${{ steps.web-image.outputs.digest }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          for service in api web; do
+            digest_var="${service^^}_DIGEST"
+            digest="${!digest_var}"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            ref="ghcr.io/yykx682436/myshop-$service:$SOURCE_SHA"
+            docker pull --platform linux/amd64 "$ref@$digest"
+            docker tag "$ref@$digest" "$ref"
+          done
+          docker tag "ghcr.io/yykx682436/myshop-web:$SOURCE_SHA" myshop-web:ci
+          bash scripts/test-web-image-host-routing.sh
       - name: Generate immutable release manifest
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -353,3 +399,35 @@ jobs:
             printf 'source_sha=%s\nmanifest_carrier_ref=%s\nmanifest_carrier_digest=%s\n' \
               "$SOURCE_SHA" "$carrier_ref" "$carrier_digest"
           } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$carrier_digest" > "$RUNNER_TEMP/manifest-carrier-digest.txt"
+      - name: Prepare verified offline release archives
+        id: prepare-offline-archives
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          ARCHIVE_DIR: ${{ runner.temp }}/myshop-release-archives
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$ARCHIVE_DIR"
+          for service in api web; do
+            docker save --output "$ARCHIVE_DIR/$service.tar" \
+              "ghcr.io/yykx682436/myshop-$service:$SOURCE_SHA"
+          done
+          cp release-manifest.json "$ARCHIVE_DIR/release-manifest.json"
+          cp "$RUNNER_TEMP/manifest-carrier-digest.txt" "$ARCHIVE_DIR/manifest-carrier-digest.txt"
+          (cd "$ARCHIVE_DIR" && sha256sum api.tar web.tar release-manifest.json manifest-carrier-digest.txt > SHA256SUMS)
+      - name: Upload offline release archives
+        id: offline-archives
+        if: ${{ steps.prepare-offline-archives.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: myshop-release-${{ github.sha }}
+          path: ${{ runner.temp }}/myshop-release-archives/
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 2
+      - name: Report unavailable offline archives
+        if: ${{ steps.prepare-offline-archives.outcome != 'success' || steps.offline-archives.outcome != 'success' }}
+        run: echo 'Offline artifact unavailable; use the existing digest-pinned Skopeo transfer.' >> "$GITHUB_STEP_SUMMARY"

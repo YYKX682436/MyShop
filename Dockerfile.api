@@ -4,7 +4,8 @@ WORKDIR /build
 COPY apps/api/pom.xml apps/api/pom.xml
 RUN mvn -B -f apps/api/pom.xml dependency:go-offline
 COPY apps/api/src apps/api/src
-RUN mvn -B -f apps/api/pom.xml package
+ARG SKIP_TESTS=false
+RUN mvn -B -f apps/api/pom.xml -DskipTests=${SKIP_TESTS} package
 
 # Keep the runtime distribution explicit: this image uses Ubuntu Noble, so
 # user creation below uses Debian/Ubuntu's documented adduser/addgroup flags.

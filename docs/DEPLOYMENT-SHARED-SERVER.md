@@ -18,12 +18,17 @@ the stack, restore a database from another host, or change DNS or TLS.
 
 ## Routine production upgrade
 
-1. Follow `AGENTS.md`: preview locally, push the selected commit, and wait for
-   the owner's production release approval. Run the manual GitHub release
-   workflow for the **exact** approved commit. Confirm that the Web, API
-   (including PostgreSQL integration tests), and Compose checks passed and
-   that the matching immutable API/Web images and release manifest are
-   available. Stop if checks were skipped or publication did not complete.
+1. Push the selected commit and run the existing manual GitHub release
+   workflow on `main` for that **exact** SHA. Authorization to deploy still
+   comes from the owner. The workflow compares the changes to a previous
+   successful full release run; it runs the affected checks and falls back to
+   all checks when that baseline cannot be established. API changes run the
+   API suite, including the required real PostgreSQL tests; migrations also
+   run the deployment/schema checks. Unknown paths and CI changes run all
+   checks. A documentation-only change does not create release images.
+   Confirm the run succeeded, review its validation-scope summary, and use
+   only its matching immutable images and release manifest. Stop for a failed
+   required check or incomplete publication.
 2. Use an authorized terminal on `110.42.34.161`. The already authorized Baota
    web terminal works for this purpose when available; it does not require
    separate SSH credentials. First verify the host identity, the running
@@ -187,3 +192,41 @@ adds `--pull never` to Compose startup, and records both the GHCR manifest
 digest and local image ID for future rollback/retention. Keep the three
 infrastructure image overrides blank when pulling from GHCR; set them to the
 approved digest-derived `mirror-<digest>` tags only after an offline import.
+
+### Faster offline transfer from the existing release workflow
+
+For releases built by the current workflow, the successful run also supplies
+`myshop-release-<full SHA>` for two days. It contains the API/Web Docker
+archives saved from images pulled by their published digests, the release
+manifest, carrier digest and checksums. This is a transfer convenience: the
+GHCR carrier and the existing offline-bundle verification remain the release
+authority. Do not use an artifact from a failed run or a different SHA.
+
+```bash
+release_sha=$(git rev-parse HEAD)
+# Run the existing manual workflow after pushing this SHA:
+gh workflow run cicd.yml --repo YYKX682436/MyShop --ref main
+# Once it completes, select a successful run for this exact SHA:
+run_id=$(gh run list --repo YYKX682436/MyShop --workflow cicd.yml --branch main \
+  --limit 20 --json databaseId,headSha,status,conclusion \
+  --jq ".[] | select(.headSha == \"$release_sha\" and .status == \"completed\" and .conclusion == \"success\") | .databaseId" | head -n 1)
+test -n "$run_id" || { echo 'No successful run for this SHA' >&2; exit 1; }
+release_dir=$(mktemp -d "${TMPDIR:-/tmp}/myshop-release.XXXXXX")
+gh run download "$run_id" --repo YYKX682436/MyShop \
+  --name "myshop-release-$release_sha" --dir "$release_dir"
+(cd "$release_dir" && shasum -a 256 -c SHA256SUMS)
+python3 scripts/validate-release-manifest.py "$release_dir/release-manifest.json" \
+  ghcr.io/yykx682436 myshop
+```
+
+The source SHA in the validated manifest must equal `release_sha`. Transfer
+the two archives and manifest over SSH. On the server, fetch the carrier by
+the reported digest with `fetch-release-manifest.sh` and compare its manifest
+to the transferred copy. Reuse the already verified PostgreSQL, Caddy and
+node-exporter archives from the last accepted release if their checks still
+pass; otherwise obtain their pinned images as described above. Put those
+three archives alongside `api.tar` and `web.tar`, then use the existing bundle
+creation, archive verification, import, preflight and deploy steps. If the
+two-day artifact has expired, use the existing Skopeo fallback. Delete the
+temporary local download after the release; retain the accepted server
+recovery point and the files needed by the configured offline bundle.

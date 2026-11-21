@@ -200,9 +200,8 @@ else:
         result, _ = self.run_fetch()
         self.assertNotEqual(result.returncode, 0)
 
-    def test_workflow_publishes_only_ghcr_manifest_carrier(self):
+    def test_workflow_keeps_the_pinned_carrier_with_checked_offline_archives(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertNotIn("actions/upload-artifact", workflow)
         self.assertIn('DOCKER_BUILD_RECORD_UPLOAD: "false"', workflow)
         self.assertIn("myshop-release-manifest:${SOURCE_SHA}", workflow)
         self.assertIn("bash scripts/fetch-release-manifest.sh", workflow)
@@ -213,6 +212,10 @@ else:
         self.assertIn('manifest_carrier_ref=%s', workflow)
         self.assertIn("ghcr.io/yykx682436/myshop-api:${{ github.sha }}", workflow)
         self.assertIn("ghcr.io/yykx682436/myshop-web:${{ github.sha }}", workflow)
+        self.assertIn('docker pull --platform linux/amd64 "$ref@$digest"', workflow)
+        self.assertIn("sha256sum api.tar web.tar release-manifest.json manifest-carrier-digest.txt", workflow)
+        self.assertIn("name: myshop-release-${{ github.sha }}", workflow)
+        self.assertIn("retention-days: 2", workflow)
 
     def test_validator_rejects_nonapproved_registry_and_unknown_fields(self):
         manifest_path = self.root / "manifest.json"
