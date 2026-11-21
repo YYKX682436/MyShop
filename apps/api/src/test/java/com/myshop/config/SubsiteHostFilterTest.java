@@ -29,9 +29,11 @@ class SubsiteHostFilterTest {
         SubsiteHostFilter filter = new SubsiteHostFilter(sites, "https://mc.mc520.top");
         for (String host : new String[]{"unknown.mc520.top", "a.b.mc520.top", "mc520.top", "evil.test", "mc.mc520.top.evil.test"}) {
             MockHttpServletRequest request = new MockHttpServletRequest(); request.addHeader("Host", host);
+            request.addHeader("X-Forwarded-Host", "mc.mc520.top");
             MockHttpServletResponse response = new MockHttpServletResponse();
             MockFilterChain chain = new MockFilterChain(); filter.doFilter(request, response, chain);
             assertEquals(404, response.getStatus(), host); assertNull(chain.getRequest());
+            assertFalse(response.isCommitted(), "do not trigger an authenticated servlet error dispatch");
         }
     }
 }

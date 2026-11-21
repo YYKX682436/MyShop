@@ -37,9 +37,9 @@ public class SubsiteHostFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         try {
             String raw = request.getHeader("Host");
-            if (raw == null) { response.sendError(400); return; }
+            if (raw == null) { response.setStatus(400); return; }
             String host = raw.toLowerCase(Locale.ROOT);
-            if (!HOST.matcher(host).matches()) { response.sendError(400); return; }
+            if (!HOST.matcher(host).matches()) { response.setStatus(400); return; }
             int port = host.indexOf(':');
             if (port >= 0) host = host.substring(0, port);
             boolean health = (host.equals("127.0.0.1") || host.equals("localhost"))
@@ -47,11 +47,11 @@ public class SubsiteHostFilter extends OncePerRequestFilter {
                     && request.getRequestURI().equals(request.getContextPath() + "/site/config");
             if (host.equals(mainHost) || health) { chain.doFilter(request, response); return; }
             String suffix = domain == null ? "" : "." + domain;
-            if (suffix.isEmpty() || !host.endsWith(suffix)) { response.sendError(404); return; }
+            if (suffix.isEmpty() || !host.endsWith(suffix)) { response.setStatus(404); return; }
             String prefix = host.substring(0, host.length() - suffix.length());
-            if (!prefix.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) { response.sendError(404); return; }
+            if (!prefix.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) { response.setStatus(404); return; }
             Subsite site = sites.findByPrefix(prefix).orElse(null);
-            if (site == null) { response.sendError(404); return; }
+            if (site == null) { response.setStatus(404); return; }
             SiteRequestContext.set(site);
             chain.doFilter(request, response);
         } finally { SiteRequestContext.clear(); }

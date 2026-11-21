@@ -19,7 +19,7 @@ import type {
 } from "@/types"
 import { cookies } from "next/headers"
 import { requestSiteUrl } from "@/lib/request-site"
-import { getServerHttpResponse } from "@/lib/server-http"
+import { getServerHttpResponse, ServerApiError } from "@/lib/server-http"
 
 // 后端直连地址（Docker 内部网络或本地开发）
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8083"
@@ -39,7 +39,7 @@ async function serverRequest<T>(path: string, accessToken?: string): Promise<T> 
   const res = await getServerHttpResponse(`${BACKEND_URL}/api${path}`, headers)
 
   if (res.status < 200 || res.status >= 300) {
-    throw new Error(`Server API error: ${res.status} ${res.statusText} [${path}]`)
+    throw new ServerApiError(res.status, res.statusText, path)
   }
 
   const body: ApiResponse<T> = JSON.parse(res.body)

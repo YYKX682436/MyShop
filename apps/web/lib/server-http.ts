@@ -7,6 +7,15 @@ type ServerHttpResponse = {
   body: string
 }
 
+export class ServerApiError extends Error {
+  readonly status: number
+
+  constructor(status: number, statusText: string, path: string) {
+    super(`Server API error: ${status} ${statusText} [${path}]`)
+    this.status = status
+  }
+}
+
 /** Send the validated storefront Host to the internal API without rewriting it. */
 export function getServerHttpResponse(url: string, headers: Record<string, string>): Promise<ServerHttpResponse> {
   const target = new URL(url)

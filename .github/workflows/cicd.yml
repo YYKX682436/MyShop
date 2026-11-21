@@ -127,6 +127,8 @@ jobs:
       - run: pnpm --filter @myshop/web build
       - name: Build Web image smoke
         run: docker build --file Dockerfile.web --tag myshop-web:ci .
+      - name: Verify server-rendered storefront host routing
+        run: bash scripts/test-web-image-host-routing.sh
 
   compose:
     if: ${{ !inputs.mirror_base_images }}

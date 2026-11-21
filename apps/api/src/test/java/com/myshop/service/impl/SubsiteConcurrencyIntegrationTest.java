@@ -74,6 +74,14 @@ class SubsiteConcurrencyIntegrationTest {
                 id,name,name+"@example.com",Math.abs(id.getLeastSignificantBits() % 1000000000L)+1000000000L,level);
         return id;
     }
+    @Test void unknownHostRemainsNotFoundDespiteForwardedMainHost() throws Exception {
+        var mvc=org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(webContext)
+                .addFilters(hostFilter,security).build();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/site/config")
+                .contextPath("/api").header("Host",tag+"unknown.mc520.top")
+                .header("X-Forwarded-Host","mc.mc520.top"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+    }
     @Test void duplicateRequestsChargeExactlyOnce() throws Exception {
         UUID owner=user("own"); String prefix=tag+"same";
         var request=new SubsiteManagementService.OpenRequest(null,prefix,"测试站");
