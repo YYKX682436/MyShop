@@ -45,7 +45,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     private static final List<String> PUBLIC_KEYS = List.of(
             "site_name", "site_slogan", "site_description", "logo_url", "favicon_url",
             "announcement_enabled", "announcement", "popup_enabled", "popup_content",
-            "contact_email", "contact_items",
+            "contact_email", "contact_items", "customer_service",
             "maintenance_enabled", "maintenance_message", "footer_text", "custom_css"
     );
 
@@ -56,7 +56,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             // 公告 / 弹窗
             "announcement_enabled", "announcement", "popup_enabled", "popup_content",
             // 联系方式
-            "contact_email", "contact_items",
+            "contact_email", "contact_items", "customer_service",
             // 维护模式
             "maintenance_enabled", "maintenance_message",
             // 页脚
@@ -90,7 +90,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
                         log.error("Invalid stored contact_items; exposing an empty array", exception);
                         result.put(key, List.of());
                     }
-                } else if ("true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val)) {
+                } else if (!"customer_service".equals(key) && ("true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val))) {
                     result.put(key, Boolean.parseBoolean(val));
                 } else {
                     result.put(key, val);
@@ -118,10 +118,10 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             result.put("logo_url", subsite.getLogoUrl());
             result.put("announcement", subsite.getAnnouncement());
             result.put("announcement_enabled", subsite.getAnnouncement() != null && !subsite.getAnnouncement().isBlank());
-            result.put("customer_service", subsite.getCustomerService());
             result.put("popup_enabled", false);
             result.put("popup_content", "");
             if (subsite.getCustomerService() != null && !subsite.getCustomerService().isBlank()) {
+                result.put("customer_service", subsite.getCustomerService());
                 result.put("contact_email", null);
                 result.put("contact_items", List.of());
             }
@@ -132,6 +132,9 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @Override
     @Transactional(readOnly = true)
     public boolean hasMainSiteContact() {
+        String service = siteConfigRepository.findByConfigKey("customer_service")
+                .map(SiteConfig::getConfigValue).orElse(null);
+        if (validCustomerService(service)) return true;
         String email = siteConfigRepository.findByConfigKey("contact_email")
                 .map(SiteConfig::getConfigValue).orElse("");
         if (email != null && email.trim().matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) return true;
@@ -171,6 +174,11 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             if ("contact_items".equals(key)) {
                 value = serializeContactItems(value);
             }
+            if ("customer_service".equals(key) && value != null) {
+                value = value.trim();
+                if (!value.isEmpty() && !validCustomerService(value))
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "客服账号不能超过 500 个字符或包含控制字符");
+            }
             SiteConfig config = siteConfigRepository.findByConfigKey(key)
                     .orElseGet(() -> {
                         SiteConfig c = new SiteConfig();
@@ -180,6 +188,11 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             config.setConfigValue(value);
             siteConfigRepository.save(config);
         }
+    }
+
+    private boolean validCustomerService(String value) {
+        return value != null && !value.isBlank() && value.codePointCount(0, value.length()) <= 500
+                && value.codePoints().noneMatch(Character::isISOControl);
     }
 
     private String serializeContactItems(String value) {

@@ -83,6 +83,41 @@ class SiteConfigServiceImplTest {
     }
 
     @Test
+    void textSupportIsAvailableOnMainAndInheritedUntilSubsiteOverridesIt() {
+        when(repository.findByConfigKey(anyString())).thenAnswer(invocation ->
+                "customer_service".equals(invocation.getArgument(0))
+                        ? Optional.of(configValue("客服：demo-account")) : Optional.empty());
+        assertTrue(service.hasMainSiteContact());
+        assertEquals("客服：demo-account", service.getPublicConfig().get("customer_service"));
+        var site = new com.myshop.entity.Subsite();
+        site.setName("分站");
+        com.myshop.context.SiteRequestContext.set(site);
+        try {
+            assertEquals("客服：demo-account", service.getPublicConfig().get("customer_service"));
+            site.setCustomerService("分站客服");
+            assertEquals("分站客服", service.getPublicConfig().get("customer_service"));
+        } finally { com.myshop.context.SiteRequestContext.clear(); }
+    }
+
+    @Test
+    void rejectsInvalidTextSupport() {
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("customer_service", "客服\u0001账号"))));
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("customer_service", "a".repeat(501)))));
+    }
+
+    @Test
+    void invalidStoredTextDoesNotEnableGuestSupportAndBooleanLikeTextStaysText() {
+        when(repository.findByConfigKey(anyString())).thenAnswer(invocation ->
+                "customer_service".equals(invocation.getArgument(0))
+                        ? Optional.of(configValue("客服\u0001账号")) : Optional.empty());
+        assertFalse(service.hasMainSiteContact());
+        when(repository.findByConfigKey("customer_service")).thenReturn(Optional.of(configValue("true")));
+        assertEquals("true", service.getPublicConfig().get("customer_service"));
+    }
+
+    @Test
     void acceptsZeroContactItemsAndStoresCanonicalJson() {
         saveContactItems("[]");
     }

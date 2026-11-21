@@ -1746,13 +1746,14 @@ class PostgresDeliveryIntegrationTest {
         configurePaymentCreation("guest-site-trade");
         var site=new com.myshop.entity.Subsite(); site.setId(siteId); site.setOwnerId(owner); site.setPrefix(prefix); site.setEnabled(true);
         jdbcTemplate.update("insert into site_configs(config_key,config_value,config_group) values ('contact_email','','basic') on conflict(config_key) do update set config_value=''");
+        jdbcTemplate.update("insert into site_configs(config_key,config_value,config_group) values ('customer_service','','basic') on conflict(config_key) do update set config_value=''");
         jdbcTemplate.update("update site_configs set config_value='[]' where config_key='contact_items'");
         com.myshop.context.SiteRequestContext.set(site);
         try {
             Map<String,Object> request=directOrderRequest(product,channel);
             BusinessException unavailable=assertThrows(BusinessException.class,()->orderService.createDirectOrder(request,null,"127.0.0.1","guest-token"));
             assertTrue(unavailable.getMessage().contains("售后联系方式"));
-            jdbcTemplate.update("update site_configs set config_value='support@example.com' where config_key='contact_email'");
+            jdbcTemplate.update("update site_configs set config_value='客服：demo-account' where config_key='customer_service'");
             var result=orderService.createDirectOrder(request,null,"127.0.0.1","guest-token");
             UUID orderId=(UUID)((Map<?,?>)result.get("order")).get("id");
             assertEquals(siteId,scalar("select subsite_id from orders where id=?",UUID.class,orderId));
@@ -1775,6 +1776,7 @@ class PostgresDeliveryIntegrationTest {
         } finally {
             com.myshop.context.SiteRequestContext.clear();
             jdbcTemplate.update("update site_configs set config_value='' where config_key='contact_email'");
+            jdbcTemplate.update("update site_configs set config_value='' where config_key='customer_service'");
             jdbcTemplate.update("update subsite_settings set supply_level_id=null where id=1");
         }
     }
