@@ -34,10 +34,22 @@ public class SupplierCheckout {
     private final ProductSpecRepository specs;
     @Value("${supplier.purchase-enabled:false}") private boolean purchaseEnabled;
 
+    public void validateVisibleBindings(Product product, List<UUID> visibleSpecIds) {
+        var rows=mappings.findByProductId(product.getId());
+        if (product.isSpecEnabled()) {
+            if (visibleSpecIds.stream().anyMatch(id -> rows.stream().noneMatch(row -> id.equals(row.getSpecId()))))
+                throw new SupplierException("MAPPING","有可售规格尚未关联货源，请先配置");
+        } else if (rows.stream().noneMatch(row -> row.getSpecId()==null)) {
+            throw new SupplierException("MAPPING","商品尚未关联货源，请先配置");
+        }
+    }
+
     public void validateActivation(Product product) {
         if (!purchaseEnabled) throw new SupplierException("DISABLED","货源商品暂未开放销售");
         var rows=mappings.findByProductId(product.getId());
         if (rows.isEmpty()) throw new SupplierException("MAPPING","货源商品映射不存在");
+        validateVisibleBindings(product,specs.findByProductIdAndIsDeletedOrderBySortOrderAsc(product.getId(),0).stream()
+                .filter(com.myshop.entity.ProductSpec::isVisible).map(com.myshop.entity.ProductSpec::getId).toList());
         for (var row:rows) {
             var runtime=suppliers.runtime(row.getAccountId(),true);
             var fields=runtime.provider().customerFields(row.getSnapshot());

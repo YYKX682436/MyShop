@@ -23,6 +23,11 @@ public interface SupplierPurchaseRepository extends JpaRepository<SupplierPurcha
             "(select op.id from SupplierAftercareOperation op where op.purchaseId=p.id " +
             "and op.status in ('INTENT','SUBMITTING','UNKNOWN','ACCEPTED'))) ")
     boolean hasUnfinishedForBinding(@Param("productId") UUID productId, @Param("specId") UUID specId);
+    @Query("select (count(p) > 0) from SupplierPurchase p, OrderItem i where p.orderItemId=i.id " +
+            "and i.productId=:productId and (p.status not in ('COMPLETED','WITHDRAWN','REFUNDED') or exists " +
+            "(select op.id from SupplierAftercareOperation op where op.purchaseId=p.id " +
+            "and op.status in ('INTENT','SUBMITTING','UNKNOWN','ACCEPTED'))) ")
+    boolean hasUnfinishedForProduct(@Param("productId") UUID productId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select p from SupplierPurchase p where p.id=:id")
     Optional<SupplierPurchase> findForUpdate(@Param("id") UUID id);

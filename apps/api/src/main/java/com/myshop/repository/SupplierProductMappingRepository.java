@@ -20,6 +20,10 @@ public interface SupplierProductMappingRepository extends JpaRepository<Supplier
     java.util.Optional<UUID> findLocalAccount(@Param("productId") UUID productId, @Param("specId") UUID specId);
     List<SupplierProductMapping> findByProductIdIn(List<UUID> productIds);
     List<SupplierProductMapping> findByProductId(UUID productId);
+    @Query("select distinct m.accountId from SupplierProductMapping m where m.productId=:productId")
+    List<UUID> findAccountsByProductId(@Param("productId") UUID productId);
+    @Query("select m.accountId, m.productId from SupplierProductMapping m where m.id=:id")
+    List<Object[]> findCoordinates(@Param("id") UUID id);
     @Query("select m.accountId, m.remoteGoodsId from SupplierProductMapping m, SupplierAccount a " +
            "where m.accountId = a.id and a.enabled = true group by m.accountId, m.remoteGoodsId " +
            "order by min(m.lastAttemptAt) asc")

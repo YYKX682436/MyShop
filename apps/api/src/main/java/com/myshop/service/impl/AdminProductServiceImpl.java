@@ -95,6 +95,8 @@ public class AdminProductServiceImpl implements AdminProductService {
     private final com.myshop.service.ManualStockService manualStockService;
     private SupplierCheckout supplierCheckout;
     @Autowired public void setSupplierCheckout(SupplierCheckout value) { this.supplierCheckout=value; }
+    private com.myshop.supplier.SupplierCatalogTransaction supplierCatalog;
+    @Autowired public void setSupplierCatalog(com.myshop.supplier.SupplierCatalogTransaction value) { this.supplierCatalog=value; }
 
     @Override
     @Transactional(readOnly = true)
@@ -337,10 +339,7 @@ public class AdminProductServiceImpl implements AdminProductService {
     @Override
     @Transactional
     public void deleteProduct(UUID id) {
-        Product product = productRepository.findByIdForUpdate(id)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
-        product.setIsDeleted(1);
-        productRepository.save(product);
+        supplierCatalog.deleteProduct(id);
     }
 
     @Override
@@ -547,7 +546,14 @@ public class AdminProductServiceImpl implements AdminProductService {
         if ((creating || product.getStockMode() != StockMode.SUPPLIER) && request.stockMode() == StockMode.SUPPLIER) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品只能通过货源管理导入");
         }
-        if (!creating && product.getStockMode() == StockMode.SUPPLIER) {
+        boolean leavingSupplier=!creating && product.getStockMode()==StockMode.SUPPLIER
+                && request.stockMode()!=null && request.stockMode()!=StockMode.SUPPLIER;
+        if (leavingSupplier) {
+            if (request.isEnabled()==null ? product.isEnabled() : request.isEnabled())
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "切换库存前请先下架商品");
+            supplierCatalog.requireLocalConversionSafe(product.getId());
+        }
+        if (!creating && product.getStockMode() == StockMode.SUPPLIER && !leavingSupplier) {
             if (Boolean.TRUE.equals(request.isEnabled()) && !product.isEnabled()) {
                 if (supplierCheckout==null) throw new BusinessException(ErrorCode.BAD_REQUEST, "货源商品暂未开放销售");
                 supplierCheckout.validateActivation(product);
@@ -561,22 +567,24 @@ public class AdminProductServiceImpl implements AdminProductService {
                 Set<UUID> currentIds = existingSpecs.stream().map(ProductSpec::getId).collect(Collectors.toSet());
                 Set<UUID> requestedIds = request.specs().stream().filter(Objects::nonNull)
                         .map(AdminProductSpecRequest::id).collect(Collectors.toSet());
-                if (requestedIds.contains(null) || !currentIds.equals(requestedIds)
+                if (requestedIds.contains(null) || !requestedIds.containsAll(currentIds)
                         || requestedIds.size() != request.specs().size()) {
-                    throw new BusinessException(ErrorCode.BAD_REQUEST, "货源规格由上游同步，不能增删规格");
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "已有货源规格不能直接删除，请先处理关联");
                 }
+                if (requestedIds.size()>currentIds.size() && (request.isEnabled()==null ? product.isEnabled() : request.isEnabled()))
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "添加规格前请先下架商品并配置货源");
             }
         }
         boolean specEnabled = request.specEnabled() != null
                 ? request.specEnabled() : (!creating && product.isSpecEnabled());
         List<PreparedSpec> preparedSpecs = prepareSpecs(request.specs(), existingSpecs, specEnabled, creating);
-        if (!creating && product.getStockMode() == StockMode.SUPPLIER) {
+        if (!creating && product.getStockMode() == StockMode.SUPPLIER && !leavingSupplier) {
             preparedSpecs = preparedSpecs.stream().map(s -> new PreparedSpec(s.request(), s.id(), s.existing(),
-                    s.name(), s.existing().getCostPrice(), s.retailPrice())).toList();
+                    s.name(), s.existing()==null ? s.costPrice() : s.existing().getCostPrice(), s.retailPrice())).toList();
         }
         BigDecimal retailPrice = resolveRetailPrice(product, request, preparedSpecs, specEnabled, creating);
         BigDecimal costPrice = resolveCostPrice(product, request, specEnabled, creating);
-        if (!creating && product.getStockMode() == StockMode.SUPPLIER && !specEnabled) costPrice = product.getCostPrice();
+        if (!creating && product.getStockMode() == StockMode.SUPPLIER && !leavingSupplier && !specEnabled) costPrice = product.getCostPrice();
         if (specEnabled) costPrice = null;
 
         String title = ProductRules.normalizeProductTitle(request.title());

@@ -4,6 +4,8 @@ import com.myshop.entity.SupplierAccount;
 import com.myshop.entity.SupplierProductMapping;
 import com.myshop.repository.SupplierAccountRepository;
 import com.myshop.repository.SupplierProductMappingRepository;
+import com.myshop.repository.ProductRepository;
+import com.myshop.repository.ProductSpecRepository;
 import com.myshop.service.PaymentUrlService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -24,6 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SupplierService {
     private final SupplierAccountRepository accounts;
     private final SupplierProductMappingRepository mappings;
+    private final ProductRepository products;
+    private final ProductSpecRepository specs;
     private final SupplierSecretCipher cipher;
     private final List<SupplierProvider> providers;
     private final SupplierCatalogTransaction transactions;
@@ -42,7 +46,8 @@ public class SupplierService {
     public record MappingView(UUID id,UUID accountId,String remoteGoodsId,String remoteSku,UUID productId,UUID specId,
                               int goodsType,int skuType,@com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) java.math.BigDecimal cost,long stock,int goodsStatus,int skuStatus,
                               int multiple,int minQuantity,int maxQuantity,LocalDateTime lastSyncedAt,
-                              LocalDateTime lastAttemptAt,String syncError) {}
+                              LocalDateTime lastAttemptAt,String syncError,String remoteGoodsName,String remoteSkuName,
+                              String productName,String specName,String localState) {}
 
     @Transactional(readOnly=true)
     public List<AccountView> listAccounts() { return accounts.findAll().stream().map(this::view).toList(); }
@@ -98,14 +103,17 @@ public class SupplierService {
         if (!confirmed || productId==null) throw invalid("请选择商品并确认同步商品资料");
         transactions.syncPresentation(accountId,productId,detail(accountId,goodsId));
     }
+    public void unbind(UUID accountId,UUID mappingId,boolean confirmed) {
+        transactions.unbind(accountId,mappingId,confirmed);
+    }
     @Transactional(readOnly=true)
     public List<MappingView> mappings(UUID id) {
         accounts.findById(id).orElseThrow(() -> invalid("货源账号不存在"));
-        return mappings.findByAccountIdOrderByRemoteGoodsIdAscRemoteSkuAsc(id).stream().map(this::view).toList();
+        return views(mappings.findByAccountIdOrderByRemoteGoodsIdAscRemoteSkuAsc(id));
     }
     @Transactional(readOnly=true)
     public List<MappingView> productMappings(UUID productId) {
-        return mappings.findByProductId(productId).stream().map(this::view).toList();
+        return views(mappings.findByProductId(productId));
     }
     public void sync(UUID accountId,String goodsId) {
         LocalDateTime attempt=transactions.markAttempt(accountId,goodsId);
@@ -184,10 +192,43 @@ public class SupplierService {
         }
         return new AccountView(a.getId(),a.getName(),a.getProviderType(),a.getBaseUrl(),a.getAppId(),"••••••••",a.isEnabled(),callback);
     }
-    private MappingView view(SupplierProductMapping m) {
+    private List<MappingView> views(List<SupplierProductMapping> rows) {
+        var localProducts=products.findAllById(rows.stream().map(SupplierProductMapping::getProductId).distinct().toList())
+                .stream().collect(java.util.stream.Collectors.toMap(com.myshop.entity.Product::getId,p -> p));
+        var localSpecs=specs.findAllById(rows.stream().map(SupplierProductMapping::getSpecId).filter(java.util.Objects::nonNull).distinct().toList())
+                .stream().collect(java.util.stream.Collectors.toMap(com.myshop.entity.ProductSpec::getId,s -> s));
+        return rows.stream().map(m -> {
+            var p=localProducts.get(m.getProductId()); var s=localSpecs.get(m.getSpecId());
+            String state=p==null || p.getIsDeleted()!=0 ? "PRODUCT_DELETED" :
+                    m.getSpecId()!=null && (s==null || s.getIsDeleted()!=0 || !s.getProductId().equals(m.getProductId())) ? "SPEC_DELETED" : null;
+            String name=m.getSnapshot().path("name").asText("");
+            return view(m,name.isBlank() ? "上游商品 "+m.getRemoteGoodsId() : name,skuName(m),
+                    p==null ? "本地商品不存在" : p.getTitle(),s==null ? null : s.getName(),state);
+        }).toList();
+    }
+    private String skuName(SupplierProductMapping m) {
+        if (m.getRemoteSku().isBlank()) return "单规格";
+        var snapshot=m.getSnapshot();
+        for (var item:snapshot.path("goodsSku").path("details")) {
+            if (m.getRemoteSku().equals(item.path("sku").asText())) {
+                var labels=new java.util.ArrayList<String>();
+                for (var name:item.path("names")) if (!name.path("value").asText("").isBlank()) labels.add(name.path("value").asText());
+                if (!labels.isEmpty()) return String.join(" / ",labels);
+            }
+        }
+        for (var group:snapshot.path("goodsSpec")) for (var item:group.path("items")) {
+            if (m.getRemoteSku().equals(item.path("sku").asText())) {
+                String label=group.path("name").asText(""); String title=item.path("title").asText("");
+                if (!label.isBlank() && !title.isBlank()) return label+" / "+title;
+                if (!title.isBlank()) return title;
+            }
+        }
+        return "规格 "+m.getRemoteSku();
+    }
+    private MappingView view(SupplierProductMapping m,String remoteName,String remoteSkuName,String productName,String specName,String localState) {
         return new MappingView(m.getId(),m.getAccountId(),m.getRemoteGoodsId(),m.getRemoteSku(),m.getProductId(),m.getSpecId(),m.getGoodsType(),m.getSkuType(),
                 m.getCost(),m.getStock(),m.getGoodsStatus(),m.getSkuStatus(),m.getMultiple(),m.getMinQuantity(),m.getMaxQuantity(),
-                m.getLastSyncedAt(),m.getLastAttemptAt(),m.getSyncError());
+                m.getLastSyncedAt(),m.getLastAttemptAt(),m.getSyncError(),remoteName,remoteSkuName,productName,specName,localState);
     }
     private SupplierException invalid(String message) { return new SupplierException("CONFIG",message); }
 }

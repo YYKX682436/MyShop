@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from "lu
 import { toast } from "sonner"
 
 import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
+import { SupplierPicker, type SupplierSelection } from "@/components/admin/suppliers/supplier-picker"
 import { FormSection, StatusBadge } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,7 +27,7 @@ import {
 } from "@/lib/product-editor"
 import { isValidIntegerDraft, isValidMoneyDraft, validateProductTitleDraft } from "@/lib/product-quick-edit"
 import { cn, formatYuan } from "@/lib/utils"
-import { adminProductApi, adminUserLevelApi, requestOrThrow, type AdminProductUpsertPayload } from "@/services/api"
+import { adminProductApi, adminSupplierApi, adminUserLevelApi, requestOrThrow, type AdminProductUpsertPayload, type SupplierMapping } from "@/services/api"
 import type {
   AdminPricingPreview,
   AdminProductDetail,
@@ -226,6 +227,10 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
   const [saving, setSaving] = useState(false)
   const [dirty, setDirtyState] = useState(false)
   const [cardKeyImportOpen, setCardKeyImportOpen] = useState(false)
+  const [supplierMappings, setSupplierMappings] = useState<SupplierMapping[]>([])
+  const [mappingsReady, setMappingsReady] = useState(!product)
+  const [supplierChoices, setSupplierChoices] = useState<Record<string, SupplierSelection>>({})
+  const [pickerTarget, setPickerTarget] = useState<string | null>(null)
   const dirtyRef = useRef(false)
   const savingRef = useRef(false)
   const savedProductRef = useRef<AdminProductDetail | null>(null)
@@ -262,6 +267,16 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     setPreviewError(false)
     setCardKeyImportOpen(false)
   }, [product, setDirty, initialTab])
+
+  useEffect(() => {
+    let active = true
+    if (!product?.id) { setMappingsReady(true); return }
+    setMappingsReady(false)
+    void adminSupplierApi.productMappings(product.id).then(rows => {
+      if (active) { setSupplierMappings(rows); setMappingsReady(true) }
+    }).catch(error => { if (active) toast.error(error instanceof Error ? error.message : "读取货源关联失败") })
+    return () => { active = false }
+  }, [product?.id])
 
   const levelsRequestRef = useRef<Promise<UserLevel[]> | null>(null)
 
@@ -426,6 +441,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     } else if (product?.specs.some(existing => existing.id === spec.id)
       && !window.confirm(t("admin.deleteSpecSecretWarning"))) return
     markDirty()
+    setSupplierChoices(current => { const next = { ...current }; delete next[spec.id]; return next })
     setDraft((current) => ({
       ...current,
       specs: current.specs.filter((_, currentIndex) => currentIndex !== index),
@@ -561,26 +577,103 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     return "detail_md"
   }
 
+  const sourceControl = (key: string) => {
+    const choice = supplierChoices[key]
+    const mapping = supplierMappings.find(row => (row.spec_id || "root") === key)
+    const name = choice ? `${choice.account.name} / ${choice.product.name}${choice.sku.name ? ` / ${choice.sku.name}` : ""}`
+      : mapping ? `${mapping.remote_goods_name || mapping.remote_goods_id}${mapping.remote_sku_name ? ` / ${mapping.remote_sku_name}` : ""}` : "未关联"
+    return <div className="flex min-w-0 flex-wrap items-center gap-2"><span className="min-w-0 text-sm">{name}</span><Button type="button" variant="outline" size="sm" disabled={!mappingsReady || saving} onClick={() => setPickerTarget(key)}>{mapping || choice ? "更换货源" : "选择货源"}</Button>{(mapping || choice) && <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={() => void removeSource(key)}>解除关联</Button>}</div>
+  }
+
+  const removeSource = async (key: string) => {
+    const mapping = supplierMappings.find(row => (row.spec_id || "root") === key)
+    if (supplierChoices[key] && !mapping) { setSupplierChoices(current => { const next = { ...current }; delete next[key]; return next }); markDirty(); return }
+    if (!mapping || !window.confirm("解除关联后商品会下架，确定继续？")) return
+    try {
+      await adminSupplierApi.unbind(mapping.account_id, mapping.id)
+      setSupplierMappings(current => current.filter(row => row.id !== mapping.id))
+      setSupplierChoices(current => { const next = { ...current }; delete next[key]; return next })
+      setDraft(current => ({ ...current, is_enabled: false }))
+      if (savedProductRef.current) savedProductRef.current = { ...savedProductRef.current, is_enabled: false }
+      markDirty(); toast.success("货源关联已解除，商品已下架")
+    } catch (error) { toast.error(error instanceof Error ? error.message : "解除关联失败") }
+  }
+
+  const chooseSource = (selection: SupplierSelection) => {
+    if (!pickerTarget) return
+    markDirty()
+    setSupplierChoices(current => ({ ...current, [pickerTarget]: selection }))
+    const cost = (Math.ceil(Number(selection.sku.cost) * selection.product.multiple * 100 - 1e-8) / 100).toFixed(2)
+    setDraft(current => ({ ...current, is_enabled: false,
+      cost_price: pickerTarget === "root" ? cost : current.cost_price,
+      specs: current.specs.map(spec => spec.id === pickerTarget ? { ...spec, cost_price: cost } : spec) }))
+  }
+
   const handleSave = async (continueRestock = false) => {
     if (savingRef.current) return
-    const failure = validate()
-    if (failure) {
-      showValidationFailure(failure)
-      return
+    const supplierMode = draft.stock_mode === "SUPPLIER"
+    const sourceKeys = draft.spec_enabled ? draft.specs.filter(spec => spec.visible).map(spec => spec.id) : ["root"]
+    if (supplierMode) {
+      if (!mappingsReady) { toast.error("货源关联尚未加载，请稍后重试"); return }
+      const missing = sourceKeys.find(key => !supplierChoices[key] && !supplierMappings.some(row => (row.spec_id || "root") === key))
+      if (missing) {
+        setActiveTab("inventory"); toast.error(`${draft.specs.find(spec => spec.id === missing)?.name || "商品"}尚未选择货源`); return
+      }
+      const chosen = Object.values(supplierChoices).map(item => `${item.account.id}:${item.product.id}:${item.sku.id}`)
+      if (new Set(chosen).size !== chosen.length) { setActiveTab("inventory"); toast.error("同一上游规格不能绑定多个本地规格"); return }
+      const moving = Object.entries(supplierChoices).filter(([key, item]) => item.source &&
+        (item.source.product_id !== (savedProductRef.current || product)?.id || (item.source.spec_id || "root") !== key))
+      if (moving.length && !window.confirm(`所选货源已关联其他商品，保存将移动关联并下架原商品：\n${moving.map(([, item]) => `${item.product.name}：${item.source?.product_name || "原商品"}`).join("\n")}\n确定继续？`)) return
     }
+    const failure = validate()
+    if (failure) { showValidationFailure(failure); return }
     savingRef.current = true
     setSaving(true)
     try {
-      const existing = product || savedProductRef.current
+      const previous = savedProductRef.current || product
+      const existing = supplierMode && previous ? await adminProductApi.getDetail(previous.id) : previous
+      const changesSources = supplierMode && Object.keys(supplierChoices).length > 0
+      const basePayload = supplierMode ? { ...payload,
+        stock_mode: existing?.stock_mode === "SUPPLIER" ? "SUPPLIER" as const : existing?.stock_mode || "CARD_KEY" as const,
+        delivery_type: existing?.stock_mode === "SUPPLIER" ? "AUTO" as const : existing?.delivery_type || "AUTO" as const,
+        is_enabled: changesSources || existing?.stock_mode !== "SUPPLIER" ? false : payload.is_enabled,
+        manual_stock: undefined,
+        specs: payload.specs?.map(spec => ({ ...spec, manual_stock: undefined })),
+      } : payload
       const saved = existing
-        ? await requestOrThrow(() => adminProductApi.update(existing.id, payload))
-        : await requestOrThrow(() => adminProductApi.create(payload))
+        ? await requestOrThrow(() => adminProductApi.update(existing.id, basePayload))
+        : await requestOrThrow(() => adminProductApi.create(basePayload))
       savedProductRef.current = saved
       if (existing) invalidateAdminData("products", "inventory")
       else announceCreatedProduct(saved.id, saved.product_no)
+      let currentMappings = supplierMappings
+      for (const [key, choice] of Object.entries(supplierChoices)) {
+        const target = currentMappings.find(row => (row.spec_id || "root") === key)
+        if (!target || target.id !== choice.source?.id) {
+          const moving = Boolean(choice.source && (choice.source.product_id !== saved.id || (choice.source.spec_id || "root") !== key))
+          try {
+            await adminSupplierApi.bind(choice.account.id, choice.product.id, { product_id: saved.id, spec_id: key === "root" ? null : key, remote_sku: choice.sku.id,
+              confirmed: true, move_confirmed: moving, expected_target_mapping_id: target?.id || null,
+              expected_source_mapping_id: choice.source?.id || null, expected_source_product_id: choice.source?.product_id || null, expected_source_spec_id: choice.source?.spec_id || null })
+          } catch (error) {
+            // A lost response may follow a committed bind. Confirm the intended
+            // association before reporting success or attempting it again.
+            const latest = await adminSupplierApi.productMappings(saved.id).catch(() => null)
+            if (latest) { currentMappings = latest; setSupplierMappings(latest) }
+            const actual = latest?.find(row => (row.spec_id || "root") === key)
+            if (!actual || actual.account_id !== choice.account.id || actual.remote_goods_id !== choice.product.id || actual.remote_sku !== choice.sku.id)
+              throw new Error(`商品已下架保存；${draft.specs.find(spec => spec.id === key)?.name || "商品"}关联失败：${error instanceof Error ? error.message : "请重试"}`)
+          }
+        }
+        currentMappings = await adminSupplierApi.productMappings(saved.id)
+        setSupplierMappings(currentMappings)
+        setSupplierChoices(current => { const next = { ...current }; delete next[key]; return next })
+      }
+      const completed = supplierMode && changesSources ? await adminProductApi.getDetail(saved.id) : saved
+      savedProductRef.current = completed
       toast.success(t("admin.productSaved"))
       setDirty(false)
-      await onSaved(saved, continueRestock)
+      await onSaved(completed, continueRestock)
     } catch (requestError: unknown) {
       const message = requestError instanceof Error ? requestError.message : t("admin.saveFailed")
       const tab = getProductEditorTabForMessage(message)
@@ -622,6 +715,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
   const toggleSpecMode = (checked: boolean) => {
     if (checked !== draft.spec_enabled && product && !window.confirm(t("admin.specModeSwitchWarning"))) return
     markDirty()
+    setSupplierChoices({})
     setDraft((current) => ({
       ...current,
       spec_enabled: checked,
@@ -656,7 +750,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
 
   const addSpec = () => {
     markDirty()
-    setDraft((current) => ({ ...current, specs: [...current.specs, emptySpec()] }))
+    setDraft((current) => ({ ...current, is_enabled: current.stock_mode === "SUPPLIER" ? false : current.is_enabled, specs: [...current.specs, emptySpec()] }))
   }
 
   const pricingTargets = draft.spec_enabled
@@ -736,8 +830,12 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 </div>
                 <label className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 lg:col-span-2">
                   <span className="text-sm font-medium">{t("admin.listingStatus")}</span>
-                  <Switch checked={draft.is_enabled} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
+                  <Switch checked={draft.is_enabled} disabled={draft.stock_mode === "SUPPLIER" && (!product || product.stock_mode !== "SUPPLIER" || Object.keys(supplierChoices).length > 0)} onCheckedChange={(checked) => setField("is_enabled", checked)} aria-label={t("admin.listingStatus")} />
                 </label>
+                <fieldset className="lg:col-span-2"><legend className="mb-2 text-sm font-medium">供货方式</legend><div className="flex flex-wrap gap-4 text-sm">
+                  <label className="flex items-center gap-2"><input type="radio" name="supply-mode" checked={draft.stock_mode !== "SUPPLIER"} disabled={!mappingsReady || supplierMappings.length > 0} onChange={() => { markDirty(); setSupplierChoices({}); setDraft(current => ({ ...current, is_enabled: false, stock_mode: current.delivery_type === "MANUAL" ? "MANUAL" : "CARD_KEY" })) }} />本地库存</label>
+                  <label className="flex items-center gap-2"><input type="radio" name="supply-mode" checked={draft.stock_mode === "SUPPLIER"} onChange={() => { markDirty(); setDraft(current => ({ ...current, stock_mode: "SUPPLIER", delivery_type: "AUTO", is_enabled: false })) }} />上游供货</label>
+                </div>{draft.stock_mode === "SUPPLIER" && <p className="mt-2 text-xs text-muted-foreground">配置新货源时商品会下架，完成后可单独上架。</p>}{draft.stock_mode === "SUPPLIER" && !draft.spec_enabled && <div className="mt-3">{sourceControl("root")}</div>}</fieldset>
               </div>
             </FormSection>
         </TabsContent>
@@ -755,6 +853,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                       <th className="w-24 px-3 py-2 text-left">{t("admin.specOrder")}</th>
                       <th className="px-3 py-2 text-left">{t("admin.specName")}</th>
                       <th className="w-28 px-3 py-2 text-left">{t("admin.specVisible")}</th>
+                      {draft.stock_mode === "SUPPLIER" && <th className="px-3 py-2 text-left">货源</th>}
                       <th className="w-28 px-3 py-2 text-right">{t("admin.actions")}</th>
                     </tr>
                   </thead>
@@ -770,13 +869,14 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                         </td>
                         <td className="px-3 py-2"><Input ref={registerField(`spec-name-${spec.id}`)} value={spec.name} onChange={(event) => updateSpec(index, { name: event.target.value })} placeholder={t("admin.specNamePlaceholder")} /></td>
                         <td className="px-3 py-2"><Switch checked={spec.visible} onCheckedChange={(checked) => updateSpec(index, { visible: checked })} aria-label={`${t("admin.specVisible")} ${spec.name || index + 1}`} /></td>
-                        <td className="px-3 py-2 text-right"><Button type="button" variant="ghost" size="icon" onClick={() => removeSpec(index)} disabled={product?.stock_mode === "SUPPLIER"} aria-label={t("admin.removeSpec")} title={t("admin.removeSpec")}><Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" /></Button></td>
+                        {draft.stock_mode === "SUPPLIER" && <td className="px-3 py-2">{sourceControl(spec.id)}</td>}
+                        <td className="px-3 py-2 text-right"><Button type="button" variant="ghost" size="icon" onClick={() => removeSpec(index)} disabled={product?.stock_mode === "SUPPLIER" && product.specs.some(existing => existing.id === spec.id)} aria-label={t("admin.removeSpec")} title={t("admin.removeSpec")}><Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" /></Button></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 {draft.specs.length === 0 && <p className="border-t border-border-subtle px-3 py-4 text-sm text-muted-foreground">{t("admin.noSpecs")}</p>}
-                <div className="border-t border-border-subtle bg-surface-muted/45 p-3"><Button type="button" variant="outline" onClick={addSpec} disabled={product?.stock_mode === "SUPPLIER"}><Plus className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.addSpec")}</Button></div>
+                <div className="border-t border-border-subtle bg-surface-muted/45 p-3"><Button type="button" variant="outline" onClick={addSpec}><Plus className="mr-2 h-4 w-4" aria-hidden="true" />{t("admin.addSpec")}</Button></div>
               </div>
               {!draft.spec_enabled && draft.specs.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{t("admin.storedSpecsHint")}</p>}
             </FormSection>
@@ -798,7 +898,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                   <tbody>
                     {!draft.spec_enabled && <tr className="border-t border-border-subtle">
                       <td className="px-3 py-2 font-medium">{t("admin.product")}</td>
-                      <td className="px-3 py-2"><Input disabled={product?.stock_mode === "SUPPLIER"} ref={registerField("cost_price")} type="number" min="0" step="0.01" value={draft.cost_price} onChange={(event) => setField("cost_price", event.target.value)} placeholder="0.00" /></td>
+                      <td className="px-3 py-2"><Input disabled={draft.stock_mode === "SUPPLIER"} ref={registerField("cost_price")} type="number" min="0" step="0.01" value={draft.cost_price} onChange={(event) => setField("cost_price", event.target.value)} placeholder="0.00" /></td>
                       <td className="px-3 py-2"><Input ref={registerField("retail_price")} type="number" min="0" step="0.01" value={draft.retail_price} onChange={(event) => setField("retail_price", event.target.value)} placeholder="0.00" /></td>
                       <td className={cn("whitespace-nowrap px-3 py-2 font-medium", (formatMargin(draft.cost_price, draft.retail_price) ?? 0) < 0 && "text-amber-600")}>{formatMargin(draft.cost_price, draft.retail_price) === null ? "—" : formatYuan(formatMargin(draft.cost_price, draft.retail_price) || 0)}</td>
                       <td className="whitespace-nowrap px-3 py-2">{formatMarginRate(draft.cost_price, draft.retail_price) === null ? "—" : `${formatMarginRate(draft.cost_price, draft.retail_price)?.toFixed(2)}%`}</td>
@@ -808,7 +908,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                       const marginRate = formatMarginRate(spec.cost_price, spec.retail_price)
                       return <tr key={spec.id} className="border-t border-border-subtle">
                         <td className="px-3 py-2 font-medium">{spec.name || t("admin.unnamed")}</td>
-                        <td className="px-3 py-2"><Input disabled={product?.stock_mode === "SUPPLIER"} ref={registerField(`spec-cost-${spec.id}`)} type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { cost_price: event.target.value })} placeholder="0.00" /></td>
+                        <td className="px-3 py-2"><Input disabled={draft.stock_mode === "SUPPLIER"} ref={registerField(`spec-cost-${spec.id}`)} type="number" min="0" step="0.01" value={spec.cost_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { cost_price: event.target.value })} placeholder="0.00" /></td>
                         <td className="px-3 py-2"><Input ref={registerField(`spec-retail-${spec.id}`)} type="number" min="0" step="0.01" value={spec.retail_price} onChange={(event) => updateSpec(draft.specs.findIndex((candidate) => candidate.id === spec.id), { retail_price: event.target.value })} placeholder="0.00" /></td>
                         <td className={cn("whitespace-nowrap px-3 py-2 font-medium", margin !== null && margin < 0 && "text-amber-600")}>{margin === null ? "—" : formatYuan(margin)}</td>
                         <td className="whitespace-nowrap px-3 py-2">{marginRate === null ? "—" : `${marginRate.toFixed(2)}%`}</td>
@@ -871,12 +971,12 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                 <div className="flex flex-col gap-1.5 text-sm font-medium">
                   {t("admin.deliveryMethod")}
                   <div className="grid grid-cols-2 gap-2">
-                    {(["AUTO", "MANUAL"] as const).map((deliveryType) => <Button key={deliveryType} type="button" variant={draft.delivery_type === deliveryType ? "default" : "outline"} onClick={() => handleDeliveryChange(deliveryType)} disabled={product?.stock_mode === "SUPPLIER"}>{deliveryType === "AUTO" ? t("admin.autoDelivery") : t("admin.manualDelivery")}</Button>)}
+                    {(["AUTO", "MANUAL"] as const).map((deliveryType) => <Button key={deliveryType} type="button" variant={draft.delivery_type === deliveryType ? "default" : "outline"} onClick={() => handleDeliveryChange(deliveryType)} disabled={draft.stock_mode === "SUPPLIER"}>{deliveryType === "AUTO" ? t("admin.autoDelivery") : t("admin.manualDelivery")}</Button>)}
                   </div>
                 </div>
                 <label className="flex flex-col gap-1.5 text-sm font-medium">
                   {t("admin.stockMode")}
-                  <select disabled={product?.stock_mode === "SUPPLIER"} className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={draft.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
+                  <select disabled={draft.stock_mode === "SUPPLIER"} className="h-11 rounded-control border border-input bg-surface px-3 text-sm" value={draft.stock_mode} onChange={(event) => setField("stock_mode", event.target.value as StockMode)}>
                     {draft.stock_mode === "SUPPLIER" && <option value="SUPPLIER">供应商库存</option>}
                     {draft.delivery_type === "AUTO" && <option value="CARD_KEY">{t("admin.cardKeyStock")}</option>}
                     {draft.delivery_type === "MANUAL" && <><option value="MANUAL">{t("admin.manualStock")}</option><option value="UNLIMITED">{t("admin.unlimitedStock")}</option></>}
@@ -893,6 +993,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
                   <span className="text-xs font-normal text-muted-foreground">{t("admin.manualStockHint")}</span>
                 </label>}
               </div>
+              {draft.stock_mode === "SUPPLIER" && <div className="mt-5 space-y-3">{draft.spec_enabled ? draft.specs.map(spec => <div key={spec.id} className="rounded-control border border-border-subtle p-3"><div className="mb-2 text-sm font-medium">{spec.name || "未命名规格"}</div>{sourceControl(spec.id)}</div>) : sourceControl("root")}</div>}
 
               {draft.stock_mode === "MANUAL" && draft.spec_enabled && <div className="mt-6 rounded-card border border-border-subtle bg-surface-muted/45 p-4">
                 <h3 className="text-sm font-semibold">{t("admin.manualStockBySpec")}</h3>
@@ -979,6 +1080,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
           />
         </Suspense>
       )}
+      <SupplierPicker open={pickerTarget !== null} onOpenChange={open => { if (!open) setPickerTarget(null) }} onSelect={chooseSource} />
     </form>
   )
 }

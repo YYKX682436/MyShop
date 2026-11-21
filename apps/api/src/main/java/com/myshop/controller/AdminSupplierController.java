@@ -46,6 +46,10 @@ public class AdminSupplierController {
         suppliers.syncPresentation(id,goodsId,request.productId(),Boolean.TRUE.equals(request.confirmed())); return ApiResponse.success();
     }
     @GetMapping("/{id}/mappings") public ApiResponse<?> mappings(@PathVariable UUID id) { return ApiResponse.success(suppliers.mappings(id)); }
+    @LogOperation(action="supplier.unbind", targetType="SUPPLIER", targetId="#id", detail="'解除货源关联'")
+    @PostMapping("/{id}/mappings/{mappingId}/unbind") public ApiResponse<?> unbind(@PathVariable UUID id,@PathVariable UUID mappingId,@RequestBody ConfirmRequest request) {
+        suppliers.unbind(id,mappingId,Boolean.TRUE.equals(request.confirmed())); return ApiResponse.success();
+    }
     @GetMapping("/products/{productId}/mappings") public ApiResponse<?> productMappings(@PathVariable UUID productId) { return ApiResponse.success(suppliers.productMappings(productId)); }
     @LogOperation(action="supplier.sync", targetType="SUPPLIER", targetId="#id", detail="'同步货源商品'")
     @PostMapping("/{id}/goods/{goodsId}/sync") public ApiResponse<?> sync(@PathVariable UUID id,@PathVariable String goodsId) {
@@ -56,4 +60,5 @@ public class AdminSupplierController {
     public record BindRequest(UUID productId,UUID specId,String remoteSku,Boolean confirmed,Boolean moveConfirmed,
                               UUID expectedTargetMappingId,UUID expectedSourceMappingId,UUID expectedSourceProductId,UUID expectedSourceSpecId) {}
     public record PresentationRequest(UUID productId,Boolean confirmed) {}
+    public record ConfirmRequest(Boolean confirmed) {}
 }

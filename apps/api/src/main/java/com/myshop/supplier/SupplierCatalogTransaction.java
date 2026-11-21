@@ -50,6 +50,18 @@ public class SupplierCatalogTransaction {
         var account = accounts.findForUpdate(accountId).orElseThrow(() -> error("货源账号不存在"));
         if (!account.isEnabled()) throw error("货源账号已停用");
         List<SupplierProductMapping> existing=mappings.findByAccountIdAndRemoteGoodsIdOrderByRemoteSku(accountId, remote.id());
+        // Historical soft-deleted products must not permanently reserve the remote SKU.
+        for (UUID id:existing.stream().map(SupplierProductMapping::getProductId).distinct().sorted().toList()) {
+            Product old=products.findByIdForUpdate(id).orElseThrow(() -> error("关联的本地商品不存在"));
+            if (old.getIsDeleted()!=0) {
+                List<SupplierProductMapping> stale=existing.stream().filter(m -> m.getProductId().equals(id)).toList();
+                lockOrders(id, null, true);
+                for (SupplierProductMapping row:stale) requireRemovable(row);
+                mappings.deleteAll(stale);
+            }
+        }
+        mappings.flush();
+        existing=mappings.findByAccountIdAndRemoteGoodsIdOrderByRemoteSku(accountId, remote.id());
         if (!existing.isEmpty()) {
             UUID productId=existing.getFirst().getProductId();
             Set<String> ids=remote.skus().stream().map(SupplierModels.Sku::id).collect(java.util.stream.Collectors.toSet());
@@ -116,8 +128,9 @@ public class SupplierCatalogTransaction {
         if (source!=null) productIds.add(source.getProductId());
         Map<UUID,Product> locked=new HashMap<>();
         for (UUID id:productIds.stream().sorted().toList()) locked.put(id,products.findByIdForUpdate(id)
-                .filter(p -> p.getIsDeleted()==0).orElseThrow(() -> error("本地商品不存在")));
+                .orElseThrow(() -> error("本地商品不存在")));
         Product target=locked.get(productId);
+        if (target.getIsDeleted()!=0) throw error("目标商品已删除，请选择其他商品");
         if (target.isSpecEnabled()) {
             if (specId==null || specs.findById(specId).filter(s -> s.getProductId().equals(productId) && s.getIsDeleted()==0).isEmpty())
                 throw error("请选择本地商品的有效规格");
@@ -141,6 +154,10 @@ public class SupplierCatalogTransaction {
             throw error("原货源商品有未完成的 CDKEY 操作，请先核实");
         if (sensitiveOperations.hasUnfinishedCdkeyForGoods(accountId,remote.id()))
             throw error("上游商品有未完成的 CDKEY 操作，请先核实");
+        if (moving) {
+            Product previous=locked.get(source.getProductId());
+            if (previous.getIsDeleted()==0) { previous.setEnabled(false); products.save(previous); }
+        }
         if (target.getStockMode()!=StockMode.SUPPLIER) {
             if (cardKeys.countByProductId(productId)>0 || manualStock.findByProductIdIn(List.of(productId)).stream()
                     .anyMatch(s -> s.getAvailableQuantity()!=0 || s.getReservedQuantity()!=0)
@@ -159,6 +176,12 @@ public class SupplierCatalogTransaction {
         }
         update(mapping,remote,sku,LocalDateTime.now());
         products.save(target); mappings.saveAndFlush(mapping);
+        if (target.isEnabled() && target.isSpecEnabled()) {
+            var bound=mappings.findByProductId(target.getId());
+            boolean incomplete=specs.findByProductIdAndIsDeletedOrderBySortOrderAsc(target.getId(),0).stream()
+                    .filter(ProductSpec::isVisible).anyMatch(s -> bound.stream().noneMatch(m -> s.getId().equals(m.getSpecId())));
+            if (incomplete) { target.setEnabled(false); products.save(target); }
+        }
         return new ImportResult(productId,false);
     }
 
@@ -167,6 +190,61 @@ public class SupplierCatalogTransaction {
     private void requireClear(UUID productId,UUID specId) {
         if (orderItems.hasUnfinishedForBinding(productId,specId,false) || purchases.hasUnfinishedForBinding(productId,specId))
             throw error("该商品规格存在未完成订单、采购或售后操作，请先处理");
+    }
+
+    private void lockOrders(UUID productId,UUID specId,boolean allSpecs) {
+        for (UUID id:orderItems.orderIdsForBinding(productId,specId,allSpecs).stream().sorted().toList())
+            orders.findByIdForUpdate(id);
+    }
+
+    private void requireRemovable(SupplierProductMapping row) {
+        requireClear(row.getProductId(),row.getSpecId());
+        if (sensitiveOperations.hasUnfinishedCdkeyForGoods(row.getAccountId(),row.getRemoteGoodsId()))
+            throw error("该货源商品有未完成的 CDKEY 操作，请先核实");
+    }
+
+    /** Caller holds the product lock; changing mode must not strand an active order. */
+    public void requireLocalConversionSafe(UUID productId) {
+        if (mappings.existsByProductId(productId)) throw error("请先解除该商品全部货源关联");
+        lockOrders(productId,null,true);
+        if (orderItems.hasUnfinishedForBinding(productId,null,true) || purchases.hasUnfinishedForProduct(productId))
+            throw error("该商品存在未完成订单、采购或售后操作，请先处理");
+    }
+
+    /** Same lock order as binding: accounts, product, then orders. */
+    @Transactional
+    public void deleteProduct(UUID productId) {
+        Set<UUID> accountIds=new HashSet<>(mappings.findAccountsByProductId(productId));
+        for (UUID id:accountIds.stream().sorted().toList())
+            accounts.findForUpdate(id).orElseThrow(() -> error("货源账号不存在"));
+        Product product=products.findByIdForUpdate(productId).filter(p -> p.getIsDeleted()==0)
+                .orElseThrow(() -> error("本地商品不存在或已删除"));
+        List<SupplierProductMapping> rows=mappings.findByProductId(productId);
+        if (rows.stream().anyMatch(m -> !accountIds.contains(m.getAccountId())))
+            throw error("货源关联已变化，请刷新后重试");
+        if (!rows.isEmpty()) {
+            lockOrders(productId,null,true);
+            for (SupplierProductMapping row:rows) requireRemovable(row);
+            mappings.deleteAll(rows);
+        }
+        product.setEnabled(false); product.setIsDeleted(1); products.save(product);
+    }
+
+    @Transactional
+    public void unbind(UUID accountId,UUID mappingId,boolean confirmed) {
+        if (!confirmed) throw error("请确认解除货源关联");
+        List<Object[]> coordinates=mappings.findCoordinates(mappingId);
+        if (coordinates.size()!=1 || !accountId.equals(coordinates.getFirst()[0])) throw error("货源关联不存在或已变化");
+        UUID productId=(UUID)coordinates.getFirst()[1];
+        accounts.findForUpdate(accountId).orElseThrow(() -> error("货源账号不存在"));
+        Product product=products.findByIdForUpdate(productId).orElseThrow(() -> error("关联的本地商品不存在"));
+        SupplierProductMapping row=mappings.findById(mappingId)
+                .filter(m -> m.getAccountId().equals(accountId) && m.getProductId().equals(productId))
+                .orElseThrow(() -> error("货源关联已变化，请刷新后重试"));
+        lockOrders(productId,row.getSpecId(),false);
+        requireRemovable(row);
+        mappings.delete(row);
+        if (product.getIsDeleted()==0) { product.setEnabled(false); products.save(product); }
     }
 
     @Transactional

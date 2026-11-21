@@ -14,6 +14,7 @@
     "test:dock-race": "node scripts/test-dock-race.mjs",
     "test:card-ui": "node scripts/test-card-ui.mjs",
     "test:supplier-ui": "node scripts/test-supplier-ui.mjs",
+    "test:supplier-editor-ui": "node scripts/test-supplier-editor-ui.mjs",
     "test:supplier-order-ui": "node scripts/test-supplier-order-ui.mjs",
     "test:supplier-aftercare-ui": "node scripts/test-supplier-aftercare-ui.mjs",
     "test:admin-refresh-ui": "node scripts/test-admin-refresh-ui.mjs",
