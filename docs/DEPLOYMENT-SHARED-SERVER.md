@@ -25,7 +25,8 @@ the stack, restore a database from another host, or change DNS or TLS.
    all checks when that baseline cannot be established. API changes run the
    API suite, including the required real PostgreSQL tests; migrations also
    run the deployment/schema checks. Unknown paths and CI changes run all
-   checks. A documentation-only change does not create release images.
+   checks. Documentation and most test-only changes do not create release
+   images; the Web image-routing smoke test still needs an image.
    Confirm the run succeeded, review its validation-scope summary, and use
    only its matching immutable images and release manifest. Stop for a failed
    required check or incomplete publication.
@@ -198,25 +199,18 @@ approved digest-derived `mirror-<digest>` tags only after an offline import.
 For releases built by the current workflow, the successful run also supplies
 `myshop-release-<full SHA>` for two days. It contains the API/Web Docker
 archives saved from images pulled by their published digests, the release
-manifest, carrier digest and checksums. This is a transfer convenience: the
-GHCR carrier and the existing offline-bundle verification remain the release
-authority. Do not use an artifact from a failed run or a different SHA.
+manifest, carrier digest and checksums. The helper downloads byte ranges in
+parallel, verifies GitHub's ZIP digest and the included checksums, and checks
+the exact source SHA. The GHCR carrier and existing offline-bundle
+verification remain the release authority.
 
 ```bash
 release_sha=$(git rev-parse HEAD)
 # Run the existing manual workflow after pushing this SHA:
 gh workflow run cicd.yml --repo YYKX682436/MyShop --ref main
-# Once it completes, select a successful run for this exact SHA:
-run_id=$(gh run list --repo YYKX682436/MyShop --workflow cicd.yml --branch main \
-  --limit 20 --json databaseId,headSha,status,conclusion \
-  --jq ".[] | select(.headSha == \"$release_sha\" and .status == \"completed\" and .conclusion == \"success\") | .databaseId" | head -n 1)
-test -n "$run_id" || { echo 'No successful run for this SHA' >&2; exit 1; }
+# After CI completes successfully, fetch only the artifact for this SHA:
 release_dir=$(mktemp -d "${TMPDIR:-/tmp}/myshop-release.XXXXXX")
-gh run download "$run_id" --repo YYKX682436/MyShop \
-  --name "myshop-release-$release_sha" --dir "$release_dir"
-(cd "$release_dir" && shasum -a 256 -c SHA256SUMS)
-python3 scripts/validate-release-manifest.py "$release_dir/release-manifest.json" \
-  ghcr.io/yykx682436 myshop
+python3 scripts/fetch-release-archives.py "$release_sha" "$release_dir"
 ```
 
 The source SHA in the validated manifest must equal `release_sha`. Transfer

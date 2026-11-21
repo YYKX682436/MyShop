@@ -35,6 +35,14 @@ class ReleaseScopeTests(unittest.TestCase):
         self.assertEqual(scope.classify(["scripts/deploy-production.sh"]),
                          {"api": False, "web": False, "compose": True, "runtime": True})
 
+    def test_test_only_and_download_helper_changes_do_not_publish_images(self):
+        for path in ("scripts/tests/test_fetch_release_archives.py", "scripts/fetch-release-archives.py", "scripts/test-deployment-transaction.sh"):
+            with self.subTest(path=path):
+                self.assertEqual(scope.classify([path]),
+                                 {"api": False, "web": False, "compose": True, "runtime": False})
+        self.assertEqual(scope.classify(["scripts/test-web-image-host-routing.sh"]),
+                         {"api": False, "web": True, "compose": True, "runtime": True})
+
     def test_no_baseline_and_api_failure_fall_back_to_all_checks(self):
         for side_effect in (None, OSError("unavailable")):
             with self.subTest(side_effect=side_effect), \

@@ -27,9 +27,14 @@ def classify(paths: list[str]) -> dict[str, bool]:
     for path in paths:
         if path.startswith("docs/") or path in DOCUMENT_FILES:
             continue
-        scope["runtime"] = True
         if path in {"scripts/ci-release-scope.py", "scripts/tests/test_ci_release_scope.py"}:
             return {key: True for key in scope}
+        if path == "scripts/fetch-release-archives.py" or path.startswith("scripts/tests/") or path.startswith("scripts/test-"):
+            scope["compose"] = True
+            if path == "scripts/test-web-image-host-routing.sh":
+                scope["web"] = scope["runtime"] = True
+            continue
+        scope["runtime"] = True
         if path.startswith("apps/web/") or path in WEB_ROOT_FILES:
             scope["web"] = True
             if path == "Dockerfile.web":
@@ -39,8 +44,6 @@ def classify(paths: list[str]) -> dict[str, bool]:
             scope["api"] = scope["web"] = True
             if path.startswith("apps/api/src/main/resources/db/"):
                 scope["compose"] = True
-        elif path == "scripts/test-web-image-host-routing.sh":
-            scope["web"] = scope["compose"] = True
         elif path.startswith(("scripts/", "ops/")) or path.startswith(("docker-compose", "Caddyfile")):
             scope["compose"] = True
         else:

@@ -269,7 +269,7 @@ jobs:
     name: Publish immutable production images
     needs: [scope, api, web, compose]
     if: >-
-      ${{ always() && !inputs.mirror_base_images && github.ref == 'refs/heads/main' &&
+      ${{ !cancelled() && !inputs.mirror_base_images && github.ref == 'refs/heads/main' &&
           needs.scope.result == 'success' && needs.scope.outputs.runtime == 'true' &&
           (needs.api.result == 'success' || (needs.scope.outputs.api == 'false' && needs.api.result == 'skipped')) &&
           (needs.web.result == 'success' || (needs.scope.outputs.web == 'false' && needs.web.result == 'skipped')) &&
