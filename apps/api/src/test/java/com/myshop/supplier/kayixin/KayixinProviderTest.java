@@ -180,46 +180,4 @@ class KayixinProviderTest {
         assertThrows(SupplierException.class,() -> p.createComplaint(c,new SupplierModels.ComplaintRequest("up-1","主题","内容","https://example.invalid",List.of())));
         assertEquals(3,count.get());
     }
-    @Test void transferAndCdkeyUseSignedProtocolAndNeverReplayLostResponses() throws Exception {
-        AtomicInteger transfers=new AtomicInteger(), cdkeys=new AtomicInteger(); AtomicBoolean valid=new AtomicBoolean(true);
-        var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
-        server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
-        server.createContext("/", exchange -> {
-            byte[] body=exchange.getRequestBody().readAllBytes(); String app=exchange.getRequestHeaders().getFirst("X-App-Id");
-            String stamp=exchange.getRequestHeaders().getFirst("X-Timestamp");
-            valid.set(valid.get() && KayixinProvider.signature(app,"mock-secret","3.0",stamp,body)
-                    .equals(exchange.getRequestHeaders().getFirst("X-Signature")));
-            var payload=mapper.readTree(body);
-            boolean transfer=exchange.getRequestURI().getPath().endsWith("transfer");
-            if (transfer) {
-                transfers.incrementAndGet();
-                valid.set(valid.get() && payload.path("toUserNo").asLong()==10001 && payload.path("money").decimalValue().compareTo(new BigDecimal("1.25"))==0
-                        && payload.path("outerNumber").asText().equals("fixed-outer") && payload.path("salePwd").asText().equals("mock-pwd"));
-            } else {
-                cdkeys.incrementAndGet();
-                valid.set(valid.get() && payload.path("goodsId").asInt()==12 && payload.path("cardCount").asInt()==2
-                        && payload.path("count").asInt()==3 && payload.path("safePrice").decimalValue().compareTo(new BigDecimal("0.25"))==0
-                        && payload.path("cardFaceValue").decimalValue().compareTo(new BigDecimal("5"))==0
-                        && payload.path("cardDay").asInt()==-1 && payload.path("shortLength").asInt()==10);
-            }
-            if (app.equals("lose")) { exchange.close(); return; }
-            String data=transfer ? "{\"code\":1000,\"msg\":\"success\"}"
-                    : app.equals("bad") ? "{\"code\":1000,\"data\":[{\"pwd\":\"PRE0123456789\",\"url\":\"https://example.invalid/1\"}]}"
-                    : "{\"code\":1000,\"data\":[{\"pwd\":\"PRE0123456789\",\"url\":\"https://example.invalid/1\"},{\"pwd\":\"PREabcdefghij\",\"url\":\"https://example.invalid/2\"}]}";
-            byte[] response=data.getBytes(StandardCharsets.UTF_8); exchange.sendResponseHeaders(200,response.length);
-            exchange.getResponseBody().write(response); exchange.close();
-        }); server.start();
-        var provider=new KayixinProvider(HttpClient.newHttpClient()); String base="http://127.0.0.1:"+server.getAddress().getPort();
-        var transfer=new SupplierModels.TransferRequest(10001,new BigDecimal("1.25"),"fixed-outer","mock-pwd");
-        var cdkey=new SupplierModels.CdkeyRequest("12",2,1,"PRE",10,10,3,new BigDecimal("5"),new BigDecimal("0.25"),-1,"remark");
-        var good=new SupplierModels.Connection(base,"good","mock-secret");
-        provider.transfer(good,transfer); assertEquals(2,provider.createCdkeys(good,cdkey).size());
-        assertThrows(SupplierException.class,() -> provider.createCdkeys(new SupplierModels.Connection(base,"bad","mock-secret"),cdkey));
-        var lost=new SupplierModels.Connection(base,"lose","mock-secret");
-        assertThrows(SupplierException.class,() -> provider.transfer(lost,transfer));
-        assertThrows(SupplierException.class,() -> provider.createCdkeys(lost,cdkey));
-        assertEquals(2,transfers.get()); assertEquals(3,cdkeys.get()); assertTrue(valid.get());
-        assertFalse(transfer.toString().contains("mock-pwd"));
-        assertFalse(new SupplierModels.Cdkey("mock-code","").toString().contains("mock-code"));
-    }
 }

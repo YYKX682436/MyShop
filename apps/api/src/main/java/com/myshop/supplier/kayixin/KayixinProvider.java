@@ -41,8 +41,6 @@ public class KayixinProvider implements SupplierProvider {
     KayixinProvider(HttpClient client) { this.client = client; }
 
     @Override public String type() { return "KAYIXIN"; }
-    @Override public boolean supportsTransfer() { return true; }
-    @Override public boolean supportsCdkeys() { return true; }
     @Override public List<com.myshop.model.CustomerInputField> customerFields(JsonNode snapshot) {
         return new KayixinRechargeTemplates().parse(snapshot);
     }
@@ -237,48 +235,6 @@ public class KayixinProvider implements SupplierProvider {
         validateCardId(cardId);
         JsonNode data=call(connection,"/api/v3/card/void",Map.of("cardId",cardId),false);
         return new SupplierModels.CardVoidResult(cardStatus(data),optionalText(data,"result"));
-    }
-    @Override public void transfer(SupplierModels.Connection connection,SupplierModels.TransferRequest request) {
-        if (request==null || request.toUserNo()<1 || request.money()==null || request.money().signum()<=0
-                || request.outerNumber()==null || request.outerNumber().isBlank() || request.outerNumber().length()>100
-                || request.salePwd()!=null && request.salePwd().length()>128) throw invalid();
-        Map<String,Object> body=new LinkedHashMap<>();
-        body.put("toUserNo",request.toUserNo()); body.put("money",request.money());
-        body.put("outerNumber",request.outerNumber());
-        if (request.salePwd()!=null && !request.salePwd().isEmpty()) body.put("salePwd",request.salePwd());
-        call(connection,"/api/v3/user/transfer",body,false,false);
-    }
-    @Override public List<SupplierModels.Cdkey> createCdkeys(SupplierModels.Connection connection,SupplierModels.CdkeyRequest request) {
-        if (request==null || request.goodsId()==null || !request.goodsId().matches("[0-9]{1,18}")
-                || request.cardCount()<1 || request.cardCount()>1000 || request.count()<1
-                || (request.shortStatus()!=0 && request.shortStatus()!=1) || request.cardLength()<5 || request.cardLength()>32
-                || request.shortLength()<5 || request.shortLength()>32 || request.cardPrefix()==null || request.cardPrefix().length()>20
-                || request.cardFaceValue()==null || request.cardFaceValue().signum()<0 || request.safePrice()==null
-                || request.safePrice().signum()<=0 || request.cardDay()<-1
-                || request.cardRemark()==null || request.cardRemark().length()>255) throw invalid();
-        Map<String,Object> body=new LinkedHashMap<>();
-        body.put("goodsId",Long.parseLong(request.goodsId())); body.put("cardCount",request.cardCount());
-        body.put("shortStatus",request.shortStatus()); body.put("cardPrefix",request.cardPrefix());
-        body.put("cardLength",request.cardLength()); body.put("shortLength",request.shortLength());
-        body.put("count",request.count()); body.put("cardFaceValue",request.cardFaceValue());
-        body.put("safePrice",request.safePrice()); body.put("cardDay",request.cardDay()); body.put("cardRemark",request.cardRemark());
-        JsonNode data=call(connection,"/api/v3/cdkey/create",body,false);
-        if (!data.isArray() || data.size()!=request.cardCount()) throw invalid();
-        List<SupplierModels.Cdkey> result=new ArrayList<>(); Set<String> seen=new HashSet<>();
-        for (JsonNode item:data) {
-            String pwd=text(item,"pwd"), url=optionalText(item,"url");
-            if (pwd.length()!=request.cardPrefix().length()+request.cardLength() || !pwd.startsWith(request.cardPrefix())
-                    || pwd.chars().anyMatch(Character::isISOControl) || !seen.add(pwd)) throw invalid();
-            if (url!=null && !url.isBlank()) {
-                try {
-                    URI uri=URI.create(url);
-                    if (url.length()>2048 || uri.getHost()==null || uri.getUserInfo()!=null
-                            || !("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))) throw invalid();
-                } catch (IllegalArgumentException e) { throw invalid(); }
-            } else if (request.shortStatus()==1) throw invalid();
-            result.add(new SupplierModels.Cdkey(pwd,url));
-        }
-        return List.copyOf(result);
     }
     private void validateCardId(String cardId) {
         if (cardId==null || cardId.isBlank() || cardId.length()>120) throw invalid();

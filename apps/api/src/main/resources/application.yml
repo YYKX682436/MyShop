@@ -9,13 +9,6 @@ server:
 app:
   public-site-url: ${PUBLIC_SITE_URL:http://localhost:3000}
 
-supplier:
-  transfer-enabled: ${SUPPLIER_TRANSFER_ENABLED:false}
-  transfer-max-amount: ${SUPPLIER_TRANSFER_MAX_AMOUNT:100}
-  cdkey-enabled: ${SUPPLIER_CDKEY_ENABLED:false}
-  cdkey-max-count: ${SUPPLIER_CDKEY_MAX_COUNT:20}
-  cdkey-max-exposure: ${SUPPLIER_CDKEY_MAX_EXPOSURE:100}
-
 spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/db}

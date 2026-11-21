@@ -436,22 +436,16 @@ class SupplierCatalogPostgresIntegrationTest {
         } finally { jdbc.update("delete from card_keys where id=?",card); }
     }
 
-    @Test void reservedManualStockAndUnresolvedCdkeyBothPreventBinding() throws Exception {
-        var a=account("blocked-operations","fake-secret-a"); fixture.goods.put("131",product("131",1,0,"0.10",20));
-        UUID local=localProduct(false), stock=UUID.randomUUID(), operation=UUID.randomUUID();
+    @Test void reservedManualStockPreventsBinding() throws Exception {
+        var a=account("blocked-manual-stock","fake-secret-a"); fixture.goods.put("131",product("131",1,0,"0.10",20));
+        UUID local=localProduct(false), stock=UUID.randomUUID();
         try {
             jdbc.update("update products set stock_mode='MANUAL',delivery_type='MANUAL' where id=?",local);
             jdbc.update("insert into manual_stocks (id,product_id,available_quantity,reserved_quantity) values (?,?,0,1)",stock,local);
             assertThrows(SupplierException.class,()->bind(a.id(),"131",local,null,"",false,null,null));
             assertEquals(1,jdbc.queryForObject("select reserved_quantity from manual_stocks where id=?",Integer.class,stock));
-            jdbc.update("delete from manual_stocks where id=?",stock);
-            jdbc.update("insert into supplier_sensitive_operations (id,account_id,account_name_snapshot,provider_type_snapshot,base_url_snapshot,app_id_snapshot,kind,idempotency_key,operator_id,status,parameters) values (?,?,'fixture','FIXTURE','https://fixture.example','fixture','CDKEY',?,?,'UNKNOWN','{\"goods_id\":\"131\"}'::jsonb)",operation,a.id(),UUID.randomUUID(),UUID.randomUUID());
-            assertThrows(SupplierException.class,()->bind(a.id(),"131",local,null,"",false,null,null));
             assertTrue(service.productMappings(local).isEmpty());
-        } finally {
-            jdbc.update("delete from supplier_sensitive_operations where id=?",operation);
-            jdbc.update("delete from manual_stocks where id=?",stock);
-        }
+        } finally { jdbc.update("delete from manual_stocks where id=?",stock); }
     }
 
     @Test void concurrentConfirmedBindingsCannotSilentlyReplaceOneAnother() throws Exception {

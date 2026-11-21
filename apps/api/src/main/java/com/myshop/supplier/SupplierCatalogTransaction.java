@@ -14,7 +14,6 @@ import com.myshop.repository.ManualStockRepository;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.SupplierPurchaseRepository;
-import com.myshop.repository.SupplierSensitiveOperationRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,7 +41,6 @@ public class SupplierCatalogTransaction {
     private final OrderItemRepository orderItems;
     private final OrderRepository orders;
     private final SupplierPurchaseRepository purchases;
-    private final SupplierSensitiveOperationRepository sensitiveOperations;
     private final SupplierPresentation presentation;
 
     @Transactional
@@ -150,10 +148,6 @@ public class SupplierCatalogTransaction {
         for (UUID orderId:affectedOrders.stream().sorted().toList()) orders.findByIdForUpdate(orderId);
         requireClear(productId,specId);
         if (moving) requireClear(source.getProductId(),source.getSpecId());
-        if (current!=null && sensitiveOperations.hasUnfinishedCdkeyForGoods(current.getAccountId(),current.getRemoteGoodsId()))
-            throw error("原货源商品有未完成的 CDKEY 操作，请先核实");
-        if (sensitiveOperations.hasUnfinishedCdkeyForGoods(accountId,remote.id()))
-            throw error("上游商品有未完成的 CDKEY 操作，请先核实");
         if (moving) {
             Product previous=locked.get(source.getProductId());
             if (previous.getIsDeleted()==0) { previous.setEnabled(false); products.save(previous); }
@@ -199,8 +193,6 @@ public class SupplierCatalogTransaction {
 
     private void requireRemovable(SupplierProductMapping row) {
         requireClear(row.getProductId(),row.getSpecId());
-        if (sensitiveOperations.hasUnfinishedCdkeyForGoods(row.getAccountId(),row.getRemoteGoodsId()))
-            throw error("该货源商品有未完成的 CDKEY 操作，请先核实");
     }
 
     /** Caller holds the product lock; changing mode must not strand an active order. */

@@ -33,7 +33,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -57,13 +56,12 @@ class SupplierPurchasePostgresIntegrationTest {
         r.add("spring.jpa.hibernate.ddl-auto",()->"validate");
         r.add("SUPPLIER_MASTER_KEY",()->"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
         r.add("supplier.sync-initial-delay-ms",()->"3600000"); r.add("supplier.purchase-initial-delay-ms",()->"3600000");
-        r.add("supplier.transfer-enabled",()->true); r.add("supplier.cdkey-enabled",()->true);
         r.add("app.public-site-url",()->"https://shop.example");
         r.add("jwt.secret",()->"purchase-test-secret-at-least-64-bytes-long-2026-and-further-example-content");
         r.add("mail.enabled",()->false);
     }
     @TestConfiguration static class Config {
-        @Bean FakeProvider fakeProvider(JdbcTemplate jdbc){return new FakeProvider(jdbc);}
+        @Bean FakeProvider fakeProvider(){return new FakeProvider();}
         @Bean FakePayment fakePayment(){return new FakePayment();}
     }
     static class FakePayment implements com.myshop.payment.PaymentProvider {
@@ -86,8 +84,6 @@ class SupplierPurchasePostgresIntegrationTest {
         }
     }
     static class FakeProvider implements SupplierProvider {
-        final JdbcTemplate jdbc;
-        FakeProvider(JdbcTemplate jdbc) { this.jdbc=jdbc; }
         volatile SupplierModels.Product product;
         volatile boolean loseResponse;
         volatile boolean absent;
@@ -96,9 +92,6 @@ class SupplierPurchasePostgresIntegrationTest {
         volatile BigDecimal balance=BigDecimal.valueOf(100);
         final AtomicInteger creates=new AtomicInteger();
         final AtomicInteger refunds=new AtomicInteger(), voids=new AtomicInteger(), complaints=new AtomicInteger();
-        final AtomicInteger transfers=new AtomicInteger(), cdkeys=new AtomicInteger();
-        volatile boolean loseTransfer,loseCdkey,invalidCdkeys;
-        volatile SupplierModels.CdkeyRequest lastCdkey;
         final Map<String,Integer> cardStatuses=new ConcurrentHashMap<>();
         volatile int nextRefundStatus=9, nextVoidStatus=2;
         volatile int cardCancellationAllowed=1;
@@ -111,23 +104,6 @@ class SupplierPurchasePostgresIntegrationTest {
         volatile SupplierModels.ComplaintRequest lastComplaint;
         volatile boolean committedClaimObserved;
         @Override public String type(){return "PURCHASE_TEST";}
-        @Override public boolean supportsTransfer(){return true;}
-        @Override public boolean supportsCdkeys(){return true;}
-        @Override public void transfer(SupplierModels.Connection c,SupplierModels.TransferRequest req) {
-            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
-            assertEquals("SUBMITTING",jdbc.queryForObject("select status from supplier_sensitive_operations where outer_number=?",String.class,req.outerNumber()));
-            transfers.incrementAndGet();
-            if (loseTransfer) throw new SupplierException("CONNECTION","模拟响应丢失");
-        }
-        @Override public List<SupplierModels.Cdkey> createCdkeys(SupplierModels.Connection c,SupplierModels.CdkeyRequest req) {
-            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
-            cdkeys.incrementAndGet(); lastCdkey=req;
-            if (loseCdkey) throw new SupplierException("CONNECTION","模拟响应丢失");
-            int count=invalidCdkeys ? req.cardCount()-1 : req.cardCount();
-            List<SupplierModels.Cdkey> result=new ArrayList<>();
-            for (int i=0;i<count;i++) result.add(new SupplierModels.Cdkey(req.cardPrefix()+String.format("%010d",i),req.shortStatus()==1 ? "https://example.invalid/"+i : ""));
-            return result;
-        }
         @Override public SupplierModels.Account account(SupplierModels.Connection c){return new SupplierModels.Account(balance);}
         @Override public List<SupplierModels.Category> categories(SupplierModels.Connection c){return List.of();}
         @Override public SupplierModels.Page list(SupplierModels.Connection c,String k,String d,int p){return new SupplierModels.Page(List.of(),0,0);}
@@ -209,9 +185,6 @@ class SupplierPurchasePostgresIntegrationTest {
     @Autowired SupplierAftercareOperationRepository aftercareOperations;
     @Autowired SupplierAftercareTransactions aftercareTx;
     @Autowired SupplierComplaintNotifications complaintNotifications;
-    @Autowired SupplierSensitiveService sensitive;
-    @Autowired SupplierSensitiveTransactions sensitiveTx;
-    @Autowired SupplierSensitiveOperationRepository sensitiveOperations;
     @Autowired com.myshop.utils.JwtUtils jwt;
     @Autowired com.myshop.service.PaymentService paymentService;
     @Autowired com.myshop.service.WebhookService webhookService;
@@ -223,7 +196,7 @@ class SupplierPurchasePostgresIntegrationTest {
     @Autowired WebApplicationContext webContext;
     @Autowired FilterChainProxy security;
 
-    @BeforeEach void reset(){fakePayment.mismatch=false;fake.creates.set(0);fake.refunds.set(0);fake.voids.set(0);fake.complaints.set(0);fake.transfers.set(0);fake.cdkeys.set(0);fake.loseTransfer=false;fake.loseCdkey=false;fake.invalidCdkeys=false;fake.lastCdkey=null;fake.rechargeLabel="充值账号";fake.lastQuerySecret=null;fake.cardStatuses.clear();fake.nextRefundStatus=9;fake.nextVoidStatus=2;fake.cardCancellationAllowed=1;fake.loseRefundResponse=false;fake.loseVoidResponse=false;fake.loseComplaintResponse=false;fake.rejectRefund=false;fake.returnedMoney=BigDecimal.ZERO;fake.details.clear();fake.loseResponse=false;fake.absent=false;fake.unsupportedFields=false;fake.lastRequest=null;fake.lastComplaint=null;fake.balance=BigDecimal.valueOf(100);fake.committedClaimObserved=false;}
+    @BeforeEach void reset(){fakePayment.mismatch=false;fake.creates.set(0);fake.refunds.set(0);fake.voids.set(0);fake.complaints.set(0);fake.rechargeLabel="充值账号";fake.lastQuerySecret=null;fake.cardStatuses.clear();fake.nextRefundStatus=9;fake.nextVoidStatus=2;fake.cardCancellationAllowed=1;fake.loseRefundResponse=false;fake.loseVoidResponse=false;fake.loseComplaintResponse=false;fake.rejectRefund=false;fake.returnedMoney=BigDecimal.ZERO;fake.details.clear();fake.loseResponse=false;fake.absent=false;fake.unsupportedFields=false;fake.lastRequest=null;fake.lastComplaint=null;fake.balance=BigDecimal.valueOf(100);fake.committedClaimObserved=false;}
 
     private Fixture fixture(int goodsType,int skuType) throws Exception {
         String goodsId=Long.toString(Math.abs(UUID.randomUUID().getMostSignificantBits()%1_000_000_000L)+1);
@@ -259,82 +232,6 @@ class SupplierPurchasePostgresIntegrationTest {
     private record Fixture(UUID account,UUID product,UUID order,UUID item,UUID purchase){}
     private String value(String sql,UUID id){return jdbc.queryForObject(sql,String.class,id);}
 
-    @Test void transferDoubleClickIsOneRequestAndPasswordNeverPersists() throws Exception {
-        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID(), key=UUID.randomUUID();
-        var input=new SupplierSensitiveService.TransferInput(key,true,"10001",new BigDecimal("1.25"),"mock-sale-password");
-        ExecutorService pool=Executors.newFixedThreadPool(6); CountDownLatch start=new CountDownLatch(1);
-        try {
-            List<Future<?>> futures=new ArrayList<>();
-            for(int i=0;i<6;i++) futures.add(pool.submit(() -> {
-                RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN"));
-                try { start.await(); sensitive.transfer(f.account(),input); return null; }
-                finally { RequestContext.clear(); }
-            }));
-            start.countDown(); for(var future:futures) future.get(15,TimeUnit.SECONDS);
-        } finally { pool.shutdownNow(); }
-        assertEquals(1,fake.transfers.get());
-        assertEquals("SUCCEEDED",jdbc.queryForObject("select status from supplier_sensitive_operations where account_id=? and kind='TRANSFER'",String.class,f.account()));
-        assertFalse(jdbc.queryForObject("select parameters::text from supplier_sensitive_operations where account_id=? and kind='TRANSFER'",String.class,f.account()).contains("mock-sale-password"));
-        assertEquals(0,jdbc.queryForObject("select count(*) from operation_logs where detail like '%mock-sale-password%'",Integer.class));
-        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
-        try { assertThrows(com.myshop.exception.BusinessException.class,() -> sensitive.transfer(f.account(),input)); }
-        finally { RequestContext.clear(); }
-    }
-    @Test void unknownTransferCannotBeResentOrReplacedBeforeManualReview() throws Exception {
-        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID(), key=UUID.randomUUID();
-        var input=new SupplierSensitiveService.TransferInput(key,true,"10001",new BigDecimal("1.25"),null);
-        RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN")); fake.loseTransfer=true;
-        try {
-            Map<String,Object> first=sensitive.transfer(f.account(),input); UUID id=(UUID)first.get("id");
-            assertEquals("UNKNOWN",first.get("status"));
-            assertEquals("UNKNOWN",sensitive.transfer(f.account(),input).get("status"));
-            assertThrows(SupplierException.class,() -> sensitive.transfer(f.account(),new SupplierSensitiveService.TransferInput(UUID.randomUUID(),true,"10001",new BigDecimal("1.25"),null)));
-            sensitive.review(f.account(),id,"TRANSFER","MANUAL_HANDLING");
-            assertEquals("UNKNOWN",sensitiveOperations.findById(id).orElseThrow().getStatus());
-            assertEquals(1,fake.transfers.get());
-        } finally { RequestContext.clear(); }
-    }
-    @Test void cdkeyResultsAreAtomicEncryptedAndUnknownNeverRegenerates() throws Exception {
-        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
-        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
-        try {
-            var request=cdkeyInput(UUID.randomUUID(),2);
-            Map<String,Object> created=sensitive.createCdkeys(f.account(),request); UUID id=(UUID)created.get("id");
-            assertEquals("SUCCEEDED",created.get("status")); assertEquals(1,fake.cdkeys.get());
-            assertEquals(2,fake.lastCdkey.cardCount()); assertEquals(1,fake.lastCdkey.count());
-            assertEquals(0,new BigDecimal("0.01").compareTo(fake.lastCdkey.safePrice())); assertEquals(-1,fake.lastCdkey.cardDay());
-            assertEquals(2,sensitive.result(f.account(),id).size());
-            assertFalse(sensitiveOperations.findById(id).orElseThrow().getEncryptedResult().contains("mock-key-0"));
-            assertEquals("SUCCEEDED",sensitive.createCdkeys(f.account(),request).get("status")); assertEquals(1,fake.cdkeys.get());
-            fake.invalidCdkeys=true;
-            var invalid=sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),2));
-            assertEquals("UNKNOWN",invalid.get("status"));
-            assertThrows(SupplierException.class,() -> sensitive.result(f.account(),(UUID)invalid.get("id")));
-            assertThrows(SupplierException.class,() -> sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),2)));
-            assertEquals(2,fake.cdkeys.get());
-        } finally { RequestContext.clear(); }
-    }
-    @Test void cdkeyDatabaseCommitFailureLeavesUnknownAndNeverRetries() throws Exception {
-        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
-        jdbc.execute("create function p4_fail_sensitive_success() returns trigger language plpgsql as $$ begin raise exception 'simulated commit failure'; end $$");
-        jdbc.execute("create constraint trigger p4_fail_sensitive_success after update on supplier_sensitive_operations deferrable initially deferred for each row when (new.status='SUCCEEDED' and new.account_id='"+f.account()+"'::uuid) execute function p4_fail_sensitive_success()");
-        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
-        try {
-            var request=cdkeyInput(UUID.randomUUID(),2);
-            Map<String,Object> result=sensitive.createCdkeys(f.account(),request);
-            assertEquals("UNKNOWN",result.get("status"));
-            assertNull(sensitiveOperations.findById((UUID)result.get("id")).orElseThrow().getEncryptedResult());
-            assertEquals("UNKNOWN",sensitive.createCdkeys(f.account(),request).get("status"));
-            assertEquals(1,fake.cdkeys.get());
-        } finally {
-            RequestContext.clear(); jdbc.execute("drop trigger p4_fail_sensitive_success on supplier_sensitive_operations");
-            jdbc.execute("drop function p4_fail_sensitive_success()");
-        }
-    }
-    private SupplierSensitiveService.CdkeyInput cdkeyInput(UUID key,int amount) {
-        return new SupplierSensitiveService.CdkeyInput(key,true,fake.product.id(),amount,0,"P",10,10,1,
-                BigDecimal.ZERO,new BigDecimal("0.01"),-1,"mock order");
-    }
     @Test void registeredRechargeEndToEndSeparatesUpstreamAndCustomerRefund() throws Exception {
         Fixture f=fixture(3,0); suppliers.sync(f.account(),fake.product.id());
         adminProducts.updatePrices(f.product(),new com.myshop.model.request.AdminProductPricesUpdateRequest(new BigDecimal("0.02"),new BigDecimal("10.00"),List.of()));
@@ -505,76 +402,6 @@ class SupplierPurchasePostgresIntegrationTest {
             assertEquals(0,fake.creates.get());
         } finally { release.countDown(); pool.shutdownNow(); }
     }
-    @Test void crashedTransferClaimRecoversAsUnknownWithoutSending() throws Exception {
-        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID(), key=UUID.randomUUID();
-        RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN"));
-        try {
-            UUID id=sensitiveTx.intent(f.account(),"TRANSFER",key,operator,json.readTree("{\"money\":\"1\",\"to_user_no\":\"10001\"}"));
-            assertTrue(sensitiveTx.claim(id,suppliers.runtime(f.account(),true)));
-            jdbc.update("update supplier_sensitive_operations set submitted_at=current_timestamp-interval '1 minute' where id=?",id);
-            sensitive.recover();
-            assertEquals("UNKNOWN",sensitiveOperations.findById(id).orElseThrow().getStatus());
-            assertEquals("UNKNOWN",sensitive.transfer(f.account(),new SupplierSensitiveService.TransferInput(key,true,"10001",BigDecimal.ONE,null)).get("status"));
-            assertEquals(0,fake.transfers.get());
-        } finally { RequestContext.clear(); }
-    }
-    @Test void cdkeyTimeoutAndRiskLimitsNeverCauseAutomaticResubmission() throws Exception {
-        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
-        RequestContext.set(new RequestContext.UserInfo(operator,"admin","ADMIN"));
-        try {
-            assertThrows(SupplierException.class,() -> sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),21)));
-            var tooLow=new SupplierSensitiveService.CdkeyInput(UUID.randomUUID(),true,fake.product.id(),1,0,"P",10,10,1,
-                    BigDecimal.ZERO,new BigDecimal("0.001"),-1,"");
-            assertEquals("REJECTED",sensitive.createCdkeys(f.account(),tooLow).get("status"));
-            assertEquals(0,fake.cdkeys.get());
-            fake.loseCdkey=true; var request=cdkeyInput(UUID.randomUUID(),2);
-            assertEquals("UNKNOWN",sensitive.createCdkeys(f.account(),request).get("status"));
-            assertEquals("UNKNOWN",sensitive.createCdkeys(f.account(),request).get("status"));
-            assertEquals(1,fake.cdkeys.get());
-        } finally { RequestContext.clear(); }
-    }
-    @Test void sensitiveOperationsDefaultOffAndHistoricalClaimsDetectCredentialChanges() throws Exception {
-        Fixture f=fixture(1,0); UUID operator=UUID.randomUUID();
-        RequestContext.set(new RequestContext.UserInfo(operator,"super","SUPER_ADMIN"));
-        try {
-            var transfer=new SupplierSensitiveService.TransferInput(UUID.randomUUID(),true,"10001",BigDecimal.ONE,null);
-            ReflectionTestUtils.setField(sensitive,"transferEnabled",false);
-            ReflectionTestUtils.setField(sensitive,"cdkeyEnabled",false);
-            try {
-                assertThrows(SupplierException.class,() -> sensitive.transfer(f.account(),transfer));
-                assertThrows(SupplierException.class,() -> sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),1)));
-                assertEquals(0,fake.transfers.get()); assertEquals(0,fake.cdkeys.get());
-            } finally { ReflectionTestUtils.setField(sensitive,"transferEnabled",true); ReflectionTestUtils.setField(sensitive,"cdkeyEnabled",true); }
-            var snapshot=suppliers.runtime(f.account(),true);
-            UUID op=sensitiveTx.intent(f.account(),"TRANSFER",UUID.randomUUID(),operator,json.readTree("{\"money\":\"1\",\"to_user_no\":\"10001\"}"));
-            suppliers.saveAccount(f.account(),new SupplierService.AccountRequest("test","PURCHASE_TEST","https://test.invalid","test-id","changed-mock-secret",true));
-            assertFalse(sensitiveTx.claim(op,snapshot));
-            assertEquals("ACCOUNT_CHANGED",sensitiveOperations.findById(op).orElseThrow().getErrorCode());
-            assertEquals(0,fake.transfers.get());
-        } finally { RequestContext.clear(); }
-    }
-    @Test void sensitiveEndpointsEnforceRolesAndScopeCdkeyResults() throws Exception {
-        Fixture f=fixture(1,0); UUID admin=UUID.randomUUID(); String name="sensitive-"+admin;
-        jdbc.update("insert into users(id,username,email,password_hash,role,is_deleted,user_no) values (?,?,?,'fixture-hash','ADMIN',0,null)",admin,name,admin+"@example.invalid");
-        UUID op;
-        RequestContext.set(new RequestContext.UserInfo(admin,name,"ADMIN"));
-        try { op=(UUID)sensitive.createCdkeys(f.account(),cdkeyInput(UUID.randomUUID(),2)).get("id"); }
-        finally { RequestContext.clear(); }
-        var mvc=MockMvcBuilders.webAppContextSetup(webContext).addFilters(security).build();
-        var get=org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/transfers",f.account()).contextPath("/api");
-        var auth=new jakarta.servlet.http.Cookie("myshop_access_token",jwt.generateToken(admin,name,"ADMIN",0));
-        mvc.perform(get.cookie(auth)).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/cdkeys/{id}/result",f.account(),op).contextPath("/api"))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
-        var response=mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/cdkeys/{id}/result",f.account(),op).contextPath("/api").cookie(auth))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andReturn().getResponse();
-        assertTrue(response.getContentAsString().contains("P0000000000"));
-        assertTrue(response.getHeader("Cache-Control").contains("no-store"));
-        var other=suppliers.saveAccount(null,new SupplierService.AccountRequest("other","PURCHASE_TEST","https://other.invalid","other","fake-secret",true));
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/suppliers/{account}/cdkeys/{id}/result",other.id(),op).contextPath("/api").cookie(auth))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
-    }
-
     @Test void concurrentWorkersCreateOnlyOnceAndDeliverTwoCards() throws Exception {
         Fixture f=fixture(1,1);
         ExecutorService pool=Executors.newFixedThreadPool(8); CountDownLatch start=new CountDownLatch(1);

@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 56,
-  "latest_migration_version": "56",
+  "migration_count": 57,
+  "latest_migration_version": "57",
   "tables": {
     "media_deleted_files": ["filename", "deleted_at"],
     "users": ["id", "username", "role", "subsite_id"],
@@ -36,8 +36,7 @@
     "supplier_goods_notifications": ["id", "account_id", "remote_goods_id", "event_hash", "status", "last_attempt_at"],
     "supplier_aftercare_operations": ["id", "account_id", "purchase_id", "kind", "status", "idempotency_key", "supplier_req_id"],
     "supplier_complaint_events": ["id", "account_id", "operation_id", "supplier_req_id", "event_hash", "status"],
-    "supplier_complaint_attachments": ["id", "event_id", "storage_key", "content_type", "file_size"],
-    "supplier_sensitive_operations": ["id", "account_id", "account_name_snapshot", "provider_type_snapshot", "base_url_snapshot", "app_id_snapshot", "kind", "idempotency_key", "operator_id", "status", "outer_number", "parameters", "encrypted_result", "submitted_at"]
+    "supplier_complaint_attachments": ["id", "event_id", "storage_key", "content_type", "file_size"]
   },
   "indexes": [
     "uq_payment_attempt_unresolved_creation",
@@ -70,10 +69,6 @@
     "uq_supplier_complaint_unresolved",
     "uq_supplier_complaint_req",
     "uq_supplier_complaint_event",
-    "uq_supplier_complaint_event_status",
-    "uq_supplier_sensitive_request",
-    "uq_supplier_transfer_outer",
-    "idx_supplier_sensitive_account",
-    "idx_supplier_sensitive_recovery"
+    "uq_supplier_complaint_event_status"
   ]
 }

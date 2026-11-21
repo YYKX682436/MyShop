@@ -48,15 +48,4 @@ public final class SupplierModels {
     public record CardVoidResult(int status,String result) {
         @Override public String toString() { return "CardVoidResult[redacted]"; }
     }
-    public record TransferRequest(long toUserNo,BigDecimal money,String outerNumber,String salePwd) {
-        @Override public String toString() { return "TransferRequest[redacted]"; }
-    }
-    public record CdkeyRequest(String goodsId,int cardCount,int shortStatus,String cardPrefix,int cardLength,
-                               int shortLength,int count,BigDecimal cardFaceValue,BigDecimal safePrice,
-                               int cardDay,String cardRemark) {
-        @Override public String toString() { return "CdkeyRequest[redacted]"; }
-    }
-    public record Cdkey(String pwd,String url) {
-        @Override public String toString() { return "Cdkey[redacted]"; }
-    }
 }
