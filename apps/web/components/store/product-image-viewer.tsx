@@ -23,7 +23,8 @@ export function ProductImageViewer({ src, title }: { src: string; title: string 
         </button>
       </DialogTrigger>
       <DialogPortal>
-        <DialogOverlay className="z-[60] bg-black/95" />
+        {/* Keep the scroll lock and viewer content in the same unmount cycle. */}
+        <DialogOverlay className="z-[60] bg-black/95" style={{ animation: "none" }} />
         <DialogPrimitive.Content
           className="product-image-viewer fixed inset-0 z-[60] flex flex-col bg-black text-white outline-none"
           aria-describedby={undefined}
