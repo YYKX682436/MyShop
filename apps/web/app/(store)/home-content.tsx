@@ -7,7 +7,7 @@ import {
   Loader2,
 } from "lucide-react"
 import { motion } from "motion/react"
-import { useLocale, useSearch } from "@/lib/context"
+import { useLocale } from "@/lib/context"
 import { ProductCard } from "@/components/store/product-card"
 import { FadeIn } from "@/components/ui/motion"
 import { Pagination } from "@/components/shared/pagination"
@@ -19,14 +19,14 @@ import type { ProductCard as ProductCardType, Category, PaginatedData, ProductLi
 interface HomeContentProps {
   initialProducts: PaginatedData<ProductCardType>
   categories: Category[]
+  siteName: string
   siteSlogan: string
   siteDescription: string
   productsError?: boolean
 }
 
-export function HomeContent({ initialProducts, categories, siteSlogan, siteDescription, productsError = false }: HomeContentProps) {
+export function HomeContent({ initialProducts, categories, siteName, siteSlogan, siteDescription, productsError = false }: HomeContentProps) {
   const { t } = useLocale()
-  const { searchQuery, sortBy, inStockOnly, priceMin, priceMax } = useSearch()
 
   const [selectedRootCategory, setSelectedRootCategory] = useState<string | null>(null)
   const [selectedChildCategory, setSelectedChildCategory] = useState<string | null>(null)
@@ -34,25 +34,10 @@ export function HomeContent({ initialProducts, categories, siteSlogan, siteDescr
   const selectedRoot = rootCategories.find((category) => category.id === selectedRootCategory) ?? null
   const selectedChildren = selectedRoot?.children ?? []
 
-  const [textFilters, setTextFilters] = useState({ keyword: searchQuery.trim(), priceMin, priceMax })
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const keyword = searchQuery.trim()
-      setTextFilters(current => current.keyword === keyword && current.priceMin === priceMin && current.priceMax === priceMax
-        ? current
-        : { keyword, priceMin, priceMax })
-    }, 300)
-    return () => window.clearTimeout(timer)
-  }, [searchQuery, priceMin, priceMax])
-
   const filters = useMemo<ProductListQuery>(() => ({
     category_id: selectedChildCategory ?? selectedRootCategory ?? undefined,
-    keyword: textFilters.keyword || undefined,
-    sort: sortBy,
-    in_stock: inStockOnly || undefined,
-    price_min: textFilters.priceMin.trim() || undefined,
-    price_max: textFilters.priceMax.trim() || undefined,
-  }), [selectedRootCategory, selectedChildCategory, textFilters, sortBy, inStockOnly])
+    sort: "default",
+  }), [selectedRootCategory, selectedChildCategory])
   const filterKey = JSON.stringify(filters)
   const [pageSelection, setPageSelection] = useState({ filterKey, page: 1 })
   useEffect(() => {
@@ -71,8 +56,7 @@ export function HomeContent({ initialProducts, categories, siteSlogan, siteDescr
     if (firstRequest.current) {
       firstRequest.current = false
       // The server has already rendered the unfiltered first page with viewer prices.
-      if (filters.sort === "default" && !filters.category_id && !filters.keyword
-        && !filters.in_stock && !filters.price_min && !filters.price_max && page === 1) return
+      if (!filters.category_id && page === 1) return
     }
     const controller = new AbortController()
     setLoading(true)
@@ -117,6 +101,7 @@ export function HomeContent({ initialProducts, categories, siteSlogan, siteDescr
           <section className="store-home-intro">
             <div className="store-home-hero">
               <div className="store-home-hero-copy">
+                <p className="store-home-brand">{siteName}</p>
                 {siteSlogan.trim() && (
                   <h1 className="store-home-hero-title text-balance">
                     {siteSlogan}

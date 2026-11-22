@@ -24,11 +24,11 @@ export default function MySettingsPage() {
   return (
     <div className="account-page max-w-2xl space-y-6">
       <header>
-        <Link href="/my" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground">
+        <Link href="/my" className="mb-2 inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:mb-4">
           <ArrowLeft className="size-4" aria-hidden="true" />
           {t("my.backToAccount")}
         </Link>
-        <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("settings.title")}</h1>
+        <h1 className="text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl">{t("settings.title")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{t("settings.description")}</p>
       </header>
 

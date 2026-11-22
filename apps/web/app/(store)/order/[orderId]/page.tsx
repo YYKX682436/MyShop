@@ -282,6 +282,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   }
 
   return <div className="order-detail-page mx-auto flex w-full max-w-4xl flex-col gap-5 py-2 sm:gap-6">
+    <Link href={view.order.guest ? "/" : "/my/orders"} className="inline-flex min-h-11 w-fit items-center text-sm text-muted-foreground hover:text-foreground sm:hidden">← {t("common.back")}</Link>
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t("order.lifecycleTitle")}</h1>

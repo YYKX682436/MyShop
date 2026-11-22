@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation"
 import { Wrench } from "lucide-react"
 import { StoreFooter } from "@/components/layout/store-footer"
 import { StoreBottomNav } from "@/components/layout/store-bottom-nav"
-import { StoreSearchPanel } from "@/components/layout/store-search-panel"
 import { VisitTracker } from "@/components/store/visit-tracker"
 import { MessageSummaryProvider } from "@/components/store/message-summary"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -150,7 +149,6 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
         !hasHeader && "storefront-main--without-header",
       )}>{children}</main>
       {!isChat && <StoreFooter reserveForDock={hasDock} />}
-      <StoreSearchPanel />
       {hasDock && <StoreBottomNav />}
       <PopupAnnouncement />
     </div></MessageSummaryProvider>

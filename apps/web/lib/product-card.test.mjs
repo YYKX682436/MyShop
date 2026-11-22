@@ -11,7 +11,8 @@ test("product cards stay limited to image, title, price, and a light sold-out st
   assert.match(source, /className="product-image-stage-image"/)
   assert.doesNotMatch(source, /object-cover/)
   assert.match(styles, /\.product-image-stage\s*\{[^}]*aspect-ratio:\s*1;[^}]*background:\s*transparent;/s)
-  assert.match(styles, /\.product-image-stage-image\s*\{[^}]*object-fit:\s*contain;[^}]*padding:\s*9%;/s)
+  assert.match(styles, /\.product-image-stage-image\s*\{[^}]*object-fit:\s*contain;/s)
+  assert.doesNotMatch(styles.match(/\.product-image-stage-image\s*\{[^}]*\}/s)?.[0] ?? "", /padding/)
   assert.match(source, /line-clamp-2/)
   assert.match(source, /formatYuan\(product\.price\)/)
   assert.match(source, /product\.soldOut/)
@@ -20,12 +21,12 @@ test("product cards stay limited to image, title, price, and a light sold-out st
   assert.doesNotMatch(source, /<span[^>]+product\.buyNow|t\("product\.buyNow"\)/)
 })
 
-test("home intro is a compact rounded card and the category label appears once", () => {
+test("mobile home uses a compact intro and the category label appears once", () => {
   assert.match(homeSource, /className="store-home-hero"/)
   assert.doesNotMatch(homeSource, /store-catalog-kicker/)
   assert.match(homeSource, /<span className="relative z-10">\{t\("home\.allCategories"\)\}<\/span>/)
-  assert.match(styles, /\.store-home-hero\s*\{[^}]*overflow:\s*hidden;[^}]*border-radius:\s*var\(--radius-sheet\);/s)
-  assert.doesNotMatch(styles, /min-height:\s*clamp\(16rem,\s*38vw,\s*28rem\)/)
-  assert.match(styles, /font-size:\s*clamp\(1\.8rem,\s*4vw,\s*3\.2rem\)/)
+  assert.match(homeSource, /store-home-brand/)
+  assert.match(styles, /@media \(max-width: 767px\)[\s\S]*?\.store-home-hero\s*\{[^}]*border:\s*0;[^}]*padding:\s*0;/)
+  assert.match(styles, /@media \(max-width: 767px\)[\s\S]*?\.product-card\s*\{[^}]*border:\s*1px solid/)
   assert.match(styles, /\.store-catalog-header\s*\{[^}]*justify-content:\s*flex-start;/s)
 })

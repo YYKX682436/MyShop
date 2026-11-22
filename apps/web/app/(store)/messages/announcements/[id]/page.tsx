@@ -32,8 +32,8 @@ export default function AnnouncementDetailPage() {
     }).catch(() => {})
     return () => controller.abort()
   }, [item])
-  return <div className="mx-auto max-w-3xl space-y-5 py-6">
-    <Link href="/messages/announcements" className="text-sm text-muted-foreground">← 网站公告</Link>
+  return <div className="mx-auto max-w-3xl space-y-4 py-0 sm:space-y-5 sm:py-6">
+    <Link href="/messages/announcements" className="inline-flex min-h-11 items-center text-sm text-muted-foreground">← 网站公告</Link>
     {error && <p role="alert" className="text-destructive">{error}</p>}
     {item && <article className="content-surface space-y-4 rounded-card p-5"><header><h1 className="text-xl font-semibold">{item.title}</h1><time className="text-xs text-muted-foreground">{item.published_at ? formatDateTime(item.published_at) : "发布时间未知"}</time></header><MarkdownContent value={item.body} /></article>}
   </div>

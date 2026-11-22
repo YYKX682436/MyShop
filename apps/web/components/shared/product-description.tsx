@@ -15,7 +15,7 @@ export function ProductDescription({ product }: { product: ProductDetail }) {
 
   return (
     <section className="product-description-content" aria-labelledby={titleId}>
-      <div className="mb-6 flex items-center gap-2 border-b border-border-subtle pb-4">
+      <div className="mb-4 flex items-center gap-2 border-b border-border-subtle pb-3 sm:mb-6 sm:pb-4">
         <svg className="h-5 w-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 01 2-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>

@@ -31,8 +31,8 @@ export default function AnnouncementsPage() {
     } catch (e) { setError(e instanceof Error ? e.message : "加载失败") }
     finally { setLoading(false) }
   }
-  return <div className="mx-auto max-w-3xl space-y-5 py-6">
-    <header><Link href="/messages" className="text-sm text-muted-foreground">← 消息</Link><h1 className="mt-2 text-2xl font-semibold">网站公告</h1></header>
+  return <div className="mx-auto max-w-3xl space-y-4 py-0 sm:space-y-5 sm:py-6">
+    <header><Link href="/messages" className="inline-flex min-h-11 items-center text-sm text-muted-foreground">← 消息</Link><h1 className="mt-2 text-2xl font-semibold">网站公告</h1></header>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     <div className="overflow-hidden rounded-card border border-border-subtle bg-surface">
       {items.map(item => <Link key={item.id} href={`/messages/announcements/${item.id}`} className="block border-b border-border-subtle px-4 py-4 last:border-0 hover:bg-surface-muted">

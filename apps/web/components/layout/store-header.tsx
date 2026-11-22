@@ -1,19 +1,14 @@
 import Link from "next/link"
 import Image from "next/image"
-import { StoreHeaderSearch } from "./store-header-search"
 
 interface StoreHeaderProps {
   siteName?: string
   logoUrl?: string
 }
 
-/**
- * The brand remains visually centered while the search action is anchored to
- * the header's right edge so it never changes the title's optical position.
- */
 export function StoreHeader({ siteName = "", logoUrl }: StoreHeaderProps) {
   return (
-    <div className="store-header-layer">
+    <div className="store-header-layer hidden md:block">
       <header className="store-header-frame static-material">
         <div className="relative mx-auto flex h-14 max-w-[1440px] items-center justify-center px-4 sm:px-6 lg:px-8">
           <Link
@@ -23,7 +18,6 @@ export function StoreHeader({ siteName = "", logoUrl }: StoreHeaderProps) {
             {logoUrl && <Image src={logoUrl} alt="" width={28} height={28} unoptimized className="mr-2 size-7 shrink-0 object-contain" />}
             <span className="truncate">{siteName}</span>
           </Link>
-          <StoreHeaderSearch />
         </div>
       </header>
     </div>

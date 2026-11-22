@@ -24,11 +24,11 @@ export function ProductSummary({ product }: { product: ProductDetail }) {
 
   return (
     <div className="product-summary">
-      <h1 className="max-w-3xl text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-5xl sm:leading-[1.08]">
+      <h1 className="max-w-3xl break-words text-xl font-semibold leading-snug tracking-tight text-foreground sm:text-5xl sm:leading-[1.08]">
         {product.title}
       </h1>
       <div className="flex items-baseline gap-1.5">
-        <span className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+        <span className="text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
           {formatYuan(product.price)}
         </span>
         {product.has_specs && <span className="text-sm text-muted-foreground">{t("home.startFrom")}</span>}

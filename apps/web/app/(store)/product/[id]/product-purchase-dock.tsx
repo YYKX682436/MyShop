@@ -332,7 +332,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
             <button
               type="button"
               disabled={isOutOfStock || !authLoaded}
-              className="inline-flex min-h-12 min-w-[7.5rem] shrink-0 items-center justify-center gap-2 rounded-control bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
+              className="inline-flex min-h-11 min-w-[6.5rem] shrink-0 items-center justify-center gap-2 rounded-control bg-primary px-3 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
               aria-label={isOutOfStock ? t("product.soldOut") : t("product.buyNow")}
             >
               {isOutOfStock ? (

@@ -8,7 +8,7 @@ import { useSupportIdentity } from "@/hooks/use-support-identity"
 export default function SupportConversationPage() {
   const id = useParams<{ id: string }>().id
   const identity = useSupportIdentity()
-  return <div className="mx-auto max-w-3xl space-y-2 py-2"><Link href="/messages/support" className="inline-block text-sm text-muted-foreground">← 客服</Link>
+  return <div className="mx-auto max-w-3xl space-y-2 py-2"><Link href="/messages/support" className="inline-flex min-h-11 items-center text-sm text-muted-foreground">← 客服</Link>
     {identity && <SupportThread key={`${identity}:${id}`} id={id} identity={identity} />}
   </div>
 }

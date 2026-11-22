@@ -11,7 +11,7 @@ export default function MessagesPage() {
     { href: "/messages/announcements", title: "网站公告", text: announcements.latest?.title || "暂无公告", time: announcements.latest?.published_at, unread: announcements.unread, icon: Megaphone },
     { href: "/messages/support", title: "客服", text: support.latest?.preview || "联系主站客服", time: support.latest?.latest_at, unread: support.unread, icon: Headset },
   ]
-  return <div className="mx-auto max-w-3xl space-y-5 py-6">
+  return <div className="mx-auto max-w-3xl space-y-4 py-0 sm:space-y-5 sm:py-6">
     <h1 className="text-2xl font-semibold">消息</h1>
     <div className="overflow-hidden rounded-card border border-border-subtle bg-surface">
       {entries.map(({ href, title, text, time, unread, icon: Icon }) => <Link key={href} href={href}

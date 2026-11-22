@@ -148,11 +148,12 @@ export default function RegisterPage() {
   return (
     <div className="auth-page mx-auto min-h-[calc(100vh-13rem)] w-full max-w-3xl py-8 sm:grid-cols-[minmax(0,0.8fr)_minmax(18rem,1fr)] sm:gap-10 lg:gap-16">
       <header className="auth-intro">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-primary">MyShop</p>
-        <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">
+        <Link href="/" className="mb-1 inline-flex min-h-11 items-center text-sm text-muted-foreground sm:hidden">← {t("common.back")}</Link>
+        <p className="mb-2 hidden text-xs font-semibold uppercase tracking-[0.16em] text-primary sm:block">MyShop</p>
+        <h1 className="text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">
           {t("auth.register")}
         </h1>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">{t("auth.hasAccount")}</p>
+        <p className="mt-3 hidden text-sm leading-6 text-muted-foreground sm:block">{t("auth.hasAccount")}</p>
       </header>
 
       <section className="auth-form-panel">
@@ -248,7 +249,8 @@ export default function RegisterPage() {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={t("auth.togglePassword")}
-                  className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+                  aria-pressed={showPassword}
+                  className="absolute right-0 top-1/2 flex size-11 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -280,7 +282,8 @@ export default function RegisterPage() {
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                   aria-label={t("auth.togglePassword")}
-                  className="absolute right-2 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+                  aria-pressed={showConfirmPassword}
+                  className="absolute right-0 top-1/2 flex size-11 -translate-y-1/2 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
                 >
                   {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>

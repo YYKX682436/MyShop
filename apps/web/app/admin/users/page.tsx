@@ -12,6 +12,7 @@ import {
   DataTableShell,
   PageHeader,
   PageToolbar,
+  ResponsiveFilters,
   TableEmptyState,
   TableErrorState,
   TableLoadingState,
@@ -221,7 +222,7 @@ export default function AdminUsersPage() {
     <AdminPage>
       <PageHeader title={t("admin.users")} description={t("admin.usersDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
       <PageToolbar>
-        <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row">
           <Input
             className="min-w-0 sm:max-w-md"
             value={search}
@@ -229,6 +230,7 @@ export default function AdminUsersPage() {
             placeholder={t("admin.searchUser")}
             aria-label={t("admin.searchUser")}
           />
+          <ResponsiveFilters activeCount={Number(Boolean(statusFilter)) + Number(Boolean(levelFilter))}>
           <select
             className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm"
             value={statusFilter}
@@ -248,6 +250,7 @@ export default function AdminUsersPage() {
             <option value="">{t("admin.allUserLevels")}</option>
             {levels.map((level) => <option key={level.id} value={level.id}>{level.name}{!level.enabled ? ` · ${t("admin.inactive")}` : ""}</option>)}
           </select>
+          </ResponsiveFilters>
           {levelError && <Button type="button" variant="outline" size="sm" onClick={() => void loadLevels()}>{t("common.retry")}</Button>}
         </div>
       </PageToolbar>

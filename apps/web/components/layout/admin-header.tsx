@@ -2,28 +2,13 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import {
-  ArrowUpRight,
   ChevronDown,
   Globe2,
-  Images,
-  LayoutDashboard,
   LogOut,
   Moon,
-  Package,
-  Search,
   Sun,
-  Users,
-  ClipboardList,
-  MessageCircle,
-  ShieldAlert,
-  ScrollText,
-  CreditCard,
-  FolderTree,
-  KeyRound,
-  Settings,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -36,34 +21,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarTrigger } from "@/components/ui/sidebar"
-import {
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandShortcut,
-} from "@/components/ui/command"
 import { useAuth, useLocale, useTheme } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
-
-const commandItems: Array<{ labelKey: TranslationKey; href: string; icon: typeof LayoutDashboard; superAdminOnly?: boolean }> = [
-  { labelKey: "admin.dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-  { labelKey: "admin.products", href: "/admin/products", icon: Package },
-  { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
-  { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
-  { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList },
-  { labelKey: "admin.supportMessages", href: "/admin/support", icon: MessageCircle },
-  { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
-  { labelKey: "admin.users", href: "/admin/users", icon: Users },
-  { labelKey: "admin.userLevels", href: "/admin/user-levels", icon: ShieldAlert },
-  { labelKey: "admin.risk", href: "/admin/risk", icon: ShieldAlert },
-  { labelKey: "admin.logs", href: "/admin/operation-logs", icon: ScrollText },
-  { labelKey: "admin.siteConfig", href: "/admin/site-config", icon: Settings },
-  { labelKey: "admin.media", href: "/admin/media", icon: Images },
-  { labelKey: "admin.administrators", href: "/admin/administrators", icon: Users, superAdminOnly: true },
-]
 
 function getPageLabel(pathname: string): TranslationKey {
   if (pathname === "/admin" || pathname === "/admin/dashboard") return "admin.dashboard"
@@ -90,20 +49,6 @@ export function AdminHeader() {
   const { locale, setLocale, t } = useLocale()
   const { resolvedTheme, setTheme } = useTheme()
   const { user, logout } = useAuth()
-  const [commandOpen, setCommandOpen] = useState(false)
-  const pageLabel = t(getPageLabel(pathname))
-
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault()
-        setCommandOpen(true)
-      }
-    }
-    window.addEventListener("keydown", handleShortcut)
-    return () => window.removeEventListener("keydown", handleShortcut)
-  }, [])
-
   const toggleLocale = () => setLocale(locale === "zh" ? "en" : "zh")
   const toggleTheme = () => setTheme(resolvedTheme === "dark" ? "light" : "dark")
   const handleLogout = () => { void logout().then(() => router.push("/")).catch(() => toast.error("退出失败，请重试")) }
@@ -112,27 +57,14 @@ export function AdminHeader() {
     <div className="admin-header-layer">
       <header className="admin-floating-toolbar static-material">
         <div className="admin-toolbar-leading">
-          <SidebarTrigger className="shrink-0 rounded-control" aria-label={t("admin.toggleSidebar")} />
-          <div className="admin-toolbar-context">
-            <span className="admin-toolbar-kicker">{t("admin.adminHome")}</span>
-            <span className="admin-toolbar-title">{pageLabel}</span>
+          <SidebarTrigger className="h-11 w-11 shrink-0 rounded-control md:h-7 md:w-7" aria-label={t("admin.toggleSidebar")} />
+          <div className="hidden min-w-0 flex-col gap-0.5 md:flex">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{t("admin.adminHome")}</span>
+            <span className="truncate text-[15px] font-semibold">{t(getPageLabel(pathname))}</span>
           </div>
         </div>
 
         <div className="admin-toolbar-actions">
-        <Button
-          type="button"
-          variant="outline"
-          className="admin-command-trigger hidden h-9 justify-between gap-3 border-border-subtle bg-surface-muted/65 px-3 text-muted-foreground shadow-none hover:bg-surface md:inline-flex"
-          onClick={() => setCommandOpen(true)}
-          aria-label={t("admin.commandBar")}
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <Search className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate text-xs font-normal">{t("admin.commandBar")}</span>
-          </span>
-          <kbd className="hidden rounded border border-border-subtle bg-surface px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground lg:inline-block">⌘ K</kbd>
-        </Button>
         <Button asChild variant="ghost" size="sm" className="hidden gap-2 sm:inline-flex">
           <Link href="/">
             <span>{t("admin.backToSite")}</span>
@@ -172,31 +104,6 @@ export function AdminHeader() {
         </DropdownMenu>
         </div>
 
-        <CommandDialog open={commandOpen} onOpenChange={setCommandOpen}>
-          <CommandInput placeholder={t("admin.commandBar")} />
-          <CommandList>
-            <CommandEmpty>{t("admin.noCommandResults")}</CommandEmpty>
-            <CommandGroup heading={t("admin.quickNavigation")}>
-              {commandItems
-                .filter((item) => !item.superAdminOnly || user?.role === "SUPER_ADMIN")
-                .map((item) => (
-                  <CommandItem
-                    key={item.href}
-                    value={t(item.labelKey)}
-                    onSelect={() => {
-                      setCommandOpen(false)
-                      router.push(item.href)
-                    }}
-                  >
-                    <item.icon className="text-muted-foreground" aria-hidden="true" />
-                    <span>{t(item.labelKey)}</span>
-                    <ArrowUpRight className="ml-auto size-3.5 text-muted-foreground" aria-hidden="true" />
-                    <CommandShortcut>↵</CommandShortcut>
-                  </CommandItem>
-                ))}
-            </CommandGroup>
-          </CommandList>
-        </CommandDialog>
       </header>
     </div>
   )

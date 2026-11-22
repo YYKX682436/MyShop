@@ -48,50 +48,6 @@ export function useLocale() {
 }
 
 // ============================================================
-// Search
-// ============================================================
-
-export type SortKey = "default" | "hot" | "price_low" | "price_high" | "new"
-
-interface SearchContextValue {
-  searchQuery: string
-  setSearchQuery: (q: string) => void
-  searchOpen: boolean
-  setSearchOpen: (open: boolean) => void
-  sortBy: SortKey
-  setSortBy: (s: SortKey) => void
-  filterOpen: boolean
-  setFilterOpen: (open: boolean) => void
-  inStockOnly: boolean
-  setInStockOnly: (v: boolean) => void
-  priceMin: string
-  setPriceMin: (v: string) => void
-  priceMax: string
-  setPriceMax: (v: string) => void
-}
-
-const SearchContext = createContext<SearchContextValue>({
-  searchQuery: "",
-  setSearchQuery: () => {},
-  searchOpen: false,
-  setSearchOpen: () => {},
-  sortBy: "default",
-  setSortBy: () => {},
-  filterOpen: false,
-  setFilterOpen: () => {},
-  inStockOnly: false,
-  setInStockOnly: () => {},
-  priceMin: "",
-  setPriceMin: () => {},
-  priceMax: "",
-  setPriceMax: () => {},
-})
-
-export function useSearch() {
-  return useContext(SearchContext)
-}
-
-// ============================================================
 // Auth
 // ============================================================
 
@@ -296,48 +252,18 @@ export function AppProviders({ children }: { children: ReactNode }) {
     return () => { cancelled = true }
   }, [])
 
-  // ---------- Search + Sort/Filter（会话状态，无需持久化）----------
-  const [searchQuery, setSearchQuery] = useState("")
-  const [searchOpen, setSearchOpen] = useState(false)
-  const [sortBy, setSortBy] = useState<SortKey>("default")
-  const [filterOpen, setFilterOpen] = useState(false)
-  const [inStockOnly, setInStockOnly] = useState(false)
-  const [priceMin, setPriceMin] = useState("")
-  const [priceMax, setPriceMax] = useState("")
-
   // ---------- Memoized Context Values ----------
   const themeValue = useMemo<ThemeContextValue>(() => ({ theme, setTheme, resolvedTheme }), [theme, setTheme, resolvedTheme])
   const localeValue = useMemo<LocaleContextValue>(() => ({ locale, setLocale, t }), [locale, setLocale, t])
   const authValue = useMemo<AuthContextValue>(() => ({ user, setUser, isLoggedIn, authLoaded, logout }), [user, setUser, isLoggedIn, authLoaded, logout])
   const siteConfigValue = useMemo<SiteConfigContextValue>(() => ({ config: siteConfig, isLoading: siteConfigLoading }), [siteConfig, siteConfigLoading])
-  const searchValue = useMemo<SearchContextValue>(
-    () => ({
-      searchQuery,
-      setSearchQuery,
-      searchOpen,
-      setSearchOpen,
-      sortBy,
-      setSortBy,
-      filterOpen,
-      setFilterOpen,
-      inStockOnly,
-      setInStockOnly,
-      priceMin,
-      setPriceMin,
-      priceMax,
-      setPriceMax,
-    }),
-    [searchQuery, searchOpen, sortBy, filterOpen, inStockOnly, priceMin, priceMax],
-  )
 
   return (
     <ThemeContext.Provider value={themeValue}>
       <LocaleContext.Provider value={localeValue}>
         <AuthContext.Provider value={authValue}>
           <SiteConfigContext.Provider value={siteConfigValue}>
-            <SearchContext.Provider value={searchValue}>
-              {children}
-            </SearchContext.Provider>
+            {children}
           </SiteConfigContext.Provider>
         </AuthContext.Provider>
       </LocaleContext.Provider>

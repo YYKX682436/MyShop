@@ -6,7 +6,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
-import { AdminPage, AdminPagination, ConfirmAlert, DataTableShell, PageHeader, PageToolbar, TableEmptyState, TableErrorState, TableLoadingState } from "@/components/admin/shared"
+import { AdminPage, AdminPagination, ConfirmAlert, DataTableShell, PageHeader, PageToolbar, ResponsiveFilters, TableEmptyState, TableErrorState, TableLoadingState } from "@/components/admin/shared"
 import { ProductCategoryQuickEdit } from "@/components/admin/products/product-category-quick-edit"
 import { ProductImagePreviewDialog } from "@/components/admin/products/product-image-preview-dialog"
 import { ProductPriceQuickEdit } from "@/components/admin/products/product-price-quick-edit"
@@ -241,7 +241,7 @@ export default function AdminProductsPage() {
       />
 
       <PageToolbar>
-        <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center">
           <Input
             className="min-w-0 sm:max-w-sm"
             value={search}
@@ -249,6 +249,7 @@ export default function AdminProductsPage() {
             placeholder={t("admin.searchProduct")}
             aria-label={t("admin.searchProduct")}
           />
+          <ResponsiveFilters activeCount={Number(Boolean(categoryFilter)) + Number(Boolean(statusFilter)) + Number(sortOption !== "weight_desc")}>
           <select
             className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
             value={categoryFilter}
@@ -284,6 +285,7 @@ export default function AdminProductsPage() {
           >
             {PRODUCT_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
           </select>
+          </ResponsiveFilters>
         </div>
         {categoryError && (
           <Button type="button" variant="outline" size="sm" onClick={() => void loadCategories()}>

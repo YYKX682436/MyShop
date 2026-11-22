@@ -50,7 +50,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
         </h3>
 
         <div className="flex min-w-0 items-baseline gap-1">
-          <span className={`product-card-price min-w-0 truncate ${inStock ? "text-foreground" : "text-muted-foreground"}`}>
+          <span className={`product-card-price min-w-0 break-all ${inStock ? "text-foreground" : "text-muted-foreground"}`}>
             {formatYuan(product.price)}
           </span>
           {product.has_specs && <span className="shrink-0 text-xs text-muted-foreground">{t("home.startFrom")}</span>}

@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation"
-import { ProductImage } from "@/components/store/product-image"
+import { ProductImageViewer } from "@/components/store/product-image-viewer"
 import { Package } from "lucide-react"
 import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels } from "@/services/api-server"
 import { ProductPurchaseDock } from "./product-purchase-dock"
@@ -81,7 +81,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   }
 
   return (
-    <div className="product-detail-page storefront-content-width flex flex-col gap-6 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
+    <div className="product-detail-page storefront-content-width flex flex-col gap-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
@@ -97,21 +97,15 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       <div className="product-detail-layout lg:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] lg:items-start">
         {/* Left: Image — server rendered */}
         <div className="product-visual-column min-w-0">
-          <div className="product-image-stage product-image-stage--detail">
-            {product.cover_url ? (
-              <ProductImage
-                src={product.cover_url}
-                alt={product.title}
-                priority
-                sizes="(min-width: 1024px) 60vw, 100vw"
-                className="product-image-stage-image"
-              />
-            ) : (
+          {product.cover_url ? (
+            <ProductImageViewer src={product.cover_url} title={product.title} />
+          ) : (
+            <div className="product-image-stage product-image-stage--detail">
               <div className="flex h-full w-full items-center justify-center">
                 <Package className="size-20 text-muted-foreground/20" aria-hidden="true" />
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Right: Product-first summary; purchase controls live in the Dock. */}

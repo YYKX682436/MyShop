@@ -11,6 +11,7 @@ import {
   DataTableShell,
   PageHeader,
   PageToolbar,
+  ResponsiveFilters,
   StatusBadge,
   TableEmptyState,
   TableErrorState,
@@ -205,6 +206,7 @@ export default function AdminOrdersPage() {
       <PageToolbar>
         <div className="flex min-w-0 flex-1 flex-col gap-3 lg:flex-row lg:flex-wrap">
           <Input className="min-w-0 lg:max-w-sm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("admin.searchOrder")} aria-label={t("admin.searchOrder")} />
+          <ResponsiveFilters activeCount={Number(timeRange !== "all") + Number(sortDirection !== "desc")}>
           <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground shadow-sm" value={timeRange} onChange={(event) => { setTimeRange(event.target.value as TimeRange); setPage(1) }} aria-label={t("admin.timeRangeLabel")}>
             <option value="all">{t("admin.allTime")}</option>
             <option value="today">{t("admin.today")}</option>
@@ -217,11 +219,12 @@ export default function AdminOrdersPage() {
             <option value="desc">{t("admin.newestFirst")}</option>
             <option value="asc">{t("admin.oldestFirst")}</option>
           </select>
-          {timeRange === "custom" && <div className="flex items-center gap-2">
-            <Input type="date" value={customFrom} onChange={(event) => { setCustomFrom(event.target.value); setPage(1) }} aria-label={t("admin.startDate")} />
+          {timeRange === "custom" && <div className="flex flex-wrap items-center gap-2">
+            <Input className="min-w-0 flex-1" type="date" value={customFrom} onChange={(event) => { setCustomFrom(event.target.value); setPage(1) }} aria-label={t("admin.startDate")} />
             <span className="text-sm text-muted-foreground">{t("admin.to")}</span>
-            <Input type="date" value={customTo} onChange={(event) => { setCustomTo(event.target.value); setPage(1) }} aria-label={t("admin.endDate")} />
+            <Input className="min-w-0 flex-1" type="date" value={customTo} onChange={(event) => { setCustomTo(event.target.value); setPage(1) }} aria-label={t("admin.endDate")} />
           </div>}
+          </ResponsiveFilters>
         </div>
       </PageToolbar>
 

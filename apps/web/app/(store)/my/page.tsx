@@ -8,12 +8,10 @@ import {
   LayoutDashboard,
   LogIn,
   LogOut,
-  ReceiptText,
   Settings,
   ShieldCheck,
   Store,
   UserPlus,
-  WalletCards,
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -36,9 +34,9 @@ function AccountLink({ href, icon: Icon, label }: AccountLinkProps) {
   return (
     <Link
       href={href}
-      className="group flex min-h-14 items-center gap-3 px-4 text-sm text-foreground transition-colors hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="group flex min-h-12 items-center gap-3 px-4 text-sm text-foreground transition-colors hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground/[0.06] text-muted-foreground transition-colors group-hover:text-foreground">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-control bg-foreground/[0.05] text-muted-foreground transition-colors group-hover:text-foreground">
         <Icon className="size-[18px]" strokeWidth={1.9} aria-hidden="true" />
       </span>
       <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
@@ -53,8 +51,8 @@ function Divider() {
 
 function LoadingAccount() {
   return (
-    <div className="account-page space-y-6">
-      <header className="space-y-2" aria-hidden="true">
+    <div className="account-page space-y-4 sm:space-y-6">
+      <header className="hidden space-y-2 sm:block" aria-hidden="true">
         <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
         <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
       </header>
@@ -71,12 +69,11 @@ function LoadingAccount() {
         </div>
       </section>
       <section
-        className="relative overflow-hidden rounded-card border border-amber-300/40 bg-gradient-to-br from-amber-50/70 via-yellow-50/70 to-orange-50/70 p-5 dark:border-amber-400/20 dark:from-amber-950/30 dark:via-yellow-950/20 dark:to-orange-950/30"
+        className="overflow-hidden rounded-card border border-border-subtle bg-surface p-4"
         data-layout="account-balance"
         aria-hidden="true"
       >
         <div className="flex items-center gap-4">
-          <div className="size-11 shrink-0 animate-pulse rounded-full bg-foreground/[0.07]" />
           <div className="space-y-2">
             <div className="h-4 w-14 animate-pulse rounded-full bg-foreground/[0.07]" />
             <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
@@ -96,8 +93,8 @@ export default function MyPage() {
 
   if (!isLoggedIn || !user) {
     return (
-      <div className="account-page max-w-2xl space-y-6">
-        <header>
+      <div className="account-page max-w-2xl space-y-4 sm:space-y-6">
+        <header className="sr-only sm:not-sr-only">
           <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         </header>
 
@@ -189,8 +186,8 @@ export default function MyPage() {
   ) : null
 
   return (
-    <div className="account-page space-y-6">
-      <header>
+    <div className="account-page space-y-4 sm:space-y-6">
+      <header className="sr-only sm:not-sr-only">
         <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{t("my.accountSummary")}</p>
       </header>
@@ -209,13 +206,13 @@ export default function MyPage() {
                 type="button"
                 onClick={handleCopyUsername}
                 aria-label={t("my.copyUsername")}
-                className="-mx-1 inline-flex max-w-full items-center rounded px-1 py-0.5 text-left text-xl font-semibold tracking-tight text-foreground transition-[color,transform] hover:text-foreground/80 active:scale-[.995] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="-mx-1 inline-flex min-h-11 max-w-full items-center rounded px-1 py-0.5 text-left text-xl font-semibold tracking-tight text-foreground transition-[color,transform] hover:text-foreground/80 active:scale-[.995] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <span className="truncate">{user.username}</span>
               </button>
             </h2>
             {(identityBadge || (!isAdminRole(user.role) && user.user_no !== null)) && (
-              <div className="mt-2 flex min-w-0 max-w-full items-center gap-2">
+              <div className="mt-1 flex min-w-0 max-w-full flex-wrap items-center gap-2">
                 {identityBadge}
                 {!isAdminRole(user.role) && user.user_no !== null && (
                   <button
@@ -234,17 +231,13 @@ export default function MyPage() {
       </section>
 
       <section
-        className="account-balance relative bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/50 dark:via-yellow-950/35 dark:to-orange-950/45"
+        className="account-balance bg-surface"
         aria-label={t("my.balance")}
       >
-        <div className="pointer-events-none absolute -right-16 -top-24 size-48 rounded-full bg-amber-300/20 blur-3xl dark:bg-amber-400/10" aria-hidden="true" />
-        <div className="account-balance-row relative">
-          <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 ring-1 ring-inset ring-amber-500/20 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/25">
-            <WalletCards className="size-5" strokeWidth={1.8} aria-hidden="true" />
-          </span>
+        <div className="account-balance-row">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-amber-800/80 dark:text-amber-200/80">{t("my.balance")}</p>
-            <p className="mt-1 text-3xl font-semibold tracking-tight text-amber-950 tabular-nums dark:text-amber-50">
+            <p className="text-sm font-medium text-muted-foreground">{t("my.balance")}</p>
+            <p className="mt-1 break-all text-2xl font-semibold tracking-tight text-foreground tabular-nums">
               {user.unlimited ? "∞" : formatYuan(user.balance)}
             </p>
           </div>
@@ -252,8 +245,6 @@ export default function MyPage() {
       </section>
 
       <section className="settings-group overflow-hidden rounded-card" aria-label={t("my.title")}>
-        <AccountLink href="/my/orders" icon={ReceiptText} label={t("my.orders")} />
-        <Divider />
         <AccountLink href="/my/subsite" icon={Store} label="我的分站" />
         <Divider />
         <AccountLink href="/my/security" icon={ShieldCheck} label={t("my.security")} />
@@ -271,9 +262,9 @@ export default function MyPage() {
         <button
           type="button"
           onClick={() => void logout().catch(() => toast.error("退出失败，请重试"))}
-          className="flex min-h-14 w-full items-center gap-3 px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-destructive"
+          className="flex min-h-12 w-full items-center gap-3 px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-destructive"
         >
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/[0.10]">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-control bg-destructive/[0.10]">
             <LogOut className="size-[18px]" strokeWidth={1.9} aria-hidden="true" />
           </span>
           <span>{t("nav.logout")}</span>

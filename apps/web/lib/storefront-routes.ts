@@ -24,7 +24,8 @@ export function normalizeStorefrontPath(pathname: string): string {
 
 /**
  * Product detail pages use their own breadcrumb and purchase Dock instead of
- * the shared floating storefront header. Other storefront routes keep it.
+ * the desktop storefront header. Other storefront routes keep it on desktop;
+ * the header component is hidden on mobile.
  */
 export function isStorefrontHeaderVisible(pathname: string): boolean {
   return !normalizeStorefrontPath(pathname).startsWith("/product/")

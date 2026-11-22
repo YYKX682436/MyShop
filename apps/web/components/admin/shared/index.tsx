@@ -1,7 +1,7 @@
 "use client"
 
-import type { ReactNode } from "react"
-import { ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react"
+import { useId, useState, type ReactNode } from "react"
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, RefreshCw } from "lucide-react"
 
 import {
   AlertDialog,
@@ -72,10 +72,29 @@ export function PageToolbar({ children, className }: { children: ReactNode; clas
   )
 }
 
+/** Keep search visible on mobile while making secondary filters available on demand. */
+export function ResponsiveFilters({ children, activeCount = 0 }: { children: ReactNode; activeCount?: number }) {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const { t } = useLocale()
+  return (
+    <div className="min-w-0 md:contents">
+      <button type="button" className="flex min-h-11 w-full items-center justify-between rounded-control border border-input bg-surface px-3 text-sm font-medium md:hidden" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
+        <span>{t("admin.filters")}{activeCount > 0 ? ` (${activeCount})` : ""}</span>
+        <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} aria-hidden="true" />
+      </button>
+      <div id={id} className={cn("min-w-0 flex-col gap-2 pt-2 md:flex md:flex-row md:items-center md:pt-0", open ? "flex" : "hidden")}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 export function DataTableShell({ children, footer, className }: { children: ReactNode; footer?: ReactNode; className?: string }) {
+  const { t } = useLocale()
   return (
     <section className={cn("admin-table-region min-w-0", className)}>
-      <div className="admin-table-scroll min-w-0 overflow-x-auto">{children}</div>
+      <div className="admin-table-scroll min-w-0 overflow-x-auto" role="region" aria-label={t("admin.dataTable")} tabIndex={0}>{children}</div>
       {footer}
     </section>
   )

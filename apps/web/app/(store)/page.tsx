@@ -50,6 +50,7 @@ export default async function HomePage() {
       <HomeContent
         initialProducts={productsResult.data}
         categories={categories}
+        siteName={config?.site_name || "MyShop"}
         siteSlogan={config?.site_slogan || ""}
         siteDescription={config?.site_description || ""}
         productsError={productsResult.error}

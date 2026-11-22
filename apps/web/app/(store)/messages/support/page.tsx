@@ -22,8 +22,8 @@ export default function SupportListPage() {
     } catch (e) { if (!signal.aborted) setError(e instanceof Error ? e.message : "加载失败"); throw e }
   }, !!identity, 20_000, scope)
   const rows = snapshot.identity === scope ? snapshot.rows : []
-  return <div className="mx-auto max-w-3xl space-y-5 py-6">
-    <header className="flex items-end justify-between gap-3"><div><Link href="/messages" className="text-sm text-muted-foreground">← 消息</Link><h1 className="mt-2 text-2xl font-semibold">主站客服</h1></div><Button asChild><Link href="/messages/support/new">联系客服</Link></Button></header>
+  return <div className="mx-auto max-w-3xl space-y-4 py-0 sm:space-y-5 sm:py-6">
+    <header className="flex items-end justify-between gap-3"><div><Link href="/messages" className="inline-flex min-h-11 items-center text-sm text-muted-foreground">← 消息</Link><h1 className="mt-2 text-2xl font-semibold">主站客服</h1></div><Button asChild><Link href="/messages/support/new">联系客服</Link></Button></header>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     <div className="overflow-hidden rounded-card border border-border-subtle bg-surface">
       {rows.map(row => <Link key={row.id} href={`/messages/support/${row.id}`} className="flex min-h-20 items-center gap-3 border-b border-border-subtle px-4 py-4 last:border-0 hover:bg-surface-muted">

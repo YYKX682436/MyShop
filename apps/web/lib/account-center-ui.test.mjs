@@ -10,13 +10,14 @@ test("account home owns the complete logged-in summary and scoped account action
   const dictionary = readSource("./i18n.ts")
   const loadingSource = source.slice(source.indexOf("function LoadingAccount"), source.indexOf("export default function MyPage"))
   const identityBadgeStart = source.indexOf("const identityBadge =")
-  const metadataRowStart = source.indexOf('className="mt-2 flex min-w-0 max-w-full items-center gap-2"', identityBadgeStart)
+  const metadataRowStart = source.indexOf('className="mt-1 flex min-w-0 max-w-full flex-wrap items-center gap-2"', identityBadgeStart)
   const metadataRowEnd = source.indexOf("</div>", metadataRowStart) + "</div>".length
   const metadataRow = source.slice(metadataRowStart, metadataRowEnd)
 
-  for (const route of ["/my/orders", "/my/security", "/my/settings"]) {
+  for (const route of ["/my/subsite", "/my/security", "/my/settings"]) {
     assert.equal(source.includes(`href="${route}"`), true, route)
   }
+  assert.match(readSource("./storefront-routes.ts"), /pathname: "\/my\/orders"/)
   assert.match(source, /user\.avatar_url/)
   assert.match(source, /user\.user_no/)
   assert.match(source, /user\.balance/)
@@ -27,7 +28,7 @@ test("account home owns the complete logged-in summary and scoped account action
   assert.match(source, /aria-label=\{t\("my\.copyUsername"\)\}/)
   assert.match(source, /type="button"[\s\S]*aria-label=\{t\("my\.copyUsername"\)\}[\s\S]*focus-visible:ring-2/)
   assert.ok(metadataRowStart >= 0)
-  assert.match(metadataRow, /className="mt-2 flex min-w-0 max-w-full items-center gap-2"/)
+  assert.match(metadataRow, /flex-wrap/)
   assert.match(metadataRow, /\{identityBadge\}/)
   assert.match(metadataRow, /user\.user_no !== null/)
   assert.doesNotMatch(metadataRow, /justify-between/)
@@ -38,7 +39,8 @@ test("account home owns the complete logged-in summary and scoped account action
   assert.match(source, /user\.user_no !== null[\s\S]*handleCopyUserId/)
   assert.match(source, /copyAccountValue\(String\(user\.user_no\), t\("my\.userIdCopied"\)\)/)
   assert.match(source, /formatYuan\(user\.balance\)/)
-  assert.match(source, /WalletCards/)
+  assert.match(source, /account-balance bg-surface/)
+  assert.doesNotMatch(source, /WalletCards/)
   assert.match(source, /userApi\.uploadAvatar/)
   assert.match(source, /setUser\(updatedProfile\)/)
   assert.doesNotMatch(source, /user\.email/)
@@ -55,9 +57,9 @@ test("account home owns the complete logged-in summary and scoped account action
   assert.match(loadingSource, /<header[\s\S]*aria-hidden="true"/)
   assert.equal((loadingSource.match(/<section/g) || []).length, 2)
   assert.match(loadingSource, /<section className="content-surface rounded-card p-5 sm:p-6"/)
-  assert.match(loadingSource, /<section\n\s+className="relative overflow-hidden rounded-card border border-amber-300\/40/)
+  assert.match(loadingSource, /<section\n\s+className="overflow-hidden rounded-card border border-border-subtle bg-surface/)
   const identitySkeletonStart = loadingSource.indexOf('<section className="content-surface')
-  const balanceSkeletonStart = loadingSource.indexOf('<section\n        className="relative overflow-hidden rounded-card')
+  const balanceSkeletonStart = loadingSource.indexOf('<section\n        className="overflow-hidden rounded-card')
   assert.ok(balanceSkeletonStart > identitySkeletonStart)
   assert.match(loadingSource.slice(identitySkeletonStart, balanceSkeletonStart), /metadata|mt-2 flex min-w-0 max-w-full items-center gap-2/)
   assert.doesNotMatch(loadingSource.slice(identitySkeletonStart, balanceSkeletonStart), /justify-between/)

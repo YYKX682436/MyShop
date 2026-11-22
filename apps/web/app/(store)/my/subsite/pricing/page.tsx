@@ -78,8 +78,8 @@ export default function SubsitePricingPage() {
     finally { setBusy(false) }
   }
   if (!user) return null
-  return <div className="mx-auto max-w-4xl space-y-6 py-6">
-    <header><Link href="/my/subsite" className="text-sm text-muted-foreground">← 我的分站</Link><h1 className="mt-2 text-2xl font-semibold">商品定价</h1></header>
+  return <div className="mx-auto max-w-4xl space-y-4 py-0 sm:space-y-6 sm:py-6">
+    <header><Link href="/my/subsite" className="inline-flex min-h-11 items-center text-sm text-muted-foreground">← 我的分站</Link><h1 className="mt-2 text-2xl font-semibold">商品定价</h1></header>
     {error && <p role="alert" className="text-destructive">{error} <Button type="button" variant="ghost" onClick={() => void load()}>重试</Button></p>}
     {loading ? <p>加载中…</p> : !error && <>
       <form onSubmit={saveMarkups} className="content-surface space-y-4 rounded-card p-5">
