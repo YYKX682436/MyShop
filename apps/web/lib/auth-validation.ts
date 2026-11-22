@@ -32,7 +32,7 @@ export type RegistrationValidationMessage =
 export type RegistrationErrors = Partial<Record<RegistrationField, RegistrationValidationMessage>>
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_-]{3,20}$/
-const EMAIL_PATTERN = /^(?!.*\.\.)[A-Za-z0-9](?:[A-Za-z0-9.!#$%&'*+/=?^`{|}~-]{0,62}[A-Za-z0-9])?@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/
+const EMAIL_PATTERN = /^(?!.*\.\.)[A-Za-z0-9](?:[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{0,62}[A-Za-z0-9])?@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/
 const PASSWORD_PATTERN = /^[!-~]{6,72}$/
 const PHONE_PATTERN = /^1[3-9]\d{9}$/
 

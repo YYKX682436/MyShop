@@ -344,7 +344,9 @@ class CoreStabilityPostgresIntegrationTest {
                 commitAdmin.countDown();
             }
             admin.get(10, TimeUnit.SECONDS);
-            assertEquals(ErrorCode.PHONE_EXISTS, rejected.get(10, TimeUnit.SECONDS).getCode());
+            BusinessException conflict = rejected.get(10, TimeUnit.SECONDS);
+            assertEquals(ErrorCode.IDENTIFIER_CONFLICT, conflict.getCode());
+            assertEquals("phone", conflict.getParams().get("field"));
         }
 
         assertEquals(1, number("select count(*) from users where username = ? or phone = ?", identity, identity));

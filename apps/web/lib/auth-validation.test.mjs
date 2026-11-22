@@ -60,7 +60,7 @@ test("username and email validation match the backend's canonical formats", () =
     assert.equal(validateRegistrationField("username", { ...validForm, username }), "auth.usernameRule", username)
   }
 
-  for (const email of ["a@b.co", "buyer+tag@example.co.uk", "name.surname@example.com"]) {
+  for (const email of ["a@b.co", "buyer+tag@example.co.uk", "buyer_name@example.com", "name.surname@example.com"]) {
     assert.equal(validateRegistrationField("email", { ...validForm, email }), null, email)
   }
   for (const email of ["buyer", "buyer@localhost", "two@@example.com", "a..b@example.com", "buyer @example.com", "a".repeat(250) + "@example.com"]) {

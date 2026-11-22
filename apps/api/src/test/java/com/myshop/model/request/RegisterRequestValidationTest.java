@@ -12,7 +12,7 @@ class RegisterRequestValidationTest {
     void requestUsesTheSharedRegistrationRulesForAllSubmittedFields() {
         try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
             var validator = factory.getValidator();
-            RegisterRequest valid = request("buyer+tag@example.co.uk");
+            RegisterRequest valid = request("buyer_name@example.test");
             assertTrue(validator.validate(valid).isEmpty());
 
             RegisterRequest invalidEmail = request("buyer@localhost");
