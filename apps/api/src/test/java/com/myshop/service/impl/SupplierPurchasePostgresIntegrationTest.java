@@ -746,7 +746,15 @@ class SupplierPurchasePostgresIntegrationTest {
         complaintNotifications.accept(f.account(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),2,"已经受理","c".repeat(64),List.of());
         complaintNotifications.accept(f.account(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),3,"处理完成","d".repeat(64),List.of());
         complaintNotifications.accept(f.account(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),1,"旧消息","e".repeat(64),List.of());
-        assertEquals(2,complaintNotifications.forAfterSale(sale).size());
+        var updates=complaintNotifications.forAfterSale(sale);
+        assertEquals(2,updates.size());
+        assertEquals(jdbc.queryForList("select id from supplier_complaint_events where operation_id=? order by created_at,id",UUID.class,operation),
+                updates.stream().map(update -> update.get("id")).toList());
+        assertEquals(updates.stream().map(update -> update.get("id")).toList(),
+                complaintNotifications.forAfterSale(sale).stream().map(update -> update.get("id")).toList());
+        assertEquals(updates.stream().map(update -> update.get("id")).toList(),
+                jdbc.queryForList("select source_id from support_activity where source_type='SUPPLIER_UPDATE' and source_id in (select id from supplier_complaint_events where operation_id=?) order by seq",UUID.class,operation));
+        assertEquals(0,jdbc.queryForObject("select count(*) from support_activity where source_type='ORDER_REFUND' and source_id=?",Integer.class,f.order()));
         assertEquals(3,aftercareOperations.findById(operation).orElseThrow().getUpstreamStatus());
         assertThrows(com.myshop.exception.BusinessException.class,() -> complaintNotifications.accept(UUID.randomUUID(),1001,p.getUpstreamOrderNumber(),p.getOuterNumber(),3,"完成","f".repeat(64),List.of()));
         RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));

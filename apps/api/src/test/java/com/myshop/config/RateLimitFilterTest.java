@@ -39,6 +39,21 @@ class RateLimitFilterTest {
         assertEquals(200, otherIp.getStatus());
     }
 
+    @Test
+    void supportWritesHaveASeparateMinuteLimit() throws Exception {
+        SiteConfigRepository configs=mock(SiteConfigRepository.class);
+        var rate=new com.myshop.entity.SiteConfig(); rate.setConfigValue("1000");
+        when(configs.findByConfigKey("rate_limit_per_second")).thenReturn(Optional.of(rate));
+        var filter=new RateLimitFilter(configs,new ObjectMapper(),new ClientIpResolver(""));
+        FilterChain chain=(request,response) -> {};
+        for (int i=0;i<30;i++) {
+            var req=new MockHttpServletRequest("POST","/api/support/conversations/send"); req.setRemoteAddr("203.0.113.10");
+            var res=new MockHttpServletResponse(); filter.doFilter(req,res,chain); assertEquals(200,res.getStatus());
+        }
+        var req=new MockHttpServletRequest("POST","/api/support/conversations/send"); req.setRemoteAddr("203.0.113.10");
+        var res=new MockHttpServletResponse(); filter.doFilter(req,res,chain); assertEquals(429,res.getStatus());
+    }
+
     private MockHttpServletRequest request(String publicIp) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRequestURI("/api/products");

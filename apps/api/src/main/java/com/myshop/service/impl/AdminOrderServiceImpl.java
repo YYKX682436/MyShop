@@ -254,8 +254,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     @Override
     @Transactional
     public Map<String, Object> replyAfterSale(UUID id, String content,
-                                               List<MultipartFile> attachments) {
-        return afterSaleService.replyFromAdmin(id, content, attachments);
+                                               List<MultipartFile> attachments, UUID clientKey) {
+        return afterSaleService.replyFromAdminWithKey(id, content, attachments, clientKey);
     }
 
     @Override

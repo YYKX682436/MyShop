@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { usePathname, useRouter } from "next/navigation"
-import { House, ReceiptText, UserRound, type LucideIcon } from "lucide-react"
+import { House, ReceiptText, MessageCircle, UserRound, type LucideIcon } from "lucide-react"
 import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
 import { useLocale } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
 import { getStorefrontDockAction } from "@/lib/storefront-dock"
 import { getStorefrontActiveTab, isStorefrontDockVisible, normalizeStorefrontPath, type StorefrontNavKey } from "@/lib/storefront-routes"
 import { cn } from "@/lib/utils"
+import { useMessageSummary } from "@/components/store/message-summary"
 
 type DockKey = StorefrontNavKey
 
@@ -21,6 +22,7 @@ interface StoreDockItemDefinition {
 const DOCK_ITEM_DEFINITIONS: readonly StoreDockItemDefinition[] = [
   { key: "home", labelKey: "nav.home", icon: House },
   { key: "orders", labelKey: "nav.orders", icon: ReceiptText },
+  { key: "messages", labelKey: "nav.messages", icon: MessageCircle },
   { key: "me", labelKey: "nav.me", icon: UserRound },
 ]
 
@@ -52,6 +54,8 @@ export function StoreBottomNav() {
   const reducedMotion = useReducedMotion() ?? false
   const [isNavigationPending, startNavigationTransition] = useTransition()
   const { t } = useLocale()
+  const summary = useMessageSummary()
+  const unread = summary.announcements.unread + summary.support.unread
 
   const isVisible = isStorefrontDockVisible(pathname)
   const activeKey = isVisible ? getStorefrontActiveTab(pathname) : null
@@ -305,7 +309,7 @@ export function StoreBottomNav() {
                 type="button"
                 data-testid={`store-dock-${item.key}`}
                 onClick={() => requestDockAction(item.key)}
-                aria-label={item.label}
+                aria-label={item.key === "messages" && unread > 0 ? `${item.label}，${unread} 条未读` : item.label}
                 aria-current={isActive ? "page" : undefined}
                 aria-pressed={isActive}
                 data-preview-active={isPreviewed ? "true" : "false"}
@@ -315,11 +319,11 @@ export function StoreBottomNav() {
                 )}
               >
                 <span className="store-dock-item-content">
-                  <Icon
+                  <span className="relative"><Icon
                     className="size-[18px]"
                     strokeWidth={isPreviewed ? 2.1 : 1.75}
                     aria-hidden="true"
-                  />
+                  />{item.key === "messages" && unread > 0 && <span aria-hidden="true" className="absolute -right-2 -top-1 min-w-3 rounded-full bg-destructive px-1 text-center text-[9px] leading-3 text-white">{unread > 99 ? "99+" : unread}</span>}</span>
                   <span className="store-dock-label">{item.label}</span>
                 </span>
               </button>

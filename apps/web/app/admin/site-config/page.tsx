@@ -5,7 +5,7 @@ import Image from "next/image"
 import { AlertTriangle, ImagePlus, Loader2, Plus, Save, Trash2, Upload } from "lucide-react"
 import { toast } from "sonner"
 
-import { MarkdownEditor } from "@/components/admin/markdown-editor"
+import { AnnouncementManagement } from "@/components/shared/announcement-management"
 import { MediaPicker } from "@/components/admin/media-library"
 import { AdminPage, PageHeader, SettingsSection } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
@@ -47,7 +47,6 @@ export default function AdminSiteConfigPage() {
   const settingsVersion = useRef(0)
   const numberVersion = useRef(0)
   const startRequest = useRequestGuard()
-  const popupContent = getValueFromMap(configMap, "popup_content")
 
   const load = useCallback(async () => {
     const current = startRequest()
@@ -263,14 +262,8 @@ export default function AdminSiteConfigPage() {
         </TabsContent>
 
         <TabsContent value="announcement">
-          <SettingsSection title={t("admin.announcementTab")} description={t("admin.popupContent")}>
-            <div className="max-w-4xl space-y-5">
-              <div className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted/60 px-3.5 py-3"><div><p className="text-sm font-medium">{t("admin.enableAnnouncement")}</p><p className="text-xs text-muted-foreground">{t("admin.scrollAnnouncement")}</p></div><Switch checked={getBool("announcement_enabled")} onCheckedChange={(checked) => setValue("announcement_enabled", String(checked))} aria-label={t("admin.enableAnnouncement")} /></div>
-              <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.scrollAnnouncement")}</span><Input value={getValue("announcement")} onChange={(event) => setValue("announcement", event.target.value)} /></label>
-              <div className="flex items-center justify-between rounded-control border border-border-subtle bg-surface-muted/60 px-3.5 py-3"><div><p className="text-sm font-medium">{t("admin.enablePopup")}</p><p className="text-xs text-muted-foreground">{t("admin.popupContent")}</p></div><Switch checked={getBool("popup_enabled")} onCheckedChange={(checked) => setValue("popup_enabled", String(checked))} aria-label={t("admin.enablePopup")} /></div>
-              <div className="flex flex-col gap-2"><label className="text-sm font-medium">{t("admin.popupContent")}</label><MarkdownEditor value={popupContent} onChange={(value) => setValue("popup_content", value)} uploadImage={(file) => adminProductApi.uploadImage(file).then((result) => result.url)} /></div>
-            </div>
-            {saveButton}
+          <SettingsSection title={t("admin.announcementTab")}>
+            <AnnouncementManagement scope="admin" />
           </SettingsSection>
         </TabsContent>
 
@@ -333,8 +326,4 @@ export default function AdminSiteConfigPage() {
       </Tabs>
     </AdminPage>
   )
-}
-
-function getValueFromMap(map: Record<string, string>, key: string) {
-  return map[key] ?? ""
 }

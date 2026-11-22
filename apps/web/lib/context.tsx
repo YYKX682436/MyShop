@@ -3,7 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react"
 import { type Locale, getDictionary, type TranslationKey } from "./i18n"
 import type { UserProfile, SiteConfig } from "@/types"
-import { siteApi, userApi, authApi, requestOrThrow } from "@/services/api"
+import { siteApi, userApi, authApi, requestOrThrow, setMessageViewer } from "@/services/api"
 
 // ============================================================
 // Theme
@@ -100,7 +100,7 @@ interface AuthContextValue {
   setUser: (u: UserProfile | null) => void
   isLoggedIn: boolean
   authLoaded: boolean
-  logout: () => void
+  logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -108,7 +108,7 @@ const AuthContext = createContext<AuthContextValue>({
   setUser: () => {},
   isLoggedIn: false,
   authLoaded: false,
-  logout: () => {},
+  logout: async () => {},
 })
 
 export function useAuth() {
@@ -240,10 +240,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
     const requestVersion = authVersionRef.current
     userApi.getProfile()
       .then(profile => {
-        if (!cancelled && requestVersion === authVersionRef.current) setUserState(profile)
+        if (!cancelled && requestVersion === authVersionRef.current) { setMessageViewer(profile.id); setUserState(profile) }
       })
       .catch(() => {
-        if (!cancelled && requestVersion === authVersionRef.current) setUserState(null)
+        if (!cancelled && requestVersion === authVersionRef.current) { setMessageViewer(null); setUserState(null) }
       })
       .finally(() => {
         if (!cancelled && requestVersion === authVersionRef.current) setAuthLoaded(true)
@@ -253,16 +253,28 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   const setUser = useCallback((u: UserProfile | null) => {
     authVersionRef.current += 1
+    setMessageViewer(u?.id ?? null)
     setUserState(u)
     setAuthLoaded(true)
   }, [])
 
   const isLoggedIn = useMemo(() => !!user, [user])
 
-  const logout = useCallback(() => {
-    void authApi.logout().catch(() => undefined)
-    setUser(null)
-  }, [setUser])
+  const logout = useCallback(async () => {
+    authVersionRef.current += 1
+    const requestVersion = authVersionRef.current
+    setMessageViewer(undefined)
+    setAuthLoaded(false)
+    try {
+      await authApi.logout()
+      if (requestVersion !== authVersionRef.current) return
+      setMessageViewer(null); setUserState(null); setAuthLoaded(true)
+    } catch (error) {
+      if (requestVersion !== authVersionRef.current) throw error
+      setMessageViewer(user?.id ?? null); setAuthLoaded(true)
+      throw error
+    }
+  }, [user?.id])
 
   // ---------- Site Config ----------
   const [siteConfig, setSiteConfig] = useState<SiteConfig | null>(null)

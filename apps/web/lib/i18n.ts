@@ -4,6 +4,7 @@ const zh = {
   // Nav
   "nav.home": "首页",
   "nav.orders": "订单",
+  "nav.messages": "消息",
   "nav.me": "我的",
   "nav.search": "搜索",
   "nav.main": "主要导航",
@@ -389,6 +390,7 @@ const zh = {
   "admin.suppliers": "货源管理",
   "admin.cardKeys": "卡密管理",
   "admin.orders": "订单管理",
+  "admin.supportMessages": "客服消息",
   "admin.users": "用户管理",
   "admin.userLevels": "用户等级",
   "admin.subsiteSalePrice": "顾客成交单价",
@@ -1424,6 +1426,7 @@ const en: Record<keyof typeof zh, string> = {
   // Nav
   "nav.home": "Home",
   "nav.orders": "Orders",
+  "nav.messages": "Messages",
   "nav.me": "Me",
   "nav.search": "Search",
   "nav.main": "Primary navigation",
@@ -1809,6 +1812,7 @@ const en: Record<keyof typeof zh, string> = {
   "admin.suppliers": "Suppliers",
   "admin.cardKeys": "Card Keys",
   "admin.orders": "Orders",
+  "admin.supportMessages": "Support messages",
   "admin.users": "Users",
   "admin.userLevels": "User Levels",
   "admin.subsiteSalePrice": "Customer unit price",

@@ -15,6 +15,7 @@ import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.SiteConfigService;
+import com.myshop.service.AnnouncementService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     private final ObjectMapper objectMapper;
     private final UserNumberSequenceRepository userNumberSequenceRepository;
     private final UserRepository userRepository;
+    private final AnnouncementService announcementService;
 
     @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
     private String turnstileSiteKey;
@@ -44,7 +46,6 @@ public class SiteConfigServiceImpl implements SiteConfigService {
 
     private static final List<String> PUBLIC_KEYS = List.of(
             "site_name", "site_slogan", "site_description", "logo_url", "favicon_url",
-            "announcement_enabled", "announcement", "popup_enabled", "popup_content",
             "contact_email", "contact_items", "customer_service",
             "maintenance_enabled", "maintenance_message", "footer_text", "custom_css"
     );
@@ -53,8 +54,6 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     private static final Set<String> EDITABLE_KEYS = Set.of(
             // 站点基础
             "site_name", "site_slogan", "site_description", "logo_url", "favicon_url",
-            // 公告 / 弹窗
-            "announcement_enabled", "announcement", "popup_enabled", "popup_content",
             // 联系方式
             "contact_email", "contact_items", "customer_service",
             // 维护模式
@@ -116,16 +115,13 @@ public class SiteConfigServiceImpl implements SiteConfigService {
         if (subsite != null) {
             result.put("site_name", subsite.getName());
             result.put("logo_url", subsite.getLogoUrl());
-            result.put("announcement", subsite.getAnnouncement());
-            result.put("announcement_enabled", subsite.getAnnouncement() != null && !subsite.getAnnouncement().isBlank());
-            result.put("popup_enabled", false);
-            result.put("popup_content", "");
             if (subsite.getCustomerService() != null && !subsite.getCustomerService().isBlank()) {
                 result.put("customer_service", subsite.getCustomerService());
                 result.put("contact_email", null);
                 result.put("contact_items", List.of());
             }
         }
+        result.putAll(announcementService.channels(com.myshop.context.SiteRequestContext.getSiteId()));
         return result;
     }
 
@@ -147,6 +143,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @Override
     public List<?> getAllConfigs() {
         return siteConfigRepository.findAll().stream()
+                .filter(c -> !Set.of("announcement_enabled", "announcement", "popup_enabled", "popup_content").contains(c.getConfigKey()))
                 .map(c -> {
                     Map<String, Object> map = new LinkedHashMap<>();
                     map.put("config_key", c.getConfigKey());

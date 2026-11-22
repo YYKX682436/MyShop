@@ -313,7 +313,7 @@ export interface AfterSaleRequest {
   handled_at?: string | null
   attachments: AfterSaleAttachment[]
   messages: AfterSaleMessage[]
-  supplier_updates?: { status: number; reply: string; created_at: string; attachments: { id: string; url: string; content_type: string; file_size: number }[] }[]
+  supplier_updates?: { id: string; status: number; reply: string; created_at: string; attachments: { id: string; url: string; content_type: string; file_size: number }[] }[]
 }
 
 export type AfterSaleSummary = Pick<AfterSaleRequest,
@@ -552,8 +552,15 @@ export interface SiteConfig {
   favicon_url?: string
   announcement_enabled: boolean
   announcement?: string
+  announcement_id?: string
+  announcement_title?: string
+  announcement_version?: number
+  announcement_site_id?: string
   popup_enabled: boolean
   popup_content?: string
+  popup_id?: string
+  popup_title?: string
+  popup_version?: number
   contact_email?: string
   contact_items?: ContactItem[]
   customer_service?: string

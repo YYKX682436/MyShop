@@ -270,7 +270,7 @@ export default function MyPage() {
       <section className="settings-group overflow-hidden rounded-card">
         <button
           type="button"
-          onClick={logout}
+          onClick={() => void logout().catch(() => toast.error("退出失败，请重试"))}
           className="flex min-h-14 w-full items-center gap-3 px-4 text-sm font-medium text-destructive transition-colors hover:bg-destructive/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-destructive"
         >
           <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/[0.10]">

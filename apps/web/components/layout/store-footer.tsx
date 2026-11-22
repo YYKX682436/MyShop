@@ -3,6 +3,7 @@
 import { useSiteConfig } from "@/lib/context"
 import { ContactMethods } from "@/components/shared/contact-methods"
 import { cn } from "@/lib/utils"
+import Link from "next/link"
 
 export function StoreFooter({ reserveForDock = false }: { reserveForDock?: boolean }) {
   const { config } = useSiteConfig()
@@ -18,7 +19,7 @@ export function StoreFooter({ reserveForDock = false }: { reserveForDock?: boole
             {config.footer_text}
           </p>
         )}
-        <ContactMethods email={config?.contact_email} items={config?.contact_items} customerService={config?.customer_service} />
+        <div className="flex flex-wrap items-center gap-4"><Link href="/messages/support/new" className="text-sm text-primary">联系主站客服</Link><ContactMethods email={config?.contact_email} items={config?.contact_items} customerService={config?.customer_service} /></div>
       </div>
     </footer>
   )

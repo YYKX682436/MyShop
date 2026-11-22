@@ -6,9 +6,9 @@ import Image from "next/image"
 import Link from "next/link"
 import { ChevronDown, Clock, Copy, Download, KeyRound, Package, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useLocale, useSiteConfig } from "@/lib/context"
-import { getApiErrorMessage, orderApi, productApi, userApi } from "@/services/api"
+import { getApiErrorMessage, orderApi, productApi } from "@/services/api"
 import type { OrderDeliveryGroup, OrderItemDetail, OrderView, ProductDetail } from "@/types"
 import { cn, detectPaymentDevice, formatDateTime, formatYuan } from "@/lib/utils"
 import { formatCardContent, formatCardContents } from "@/lib/card-display"
@@ -17,7 +17,6 @@ import { applyPaymentStatus, applyPaymentStatusError, createPaymentPageActionSta
 import { PaymentActionRenderer } from "@/components/shared/payment-action-renderer"
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
-import { AfterSaleHistoryCard } from "@/components/shared/after-sale-history-card"
 import { AfterSaleRequestDialog } from "@/components/shared/after-sale-request-dialog"
 import { ContactSupport } from "@/components/shared/contact-methods"
 import { CardContentParts } from "@/components/shared/card-content-parts"
@@ -25,10 +24,9 @@ import { MarkdownContent } from "@/components/shared/markdown-content"
 import { ProductDescription } from "@/components/shared/product-description"
 import { isManualFulfillmentItem } from "@/lib/order-status"
 import { supplierStatusLabel } from "@/lib/supplier-order"
-import { getAfterSaleAnchorAction } from "@/lib/order-after-sale-anchor"
+import { getAfterSaleAnchorDestination } from "@/lib/order-after-sale-anchor"
 import { getOrderStatusPollInterval, shouldPollOrderStatus } from "@/lib/order-polling"
 import { canApplyForAfterSale } from "@/lib/guest-order"
-import { safeHomeSiteUrl } from "@/lib/safe-navigation"
 
 const PAYMENT_RETURN_TIMEOUT = 20000
 const MANUAL_REFRESH_COOLDOWN = 10
@@ -37,6 +35,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const { orderId } = use(params)
   const { t, locale } = useLocale()
   const { config } = useSiteConfig()
+  const router = useRouter()
   const searchParams = useSearchParams()
   const paymentReturn = searchParams.get("paymentReturn") === "1"
   const initialAction = useMemo(() => readPaymentAction(orderId), [orderId])
@@ -47,7 +46,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const [refreshing, setRefreshing] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [afterSaleOpen, setAfterSaleOpen] = useState(false)
-  const [afterSaleReplyLoading, setAfterSaleReplyLoading] = useState(false)
   const [checkingReturn, setCheckingReturn] = useState(paymentReturn)
   const [returnTimedOut, setReturnTimedOut] = useState(false)
   const [paymentState, setPaymentState] = useState(() => createPaymentPageActionState(initialAction))
@@ -56,7 +54,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   const viewRef = useRef<OrderView | null>(null)
   const requestedProductIds = useRef(new Set<string>())
   const returnDeadline = useRef<number | null>(paymentReturn ? Date.now() + PAYMENT_RETURN_TIMEOUT : null)
-  const afterSaleAnchorHandledRef = useRef<string | null>(null)
 
   const fetchView = useCallback(async (requestKind: PaymentStatusRequestKind, forceRefresh = false): Promise<string | null> => {
     if (requestInFlight.current) return null
@@ -91,29 +88,14 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   }, [fetchView, paymentReturn])
 
   useEffect(() => {
-    afterSaleAnchorHandledRef.current = null
-  }, [orderId])
-
-  useEffect(() => {
-    const hash = window.location.hash
-    if (hash !== "#after-sale") return
-    const afterSaleHistory = view?.order.after_sale_history ?? view?.after_sale_history
-    const hasAfterSaleData = Boolean(view?.order.after_sale || afterSaleHistory?.length)
-    const action = getAfterSaleAnchorAction(
-      hash,
-      hasAfterSaleData,
-      afterSaleAnchorHandledRef.current,
-    )
-    if (action !== "scroll") return
-
-    const frame = window.requestAnimationFrame(() => {
-      const target = document.getElementById("after-sale")
-      if (!target) return
-      target.scrollIntoView({ behavior: "smooth", block: "start" })
-      afterSaleAnchorHandledRef.current = hash
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [view])
+    const openConversation = () => {
+      const target = getAfterSaleAnchorDestination(window.location.hash, orderId)
+      if (target) router.replace(target)
+    }
+    openConversation()
+    window.addEventListener("hashchange", openConversation)
+    return () => window.removeEventListener("hashchange", openConversation)
+  }, [orderId, router])
 
   const orderItems = useMemo(() => view?.order.items ?? [], [view?.order.items])
   const productIds = useMemo(
@@ -255,30 +237,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     }
   }
 
-  const sendAfterSaleMessage = async (content: string, attachments: File[]) => {
-    if (afterSaleReplyLoading) return
-    setAfterSaleReplyLoading(true)
-    try {
-      const afterSaleView = await userApi.sendAfterSaleMessage(orderId, content, attachments)
-      // The reply endpoint returns the authoritative locked conversation view.
-      // Apply it immediately so a later refresh failure cannot make a committed
-      // reply look like a failed submission and invite a duplicate retry.
-      const currentView = viewRef.current
-      if (currentView) {
-        const nextView: OrderView = {
-          ...currentView,
-          order: { ...currentView.order, status: "AFTER_SALE", after_sale: afterSaleView.after_sale, after_sale_history: afterSaleView.after_sale_history },
-          after_sale: afterSaleView.after_sale,
-          after_sale_history: afterSaleView.after_sale_history,
-        }
-        viewRef.current = nextView
-        setView(nextView)
-      }
-    } finally {
-      setAfterSaleReplyLoading(false)
-    }
-  }
-
   const formatTime = (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`
   const status = view?.order.status ?? "PENDING"
   const paymentMethod = view?.payment?.payment_type || view?.payment?.payment_method || "online"
@@ -411,13 +369,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </details>
 
-    <AfterSaleHistoryCard
-      request={view.order.after_sale}
-      history={view.order.after_sale_history ?? view.after_sale_history}
-      mode="customer"
-      onReply={status === "AFTER_SALE" ? sendAfterSaleMessage : undefined}
-      replyLoading={afterSaleReplyLoading}
-    />
+    <div className="content-surface flex items-center justify-between gap-3 rounded-card p-4"><span className="text-sm font-medium">主站客服</span><Link className="text-sm text-primary" href={`/messages/support/new?order=${encodeURIComponent(orderId)}`}>{view.order.after_sale || (view.order.after_sale_history ?? view.after_sale_history)?.length ? "查看会话" : "联系客服"}</Link></div>
 
     {itemsWithCustomerInputs.length > 0 && (
       <details className="content-surface overflow-hidden">
@@ -516,7 +468,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     {purchasedProducts.map(product => <ProductDescription key={product.id} product={product} />)}
 
     <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} customerService={config?.customer_service} emailLabel={t("payment.contactSupport")} />
-    {view.order.guest && <div className="space-y-2 text-center text-sm"><p className="text-muted-foreground">{t("order.guestAfterSale")}</p>{config?.main_site_has_contact && typeof window !== "undefined" && safeHomeSiteUrl(config?.main_site_url, window.location.origin) ? <a href={safeHomeSiteUrl(config?.main_site_url, window.location.origin) ?? undefined} className="text-primary underline">{t("order.mainSiteSupport")}</a> : <p className="text-muted-foreground">{t("order.mainSiteSupportUnavailable")}</p>}</div>}
 
     <AfterSaleRequestDialog
       open={afterSaleOpen}
@@ -524,35 +475,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       orderNo={view.order.order_no}
       productSummary={orderItems.map(item => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、")}
       onOpenChange={setAfterSaleOpen}
-      onSubmitted={(result) => {
-        const currentView = viewRef.current
-        if (currentView) {
-          const currentHistory = currentView.order.after_sale_history
-            ?? currentView.after_sale_history
-            ?? []
-          const nextHistory = [
-            result.after_sale,
-            ...currentHistory.filter(item => item.id !== result.after_sale.id),
-          ]
-          const nextView: OrderView = {
-            ...currentView,
-            order: {
-              ...currentView.order,
-              status: "AFTER_SALE",
-              after_sale: result.after_sale,
-              after_sale_history: nextHistory,
-            },
-            after_sale: result.after_sale,
-            after_sale_history: nextHistory,
-          }
-          viewRef.current = nextView
-          setView(nextView)
-          setPaymentState(current => applyPaymentStatus(current, "AFTER_SALE", undefined))
-          clearPaymentAction(orderId)
-          setCheckingReturn(false)
-        }
-        void fetchView("manual", true)
-      }}
+      onSubmitted={() => { router.push(`/messages/support/new?order=${encodeURIComponent(orderId)}`) }}
     />
   </div>
 }

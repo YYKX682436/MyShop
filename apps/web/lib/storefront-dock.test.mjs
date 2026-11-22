@@ -13,6 +13,8 @@ test("keeps the Dock action model focused on configured primary routes", () => {
     ["orders", "/", "/my/orders"],
     ["orders", "/order/abc", "/my/orders"],
     ["orders", "/my/orders/", null],
+    ["messages", "/", "/messages"],
+    ["messages", "/messages/", null],
     ["me", "/my", null],
     ["me", "/my/", null],
     ["me", "/my/security", "/my"],
@@ -110,12 +112,14 @@ test("consecutive dock navigation behavior resolves the latest user intent under
   assert.equal(pendingTarget, null)
   assert.equal(pathname, "/")
 
-  // 6. Rapid consecutive sequence: Home -> Orders -> Me
+  // 6. Rapid consecutive sequence includes Messages between Orders and Me.
   navigateToKey("orders") // pendingTarget: /my/orders
   assert.equal(pendingTarget, "/my/orders")
+  navigateToKey("messages")
+  assert.equal(pendingTarget, "/messages")
   navigateToKey("me")     // pendingTarget: /my
   assert.equal(pendingTarget, "/my")
-  assert.deepEqual(dispatchedNavigations, ["/my/orders", "/", "/my/orders", "/my"])
+  assert.deepEqual(dispatchedNavigations, ["/my/orders", "/", "/my/orders", "/messages", "/my"])
 
   // Transition to /my resolves
   pathname = "/my"

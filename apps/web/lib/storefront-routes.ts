@@ -1,4 +1,4 @@
-export type StorefrontNavKey = "home" | "orders" | "me"
+export type StorefrontNavKey = "home" | "orders" | "messages" | "me"
 
 export interface StorefrontDockDestination {
   readonly key: StorefrontNavKey
@@ -14,6 +14,7 @@ export interface StorefrontDockDestination {
 export const STOREFRONT_DOCK_DESTINATIONS: readonly StorefrontDockDestination[] = [
   { key: "home", pathname: "/" },
   { key: "orders", pathname: "/my/orders" },
+  { key: "messages", pathname: "/messages" },
   { key: "me", pathname: "/my" },
 ]
 
@@ -75,6 +76,11 @@ export function getStorefrontRouteSection(pathname: string): StorefrontNavKey | 
   if (normalizedPath === "/" || normalizedPath.startsWith("/product/")) {
     return "home"
   }
+
+  if (
+    normalizedPath === "/messages" ||
+    normalizedPath.startsWith("/messages/")
+  ) return "messages"
 
   if (
     normalizedPath === "/my/orders" ||

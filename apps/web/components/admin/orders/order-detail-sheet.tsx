@@ -6,7 +6,7 @@ import { toast } from "sonner"
 
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { StatusBadge } from "@/components/admin/shared"
-import { AfterSaleHistoryCard } from "@/components/shared/after-sale-history-card"
+import Link from "next/link"
 import { SupplierAftercarePanel } from "@/components/admin/orders/supplier-aftercare-panel"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { CardContentParts } from "@/components/shared/card-content-parts"
@@ -30,8 +30,6 @@ interface OrderDetailSheetProps {
   detailCardKeysLoading?: boolean
   detailCardKeysError?: boolean
   onRetryCardKeys?: () => void
-  onReplyAfterSale?: (content: string, attachments: File[]) => Promise<void>
-  afterSaleReplyLoading?: boolean
   onRefreshSupplier?: (purchaseId: string) => void
   onReviewSupplier?: (purchaseId: string, outcome: string) => Promise<void>
   onReviewPayment?: (attemptId: string, note: string) => Promise<void>
@@ -194,8 +192,6 @@ export function OrderDetailSheet({
   detailCardKeysLoading = false,
   detailCardKeysError = false,
   onRetryCardKeys,
-  onReplyAfterSale,
-  afterSaleReplyLoading = false,
   onRefreshSupplier,
   onReviewSupplier,
   onReviewPayment,
@@ -226,9 +222,6 @@ export function OrderDetailSheet({
   if (!order) return null
 
   const identity = formatAdminOrderCustomer(order, t("admin.guest"))
-  const afterSaleRequest = order.after_sale && "reason" in order.after_sale
-    ? order.after_sale
-    : null
   const mainItem = order.items[0]
   const hasAutomaticCardItems = order.items.some((item) =>
     !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY"
@@ -293,16 +286,7 @@ export function OrderDetailSheet({
         </section>
       )}
 
-      {(afterSaleRequest || (order.after_sale_history?.length ?? 0) > 0) && (
-        <AfterSaleHistoryCard
-          request={afterSaleRequest}
-          history={order.after_sale_history ?? []}
-          customerLabel={[identity.primary, identity.secondary].filter(Boolean).join(" · ")}
-          mode="admin"
-          onReply={onReplyAfterSale}
-          replyLoading={afterSaleReplyLoading}
-        />
-      )}
+      {(order.after_sale || (order.after_sale_history?.length ?? 0) > 0 || order.status === "REFUNDED") && <div className="rounded-control border border-border-subtle p-4 text-sm"><Link href={`/admin/support?order=${encodeURIComponent(order.id)}`} className="text-primary">查看客服会话</Link></div>}
 
       {order.status === "REFUNDED" && (
         <section className="rounded-surface border border-slate-300/80 bg-slate-500/[0.06] p-5 shadow-sm dark:border-slate-700/80 dark:bg-slate-500/10 sm:p-6" aria-labelledby="order-refund-title">

@@ -1,12 +1,14 @@
 "use client"
 
 import React, { useState, useEffect, useCallback } from "react"
+import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Wrench } from "lucide-react"
 import { StoreFooter } from "@/components/layout/store-footer"
 import { StoreBottomNav } from "@/components/layout/store-bottom-nav"
 import { StoreSearchPanel } from "@/components/layout/store-search-panel"
 import { VisitTracker } from "@/components/store/visit-tracker"
+import { MessageSummaryProvider } from "@/components/store/message-summary"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
 import { ContactSupport } from "@/components/shared/contact-methods"
@@ -14,6 +16,7 @@ import { MarkdownContent } from "@/components/shared/markdown-content"
 import { isAdminRole } from "@/lib/hooks"
 import { cn } from "@/lib/utils"
 import { isStorefrontDockVisible, isStorefrontHeaderVisible } from "@/lib/storefront-routes"
+import { announcementPopupKey } from "@/lib/announcement-popup"
 
 function AnnouncementBar() {
   const { config } = useSiteConfig()
@@ -22,9 +25,10 @@ function AnnouncementBar() {
 
   return (
     <div className="overflow-hidden border-b border-primary/15 bg-primary/[0.06] text-primary">
-      <div className="mx-auto max-w-[1440px] truncate px-4 py-2 text-center text-xs font-medium sm:px-6 sm:text-sm">
+      <Link href={config.announcement_id ? `/messages/announcements/${config.announcement_id}` : "/messages/announcements"}
+        className="mx-auto block max-w-[1440px] truncate px-4 py-2 text-center text-xs font-medium sm:px-6 sm:text-sm">
         {config.announcement}
-      </div>
+      </Link>
     </div>
   )
 }
@@ -43,6 +47,7 @@ function MaintenancePage() {
         <p className="mb-6 max-w-md text-sm text-muted-foreground">
           {config?.maintenance_message || t("maintenance.description")}
         </p>
+        <Link href="/messages/support" className="mb-4 inline-flex min-h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground">联系主站客服</Link>
         <ContactSupport
           title={t("maintenance.needHelp")}
           email={config?.contact_email}
@@ -67,27 +72,22 @@ function MaintenanceAdminBanner() {
   )
 }
 
-const POPUP_DISMISSED_KEY = "popup_dismissed"
-
 function PopupAnnouncement() {
   const { t } = useLocale()
   const { config } = useSiteConfig()
   const [open, setOpen] = useState(false)
+  const key = announcementPopupKey(config?.announcement_site_id, config?.popup_id, config?.popup_version)
 
   useEffect(() => {
-    if (
-      config?.popup_enabled &&
-      config.popup_content &&
-      !sessionStorage.getItem(POPUP_DISMISSED_KEY)
-    ) {
-      setOpen(true)
-    }
-  }, [config?.popup_enabled, config?.popup_content])
+    let dismissed = false
+    try { dismissed = !!key && localStorage.getItem(key) === "1" } catch { /* Storage can be disabled. */ }
+    setOpen(!!(key && config?.popup_enabled && config.popup_content && !dismissed))
+  }, [config?.popup_enabled, config?.popup_content, key])
 
   const handleClose = useCallback(() => {
     setOpen(false)
-    sessionStorage.setItem(POPUP_DISMISSED_KEY, "1")
-  }, [])
+    try { if (key) localStorage.setItem(key, "1") } catch { /* The dialog can still be closed. */ }
+  }, [key])
 
   if (!open) return null
 
@@ -95,7 +95,7 @@ function PopupAnnouncement() {
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) handleClose() }}>
       <DialogContent className="max-w-lg gap-0 p-0">
         <DialogHeader className="border-b border-border px-6 py-4 pr-12">
-          <DialogTitle className="text-base">{t("common.announcement")}</DialogTitle>
+          <DialogTitle className="text-base">{config?.popup_title || t("common.announcement")}</DialogTitle>
         </DialogHeader>
         <div className="px-6 py-4">
           <MarkdownContent value={config!.popup_content!} />
@@ -123,10 +123,11 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
   const pathname = usePathname()
   const hasHeader = isStorefrontHeaderVisible(pathname)
   const hasDock = isStorefrontDockVisible(pathname)
+  const isChat = pathname.startsWith("/messages/support/")
 
   // 维护模式判断需要 config + auth 都就绪才能准确决策
   const configReady = !isLoading && !!config
-  const isExempt = MAINTENANCE_EXEMPT_PATHS.includes(pathname)
+  const isExempt = MAINTENANCE_EXEMPT_PATHS.includes(pathname) || pathname === "/messages/support" || pathname.startsWith("/messages/support/")
   const isAdmin = authLoaded && isLoggedIn && isAdminRole(user?.role)
   const isMaintenance = configReady && config?.maintenance_enabled
 
@@ -138,7 +139,7 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
   }
 
   return (
-    <div className="store-shell flex min-h-screen flex-col bg-background">
+    <MessageSummaryProvider><div className="store-shell flex min-h-screen flex-col bg-background">
       <VisitTracker />
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
       <AnnouncementBar />
@@ -148,10 +149,10 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
         hasDock && "storefront-main--with-dock",
         !hasHeader && "storefront-main--without-header",
       )}>{children}</main>
-      <StoreFooter reserveForDock={hasDock} />
+      {!isChat && <StoreFooter reserveForDock={hasDock} />}
       <StoreSearchPanel />
       {hasDock && <StoreBottomNav />}
       <PopupAnnouncement />
-    </div>
+    </div></MessageSummaryProvider>
   )
 }

@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ClipboardList,
+  MessageCircle,
   Users,
   Store,
   type LucideIcon,
@@ -70,6 +71,7 @@ const navGroups: AdminNavGroup[] = [
     labelKey: "admin.navTransactions",
     items: [
       { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList, attention: true },
+      { labelKey: "admin.supportMessages", href: "/admin/support", icon: MessageCircle },
       { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
     ],
   },

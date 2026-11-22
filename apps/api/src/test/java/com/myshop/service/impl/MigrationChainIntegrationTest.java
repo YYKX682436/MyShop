@@ -54,6 +54,85 @@ class MigrationChainIntegrationTest {
     }
 
     @Test
+    void v59PreservesDistinctLegacyAnnouncementsWithoutPublishingDisabledContent() {
+        flyway("58").migrate();
+        String deletedFile="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png";
+        jdbcTemplate.update("UPDATE site_configs SET config_value=? WHERE config_key='announcement'", "顶部正文 /api/uploads/"+deletedFile);
+        jdbcTemplate.update("UPDATE site_configs SET config_value='true' WHERE config_key='announcement_enabled'");
+        jdbcTemplate.update("UPDATE site_configs SET config_value='弹窗草稿' WHERE config_key='popup_content'");
+        jdbcTemplate.update("UPDATE site_configs SET config_value='false' WHERE config_key='popup_enabled'");
+        UUID owner = UUID.randomUUID(), site = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id,balance) VALUES (?, 'announcement-owner','announcement-owner@example.com','test-hash','USER',123457,?,0)", owner, defaultUserLevelId());
+        jdbcTemplate.update("INSERT INTO subsites(id,owner_id,prefix,name,announcement,logo_url) VALUES (?,?,'announcement-test','测试分站','分站正文',?)", site, owner, "/api/uploads/"+deletedFile);
+        jdbcTemplate.update("INSERT INTO media_deleted_files(filename) VALUES (?)",deletedFile);
+
+        flyway().migrate();
+        flyway().migrate();
+        assertEquals(3, jdbcTemplate.queryForObject("SELECT count(*) FROM site_announcements", Integer.class));
+        assertEquals("PUBLISHED", jdbcTemplate.queryForObject("SELECT status FROM site_announcements WHERE source_key='legacy:main:banner'", String.class));
+        assertEquals("顶部正文 /api/uploads/"+deletedFile, jdbcTemplate.queryForObject("SELECT body FROM site_announcements WHERE source_key='legacy:main:banner'", String.class));
+        assertEquals("DRAFT", jdbcTemplate.queryForObject("SELECT status FROM site_announcements WHERE source_key='legacy:main:popup'", String.class));
+        assertEquals("弹窗草稿", jdbcTemplate.queryForObject("SELECT body FROM site_announcements WHERE source_key='legacy:main:popup'", String.class));
+        assertEquals("分站正文", jdbcTemplate.queryForObject("SELECT body FROM site_announcements WHERE site_id=?", String.class, site));
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM site_announcements WHERE published_at IS NOT NULL", Integer.class));
+        assertEquals(false, jdbcTemplate.queryForObject("SELECT enabled FROM site_announcement_channels WHERE site_id IS NULL AND channel='POPUP'", Boolean.class));
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM site_announcement_channels WHERE site_id=? AND channel='POPUP'", Integer.class, site));
+        assertEquals(3, jdbcTemplate.queryForObject("SELECT count(*) FROM pg_trigger WHERE tgname='myshop_media_guard' AND NOT tgisinternal AND tgrelid IN ('site_announcements'::regclass,'site_announcement_channels'::regclass,'site_announcement_reads'::regclass)", Integer.class));
+        UUID mainAnnouncement = jdbcTemplate.queryForObject("SELECT id FROM site_announcements WHERE source_key='legacy:main:banner'", UUID.class);
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("INSERT INTO site_announcement_channels(site_id,channel,announcement_id,enabled) VALUES (?,'POPUP',?,true)", site, mainAnnouncement));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("INSERT INTO site_announcement_reads(announcement_id,read_version) VALUES (?,1)", mainAnnouncement));
+        assertThrows(DataAccessException.class, () -> jdbcTemplate.update("INSERT INTO site_announcements(title,body,status) VALUES ('新公告',?,'DRAFT')", "/api/uploads/"+deletedFile));
+    }
+
+    @Test
+    void v59MergesIdenticalLegacyBodiesAndKeepsEachChannelSetting() {
+        flyway("58").migrate();
+        jdbcTemplate.update("UPDATE site_configs SET config_value='同一正文' WHERE config_key IN ('announcement','popup_content')");
+        jdbcTemplate.update("UPDATE site_configs SET config_value='false' WHERE config_key='announcement_enabled'");
+        jdbcTemplate.update("UPDATE site_configs SET config_value='true' WHERE config_key='popup_enabled'");
+        flyway().migrate();
+
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM site_announcements", Integer.class));
+        assertEquals("PUBLISHED", jdbcTemplate.queryForObject("SELECT status FROM site_announcements", String.class));
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT count(DISTINCT announcement_id) FROM site_announcement_channels", Integer.class));
+        assertEquals(false, jdbcTemplate.queryForObject("SELECT enabled FROM site_announcement_channels WHERE channel='BANNER'", Boolean.class));
+        assertEquals(true, jdbcTemplate.queryForObject("SELECT enabled FROM site_announcement_channels WHERE channel='POPUP'", Boolean.class));
+    }
+
+    @Test
+    void v60IndexesExistingHistoryAndOnlyEmitsCommittedNewActivity() {
+        flyway("59").migrate();
+        UUID user=UUID.randomUUID(), order=UUID.randomUUID(), sale=UUID.randomUUID(), oldMessage=UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id,balance) VALUES (?, 'support-owner','support-owner@example.com','test','USER',123461,?,0)", user, defaultUserLevelId());
+        jdbcTemplate.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,10,10,'AFTER_SALE','NORMAL')", order, user);
+        jdbcTemplate.update("INSERT INTO after_sale_requests(id,order_id,user_id,status,source_order_status,reason,waiting_for,last_activity_at,submitted_at) VALUES (?,?,?,'PENDING','PAID','历史申请内容','ADMIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", sale, order, user);
+        String oldFile="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.png";
+        jdbcTemplate.update("INSERT INTO after_sale_messages(id,request_id,sender_type,sender_user_id,content,created_at) VALUES (?,?,'CUSTOMER',?,?,CURRENT_TIMESTAMP)", oldMessage, sale, user,"历史回复 /api/uploads/"+oldFile);
+        jdbcTemplate.update("INSERT INTO media_deleted_files(filename) VALUES (?)",oldFile);
+        flyway().migrate();
+        assertEquals("历史回复 /api/uploads/"+oldFile,jdbcTemplate.queryForObject("SELECT content FROM after_sale_messages WHERE id=?",String.class,oldMessage));
+        UUID conversation=jdbcTemplate.queryForObject("SELECT id FROM support_conversations WHERE order_id=?", UUID.class, order);
+        assertEquals(2, jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE conversation_id=? AND legacy", Integer.class, conversation));
+        UUID next=UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO after_sale_messages(id,request_id,sender_type,sender_user_id,content,created_at) VALUES (?,?,'CUSTOMER',?,'新的回复',CURRENT_TIMESTAMP)", next, sale, user);
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE source_type='AFTER_SALE_MESSAGE' AND source_id=? AND notify_admin AND NOT notify_customer AND NOT legacy", Integer.class, next));
+        assertEquals(5, jdbcTemplate.queryForObject("SELECT count(*) FROM pg_trigger WHERE tgname='myshop_media_guard' AND NOT tgisinternal AND tgrelid IN ('support_conversations'::regclass,'support_messages'::regclass,'support_attachments'::regclass,'support_activity'::regclass,'support_read_states'::regclass)", Integer.class));
+
+        UUID direct=UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,7,7,'PAID','NORMAL')", direct, user);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(jdbcTemplate.getDataSource()));
+        tx.executeWithoutResult(status -> {
+            jdbcTemplate.update("UPDATE orders SET status='REFUNDED',refunded_at=CURRENT_TIMESTAMP WHERE id=?", direct);
+            status.setRollbackOnly();
+        });
+        assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=?", Integer.class, direct));
+        jdbcTemplate.update("UPDATE orders SET status='REFUNDED',refunded_at=CURRENT_TIMESTAMP WHERE id=?", direct);
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=? AND notify_customer AND NOT legacy", Integer.class, direct));
+        jdbcTemplate.update("UPDATE orders SET status='REFUNDED' WHERE id=?", direct);
+        assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=?", Integer.class, direct));
+    }
+
+    @Test
     void v51PaymentAttemptsRetainTheirCarriersAndV52ProtectsUnresolvedIntents() {
         flyway("51").migrate();
         UUID orderId = UUID.randomUUID(), oldId = UUID.randomUUID();
@@ -90,7 +169,7 @@ class MigrationChainIntegrationTest {
         jdbcTemplate.update("INSERT INTO card_keys(id,product_id,content_parts,content_fingerprint,status) VALUES (?,?,'[\"kept-key\"]'::jsonb,'migration-kept-key','AVAILABLE')",card,product);
         jdbcTemplate.update("INSERT INTO user_secret_prices(user_id,product_id,price) VALUES (?,?,9.00)",user,product);
         flyway().migrate();
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertEquals(0,new BigDecimal("123.45").compareTo(jdbcTemplate.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
         assertEquals("PAID",jdbcTemplate.queryForObject("select status from orders where id=?",String.class,order));
         assertEquals("kept-key",jdbcTemplate.queryForObject("select content_parts->>0 from card_keys where id=?",String.class,card));
@@ -106,8 +185,8 @@ class MigrationChainIntegrationTest {
         Flyway flyway = flyway();
         flyway.migrate();
 
-        assertEquals("58", flyway.info().current().getVersion().getVersion());
-        assertEquals(58, flyway.info().all().length);
+        assertEquals("60", flyway.info().current().getVersion().getVersion());
+        assertEquals(60, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides", "subsites", "subsite_settings", "subsite_allowed_levels",
@@ -591,7 +670,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertEquals("NO", jdbcTemplate.queryForObject("""
                 SELECT is_nullable FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = 'sales_channel_cutover_certifications'
@@ -827,7 +906,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("after_sale_requests", "admin_reply"));
         assertEquals("历史管理员说明", jdbcTemplate.queryForObject(
                 "SELECT rejection_reason FROM after_sale_requests WHERE id = ?", String.class,
@@ -900,7 +979,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertEquals("https://cdn.example/v27-cover.png", jdbcTemplate.queryForObject(
                 "SELECT product_cover_url FROM order_items WHERE product_id = ?", String.class, coveredProductId));
         assertNull(jdbcTemplate.queryForObject(
@@ -930,7 +1009,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertTrue(columnExists("product_categories", "parent_id"));
         assertEquals("YES", nullableValue("product_categories", "parent_id"));
         assertTrue(indexExists("idx_product_categories_parent_deleted_sort"));
@@ -1024,7 +1103,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         for (UUID channelId : List.of(pageChannelId, apiChannelId, defaultChannelId)) {
             assertEquals(3, paymentChannelConfigKeyCount(channelId));
             assertNull(paymentChannelConfigValue(channelId, legacyCreateModeKey));
@@ -1225,7 +1304,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("products", "sort_order"));
         assertEquals("NO", nullableValue("products", "sort_weight"));
         assertEquals("NO", nullableValue("products", "product_no"));
@@ -1295,7 +1374,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertEquals(1L, jdbcTemplate.queryForObject(
                 "SELECT product_no FROM products WHERE id = ?", Long.class, firstProductId));
         assertEquals(138L, jdbcTemplate.queryForObject(
@@ -1344,7 +1423,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         assertFalse(columnExists("orders", "email"));
         assertFalse(indexExists("idx_orders_email_status"));
         String retiredLookupHash = String.join("_", "lookup", "token", "hash");
@@ -1544,7 +1623,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         for (String retiredKey : List.of("max_pending_orders_per_ip", "max_pending_orders_per_user")) {
             assertEquals(0, configCount(retiredKey),
                     "retired pending-order config must be removed: " + retiredKey);
@@ -1590,7 +1669,7 @@ class MigrationChainIntegrationTest {
 
         flyway().migrate();
 
-        assertEquals("58", flyway().info().current().getVersion().getVersion());
+        assertEquals("60", flyway().info().current().getVersion().getVersion());
         UUID levelId = defaultUserLevelId();
         assertEquals(levelId, jdbcTemplate.queryForObject(
                 "SELECT user_level_id FROM users WHERE id = ?", UUID.class, userId));

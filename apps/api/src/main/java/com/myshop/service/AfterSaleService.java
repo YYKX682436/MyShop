@@ -28,6 +28,12 @@ public interface AfterSaleService {
     Map<String, Object> replyFromAdmin(UUID orderId, String content,
                                         List<MultipartFile> attachments);
 
+    Map<String, Object> replyFromCustomerWithKey(UUID orderId, UUID userId, String content,
+                                                  List<MultipartFile> attachments, UUID clientKey);
+
+    Map<String, Object> replyFromAdminWithKey(UUID orderId, String content,
+                                               List<MultipartFile> attachments, UUID clientKey);
+
     AdminOrderRefundResponse approve(UUID orderId, boolean confirmed,
                                      boolean reclaimCardKeys);
 }

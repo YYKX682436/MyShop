@@ -48,6 +48,10 @@ public class SecurityConfig {
                         // Public endpoints
                         .requestMatchers("/auth/captcha", "/auth/register", "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/products/**", "/categories", "/site/config", "/subsite/current", "/payment-channels", "/payment-providers").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/announcements", "/announcements/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/announcements/*/read").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/support/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/support/conversations/send", "/support/conversations/*/read", "/support/conversations/*/after-sale-reply").permitAll()
                         .requestMatchers(HttpMethod.GET, "/orders/*", "/orders/*/export").permitAll()
                         .requestMatchers(HttpMethod.POST, "/orders").permitAll()
                         .requestMatchers(HttpMethod.POST, "/orders/*/refresh").permitAll()
@@ -69,7 +73,8 @@ public class SecurityConfig {
                         // Default
                         .anyRequest().authenticated())
                 .addFilterBefore(csrfCookieFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(new MessageIdentityFilter(), JwtAuthenticationFilter.class);
 
         return http.build();
     }

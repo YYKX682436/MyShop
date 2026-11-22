@@ -106,21 +106,22 @@ class AdminOrderControllerTest {
     @Test
     void afterSaleMessageApiForwardsContentAndAllPrivateAttachments() throws Exception {
         UUID orderId = UUID.randomUUID();
+        UUID clientKey = UUID.randomUUID();
         MockMultipartFile first = new MockMultipartFile(
                 "attachments", "reply.png", "image/png", new byte[]{1, 2, 3});
-        when(adminOrderService.replyAfterSale(eq(orderId), eq("补充说明"), anyList()))
+        when(adminOrderService.replyAfterSale(eq(orderId), eq("补充说明"), anyList(), eq(clientKey)))
                 .thenReturn(java.util.Map.of("status", "PENDING"));
 
         mockMvc().perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .multipart("/admin/orders/{id}/after-sale/messages", orderId)
                         .file(first)
-                        .param("content", "补充说明"))
+                        .param("content", "补充说明").param("client_key", clientKey.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("PENDING"));
 
         org.mockito.ArgumentCaptor<List<MultipartFile>> files =
                 org.mockito.ArgumentCaptor.forClass(List.class);
-        verify(adminOrderService).replyAfterSale(eq(orderId), eq("补充说明"), files.capture());
+        verify(adminOrderService).replyAfterSale(eq(orderId), eq("补充说明"), files.capture(), eq(clientKey));
         org.junit.jupiter.api.Assertions.assertEquals("reply.png",
                 files.getValue().get(0).getOriginalFilename());
     }

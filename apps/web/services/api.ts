@@ -60,6 +60,20 @@ import type { AdminOrderSearchParams } from "@/lib/admin-order-search"
 // ============================================================
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "/api"
+let messageViewer = "pending"
+let expectedMessageGuest: string | null = null
+/** An assertion checked against the authenticated cookie, never an authority claim. */
+export function setMessageViewer(userId: string | null | undefined) {
+  messageViewer = userId === undefined ? "pending" : userId === null ? "guest" : `user:${userId}`
+}
+export function setMessageGuestToken(token: string) { expectedMessageGuest = token }
+function isMessagePath(path: string) {
+  return path.startsWith("/support/") || path.startsWith("/admin/support/") || path === "/announcements" || path.startsWith("/announcements/") || path.startsWith("/announcements?")
+}
+function assertMessageIdentity(path: string, viewer: string, token: string | null) {
+  if (isMessagePath(path) && (viewer !== messageViewer || (viewer === "guest" && (token !== expectedMessageGuest || token !== getSessionToken()))))
+    throw new DOMException("身份已变化", "AbortError")
+}
 
 // ============================================================
 // Error
@@ -199,7 +213,8 @@ function consumeTurnstileToken(): string | null {
 
 async function request<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  redirectOnUnauthorized = true,
 ): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -217,6 +232,9 @@ async function request<T>(
   if (sessionToken) {
     headers["X-Session-Token"] = sessionToken
   }
+  const viewer = messageViewer
+  if (isMessagePath(path)) headers["X-Message-Viewer"] = viewer
+  assertMessageIdentity(path, viewer, sessionToken)
 
   // Capture this action's token before any asynchronous fingerprint work.
   const turnstileToken = consumeTurnstileToken()
@@ -238,6 +256,7 @@ async function request<T>(
     credentials: "include",
     headers,
   })
+  assertMessageIdentity(path, viewer, sessionToken)
 
   // Capture session token from response
   const newSessionToken = res.headers.get("X-Session-Token")
@@ -246,7 +265,7 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    if (res.status === 401 && path !== "/user/profile") {
+    if (res.status === 401 && path !== "/user/profile" && redirectOnUnauthorized) {
       handleUnauthorized()
     }
     const body = await res.json().catch(() => ({ code: res.status, message: res.statusText }))
@@ -262,12 +281,15 @@ async function request<T>(
   return body.data
 }
 
-async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
+async function uploadRequest<T>(path: string, formData: FormData, redirectOnUnauthorized = true, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   const csrf = getCsrfToken()
   if (csrf) headers["X-CSRF-Token"] = csrf
   const sessionToken = getSessionToken()
   if (sessionToken) headers["X-Session-Token"] = sessionToken
+  const viewer = messageViewer
+  if (isMessagePath(path)) headers["X-Message-Viewer"] = viewer
+  assertMessageIdentity(path, viewer, sessionToken)
   const deviceId = cachedDeviceId
   if (deviceId) headers["X-Device-Id"] = deviceId
   const turnstileToken = consumeTurnstileToken()
@@ -278,10 +300,12 @@ async function uploadRequest<T>(path: string, formData: FormData): Promise<T> {
     headers,
     credentials: "include",
     body: formData,
+    signal,
   })
+  assertMessageIdentity(path, viewer, sessionToken)
 
   if (!res.ok) {
-    if (res.status === 401) {
+    if (res.status === 401 && redirectOnUnauthorized) {
       handleUnauthorized()
     }
     const body = await res.json().catch(() => ({ code: res.status, message: res.statusText }))
@@ -319,6 +343,109 @@ async function requestText(path: string): Promise<string> {
 /** Execute a required API call; errors are never replaced with local data. */
 export async function requestOrThrow<T>(apiCall: () => Promise<T>): Promise<T> {
   return apiCall()
+}
+
+export interface SiteAnnouncement {
+  id: string
+  title: string
+  body: string
+  status: "DRAFT" | "PUBLISHED" | "WITHDRAWN"
+  published_at: string | null
+  publish_version: number
+  unread?: boolean
+}
+
+export interface AnnouncementChannel {
+  channel: "BANNER" | "POPUP"
+  announcement_id: string | null
+  enabled: boolean
+}
+
+export const announcementApi = {
+  summary: (signal?: AbortSignal) => request<{ unread: number; latest: Pick<SiteAnnouncement, "id" | "title" | "body" | "published_at"> | null }>("/announcements/summary", { signal }, false),
+  list: (page = 0, signal?: AbortSignal) => request<SiteAnnouncement[]>(`/announcements?page=${page}`, { signal }, false),
+  detail: (id: string, signal?: AbortSignal) => request<SiteAnnouncement>(`/announcements/${encodeURIComponent(id)}`, { signal }, false),
+  read: (id: string, version: number, signal?: AbortSignal) => request<null>(`/announcements/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ version }), signal }, false),
+  manage: (scope: "admin" | "subsite") => ({
+    list: () => request<{ announcements: SiteAnnouncement[]; channels: AnnouncementChannel[] }>(`/${scope}/announcements`),
+    create: (title: string, body: string) => request<{ id: string }>(`/${scope}/announcements`, { method: "POST", body: JSON.stringify({ title, body }) }),
+    edit: (id: string, title: string, body: string) => request<null>(`/${scope}/announcements/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ title, body }) }),
+    publish: (id: string) => request<null>(`/${scope}/announcements/${encodeURIComponent(id)}/publish`, { method: "POST" }),
+    withdraw: (id: string) => request<null>(`/${scope}/announcements/${encodeURIComponent(id)}/withdraw`, { method: "POST" }),
+    channel: (channel: "BANNER" | "POPUP", announcementId: string | null, enabled: boolean) => request<null>(`/${scope}/announcements/channels/${channel}`, { method: "PUT", body: JSON.stringify({ announcement_id: announcementId, enabled }) }),
+  }),
+}
+
+export interface SupportConversation {
+  id: string
+  site_id: string | null
+  site_name: string | null
+  customer_name?: string
+  order_id: string | null
+  order_no: number | null
+  order_status: string | null
+  latest_at: string | null
+  latest_type: string | null
+  preview: string
+  unread: number
+  waiting_for: "ADMIN" | "CUSTOMER" | null
+}
+
+export interface SupportAttachment { id: string; url: string; content_type: string; file_size: number }
+export interface SupportActivity {
+  id: string
+  cursor: string
+  source_type: "SUPPORT_MESSAGE" | "AFTER_SALE_MESSAGE" | "AFTER_SALE_APPLY" | "AFTER_SALE_REJECT" | "ORDER_REFUND" | "SUPPLIER_UPDATE"
+  sender_type: "CUSTOMER" | "ADMIN" | "SYSTEM"
+  content: string | null
+  created_at: string | null
+  request_id: string | null
+  client_key: string | null
+  round?: number
+  refund_amount?: number | null
+  refund_destination?: string | null
+  order_status?: string
+  supplier_status?: number
+  attachments: SupportAttachment[]
+}
+export interface SupportActivityPage { items: SupportActivity[]; has_more: boolean; oldest_cursor: string | null; newest_cursor: string | null }
+
+export const supportApi = {
+  summary: (signal?: AbortSignal) => request<{ unread: number; latest: SupportConversation | null }>("/support/summary", { signal }, false),
+  list: (admin = false, query = "", signal?: AbortSignal) => request<SupportConversation[]>(`${admin ? "/admin" : ""}/support/conversations${query ? `?${query}` : ""}`, { signal }, !admin ? false : true),
+  detail: (id: string, admin = false, signal?: AbortSignal) => request<SupportConversation>(`${admin ? "/admin" : ""}/support/conversations/${encodeURIComponent(id)}`, { signal }, admin),
+  activities: (id: string, admin = false, cursor?: { after?: string; before?: string }, signal?: AbortSignal) => {
+    const params = new URLSearchParams(cursor)
+    return request<SupportActivityPage>(`${admin ? "/admin" : ""}/support/conversations/${encodeURIComponent(id)}/activities?${params}`, { signal }, admin)
+  },
+  read: (id: string, cursor: string, admin = false, signal?: AbortSignal) => request<null>(`${admin ? "/admin" : ""}/support/conversations/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ cursor }), signal }, admin),
+  order: (id: string, signal?: AbortSignal) => request<{ conversation_id: string | null; order_id: string; order_no: number; order_status: string }>(`/support/orders/${encodeURIComponent(id)}`, { signal }, false),
+  adminOrder: (id: string, signal?: AbortSignal) => request<{ conversation_id: string | null }>(`/admin/support/orders/${encodeURIComponent(id)}`, { signal }),
+  general: (signal?: AbortSignal) => request<{ conversation_id: string | null }>("/support/general", { signal }, false),
+  send: (data: { conversationId?: string; orderId?: string; clientKey: string; content: string; files: File[] }, admin = false, afterSale = false, signal?: AbortSignal) => {
+    const form = new FormData()
+    if (data.conversationId) form.append("conversation_id", data.conversationId)
+    if (data.orderId) form.append("order_id", data.orderId)
+    form.append("client_key", data.clientKey); form.append("content", data.content)
+    data.files.forEach(file => form.append("attachments", file))
+    const path = afterSale && data.conversationId
+      ? `${admin ? "/admin" : ""}/support/conversations/${encodeURIComponent(data.conversationId)}/after-sale-reply`
+      : `${admin ? "/admin" : ""}/support/conversations/send`
+    return uploadRequest<{ conversation_id: string; message_id: string } | null>(path, form, admin, signal)
+  },
+  attachment: async (url: string, signal?: AbortSignal) => {
+    if (!/^\/api\/(?:admin\/support|support|after-sale-attachments|supplier-complaint-attachments)\/[a-zA-Z0-9/-]+$/.test(url)) throw new Error("附件地址无效")
+    const headers: Record<string, string> = {}
+    const token = getSessionToken()
+    if (token) headers["X-Session-Token"] = token
+    const viewer = messageViewer
+    headers["X-Message-Viewer"] = viewer
+    if (viewer === "guest" && token !== expectedMessageGuest) throw new DOMException("身份已变化", "AbortError")
+    const response = await fetch(url, { credentials: "include", headers, signal })
+    if (viewer !== messageViewer || (viewer === "guest" && (token !== expectedMessageGuest || token !== getSessionToken()))) throw new DOMException("身份已变化", "AbortError")
+    if (!response.ok) throw new Error("附件加载失败")
+    return response.blob()
+  },
 }
 
 
@@ -361,9 +488,10 @@ export const userApi = {
     attachments.forEach(file => formData.append("attachments", file, file.name))
     return uploadRequest<AfterSaleApplyResult>(`/user/orders/${encodeURIComponent(orderId)}/after-sales`, formData)
   },
-  sendAfterSaleMessage: (orderId: string, content: string, attachments: File[] = []) => {
+  sendAfterSaleMessage: (orderId: string, content: string, clientKey: string, attachments: File[] = []) => {
     const formData = new FormData()
     formData.append("content", content)
+    formData.append("client_key", clientKey)
     attachments.forEach(file => formData.append("attachments", file, file.name))
     return uploadRequest<AfterSaleView>(`/user/orders/${encodeURIComponent(orderId)}/after-sale/messages`, formData)
   },
@@ -441,7 +569,7 @@ export const subsiteApi = {
   mine: () => request<SubsiteInfo | null>("/subsite/mine"),
   opening: () => request<{ enabled: boolean; opening_price: number; eligible: boolean }>("/subsite/opening"),
   open: (data: { prefix: string; name: string }) => request<SubsiteInfo>("/subsite/open", { method: "POST", body: JSON.stringify(data) }),
-  update: (data: Pick<SubsiteInfo, "name" | "logo_url" | "customer_service" | "announcement">) => request<SubsiteInfo>("/subsite/mine", { method: "PUT", body: JSON.stringify(data) }),
+  update: (data: Pick<SubsiteInfo, "name" | "logo_url" | "customer_service">) => request<SubsiteInfo>("/subsite/mine", { method: "PUT", body: JSON.stringify(data) }),
   customers: (page: number) => request<{ content: SubsiteCustomer[]; total_pages: number }>(`/subsite/customers?page=${page}&size=20`),
   overview: () => request<{ order_count: number; estimated_profit: number; pending_profit: number; settled_profit: number }>("/subsite/overview"),
   orders: (page: number) => request<{ content: SubsiteOrder[]; total_pages: number }>(`/subsite/orders?page=${page}&size=20`),
@@ -662,9 +790,10 @@ export const adminOrderApi = {
       method: "POST",
       body: JSON.stringify({ rejection_reason: rejectionReason }),
     }),
-  sendAfterSaleMessage: (id: string, content: string, attachments: File[] = []) => {
+  sendAfterSaleMessage: (id: string, content: string, clientKey: string, attachments: File[] = []) => {
     const formData = new FormData()
     formData.append("content", content)
+    formData.append("client_key", clientKey)
     attachments.forEach(file => formData.append("attachments", file, file.name))
     return uploadRequest<AfterSaleView>(`/admin/orders/${encodeURIComponent(id)}/after-sale/messages`, formData)
   },

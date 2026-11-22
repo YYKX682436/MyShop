@@ -58,6 +58,9 @@ class OrderRefundConcurrencyIntegrationTest {
     private OrderRefundService orderRefundService;
 
     @Autowired
+    private com.myshop.service.SupportService supportService;
+
+    @Autowired
     private AdminOrderService adminOrderService;
 
     @Autowired
@@ -92,6 +95,11 @@ class OrderRefundConcurrencyIntegrationTest {
 
     @BeforeEach
     void resetDatabase() {
+        jdbcTemplate.update("DELETE FROM support_read_states");
+        jdbcTemplate.update("DELETE FROM support_attachments");
+        jdbcTemplate.update("DELETE FROM support_activity");
+        jdbcTemplate.update("DELETE FROM support_messages");
+        jdbcTemplate.update("DELETE FROM support_conversations");
         jdbcTemplate.update("DELETE FROM card_key_reclaims");
         jdbcTemplate.update("DELETE FROM balance_transactions");
         jdbcTemplate.update("DELETE FROM operation_logs");
@@ -171,11 +179,13 @@ class OrderRefundConcurrencyIntegrationTest {
         assertMoney("0.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, buyerId));
         assertEquals("DELIVERED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
         assertEquals(0, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type IN ('REFUND','SUBSITE_PROFIT_REVERSAL')", Integer.class, fixture.orderId()));
+        assertEquals(0, scalar("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=?", Integer.class, fixture.orderId()));
         jdbcTemplate.update("UPDATE users SET balance=5.00 WHERE id=?", ownerId);
         orderRefundService.refund(fixture.orderId(), "refund", true, false);
         assertMoney("0.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, ownerId));
         assertMoney("15.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, buyerId));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id=? AND type='SUBSITE_PROFIT_REVERSAL'", Integer.class, fixture.orderId()));
+        assertEquals(1, scalar("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=? AND notify_customer", Integer.class, fixture.orderId()));
     }
 
     @Test
@@ -364,6 +374,14 @@ class OrderRefundConcurrencyIntegrationTest {
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id = ? AND type = 'REFUND'", Integer.class, orderId));
         assertEquals(1, scalar("SELECT count(*) FROM operation_logs WHERE action = 'order.refund' AND target_id = ?", Integer.class, orderId.toString()));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE user_id = ?", Integer.class, userId));
+        assertEquals(1, scalar("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=? AND notify_customer", Integer.class, orderId));
+        RequestContext.set(new RequestContext.UserInfo(userId, "buyer", "USER"));
+        UUID conversation=scalar("SELECT id FROM support_conversations WHERE order_id=?",UUID.class,orderId);
+        @SuppressWarnings("unchecked") var events=(List<Map<String,Object>>)supportService.activities(conversation,false,null,null,null,40).get("items");
+        var refund=events.stream().filter(event -> "ORDER_REFUND".equals(event.get("source_type"))).findFirst().orElseThrow();
+        assertEquals(new BigDecimal("12.34"),refund.get("refund_amount"));
+        assertEquals("BALANCE",refund.get("refund_destination"));
+        assertEquals("REFUNDED",refund.get("order_status"));
     }
 
     @Test
@@ -386,6 +404,7 @@ class OrderRefundConcurrencyIntegrationTest {
         assertMoney("5.66", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, userId));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE order_id = ? AND type = 'REFUND'", Integer.class, orderId));
         assertEquals(0, scalar("SELECT count(*) FROM operation_logs WHERE action = 'order.refund' AND target_id = ?", Integer.class, orderId.toString()));
+        assertEquals(0, scalar("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=?", Integer.class, orderId));
     }
 
     @Test

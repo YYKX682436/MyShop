@@ -123,7 +123,7 @@ function AfterSaleRequestTimeline({
             t={t}
           />
         ))}
-        {(item.supplier_updates ?? []).map((update, index) => <div key={`${update.created_at}-${index}`} className="rounded-control border border-border-subtle bg-surface px-3 py-3">
+        {(item.supplier_updates ?? []).map((update) => <div key={update.id} className="rounded-control border border-border-subtle bg-surface px-3 py-3">
           <div className="flex flex-wrap justify-between gap-2"><p className="text-xs font-semibold">供应商处理 · {({ 1: "等待处理", 2: "已受理", 3: "处理完成", 4: "审核终止" } as Record<number, string>)[update.status] || "处理中"}</p><time className="text-xs text-muted-foreground">{formatDateTime(update.created_at, locale)}</time></div>
           {update.reply && <p className="mt-2 whitespace-pre-wrap break-words text-sm">{update.reply}</p>}
           {update.attachments.length > 0 && <div className="mt-2 flex flex-wrap gap-3">{update.attachments.map((attachment, i) => <a key={attachment.id} href={attachment.url} className="text-sm text-primary underline">处理凭证 {i + 1}</a>)}</div>}

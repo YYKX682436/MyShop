@@ -5,7 +5,7 @@ import Link from "next/link"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { AnnouncementManagement } from "@/components/shared/announcement-management"
 import { useRequireAuth } from "@/lib/hooks"
 import { formatYuan } from "@/lib/utils"
 import { subsiteApi, type SubsiteInfo, type SubsiteCustomer, type SubsiteLevel, type SubsiteOrder } from "@/services/api"
@@ -21,7 +21,6 @@ export default function MySubsitePage() {
   const [name, setName] = useState("")
   const [logo, setLogo] = useState("")
   const [contact, setContact] = useState("")
-  const [announcement, setAnnouncement] = useState("")
   const [customers, setCustomers] = useState<SubsiteCustomer[]>([])
   const [levels, setLevels] = useState<SubsiteLevel[]>([])
   const [customerLevels, setCustomerLevels] = useState<Record<string, string>>({})
@@ -37,7 +36,7 @@ export default function MySubsitePage() {
       const result = await subsiteApi.mine()
       setSite(result)
       if (result) {
-        setName(result.name); setLogo(result.logo_url ?? ""); setContact(result.customer_service ?? ""); setAnnouncement(result.announcement ?? "")
+        setName(result.name); setLogo(result.logo_url ?? ""); setContact(result.customer_service ?? "")
         const [customerPage, availableLevels, stats, orderResult] = await Promise.all([subsiteApi.customers(page), subsiteApi.levels(), subsiteApi.overview(), subsiteApi.orders(orderPage)])
         setCustomers(customerPage.content); setTotalPages(customerPage.total_pages); setLevels(availableLevels)
         setCustomerLevels(Object.fromEntries(customerPage.content.map(customer => [customer.id, customer.user_level_id ?? ""])))
@@ -55,7 +54,7 @@ export default function MySubsitePage() {
   }
   async function save(event: React.FormEvent) {
     event.preventDefault(); setBusy(true)
-    try { setSite(await subsiteApi.update({ name, logo_url: logo || null, customer_service: contact || null, announcement: announcement || null })); toast.success("设置已保存") }
+    try { setSite(await subsiteApi.update({ name, logo_url: logo || null, customer_service: contact || null })); toast.success("设置已保存") }
     catch (e) { toast.error(e instanceof Error ? e.message : "保存失败") }
     finally { setBusy(false) }
   }
@@ -76,9 +75,9 @@ export default function MySubsitePage() {
         <label className="block space-y-1 text-sm"><span>网站名称</span><Input required maxLength={100} value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="block space-y-1 text-sm"><span>Logo 地址</span><Input maxLength={500} value={logo} onChange={e => setLogo(e.target.value)} /></label>
         <label className="block space-y-1 text-sm"><span>客服</span><Input maxLength={500} value={contact} onChange={e => setContact(e.target.value)} /></label>
-        <label className="block space-y-1 text-sm"><span>公告</span><Textarea maxLength={2000} value={announcement} onChange={e => setAnnouncement(e.target.value)} /></label>
         <Button type="submit" disabled={busy}>保存设置</Button>
       </form>
+      <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">公告管理</h2><AnnouncementManagement scope="subsite" /></section>
       <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">分站订单</h2><ul className="divide-y divide-border">{orders.map(order => <li key={order.id} className="space-y-1 py-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span className="break-all font-medium">{order.order_no}</span><span>{order.status}</span></div><div className="flex flex-wrap justify-between gap-2 text-muted-foreground"><span>成交 {formatYuan(order.actual_amount)}</span><span>{order.subsite_profit_state === "CANCELED" ? `已取消 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "REVERSED" ? `已冲回 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "SETTLED" ? `已入账 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "PENDING" ? `待入账 ${formatYuan(order.subsite_profit)}` : order.status === "PAID" ? `预计收益 ${formatYuan(order.subsite_profit)}` : "未结算"}</span></div></li>)}</ul>{!orders.length && <p className="text-sm text-muted-foreground">暂无订单</p>}<div className="flex items-center justify-between text-sm"><Button type="button" variant="ghost" disabled={orderPage === 0 || busy} onClick={() => setOrderPage(value => value - 1)}>上一页</Button><span>{orderPage + 1} / {Math.max(1, orderTotalPages)}</span><Button type="button" variant="ghost" disabled={orderPage + 1 >= orderTotalPages || busy} onClick={() => setOrderPage(value => value + 1)}>下一页</Button></div></section>
       <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">我的客户</h2>
         <ul className="divide-y divide-border">{customers.map(customer => <li key={customer.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><span>{customer.username} {customer.user_no != null && <span className="text-muted-foreground">#{customer.user_no}</span>}</span><label className="text-sm">等级 <select className="ml-2 rounded-control border border-input bg-background p-2" value={customerLevels[customer.id] ?? ""} disabled={busy} onChange={e => setCustomerLevels(value => ({ ...value, [customer.id]: e.target.value }))}><option value="" disabled>选择等级</option>{levels.map(level => <option key={level.id} value={level.id}>{level.name}</option>)}</select></label><Button type="button" variant="outline" disabled={busy || !customerLevels[customer.id] || customerLevels[customer.id] === customer.user_level_id} onClick={() => void updateLevel(customer.id, customerLevels[customer.id])}>保存等级</Button></li>)}</ul>

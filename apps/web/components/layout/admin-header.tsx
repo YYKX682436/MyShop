@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
+import { toast } from "sonner"
 import {
   ArrowUpRight,
   ChevronDown,
@@ -16,6 +17,7 @@ import {
   Sun,
   Users,
   ClipboardList,
+  MessageCircle,
   ShieldAlert,
   ScrollText,
   CreditCard,
@@ -52,6 +54,7 @@ const commandItems: Array<{ labelKey: TranslationKey; href: string; icon: typeof
   { labelKey: "admin.categories", href: "/admin/categories", icon: FolderTree },
   { labelKey: "admin.cardKeys", href: "/admin/card-keys", icon: KeyRound },
   { labelKey: "admin.orders", href: "/admin/orders", icon: ClipboardList },
+  { labelKey: "admin.supportMessages", href: "/admin/support", icon: MessageCircle },
   { labelKey: "admin.payment", href: "/admin/payment-channels", icon: CreditCard },
   { labelKey: "admin.users", href: "/admin/users", icon: Users },
   { labelKey: "admin.userLevels", href: "/admin/user-levels", icon: ShieldAlert },
@@ -71,6 +74,7 @@ function getPageLabel(pathname: string): TranslationKey {
   if (pathname.startsWith("/admin/categories")) return "admin.categories"
   if (pathname.startsWith("/admin/card-keys")) return "admin.cardKeys"
   if (pathname.startsWith("/admin/orders")) return "admin.orders"
+  if (pathname.startsWith("/admin/support")) return "admin.supportMessages"
   if (pathname.startsWith("/admin/users")) return "admin.users"
   if (pathname.startsWith("/admin/payment-channels")) return "admin.payment"
   if (pathname.startsWith("/admin/site-config")) return "admin.siteConfig"
@@ -102,10 +106,7 @@ export function AdminHeader() {
 
   const toggleLocale = () => setLocale(locale === "zh" ? "en" : "zh")
   const toggleTheme = () => setTheme(resolvedTheme === "dark" ? "light" : "dark")
-  const handleLogout = () => {
-    logout()
-    router.push("/")
-  }
+  const handleLogout = () => { void logout().then(() => router.push("/")).catch(() => toast.error("退出失败，请重试")) }
 
   return (
     <div className="admin-header-layer">

@@ -53,6 +53,9 @@ public class MaintenanceFilter implements Filter {
         if (path.startsWith("/api/admin")
                 || path.startsWith("/api/payments/webhook")
                 || path.startsWith("/api/supplier-callback/")
+                || path.startsWith("/api/support/")
+                || ("GET".equalsIgnoreCase(httpRequest.getMethod()) && (path.equals("/api/user/profile")
+                    || path.startsWith("/api/after-sale-attachments/") || path.startsWith("/api/supplier-complaint-attachments/")))
                 || path.equals("/api/site/config")
                 || path.startsWith("/api/auth/")
                 || path.startsWith("/api/captcha")) {

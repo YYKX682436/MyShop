@@ -154,7 +154,6 @@ public class SubsiteManagementService {
         if (request == null) throw bad("站点设置无效");
         site.setName(text(request.name(),100,true)); site.setLogoUrl(text(request.logoUrl(),500,false));
         site.setCustomerService(text(request.customerService(),500,false));
-        site.setAnnouncement(text(request.announcement(),2000,false));
         return view(sites.save(site));
     }
     @Transactional

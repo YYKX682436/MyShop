@@ -79,7 +79,7 @@ public class SupplierComplaintNotifications {
             WHERE o.after_sale_id=? ORDER BY e.created_at,e.id
             """,(rs,n) -> {
                 UUID id=rs.getObject("id",UUID.class);
-                Map<String,Object> row=new LinkedHashMap<>(); row.put("status",rs.getInt("status"));
+                Map<String,Object> row=new LinkedHashMap<>(); row.put("id",id); row.put("status",rs.getInt("status"));
                 row.put("reply",rs.getString("reply")); row.put("created_at",rs.getTimestamp("created_at").toLocalDateTime());
                 row.put("attachments",jdbc.query("SELECT id,content_type,file_size FROM supplier_complaint_attachments WHERE event_id=? ORDER BY id",
                         (a,i) -> Map.of("id",a.getObject(1,UUID.class),"content_type",a.getString(2),"file_size",a.getLong(3),

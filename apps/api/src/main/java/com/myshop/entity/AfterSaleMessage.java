@@ -41,6 +41,12 @@ public class AfterSaleMessage implements Persistable<UUID> {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
+    @Column(name = "client_key")
+    private UUID clientKey;
+
+    @Column(name = "request_fingerprint", columnDefinition = "bytea")
+    private byte[] requestFingerprint;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

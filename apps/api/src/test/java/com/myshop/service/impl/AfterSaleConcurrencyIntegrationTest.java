@@ -91,6 +91,11 @@ class AfterSaleConcurrencyIntegrationTest {
 
     @BeforeEach
     void resetDatabase() {
+        jdbcTemplate.update("DELETE FROM support_read_states");
+        jdbcTemplate.update("DELETE FROM support_attachments");
+        jdbcTemplate.update("DELETE FROM support_activity");
+        jdbcTemplate.update("DELETE FROM support_messages");
+        jdbcTemplate.update("DELETE FROM support_conversations");
         jdbcTemplate.update("DELETE FROM card_key_reclaims");
         jdbcTemplate.update("DELETE FROM balance_transactions");
         jdbcTemplate.update("DELETE FROM operation_logs");
@@ -101,7 +106,51 @@ class AfterSaleConcurrencyIntegrationTest {
         jdbcTemplate.update("DELETE FROM after_sale_requests");
         jdbcTemplate.update("DELETE FROM order_items");
         jdbcTemplate.update("DELETE FROM orders");
+        jdbcTemplate.update("UPDATE users SET subsite_id=NULL WHERE subsite_id IS NOT NULL");
+        jdbcTemplate.update("DELETE FROM subsite_opening_records");
+        jdbcTemplate.update("DELETE FROM subsites");
         jdbcTemplate.update("DELETE FROM users");
+    }
+
+    @Test
+    void keyedReplyRetriesOnceAndRejectsChangedContentEvenAfterClosure() {
+        UUID userId=insertUser("keyed-reply-user");
+        UUID adminId=insertUser("keyed-reply-admin");
+        UUID orderId=insertAfterSaleOrder(userId,"3.00",OrderStatus.PAID);
+        UUID requestId=insertPendingRequest(orderId,userId,OrderStatus.PAID);
+        UUID key=UUID.randomUUID();
+        RequestContext.set(new RequestContext.UserInfo(userId,"buyer","USER"));
+        afterSaleService.replyFromCustomerWithKey(orderId,userId,"补充的消息",List.of(),key);
+        afterSaleService.replyFromCustomerWithKey(orderId,userId,"补充的消息",List.of(),key);
+        org.junit.jupiter.api.Assertions.assertThrows(com.myshop.exception.BusinessException.class,
+                () -> afterSaleService.replyFromCustomerWithKey(orderId,userId,"不同内容",List.of(),key));
+        assertEquals(1,jdbcTemplate.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,requestId,key));
+        RequestContext.set(new RequestContext.UserInfo(adminId,"admin","ADMIN"));
+        afterSaleService.reject(orderId,"未通过");
+        RequestContext.set(new RequestContext.UserInfo(userId,"buyer","USER"));
+        afterSaleService.replyFromCustomerWithKey(orderId,userId,"补充的消息",List.of(),key);
+        assertEquals(1,jdbcTemplate.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,requestId,key));
+    }
+
+    @Test
+    void concurrentIdenticalReplyRetriesPersistOneMessage() throws Exception {
+        UUID user=insertUser("concurrent-key-user"), order=insertAfterSaleOrder(user,"3.00",OrderStatus.PAID);
+        UUID request=insertPendingRequest(order,user,OrderStatus.PAID), key=UUID.randomUUID();
+        var ready=new CountDownLatch(2); var start=new CountDownLatch(1);
+        var executor=Executors.newFixedThreadPool(2);
+        try {
+            var tasks=new ArrayList<Future<Boolean>>();
+            for (int i=0;i<2;i++) tasks.add(executor.submit(() -> {
+                ready.countDown(); assertTrue(start.await(10,TimeUnit.SECONDS));
+                RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
+                try { afterSaleService.replyFromCustomerWithKey(order,user,"相同重试",List.of(),key); return true; }
+                finally { RequestContext.clear(); }
+            }));
+            assertTrue(ready.await(10,TimeUnit.SECONDS)); start.countDown();
+            for (var task:tasks) assertTrue(task.get(30,TimeUnit.SECONDS));
+        } finally { executor.shutdownNow(); }
+        assertEquals(1,jdbcTemplate.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,request,key));
+        assertEquals(1,jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE source_type='AFTER_SALE_MESSAGE' AND source_id IN (SELECT id FROM after_sale_messages WHERE request_id=? AND client_key=?)",Integer.class,request,key));
     }
 
     @AfterEach
@@ -295,6 +344,7 @@ class AfterSaleConcurrencyIntegrationTest {
         assertEquals("REFUNDED", scalar("SELECT status FROM after_sale_requests WHERE order_id = ?", String.class, orderId));
         assertEquals(new BigDecimal("6.00"), scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, userId));
         assertEquals(1, count("SELECT count(*) FROM balance_transactions WHERE order_id = ? AND type = 'REFUND'", orderId));
+        assertEquals(1, count("SELECT count(*) FROM support_activity WHERE source_type='ORDER_REFUND' AND source_id=? AND notify_customer", orderId));
         assertEquals(1, count("SELECT count(*) FROM operation_logs WHERE action = 'order.after_sale.approve' AND target_id = ?",
                 orderId.toString()));
     }

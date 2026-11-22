@@ -8,6 +8,7 @@ import com.myshop.model.request.UserNumberConfigUpdateRequest;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserRepository;
+import com.myshop.service.AnnouncementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -47,11 +48,14 @@ class SiteConfigServiceImplTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private AnnouncementService announcements;
+
     private SiteConfigServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new SiteConfigServiceImpl(repository, new ObjectMapper(), userNumberSequenceRepository, userRepository);
+        service = new SiteConfigServiceImpl(repository, new ObjectMapper(), userNumberSequenceRepository, userRepository, announcements);
     }
 
     @Test
@@ -173,12 +177,14 @@ class SiteConfigServiceImplTest {
             };
         });
         var site = new com.myshop.entity.Subsite();
-        site.setName("分站"); site.setAnnouncement("分站公告");
+        site.setId(java.util.UUID.randomUUID()); site.setName("分站"); site.setAnnouncement("旧数据");
+        when(announcements.channels(site.getId())).thenReturn(Map.of("announcement_enabled", true,
+                "announcement", "分站公告", "popup_enabled", false));
         com.myshop.context.SiteRequestContext.set(site);
         try {
             var result = service.getPublicConfig();
             assertEquals(false, result.get("popup_enabled"));
-            assertEquals("", result.get("popup_content"));
+            assertFalse(result.containsKey("popup_content"));
             assertEquals("分站公告", result.get("announcement"));
             assertEquals("分站", result.get("site_name"));
             assertEquals("http://localhost:3000", result.get("main_site_url"));

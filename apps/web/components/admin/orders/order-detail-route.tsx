@@ -48,7 +48,6 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [afterSaleRejectLoading, setAfterSaleRejectLoading] = useState(false)
   const [afterSaleApproveOpen, setAfterSaleApproveOpen] = useState(false)
   const [afterSaleApproveLoading, setAfterSaleApproveLoading] = useState(false)
-  const [afterSaleMessageLoading, setAfterSaleMessageLoading] = useState(false)
   const [refreshingSupplier, setRefreshingSupplier] = useState<string | null>(null)
   const startRequest = useRequestGuard()
 
@@ -234,24 +233,6 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     }
   }
 
-  const sendAfterSaleMessage = async (content: string, attachments: File[]) => {
-    if (!order || afterSaleMessageLoading) return
-    setAfterSaleMessageLoading(true)
-    try {
-      const afterSaleView = await requestOrThrow(() => adminOrderApi.sendAfterSaleMessage(order.id, content, attachments))
-      // The endpoint returns the transactionally locked conversation view. Keep
-      // it as the immediate source of truth so a post-commit detail reload
-      // failure cannot turn a successful reply into a duplicate retry prompt.
-      setOrder(current => current
-        ? { ...current, after_sale: afterSaleView.after_sale, after_sale_history: afterSaleView.after_sale_history }
-        : current)
-      invalidateAdminOrders()
-      invalidateAdminAttention()
-    } finally {
-      setAfterSaleMessageLoading(false)
-    }
-  }
-
   const retryCardKeys = () => {
     if (!order || (order.status !== "PAID" && order.status !== "DELIVERED" && order.status !== "AFTER_SALE" && order.status !== "REFUNDED")
       || !order.items.some((item) => !isManualFulfillmentItem(item) && item.stock_mode === "CARD_KEY")) return
@@ -278,8 +259,6 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
           detailCardKeysLoading={cardKeysLoading}
           detailCardKeysError={cardKeysError}
           onRetryCardKeys={retryCardKeys}
-          onReplyAfterSale={sendAfterSaleMessage}
-          afterSaleReplyLoading={afterSaleMessageLoading}
           onRefreshSupplier={(id) => void refreshSupplier(id)}
           onReviewSupplier={reviewSupplier}
           onReviewPayment={reviewPayment}

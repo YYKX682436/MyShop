@@ -66,10 +66,11 @@ public class AdminOrderController {
 
     @PostMapping("/{id}/after-sale/messages")
     public ApiResponse<?> replyAfterSale(@PathVariable UUID id,
+                                         @RequestParam(value = "client_key") UUID clientKey,
                                          @RequestParam(value = "content", required = false) String content,
                                          @RequestParam(value = "attachments", required = false) MultipartFile[] attachments) {
         List<MultipartFile> files = attachments == null ? List.of() : Arrays.asList(attachments);
-        return ApiResponse.success(adminOrderService.replyAfterSale(id, content, files));
+        return ApiResponse.success(adminOrderService.replyAfterSale(id, content, files, clientKey));
     }
 
     @PostMapping("/{id}/after-sale/approve")

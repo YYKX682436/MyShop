@@ -27,7 +27,7 @@ public interface AdminOrderService {
     void rejectAfterSale(UUID id, String rejectionReason);
 
     Map<String, Object> replyAfterSale(UUID id, String content,
-                                       List<MultipartFile> attachments);
+                                       List<MultipartFile> attachments, UUID clientKey);
 
     AdminOrderRefundResponse approveAfterSale(UUID id, boolean confirmed,
                                               boolean reclaimCardKeys);

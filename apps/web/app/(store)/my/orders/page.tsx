@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { LogIn, Package } from "lucide-react"
 import { useAuth, useLocale } from "@/lib/context"
 import { userApi, requestOrThrow } from "@/services/api"
@@ -10,7 +11,6 @@ import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { AfterSaleRequestDialog } from "@/components/shared/after-sale-request-dialog"
 import type { OrderBrief, OrderStatus } from "@/types"
 import type { TranslationKey } from "@/lib/i18n"
-import { getAfterSaleWaitingLabelKey } from "@/lib/after-sale-waiting"
 import { cn, formatDateTime, formatYuan } from "@/lib/utils"
 import { buildOrderPageHref } from "@/lib/payment-entry"
 
@@ -18,13 +18,13 @@ const STATUS_FILTERS: (OrderStatus | "ALL")[] = ["ALL", "PENDING", "PAID", "DELI
 
 export default function MyOrdersPage() {
   const { t, locale } = useLocale()
+  const router = useRouter()
   const { user, isLoggedIn, authLoaded } = useAuth()
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "ALL">("ALL")
   const [orders, setOrders] = useState<OrderBrief[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
-  const [refreshNonce, setRefreshNonce] = useState(0)
   const [afterSaleOrder, setAfterSaleOrder] = useState<OrderBrief | null>(null)
   const [afterSaleOpen, setAfterSaleOpen] = useState(false)
   const pageSize = 20
@@ -57,7 +57,7 @@ export default function MyOrdersPage() {
     }
     fetchOrders()
     return () => { cancelled = true }
-  }, [authLoaded, isLoggedIn, user, statusFilter, page, refreshNonce])
+  }, [authLoaded, isLoggedIn, user, statusFilter, page])
 
   const statusKeys: Record<OrderStatus, TranslationKey> = {
     PENDING: "status.PENDING",
@@ -203,11 +203,10 @@ export default function MyOrdersPage() {
                   )}
                   {order.status === "AFTER_SALE" && (
                     <Link
-                      href={`${buildOrderPageHref(order.id)}#after-sale`}
+                      href={`/messages/support/new?order=${encodeURIComponent(order.id)}`}
                       className="inline-flex min-h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control border border-orange-300/50 bg-orange-50 px-3 py-2 text-center text-xs font-medium text-orange-800 dark:border-orange-500/30 dark:bg-orange-950/20 dark:text-orange-200 sm:flex-none"
                       aria-label={t("status.AFTER_SALE")}
                     >
-                      {order.after_sale?.waiting_for === "CUSTOMER" && <span className="size-1.5 rounded-full bg-destructive" aria-label={t(getAfterSaleWaitingLabelKey("customer", order.after_sale.waiting_for))} />}
                       {t("status.AFTER_SALE")}
                     </Link>
                   )}
@@ -265,7 +264,7 @@ export default function MyOrdersPage() {
           orderNo={afterSaleOrder.order_no}
           productSummary={afterSaleOrder.items.map(item => `${item.product_title}${item.spec_name ? ` · ${item.spec_name}` : ""}`).join("、")}
           onOpenChange={open => { setAfterSaleOpen(open); if (!open) setAfterSaleOrder(null) }}
-          onSubmitted={() => setRefreshNonce(value => value + 1)}
+          onSubmitted={() => { if (afterSaleOrder) router.push(`/messages/support/new?order=${encodeURIComponent(afterSaleOrder.id)}`) }}
         />
       )}
     </div>

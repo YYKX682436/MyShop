@@ -34,10 +34,11 @@ public class AfterSaleController {
 
     @PostMapping("/{orderId}/after-sale/messages")
     public ApiResponse<?> reply(@PathVariable UUID orderId,
+                                @RequestParam(value = "client_key") UUID clientKey,
                                 @RequestParam(value = "content", required = false) String content,
                                 @RequestParam(value = "attachments", required = false) MultipartFile[] attachments) {
         List<MultipartFile> files = attachments == null ? List.of() : Arrays.asList(attachments);
-        return ApiResponse.success(afterSaleService.replyFromCustomer(
-                orderId, RequestContext.getUserId(), content, files));
+        return ApiResponse.success(afterSaleService.replyFromCustomerWithKey(
+                orderId, RequestContext.getUserId(), content, files, clientKey));
     }
 }

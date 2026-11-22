@@ -31,6 +31,7 @@ public class RateLimitFilter implements Filter {
     private final Map<String, TokenBucket> buckets = new ConcurrentHashMap<>();
     /** 登录端点独立限流桶（更严格） */
     private final Map<String, TokenBucket> loginBuckets = new ConcurrentHashMap<>();
+    private final Map<String, TokenBucket> supportBuckets = new ConcurrentHashMap<>();
 
     // Cache: rate limit config, refresh every 60s
     private volatile int cachedRateLimit = 20;
@@ -69,6 +70,17 @@ public class RateLimitFilter implements Filter {
             }
         }
 
+        if ("POST".equalsIgnoreCase(httpRequest.getMethod())
+                && (path.equals("/api/support/conversations/send") || path.equals("/api/admin/support/conversations/send")
+                || path.matches("/api/(admin/)?support/conversations/[^/]+/after-sale-reply")
+                || path.matches("/api/(user|admin)/orders/[^/]+/after-sale/messages"))) {
+            TokenBucket supportBucket = supportBuckets.computeIfAbsent(clientIp, k -> new TokenBucket(30, 60_000));
+            if (!supportBucket.tryConsume()) {
+                rejectTooManyRequests(response, "消息发送过于频繁，请稍后再试");
+                return;
+            }
+        }
+
         // 通用限流
         int rateLimit = getRateLimit();
         TokenBucket bucket = buckets.computeIfAbsent(clientIp, k -> new TokenBucket(rateLimit));
@@ -86,6 +98,9 @@ public class RateLimitFilter implements Filter {
         }
         if (loginBuckets.size() > 5000) {
             loginBuckets.entrySet().removeIf(e -> now - e.getValue().lastAccess > 120_000);
+        }
+        if (supportBuckets.size() > 5000) {
+            supportBuckets.entrySet().removeIf(e -> now - e.getValue().lastAccess > 120_000);
         }
     }
 

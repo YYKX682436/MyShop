@@ -180,20 +180,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
     }
 
     private Order authorize(Order order, UUID requestUserId, String sessionToken) {
-        if (!com.myshop.service.SubsiteOrderAccess.permits(order, requestUserId))
-            throw new BusinessException(ErrorCode.FORBIDDEN, "订单不属于当前站点");
-        if (order.getUserId() != null) {
-            if (requestUserId == null || !requestUserId.equals(order.getUserId())) {
-                throw new BusinessException(ErrorCode.FORBIDDEN, "无权访问此订单");
-            }
-            return order;
-        }
-
-        String provided = clean(sessionToken);
-        String stored = clean(order.getSessionToken());
-        if (provided == null || stored == null || !stored.equals(provided)) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "游客会话无效");
-        }
+        com.myshop.service.OrderOwnership.requireAccess(order, requestUserId, sessionToken);
         return order;
     }
 
@@ -432,9 +419,4 @@ public class OrderAccessServiceImpl implements OrderAccessService {
         };
     }
 
-    private String clean(String value) {
-        if (value == null) return null;
-        String result = value.trim();
-        return result.isEmpty() ? null : result;
-    }
 }

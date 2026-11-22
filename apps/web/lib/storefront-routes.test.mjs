@@ -14,6 +14,8 @@ test("uses exact Dock destinations for active state", () => {
     ["///", "home"],
     ["/my/orders", "orders"],
     ["/my/orders/", "orders"],
+    ["/messages", "messages"],
+    ["/messages/support/abc", null],
     ["/my", "me"],
     ["/my///", "me"],
     ["/product/abc", null],
@@ -35,6 +37,7 @@ test("keeps broad section matching separate from Dock visibility", () => {
   assert.equal(getStorefrontRouteSection("/order/abc"), "orders")
   assert.equal(getStorefrontRouteSection("/my/security"), "me")
   assert.equal(getStorefrontRouteSection("/my/settings"), "me")
+  assert.equal(getStorefrontRouteSection("/messages/support/abc"), "messages")
 
   assert.equal(getStorefrontActiveTab("/product/abc"), null)
   assert.equal(getStorefrontActiveTab("/order/abc"), null)
@@ -43,12 +46,13 @@ test("keeps broad section matching separate from Dock visibility", () => {
 })
 
 test("recognizes only exact first-level Dock destinations", () => {
-  const visiblePaths = ["/", "///", "/my/orders", "/my/orders/", "/my", "/my///"]
+  const visiblePaths = ["/", "///", "/my/orders", "/my/orders/", "/messages", "/messages/", "/my", "/my///"]
   const hiddenPaths = [
     "/product/abc",
     "/product/abc/",
     "/order",
     "/order/abc",
+    "/messages/support/abc",
     "/my/orders/receipt",
     "/my/orders/receipt/",
     "/my/security",
@@ -65,6 +69,7 @@ test("recognizes only exact first-level Dock destinations", () => {
 test("exposes one canonical destination identity for each Dock item", () => {
   assert.deepEqual(getStorefrontDockDestination("/"), { key: "home", pathname: "/" })
   assert.deepEqual(getStorefrontDockDestination("/my/orders/"), { key: "orders", pathname: "/my/orders" })
+  assert.deepEqual(getStorefrontDockDestination("/messages"), { key: "messages", pathname: "/messages" })
   assert.deepEqual(getStorefrontDockDestination("/my"), { key: "me", pathname: "/my" })
   assert.equal(getStorefrontDockDestination("/my/orders/receipt"), null)
 })

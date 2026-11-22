@@ -56,7 +56,9 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     private final OrderRefundService orderRefundService;
     private final Clock clock;
     private SupplierComplaintNotifications supplierComplaints;
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
     @Autowired public void setSupplierComplaints(SupplierComplaintNotifications service) { this.supplierComplaints=service; }
+    @Autowired public void setJdbcTemplate(org.springframework.jdbc.core.JdbcTemplate jdbc) { this.jdbc=jdbc; }
 
     public AfterSaleServiceImpl(OrderRepository orderRepository,
                                 UserRepository userRepository,
@@ -256,7 +258,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                                   List<MultipartFile> attachments) {
         requireCustomerContext(userId);
         return appendMessage(orderId, userId, AfterSaleMessageSenderType.CUSTOMER,
-                content, attachments);
+                content, attachments, null);
     }
 
     @Override
@@ -265,7 +267,25 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                                List<MultipartFile> attachments) {
         RequestContext.UserInfo operator = requireAdminContext();
         return appendMessage(orderId, operator.getUserId(), AfterSaleMessageSenderType.ADMIN,
-                content, attachments);
+                content, attachments, null);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> replyFromCustomerWithKey(UUID orderId, UUID userId, String content,
+                                                        List<MultipartFile> attachments, UUID clientKey) {
+        requireCustomerContext(userId);
+        if (clientKey == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "缺少消息幂等键");
+        return appendMessage(orderId, userId, AfterSaleMessageSenderType.CUSTOMER, content, attachments, clientKey);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> replyFromAdminWithKey(UUID orderId, String content,
+                                                     List<MultipartFile> attachments, UUID clientKey) {
+        RequestContext.UserInfo operator = requireAdminContext();
+        if (clientKey == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "缺少消息幂等键");
+        return appendMessage(orderId, operator.getUserId(), AfterSaleMessageSenderType.ADMIN, content, attachments, clientKey);
     }
 
     @Override
@@ -278,7 +298,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     private Map<String, Object> appendMessage(UUID orderId, UUID senderId,
                                               AfterSaleMessageSenderType senderType,
                                               String content,
-                                              List<MultipartFile> attachments) {
+                                              List<MultipartFile> attachments, UUID clientKey) {
         String normalizedContent = normalizeMessage(content);
         List<AfterSaleAttachmentService.ValidatedAttachment> files =
                 attachmentService.validate(attachments);
@@ -295,6 +315,27 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                 || userRepository.findById(senderId).map(User::getRole).orElse(null) != UserRole.USER)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能回复自己的注册用户订单售后");
         }
+        byte[] fingerprint = clientKey == null ? null : com.myshop.service.MessageFingerprint.calculate(normalizedContent, files);
+        if (clientKey != null) {
+            var previous = messageRepository.findRetry(orderId, senderType, senderId, clientKey);
+            if (previous.isPresent()) {
+                if (!java.security.MessageDigest.isEqual(fingerprint, previous.get().getRequestFingerprint()))
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "幂等键已用于不同的消息");
+                return buildOrderView(orderId);
+            }
+            if (jdbc != null) {
+                var supportRetry = jdbc.query("""
+                        SELECT m.request_fingerprint FROM support_messages m
+                        JOIN support_conversations c ON c.id=m.conversation_id
+                        WHERE c.order_id=? AND m.sender_type=? AND m.sender_user_id=? AND m.client_key=?
+                        """, (rs, n) -> rs.getBytes(1), orderId, senderType.name(), senderId, clientKey);
+                if (!supportRetry.isEmpty()) {
+                    if (!java.security.MessageDigest.isEqual(fingerprint, supportRetry.getFirst()))
+                        throw new BusinessException(ErrorCode.BAD_REQUEST, "幂等键已用于不同的消息");
+                    return buildOrderView(orderId);
+                }
+            }
+        }
         AfterSaleRequest request = pendingRequestForUpdate(orderId);
         ensurePendingOrder(order, request);
         if (senderType == AfterSaleMessageSenderType.CUSTOMER
@@ -310,6 +351,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         message.setSenderType(senderType);
         message.setSenderUserId(senderId);
         message.setContent(normalizedContent);
+        message.setClientKey(clientKey);
+        message.setRequestFingerprint(fingerprint);
         message.setCreatedAt(messageAt);
 
         List<String> storedKeys = new ArrayList<>();

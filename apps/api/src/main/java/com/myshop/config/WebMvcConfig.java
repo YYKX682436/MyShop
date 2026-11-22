@@ -36,6 +36,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "Content-Type",
             "Accept",
             "X-Session-Token",
+            "X-Message-Viewer",
             "X-CSRF-Token",
             "X-Device-Id",
             "X-Turnstile-Token"
