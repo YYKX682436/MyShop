@@ -11,9 +11,12 @@ import { useLocale } from "@/lib/context"
 export function ProductImageViewer({ src, title }: { src: string; title: string }) {
   const { t } = useLocale()
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const scrollPosition = useRef({ x: 0, y: 0 })
 
   return (
-    <Dialog>
+    <Dialog onOpenChange={(open) => {
+      if (open) scrollPosition.current = { x: window.scrollX, y: window.scrollY }
+    }}>
       <DialogTrigger asChild>
         <button ref={triggerRef} type="button" className="product-image-stage product-image-stage--detail block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`${t("product.viewImage")}: ${title}`}>
           <ProductImage src={src} alt={title} priority sizes="(min-width: 1024px) 60vw, 100vw" className="product-image-stage-image" />
@@ -27,6 +30,10 @@ export function ProductImageViewer({ src, title }: { src: string; title: string 
           onCloseAutoFocus={(event) => {
             event.preventDefault()
             triggerRef.current?.focus({ preventScroll: true })
+            const { x, y } = scrollPosition.current
+            requestAnimationFrame(() => {
+              if (triggerRef.current?.isConnected) window.scrollTo({ left: x, top: y, behavior: "instant" })
+            })
           }}
         >
           <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>

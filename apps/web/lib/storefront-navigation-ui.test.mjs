@@ -41,6 +41,8 @@ test("product preview uses an on-demand original without altering shared markdow
   assert.match(viewer, /<DialogTrigger asChild>/)
   assert.match(viewer, /<DialogPrimitive\.Close/)
   assert.match(viewer, /onCloseAutoFocus=[\s\S]*?focus\(\{ preventScroll: true \}\)/)
+  assert.match(viewer, /scrollPosition\.current = \{ x: window\.scrollX, y: window\.scrollY \}/)
+  assert.match(viewer, /requestAnimationFrame\([\s\S]*?triggerRef\.current\?\.isConnected[\s\S]*?window\.scrollTo\(/)
   assert.match(viewer, /overflow-y-auto overscroll-contain/)
   assert.match(viewer, /<img src=\{src\}/)
   assert.doesNotMatch(markdown, /ProductImageViewer/)
