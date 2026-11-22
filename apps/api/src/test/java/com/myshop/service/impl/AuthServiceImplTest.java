@@ -1,5 +1,6 @@
 package com.myshop.service.impl;
 
+import com.myshop.constant.ErrorCode;
 import com.myshop.entity.User;
 import com.myshop.entity.UserNumberSequence;
 import com.myshop.entity.UserLevel;
@@ -20,6 +21,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.Optional;
 import java.time.LocalDateTime;
@@ -140,7 +142,10 @@ class AuthServiceImplTest {
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.register(request, "203.0.113.10"));
 
+        assertEquals(ErrorCode.IDENTIFIER_CONFLICT, exception.getCode());
         assertEquals("用户名不能与现有手机号相同", exception.getMessage());
+        assertEquals("username", exception.getParams().get("field"));
+        assertEquals(true, exception.getParams().get("captcha_consumed"));
     }
 
     @Test
@@ -152,7 +157,9 @@ class AuthServiceImplTest {
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.register(request, "203.0.113.10"));
 
-        assertEquals("该手机号已注册", exception.getMessage());
+        assertEquals(ErrorCode.IDENTIFIER_CONFLICT, exception.getCode());
+        assertEquals("手机号与现有用户名冲突", exception.getMessage());
+        assertEquals("phone", exception.getParams().get("field"));
     }
 
     @Test
@@ -164,7 +171,8 @@ class AuthServiceImplTest {
         BusinessException exception = assertThrows(BusinessException.class,
                 () -> service.register(request, "203.0.113.10"));
 
-        assertEquals("用户名和手机号不能相同", exception.getMessage());
+        assertEquals(ErrorCode.IDENTIFIER_CONFLICT, exception.getCode());
+        assertEquals("both", exception.getParams().get("field"));
     }
 
     @Test
@@ -174,20 +182,24 @@ class AuthServiceImplTest {
         when(userRepository.existsByUsernameIgnoreCase("Tom123")).thenReturn(true);
         BusinessException usernameException = assertThrows(BusinessException.class,
                 () -> service.register(usernameRequest, "203.0.113.10"));
-        assertEquals("用户名已存在", usernameException.getMessage());
+        assertEquals(ErrorCode.USERNAME_EXISTS, usernameException.getCode());
+        assertEquals("username", usernameException.getParams().get("field"));
 
         RegisterRequest emailRequest = request("Duplicate@Example.COM");
         when(userRepository.existsByEmailIgnoreCase("duplicate@example.com")).thenReturn(true);
         BusinessException emailException = assertThrows(BusinessException.class,
                 () -> service.register(emailRequest, "203.0.113.10"));
-        assertEquals("该邮箱已注册", emailException.getMessage());
+        assertEquals(ErrorCode.EMAIL_EXISTS, emailException.getCode());
+        assertEquals("email", emailException.getParams().get("field"));
 
         RegisterRequest phoneRequest = request("unique-phone@example.com");
         phoneRequest.setPhone("13900139000");
         when(userRepository.existsByPhone("13900139000")).thenReturn(true);
         BusinessException phoneException = assertThrows(BusinessException.class,
                 () -> service.register(phoneRequest, "203.0.113.10"));
-        assertEquals("该手机号已注册", phoneException.getMessage());
+        assertEquals(ErrorCode.PHONE_EXISTS, phoneException.getCode());
+        assertEquals("phone", phoneException.getParams().get("field"));
+        assertEquals(true, phoneException.getParams().get("captcha_consumed"));
     }
 
     @Test
@@ -247,7 +259,7 @@ class AuthServiceImplTest {
     }
 
     @Test
-    void loginUsesOneCredentialMessageForUnknownAccountsAndWrongPasswords() {
+    void repeatedWrongPasswordsNeverLockUsersAndCorrectPasswordsStillWorkForEveryRole() {
         BusinessException blankAccount = assertThrows(BusinessException.class,
                 () -> service.login(login("  ", "abcdef"), "203.0.113.14"));
         assertEquals("账号或密码错误", blankAccount.getMessage());
@@ -263,31 +275,42 @@ class AuthServiceImplTest {
         when(userRepository.findByUsernameForUpdate("buyer")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong-password", user.getPasswordHash())).thenReturn(false);
 
-        BusinessException wrongPassword = assertThrows(BusinessException.class,
-                () -> service.login(login("buyer", "wrong-password"), "203.0.113.14"));
-        assertEquals("账号或密码错误", wrongPassword.getMessage());
-        assertEquals("198.51.100.8", user.getLastLoginIp());
-        assertEquals(previousLogin, user.getLastLoginAt());
+        for (int attempt = 0; attempt < 20; attempt++) {
+            BusinessException wrongPassword = assertThrows(BusinessException.class,
+                    () -> service.login(login("buyer", "wrong-password"), "203.0.113.14"));
+            assertEquals("账号或密码错误", wrongPassword.getMessage());
+        }
+        verify(userRepository, never()).save(any(User.class));
+
+        when(passwordEncoder.matches("correct-password", user.getPasswordHash())).thenReturn(true);
+        assertNotNull(service.login(login("buyer", "correct-password"), "203.0.113.14"));
+        assertEquals("203.0.113.14", user.getLastLoginIp());
+        assertNotNull(user.getLastLoginAt());
+        verify(userRepository).save(user);
+
+        for (com.myshop.constant.UserRole role : List.of(
+                com.myshop.constant.UserRole.ADMIN, com.myshop.constant.UserRole.SUPER_ADMIN)) {
+            User administrator = user(role.name().toLowerCase(), role.name().toLowerCase() + "@example.com",
+                    "13800138005");
+            administrator.setRole(role);
+            when(userRepository.findByUsernameForUpdate(administrator.getUsername()))
+                    .thenReturn(Optional.of(administrator));
+            assertNotNull(service.login(login(administrator.getUsername(), "correct-password"), "203.0.113.15"));
+            verify(userRepository).save(administrator);
+        }
     }
 
     @Test
-    void disabledAndLockedAccountsDoNotRecordASuccessfulLogin() {
+    void disabledAccountsDoNotRecordASuccessfulLogin() {
         User user = user("buyer", "buyer@example.com", "13800138004");
         LocalDateTime previousLogin = LocalDateTime.of(2026, 1, 1, 12, 0);
         user.setLastLoginIp("198.51.100.8");
         user.setLastLoginAt(previousLogin);
+        user.setIsDeleted(1);
         when(userRepository.findByUsernameForUpdate("buyer")).thenReturn(Optional.of(user));
 
-        user.setIsDeleted(1);
         assertEquals("该账号已被禁用", assertThrows(BusinessException.class,
                 () -> service.login(login("buyer", "secret1"), "203.0.113.15")).getMessage());
-
-        user.setIsDeleted(0);
-        user.setLockUntil(LocalDateTime.now().plusMinutes(5));
-        BusinessException locked = assertThrows(BusinessException.class,
-                () -> service.login(login("buyer", "secret1"), "203.0.113.16"));
-        assertTrue(locked.getMessage().startsWith("账号已被锁定"));
-
         assertEquals("198.51.100.8", user.getLastLoginIp());
         assertEquals(previousLogin, user.getLastLoginAt());
     }

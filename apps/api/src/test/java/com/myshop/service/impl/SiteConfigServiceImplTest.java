@@ -111,6 +111,29 @@ class SiteConfigServiceImplTest {
                 () -> service.updateConfigs(List.of(config("customer_service", "a".repeat(501)))));
     }
 
+
+    @Test
+    void generalSiteSettingsRejectInvalidSharedRiskValues() {
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("rate_limit_per_second", "0"))));
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("order_expire_minutes", "-1"))));
+        assertThrows(BusinessException.class,
+                () -> service.updateConfigs(List.of(config("order_expire_minutes", "many"))));
+        verify(repository, never()).save(any(SiteConfig.class));
+    }
+
+    @Test
+    void publicTurnstileStateStaysDisabledWhenKeysAreIncomplete() {
+        org.mockito.Mockito.lenient().when(repository.findByConfigKey("turnstile_enabled"))
+                .thenReturn(Optional.of(configValue("true")));
+
+        var result = service.getPublicConfig();
+
+        assertEquals(false, result.get("turnstile_enabled"));
+        assertFalse(result.containsKey("turnstile_site_key"));
+    }
+
     @Test
     void invalidStoredTextDoesNotEnableGuestSupportAndBooleanLikeTextStaysText() {
         when(repository.findByConfigKey(anyString())).thenAnswer(invocation ->

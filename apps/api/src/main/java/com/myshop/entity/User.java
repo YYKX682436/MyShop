@@ -54,12 +54,6 @@ public class User extends BaseEntity {
 
     private int isDeleted = 0;
 
-    /** 连续登录失败次数 */
-    private int failedLoginAttempts = 0;
-
-    /** 账户锁定截止时间（null 表示未锁定） */
-    private LocalDateTime lockUntil;
-
     /** Incremented whenever a password or account status change invalidates sessions. */
     @Column(name = "auth_version", nullable = false)
     private int authVersion = 0;

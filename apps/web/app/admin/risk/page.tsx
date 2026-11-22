@@ -19,23 +19,22 @@ import { adminRiskApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItem, RiskConfig } from "@/types"
 
 const PAGE_SIZE = 20
-
-const DEFAULT_CONFIG: RiskConfig = {
-  turnstile_enabled: false,
-  device_rate_limit_enabled: false,
-  device_order_limit_per_hour: 15,
-  device_login_limit_per_hour: 10,
-  device_register_limit_per_hour: 10,
-  rate_limit_per_second: 25,
-  login_attempt_limit: 5,
-  max_purchase_per_user: 50,
-  order_expire_minutes: 15,
+type RiskNumericKey = Exclude<keyof RiskConfig, "turnstile_enabled" | "device_rate_limit_enabled">
+const CONFIG_NUMBER_LIMITS: Record<RiskNumericKey, { min: number; max: number }> = {
+  rate_limit_per_second: { min: 1, max: 1000 },
+  login_requests_per_minute: { min: 1, max: 120 },
+  register_requests_per_minute: { min: 1, max: 60 },
+  device_order_limit_per_hour: { min: 1, max: 1000 },
+  device_login_limit_per_hour: { min: 1, max: 1000 },
+  device_register_limit_per_hour: { min: 1, max: 1000 },
+  max_purchase_per_user: { min: 1, max: 999 },
+  order_expire_minutes: { min: 1, max: 1440 },
 }
 
 export default function AdminRiskPage() {
   const { t, locale } = useLocale()
   const [tab, setTab] = useState<"config" | "flagged">("config")
-  const [config, setConfig] = useState<RiskConfig>(DEFAULT_CONFIG)
+  const [config, setConfig] = useState<RiskConfig | null>(null)
   const [configLoading, setConfigLoading] = useState(true)
   const [configError, setConfigError] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -46,7 +45,6 @@ export default function AdminRiskPage() {
   const [flaggedPage, setFlaggedPage] = useState(1)
   const [flaggedLoading, setFlaggedLoading] = useState(false)
   const [flaggedError, setFlaggedError] = useState(false)
-  const [hasConfig, setHasConfig] = useState(false)
   const savedConfig = useRef<RiskConfig | null>(null)
   const draftVersion = useRef(0)
   const startConfigRequest = useRequestGuard()
@@ -58,12 +56,11 @@ export default function AdminRiskPage() {
     setConfigLoading(true)
     setConfigError(false)
     try {
-      const data = { ...DEFAULT_CONFIG, ...await requestOrThrow(() => adminRiskApi.getConfig()) }
+      const data = await requestOrThrow(() => adminRiskApi.getConfig())
       if (!current()) return
       if (version !== draftVersion.current) { setConfigError(true); return }
       setConfig(data)
       savedConfig.current = data
-      setHasConfig(true)
     } catch {
       if (current()) setConfigError(true)
     } finally {
@@ -102,24 +99,24 @@ export default function AdminRiskPage() {
   }
 
   const handleToggle = async (key: "turnstile_enabled" | "device_rate_limit_enabled", value: boolean) => {
-    if (togglingRef.current) return
+    if (!config || togglingRef.current) return
     togglingRef.current = true
     setToggling(true)
     const previous = config[key]
     draftVersion.current += 1
-    setConfig((current) => ({ ...current, [key]: value }))
+    setConfig((current) => current ? ({ ...current, [key]: value }) : current)
     try {
       await requestOrThrow(() => adminRiskApi.updateConfig({ [key]: value }))
       if (savedConfig.current) savedConfig.current = { ...savedConfig.current, [key]: value }
       try {
         const authoritative = await requestOrThrow(() => adminRiskApi.getConfig())
         const actual = authoritative[key] ?? value
-        setConfig((current) => ({ ...current, [key]: actual }))
+        setConfig((current) => current ? ({ ...current, [key]: actual }) : current)
         if (savedConfig.current) savedConfig.current = { ...savedConfig.current, [key]: actual }
       } catch { setConfigError(true) }
       toast.success(t("admin.riskSaved"))
     } catch (requestError: unknown) {
-      setConfig((current) => ({ ...current, [key]: previous }))
+      setConfig((current) => current ? ({ ...current, [key]: previous }) : current)
       toast.error(requestError instanceof Error ? requestError.message : t("admin.riskSaveFailed"))
     } finally {
       togglingRef.current = false
@@ -128,6 +125,7 @@ export default function AdminRiskPage() {
   }
 
   const handleSaveConfig = async () => {
+    if (!config) return
     const version = draftVersion.current
     setSaving(true)
     try {
@@ -142,11 +140,33 @@ export default function AdminRiskPage() {
     }
   }
 
-  const configNumber = (key: keyof RiskConfig, label: string) => <label className="flex flex-col gap-1.5 text-sm"><span className="font-medium">{label}</span><Input type="number" min="0" value={Number(config[key])} onChange={(event) => { draftVersion.current += 1; setConfig((current) => ({ ...current, [key]: Number.parseInt(event.target.value, 10) || 0 })) }} /></label>
+  const configNumber = (key: RiskNumericKey, label: string) => {
+    const { min, max } = CONFIG_NUMBER_LIMITS[key]
+    return (
+      <label className="flex flex-col gap-1.5 text-sm">
+        <span className="font-medium">{label}</span>
+        <Input
+          type="number"
+          min={min}
+          max={max}
+          step={1}
+          value={config![key]}
+          onChange={(event) => {
+            draftVersion.current += 1
+            setConfig((current) => current
+              ? { ...current, [key]: Number(event.target.value) || 0 }
+              : current)
+          }}
+        />
+      </label>
+    )
+  }
 
   const header = <PageHeader title={t("admin.risk")} description={t("admin.riskDesc")} onRefresh={requestRefresh} refreshing={refreshing} refreshDisabled={saving || toggling} />
-  if (configLoading && !hasConfig) return <AdminPage>{header}<div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
-  if (configError && !hasConfig) return <AdminPage>{header}<div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={requestRefresh}>{t("common.retry")}</Button></div></AdminPage>
+  if (configLoading && !config) return <AdminPage>{header}<div className="h-64 animate-pulse rounded-card border border-border-subtle bg-surface-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
+  if (configError && !config) return <AdminPage>{header}<div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={requestRefresh}>{t("common.retry")}</Button></div></AdminPage>
+
+  if (!config) return null
 
   return (
     <AdminPage>
@@ -161,7 +181,7 @@ export default function AdminRiskPage() {
                 <div className="flex items-center justify-between gap-4"><span className="text-sm font-medium">{t("admin.turnstileLabel")}</span><Switch checked={config.turnstile_enabled} onCheckedChange={(checked) => void handleToggle("turnstile_enabled", checked)} disabled={toggling || saving || refreshing} aria-label={t("admin.turnstileLabel")} /></div>
               </SettingsSection>
               <SettingsSection title={t("admin.generalLimits")}>
-                <div className="grid gap-4 sm:grid-cols-2">{configNumber("rate_limit_per_second", t("admin.ratePerSecond"))}{configNumber("login_attempt_limit", t("admin.loginAttemptLimit"))}{configNumber("max_purchase_per_user", t("admin.maxPurchasePerUser"))}{configNumber("order_expire_minutes", t("admin.orderExpire"))}</div>
+                <div className="grid gap-4 sm:grid-cols-2">{configNumber("rate_limit_per_second", t("admin.ratePerSecond"))}{configNumber("login_requests_per_minute", t("admin.loginRequestsPerMinute"))}{configNumber("register_requests_per_minute", t("admin.registerRequestsPerMinute"))}{configNumber("max_purchase_per_user", t("admin.maxPurchasePerUser"))}{configNumber("order_expire_minutes", t("admin.orderExpire"))}</div>
               </SettingsSection>
             </div>
             <SettingsSection title={t("admin.deviceRateLimitTitle")} description={t("admin.deviceRateLimitDescription")}>

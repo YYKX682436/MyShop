@@ -16,6 +16,7 @@ import com.myshop.repository.UserLevelRepository;
 import com.myshop.service.AuthService;
 import com.myshop.utils.CaptchaUtils;
 import com.myshop.utils.JwtUtils;
+import com.myshop.validation.RegistrationRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -33,9 +34,10 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
-    private static final Pattern USERNAME_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,20}$");
-    private static final Pattern PASSWORD_PATTERN = Pattern.compile("^[!-~]{6,72}$");
-    private static final Pattern PHONE_PATTERN = Pattern.compile("^1[3-9]\\d{9}$");
+    private static final Pattern USERNAME_PATTERN = RegistrationRules.USERNAME;
+    private static final Pattern EMAIL_PATTERN = RegistrationRules.EMAIL;
+    private static final Pattern PASSWORD_PATTERN = RegistrationRules.PASSWORD;
+    private static final Pattern PHONE_PATTERN = RegistrationRules.PHONE;
 
     private final UserRepository userRepository;
     private final UserNumberSequenceRepository userNumberSequenceRepository;
@@ -65,7 +67,8 @@ public class AuthServiceImpl implements AuthService {
             if (!site.isEnabled()) throw new BusinessException(ErrorCode.FORBIDDEN, "该分站已停用，暂不能注册");
         }
         if (!captchaUtils.verify(request.getCaptchaId(), request.getCaptcha())) {
-            throw new BusinessException(ErrorCode.CAPTCHA_INVALID, "验证码错误或已过期");
+            throw new BusinessException(ErrorCode.CAPTCHA_INVALID, "验证码错误或已过期",
+                    java.util.Map.of("field", "captcha", "validation", "captcha", "captcha_consumed", true));
         }
         String username = normalizeUsername(request.getUsername());
         String normalizedEmail = normalizeEmail(request.getEmail());
@@ -73,7 +76,8 @@ public class AuthServiceImpl implements AuthService {
         validateRegistrationFields(username, normalizedEmail, request.getPassword(), phone);
 
         if (username.equals(phone)) {
-            throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "用户名和手机号不能相同");
+            throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "用户名和手机号不能相同",
+                    java.util.Map.of("field", "both", "validation", "sameIdentifier", "captcha_consumed", true));
         }
 
         // Registration, administrator identity writes and bootstrap share this
@@ -87,19 +91,24 @@ public class AuthServiceImpl implements AuthService {
                 .orElseThrow(() -> new IllegalStateException("No active default user level is configured"));
 
         if (userRepository.existsByUsernameIgnoreCase(username)) {
-            throw new BusinessException(ErrorCode.USERNAME_EXISTS, "用户名已存在");
+            throw new BusinessException(ErrorCode.USERNAME_EXISTS, "用户名已存在",
+                    java.util.Map.of("field", "username", "validation", "duplicate", "captcha_consumed", true));
         }
         if (userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
-            throw new BusinessException(ErrorCode.EMAIL_EXISTS, "该邮箱已注册");
+            throw new BusinessException(ErrorCode.EMAIL_EXISTS, "该邮箱已注册",
+                    java.util.Map.of("field", "email", "validation", "duplicate", "captcha_consumed", true));
         }
         if (userRepository.existsByPhone(phone)) {
-            throw new BusinessException(ErrorCode.PHONE_EXISTS, "该手机号已注册");
+            throw new BusinessException(ErrorCode.PHONE_EXISTS, "该手机号已注册",
+                    java.util.Map.of("field", "phone", "validation", "duplicate", "captcha_consumed", true));
         }
         if (userRepository.existsByPhone(username)) {
-            throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "用户名不能与现有手机号相同");
+            throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "用户名不能与现有手机号相同",
+                    java.util.Map.of("field", "username", "validation", "phoneConflict", "captcha_consumed", true));
         }
         if (userRepository.existsByUsernameIgnoreCase(phone)) {
-            throw new BusinessException(ErrorCode.PHONE_EXISTS, "该手机号已注册");
+            throw new BusinessException(ErrorCode.IDENTIFIER_CONFLICT, "手机号与现有用户名冲突",
+                    java.util.Map.of("field", "phone", "validation", "usernameConflict", "captcha_consumed", true));
         }
 
         long userNo = sequence.getNextUserNo();
@@ -135,13 +144,8 @@ public class AuthServiceImpl implements AuthService {
         return new AuthResult(token, UserProfileResponse.from(user, defaultLevel));
     }
 
-    /** 连续登录失败上限 */
-    private static final int MAX_FAILED_ATTEMPTS = 5;
-    /** 账户锁定时长（分钟） */
-    private static final int LOCK_DURATION_MINUTES = 15;
-
     @Override
-    @Transactional(noRollbackFor = BusinessException.class)
+    @Transactional
     public AuthResult login(LoginRequest request, String clientIp) {
         String account = request == null ? null : request.getAccount();
         account = account == null ? null : account.trim();
@@ -167,29 +171,7 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(ErrorCode.ACCOUNT_DISABLED, "该账号已被禁用");
         }
 
-        // 账户锁定检查
-        if (user.getLockUntil() != null) {
-            if (user.getLockUntil().isAfter(java.time.LocalDateTime.now())) {
-                long remainMinutes = java.time.Duration.between(java.time.LocalDateTime.now(), user.getLockUntil()).toMinutes() + 1;
-                throw new BusinessException(ErrorCode.ACCOUNT_LOCKED,
-                        "账号已被锁定，请 " + remainMinutes + " 分钟后再试");
-            }
-            // 锁定已过期：重置失败计数，给予完整的重试机会
-            user.setFailedLoginAttempts(0);
-            user.setLockUntil(null);
-        }
-
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
-            // 记录失败次数
-            user.setFailedLoginAttempts(user.getFailedLoginAttempts() + 1);
-            if (user.getFailedLoginAttempts() >= MAX_FAILED_ATTEMPTS) {
-                user.setLockUntil(java.time.LocalDateTime.now().plusMinutes(LOCK_DURATION_MINUTES));
-                userRepository.save(user);
-                log.warn("Account locked due to {} failed login attempts: {}", MAX_FAILED_ATTEMPTS, user.getUsername());
-                throw new BusinessException(ErrorCode.ACCOUNT_LOCKED,
-                        "连续登录失败 " + MAX_FAILED_ATTEMPTS + " 次，账号已锁定 " + LOCK_DURATION_MINUTES + " 分钟");
-            }
-            userRepository.save(user);
             throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "账号或密码错误");
         }
 
@@ -204,9 +186,6 @@ public class AuthServiceImpl implements AuthService {
             throw new BusinessException(ErrorCode.FORBIDDEN, "请前往账号归属站点登录", java.util.Map.of("home_url", home));
         }
 
-        // 登录成功：重置失败计数和锁定状态
-        user.setFailedLoginAttempts(0);
-        user.setLockUntil(null);
         recordSuccessfulLogin(user, clientIp);
         userRepository.save(user);
 
@@ -238,16 +217,25 @@ public class AuthServiceImpl implements AuthService {
 
     private void validateRegistrationFields(String username, String email, String password, String phone) {
         if (username == null || !USERNAME_PATTERN.matcher(username).matches()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名必须为 3-20 位，只能使用英文字母、数字、下划线和连字符");
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    "用户名必须为 3-20 位，只能使用英文字母、数字、下划线和连字符",
+                    java.util.Map.of("field", "username", "validation", "format", "captcha_consumed", true));
         }
         if (email == null || email.isBlank()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "邮箱不能为空");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "邮箱不能为空",
+                    java.util.Map.of("field", "email", "validation", "required", "captcha_consumed", true));
+        }
+        if (!EMAIL_PATTERN.matcher(email).matches()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "邮箱格式不正确",
+                    java.util.Map.of("field", "email", "validation", "format", "captcha_consumed", true));
         }
         if (password == null || !PASSWORD_PATTERN.matcher(password).matches()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "密码必须为 6-72 位 ASCII 可见字符");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "密码必须为 6-72 位 ASCII 可见字符",
+                    java.util.Map.of("field", "password", "validation", "format", "captcha_consumed", true));
         }
         if (phone == null || !PHONE_PATTERN.matcher(phone).matches()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "手机号格式不正确");
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "手机号格式不正确",
+                    java.util.Map.of("field", "phone", "validation", "format", "captcha_consumed", true));
         }
     }
 

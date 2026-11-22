@@ -7,9 +7,17 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Eye, EyeOff, UserPlus, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
-import { authApi, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
+import { ApiError, authApi, getApiErrorMessage, setTurnstileHeaders } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
-import { buildRegisterRequest, validateRegistrationForm } from "@/lib/auth-validation"
+import {
+  buildRegisterRequest,
+  mapRegistrationApiError,
+  registrationErrorConsumesCaptcha,
+  validateRegistrationField,
+  validateRegistrationForm,
+  type RegistrationErrors,
+  type RegistrationField,
+} from "@/lib/auth-validation"
 import { safeLoginRedirect } from "@/lib/safe-navigation"
 
 export default function RegisterPage() {
@@ -33,10 +41,21 @@ export default function RegisterPage() {
   const [captchaId, setCaptchaId] = useState("")
   const [captchaImage, setCaptchaImage] = useState("")
   const [captchaLoading, setCaptchaLoading] = useState(false)
+  const [captchaLoadError, setCaptchaLoadError] = useState(false)
+  const [errors, setErrors] = useState<RegistrationErrors>({})
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
 
-  const fetchCaptcha = useCallback(async () => {
+  const fetchCaptcha = useCallback(async (clearCaptchaError = false) => {
     setCaptchaLoading(true)
+    setCaptchaLoadError(false)
+    if (clearCaptchaError) {
+      setErrors((current) => {
+        const next = { ...current }
+        delete next.captcha
+        return next
+      })
+      setForm((current) => ({ ...current, captcha: "" }))
+    }
     try {
       const result = await authApi.getCaptcha()
       setCaptchaId(result.captcha_id)
@@ -44,6 +63,7 @@ export default function RegisterPage() {
     } catch {
       setCaptchaId("")
       setCaptchaImage("")
+      setCaptchaLoadError(true)
     } finally {
       setCaptchaLoading(false)
     }
@@ -54,19 +74,43 @@ export default function RegisterPage() {
     fetchCaptcha()
   }, [fetchCaptcha])
 
-  const update = (key: string, value: string) => {
-    setForm((prev) => ({ ...prev, [key]: value }))
+  const update = (key: RegistrationField, value: string) => {
+    const nextForm = { ...form, [key]: value }
+    setForm(nextForm)
+    setErrors((current) => {
+      const next = { ...current }
+      if (current[key]) {
+        const message = validateRegistrationField(key, nextForm)
+        if (message) next[key] = message
+        else delete next[key]
+      }
+      if (key === "password" && current.confirmPassword) {
+        const message = validateRegistrationField("confirmPassword", nextForm)
+        if (message) next.confirmPassword = message
+        else delete next.confirmPassword
+      }
+      return next
+    })
+    if (key === "captcha" && value.trim()) setCaptchaLoadError(false)
   }
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
-    const validationMessage = validateRegistrationForm(form)
-    if (validationMessage) {
-      toast.error(t(validationMessage))
+    const validationErrors = validateRegistrationForm(form)
+    setErrors(validationErrors)
+    const firstInvalidField = Object.keys(validationErrors)[0] as RegistrationField | undefined
+    if (firstInvalidField) {
+      const focusId = firstInvalidField === "confirmPassword" ? "reg-confirm-password" : "reg-" + firstInvalidField
+      document.getElementById(focusId)?.focus()
+      return
+    }
+    if (!captchaId) {
+      setCaptchaLoadError(true)
       return
     }
 
     setIsLoading(true)
+    setErrors({})
     try {
       setTurnstileHeaders(turnstileToken)
       const result = await authApi.register(buildRegisterRequest(form, captchaId))
@@ -74,10 +118,27 @@ export default function RegisterPage() {
       toast.success(t("auth.registerSuccess"))
       router.replace(redirectTo)
     } catch (err: unknown) {
-      toast.error(getApiErrorMessage(err, t))
-      // Refresh captcha after failed attempt
-      fetchCaptcha()
-      setForm((prev) => ({ ...prev, captcha: "" }))
+      const apiError = err instanceof ApiError ? err : null
+      const fieldErrors = apiError
+        ? mapRegistrationApiError(apiError.code, apiError.params)
+        : null
+      if (fieldErrors) {
+        setErrors(fieldErrors)
+        const firstField = Object.keys(fieldErrors)[0] as RegistrationField | undefined
+        if (firstField) {
+          const focusId = firstField === "confirmPassword" ? "reg-confirm-password" : "reg-" + firstField
+          document.getElementById(focusId)?.focus()
+        }
+      } else {
+        toast.error(getApiErrorMessage(err, t))
+      }
+      const captchaConsumed = apiError
+        ? registrationErrorConsumesCaptcha(apiError.code, apiError.params)
+        : false
+      if (captchaConsumed) {
+        setForm((prev) => ({ ...prev, captcha: "" }))
+        void fetchCaptcha()
+      }
       handleTurnstileReset()
     } finally {
       setIsLoading(false)
@@ -96,7 +157,7 @@ export default function RegisterPage() {
 
       <section className="auth-form-panel">
 
-          <form onSubmit={handleRegister} className="flex flex-col gap-4">
+          <form onSubmit={handleRegister} noValidate className="flex flex-col gap-4">
             {/* Username */}
             <div>
               <label htmlFor="reg-username" className="mb-1.5 block text-sm font-medium text-foreground">
@@ -111,10 +172,13 @@ export default function RegisterPage() {
                 spellCheck={false}
                 minLength={3}
                 maxLength={20}
-                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                aria-invalid={Boolean(errors.username)}
+                aria-describedby={errors.username ? "reg-username-error reg-username-rule" : "reg-username-rule"}
+                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                 required
               />
-              <p className="mt-1 text-xs text-muted-foreground">{t("auth.usernameRule")}</p>
+              <p id="reg-username-rule" className="mt-1 text-xs text-muted-foreground">{t("auth.usernameRule")}</p>
+              {errors.username && <p id="reg-username-error" role="alert" className="mt-1 text-xs text-destructive">{t(errors.username)}</p>}
             </div>
 
             {/* Email */}
@@ -128,11 +192,15 @@ export default function RegisterPage() {
                 value={form.email}
                 onChange={(e) => update("email", e.target.value)}
                 autoComplete="email"
+                autoCapitalize="none"
                 spellCheck={false}
                 maxLength={255}
-                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                aria-invalid={Boolean(errors.email)}
+                aria-describedby={errors.email ? "reg-email-error" : undefined}
+                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                 required
               />
+              {errors.email && <p id="reg-email-error" role="alert" className="mt-1 text-xs text-destructive">{t(errors.email)}</p>}
             </div>
 
             {/* Phone */}
@@ -148,10 +216,13 @@ export default function RegisterPage() {
                 onChange={(e) => update("phone", e.target.value)}
                 autoComplete="tel"
                 maxLength={11}
-                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                aria-invalid={Boolean(errors.phone)}
+                aria-describedby={errors.phone ? "reg-phone-error reg-phone-rule" : "reg-phone-rule"}
+                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                 required
               />
-              <p className="mt-1 text-xs text-muted-foreground">{t("auth.phoneRule")}</p>
+              <p id="reg-phone-rule" className="mt-1 text-xs text-muted-foreground">{t("auth.phoneRule")}</p>
+              {errors.phone && <p id="reg-phone-error" role="alert" className="mt-1 text-xs text-destructive">{t(errors.phone)}</p>}
             </div>
 
             {/* Password */}
@@ -168,7 +239,9 @@ export default function RegisterPage() {
                   autoComplete="new-password"
                   minLength={6}
                   maxLength={72}
-                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  aria-invalid={Boolean(errors.password)}
+                  aria-describedby={errors.password ? "reg-password-error reg-password-rule" : "reg-password-rule"}
+                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                   required
                 />
                 <button
@@ -180,7 +253,8 @@ export default function RegisterPage() {
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">{t("auth.passwordRule")}</p>
+              <p id="reg-password-rule" className="mt-1 text-xs text-muted-foreground">{t("auth.passwordRule")}</p>
+              {errors.password && <p id="reg-password-error" role="alert" className="mt-1 text-xs text-destructive">{t(errors.password)}</p>}
             </div>
 
             {/* Confirm password */}
@@ -197,7 +271,9 @@ export default function RegisterPage() {
                   autoComplete="new-password"
                   minLength={6}
                   maxLength={72}
-                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  aria-invalid={Boolean(errors.confirmPassword)}
+                  aria-describedby={errors.confirmPassword ? "reg-confirm-password-error" : undefined}
+                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                   required
                 />
                 <button
@@ -209,9 +285,7 @@ export default function RegisterPage() {
                   {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              {form.confirmPassword && form.password !== form.confirmPassword && (
-                <p className="mt-1 text-xs text-destructive" role="alert">{t("auth.passwordMismatch")}</p>
-              )}
+              {errors.confirmPassword && <p id="reg-confirm-password-error" role="alert" className="mt-1 text-xs text-destructive">{t(errors.confirmPassword)}</p>}
             </div>
 
             {/* Image Captcha */}
@@ -225,31 +299,38 @@ export default function RegisterPage() {
                   type="text"
                   value={form.captcha}
                   onChange={(e) => update("captcha", e.target.value.toUpperCase())}
+                  autoCapitalize="characters"
                   maxLength={6}
-                  placeholder="请输入验证码"
-                  className="h-11 flex-1 rounded-control border border-input bg-surface-muted px-3 text-sm uppercase tracking-wider text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  aria-invalid={Boolean(errors.captcha) || captchaLoadError}
+                  aria-describedby={[
+                    errors.captcha ? "reg-captcha-error" : null,
+                    captchaLoadError ? "reg-captcha-load-error" : null,
+                  ].filter(Boolean).join(" ") || undefined}
+                  className="h-11 flex-1 rounded-control border border-input bg-surface-muted px-3 text-base uppercase tracking-wider text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                   required
                 />
-                <div
-                  className="relative flex h-11 w-24 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted"
-                  onClick={fetchCaptcha}
+                <button
+                  type="button"
+                  disabled={captchaLoading}
+                  onClick={() => void fetchCaptcha(true)}
+                  aria-label={t("auth.clickToRefresh")}
                   title={t("auth.clickToRefresh")}
+                  className="relative flex h-11 w-24 shrink-0 items-center justify-center overflow-hidden rounded-control border border-border-subtle bg-surface-muted disabled:cursor-not-allowed"
                 >
                   {captchaLoading ? (
-                    <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+                    <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
                   ) : captchaImage ? (
-                    <Image src={captchaImage} alt="captcha" fill unoptimized sizes="96px" className="object-contain" />
+                    <Image src={captchaImage} alt={t("auth.imageCode")} fill unoptimized sizes="96px" className="object-contain" />
                   ) : (
-                    <span className="select-none text-lg font-bold tracking-wider text-foreground/60">
+                    <span className="select-none text-lg font-bold tracking-wider text-foreground/60" aria-hidden="true">
                       ----
                     </span>
                   )}
-                  <RefreshCw className="absolute right-1 top-1 h-3 w-3 text-muted-foreground" />
-                </div>
+                  <RefreshCw className="absolute right-1 top-1 h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                </button>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("auth.clickToRefresh")}
-              </p>
+              {errors.captcha && <p id="reg-captcha-error" role="alert" className="mt-1 text-xs text-destructive">{t(errors.captcha)}</p>}
+              {captchaLoadError && <p id="reg-captcha-load-error" role="alert" className="mt-1 text-xs text-destructive">{t("auth.captchaLoadFailed")}</p>}
             </div>
 
             <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mb-1" />

@@ -215,6 +215,7 @@ class AdministratorServiceImplTest {
         reset.setNewPassword("newpass");
         service.resetAdministratorPassword(id, reset);
         assertEquals("new-hash", admin.getPasswordHash());
+        assertEquals(2, admin.getAuthVersion());
 
         verify(operationLogService).logCurrentRequest(
                 "administrator.update", "ADMINISTRATOR", id.toString(),

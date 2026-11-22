@@ -2,6 +2,7 @@ package com.myshop.exception;
 
 import com.myshop.common.ApiResponse;
 import com.myshop.constant.ErrorCode;
+import com.myshop.model.request.RegisterRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,7 +37,24 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(MethodArgumentNotValidException e) {
-        String message = e.getBindingResult().getFieldErrors().stream()
+        var fieldErrors = e.getBindingResult().getFieldErrors();
+        if (e.getParameter().getParameterType() == RegisterRequest.class && !fieldErrors.isEmpty()) {
+            FieldError fieldError = fieldErrors.stream()
+                    .filter(error -> "NotBlank".equals(error.getCode()) || "NotNull".equals(error.getCode()))
+                    .findFirst()
+                    .orElse(fieldErrors.get(0));
+            String validation = switch (String.valueOf(fieldError.getCode())) {
+                case "NotBlank", "NotNull" -> "required";
+                default -> "format";
+            };
+            String field = "captchaId".equals(fieldError.getField()) ? "captcha" : fieldError.getField();
+            return ResponseEntity.badRequest().body(ApiResponse.error(
+                    ErrorCode.BAD_REQUEST,
+                    fieldError.getDefaultMessage(),
+                    java.util.Map.of("field", field, "validation", validation)));
+        }
+
+        String message = fieldErrors.stream()
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining("; "));
         return ResponseEntity.badRequest()

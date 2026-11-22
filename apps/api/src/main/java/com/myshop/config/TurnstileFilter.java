@@ -41,6 +41,9 @@ public class TurnstileFilter implements Filter {
     @Value("${turnstile.secret-key:}")
     private String secretKey;
 
+    @Value("${turnstile.site-key:}")
+    private String siteKey;
+
     private static final String TOKEN_HEADER = "X-Turnstile-Token";
     private static final String SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
     private static final int TIMEOUT_MS = 3000;
@@ -58,7 +61,7 @@ public class TurnstileFilter implements Filter {
     );
 
     /** 开关配置缓存（60 秒刷新） */
-    private volatile boolean cachedEnabled = true;
+    private volatile boolean cachedEnabled = false;
     private volatile long enabledCacheExpiry = 0;
 
     @Override
@@ -161,13 +164,19 @@ public class TurnstileFilter implements Filter {
         long now = System.currentTimeMillis();
         if (now > enabledCacheExpiry) {
             try {
-                cachedEnabled = siteConfigRepository.findByConfigKey("turnstile_enabled")
-                        .map(c -> !"false".equalsIgnoreCase(c.getConfigValue()))
+                boolean configured = secretKey != null && !secretKey.isBlank()
+                        && siteKey != null && !siteKey.isBlank();
+                boolean requested = siteConfigRepository.findByConfigKey("turnstile_enabled")
+                        .map(config -> RiskConfigPolicy.runtimeBoolean("turnstile_enabled", config.getConfigValue()))
                         .orElse(false);
-            } catch (Exception e) {
-                // DB 不可用时使用缓存值
+                cachedEnabled = requested && configured;
+                if (requested && !configured) {
+                    log.warn("Turnstile is stored as enabled but required keys are incomplete; verification remains disabled");
+                }
+            } catch (Exception exception) {
+                // Keep the last valid snapshot; the initial state is disabled.
             }
-            enabledCacheExpiry = now + 60_000;
+            enabledCacheExpiry = now + 5_000;
         }
         return cachedEnabled;
     }

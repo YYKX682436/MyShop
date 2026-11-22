@@ -296,7 +296,7 @@ public class OrderServiceImpl implements OrderService {
             }
         }
         reserveManualStock(product, specId, stockMode, quantity);
-        int expireMinutes = getConfigInt("order_expire_minutes", 15);
+        int expireMinutes = getConfigInt("order_expire_minutes");
 
         Order order = new Order();
         order.setUserId(userId);
@@ -599,18 +599,15 @@ public class OrderServiceImpl implements OrderService {
         return value == null ? null : String.valueOf(value);
     }
 
-    /** 每用户单次最大购买数量，后台可配，兜底 999（配置异常或 ≤ 0 时回退） */
+    /** Effective single-order purchase cap, including safe fallback for legacy values. */
     private int getMaxPurchasePerUser() {
-        int val = getConfigInt("max_purchase_per_user", 999);
-        return (val > 0 && val <= 999) ? val : 999;
+        return getConfigInt("max_purchase_per_user");
     }
 
-    private int getConfigInt(String key, int defaultValue) {
+    private int getConfigInt(String key) {
         return siteConfigRepository.findByConfigKey(key)
-                .map(c -> {
-                    try { return Integer.parseInt(c.getConfigValue()); }
-                    catch (Exception e) { return defaultValue; }
-                }).orElse(defaultValue);
+                .map(config -> com.myshop.config.RiskConfigPolicy.runtimeInteger(key, config.getConfigValue()))
+                .orElseGet(() -> com.myshop.config.RiskConfigPolicy.runtimeInteger(key, null));
     }
 
     private StockView getStock(Product product, UUID specId) {

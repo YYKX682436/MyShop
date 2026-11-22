@@ -20,7 +20,6 @@ public final class ErrorCode {
     public static final int INVALID_CREDENTIALS = 20004;
     public static final int OLD_PASSWORD_WRONG = 20005;
     public static final int ACCOUNT_DISABLED = 20006;
-    public static final int ACCOUNT_LOCKED = 20007;
     public static final int PHONE_EXISTS = 20008;
     public static final int IDENTIFIER_CONFLICT = 20009;
     public static final int AVATAR_FORMAT_INVALID = 20010;

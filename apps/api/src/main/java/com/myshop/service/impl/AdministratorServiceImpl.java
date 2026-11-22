@@ -152,8 +152,6 @@ public class AdministratorServiceImpl implements AdministratorService {
         String password = request == null ? null : request.getNewPassword();
         validatePassword(password);
         user.setPasswordHash(passwordEncoder.encode(password));
-        user.setFailedLoginAttempts(0);
-        user.setLockUntil(null);
         bumpAuthVersion(user);
         userRepository.save(user);
         logAdministratorOperation("administrator.reset_password", id,

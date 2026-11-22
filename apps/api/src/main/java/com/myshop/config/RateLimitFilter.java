@@ -11,11 +11,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
@@ -27,23 +25,19 @@ public class RateLimitFilter implements Filter {
     private final ObjectMapper objectMapper;
     private final ClientIpResolver clientIpResolver;
 
-    /** 通用限流桶 */
+    /** General and action-specific per-IP token buckets. */
     private final Map<String, TokenBucket> buckets = new ConcurrentHashMap<>();
-    /** 登录端点独立限流桶（更严格） */
     private final Map<String, TokenBucket> loginBuckets = new ConcurrentHashMap<>();
+    private final Map<String, TokenBucket> registerBuckets = new ConcurrentHashMap<>();
     private final Map<String, TokenBucket> supportBuckets = new ConcurrentHashMap<>();
 
-    // Cache: rate limit config, refresh every 60s
-    private volatile int cachedRateLimit = 20;
+    private volatile int cachedRateLimit = RiskConfigPolicy.runtimeInteger("rate_limit_per_second", null);
+    private volatile int cachedLoginLimit = RiskConfigPolicy.runtimeInteger("login_requests_per_minute", null);
+    private volatile int cachedRegisterLimit = RiskConfigPolicy.runtimeInteger("register_requests_per_minute", null);
     private volatile long cacheExpiry = 0;
 
-    /** 登录端点限制：每分钟 5 次 */
-    private static final int LOGIN_RATE_PER_MINUTE = 5;
-
-    /** 敏感端点路径 */
-    private static final Set<String> LOGIN_PATHS = Set.of(
-            "/api/auth/login", "/api/auth/register"
-    );
+    private static final String LOGIN_PATH = "/api/auth/login";
+    private static final String REGISTER_PATH = "/api/auth/register";
 
     @Override
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
@@ -51,66 +45,65 @@ public class RateLimitFilter implements Filter {
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         String path = httpRequest.getRequestURI();
 
-        // F21: 仅跳过静态资源（上传文件服务），admin 端点纳入限流（防止暴力攻击）
+        // Static uploads do not consume API request capacity.
         if (path.startsWith("/api/uploads")) {
             chain.doFilter(request, response);
             return;
         }
 
         String clientIp = resolveClientIp(httpRequest);
+        refreshConfig();
+        String method = httpRequest.getMethod();
 
-        // 登录/注册端点：独立的更严格限流（每分钟 LOGIN_RATE_PER_MINUTE 次）
-        if (LOGIN_PATHS.contains(path)) {
-            String loginKey = "login:" + clientIp;
-            TokenBucket loginBucket = loginBuckets.computeIfAbsent(loginKey,
-                    k -> new TokenBucket(LOGIN_RATE_PER_MINUTE, 60_000));
-            if (!loginBucket.tryConsume()) {
-                rejectTooManyRequests(response, "登录请求过于频繁，请稍后再试");
+        if ("POST".equalsIgnoreCase(method) && LOGIN_PATH.equals(path)) {
+            TokenBucket bucket = loginBuckets.computeIfAbsent(clientIp,
+                    key -> new TokenBucket(cachedLoginLimit, 60_000));
+            if (!bucket.tryConsume(cachedLoginLimit)) {
+                rejectTooManyRequests(response, "登录请求过于频繁，请稍后重试", bucket.retryAfterSeconds());
+                return;
+            }
+        } else if ("POST".equalsIgnoreCase(method) && REGISTER_PATH.equals(path)) {
+            TokenBucket bucket = registerBuckets.computeIfAbsent(clientIp,
+                    key -> new TokenBucket(cachedRegisterLimit, 60_000));
+            if (!bucket.tryConsume(cachedRegisterLimit)) {
+                rejectTooManyRequests(response, "注册请求过于频繁，请稍后重试", bucket.retryAfterSeconds());
                 return;
             }
         }
 
-        if ("POST".equalsIgnoreCase(httpRequest.getMethod())
+        if ("POST".equalsIgnoreCase(method)
                 && (path.equals("/api/support/conversations/send") || path.equals("/api/admin/support/conversations/send")
                 || path.matches("/api/(admin/)?support/conversations/[^/]+/after-sale-reply")
                 || path.matches("/api/(user|admin)/orders/[^/]+/after-sale/messages"))) {
-            TokenBucket supportBucket = supportBuckets.computeIfAbsent(clientIp, k -> new TokenBucket(30, 60_000));
+            TokenBucket supportBucket = supportBuckets.computeIfAbsent(clientIp, key -> new TokenBucket(30, 60_000));
             if (!supportBucket.tryConsume()) {
-                rejectTooManyRequests(response, "消息发送过于频繁，请稍后再试");
+                rejectTooManyRequests(response, "消息发送过于频繁，请稍后再试", supportBucket.retryAfterSeconds());
                 return;
             }
         }
 
-        // 通用限流
-        int rateLimit = getRateLimit();
-        TokenBucket bucket = buckets.computeIfAbsent(clientIp, k -> new TokenBucket(rateLimit));
-        if (!bucket.tryConsume()) {
-            rejectTooManyRequests(response, "请求过于频繁，请稍后再试");
+        TokenBucket bucket = buckets.computeIfAbsent(clientIp,
+                key -> new TokenBucket(cachedRateLimit));
+        if (!bucket.tryConsume(cachedRateLimit)) {
+            rejectTooManyRequests(response, "请求过于频繁，请稍后重试", bucket.retryAfterSeconds());
             return;
         }
 
         chain.doFilter(request, response);
 
-        // Periodic cleanup
         long now = System.currentTimeMillis();
         if (buckets.size() > 10000) {
-            buckets.entrySet().removeIf(e -> now - e.getValue().lastAccess > 60_000);
+            buckets.entrySet().removeIf(entry -> now - entry.getValue().lastAccess > 60_000);
         }
         if (loginBuckets.size() > 5000) {
-            loginBuckets.entrySet().removeIf(e -> now - e.getValue().lastAccess > 120_000);
+            loginBuckets.entrySet().removeIf(entry -> now - entry.getValue().lastAccess > 120_000);
+        }
+        if (registerBuckets.size() > 5000) {
+            registerBuckets.entrySet().removeIf(entry -> now - entry.getValue().lastAccess > 120_000);
         }
         if (supportBuckets.size() > 5000) {
-            supportBuckets.entrySet().removeIf(e -> now - e.getValue().lastAccess > 120_000);
+            supportBuckets.entrySet().removeIf(entry -> now - entry.getValue().lastAccess > 120_000);
         }
-    }
-
-    private void rejectTooManyRequests(ServletResponse response, String message) throws IOException {
-        HttpServletResponse httpResponse = (HttpServletResponse) response;
-        httpResponse.setStatus(429);
-        httpResponse.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        httpResponse.setCharacterEncoding("UTF-8");
-        httpResponse.getWriter().write(objectMapper.writeValueAsString(
-                ApiResponse.error(ErrorCode.TOO_MANY_REQUESTS, message)));
     }
 
     /**
@@ -123,47 +116,68 @@ public class RateLimitFilter implements Filter {
         return clientIpResolver.resolve(request);
     }
 
-    private int getRateLimit() {
+    private void refreshConfig() {
         long now = System.currentTimeMillis();
         if (now > cacheExpiry) {
             try {
-                cachedRateLimit = siteConfigRepository.findByConfigKey("rate_limit_per_second")
-                        .map(c -> {
-                            try { return Integer.parseInt(c.getConfigValue()); }
-                            catch (Exception e) { return 20; }
-                        }).orElse(20);
-            } catch (Exception e) {
-                // DB unavailable, use cached value
+                cachedRateLimit = configuredInteger("rate_limit_per_second");
+                cachedLoginLimit = configuredInteger("login_requests_per_minute");
+                cachedRegisterLimit = configuredInteger("register_requests_per_minute");
+            } catch (Exception exception) {
+                // Database unavailable: keep the last valid configuration.
             }
-            cacheExpiry = now + 60_000; // 60s TTL
+            cacheExpiry = now + 5_000;
         }
-        return cachedRateLimit;
+    }
+
+    private int configuredInteger(String key) {
+        return siteConfigRepository.findByConfigKey(key)
+                .map(config -> RiskConfigPolicy.runtimeInteger(key, config.getConfigValue()))
+                .orElseGet(() -> RiskConfigPolicy.runtimeInteger(key, null));
+    }
+
+    private void rejectTooManyRequests(ServletResponse response, String message, long retryAfterSeconds)
+            throws IOException {
+        HttpServletResponse httpResponse = (HttpServletResponse) response;
+        httpResponse.setStatus(429);
+        httpResponse.setHeader("Retry-After", Long.toString(retryAfterSeconds));
+        httpResponse.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        httpResponse.setCharacterEncoding("UTF-8");
+        httpResponse.getWriter().write(objectMapper.writeValueAsString(
+                ApiResponse.error(ErrorCode.TOO_MANY_REQUESTS, message)));
     }
 
     private static class TokenBucket {
-        private final int capacity;
+        private int capacity;
         private final long refillIntervalMs;
         private long tokens;
         private long lastRefill;
         volatile long lastAccess;
 
-        /** 默认：每秒补满 */
+        /** Default per-second request bucket. */
         TokenBucket(int capacity) {
             this(capacity, 1000);
         }
 
-        /** 自定义补充间隔（毫秒） */
+        /** Configurable refill interval used for minute-based limits. */
         TokenBucket(int capacity, long refillIntervalMs) {
-            this.capacity = capacity;
+            this.capacity = Math.max(1, capacity);
             this.refillIntervalMs = refillIntervalMs;
-            this.tokens = capacity;
+            this.tokens = this.capacity;
             this.lastRefill = System.currentTimeMillis();
-            this.lastAccess = System.currentTimeMillis();
+            this.lastAccess = this.lastRefill;
         }
 
         synchronized boolean tryConsume() {
-            refill();
-            lastAccess = System.currentTimeMillis();
+            return tryConsume(capacity);
+        }
+
+        synchronized boolean tryConsume(int requestedCapacity) {
+            long now = System.currentTimeMillis();
+            capacity = Math.max(1, requestedCapacity);
+            tokens = Math.min(tokens, capacity);
+            refill(now);
+            lastAccess = now;
             if (tokens > 0) {
                 tokens--;
                 return true;
@@ -171,14 +185,17 @@ public class RateLimitFilter implements Filter {
             return false;
         }
 
-        private void refill() {
-            long now = System.currentTimeMillis();
+        synchronized long retryAfterSeconds() {
+            long remainingMs = Math.max(0, lastRefill + refillIntervalMs - System.currentTimeMillis());
+            return Math.max(1, (remainingMs + 999) / 1000);
+        }
+
+        private void refill(long now) {
             long elapsed = now - lastRefill;
             if (elapsed >= refillIntervalMs) {
                 long intervals = elapsed / refillIntervalMs;
-                long tokensToAdd = intervals * capacity;
-                tokens = Math.min(capacity, tokens + tokensToAdd);
-                lastRefill = now;
+                tokens = Math.min(capacity, tokens + intervals * capacity);
+                lastRefill += intervals * refillIntervalMs;
             }
         }
     }

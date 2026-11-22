@@ -33,31 +33,24 @@ public class RiskConfigServiceImpl implements RiskConfigService {
     private final OrderItemRepository orderItemRepository;
     private final UserRepository userRepository;
 
-    private static final List<String> RISK_KEYS = List.of(
-            // 人机验证
-            "turnstile_enabled",
-            // 设备指纹限流
-            "device_rate_limit_enabled",
-            "device_order_limit_per_hour",
-            "device_login_limit_per_hour", "device_register_limit_per_hour",
-            // 已有配置
-            "rate_limit_per_second", "login_attempt_limit", "max_purchase_per_user", "order_expire_minutes"
-    );
+    private static final List<String> RISK_KEYS = List.copyOf(
+            com.myshop.config.RiskConfigPolicy.defaults().keySet());
+
+    @org.springframework.beans.factory.annotation.Value("${turnstile.secret-key:}")
+    private String turnstileSecretKey;
+
+    @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
+    private String turnstileSiteKey;
 
     @Override
     public Map<String, Object> getRiskConfig() {
-        Map<String, Object> result = new LinkedHashMap<>();
+        Map<String, Object> result = com.myshop.config.RiskConfigPolicy.defaults();
         for (String key : RISK_KEYS) {
-            siteConfigRepository.findByConfigKey(key).ifPresent(c -> {
-                String val = c.getConfigValue();
-                // boolean 类型配置项直接返回 boolean
-                if ("true".equalsIgnoreCase(val) || "false".equalsIgnoreCase(val)) {
-                    result.put(key, Boolean.parseBoolean(val));
-                } else {
-                    try { result.put(key, Integer.parseInt(val)); }
-                    catch (NumberFormatException e) { result.put(key, val); }
-                }
-            });
+            siteConfigRepository.findByConfigKey(key).ifPresent(config ->
+                    result.put(key, com.myshop.config.RiskConfigPolicy.storedValue(key, config.getConfigValue())));
+        }
+        if (Boolean.TRUE.equals(result.get("turnstile_enabled")) && !turnstileConfigured()) {
+            result.put("turnstile_enabled", false);
         }
         return result;
     }
@@ -65,19 +58,40 @@ public class RiskConfigServiceImpl implements RiskConfigService {
     @Override
     @Transactional
     public void updateRiskConfig(Map<String, Object> request) {
-        for (String key : RISK_KEYS) {
-            if (request.containsKey(key)) {
-                SiteConfig config = siteConfigRepository.findByConfigKey(key)
-                        .orElseGet(() -> {
-                            SiteConfig c = new SiteConfig();
-                            c.setConfigKey(key);
-                            c.setConfigGroup("risk");
-                            return c;
-                        });
-                config.setConfigValue(request.get(key).toString());
-                siteConfigRepository.save(config);
-            }
+        if (request == null) {
+            throw new com.myshop.exception.BusinessException(
+                    com.myshop.constant.ErrorCode.BAD_REQUEST, "风控配置不能为空");
         }
+
+        Map<String, String> validated = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : request.entrySet()) {
+            String key = entry.getKey();
+            if (key == null || !RISK_KEYS.contains(key)) continue;
+            validated.put(key, com.myshop.config.RiskConfigPolicy.validateRequestValue(key, entry.getValue()));
+        }
+
+        if ("true".equals(validated.get("turnstile_enabled")) && !turnstileConfigured()) {
+            throw new com.myshop.exception.BusinessException(
+                    com.myshop.constant.ErrorCode.BAD_REQUEST,
+                    "无法启用 Turnstile：请先配置服务端密钥和站点密钥");
+        }
+
+        for (Map.Entry<String, String> entry : validated.entrySet()) {
+            SiteConfig config = siteConfigRepository.findByConfigKey(entry.getKey())
+                    .orElseGet(() -> {
+                        SiteConfig created = new SiteConfig();
+                        created.setConfigKey(entry.getKey());
+                        created.setConfigGroup("risk");
+                        return created;
+                    });
+            config.setConfigValue(entry.getValue());
+            siteConfigRepository.save(config);
+        }
+    }
+
+    private boolean turnstileConfigured() {
+        return turnstileSecretKey != null && !turnstileSecretKey.isBlank()
+                && turnstileSiteKey != null && !turnstileSiteKey.isBlank();
     }
 
     @Override

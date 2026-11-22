@@ -41,6 +41,9 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
     private String turnstileSiteKey;
 
+    @org.springframework.beans.factory.annotation.Value("${turnstile.secret-key:}")
+    private String turnstileSecretKey;
+
     @org.springframework.beans.factory.annotation.Value("${app.public-site-url:http://localhost:3000}")
     private String publicSiteUrl = "http://localhost:3000";
 
@@ -104,13 +107,13 @@ public class SiteConfigServiceImpl implements SiteConfigService {
         if (result.containsKey("custom_css") && result.get("custom_css") instanceof String css) {
             result.put("custom_css", sanitizeCss(css));
         }
-        // Turnstile Site Key：仅在后台开关启用时才返回给前端，确保前后端状态一致
         boolean turnstileEnabled = siteConfigRepository.findByConfigKey("turnstile_enabled")
-                .map(c -> "true".equalsIgnoreCase(c.getConfigValue()))
+                .map(config -> com.myshop.config.RiskConfigPolicy.runtimeBoolean(
+                        "turnstile_enabled", config.getConfigValue()))
                 .orElse(false);
-        if (turnstileEnabled && turnstileSiteKey != null && !turnstileSiteKey.isBlank()) {
-            result.put("turnstile_site_key", turnstileSiteKey);
-        }
+        turnstileEnabled = turnstileEnabled && turnstileConfigured();
+        result.put("turnstile_enabled", turnstileEnabled);
+        if (turnstileEnabled) result.put("turnstile_site_key", turnstileSiteKey);
         var subsite = com.myshop.context.SiteRequestContext.getSite();
         if (subsite != null) {
             result.put("site_name", subsite.getName());
@@ -123,6 +126,11 @@ public class SiteConfigServiceImpl implements SiteConfigService {
         }
         result.putAll(announcementService.channels(com.myshop.context.SiteRequestContext.getSiteId()));
         return result;
+    }
+
+    private boolean turnstileConfigured() {
+        return turnstileSiteKey != null && !turnstileSiteKey.isBlank()
+                && turnstileSecretKey != null && !turnstileSecretKey.isBlank();
     }
 
     @Override
@@ -163,6 +171,9 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             if (key == null || !EDITABLE_KEYS.contains(key)) {
                 log.warn("Rejected config update for non-editable key: {}", key);
                 continue;
+            }
+            if (com.myshop.config.RiskConfigPolicy.isRiskKey(key)) {
+                value = com.myshop.config.RiskConfigPolicy.validateSiteConfigValue(key, value);
             }
             // F15: custom_css 写入时也做安全过滤
             if ("custom_css".equals(key) && value != null) {

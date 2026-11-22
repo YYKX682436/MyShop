@@ -81,8 +81,8 @@ function assertMessageIdentity(path: string, viewer: string, token: string | nul
 
 class ApiError extends Error {
   code: number
-  params?: Record<string, string | number>
-  constructor(code: number, message: string, params?: Record<string, string | number>) {
+  params?: Record<string, string | number | boolean>
+  constructor(code: number, message: string, params?: Record<string, string | number | boolean>) {
     super(message)
     this.code = code
     this.params = params
@@ -1046,6 +1046,7 @@ const ERROR_CODE_I18N: Record<number, string> = {
   10005: "error.tooManyRequests",
   10006: "error.serverError",
   10007: "error.maintenance",
+  60002: "error.tooManyRequests",
   // Auth
   20001: "error.usernameExists",
   20002: "error.emailExists",

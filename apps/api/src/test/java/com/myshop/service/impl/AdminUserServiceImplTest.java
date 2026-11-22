@@ -421,8 +421,6 @@ class AdminUserServiceImplTest {
         UUID userId = UUID.randomUUID();
         UUID operatorId = UUID.randomUUID();
         User user = user(userId, "buyer", "buyer@example.com", 10000L, "0.00");
-        user.setFailedLoginAttempts(4);
-        user.setLockUntil(java.time.LocalDateTime.now().plusMinutes(10));
         when(userRepository.findByIdForUpdate(userId)).thenReturn(Optional.of(user));
         when(passwordEncoder.encode(anyString())).thenReturn("bcrypt-hash");
         RequestContext.set(new RequestContext.UserInfo(operatorId, "admin", "ADMIN"));
@@ -435,8 +433,6 @@ class AdminUserServiceImplTest {
         AdminResetPasswordResponse reset = service.resetPassword(userId);
         assertTrue(reset.temporaryPassword().matches("^AIYUN\\d{8}$"));
         assertEquals("bcrypt-hash", user.getPasswordHash());
-        assertEquals(0, user.getFailedLoginAttempts());
-        assertEquals(null, user.getLockUntil());
         assertEquals(2, user.getAuthVersion());
         verify(passwordEncoder).encode(org.mockito.ArgumentMatchers.argThat(
                 password -> password != null && password.toString().matches("^AIYUN\\d{8}$")));

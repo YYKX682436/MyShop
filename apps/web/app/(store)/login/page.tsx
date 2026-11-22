@@ -19,6 +19,8 @@ export default function LoginPage() {
 
   const [account, setAccount] = useState("")
   const [password, setPassword] = useState("")
+  const [accountError, setAccountError] = useState(false)
+  const [passwordError, setPasswordError] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [homeSite, setHomeSite] = useState<string | null>(null)
@@ -26,7 +28,15 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!account.trim() || !password.trim()) return
+    const missingAccount = !account.trim()
+    const missingPassword = !password
+    setAccountError(missingAccount)
+    setPasswordError(missingPassword)
+    if (missingAccount || missingPassword) {
+      if (missingAccount) document.getElementById("account")?.focus()
+      else document.getElementById("password")?.focus()
+      return
+    }
 
     setIsLoading(true)
     setHomeSite(null)
@@ -60,7 +70,7 @@ export default function LoginPage() {
       <section className="auth-form-panel">
           {homeSite && <p role="status" className="mb-4 text-sm">请前往账号归属站点登录： <a className="break-all text-primary underline" href={`${homeSite}/login`}>{homeSite}</a></p>}
 
-          <form onSubmit={handleLogin} className="flex flex-col gap-4">
+          <form onSubmit={handleLogin} noValidate className="flex flex-col gap-4">
             {/* Username or Email */}
             <div>
               <label
@@ -73,13 +83,19 @@ export default function LoginPage() {
                 id="account"
                 type="text"
                 value={account}
-                onChange={(e) => setAccount(e.target.value)}
+                onChange={(e) => {
+                  setAccount(e.target.value)
+                  if (e.target.value.trim()) setAccountError(false)
+                }}
                 autoComplete="username"
                 spellCheck={false}
                 enterKeyHint="next"
-                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                aria-invalid={accountError}
+                aria-describedby={accountError ? "account-error" : undefined}
+                className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                 required
               />
+              {accountError && <p id="account-error" role="alert" className="mt-1 text-xs text-destructive">{t("auth.loginAccountRequired")}</p>}
             </div>
 
             {/* Password */}
@@ -95,10 +111,15 @@ export default function LoginPage() {
                   id="password"
                   type={showPassword ? "text" : "password"}
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    if (e.target.value) setPasswordError(false)
+                  }}
                   autoComplete="current-password"
                   enterKeyHint="done"
-                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  aria-invalid={passwordError}
+                  aria-describedby={passwordError ? "password-error" : undefined}
+                  className="h-11 w-full rounded-control border border-input bg-surface-muted px-3 pr-10 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                   required
                 />
                 <button
@@ -113,6 +134,7 @@ export default function LoginPage() {
                   )}
                 </button>
               </div>
+              {passwordError && <p id="password-error" role="alert" className="mt-1 text-xs text-destructive">{t("auth.loginPasswordRequired")}</p>}
             </div>
 
             <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mb-1" />

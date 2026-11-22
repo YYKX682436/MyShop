@@ -275,8 +275,6 @@ public class AdminUserServiceImpl implements AdminUserService {
         User user = requireRegularUser(id, true);
         String temporaryPassword = generateTemporaryPassword();
         user.setPasswordHash(passwordEncoder.encode(temporaryPassword));
-        user.setFailedLoginAttempts(0);
-        user.setLockUntil(null);
         bumpAuthVersion(user);
         userRepository.save(user);
         logUserOperation("user.reset_password", id, "管理员重置用户密码（密码内容不记录）");

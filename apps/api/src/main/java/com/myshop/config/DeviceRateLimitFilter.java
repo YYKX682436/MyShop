@@ -47,13 +47,15 @@ public class DeviceRateLimitFilter implements Filter {
     private final Map<String, SlidingWindowCounter> deviceBuckets = new ConcurrentHashMap<>();
 
     // ── 配置缓存 ──
-    private volatile boolean cachedEnabled = true;
-    private volatile int orderLimit = 10;
-    private volatile int loginLimit = 10;
-    private volatile int registerLimit = 5;
+    private volatile boolean cachedEnabled = false;
+    private volatile int orderLimit = RiskConfigPolicy.runtimeInteger("device_order_limit_per_hour", null);
+    private volatile int loginLimit = RiskConfigPolicy.runtimeInteger("device_login_limit_per_hour", null);
+    private volatile int registerLimit = RiskConfigPolicy.runtimeInteger("device_register_limit_per_hour", null);
     private volatile long configCacheExpiry = 0;
 
-    /** 限流类别 */
+    private static final String LOGIN_PATH = "/api/auth/login";
+    private static final String REGISTER_PATH = "/api/auth/register";
+
     private enum Category {
         ORDER, LOGIN, REGISTER, NONE
     }
@@ -95,7 +97,7 @@ public class DeviceRateLimitFilter implements Filter {
 
         if (!counter.tryIncrement(limit)) {
             log.info("Device rate limit hit: category={}, key={}, path={}", category, rateLimitKey, path);
-            reject(response);
+            reject(response, counter.retryAfterSeconds());
             return;
         }
 
@@ -109,31 +111,11 @@ public class DeviceRateLimitFilter implements Filter {
     }
 
     private Category classify(String path, String method) {
-        if (!"POST".equalsIgnoreCase(method) && !"GET".equalsIgnoreCase(method)) {
-            return Category.NONE;
-        }
+        if (!"POST".equalsIgnoreCase(method)) return Category.NONE;
 
-        // POST 精确匹配
-        if ("POST".equalsIgnoreCase(method)) {
-            if ("/api/orders".equals(path)) {
-                return Category.ORDER;
-            }
-            if (path.matches("^/api/orders/[^/]+/(refresh|repay)$")) {
-                return Category.ORDER;
-            }
-            if ("/api/auth/login".equals(path)) {
-                return Category.LOGIN;
-            }
-            if ("/api/auth/register".equals(path)) {
-                return Category.REGISTER;
-            }
-        }
-
-        // GET 动态路径：export
-        if ("GET".equalsIgnoreCase(method) && path.matches("^/api/orders/[^/]+/export$")) {
-            return Category.ORDER;
-        }
-
+        if ("/api/orders".equals(path)) return Category.ORDER;
+        if (LOGIN_PATH.equals(path)) return Category.LOGIN;
+        if (REGISTER_PATH.equals(path)) return Category.REGISTER;
         return Category.NONE;
     }
 
@@ -154,38 +136,37 @@ public class DeviceRateLimitFilter implements Filter {
         long now = System.currentTimeMillis();
         if (now > configCacheExpiry) {
             try {
-                cachedEnabled = getConfigBool("device_rate_limit_enabled", false);
-                orderLimit = getConfigInt("device_order_limit_per_hour", 10);
-                loginLimit = getConfigInt("device_login_limit_per_hour", 10);
-                registerLimit = getConfigInt("device_register_limit_per_hour", 5);
-            } catch (Exception e) {
-                // DB 不可用时使用缓存值
+                cachedEnabled = getConfigBool("device_rate_limit_enabled");
+                orderLimit = getConfigInt("device_order_limit_per_hour");
+                loginLimit = getConfigInt("device_login_limit_per_hour");
+                registerLimit = getConfigInt("device_register_limit_per_hour");
+            } catch (Exception exception) {
+                // Keep the last valid snapshot; a cold start defaults to disabled.
             }
-            configCacheExpiry = now + 60_000;
+            configCacheExpiry = now + 5_000;
         }
     }
 
-    private int getConfigInt(String key, int defaultValue) {
+    private int getConfigInt(String key) {
         return siteConfigRepository.findByConfigKey(key)
-                .map(c -> {
-                    try { return Integer.parseInt(c.getConfigValue()); }
-                    catch (Exception e) { return defaultValue; }
-                }).orElse(defaultValue);
+                .map(config -> RiskConfigPolicy.runtimeInteger(key, config.getConfigValue()))
+                .orElseGet(() -> RiskConfigPolicy.runtimeInteger(key, null));
     }
 
-    private boolean getConfigBool(String key, boolean defaultValue) {
+    private boolean getConfigBool(String key) {
         return siteConfigRepository.findByConfigKey(key)
-                .map(c -> !"false".equalsIgnoreCase(c.getConfigValue()))
-                .orElse(defaultValue);
+                .map(config -> RiskConfigPolicy.runtimeBoolean(key, config.getConfigValue()))
+                .orElse(false);
     }
 
-    private void reject(ServletResponse response) throws IOException {
+    private void reject(ServletResponse response, long retryAfterSeconds) throws IOException {
         HttpServletResponse httpResponse = (HttpServletResponse) response;
         httpResponse.setStatus(429);
+        httpResponse.setHeader("Retry-After", Long.toString(retryAfterSeconds));
         httpResponse.setContentType(MediaType.APPLICATION_JSON_VALUE);
         httpResponse.setCharacterEncoding("UTF-8");
         httpResponse.getWriter().write(objectMapper.writeValueAsString(
-                ApiResponse.error(ErrorCode.DEVICE_RATE_LIMITED, "操作过于频繁，请稍后再试")));
+                ApiResponse.error(ErrorCode.DEVICE_RATE_LIMITED, "设备操作过于频繁，请稍后再试")));
     }
 
     @Override
@@ -225,6 +206,11 @@ public class DeviceRateLimitFilter implements Filter {
             }
             count++;
             return true;
+        }
+
+        synchronized long retryAfterSeconds() {
+            long remainingMs = Math.max(0, windowStart + windowMs - System.currentTimeMillis());
+            return Math.max(1, (remainingMs + 999) / 1000);
         }
     }
 }
