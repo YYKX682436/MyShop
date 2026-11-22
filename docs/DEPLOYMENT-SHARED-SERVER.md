@@ -18,8 +18,11 @@ the stack, restore a database from another host, or change DNS or TLS.
 
 ## Routine production upgrade
 
-1. Push the selected commit to `main`. GitHub Actions compares it with the
-   most recent successful ancestor release and runs the affected checks;
+1. Ordinary pushes do not start a release. Only after an explicit deployment
+   request, dispatch GitHub Actions manually for the current `main` SHA. The
+   workflow refuses a stale SHA or one that already has a successful release,
+   and serializes release runs. It compares the commit with the most recent
+   successful ancestor release and runs the affected checks;
    if no trustworthy baseline exists, all checks run. API changes retain
    the PostgreSQL integration gate, migrations also run deployment/schema
    checks, and unknown paths run all checks. Documentation-only changes do

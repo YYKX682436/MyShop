@@ -1,13 +1,12 @@
 name: MyShop CI
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - '**/*.md'
-      - 'LICENSE'
+  workflow_dispatch:
+
+concurrency:
+  group: myshop-manual-release
+  queue: max
+  cancel-in-progress: false
 
 permissions:
   actions: read
@@ -184,6 +183,16 @@ jobs:
       DOCKER_BUILD_RECORD_UPLOAD: "false"
     steps:
       - uses: actions/checkout@v7
+      - name: Confirm release SHA is still current on main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          [[ "$main_sha" == "$GITHUB_SHA" ]] || {
+            printf 'Refusing stale release SHA %s; main is now %s\n' "$GITHUB_SHA" "$main_sha" >&2
+            exit 1
+          }
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -288,6 +297,16 @@ jobs:
           Path("release-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
           python3 scripts/validate-release-manifest.py release-manifest.json ghcr.io/yykx682436 myshop > "$RUNNER_TEMP/validated-release-manifest.json"
+      - name: Confirm release SHA is still current before publishing manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          [[ "$main_sha" == "$GITHUB_SHA" ]] || {
+            printf 'Refusing stale release SHA %s; main is now %s\n' "$GITHUB_SHA" "$main_sha" >&2
+            exit 1
+          }
       - name: Push the immutable manifest carrier
         env:
           SOURCE_SHA: ${{ github.sha }}

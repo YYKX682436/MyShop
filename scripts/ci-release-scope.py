@@ -68,16 +68,54 @@ def prior_release(repository: str, current_sha: str, current_run: str) -> tuple[
     return None
 
 
+def successful_release_for_sha(repository: str, source_sha: str, current_run: str) -> int | None:
+    endpoint = (
+        f"repos/{repository}/actions/workflows/cicd.yml/runs"
+        f"?head_sha={source_sha}&status=success&per_page=100"
+    )
+    runs = json.loads(command("gh", "api", endpoint))["workflow_runs"]
+    for run in runs:
+        run_id = run.get("id")
+        if str(run_id) == current_run or run.get("head_sha") != source_sha:
+            continue
+        jobs = json.loads(command("gh", "api", f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"))["jobs"]
+        if any(job.get("name") == RELEASE_JOB and job.get("conclusion") == "success" for job in jobs):
+            return int(run_id)
+    return None
+
+
+def validate_manual_release(repository: str, source_sha: str, current_run: str, ref: str, attempt: str = "1") -> None:
+    if attempt != "1":
+        raise SystemExit("Refusing a workflow re-run; use a fresh workflow dispatch")
+    if ref != "refs/heads/main":
+        return
+    ref_data = json.loads(command("gh", "api", f"repos/{repository}/git/ref/heads/main"))
+    main_sha = ref_data.get("object", {}).get("sha", "")
+    if main_sha != source_sha:
+        raise SystemExit(f"Refusing stale release SHA {source_sha}; main is now {main_sha}")
+    previous_run = successful_release_for_sha(repository, source_sha, current_run)
+    if previous_run is not None:
+        raise SystemExit(f"Release already succeeded for SHA {source_sha} in workflow run {previous_run}")
+
+
 def main() -> None:
     # Fail closed: an unavailable API, an untrusted base, or an unexpected
     # repository state means all checks run and a release can still be built.
     scope = {key: True for key in ("api", "web", "compose", "runtime")}
     baseline = "none; running all checks"
+    sha = os.environ["GITHUB_SHA"]
+    repository = os.environ["GITHUB_REPOSITORY"]
+    validate_manual_release(
+        repository,
+        sha,
+        os.environ["GITHUB_RUN_ID"],
+        os.environ.get("GITHUB_REF", ""),
+        os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+    )
     try:
-        sha = os.environ["GITHUB_SHA"]
         if command("git", "rev-parse", "HEAD").strip() != sha:
             raise ValueError("checkout does not match the workflow SHA")
-        prior = prior_release(os.environ["GITHUB_REPOSITORY"], sha, os.environ["GITHUB_RUN_ID"])
+        prior = prior_release(repository, sha, os.environ["GITHUB_RUN_ID"])
         if prior:
             base_sha, run_id = prior
             raw = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", base_sha, sha],

@@ -27,7 +27,7 @@ docker-compose.shared-server.yml
 
 ## Release and verification
 
-A push to `main` runs the affected GitHub Actions checks and publishes images bound to the full Git SHA and image digests. See [the shared-server deployment runbook](docs/DEPLOYMENT-SHARED-SERVER.md) and [independent regression tests](docs/TESTING.md).
+Ordinary commits and pushes do not start a release. Only after an explicit deployment request does Codex manually dispatch GitHub Actions for `main`, then deploy and verify the successful release over the existing SSH connection. See [the shared-server deployment runbook](docs/DEPLOYMENT-SHARED-SERVER.md) and [independent regression tests](docs/TESTING.md).
 
 ## Administrator bootstrap
 
@@ -74,7 +74,7 @@ cd ../..
 bash scripts/check-compose.sh
 ```
 
-GitHub Actions builds and publishes immutable release images after the required checks pass.
+GitHub Actions builds and publishes immutable release images only after a manual dispatch and successful required checks.
 
 ## Reference and license
 

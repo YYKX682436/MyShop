@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -65,6 +66,40 @@ class ReleaseScopeTests(unittest.TestCase):
         with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=1)), \
              mock.patch.object(scope, "command", return_value=json.dumps(runs)):
             self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
+
+    def test_duplicate_or_stale_manual_release_is_rejected(self):
+        sha = "a" * 40
+        runs = {"workflow_runs": [{"head_sha": sha, "id": 2, "conclusion": "success"}]}
+        with mock.patch.object(scope, "command", side_effect=[
+            json.dumps({"object": {"sha": sha}}),
+            json.dumps(runs),
+            json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]}),
+        ]):
+            with self.assertRaisesRegex(SystemExit, "already succeeded"):
+                scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main")
+        with mock.patch.object(scope, "command", return_value=json.dumps({"object": {"sha": "b" * 40}})):
+            with self.assertRaisesRegex(SystemExit, "Refusing stale release SHA"):
+                scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main")
+
+    def test_same_sha_without_successful_publish_can_retry(self):
+        sha = "a" * 40
+        with mock.patch.object(scope, "command", side_effect=[
+            json.dumps({"object": {"sha": sha}}),
+            json.dumps({"workflow_runs": []}),
+        ]):
+            scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main")
+
+    def test_workflow_rerun_attempt_is_rejected(self):
+        with self.assertRaisesRegex(SystemExit, "fresh workflow dispatch"):
+            scope.validate_manual_release("owner/repo", "a" * 40, "3", "refs/heads/main", attempt="2")
+
+    def test_workflow_is_manual_and_release_runs_are_serialized(self):
+        workflow = (path.parents[1] / ".github/workflows/cicd.yml").read_text(encoding="utf-8")
+        self.assertRegex(workflow, r"(?m)^on:\n  workflow_dispatch:\s*$")
+        self.assertNotRegex(workflow, r"(?m)^  (push|pull_request|schedule|workflow_run):")
+        self.assertIn("group: myshop-manual-release", workflow)
+        self.assertIn("queue: max", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
 
     def test_app_test_only_changes_run_affected_checks_without_release(self):
         self.assertEqual(scope.classify(["apps/api/src/test/java/PaymentTest.java"]),

@@ -29,7 +29,7 @@ docker-compose.prod.yml
 
 ## 发布和验证
 
-推送 `main` 后，GitHub Actions 按改动范围执行检查并发布带完整 Git SHA 和 Digest 的镜像。正式站升级步骤见 [共享服务器部署说明](docs/DEPLOYMENT-SHARED-SERVER.md)，独立回归测试见 [测试说明](docs/TESTING.md)。
+普通提交和推送不会触发发布。只有明确要求发布时，才由 Codex 对 `main` 手动启动 GitHub Actions；发布成功后再通过现有 SSH 部署并验收。正式站流程见 [共享服务器部署说明](docs/DEPLOYMENT-SHARED-SERVER.md)，独立回归测试见 [测试说明](docs/TESTING.md)。
 
 图片上传、资源库与存储要求见 [docs/MEDIA.md](docs/MEDIA.md)。
 
