@@ -4,7 +4,8 @@ import { chromium } from "playwright"
 
 // The product list and mutations are intercepted; no catalog data is changed.
 const base = new URL(process.env.BASE_URL ?? "http://localhost:3000")
-if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("A local preview is required")
+if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("An isolated loopback test service is required")
+if (!process.env.MYSHOP_TEST_ADMIN || !process.env.MYSHOP_TEST_PASSWORD) throw new Error("Set MYSHOP_TEST_ADMIN and MYSHOP_TEST_PASSWORD for the isolated test service")
 const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? (existsSync(chrome) ? chrome : undefined)
 const browser = await chromium.launch({ headless: true, executablePath })
@@ -13,7 +14,7 @@ const page = await context.newPage()
 const item = (id, title, number, weight) => ({
   id, product_no: number, title, description: null, detail_md: null, cover_url: null,
   cost_price: 1, retail_price: 2, category_id: "5ce00000-0000-4000-8000-000000000001",
-  category_name: "本地演示", primary_category_id: "5ce00000-0000-4000-8000-000000000001", primary_category_name: "本地演示",
+  category_name: "测试分类", primary_category_id: "5ce00000-0000-4000-8000-000000000001", primary_category_name: "测试分类",
   secondary_category_id: null, secondary_category_name: null, stock_available: null, unlimited: true,
   has_specs: false, delivery_type: "MANUAL", customer_input_fields: [], stock_mode: "UNLIMITED",
   card_content_column_count: null, card_content_column_counts: [], sales_count: 0, initial_sales: 0,
@@ -28,8 +29,8 @@ const envelope = data => ({ status: 200, contentType: "application/json", body: 
 
 try {
   await page.goto(new URL("/login", base).href)
-  await page.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_PREVIEW_ADMIN ?? "muchen-admin")
-  await page.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_PREVIEW_PASSWORD ?? "LocalPreview123!")
+  await page.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_TEST_ADMIN)
+  await page.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_TEST_PASSWORD)
   await page.getByRole("button", { name: "登录", exact: true }).click()
   await page.waitForURL(url => url.pathname !== "/login")
   await page.waitForTimeout(1300)

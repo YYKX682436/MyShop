@@ -5,7 +5,8 @@ import { chromium } from "playwright"
 // User mutations are fully intercepted; this exercises intercepted-route
 // invalidation without changing a real user, balance, or account status.
 const base = new URL(process.env.BASE_URL ?? "http://localhost:3000")
-if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("A local preview is required")
+if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("An isolated loopback test service is required")
+if (!process.env.MYSHOP_TEST_ADMIN || !process.env.MYSHOP_TEST_PASSWORD) throw new Error("Set MYSHOP_TEST_ADMIN and MYSHOP_TEST_PASSWORD for the isolated test service")
 const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? (existsSync(macChrome) ? macChrome : undefined)
 const browser = await chromium.launch({ headless: true, executablePath })
@@ -26,8 +27,8 @@ const waitForUserList = predicate => page.waitForResponse(async response => {
 
 try {
   await page.goto(new URL("/login", base).href)
-  await page.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_PREVIEW_ADMIN ?? "muchen-admin")
-  await page.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_PREVIEW_PASSWORD ?? "LocalPreview123!")
+  await page.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_TEST_ADMIN)
+  await page.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_TEST_PASSWORD)
   await page.getByRole("button", { name: "登录", exact: true }).click()
   await page.waitForURL(url => url.pathname !== "/login")
   await page.waitForTimeout(1300)

@@ -1,12 +1,13 @@
 name: MyShop CI
 
 on:
-  workflow_dispatch:
-    inputs:
-      mirror_base_images:
-        description: Mirror pinned base images instead of building a release
-        type: boolean
-        default: false
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '**/*.md'
+      - 'LICENSE'
 
 permissions:
   actions: read
@@ -19,7 +20,6 @@ env:
 
 jobs:
   scope:
-    if: ${{ !inputs.mirror_base_images }}
     name: Select checks from a verified CI baseline
     runs-on: ubuntu-latest
     outputs:
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Compare with the latest successful full CI run
+      - name: Compare with the latest successful ancestor release
         id: changes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -39,7 +39,7 @@ jobs:
 
   api:
     needs: scope
-    if: ${{ !inputs.mirror_base_images && needs.scope.outputs.api == 'true' }}
+    if: ${{ needs.scope.outputs.api == 'true' }}
     name: API build and tests
     runs-on: ubuntu-latest
     steps:
@@ -122,13 +122,9 @@ jobs:
                   + "\n".join(invalid)
               )
           PY
-      - name: Build API image smoke on non-release branches
-        if: ${{ github.ref != 'refs/heads/main' }}
-        run: docker build --build-arg SKIP_TESTS=true --file Dockerfile.api --tag myshop-api:ci .
-
   web:
     needs: scope
-    if: ${{ !inputs.mirror_base_images && needs.scope.outputs.web == 'true' }}
+    if: ${{ needs.scope.outputs.web == 'true' }}
     name: Web typecheck, lint, and build
     runs-on: ubuntu-latest
     steps:
@@ -144,16 +140,9 @@ jobs:
       - run: pnpm --filter @myshop/web exec tsc --noEmit
       - run: pnpm --filter @myshop/web test:logic
       - run: pnpm --filter @myshop/web lint
-      - name: Build Web image smoke on non-release branches
-        if: ${{ github.ref != 'refs/heads/main' }}
-        run: docker build --file Dockerfile.web --tag myshop-web:ci .
-      - name: Verify server-rendered storefront host routing on non-release branches
-        if: ${{ github.ref != 'refs/heads/main' }}
-        run: bash scripts/test-web-image-host-routing.sh
-
   compose:
     needs: scope
-    if: ${{ !inputs.mirror_base_images && needs.scope.outputs.compose == 'true' }}
+    if: ${{ needs.scope.outputs.compose == 'true' }}
     name: Compose configuration smoke test
     runs-on: ubuntu-latest
     steps:
@@ -168,109 +157,21 @@ jobs:
         run: bash -n scripts/deploy-production.sh scripts/myshop-compose.sh
       - name: Run production schema contract regression tests
         run: bash scripts/test-production-schema-contract.sh
+      - name: Check shared-server isolation, proxy and preflight
+        run: |
+          bash scripts/test-shared-server-images.sh
+          bash scripts/test-shared-server-proxy-config.sh
+          bash scripts/test-shared-server-isolation.sh
+          bash scripts/test-shared-server-preflight.sh
+          bash scripts/test-shared-server-audit.sh
       - name: Validate required Compose variables
         run: bash scripts/check-compose.sh
-
-  mirror-base-images:
-    name: Mirror approved base images to GHCR
-    if: ${{ inputs.mirror_base_images }}
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v7
-      - name: Verify shared image pins and legacy production isolation
-        run: bash scripts/test-shared-server-images.sh
-      - name: Install Skopeo from Ubuntu packages
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y skopeo
-          skopeo --version
-      - name: Authenticate to GHCR with the job token
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -Eeuo pipefail
-          printf '%s' "$GHCR_TOKEN" | skopeo login \
-            --authfile "$RUNNER_TEMP/ghcr-auth.json" \
-            --username "$GITHUB_ACTOR" --password-stdin ghcr.io
-      - name: Copy source-pinned multi-platform manifests and verify identity
-        env:
-          REGISTRY_AUTH_FILE: ${{ runner.temp }}/ghcr-auth.json
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          while IFS='|' read -r name source expected tag; do
-            [[ -n "$name" ]] || continue
-            source_ref="docker://$source@$expected"
-            target_ref="docker://ghcr.io/yykx682436/myshop-$name:$tag"
-            source_raw="$RUNNER_TEMP/$name-source-manifest.json"
-            target_raw="$RUNNER_TEMP/$name-target-manifest.json"
-
-            skopeo inspect --raw --tls-verify=true "$source_ref" > "$source_raw"
-            source_digest="sha256:$(sha256sum "$source_raw" | awk '{print $1}')"
-            [[ "$source_digest" == "$expected" ]] || {
-              printf 'Source digest mismatch for %s: %s\n' "$name" "$source_digest" >&2
-              exit 1
-            }
-            python3 - "$source_raw" "$name" <<'PY'
-          import json, sys
-          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-          platforms = {
-              f"{item.get('platform', {}).get('os')}/{item.get('platform', {}).get('architecture')}"
-              for item in manifest.get("manifests", [])
-          }
-          if "linux/amd64" not in platforms:
-              raise SystemExit(f"{sys.argv[2]} source index is missing linux/amd64")
-          print(f"{sys.argv[2]} source platforms: {', '.join(sorted(platforms))}")
-          PY
-
-            skopeo copy --all --preserve-digests \
-              --src-tls-verify=true --dest-tls-verify=true \
-              --authfile "$REGISTRY_AUTH_FILE" \
-              --digestfile "$RUNNER_TEMP/$name-destination.digest" \
-              "$source_ref" "$target_ref"
-
-            skopeo inspect --raw --authfile "$REGISTRY_AUTH_FILE" \
-              --tls-verify=true "$target_ref" > "$target_raw"
-            target_digest="sha256:$(sha256sum "$target_raw" | awk '{print $1}')"
-            [[ "$target_digest" == "$source_digest" ]] || {
-              printf 'Destination digest mismatch for %s: %s != %s\n' \
-                "$name" "$target_digest" "$source_digest" >&2
-              exit 1
-            }
-            python3 - "$target_raw" "$name" <<'PY'
-          import json, sys
-          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-          platforms = {
-              f"{item.get('platform', {}).get('os')}/{item.get('platform', {}).get('architecture')}"
-              for item in manifest.get("manifests", [])
-          }
-          if "linux/amd64" not in platforms:
-              raise SystemExit(f"{sys.argv[2]} target index is missing linux/amd64")
-          PY
-            printf '%s|%s|%s\n' "$name" "$source_digest" "$target_digest" \
-              >> "$RUNNER_TEMP/myshop-base-image-digests.txt"
-          done <<'IMAGES'
-          postgres|docker.io/library/postgres|sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685|mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
-          caddy|docker.io/library/caddy|sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648|mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
-          node-exporter|quay.io/prometheus/node-exporter|sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0|mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
-          IMAGES
-
-          {
-            printf '| Image | Source digest | GHCR digest |\n|---|---|---|\n'
-            while IFS='|' read -r name source_digest target_digest; do
-              printf '| %s | \`%s\` | \`%s\` |\n' "$name" "$source_digest" "$target_digest"
-            done < "$RUNNER_TEMP/myshop-base-image-digests.txt"
-          } >> "$GITHUB_STEP_SUMMARY"
 
   publish-images:
     name: Publish immutable production images
     needs: [scope, api, web, compose]
     if: >-
-      ${{ !cancelled() && !inputs.mirror_base_images && github.ref == 'refs/heads/main' &&
+      ${{ !cancelled() && github.ref == 'refs/heads/main' &&
           needs.scope.result == 'success' && needs.scope.outputs.runtime == 'true' &&
           (needs.api.result == 'success' || (needs.scope.outputs.api == 'false' && needs.api.result == 'skipped')) &&
           (needs.web.result == 'success' || (needs.scope.outputs.web == 'false' && needs.web.result == 'skipped')) &&
@@ -291,51 +192,73 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Build and publish API image
-        id: api-image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.api
-          push: true
-          build-args: SKIP_TESTS=true
-          tags: ghcr.io/yykx682436/myshop-api:${{ github.sha }}
-          cache-from: type=gha,scope=myshop-api
-          cache-to: type=gha,mode=max,scope=myshop-api
-      - name: Build and publish Web image
-        id: web-image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.web
-          push: true
-          tags: ghcr.io/yykx682436/myshop-web:${{ github.sha }}
-          cache-from: type=gha,scope=myshop-web
-          cache-to: type=gha,mode=max,scope=myshop-web
-      - name: Verify the published Web image and load release images
+      - name: Expose Actions cache to Buildx
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: Build images and offline archives in parallel
+        id: images
         env:
           SOURCE_SHA: ${{ github.sha }}
-          API_DIGEST: ${{ steps.api-image.outputs.digest }}
-          WEB_DIGEST: ${{ steps.web-image.outputs.digest }}
+          ARCHIVE_DIR: ${{ runner.temp }}/myshop-release-archives
         shell: bash
         run: |
           set -Eeuo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          for service in api web; do
-            digest_var="${service^^}_DIGEST"
-            digest="${!digest_var}"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            ref="ghcr.io/yykx682436/myshop-$service:$SOURCE_SHA"
-            docker pull --platform linux/amd64 "$ref@$digest"
-            docker tag "$ref@$digest" "$ref"
-          done
+          mkdir -p "$ARCHIVE_DIR"
+          build_image() {
+            local service=$1
+            local extra=()
+            [[ "$service" != api ]] || extra+=(--build-arg SKIP_TESTS=true)
+            docker buildx build --platform linux/amd64 --provenance=false \
+              --file "Dockerfile.$service" --tag "ghcr.io/yykx682436/myshop-$service:$SOURCE_SHA" \
+              --cache-from "type=gha,scope=myshop-$service" \
+              --cache-to "type=gha,mode=max,scope=myshop-$service" \
+              --output type=registry --output "type=docker,dest=$ARCHIVE_DIR/$service.tar" \
+              --metadata-file "$RUNNER_TEMP/$service-metadata.json" "${extra[@]}" .
+          }
+          build_image api >"$RUNNER_TEMP/api-build.log" 2>&1 & api_pid=$!
+          build_image web >"$RUNNER_TEMP/web-build.log" 2>&1 & web_pid=$!
+          api_status=0; wait "$api_pid" || api_status=$?
+          web_status=0; wait "$web_pid" || web_status=$?
+          cat "$RUNNER_TEMP/api-build.log" "$RUNNER_TEMP/web-build.log"
+          (( api_status == 0 && web_status == 0 )) || exit 1
+          python3 - <<'PYCODE'
+          import hashlib, json, os, re, subprocess, tarfile
+          from pathlib import Path
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for service in ("api", "web"):
+                  metadata = json.loads(Path(os.environ["RUNNER_TEMP"], f"{service}-metadata.json").read_text())
+                  digest = metadata.get("containerimage.digest", "")
+                  if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                      raise SystemExit(f"invalid {service} registry digest")
+                  ref = f"ghcr.io/yykx682436/myshop-{service}:{os.environ['SOURCE_SHA']}"
+                  def inspect(image):
+                      return json.loads(subprocess.check_output(["docker", "buildx", "imagetools", "inspect", "--raw", image]))
+                  registry_manifest = inspect(f"{ref}@{digest}")
+                  if "manifests" in registry_manifest:
+                      matches = [item for item in registry_manifest["manifests"]
+                                 if item.get("platform", {}).get("os") == "linux"
+                                 and item.get("platform", {}).get("architecture") == "amd64"]
+                      if len(matches) != 1:
+                          raise SystemExit(f"{service} registry index does not contain exactly one linux/amd64 image")
+                      registry_manifest = inspect(f"{ref}@{matches[0]['digest']}")
+                  with tarfile.open(Path(os.environ["ARCHIVE_DIR"], f"{service}.tar"), "r:") as archive:
+                      records = json.load(archive.extractfile("manifest.json"))
+                      if len(records) != 1 or records[0].get("RepoTags") != [ref]:
+                          raise SystemExit(f"{service} archive tag does not match the release")
+                      config = archive.extractfile(records[0]["Config"]).read()
+                  config_digest = "sha256:" + hashlib.sha256(config).hexdigest()
+                  if config_digest != registry_manifest.get("config", {}).get("digest"):
+                      raise SystemExit(f"{service} archive differs from the published image")
+                  output.write(f"{service}_digest={digest}\n")
+          PYCODE
+          docker load --input "$ARCHIVE_DIR/web.tar"
           docker tag "ghcr.io/yykx682436/myshop-web:$SOURCE_SHA" myshop-web:ci
           bash scripts/test-web-image-host-routing.sh
       - name: Generate immutable release manifest
         env:
           SOURCE_SHA: ${{ github.sha }}
-          API_DIGEST: ${{ steps.api-image.outputs.digest }}
-          WEB_DIGEST: ${{ steps.web-image.outputs.digest }}
+          API_DIGEST: ${{ steps.images.outputs.api_digest }}
+          WEB_DIGEST: ${{ steps.images.outputs.web_digest }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -365,11 +288,10 @@ jobs:
           Path("release-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
           python3 scripts/validate-release-manifest.py release-manifest.json ghcr.io/yykx682436 myshop > "$RUNNER_TEMP/validated-release-manifest.json"
-      - name: Push and round-trip the immutable manifest carrier
+      - name: Push the immutable manifest carrier
         env:
           SOURCE_SHA: ${{ github.sha }}
           CARRIER_CONTEXT: ${{ runner.temp }}/myshop-manifest-carrier/${{ github.sha }}
-          FETCHED_MANIFEST: ${{ runner.temp }}/myshop-release-manifest-${{ github.sha }}.json
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -392,10 +314,6 @@ jobs:
           printf '%s\n' "$push_log"
           carrier_digest=$(printf '%s\n' "$push_log" | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' | tail -n 1)
           [[ "$carrier_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'could not parse manifest carrier registry digest\n' >&2; exit 1; }
-          docker image rm "$carrier_ref" >/dev/null
-          bash scripts/fetch-release-manifest.sh "$SOURCE_SHA" "$carrier_digest" "$FETCHED_MANIFEST"
-          cmp release-manifest.json "$FETCHED_MANIFEST"
-          python3 scripts/validate-release-manifest.py "$FETCHED_MANIFEST" ghcr.io/yykx682436 myshop >/dev/null
           {
             printf 'source_sha=%s\nmanifest_carrier_ref=%s\nmanifest_carrier_digest=%s\n' \
               "$SOURCE_SHA" "$carrier_ref" "$carrier_digest"
@@ -403,25 +321,17 @@ jobs:
           printf '%s\n' "$carrier_digest" > "$RUNNER_TEMP/manifest-carrier-digest.txt"
       - name: Prepare verified offline release archives
         id: prepare-offline-archives
-        continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
           ARCHIVE_DIR: ${{ runner.temp }}/myshop-release-archives
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p "$ARCHIVE_DIR"
-          for service in api web; do
-            docker save --output "$ARCHIVE_DIR/$service.tar" \
-              "ghcr.io/yykx682436/myshop-$service:$SOURCE_SHA"
-          done
           cp release-manifest.json "$ARCHIVE_DIR/release-manifest.json"
           cp "$RUNNER_TEMP/manifest-carrier-digest.txt" "$ARCHIVE_DIR/manifest-carrier-digest.txt"
           (cd "$ARCHIVE_DIR" && sha256sum api.tar web.tar release-manifest.json manifest-carrier-digest.txt > SHA256SUMS)
       - name: Upload offline release archives
         id: offline-archives
-        if: ${{ steps.prepare-offline-archives.outcome == 'success' }}
-        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: myshop-release-${{ github.sha }}
@@ -429,6 +339,3 @@ jobs:
           if-no-files-found: error
           compression-level: 1
           retention-days: 2
-      - name: Report unavailable offline archives
-        if: ${{ steps.prepare-offline-archives.outcome != 'success' || steps.offline-archives.outcome != 'success' }}
-        run: echo 'Offline artifact unavailable; use the existing digest-pinned Skopeo transfer.' >> "$GITHUB_STEP_SUMMARY"

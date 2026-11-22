@@ -2,21 +2,9 @@
 set -euo pipefail
 
 repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-valid_env="$(mktemp)"
 missing_env="$(mktemp)"
 production_env="$(mktemp)"
-trap 'rm -f "$valid_env" "$missing_env" "$production_env"' EXIT
-
-cat >"$valid_env" <<'EOF'
-SITE_DOMAIN=store.example.test
-ACME_EMAIL=ops@example.test
-PUBLIC_SITE_URL=https://store.example.test
-DB_PASSWORD=compose-validation-password
-JWT_SECRET=compose-validation-jwt-secret-with-at-least-64-random-characters-0123456789
-UPLOAD_HOST_PATH=./uploads
-PRIVATE_UPLOAD_HOST_PATH=./private-uploads
-IP_GEO_HOST_PATH=./ipdb
-EOF
+trap 'rm -f "$missing_env" "$production_env"' EXIT
 
 cat >"$production_env" <<'EOF'
 SITE_DOMAIN=store.example.test
@@ -56,10 +44,9 @@ assert_project_name() {
   fi
 }
 
-rendered_config="$(docker compose --project-directory "$repo_dir" --env-file "$valid_env" config)"
 production_config="$(docker compose --project-directory "$repo_dir" --file "$repo_dir/docker-compose.prod.yml" --env-file "$production_env" config)"
+rendered_config="$production_config"
 production_json_config="$(docker compose --project-directory "$repo_dir" --file "$repo_dir/docker-compose.prod.yml" --env-file "$production_env" config --format json)"
-assert_project_name "$rendered_config" "normal repository"
 assert_project_name "$production_config" "production environment"
 python3 -c '
 import json, sys
@@ -94,7 +81,7 @@ assert_project_name "$wrapper_config" "production wrapper"
 wrapper_must_reject() {
   local label="$1"
   shift
-  if "$wrapper_path" "$@" --env-file "$valid_env" config >/dev/null 2>&1; then
+  if MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436 "$wrapper_path" "$@" --env-file "$production_env" config >/dev/null 2>&1; then
     echo "production wrapper unexpectedly accepted override: $label" >&2
     exit 1
   fi
@@ -103,8 +90,8 @@ wrapper_must_reject() {
 wrapper_must_reject '-p' -p wrong
 wrapper_must_reject '--project-name' --project-name wrong
 wrapper_must_reject '--project-name=...' --project-name=wrong
-wrapper_must_reject '-f' -f "$repo_dir/docker-compose.yml"
-wrapper_must_reject '--file' --file "$repo_dir/docker-compose.yml"
+wrapper_must_reject '-f' -f "$repo_dir/docker-compose.prod.yml"
+wrapper_must_reject '--file' --file "$repo_dir/docker-compose.prod.yml"
 wrapper_must_reject '--project-directory' --project-directory "$repo_dir"
 wrapper_must_reject '--project-directory=...' --project-directory="$repo_dir"
 wrapper_must_reject 'build' build
@@ -123,7 +110,7 @@ for expected in \
   fi
 done
 
-if [[ "$(grep -Fc 'create_host_path: false' "$repo_dir/docker-compose.yml")" -lt 3 ]]; then
+if [[ "$(grep -Fc 'create_host_path: false' "$repo_dir/docker-compose.prod.yml")" -lt 3 ]]; then
   echo "compose validation missing create_host_path: false for the public/private upload and IP database binds" >&2
   exit 1
 fi
@@ -170,7 +157,7 @@ if ! grep -Fq 'source: /data/myshop/ipdb' <<<"$production_config"; then
   exit 1
 fi
 
-if grep -Fq '/opt/myshop/uploads' "$repo_dir/docker-compose.yml"; then
+if grep -Fq '/opt/myshop/uploads' "$repo_dir/docker-compose.prod.yml"; then
   echo "compose validation found the retired /opt/myshop/uploads symlink path" >&2
   exit 1
 fi
@@ -194,7 +181,7 @@ caddy_config="$(awk '
   /^  caddy:$/ { in_caddy=1; print; next }
   in_caddy && /^  [^[:space:]]/ { exit }
   in_caddy { print }
-' "$repo_dir/docker-compose.yml")"
+' "$repo_dir/docker-compose.prod.yml")"
 if grep -Fq 'node-exporter' <<<"$caddy_config"; then
   echo "compose validation found node-exporter in the Caddy startup dependency block" >&2
   exit 1
@@ -205,7 +192,7 @@ if grep -Eq '(^|[^0-9])9100:9100([^0-9]|$)' <<<"$rendered_config"; then
   exit 1
 fi
 
-if grep -Fq '/var/run/docker.sock' "$repo_dir/docker-compose.yml"; then
+if grep -Fq '/var/run/docker.sock' "$repo_dir/docker-compose.prod.yml"; then
   echo "compose validation found a forbidden Docker socket mount" >&2
   exit 1
 fi
@@ -228,7 +215,7 @@ for expected_header in \
   fi
 done
 
-if docker compose --project-directory "$repo_dir" --env-file "$missing_env" config --quiet; then
+if docker compose --project-directory "$repo_dir" --file "$repo_dir/docker-compose.prod.yml" --env-file "$missing_env" config --quiet; then
   echo "compose validation unexpectedly accepted missing required variables" >&2
   exit 1
 fi

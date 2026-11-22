@@ -2,10 +2,11 @@ import assert from "node:assert/strict"
 import { existsSync } from "node:fs"
 import { chromium } from "playwright"
 
-// Run against the documented local preview; all card and product APIs below
+// Run against an isolated test service; all card and product APIs below
 // are intercepted, so the test never creates or modifies inventory.
 const base = new URL(process.env.BASE_URL ?? "http://localhost:3000")
-if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("Card UI tests require a local preview")
+if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("Card UI tests require an isolated loopback test service")
+if (!process.env.MYSHOP_TEST_ADMIN || !process.env.MYSHOP_TEST_PASSWORD) throw new Error("Set MYSHOP_TEST_ADMIN and MYSHOP_TEST_PASSWORD for the isolated test service")
 
 const productId = "ca4d0000-0000-4000-8000-000000000099"
 const orderId = "ca4d0000-0000-4000-8000-000000000098"
@@ -17,8 +18,8 @@ const specs = ["规格 A", "规格 B"].map((name, index) => ({
 const product = {
   id: productId, product_no: 9999, title: "卡券界面测试商品", description: null, detail_md: null, cover_url: null,
   cost_price: null, retail_price: 10, category_id: "5ce00000-0000-4000-8000-000000000001",
-  category_name: "本地演示", primary_category_id: "5ce00000-0000-4000-8000-000000000001",
-  primary_category_name: "本地演示", secondary_category_id: null, secondary_category_name: null,
+  category_name: "测试分类", primary_category_id: "5ce00000-0000-4000-8000-000000000001",
+  primary_category_name: "测试分类", secondary_category_id: null, secondary_category_name: null,
   stock_available: 0, unlimited: false, has_specs: true, delivery_type: "AUTO", customer_input_fields: [],
   stock_mode: "CARD_KEY", card_content_column_count: null, card_content_column_counts: [], sales_count: 0,
   initial_sales: 0, spec_enabled: true, is_enabled: true, sort_weight: 0, low_stock_threshold: 10,
@@ -83,8 +84,8 @@ try {
   const admin = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const adminPage = await admin.newPage()
   await adminPage.goto(new URL("/login", base).href)
-  await adminPage.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_PREVIEW_ADMIN ?? "muchen-admin")
-  await adminPage.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_PREVIEW_PASSWORD ?? "LocalPreview123!")
+  await adminPage.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_TEST_ADMIN)
+  await adminPage.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_TEST_PASSWORD)
   await adminPage.getByRole("button", { name: "登录", exact: true }).click()
   await adminPage.waitForURL(url => url.pathname !== "/login")
 

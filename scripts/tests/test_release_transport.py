@@ -200,22 +200,18 @@ else:
         result, _ = self.run_fetch()
         self.assertNotEqual(result.returncode, 0)
 
-    def test_workflow_keeps_the_pinned_carrier_with_checked_offline_archives(self):
+    def test_workflow_publishes_manifest_and_archives_without_registry_roundtrip(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('DOCKER_BUILD_RECORD_UPLOAD: "false"', workflow)
         self.assertIn("myshop-release-manifest:${SOURCE_SHA}", workflow)
-        self.assertIn("bash scripts/fetch-release-manifest.sh", workflow)
-        self.assertIn('carrier_digest=$(printf', workflow)
         self.assertIn('[[ "$carrier_digest" =~ ^sha256:[0-9a-f]{64}$ ]]', workflow)
-        self.assertIn('bash scripts/fetch-release-manifest.sh "$SOURCE_SHA" "$carrier_digest" "$FETCHED_MANIFEST"', workflow)
         self.assertIn('manifest_carrier_digest=%s', workflow)
-        self.assertIn('manifest_carrier_ref=%s', workflow)
-        self.assertIn("ghcr.io/yykx682436/myshop-api:${{ github.sha }}", workflow)
-        self.assertIn("ghcr.io/yykx682436/myshop-web:${{ github.sha }}", workflow)
-        self.assertIn('docker pull --platform linux/amd64 "$ref@$digest"', workflow)
-        self.assertIn("sha256sum api.tar web.tar release-manifest.json manifest-carrier-digest.txt", workflow)
-        self.assertIn("name: myshop-release-${{ github.sha }}", workflow)
-        self.assertIn("retention-days: 2", workflow)
+        self.assertIn('--output type=registry --output "type=docker,dest=$ARCHIVE_DIR/$service.tar"', workflow)
+        self.assertIn('sha256sum api.tar web.tar release-manifest.json manifest-carrier-digest.txt', workflow)
+        self.assertIn('name: myshop-release-${{ github.sha }}', workflow)
+        self.assertNotIn('docker pull --platform', workflow)
+        self.assertNotIn('docker save --output', workflow)
+        self.assertIn('retention-days: 2', workflow)
 
     def test_validator_rejects_nonapproved_registry_and_unknown_fields(self):
         manifest_path = self.root / "manifest.json"

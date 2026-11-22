@@ -51,7 +51,7 @@ let browser
 try {
   for (let attempt=0; attempt<100; attempt++) {
     try { if ((await fetch(`${base}/product/fixture-product`)).ok) break } catch { /* server starting */ }
-    if (attempt===99) throw new Error("Local preview did not start")
+    if (attempt===99) throw new Error("Test server did not start")
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

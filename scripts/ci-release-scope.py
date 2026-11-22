@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reuse a previously successful full CI run when classifying release checks."""
+"""Classify changes since the most recent successful ancestor release."""
 from __future__ import annotations
 
 import json
@@ -7,16 +7,7 @@ import os
 import subprocess
 import sys
 
-REQUIRED_JOBS = {
-    "API build and tests",
-    "Web typecheck, lint, and build",
-    "Compose configuration smoke test",
-    "Publish immutable production images",
-}
-API_GATE_STEPS = {
-    "Enforce PostgreSQL integration tests",
-    "Build and test, including required PostgreSQL integration tests",
-}
+RELEASE_JOB = "Publish immutable production images"
 WEB_ROOT_FILES = {"package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "Dockerfile.web"}
 DOCUMENT_FILES = {"README.md", "README.en.md", "AGENTS.md", "LICENSE", "THIRD_PARTY_NOTICES.md"}
 
@@ -25,7 +16,7 @@ def classify(paths: list[str]) -> dict[str, bool]:
     """Treat unrecognized files as affecting every check, not as safe to skip."""
     scope = {"api": False, "web": False, "compose": False, "runtime": False}
     for path in paths:
-        if path.startswith("docs/") or path in DOCUMENT_FILES:
+        if path.startswith("docs/") or path in DOCUMENT_FILES or path.rsplit("/", 1)[-1] in {"AGENTS.md", "CLAUDE.md"}:
             continue
         if path in {"scripts/ci-release-scope.py", "scripts/tests/test_ci_release_scope.py"}:
             return {key: True for key in scope}
@@ -33,6 +24,12 @@ def classify(paths: list[str]) -> dict[str, bool]:
             scope["compose"] = True
             if path == "scripts/test-web-image-host-routing.sh":
                 scope["web"] = scope["runtime"] = True
+            continue
+        if path.startswith("apps/api/src/test/"):
+            scope["api"] = True
+            continue
+        if path.startswith("apps/web/") and (path.startswith("apps/web/scripts/") or path.endswith((".test.mjs", ".test.ts", ".test.tsx"))):
+            scope["web"] = True
             continue
         scope["runtime"] = True
         if path.startswith("apps/web/") or path in WEB_ROOT_FILES:
@@ -55,7 +52,7 @@ def command(*args: str) -> str:
     return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30).stdout
 
 
-def prior_full_run(repository: str, current_sha: str, current_run: str) -> tuple[str, int] | None:
+def prior_release(repository: str, current_sha: str, current_run: str) -> tuple[str, int] | None:
     endpoint = f"repos/{repository}/actions/workflows/cicd.yml/runs?branch=main&status=success&per_page=50"
     runs = json.loads(command("gh", "api", endpoint))["workflow_runs"]
     for run in runs:
@@ -66,14 +63,7 @@ def prior_full_run(repository: str, current_sha: str, current_run: str) -> tuple
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10).returncode:
             continue
         jobs = json.loads(command("gh", "api", f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"))["jobs"]
-        passed = {job["name"] for job in jobs if job.get("conclusion") == "success"}
-        api_gate_passed = any(
-            job.get("name") == "API build and tests" and
-            any(step.get("name") in API_GATE_STEPS and step.get("conclusion") == "success"
-                for step in job.get("steps", []))
-            for job in jobs
-        )
-        if REQUIRED_JOBS <= passed and api_gate_passed:
+        if any(job.get("name") == RELEASE_JOB and job.get("conclusion") == "success" for job in jobs):
             return sha, run_id
     return None
 
@@ -87,14 +77,14 @@ def main() -> None:
         sha = os.environ["GITHUB_SHA"]
         if command("git", "rev-parse", "HEAD").strip() != sha:
             raise ValueError("checkout does not match the workflow SHA")
-        prior = prior_full_run(os.environ["GITHUB_REPOSITORY"], sha, os.environ["GITHUB_RUN_ID"])
+        prior = prior_release(os.environ["GITHUB_REPOSITORY"], sha, os.environ["GITHUB_RUN_ID"])
         if prior:
             base_sha, run_id = prior
             raw = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", base_sha, sha],
                                  check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30).stdout
             paths = [path.decode("utf-8") for path in raw.split(b"\0") if path]
             scope = classify(paths)
-            baseline = f"{base_sha} (successful full CI run {run_id})"
+            baseline = f"{base_sha} (successful release run {run_id})"
     except (KeyError, ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
         print(f"CI scope fallback: {type(exc).__name__}: {exc}", file=sys.stderr)
     result = "".join(f"{key}={str(value).lower()}\n" for key, value in scope.items())

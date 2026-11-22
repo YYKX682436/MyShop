@@ -48,23 +48,30 @@ class ReleaseScopeTests(unittest.TestCase):
             with self.subTest(side_effect=side_effect), \
                  mock.patch.dict(scope.os.environ, {"GITHUB_SHA": "a" * 40, "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "1"}, clear=True), \
                  mock.patch.object(scope, "command", return_value="a" * 40), \
-                 mock.patch.object(scope, "prior_full_run", return_value=None, side_effect=side_effect), \
+                 mock.patch.object(scope, "prior_release", return_value=None, side_effect=side_effect), \
                  mock.patch("sys.stdout", new_callable=__import__("io").StringIO) as out:
                 scope.main()
                 for key in ("api", "web", "compose", "runtime"):
                     self.assertIn(f"{key}=true", out.getvalue())
 
-    def test_baseline_requires_all_jobs_and_a_successful_postgresql_gate(self):
+    def test_only_successful_published_ancestor_is_a_baseline(self):
         runs = {"workflow_runs": [{"head_sha": "b" * 40, "id": 2}]}
-        jobs = [{"name": name, "conclusion": "success", "steps": []} for name in scope.REQUIRED_JOBS]
         with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
-             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": jobs})]):
-            self.assertIsNone(scope.prior_full_run("owner/repo", "a" * 40, "1"))
-        api_job = next(job for job in jobs if job["name"] == "API build and tests")
-        api_job["steps"] = [{"name": "Enforce PostgreSQL integration tests", "conclusion": "success"}]
+             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "skipped"}]})]):
+            self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
         with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
-             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": jobs})]):
-            self.assertEqual(scope.prior_full_run("owner/repo", "a" * 40, "1"), ("b" * 40, 2))
+             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]})]):
+            self.assertEqual(scope.prior_release("owner/repo", "a" * 40, "1"), ("b" * 40, 2))
+        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=1)), \
+             mock.patch.object(scope, "command", return_value=json.dumps(runs)):
+            self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
+
+    def test_app_test_only_changes_run_affected_checks_without_release(self):
+        self.assertEqual(scope.classify(["apps/api/src/test/java/PaymentTest.java"]),
+                         {"api": True, "web": False, "compose": False, "runtime": False})
+        self.assertEqual(scope.classify(["apps/web/lib/cart.test.mjs"]),
+                         {"api": False, "web": True, "compose": False, "runtime": False})
+        self.assertFalse(any(scope.classify(["nested/AGENTS.md"]).values()))
 
 
 if __name__ == "__main__":

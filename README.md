@@ -23,44 +23,15 @@ apps/api/       Spring Boot API、领域服务、Flyway migration 和测试
 apps/web/       Next.js storefront/admin
 docs/           支付 SPI 和部署 runbook
 Caddyfile       Compose 反向代理配置
-docker-compose.yml
+docker-compose.shared-server.yml
 docker-compose.prod.yml
 ```
 
-## 本地开发
+## 发布和验证
 
-Mac 本地预览、启动与停止方法见 [docs/LOCAL-DEVELOPMENT.md](docs/LOCAL-DEVELOPMENT.md)。
+推送 `main` 后，GitHub Actions 按改动范围执行检查并发布带完整 Git SHA 和 Digest 的镜像。正式站升级步骤见 [共享服务器部署说明](docs/DEPLOYMENT-SHARED-SERVER.md)，独立回归测试见 [测试说明](docs/TESTING.md)。
 
 图片上传、资源库与存储要求见 [docs/MEDIA.md](docs/MEDIA.md)。
-
-使用 Compose 时，先复制并编辑 `.env`，填写 `SITE_DOMAIN`、`ACME_EMAIL` 和数据库/JWT 配置，然后执行：
-
-```powershell
-docker compose up -d --build
-docker compose ps
-docker compose logs -f api
-```
-
-`docker-compose.yml` 是本地源码构建编排；共享服务器使用 [独立生产配置](docs/DEPLOYMENT-SHARED-SERVER.md)。
-旧服务器使用 `docker-compose.prod.yml`，明确禁止 `build:`。生产 application artifact 只有 CI 生成的 immutable
-image manifest；生产 host 只使用 `/opt/myshop/runtime`，不从源码 release
-目录运行。生产操作统一从受保护入口调用：
-
-```bash
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env config
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env pull
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env up -d
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
-```
-
-该入口固定 `docker-compose.prod.yml` 和 `--project-directory`，显式设置
-`COMPOSE_PROJECT_NAME=myshop`，并拒绝 `build`、`--build`、`latest`、`local`、
-非 approved registry 以及 `-p`、`--project-name`、`-f`、`--file`、
-`--project-directory` 覆盖。本地或 CI 构建只能直接调用开发 Compose；这不改变
-生产规则。生产持久化资源继续属于
-`myshop`，包括 `myshop_postgres_data`、Caddy volumes 和 `myshop_internal`。
-
-Compose 默认只有 PostgreSQL、API、Web 和 Caddy：数据库有持久化卷，API/Web 没有宿主机直连端口，公开流量只经过 Caddy。生产服务器初始化、备份、恢复和回滚步骤见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 ## 管理员初始化
 

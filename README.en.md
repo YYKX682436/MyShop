@@ -13,7 +13,7 @@ The source and license boundary is recorded in [THIRD_PARTY_NOTICES.md](THIRD_PA
 - Security: BCrypt, HttpOnly session cookie plus CSRF double-submit protection, trusted-proxy IP resolution, and high-entropy browser-session ownership for guest orders.
 - Delivery: per-line PostgreSQL `FOR UPDATE SKIP LOCKED`; every pool is checked before any mutation, and one shortage rolls back the whole delivery.
 
-The storefront uses CNY-only pricing. Not in Phase 1: coupons/custom fields/membership tiers, Kafka/RabbitMQ/Elasticsearch/Kubernetes, Redis-by-default rate limiting, microservice splitting, or production deployment.
+The storefront uses CNY-only pricing. Not in Phase 1: coupons/custom fields/membership tiers, Kafka/RabbitMQ/Elasticsearch/Kubernetes, Redis-by-default rate limiting, or microservice splitting.
 
 ## Layout
 
@@ -22,53 +22,12 @@ apps/api/       Spring Boot API, services, Flyway migrations, and tests
 apps/web/       Next.js storefront/admin
 docs/           payment SPI and deployment runbook
 Caddyfile       Compose reverse proxy
-docker-compose.yml
+docker-compose.shared-server.yml
 ```
 
-## Local development
+## Release and verification
 
-Use Node.js 22+, pnpm 10, Java 25 LTS, and Maven 3.9+. The local API defaults to PostgreSQL on `localhost:5432`; never use default database credentials or a development JWT secret in a production environment.
-
-```powershell
-Copy-Item .env.example .env
-# Edit .env with DB_URL, DB_USERNAME, DB_PASSWORD, and JWT_SECRET.
-
-pnpm install --frozen-lockfile
-pnpm --filter @myshop/web dev
-
-cd apps/api
-mvn spring-boot:run
-```
-
-For Compose, edit `.env` with `SITE_DOMAIN`, `ACME_EMAIL`, and database/JWT values, then run:
-
-```powershell
-docker compose up -d --build
-docker compose ps
-docker compose logs -f api
-```
-
-The top-level `name: myshop` in `docker-compose.yml` is the canonical Compose
-project identity. A checkout or production release directory may be named by
-its SHA, but that basename must never create a different stack. Production
-operations use the protected entrypoint from the release root:
-
-```bash
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env config
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env up -d --build
-bash scripts/myshop-compose.sh --env-file /opt/myshop/.env ps
-```
-
-The entrypoint pins `docker-compose.yml` and `--project-directory`, explicitly
-sets `COMPOSE_PROJECT_NAME=myshop`, and rejects `-p`, `--project-name`, `-f`,
-`--file`, and `--project-directory` overrides. Production operators do not
-need to remember `docker compose -p myshop`, and must not supply another
-project name. Local or CI experiments may call Compose directly when they
-intentionally need an isolated stack; that does not change the production
-rule. Production persistence remains in the `myshop` project, including
-`myshop_postgres_data`, the Caddy volumes, and `myshop_internal`.
-
-The default Compose topology contains only PostgreSQL, API, Web, and Caddy. PostgreSQL is persistent; API and Web have no host-facing ports, and public traffic enters through Caddy. Server setup, backup, restore, and rollback are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+A push to `main` runs the affected GitHub Actions checks and publishes images bound to the full Git SHA and image digests. See [the shared-server deployment runbook](docs/DEPLOYMENT-SHARED-SERVER.md) and [independent regression tests](docs/TESTING.md).
 
 ## Administrator bootstrap
 
@@ -115,7 +74,7 @@ cd ../..
 bash scripts/check-compose.sh
 ```
 
-GitHub Actions runs build and test jobs only; it contains no server deployment step.
+GitHub Actions builds and publishes immutable release images after the required checks pass.
 
 ## Reference and license
 

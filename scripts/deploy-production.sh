@@ -183,6 +183,21 @@ if (( ! shared_bootstrap )); then
   [[ -n "${before_ref[api]:-}" && -n "${before_ref[web]:-}" ]] || die 'accepted baseline image refs are incomplete'
 fi
 
+# Check the accepted version while holding the deployment lock. A delayed
+# release may only move forward along the verified Git history.
+if (( shared_server_mode && state_existed )); then
+  release_repository=${MYSHOP_RELEASE_REPOSITORY:-/opt/myshop-friend/release.git}
+  [[ -d "$release_repository" ]] || die 'release Git repository is missing'
+  [[ "$(git --git-dir="$release_repository" rev-parse --is-shallow-repository)" == false ]] \
+    || die 'release Git history must not be shallow'
+  git --git-dir="$release_repository" cat-file -e "$candidate_sha^{commit}" \
+    && git --git-dir="$release_repository" cat-file -e "$active_sha^{commit}" \
+    || die 'candidate or accepted commit is missing from release Git history'
+  [[ "$candidate_sha" != "$active_sha" ]] || die 'candidate is already the accepted release'
+  git --git-dir="$release_repository" merge-base --is-ancestor "$active_sha" "$candidate_sha" \
+    || die 'candidate does not descend from the accepted release'
+fi
+
 verify_baseline() {
   for service in api web; do
     container_id=$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --filter "label=com.docker.compose.service=$service" -q | head -n 1)
@@ -658,7 +673,6 @@ if (( ! shared_bootstrap )); then
 fi
 [[ "${DEPLOY_TEST_FAIL:-}" != health ]] || pre_commit_fail health
 run_compose config --quiet || pre_commit_fail compose
-if [[ "$offline_images" == 0 ]]; then run_compose pull || pre_commit_fail pull; fi
 prepare_bootstrap_rollback_refs || pre_commit_fail bootstrap-rollback-prepare
 [[ "${DEPLOY_TEST_FAIL:-}" != start ]] || pre_commit_fail start
 candidate_started=1

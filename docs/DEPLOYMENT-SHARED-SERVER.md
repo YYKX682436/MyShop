@@ -18,43 +18,30 @@ the stack, restore a database from another host, or change DNS or TLS.
 
 ## Routine production upgrade
 
-1. Push the selected commit and run the existing manual GitHub release
-   workflow on `main` for that **exact** SHA. Authorization to deploy still
-   comes from the owner. The workflow compares the changes to a previous
-   successful full release run; it runs the affected checks and falls back to
-   all checks when that baseline cannot be established. API changes run the
-   API suite, including the required real PostgreSQL tests; migrations also
-   run the deployment/schema checks. Unknown paths and CI changes run all
-   checks. Documentation and most test-only changes do not create release
-   images; the Web image-routing smoke test still needs an image.
-   Confirm the run succeeded, review its validation-scope summary, and use
-   only its matching immutable images and release manifest. Stop for a failed
-   required check or incomplete publication.
-2. Use an authorized terminal on `110.42.34.161`. The already authorized Baota
-   web terminal works for this purpose when available; it does not require
-   separate SSH credentials. First verify the host identity, the running
-   `myshop-friend-prod` services and current accepted release, and the
-   existing runtime, mounts, and loopback binding. If the expected stack or
-   accepted state is missing, stop and check the target. Do not fall back to
-   first-install mode.
-3. Use the existing production configuration and persistence. Load the
-   shared-host settings below and run the read-only `upgrade` preflight as
-   root on the target host.
-   Resolve any failure before deploying; do not bypass the checks or touch
-   other projects on the host.
-4. Run the installed `deploy-production.sh` with the validated **new**
-   release-manifest path using the same settings. The existing release
-   transaction checks images and digests, keeps its predeploy recovery point,
-   verifies health/schema/smoke checks, and rolls back the app images on
-   pre-commit failure only when the Flyway history is unchanged. If the
-   candidate has started, rollback stops the app-facing services before
-   checking history; a changed or unreadable history blocks the old API and
-   leaves the database and recovery point for operator assessment. It does
-   not automatically restore a live database. Leave the existing proxy and
-   data in place.
-5. Verify the accepted release and the real HTTPS site, including the homepage
-   and `/api/site/config`. Verify the changed feature and report the version
-   deployed. Do not use the disabled candidate site for acceptance.
+1. Push the selected commit to `main`. GitHub Actions compares it with the
+   most recent successful ancestor release and runs the affected checks;
+   if no trustworthy baseline exists, all checks run. API changes retain
+   the PostgreSQL integration gate, migrations also run deployment/schema
+   checks, and unknown paths run all checks. Documentation-only changes do
+   not publish images. Use only the successful run matching the full SHA.
+2. On the existing host, verify the `myshop-friend-prod` services, accepted
+   release, runtime, mounts and loopback binding. Run the read-only upgrade
+   preflight with the existing private environment. Do not use first-install
+   mode for an upgrade.
+3. Transfer the validated release manifest and exact image archives using the
+   authenticated deployment connection. Import and verify the offline bundle
+   when registry blobs are unavailable. Provide a complete local Git history
+   at `MYSHOP_RELEASE_REPOSITORY` (default `/opt/myshop-friend/release.git`),
+   containing both the accepted and candidate commits. The deployment lock
+   protects an ancestry check, so an older or unrelated release is refused.
+4. Run `deploy-production.sh` with the validated manifest and the shared-host
+   settings below. The transaction checks image identities, creates its database
+   recovery point, validates health/schema/smoke checks, and permits app
+   rollback only if Flyway history is unchanged. If history changed or cannot
+   be read, the old API remains stopped and the database and recovery point
+   remain available for assessment. No database restore is automatic.
+5. Verify the accepted SHA, service and database health, and the real HTTPS
+   homepage and `/api/site/config`. Do not use the disabled candidate site.
 
 If a release reports `CRITICAL_SCHEMA_ROLLBACK_BLOCKED`, keep the old API
 stopped. A subsequent, fully validated release may use forward recovery:
@@ -88,6 +75,7 @@ export MYSHOP_STORAGE_MOUNTPOINT=/srv/myshop-friend
 export HOST_STORAGE_HEALTH_SCRIPT=/opt/myshop-friend/ops/shared-server/check-storage-health.sh
 export HOST_DEPLOY_LOCK_FILE=/run/myshop-friend-deploy.lock
 export MYSHOP_RUN_HOST_MAINTENANCE=0
+export MYSHOP_RELEASE_REPOSITORY=/opt/myshop-friend/release.git
 export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
 export MYSHOP_SMOKE_BASE_URL=http://127.0.0.1:8082
 export MYSHOP_SMOKE_HOST_HEADER=mc.mc520.top
@@ -194,33 +182,24 @@ digest and local image ID for future rollback/retention. Keep the three
 infrastructure image overrides blank when pulling from GHCR; set them to the
 approved digest-derived `mirror-<digest>` tags only after an offline import.
 
-### Faster offline transfer from the existing release workflow
+### Offline release transport
 
-For releases built by the current workflow, the successful run also supplies
-`myshop-release-<full SHA>` for two days. It contains the API/Web Docker
-archives saved from images pulled by their published digests, the release
-manifest, carrier digest and checksums. The helper downloads byte ranges in
-parallel, verifies GitHub's ZIP digest and the included checksums, and checks
-the exact source SHA. The GHCR carrier and existing offline-bundle
-verification remain the release authority.
+Each successful application release retains `myshop-release-<full SHA>` for
+2 days. It contains the image archives produced by the same builds that push
+the registry images, the release manifest, carrier digest and checksums.
+The fetcher downloads ranges in parallel, verifies GitHub's ZIP digest and the
+included checksums, and rejects a mismatching source SHA:
 
 ```bash
 release_sha=$(git rev-parse HEAD)
-# Run the existing manual workflow after pushing this SHA:
-gh workflow run cicd.yml --repo YYKX682436/MyShop --ref main
-# After CI completes successfully, fetch only the artifact for this SHA:
 release_dir=$(mktemp -d "${TMPDIR:-/tmp}/myshop-release.XXXXXX")
 python3 scripts/fetch-release-archives.py "$release_sha" "$release_dir"
 ```
 
-The source SHA in the validated manifest must equal `release_sha`. Transfer
-the two archives and manifest over SSH. On the server, fetch the carrier by
-the reported digest with `fetch-release-manifest.sh` and compare its manifest
-to the transferred copy. Reuse the already verified PostgreSQL, Caddy and
-node-exporter archives from the last accepted release if their checks still
-pass; otherwise obtain their pinned images as described above. Put those
-three archives alongside `api.tar` and `web.tar`, then use the existing bundle
-creation, archive verification, import, preflight and deploy steps. If the
-two-day artifact has expired, use the existing Skopeo fallback. Delete the
-temporary local download after the release; retain the accepted server
-recovery point and the files needed by the configured offline bundle.
+Fetch the carrier by its recorded registry digest and compare its manifest to
+the artifact before transfer. Reuse the previously verified infrastructure
+archives only when their checks pass; otherwise export the pinned images with
+Skopeo. Create and verify an offline bundle, transfer it over SSH, import the
+images, then run the preflight and deployment transaction. Delete temporary
+local downloads after the release; retain the accepted server recovery point
+and the files required by its configured offline bundle.

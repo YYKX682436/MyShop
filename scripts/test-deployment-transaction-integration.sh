@@ -97,6 +97,17 @@ chmod +x "$tmp_dir/offline-verifier.py"
 
 fake_bin="$tmp_dir/fake-bin"
 mkdir -p "$fake_bin"
+mkdir -p "$tmp_dir/release.git"
+
+cat >"$fake_bin/git" <<'GIT'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${2:-}" == rev-parse ]]; then printf '%s\n' "${FAKE_SHALLOW:-false}"; exit 0; fi
+if [[ "${2:-}" == cat-file ]]; then exit "${FAKE_MISSING_COMMIT:-0}"; fi
+if [[ "${2:-}" == merge-base ]]; then exit "${FAKE_NOT_ANCESTOR:-0}"; fi
+exit 1
+GIT
+chmod +x "$fake_bin/git"
 
 cat >"$fake_bin/flock" <<'FLOCK'
 #!/usr/bin/env bash
@@ -467,6 +478,7 @@ run_deploy() {
     MYSHOP_COMPOSE_PROJECT_NAME="${FAKE_SHARED_TEST:+myshop-friend-prod}" \
     MYSHOP_COMPOSE_FILE="${FAKE_SHARED_TEST:+$case_root/docker-compose.shared-server.yml}" \
     MYSHOP_SHARED_SERVER="${FAKE_SHARED_TEST:-0}" \
+    MYSHOP_RELEASE_REPOSITORY="$tmp_dir/release.git" \
     MYSHOP_RUN_HOST_MAINTENANCE="${FAKE_SHARED_TEST:+0}" \
     MYSHOP_DATA_ROOT="${FAKE_SHARED_TEST:+/srv/myshop-friend}" \
     MYSHOP_BACKUP_DIR="${FAKE_SHARED_TEST:+$case_root/database-backups}" \
@@ -509,6 +521,23 @@ assert_pre_commit_failure() {
   [[ ! -e "$case_root/maintenance/$candidate_sha.failed.json" ]] || fail "$hook wrote a post-commit failure record"
   printf 'PRE-COMMIT %-22s status=%s state=unchanged running=old retention=non-destructive\n' "$hook" "$status"
 }
+
+for unsafe_history in FAKE_SHALLOW FAKE_MISSING_COMMIT FAKE_NOT_ANCESTOR; do
+  reset_case
+  printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+  set +e
+  case "$unsafe_history" in
+    FAKE_SHALLOW) output=$(FAKE_SHARED_TEST=1 FAKE_SHALLOW=true run_deploy 2>&1) ;;
+    FAKE_MISSING_COMMIT) output=$(FAKE_SHARED_TEST=1 FAKE_MISSING_COMMIT=1 run_deploy 2>&1) ;;
+    FAKE_NOT_ANCESTOR) output=$(FAKE_SHARED_TEST=1 FAKE_NOT_ANCESTOR=1 run_deploy 2>&1) ;;
+  esac
+  status=$?
+  set -e
+  (( status != 0 )) || fail "$unsafe_history unexpectedly allowed deployment"
+  cmp -s "$base_state" "$case_root/deploy-state.json" || fail "$unsafe_history changed accepted state"
+  [[ ! -s "$case_root/backup.log" && ! -s "$case_root/compose.log" ]] || fail "$unsafe_history changed production"
+done
+pass 'shallow, missing, and non-ancestor histories cannot deploy'
 
 printf 'PRE-COMMIT FAILURE REGRESSION\n'
 for hook in pull backup compose start health-after-start schema smoke candidate-storage final-identity retention-preflight; do

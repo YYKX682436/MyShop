@@ -2,10 +2,12 @@ import assert from "node:assert/strict"
 import { existsSync, mkdirSync } from "node:fs"
 import { chromium } from "playwright"
 
-// This test creates only uniquely named products in the documented local
-// preview database. It removes them in finally; card imports are intercepted.
+// This test creates uniquely named products in an isolated test database.
+// It removes them in finally; card imports are intercepted.
 const base = new URL(process.env.BASE_URL ?? "http://localhost:3000")
-if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("A local preview is required")
+if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("An isolated loopback test service is required")
+if (!process.env.MYSHOP_TEST_ADMIN || !process.env.MYSHOP_TEST_PASSWORD) throw new Error("Set MYSHOP_TEST_ADMIN and MYSHOP_TEST_PASSWORD for the isolated test service")
+if (!process.env.MYSHOP_TEST_PRODUCT_TITLE) throw new Error("Set MYSHOP_TEST_PRODUCT_TITLE to a product in the isolated test database")
 const macChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? (existsSync(macChrome) ? macChrome : undefined)
 const browser = await chromium.launch({ headless: true, executablePath })
@@ -42,14 +44,14 @@ const responseForCreate = () => page.waitForResponse(response => new URL(respons
 
 try {
   await page.goto(new URL("/login", base).href)
-  await page.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_PREVIEW_ADMIN ?? "muchen-admin")
-  await page.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_PREVIEW_PASSWORD ?? "LocalPreview123!")
+  await page.getByRole("textbox", { name: "用户名 / 邮箱 / 手机号" }).fill(process.env.MYSHOP_TEST_ADMIN)
+  await page.getByRole("textbox", { name: "密码" }).fill(process.env.MYSHOP_TEST_PASSWORD)
   await page.getByRole("button", { name: "登录", exact: true }).click()
   await page.waitForURL(url => url.pathname !== "/login")
   await page.waitForTimeout(1500)
 
   await page.goto(new URL("/admin/products", base).href)
-  await page.getByText("演示商品", { exact: true }).first().waitFor()
+  await page.getByText(process.env.MYSHOP_TEST_PRODUCT_TITLE, { exact: true }).first().waitFor()
   await page.getByLabel("搜索商品名称 / 商品编号").fill("不会匹配的筛选")
   await page.getByTestId("admin-add-product").click()
   await page.getByTestId("product-form").waitFor()
@@ -229,7 +231,7 @@ try {
   page.on("request", request => requests.push(new URL(request.url()).pathname))
   page.on("response", response => responses.push({ path: new URL(response.url()).pathname, status: response.status() }))
   for (const [path, expected] of pages) {
-    // The local preview applies the production per-IP rate limiter. Leave its
+    // The test service applies the production per-IP rate limiter. Leave its
     // bucket time to refill between deliberately rapid page navigations.
     await page.waitForTimeout(1300)
     await page.goto(new URL(`/admin/${path}`, base).href)
@@ -369,7 +371,7 @@ try {
 
   await page.waitForTimeout(1300)
   await page.goto(new URL("/admin/products", base).href)
-  await page.getByLabel("搜索商品名称 / 商品编号").fill("演示")
+  await page.getByLabel("搜索商品名称 / 商品编号").fill("测试筛选")
   await page.getByLabel("排序").selectOption("retail_asc")
   await page.waitForTimeout(500)
   let refreshRequests = 0
@@ -382,7 +384,7 @@ try {
   await page.getByRole("button", { name: "刷新中...", exact: true }).waitFor()
   await page.getByRole("button", { name: "刷新", exact: true }).waitFor()
   assert.equal(refreshRequests, 1)
-  assert.equal(await page.getByLabel("搜索商品名称 / 商品编号").inputValue(), "演示")
+  assert.equal(await page.getByLabel("搜索商品名称 / 商品编号").inputValue(), "测试筛选")
   assert.equal(await page.getByLabel("排序").inputValue(), "retail_asc")
   await page.unroute("**/api/admin/products?*")
   console.log("Rapid refresh is deduplicated and preserves filters and sorting")
@@ -425,7 +427,7 @@ try {
   await page.waitForTimeout(1300)
   await page.goto(new URL("/admin/products", base).href)
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.getByText("演示商品", { exact: true }).first().waitFor()
+  await page.getByText(process.env.MYSHOP_TEST_PRODUCT_TITLE, { exact: true }).first().waitFor()
   const mobileHeader = page.locator(".admin-page-header").first()
   const fit = await mobileHeader.evaluate(element => {
     const heading = element.querySelector("h1").getBoundingClientRect()
