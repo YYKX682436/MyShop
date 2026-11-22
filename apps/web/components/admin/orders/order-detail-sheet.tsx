@@ -66,12 +66,12 @@ function SupplierReview({ purchaseId, reviews, onReview }: {
       finally { setBusy(false) }
     }} className="flex flex-wrap items-end gap-2">
       <div className="min-w-48 flex-1"><label htmlFor={id} className="mb-1 block text-xs">核实结果</label>
-        <select id={id} name="outcome" required defaultValue="" className="h-10 w-full rounded-control border border-input bg-surface px-3 text-sm text-foreground">
+        <select id={id} name="outcome" required defaultValue="" className="h-10 w-full rounded-control border border-input bg-surface px-3 text-base text-foreground md:text-sm">
           <option value="" disabled>请选择</option>
           {Object.entries(reviewLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </div>
-      <Button type="submit" disabled={busy}>{busy ? "保存中" : "记录结果"}</Button>
+      <Button type="submit" disabled={busy} className="min-h-11 h-11 md:min-h-10 md:h-10">{busy ? "保存中" : "记录结果"}</Button>
     </form>
   </div>
 }
@@ -89,9 +89,9 @@ function PaymentReview({ attemptId, onReview }: { attemptId: string; onReview: (
     finally { setBusy(false) }
   }}>
     <div className="min-w-48 flex-1"><label htmlFor={id} className="mb-1 block text-xs">人工核实记录（勿填写密钥或卡密）</label>
-      <input id={id} name="note" minLength={3} maxLength={500} required className="h-10 w-full rounded-control border border-input bg-surface px-3 text-sm text-foreground" />
+      <input id={id} name="note" minLength={3} maxLength={500} required className="h-10 w-full rounded-control border border-input bg-surface px-3 text-base text-foreground md:text-sm" />
     </div>
-    <Button type="submit" disabled={busy}>{busy ? "保存中" : "记录"}</Button>
+    <Button type="submit" disabled={busy} className="min-h-11 h-11 md:min-h-10 md:h-10">{busy ? "保存中" : "记录"}</Button>
   </form>
 }
 
