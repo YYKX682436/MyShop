@@ -45,3 +45,8 @@ test("product preview uses an on-demand original without altering shared markdow
   assert.match(viewer, /<img src=\{src\}/)
   assert.doesNotMatch(markdown, /ProductImageViewer/)
 })
+
+test("the registration captcha input can shrink beside its image on narrow screens", () => {
+  const registration = read("../app/(store)/register/page.tsx")
+  assert.match(registration, /id="reg-captcha"[\s\S]*?className="[^"]*min-w-0 flex-1/)
+})

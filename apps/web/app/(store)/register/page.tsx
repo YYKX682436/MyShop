@@ -309,7 +309,7 @@ export default function RegisterPage() {
                     errors.captcha ? "reg-captcha-error" : null,
                     captchaLoadError ? "reg-captcha-load-error" : null,
                   ].filter(Boolean).join(" ") || undefined}
-                  className="h-11 flex-1 rounded-control border border-input bg-surface-muted px-3 text-base uppercase tracking-wider text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
+                  className="h-11 min-w-0 flex-1 rounded-control border border-input bg-surface-muted px-3 text-base uppercase tracking-wider text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
                   required
                 />
                 <button
