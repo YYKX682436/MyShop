@@ -60,7 +60,11 @@ grep -Fq '27.50' "$tmp_dir/subsite.html"
 ! grep -Fq '19.25' "$tmp_dir/subsite.html"
 curl --fail --silent --max-time 15 -H 'Host: shop.mc520.top' http://127.0.0.1:18932/product/smoke-product >"$tmp_dir/product.html"
 curl --fail --silent --max-time 15 -H 'Host: empty.mc520.top' http://127.0.0.1:18932/ >"$tmp_dir/default.html"
-python3 - "$tmp_dir/main.html" "$tmp_dir/subsite.html" "$tmp_dir/product.html" "$tmp_dir/default.html" <<'PY'
+curl --fail --silent --max-time 15 -H 'Host: mc.mc520.top' http://127.0.0.1:18932/my/orders >"$tmp_dir/orders.html"
+curl --fail --silent --max-time 15 -H 'Host: shop.mc520.top' http://127.0.0.1:18932/messages/support/new >"$tmp_dir/support.html"
+curl --fail --silent --max-time 15 -H 'Host: mc.mc520.top' http://127.0.0.1:18932/admin/site-config >"$tmp_dir/admin.html"
+python3 - "$tmp_dir/main.html" "$tmp_dir/subsite.html" "$tmp_dir/product.html" "$tmp_dir/default.html" \
+  "$tmp_dir/orders.html" "$tmp_dir/support.html" "$tmp_dir/admin.html" <<'PY'
 from html.parser import HTMLParser
 from pathlib import Path
 import sys
@@ -79,14 +83,19 @@ class Metadata(HTMLParser):
     def handle_data(self, data):
         if self.in_title: self.title+=data
 
-for filename, title, icon, site in zip(sys.argv[1:], ['Main Smoke','Subsite Smoke','Smoke Item | Subsite Smoke','Default Icon Smoke'],
-                                        ['/api/uploads/main.png','/api/uploads/subsite.png','/api/uploads/subsite.png','/default-icon.svg'],
-                                        ['Main Smoke','Subsite Smoke','Subsite Smoke','Default Icon Smoke']):
+for index, (filename, title, icon, site) in enumerate(zip(sys.argv[1:],
+        ['Main Smoke','Subsite Smoke','Smoke Item | Subsite Smoke','Default Icon Smoke',
+         '购买记录 | Main Smoke','联系客服 | Subsite Smoke','网站设置 | Main Smoke'],
+        ['/api/uploads/main.png','/api/uploads/subsite.png','/api/uploads/subsite.png','/default-icon.svg',
+         '/api/uploads/main.png','/api/uploads/subsite.png','/api/uploads/main.png'],
+        ['Main Smoke','Subsite Smoke','Subsite Smoke','Default Icon Smoke',
+         'Main Smoke','Subsite Smoke','Main Smoke'])):
     page=Metadata(); page.feed(Path(filename).read_text())
     assert page.title == title, (filename, page.title)
     assert page.icons and all(item == icon for item in page.icons), (filename, page.icons)
     assert site in page.og_site, (filename, page.og_site)
-    assert title in page.twitter, (filename, page.twitter)
+    if index < 4 or page.twitter:
+        assert title in page.twitter, (filename, page.twitter)
 PY
 status=$(curl --silent --max-time 15 -o "$tmp_dir/unknown.html" -w '%{http_code}' \
   -H 'Host: unknown.mc520.top' -H 'X-Forwarded-Host: mc.mc520.top' http://127.0.0.1:18932/)
@@ -109,5 +118,5 @@ status=$(curl --silent --max-time 15 -o /dev/null -w '%{http_code}' -H 'Host: mc
   'http://127.0.0.1:18932/_next/image?url=http%3A%2F%2F127.0.0.1%3A18931%2Fapi%2Fsite%2Fconfig&w=384&q=75')
 [[ "$status" == 400 ]] || { printf 'remote optimizer request returned %s, expected 400\n' "$status" >&2; exit 1; }
 printf 'WEB_IMAGE_HOST_ROUTING_OK main=200 subsite=200 unknown=404\n'
-printf 'WEB_BRANDING_HOST_ROUTING_OK titles=4 icons=4 open_graph=4 twitter=4\n'
+printf 'WEB_BRANDING_HOST_ROUTING_OK titles=7 icons=7 open_graph=7\n'
 printf 'WEB_IMAGE_OPTIMIZER_OK webp=200 repeat=HIT cache=31536000 remote=400\n'
