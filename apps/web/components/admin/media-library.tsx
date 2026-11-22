@@ -9,13 +9,13 @@ import { PageHeader } from "@/components/admin/shared"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { useLocale } from "@/lib/context"
-import { ALLOWED_IMAGE_ACCEPT, QR_ALLOWED_IMAGE_ACCEPT, validateImageFile, validateQrImageFile } from "@/lib/image-upload"
+import { ALLOWED_IMAGE_ACCEPT, validateImageFile } from "@/lib/image-upload"
 import { adminMediaApi, adminProductApi, type MediaInspection, type MediaItem, type MediaOptimization } from "@/services/api"
 import { ProductImage } from "@/components/store/product-image"
 
 const PAGE_SIZE = 24
 
-export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: { onSelect?: (item: MediaItem) => void; qrOnly?: boolean; showHeader?: boolean }) {
+export function MediaLibrary({ onSelect, showHeader = false }: { onSelect?: (item: MediaItem) => void; showHeader?: boolean }) {
   const { t, locale } = useLocale()
   const [search, setSearch] = useState("")
   const [query, setQuery] = useState("")
@@ -46,7 +46,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
     const controller = new AbortController()
     setLoading(true)
     setError(false)
-    adminMediaApi.getList({ page, page_size: PAGE_SIZE, query, order, qr_only: qrOnly }, controller.signal)
+    adminMediaApi.getList({ page, page_size: PAGE_SIZE, query, order }, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return
         const lastPage = Math.max(1, Math.ceil(result.total / PAGE_SIZE))
@@ -56,7 +56,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
       .catch(() => { if (!controller.signal.aborted) setError(true) })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [page, query, order, qrOnly, revision])
+  }, [page, query, order, revision])
 
   useEffect(() => {
     if (!managed) return
@@ -71,7 +71,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
 
   const upload = async (file?: File) => {
     if (!file || uploading) return
-    const error = qrOnly ? validateQrImageFile(file) : validateImageFile(file)
+    const error = validateImageFile(file)
     if (error) { toast.error(error); return }
     setUploading(true)
     try {
@@ -139,7 +139,7 @@ export function MediaLibrary({ onSelect, qrOnly = false, showHeader = false }: {
         <Button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}>
           {uploading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}{t("admin.upload")}
         </Button>
-        <input ref={inputRef} type="file" accept={qrOnly ? QR_ALLOWED_IMAGE_ACCEPT : ALLOWED_IMAGE_ACCEPT} className="hidden" onChange={(event) => void upload(event.target.files?.[0])} />
+        <input ref={inputRef} type="file" accept={ALLOWED_IMAGE_ACCEPT} className="hidden" onChange={(event) => void upload(event.target.files?.[0])} />
       </div>
       {loading ? <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground" role="status"><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />{t("common.loading")}</div>
         : error ? <div className="flex min-h-48 flex-col items-center justify-center gap-3 text-sm text-destructive" role="alert">{t("admin.loadError")}<Button type="button" variant="outline" onClick={() => setRevision((value) => value + 1)}>{t("common.retry")}</Button></div>
@@ -206,7 +206,7 @@ function formatSize(bytes: number) {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
-export function MediaPicker({ onSelect, qrOnly = false, disabled = false, onOpen }: { onSelect: (item: MediaItem) => void; qrOnly?: boolean; disabled?: boolean; onOpen?: () => void }) {
+export function MediaPicker({ onSelect, disabled = false, onOpen }: { onSelect: (item: MediaItem) => void; disabled?: boolean; onOpen?: () => void }) {
   const { t } = useLocale()
   const [open, setOpen] = useState(false)
   return <>
@@ -214,7 +214,7 @@ export function MediaPicker({ onSelect, qrOnly = false, disabled = false, onOpen
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="flex max-h-[90dvh] max-w-6xl flex-col overflow-hidden">
         <DialogHeader><DialogTitle>{t("admin.mediaSelect")}</DialogTitle><DialogDescription className="sr-only">{t("admin.media")}</DialogDescription></DialogHeader>
-        <div className="min-h-0 overflow-y-auto"><MediaLibrary qrOnly={qrOnly} onSelect={(item) => { onSelect(item); setOpen(false) }} /></div>
+        <div className="min-h-0 overflow-y-auto"><MediaLibrary onSelect={(item) => { onSelect(item); setOpen(false) }} /></div>
       </DialogContent>
     </Dialog>
   </>

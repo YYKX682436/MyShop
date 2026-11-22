@@ -78,11 +78,13 @@ export function useAuth() {
 interface SiteConfigContextValue {
   config: SiteConfig | null
   isLoading: boolean
+  refresh: () => Promise<void>
 }
 
 const SiteConfigContext = createContext<SiteConfigContextValue>({
   config: null,
   isLoading: true,
+  refresh: async () => {},
 })
 
 export function useSiteConfig() {
@@ -235,17 +237,28 @@ export function AppProviders({ children }: { children: ReactNode }) {
   // ---------- Site Config ----------
   const [siteConfig, setSiteConfig] = useState<SiteConfig | null>(null)
   const [siteConfigLoading, setSiteConfigLoading] = useState(true)
+  const siteConfigVersion = useRef(0)
+  const refreshSiteConfig = useCallback(async () => {
+    const version = ++siteConfigVersion.current
+    try {
+      const config = await requestOrThrow(() => siteApi.getConfig())
+      if (version === siteConfigVersion.current) setSiteConfig(config)
+    } finally {
+      if (version === siteConfigVersion.current) setSiteConfigLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
+    const version = ++siteConfigVersion.current
     async function fetchConfig() {
       try {
         const config = await requestOrThrow(() => siteApi.getConfig())
-        if (!cancelled) setSiteConfig(config)
+        if (!cancelled && version === siteConfigVersion.current) setSiteConfig(config)
       } catch {
-        if (!cancelled) setSiteConfig(null)
+        if (!cancelled && version === siteConfigVersion.current) setSiteConfig(null)
       } finally {
-        if (!cancelled) setSiteConfigLoading(false)
+        if (!cancelled && version === siteConfigVersion.current) setSiteConfigLoading(false)
       }
     }
     fetchConfig()
@@ -256,7 +269,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const themeValue = useMemo<ThemeContextValue>(() => ({ theme, setTheme, resolvedTheme }), [theme, setTheme, resolvedTheme])
   const localeValue = useMemo<LocaleContextValue>(() => ({ locale, setLocale, t }), [locale, setLocale, t])
   const authValue = useMemo<AuthContextValue>(() => ({ user, setUser, isLoggedIn, authLoaded, logout }), [user, setUser, isLoggedIn, authLoaded, logout])
-  const siteConfigValue = useMemo<SiteConfigContextValue>(() => ({ config: siteConfig, isLoading: siteConfigLoading }), [siteConfig, siteConfigLoading])
+  const siteConfigValue = useMemo<SiteConfigContextValue>(() => ({ config: siteConfig, isLoading: siteConfigLoading, refresh: refreshSiteConfig }), [siteConfig, siteConfigLoading, refreshSiteConfig])
 
   return (
     <ThemeContext.Provider value={themeValue}>

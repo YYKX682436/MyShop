@@ -10,7 +10,6 @@ const styles = read("../app/globals.css")
 const perfScript = read("../scripts/perf-smoke.mjs")
 const webPackage = JSON.parse(read("../package.json"))
 const persistentSurfaces = [
-  read("../components/layout/store-header.tsx"),
   read("../components/layout/admin-header.tsx"),
   read("../components/admin/shared/index.tsx"),
   read("../components/ui/sheet.tsx"),

@@ -25,7 +25,7 @@ public class MediaLibraryService {
         this.urlPrefix = normalized.isEmpty() ? "/api/uploads" : normalized;
     }
 
-    public MediaPage list(int page, int pageSize, String query, String order, boolean qrOnly) {
+    public MediaPage list(int page, int pageSize, String query, String order) {
         if (page < 1 || page > 100_000 || pageSize < 1 || pageSize > 100 || query.length() > 120
                 || (!order.equals("asc") && !order.equals("desc"))) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "资源查询参数无效");
@@ -36,7 +36,6 @@ public class MediaLibraryService {
             if (order.equals("desc")) comparator = comparator.reversed();
             List<MediaItem> matches = files.map(this::item)
                     .filter(java.util.Objects::nonNull)
-                    .filter(item -> !qrOnly || List.of("jpg", "jpeg", "png", "webp").contains(item.format()))
                     .filter(item -> item.name().toLowerCase(Locale.ROOT).contains(keyword)
                             || item.url().toLowerCase(Locale.ROOT).contains(keyword))
                     .sorted(comparator).toList();

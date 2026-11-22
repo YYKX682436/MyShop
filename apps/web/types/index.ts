@@ -538,18 +538,9 @@ export interface AdminPaymentChannel {
 // Site Config
 // ============================================================
 
-export interface ContactItem {
-  name: string
-  url?: string
-  qr_url?: string
-}
-
 export interface SiteConfig {
   site_name: string
-  site_slogan?: string
-  site_description?: string
-  logo_url?: string
-  favicon_url?: string
+  favicon_url?: string | null
   announcement_enabled: boolean
   announcement?: string
   announcement_id?: string
@@ -561,14 +552,9 @@ export interface SiteConfig {
   popup_id?: string
   popup_title?: string
   popup_version?: number
-  contact_email?: string
-  contact_items?: ContactItem[]
-  customer_service?: string
-  main_site_has_contact?: boolean
   main_site_url?: string
   maintenance_enabled: boolean
   maintenance_message?: string
-  footer_text?: string
   custom_css?: string
 }
 

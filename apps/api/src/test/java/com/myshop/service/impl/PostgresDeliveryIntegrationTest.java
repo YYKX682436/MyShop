@@ -57,6 +57,7 @@ import java.util.concurrent.TimeUnit;
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -1733,7 +1734,82 @@ class PostgresDeliveryIntegrationTest {
     }
 
     @Test
-    void subsiteGuestCheckoutRequiresSupportAndProtectsOrderSession() {
+    void mainSiteBrandSettingsAreAdminOnlyAndReachPublicConfig() throws Exception {
+        String username = "brand-admin-" + UUID.randomUUID();
+        UUID admin = insertAdminUser(username, UUID.randomUUID() + "@example.com");
+        String token = jwtUtils.generateToken(admin, username, "ADMIN", scalar("select auth_version from users where id=?", Integer.class, admin));
+        String csrf = UUID.randomUUID().toString();
+        var old = jdbcTemplate.queryForList("select config_key,config_value from site_configs where config_key in ('site_name','favicon_url')");
+        String body = "{\"configs\":[{\"config_key\":\"site_name\",\"config_value\":\"品牌测试\"},{\"config_key\":\"favicon_url\",\"config_value\":\"/api/uploads/brand.png\"}]}";
+        MockMvc mvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).addFilters(springSecurityFilterChain).build();
+        try {
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/admin/site-config").contextPath("/api")
+                    .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("customer").roles("USER"))
+                    .contentType("application/json").content(body)).andExpect(status().isForbidden());
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/admin/site-config").contextPath("/api")
+                    .cookie(new Cookie("myshop_access_token", token), new Cookie("myshop_csrf", csrf)).header("X-CSRF-Token", csrf)
+                    .contentType("application/json").content(body)).andExpect(status().isOk());
+            var config = webApplicationContext.getBean(com.myshop.service.SiteConfigService.class).getPublicConfig();
+            assertEquals("品牌测试", config.get("site_name"));
+            assertEquals("/api/uploads/brand.png", config.get("favicon_url"));
+            assertFalse(config.containsKey("site_slogan"));
+            assertFalse(config.containsKey("contact_items"));
+        } finally {
+            for (String key : List.of("site_name", "favicon_url")) {
+                var previous = old.stream().filter(row -> key.equals(row.get("config_key"))).findFirst();
+                if (previous.isPresent()) jdbcTemplate.update("update site_configs set config_value=? where config_key=?", previous.get().get("config_value"), key);
+                else jdbcTemplate.update("delete from site_configs where config_key=?", key);
+            }
+        }
+    }
+
+    @Test
+    void faviconUploadRequiresSiteOwnerAndCannotAccessAdminUpload() throws Exception {
+        String username = "favicon-owner-" + UUID.randomUUID();
+        String strangerName = "favicon-stranger-" + UUID.randomUUID();
+        UUID owner = insertUser(username, UUID.randomUUID() + "@example.com");
+        UUID stranger = insertUser(strangerName, UUID.randomUUID() + "@example.com");
+        UUID site = UUID.randomUUID();
+        jdbcTemplate.update("insert into subsites(id,owner_id,prefix,name) values (?,?,?,?)", site, owner,
+                "icon" + site.toString().replace("-", ""), "图标测试");
+        String ownerToken = jwtUtils.generateToken(owner, username, "USER", scalar("select auth_version from users where id=?", Integer.class, owner));
+        String strangerToken = jwtUtils.generateToken(stranger, strangerName, "USER", scalar("select auth_version from users where id=?", Integer.class, stranger));
+        String csrf = UUID.randomUUID().toString();
+        var image = new java.awt.image.BufferedImage(3, 3, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(0, 0, owner.hashCode());
+        var bytes = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", bytes);
+        var file = new org.springframework.mock.web.MockMultipartFile("file", "icon.png", "image/png", bytes.toByteArray());
+        MockMvc mvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).addFilters(springSecurityFilterChain).build();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/subsite/mine/favicon").file(file).contextPath("/api"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/upload/image").file(file).contextPath("/api")
+                .cookie(new Cookie("myshop_access_token", ownerToken), new Cookie("myshop_csrf", csrf)).header("X-CSRF-Token", csrf))
+                .andExpect(status().isForbidden());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/subsite/mine/favicon").file(file).contextPath("/api")
+                .cookie(new Cookie("myshop_access_token", strangerToken), new Cookie("myshop_csrf", csrf)).header("X-CSRF-Token", csrf))
+                .andExpect(status().isBadRequest());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/subsite/mine/favicon").file(file).contextPath("/api")
+                .cookie(new Cookie("myshop_access_token", ownerToken), new Cookie("myshop_csrf", csrf)).header("X-CSRF-Token", csrf))
+                .andExpect(status().isOk());
+        String icon = scalar("select favicon_url from subsites where id=?", String.class, site);
+        assertNotNull(icon);
+        assertTrue(icon.startsWith("/api/uploads/"));
+        var forged = new org.springframework.mock.web.MockMultipartFile("file", "icon.png", "image/png", "not an image".getBytes());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/subsite/mine/favicon").file(forged).contextPath("/api")
+                .cookie(new Cookie("myshop_access_token", ownerToken), new Cookie("myshop_csrf", csrf)).header("X-CSRF-Token", csrf))
+                .andExpect(status().isBadRequest());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/subsite/mine").contextPath("/api")
+                .cookie(new Cookie("myshop_access_token", ownerToken), new Cookie("myshop_csrf", csrf)).header("X-CSRF-Token", csrf)
+                .contentType("application/json").content("{\"name\":\"图标测试\",\"favicon_url\":\"https://other.example/icon.png\"}"))
+                .andExpect(status().isBadRequest());
+        assertEquals(icon, scalar("select favicon_url from subsites where id=?", String.class, site));
+        webApplicationContext.getBean(com.myshop.service.MediaMaintenanceService.class).delete(icon.substring(icon.lastIndexOf('/') + 1));
+        assertNull(scalar("select favicon_url from subsites where id=?", String.class, site));
+    }
+
+    @Test
+    void subsiteGuestCheckoutAndSupportWorkWithoutExternalContactAndProtectSession() {
         UUID owner=insertUser("guest-site-"+UUID.randomUUID(),UUID.randomUUID()+"@example.com");
         UUID siteId=UUID.randomUUID(), product=UUID.randomUUID();
         String prefix="guest"+siteId.toString().replace("-", "");
@@ -1745,15 +1821,9 @@ class PostgresDeliveryIntegrationTest {
         String channel="guest-site-"+UUID.randomUUID(); insertPaymentChannel(channel);
         configurePaymentCreation("guest-site-trade");
         var site=new com.myshop.entity.Subsite(); site.setId(siteId); site.setOwnerId(owner); site.setPrefix(prefix); site.setEnabled(true);
-        jdbcTemplate.update("insert into site_configs(config_key,config_value,config_group) values ('contact_email','','basic') on conflict(config_key) do update set config_value=''");
-        jdbcTemplate.update("insert into site_configs(config_key,config_value,config_group) values ('customer_service','','basic') on conflict(config_key) do update set config_value=''");
-        jdbcTemplate.update("update site_configs set config_value='[]' where config_key='contact_items'");
         com.myshop.context.SiteRequestContext.set(site);
         try {
             Map<String,Object> request=directOrderRequest(product,channel);
-            BusinessException unavailable=assertThrows(BusinessException.class,()->orderService.createDirectOrder(request,null,"127.0.0.1","guest-token"));
-            assertTrue(unavailable.getMessage().contains("售后联系方式"));
-            jdbcTemplate.update("update site_configs set config_value='客服：demo-account' where config_key='customer_service'");
             var result=orderService.createDirectOrder(request,null,"127.0.0.1","guest-token");
             UUID orderId=(UUID)((Map<?,?>)result.get("order")).get("id");
             assertEquals(siteId,scalar("select subsite_id from orders where id=?",UUID.class,orderId));
@@ -1761,6 +1831,12 @@ class PostgresDeliveryIntegrationTest {
             var access=webApplicationContext.getBean(com.myshop.service.OrderAccessService.class);
             assertNotNull(access.getOrder(orderId,null,"guest-token"));
             assertThrows(BusinessException.class,()->access.getOrder(orderId,null,"other-token"));
+            var support=webApplicationContext.getBean(com.myshop.service.SupportService.class);
+            assertNotNull(support.orderContext(orderId,"guest-token"));
+            assertThrows(BusinessException.class,()->support.orderContext(orderId,"other-token"));
+            var message=support.send(null,orderId,UUID.randomUUID(),"游客订单咨询",List.of(),false,"guest-token");
+            assertNotNull(message.get("conversation_id"));
+            assertThrows(BusinessException.class,()->support.detail((UUID)message.get("conversation_id"),false,"other-token"));
             com.myshop.context.SiteRequestContext.clear();
             assertThrows(BusinessException.class,()->access.getOrder(orderId,null,"guest-token"));
             assertTrue(scalar("select return_url_snapshot from payment_attempts where order_id=?",String.class,orderId).startsWith("https://"+prefix+".mc520.top/"));
@@ -1775,8 +1851,6 @@ class PostgresDeliveryIntegrationTest {
             assertEquals(1,number("select count(*) from balance_transactions where order_id=? and type='SUBSITE_PROFIT'",orderId));
         } finally {
             com.myshop.context.SiteRequestContext.clear();
-            jdbcTemplate.update("update site_configs set config_value='' where config_key='contact_email'");
-            jdbcTemplate.update("update site_configs set config_value='' where config_key='customer_service'");
             jdbcTemplate.update("update subsite_settings set supply_level_id=null where id=1");
         }
     }

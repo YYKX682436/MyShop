@@ -35,4 +35,7 @@ public class SubsiteController {
     @PutMapping("/mine") public ApiResponse<?> update(@RequestBody SubsiteManagementService.SiteUpdate request) {
         return ApiResponse.success(service.updateMine(RequestContext.getUserId(), request));
     }
+    @PostMapping("/mine/favicon") public ApiResponse<?> uploadFavicon(@RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        return ApiResponse.success(service.uploadFavicon(RequestContext.getUserId(), file));
+    }
 }

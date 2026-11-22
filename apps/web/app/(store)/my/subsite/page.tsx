@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AnnouncementManagement } from "@/components/shared/announcement-management"
 import { useRequireAuth } from "@/lib/hooks"
 import { formatYuan } from "@/lib/utils"
+import { AVATAR_ALLOWED_IMAGE_ACCEPT, getAvatarFileValidationError } from "@/lib/image-upload"
 import { subsiteApi, type SubsiteInfo, type SubsiteCustomer, type SubsiteLevel, type SubsiteOrder } from "@/services/api"
 
 export default function MySubsitePage() {
@@ -19,8 +21,7 @@ export default function MySubsitePage() {
   const [busy, setBusy] = useState(false)
   const [prefix, setPrefix] = useState("")
   const [name, setName] = useState("")
-  const [logo, setLogo] = useState("")
-  const [contact, setContact] = useState("")
+  const [favicon, setFavicon] = useState("")
   const [customers, setCustomers] = useState<SubsiteCustomer[]>([])
   const [levels, setLevels] = useState<SubsiteLevel[]>([])
   const [customerLevels, setCustomerLevels] = useState<Record<string, string>>({})
@@ -36,7 +37,7 @@ export default function MySubsitePage() {
       const result = await subsiteApi.mine()
       setSite(result)
       if (result) {
-        setName(result.name); setLogo(result.logo_url ?? ""); setContact(result.customer_service ?? "")
+        setName(result.name); setFavicon(result.favicon_url ?? "")
         const [customerPage, availableLevels, stats, orderResult] = await Promise.all([subsiteApi.customers(page), subsiteApi.levels(), subsiteApi.overview(), subsiteApi.orders(orderPage)])
         setCustomers(customerPage.content); setTotalPages(customerPage.total_pages); setLevels(availableLevels)
         setCustomerLevels(Object.fromEntries(customerPage.content.map(customer => [customer.id, customer.user_level_id ?? ""])))
@@ -54,8 +55,19 @@ export default function MySubsitePage() {
   }
   async function save(event: React.FormEvent) {
     event.preventDefault(); setBusy(true)
-    try { setSite(await subsiteApi.update({ name, logo_url: logo || null, customer_service: contact || null })); toast.success("设置已保存") }
+    try { setSite(await subsiteApi.update({ name, favicon_url: favicon || null })); toast.success("设置已保存") }
     catch (e) { toast.error(e instanceof Error ? e.message : "保存失败") }
+    finally { setBusy(false) }
+  }
+  async function uploadFavicon(file?: File) {
+    if (!file) return
+    const invalid = getAvatarFileValidationError(file)
+    if (invalid) { toast.error(invalid === "size" ? "图片大小不能超过 5MB" : "仅支持 JPG、PNG 或 WebP 图片"); return }
+    setBusy(true)
+    try {
+      const updated = await subsiteApi.uploadFavicon(file)
+      setSite(updated); setFavicon(updated.favicon_url ?? ""); toast.success("图标已更新")
+    } catch (e) { toast.error(e instanceof Error ? e.message : "上传失败") }
     finally { setBusy(false) }
   }
   async function updateLevel(id: string, levelId: string) {
@@ -73,8 +85,11 @@ export default function MySubsitePage() {
       {overview && <section className="content-surface rounded-card p-5"><h2 className="mb-4 text-lg font-semibold">经营概览</h2><dl className="grid grid-cols-2 gap-4 sm:grid-cols-4"><div><dt className="text-sm text-muted-foreground">订单</dt><dd className="mt-1 text-xl font-semibold">{overview.order_count}</dd></div><div><dt className="text-sm text-muted-foreground">预计收益</dt><dd className="mt-1 text-xl font-semibold">{formatYuan(overview.estimated_profit)}</dd></div><div><dt className="text-sm text-muted-foreground">待入账收益</dt><dd className="mt-1 text-xl font-semibold">{formatYuan(overview.pending_profit)}</dd></div><div><dt className="text-sm text-muted-foreground">已入账收益</dt><dd className="mt-1 text-xl font-semibold">{formatYuan(overview.settled_profit)}</dd></div></dl></section>}
       <form onSubmit={save} className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">网站设置</h2>
         <label className="block space-y-1 text-sm"><span>网站名称</span><Input required maxLength={100} value={name} onChange={e => setName(e.target.value)} /></label>
-        <label className="block space-y-1 text-sm"><span>Logo 地址</span><Input maxLength={500} value={logo} onChange={e => setLogo(e.target.value)} /></label>
-        <label className="block space-y-1 text-sm"><span>客服</span><Input maxLength={500} value={contact} onChange={e => setContact(e.target.value)} /></label>
+        <div className="space-y-2"><p className="text-sm font-medium">网站图标</p><div className="flex flex-wrap items-center gap-3">
+          <Image src={favicon || "/default-icon.svg"} alt="网站图标预览" width={64} height={64} unoptimized className="size-16 rounded-control border border-border-subtle bg-surface object-contain p-1" />
+          <label className="inline-flex min-h-11 cursor-pointer items-center rounded-control border border-input px-3 text-sm hover:bg-accent">{favicon ? "更换图标" : "上传图标"}<input type="file" accept={AVATAR_ALLOWED_IMAGE_ACCEPT} className="sr-only" disabled={busy} onChange={e => { void uploadFavicon(e.target.files?.[0]); e.target.value = "" }} /></label>
+          {favicon && <Button type="button" variant="ghost" disabled={busy} onClick={() => setFavicon("")}>移除</Button>}
+        </div></div>
         <Button type="submit" disabled={busy}>保存设置</Button>
       </form>
       <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">公告管理</h2><AnnouncementManagement scope="subsite" /></section>

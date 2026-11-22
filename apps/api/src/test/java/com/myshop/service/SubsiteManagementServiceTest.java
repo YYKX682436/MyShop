@@ -13,11 +13,34 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class SubsiteManagementServiceTest {
+    @Test void faviconUploadAndUpdatesAreRestrictedToTheOwner() {
+        var sites=mock(SubsiteRepository.class); var images=mock(ImageUploadService.class);
+        var jdbc=mock(JdbcTemplate.class);
+        var service=new SubsiteManagementService(sites,mock(SubsiteSettingsRepository.class),mock(UserRepository.class),
+                mock(UserLevelRepository.class),jdbc,mock(BalanceTransactionRepository.class),images);
+        ReflectionTestUtils.setField(service,"publicSiteUrl","https://mc.mc520.top");
+        UUID owner=UUID.randomUUID(), stranger=UUID.randomUUID();
+        Subsite site=new Subsite(); site.setId(UUID.randomUUID()); site.setOwnerId(owner); site.setPrefix("owner"); site.setName("原站");
+        when(sites.findByOwnerId(owner)).thenReturn(Optional.of(site));
+        when(sites.findByOwnerId(stranger)).thenReturn(Optional.empty());
+        var file=new org.springframework.mock.web.MockMultipartFile("file","icon.png","image/png",new byte[]{1});
+        assertThrows(BusinessException.class, () -> service.uploadFavicon(stranger,file));
+        verify(images,never()).uploadSiteFavicon(any());
+        assertThrows(BusinessException.class, () -> service.updateMine(owner,new SubsiteManagementService.SiteUpdate("原站","https://other.example/icon.png")));
+        when(images.uploadSiteFavicon(file)).thenReturn(new ImageUploadService.UploadedImage("/api/uploads/icon.png","icon.png",1,1,"test"));
+        when(sites.save(site)).thenReturn(site);
+        when(jdbc.queryForObject(anyString(),eq(Long.class),eq(site.getId()))).thenReturn(0L);
+        assertEquals("/api/uploads/icon.png",service.uploadFavicon(owner,file).get("favicon_url"));
+        assertEquals("/api/uploads/icon.png",site.getFaviconUrl());
+        service.updateMine(owner,new SubsiteManagementService.SiteUpdate("新站",null));
+        assertNull(site.getFaviconUrl());
+        assertEquals("新站",site.getName());
+    }
     @Test void insufficientBalanceDoesNotCreateOrDebit() {
         var sites=mock(SubsiteRepository.class); var settings=mock(SubsiteSettingsRepository.class);
         var users=mock(UserRepository.class); var levels=mock(UserLevelRepository.class);
         var jdbc=mock(JdbcTemplate.class); var ledger=mock(BalanceTransactionRepository.class);
-        var service=new SubsiteManagementService(sites,settings,users,levels,jdbc,ledger);
+        var service=new SubsiteManagementService(sites,settings,users,levels,jdbc,ledger,mock(ImageUploadService.class));
         ReflectionTestUtils.setField(service,"publicSiteUrl","https://mc.mc520.top");
         ReflectionTestUtils.setField(service,"reservedPrefixes", "");
         UUID owner=UUID.randomUUID(), levelId=UUID.randomUUID();

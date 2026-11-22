@@ -9,7 +9,6 @@ import {
 import { motion } from "motion/react"
 import { useLocale } from "@/lib/context"
 import { ProductCard } from "@/components/store/product-card"
-import { FadeIn } from "@/components/ui/motion"
 import { Pagination } from "@/components/shared/pagination"
 import { getRootCategories } from "@/lib/categories"
 import { productApi } from "@/services/api"
@@ -19,13 +18,10 @@ import type { ProductCard as ProductCardType, Category, PaginatedData, ProductLi
 interface HomeContentProps {
   initialProducts: PaginatedData<ProductCardType>
   categories: Category[]
-  siteName: string
-  siteSlogan: string
-  siteDescription: string
   productsError?: boolean
 }
 
-export function HomeContent({ initialProducts, categories, siteName, siteSlogan, siteDescription, productsError = false }: HomeContentProps) {
+export function HomeContent({ initialProducts, categories, productsError = false }: HomeContentProps) {
   const { t } = useLocale()
 
   const [selectedRootCategory, setSelectedRootCategory] = useState<string | null>(null)
@@ -95,29 +91,6 @@ export function HomeContent({ initialProducts, categories, siteName, siteSlogan,
 
   return (
     <div className="store-home">
-      {/* Hero */}
-      {(siteSlogan.trim() || siteDescription.trim()) && (
-        <FadeIn>
-          <section className="store-home-intro">
-            <div className="store-home-hero">
-              <div className="store-home-hero-copy">
-                <p className="store-home-brand">{siteName}</p>
-                {siteSlogan.trim() && (
-                  <h1 className="store-home-hero-title text-balance">
-                    {siteSlogan}
-                  </h1>
-                )}
-                {siteDescription.trim() && (
-                  <p className="store-home-hero-description">
-                    {siteDescription}
-                  </p>
-                )}
-              </div>
-            </div>
-          </section>
-        </FadeIn>
-      )}
-
       <section className="store-catalog" aria-label={t("home.allCategories")} aria-busy={loading}>
       {/* Category controls */}
       {categories.length > 0 && (

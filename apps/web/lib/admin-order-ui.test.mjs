@@ -157,10 +157,10 @@ test("storefront order header owns the compact manual refresh action", () => {
   assert.equal((source.match(/t\("order\.refresh"\)/g) ?? []).length, 1)
 
   const productDetailsEnd = source.indexOf("{purchasedProducts.map")
-  const contactStart = source.indexOf("<ContactSupport", productDetailsEnd)
-  const bottom = source.slice(productDetailsEnd, contactStart)
+  const bottom = source.slice(productDetailsEnd, source.indexOf("<AfterSaleRequestDialog", productDetailsEnd))
   assert.doesNotMatch(bottom, /manualRefresh|刷新订单状态|order\.refresh/)
-  assert.match(source.slice(productDetailsEnd), /ProductDescription[\s\S]*\/>\)\}\s*<ContactSupport/)
+  assert.doesNotMatch(source, /<ContactSupport/)
+  assert.match(source, /messages\/support\/new\?order=/)
 })
 
 test("refund detail and storefront lifecycle expose the refund facts without payment actions", () => {

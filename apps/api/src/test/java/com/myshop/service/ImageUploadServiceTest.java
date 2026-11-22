@@ -68,6 +68,18 @@ class ImageUploadServiceTest {
     }
 
     @Test
+    void subsiteFaviconUsesManagedImagesAndRejectsInvalidFiles() {
+        var uploaded = service.uploadSiteFavicon(new MockMultipartFile("file", "icon.png", "image/png", pngBytes()));
+        assertTrue(uploaded.url().matches("/api/uploads/[0-9a-f]{64}\\.(png|jpg|webp)"));
+        assertThrows(BusinessException.class, () -> service.uploadSiteFavicon(
+                new MockMultipartFile("file", "icon.gif", "image/gif", new byte[]{0x47,0x49,0x46,0x38})));
+        assertThrows(BusinessException.class, () -> service.uploadSiteFavicon(
+                new MockMultipartFile("file", "icon.png", "image/png", "not-image".getBytes())));
+        assertThrows(BusinessException.class, () -> service.uploadSiteFavicon(
+                new MockMultipartFile("file", "icon.png", "image/png", new byte[5 * 1024 * 1024 + 1])));
+    }
+
+    @Test
     void managedAvatarDeletionRejectsExternalAndTraversalUrls() throws IOException {
         String filename = "avatar-" + UUID.randomUUID() + ".png";
         Path managed = uploadStorage.resolve("avatars/" + filename);
@@ -107,7 +119,7 @@ class ImageUploadServiceTest {
         ImageUploadService.UploadedImage duplicate = metadataFailureService.uploadAdminImage(
                 new MockMultipartFile("file", "renamed.png", "image/png", png));
         var listed = new MediaLibraryService(metadataFailureStorage, "/api/uploads")
-                .list(1, 24, "", "desc", false);
+                .list(1, 24, "", "desc");
 
         assertEquals(uploaded.url(), duplicate.url());
         assertArrayEquals(publishedBytes, Files.readAllBytes(published));

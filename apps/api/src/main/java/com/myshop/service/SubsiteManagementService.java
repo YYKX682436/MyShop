@@ -25,12 +25,13 @@ public class SubsiteManagementService {
     private final UserLevelRepository levels;
     private final JdbcTemplate jdbc;
     private final BalanceTransactionRepository balanceTransactions;
+    private final ImageUploadService imageUploadService;
     @Value("${app.public-site-url:http://localhost:3000}") private String publicSiteUrl;
     @Value("${subsites.reserved-prefixes:mc,www,api,admin,mail,kf,jc,dl,openlist,myshop-candidate,tp}") private String reservedPrefixes;
 
     public record Settings(boolean selfServiceEnabled, BigDecimal openingPrice, UUID supplyLevelId, List<UUID> allowedLevelIds) {}
     public record OpenRequest(UUID ownerId, String prefix, String name) {}
-    public record SiteUpdate(String name, String logoUrl, String customerService, String announcement) {}
+    public record SiteUpdate(String name, String faviconUrl) {}
     public record TransferRequest(UUID userId, UUID levelId) {}
     public record StatusRequest(boolean enabled) {}
     public record LevelRequest(UUID levelId) {}
@@ -152,8 +153,17 @@ public class SubsiteManagementService {
     public Map<String,Object> updateMine(UUID ownerId, SiteUpdate request) {
         Subsite site = sites.findByOwnerId(ownerId).orElseThrow(() -> bad("尚未开通分站"));
         if (request == null) throw bad("站点设置无效");
-        site.setName(text(request.name(),100,true)); site.setLogoUrl(text(request.logoUrl(),500,false));
-        site.setCustomerService(text(request.customerService(),500,false));
+        String favicon = text(request.faviconUrl(),500,false);
+        if (favicon != null && !favicon.equals(site.getFaviconUrl())) throw bad("请通过上传设置网站图标");
+        site.setName(text(request.name(),100,true));
+        site.setFaviconUrl(favicon);
+        return view(sites.save(site));
+    }
+    @Transactional
+    public Map<String,Object> uploadFavicon(UUID ownerId, org.springframework.web.multipart.MultipartFile file) {
+        Subsite site = sites.findByOwnerId(ownerId).orElseThrow(() -> bad("尚未开通分站"));
+        var uploaded = imageUploadService.uploadSiteFavicon(file);
+        site.setFaviconUrl(uploaded.url());
         return view(sites.save(site));
     }
     @Transactional
@@ -219,8 +229,8 @@ public class SubsiteManagementService {
     public Map<String,Object> view(Subsite s) {
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("id",s.getId()); result.put("owner_id",s.getOwnerId()); result.put("prefix",s.getPrefix());
-        result.put("name",s.getName()); result.put("enabled",s.isEnabled()); result.put("logo_url",s.getLogoUrl());
-        result.put("customer_service",s.getCustomerService()); result.put("announcement",s.getAnnouncement());
+        result.put("name",s.getName()); result.put("enabled",s.isEnabled()); result.put("favicon_url",s.getFaviconUrl());
+        result.put("announcement",s.getAnnouncement());
         String host = URI.create(publicSiteUrl).getHost(); int dot = host.indexOf('.');
         result.put("url", dot < 0 ? null : "https://" + s.getPrefix() + "." + host.substring(dot+1));
         result.put("user_count", jdbc.queryForObject("select count(*) from users where subsite_id = ?", Long.class, s.getId()));

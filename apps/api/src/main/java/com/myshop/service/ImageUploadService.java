@@ -40,6 +40,11 @@ public class ImageUploadService {
             Set.of("image/jpeg", "image/png", "image/webp"),
             "avatars/",
             "avatar-");
+    private static final UploadPolicy FAVICON_POLICY = new UploadPolicy(
+            MAX_AVATAR_FILE_SIZE_BYTES,
+            Set.of(".jpg", ".jpeg", ".png", ".webp"),
+            Set.of("image/jpeg", "image/png", "image/webp"),
+            "", "");
 
     private static final Map<String, byte[][]> MAGIC_BYTES = Map.of(
             ".jpg", new byte[][]{{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF}},
@@ -79,6 +84,10 @@ public class ImageUploadService {
 
     public UploadedImage uploadAvatar(MultipartFile file) {
         return upload(file, AVATAR_POLICY, true);
+    }
+
+    public UploadedImage uploadSiteFavicon(MultipartFile file) {
+        return upload(file, FAVICON_POLICY, false);
     }
 
     /**
@@ -171,21 +180,22 @@ public class ImageUploadService {
             if (avatar) {
                 throw new BusinessException(ErrorCode.AVATAR_SIZE_EXCEEDED, "头像大小不能超过 5MB");
             }
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片大小不能超过 10MB");
+            throw new BusinessException(ErrorCode.BAD_REQUEST,
+                    policy == FAVICON_POLICY ? "网站图标大小不能超过 5MB" : "图片大小不能超过 10MB");
         }
 
         String contentType = file.getContentType();
         if (contentType == null || !policy.contentTypes.contains(contentType.toLowerCase(Locale.ROOT))) {
             throw invalidFormat(avatar, avatar
                     ? "头像格式无效"
-                    : "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP");
+                    : policy == FAVICON_POLICY ? "网站图标仅支持 JPG/PNG/WebP" : "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP");
         }
 
         String extension = extensionOf(file.getOriginalFilename());
         if (!policy.extensions.contains(extension)) {
             throw invalidFormat(avatar, avatar
                     ? "头像格式无效"
-                    : "不支持的文件扩展名，仅支持 jpg/png/gif/webp/bmp");
+                    : policy == FAVICON_POLICY ? "网站图标仅支持 jpg/png/webp" : "不支持的文件扩展名，仅支持 jpg/png/gif/webp/bmp");
         }
         if (!contentType.equalsIgnoreCase(contentTypeFor(extension))) {
             throw invalidFormat(avatar, "文件类型与扩展名不匹配");

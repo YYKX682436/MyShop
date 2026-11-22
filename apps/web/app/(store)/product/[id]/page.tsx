@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import { ProductImageViewer } from "@/components/store/product-image-viewer"
 import { Package } from "lucide-react"
-import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels } from "@/services/api-server"
+import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels, getSiteConfig } from "@/services/api-server"
 import { ProductPurchaseDock } from "./product-purchase-dock"
 import { ProductBreadcrumb } from "./product-breadcrumb"
 import { ProductDescription } from "@/components/shared/product-description"
@@ -15,13 +15,14 @@ import { requestSiteUrl } from "@/lib/request-site"
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
   try {
-    const product = await getAnonymousProductDetail(id)
+    const [product, config] = await Promise.all([getAnonymousProductDetail(id), getSiteConfig()])
     return {
-      title: product.title,
+      title: { absolute: `${product.title} | ${config.site_name?.trim() || "商城"}` },
       description: product.description || product.title,
       alternates: { canonical: `/product/${id}` },
       openGraph: {
-        title: product.title,
+        title: `${product.title} | ${config.site_name?.trim() || "商城"}`,
+        siteName: config.site_name?.trim() || "商城",
         description: product.description || product.title,
         url: `/product/${id}`,
         type: "website",
@@ -29,7 +30,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       },
       twitter: {
         card: "summary_large_image",
-        title: product.title,
+        title: `${product.title} | ${config.site_name?.trim() || "商城"}`,
         description: product.description || product.title,
         ...(product.cover_url ? { images: [product.cover_url] } : {}),
       },

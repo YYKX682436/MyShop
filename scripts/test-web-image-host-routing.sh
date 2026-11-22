@@ -16,7 +16,7 @@ trap cleanup EXIT
 node >"$tmp_dir/backend.log" 2>&1 <<'NODE' &
 const http = require('node:http')
 http.createServer((req, res) => {
-  const names = { 'mc.mc520.top': 'Main Smoke', 'shop.mc520.top': 'Subsite Smoke' }
+  const names = { 'mc.mc520.top': 'Main Smoke', 'shop.mc520.top': 'Subsite Smoke', 'empty.mc520.top': 'Default Icon Smoke' }
   const site = names[req.headers.host]
   if (!site) { res.writeHead(404); res.end(); return }
   if (req.url === '/api/uploads/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png') {
@@ -26,7 +26,13 @@ http.createServer((req, res) => {
   }
   res.setHeader('Content-Type', 'application/json')
   const price = req.headers.host === 'mc.mc520.top' ? 19.25 : 27.50
-  const data = req.url.startsWith('/api/site/config') ? { site_name: site, contact_items: [] }
+  const favicon = req.headers.host === 'mc.mc520.top' ? '/api/uploads/main.png'
+    : req.headers.host === 'shop.mc520.top' ? '/api/uploads/subsite.png' : null
+  const product = { id: 'smoke-product', title: 'Smoke Item', price, retail_price: price,
+    cover_url: '/api/uploads/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png',
+    category_id: 'smoke', stock_available: 1, has_specs: false, specs: [], customer_input_fields: [] }
+  const data = req.url.startsWith('/api/site/config') ? { site_name: site, favicon_url: favicon }
+    : req.url.startsWith('/api/products/smoke-product') ? product
     : req.url.startsWith('/api/products') ? {
       list: [{ id: 'smoke-product', title: 'Smoke Item', price, retail_price: price,
         cover_url: '/api/uploads/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png',
@@ -52,6 +58,36 @@ grep -Fq 'Subsite Smoke' "$tmp_dir/subsite.html"
 grep -Fq '27.50' "$tmp_dir/subsite.html"
 ! grep -Fq 'Main Smoke' "$tmp_dir/subsite.html"
 ! grep -Fq '19.25' "$tmp_dir/subsite.html"
+curl --fail --silent --max-time 15 -H 'Host: shop.mc520.top' http://127.0.0.1:18932/product/smoke-product >"$tmp_dir/product.html"
+curl --fail --silent --max-time 15 -H 'Host: empty.mc520.top' http://127.0.0.1:18932/ >"$tmp_dir/default.html"
+python3 - "$tmp_dir/main.html" "$tmp_dir/subsite.html" "$tmp_dir/product.html" "$tmp_dir/default.html" <<'PY'
+from html.parser import HTMLParser
+from pathlib import Path
+import sys
+
+class Metadata(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.in_title=False; self.title=''; self.icons=[]; self.og_site=[]; self.twitter=[]
+    def handle_starttag(self, tag, attrs):
+        attrs=dict(attrs)
+        if tag=='title': self.in_title=True
+        if tag=='link' and 'icon' in attrs.get('rel','').split(): self.icons.append(attrs.get('href'))
+        if tag=='meta' and attrs.get('property')=='og:site_name': self.og_site.append(attrs.get('content'))
+        if tag=='meta' and attrs.get('name')=='twitter:title': self.twitter.append(attrs.get('content'))
+    def handle_endtag(self, tag):
+        if tag=='title': self.in_title=False
+    def handle_data(self, data):
+        if self.in_title: self.title+=data
+
+for filename, title, icon, site in zip(sys.argv[1:], ['Main Smoke','Subsite Smoke','Smoke Item | Subsite Smoke','Default Icon Smoke'],
+                                        ['/api/uploads/main.png','/api/uploads/subsite.png','/api/uploads/subsite.png','/default-icon.svg'],
+                                        ['Main Smoke','Subsite Smoke','Subsite Smoke','Default Icon Smoke']):
+    page=Metadata(); page.feed(Path(filename).read_text())
+    assert page.title == title, (filename, page.title)
+    assert page.icons and all(item == icon for item in page.icons), (filename, page.icons)
+    assert site in page.og_site, (filename, page.og_site)
+    assert title in page.twitter, (filename, page.twitter)
+PY
 status=$(curl --silent --max-time 15 -o "$tmp_dir/unknown.html" -w '%{http_code}' \
   -H 'Host: unknown.mc520.top' -H 'X-Forwarded-Host: mc.mc520.top' http://127.0.0.1:18932/)
 [[ "$status" == 404 ]] || { printf 'unknown storefront returned %s, expected 404\n' "$status" >&2; exit 1; }
@@ -73,4 +109,5 @@ status=$(curl --silent --max-time 15 -o /dev/null -w '%{http_code}' -H 'Host: mc
   'http://127.0.0.1:18932/_next/image?url=http%3A%2F%2F127.0.0.1%3A18931%2Fapi%2Fsite%2Fconfig&w=384&q=75')
 [[ "$status" == 400 ]] || { printf 'remote optimizer request returned %s, expected 400\n' "$status" >&2; exit 1; }
 printf 'WEB_IMAGE_HOST_ROUTING_OK main=200 subsite=200 unknown=404\n'
+printf 'WEB_BRANDING_HOST_ROUTING_OK titles=4 icons=4 open_graph=4 twitter=4\n'
 printf 'WEB_IMAGE_OPTIMIZER_OK webp=200 repeat=HIT cache=31536000 remote=400\n'

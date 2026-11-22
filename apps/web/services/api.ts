@@ -546,7 +546,7 @@ export const siteApi = {
 
 export interface SubsiteInfo {
   id: string; owner_id: string; prefix: string; name: string; enabled: boolean
-  logo_url: string | null; customer_service: string | null; announcement: string | null
+  favicon_url: string | null; announcement: string | null
   url: string | null; user_count: number
   owner_username?: string; owner_user_no?: number | null; order_count?: number; settled_profit?: number
 }
@@ -570,7 +570,12 @@ export const subsiteApi = {
   mine: () => request<SubsiteInfo | null>("/subsite/mine"),
   opening: () => request<{ enabled: boolean; opening_price: number; eligible: boolean }>("/subsite/opening"),
   open: (data: { prefix: string; name: string }) => request<SubsiteInfo>("/subsite/open", { method: "POST", body: JSON.stringify(data) }),
-  update: (data: Pick<SubsiteInfo, "name" | "logo_url" | "customer_service">) => request<SubsiteInfo>("/subsite/mine", { method: "PUT", body: JSON.stringify(data) }),
+  update: (data: Pick<SubsiteInfo, "name" | "favicon_url">) => request<SubsiteInfo>("/subsite/mine", { method: "PUT", body: JSON.stringify(data) }),
+  uploadFavicon: (file: File) => {
+    const formData = new FormData()
+    formData.append("file", file)
+    return uploadRequest<SubsiteInfo>("/subsite/mine/favicon", formData)
+  },
   customers: (page: number) => request<{ content: SubsiteCustomer[]; total_pages: number }>(`/subsite/customers?page=${page}&size=20`),
   overview: () => request<{ order_count: number; estimated_profit: number; pending_profit: number; settled_profit: number }>("/subsite/overview"),
   orders: (page: number) => request<{ content: SubsiteOrder[]; total_pages: number }>(`/subsite/orders?page=${page}&size=20`),
@@ -688,7 +693,7 @@ export type MediaInspection = { size: number; format: string; width?: number; he
 export type MediaOptimization = { url: string; original_size: number; optimized_size: number; replaced_covers: number; changed_products: { id: string; title: string }[]; retained_references: { table: string; source: string; count: number }[] }
 
 export const adminMediaApi = {
-  getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc"; qr_only: boolean }, signal?: AbortSignal) =>
+  getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc" }, signal?: AbortSignal) =>
     request<MediaPage>(`/admin/media?${buildQuery(params)}`, { signal }),
   inspect: (filename: string, signal?: AbortSignal) =>
     request<MediaInspection>(`/admin/media/inspection?${buildQuery({ filename })}`, { signal }),

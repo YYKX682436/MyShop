@@ -6,11 +6,9 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8")
 
 test("removing storefront search leaves category requests and pagination intact", () => {
   const shell = read("../app/(store)/store-shell-client.tsx")
-  const header = read("../components/layout/store-header.tsx")
   const home = read("../app/(store)/home-content.tsx")
   const api = read("../services/api.ts")
-  assert.match(header, /hidden md:block/)
-  assert.doesNotMatch(shell + header, /StoreSearchPanel|StoreHeaderSearch/)
+  assert.doesNotMatch(shell, /StoreSearchPanel|StoreHeaderSearch|StoreFooter|StoreHeader/)
   assert.match(home, /category_id: selectedChildCategory \?\? selectedRootCategory/)
   assert.match(home, /productApi\.getList\(params/)
   assert.match(home, /<Pagination[\s\S]*onChange=/)

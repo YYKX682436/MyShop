@@ -7,18 +7,17 @@ export async function generateMetadata(): Promise<Metadata> {
   try {
     const config = await getSiteConfig()
     return {
-      title: config.site_name || "MyShop",
-      description: config.site_description || config.site_slogan || "",
+      title: { absolute: config.site_name?.trim() || "商城" },
       alternates: { canonical: "/" },
       openGraph: {
-        title: config.site_name || "MyShop",
-        description: config.site_description || config.site_slogan || "",
+        title: config.site_name?.trim() || "商城",
+        siteName: config.site_name?.trim() || "商城",
         url: "/",
-        ...(config.logo_url ? { images: [{ url: config.logo_url }] } : {}),
       },
+      twitter: { card: "summary", title: config.site_name?.trim() || "商城" },
     }
   } catch {
-    return { title: "MyShop" }
+    return { title: { absolute: "商城" } }
   }
 }
 
@@ -37,8 +36,7 @@ export default async function HomePage() {
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    name: config?.site_name || "MyShop",
-    description: config?.site_description || config?.site_slogan || "",
+    name: config?.site_name || "商城",
   }
 
   return (
@@ -50,9 +48,6 @@ export default async function HomePage() {
       <HomeContent
         initialProducts={productsResult.data}
         categories={categories}
-        siteName={config?.site_name || "MyShop"}
-        siteSlogan={config?.site_slogan || ""}
-        siteDescription={config?.site_description || ""}
         productsError={productsResult.error}
       />
     </>

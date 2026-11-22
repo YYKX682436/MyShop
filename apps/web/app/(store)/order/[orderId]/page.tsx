@@ -7,7 +7,7 @@ import Link from "next/link"
 import { ChevronDown, Clock, Copy, Download, KeyRound, Package, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useLocale, useSiteConfig } from "@/lib/context"
+import { useLocale } from "@/lib/context"
 import { getApiErrorMessage, orderApi, productApi } from "@/services/api"
 import type { OrderDeliveryGroup, OrderItemDetail, OrderView, ProductDetail } from "@/types"
 import { cn, detectPaymentDevice, formatDateTime, formatYuan } from "@/lib/utils"
@@ -18,7 +18,6 @@ import { PaymentActionRenderer } from "@/components/shared/payment-action-render
 import { PaymentIcon, getPaymentBrandColor, getPaymentLabel, getPaymentScanHint } from "@/components/shared/payment-icon"
 import { OrderStatusBadge } from "@/components/shared/order-status-badge"
 import { AfterSaleRequestDialog } from "@/components/shared/after-sale-request-dialog"
-import { ContactSupport } from "@/components/shared/contact-methods"
 import { CardContentParts } from "@/components/shared/card-content-parts"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { ProductDescription } from "@/components/shared/product-description"
@@ -34,7 +33,6 @@ const MANUAL_REFRESH_COOLDOWN = 10
 export default function OrderLifecyclePage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = use(params)
   const { t, locale } = useLocale()
-  const { config } = useSiteConfig()
   const router = useRouter()
   const searchParams = useSearchParams()
   const paymentReturn = searchParams.get("paymentReturn") === "1"
@@ -467,8 +465,6 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     )}
 
     {purchasedProducts.map(product => <ProductDescription key={product.id} product={product} />)}
-
-    <ContactSupport title={t("order.needHelp")} email={config?.contact_email} items={config?.contact_items} customerService={config?.customer_service} emailLabel={t("payment.contactSupport")} />
 
     <AfterSaleRequestDialog
       open={afterSaleOpen}

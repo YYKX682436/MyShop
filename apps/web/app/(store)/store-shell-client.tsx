@@ -4,17 +4,15 @@ import React, { useState, useEffect, useCallback } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Wrench } from "lucide-react"
-import { StoreFooter } from "@/components/layout/store-footer"
 import { StoreBottomNav } from "@/components/layout/store-bottom-nav"
 import { VisitTracker } from "@/components/store/visit-tracker"
 import { MessageSummaryProvider } from "@/components/store/message-summary"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
-import { ContactSupport } from "@/components/shared/contact-methods"
 import { MarkdownContent } from "@/components/shared/markdown-content"
 import { isAdminRole } from "@/lib/hooks"
 import { cn } from "@/lib/utils"
-import { isStorefrontDockVisible, isStorefrontHeaderVisible } from "@/lib/storefront-routes"
+import { isStorefrontDockVisible } from "@/lib/storefront-routes"
 import { announcementPopupKey } from "@/lib/announcement-popup"
 
 function AnnouncementBar() {
@@ -47,13 +45,6 @@ function MaintenancePage() {
           {config?.maintenance_message || t("maintenance.description")}
         </p>
         <Link href="/messages/support" className="mb-4 inline-flex min-h-11 items-center rounded-control bg-primary px-5 text-sm font-medium text-primary-foreground">联系主站客服</Link>
-        <ContactSupport
-          title={t("maintenance.needHelp")}
-          email={config?.contact_email}
-          items={config?.contact_items}
-          customerService={config?.customer_service}
-          emailLabel={t("maintenance.contactSupport")}
-        />
       </div>
     </div>
   )
@@ -116,13 +107,11 @@ function PopupAnnouncement() {
 /** Routes that are always accessible even in maintenance mode */
 const MAINTENANCE_EXEMPT_PATHS = ["/login", "/register"]
 
-export function StoreShellClient({ header, children }: { header: React.ReactNode; children: React.ReactNode }) {
+export function StoreShellClient({ children }: { children: React.ReactNode }) {
   const { config, isLoading } = useSiteConfig()
   const { user, isLoggedIn, authLoaded } = useAuth()
   const pathname = usePathname()
-  const hasHeader = isStorefrontHeaderVisible(pathname)
   const hasDock = isStorefrontDockVisible(pathname)
-  const isChat = pathname.startsWith("/messages/support/")
 
   // 维护模式判断需要 config + auth 都就绪才能准确决策
   const configReady = !isLoading && !!config
@@ -142,13 +131,11 @@ export function StoreShellClient({ header, children }: { header: React.ReactNode
       <VisitTracker />
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
       <AnnouncementBar />
-      {hasHeader && header}
       <main className={cn(
         "storefront-main mx-auto w-full max-w-[var(--storefront-max-width)] flex-1 px-[var(--storefront-gutter)]",
         hasDock && "storefront-main--with-dock",
-        !hasHeader && "storefront-main--without-header",
+        "storefront-main--without-header",
       )}>{children}</main>
-      {!isChat && <StoreFooter reserveForDock={hasDock} />}
       {hasDock && <StoreBottomNav />}
       <PopupAnnouncement />
     </div></MessageSummaryProvider>

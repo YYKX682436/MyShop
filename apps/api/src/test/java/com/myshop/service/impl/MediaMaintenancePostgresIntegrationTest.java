@@ -242,28 +242,17 @@ class MediaMaintenancePostgresIntegrationTest {
         assertEquals(externalUrl, jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, external));
     }
 
-    @Test void siteLogoAndContactQrAreClearedButOtherContentIsPreserved() throws Exception {
-        String filename = fixturePng(), url = "/api/uploads/" + filename;
-        jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?, 'logo_url', ?) ON CONFLICT(config_key) DO UPDATE SET config_value=EXCLUDED.config_value", UUID.randomUUID(), url);
-        jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?, 'contact_items', ?) ON CONFLICT(config_key) DO UPDATE SET config_value=EXCLUDED.config_value",
-                UUID.randomUUID(), "[{\"name\":\"test\",\"url\":\"https://example.com\",\"qr_url\":\"" + url + "\"}]");
-        service.delete(filename);
-        assertEquals("", jdbc.queryForObject("SELECT config_value FROM site_configs WHERE config_key='logo_url'", String.class));
-        String contacts = jdbc.queryForObject("SELECT config_value FROM site_configs WHERE config_key='contact_items'", String.class);
-        assertTrue(contacts.contains("https://example.com"));
-        assertFalse(contacts.contains(filename));
-    }
-
-    @Test void subsiteLogoIsClearedWithoutChangingOtherSettings() throws Exception {
+    @Test void siteAndSubsiteFaviconsAreClearedWhenTheImageIsDeleted() throws Exception {
         String filename = fixturePng(), url = "/api/uploads/" + filename;
         UUID owner = UUID.randomUUID(), subsite = UUID.randomUUID();
         String suffix = owner.toString().substring(0, 8);
+        jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?, 'favicon_url', ?) ON CONFLICT(config_key) DO UPDATE SET config_value=EXCLUDED.config_value", UUID.randomUUID(), url);
         jdbc.update("INSERT INTO users(id,username,password_hash,role) VALUES (?,?,?,'ADMIN')", owner, "u" + suffix, "test");
-        jdbc.update("INSERT INTO subsites(id,owner_id,prefix,name,logo_url,announcement) VALUES (?,?,?,?,?,?)",
-                subsite, owner, "s" + suffix, "media fixture", url, "unchanged");
+        jdbc.update("INSERT INTO subsites(id,owner_id,prefix,name,favicon_url,announcement) VALUES (?,?,?,?,?,?)", subsite, owner, "s" + suffix, "media fixture", url, "unchanged");
         try {
             service.delete(filename);
-            assertNull(jdbc.queryForObject("SELECT logo_url FROM subsites WHERE id=?", String.class, subsite));
+            assertEquals("", jdbc.queryForObject("SELECT config_value FROM site_configs WHERE config_key='favicon_url'", String.class));
+            assertNull(jdbc.queryForObject("SELECT favicon_url FROM subsites WHERE id=?", String.class, subsite));
             assertEquals("unchanged", jdbc.queryForObject("SELECT announcement FROM subsites WHERE id=?", String.class, subsite));
         } finally {
             jdbc.update("DELETE FROM subsites WHERE id=?", subsite);

@@ -21,12 +21,10 @@ test("product cards stay limited to image, title, price, and a light sold-out st
   assert.doesNotMatch(source, /<span[^>]+product\.buyNow|t\("product\.buyNow"\)/)
 })
 
-test("mobile home uses a compact intro and the category label appears once", () => {
-  assert.match(homeSource, /className="store-home-hero"/)
-  assert.doesNotMatch(homeSource, /store-catalog-kicker/)
-  assert.match(homeSource, /<span className="relative z-10">\{t\("home\.allCategories"\)\}<\/span>/)
-  assert.match(homeSource, /store-home-brand/)
-  assert.match(styles, /@media \(max-width: 767px\)[\s\S]*?\.store-home-hero\s*\{[^}]*border:\s*0;[^}]*padding:\s*0;/)
+test("home begins with catalog and preview stages crop without stretching", () => {
+  assert.doesNotMatch(homeSource, /store-home-hero|siteSlogan|siteDescription|siteName/)
+  assert.match(homeSource, /<section className="store-catalog"/)
+  assert.match(styles, /\.product-image-stage--card \.product-image-stage-image,[\s\S]*?object-fit:\s*cover;[\s\S]*?object-position:\s*center top;/)
+  assert.match(styles, /\.product-image-stage--detail\s*\{[^}]*aspect-ratio:\s*4\s*\/\s*5;/)
   assert.match(styles, /@media \(max-width: 767px\)[\s\S]*?\.product-card\s*\{[^}]*border:\s*1px solid/)
-  assert.match(styles, /\.store-catalog-header\s*\{[^}]*justify-content:\s*flex-start;/s)
 })

@@ -26,9 +26,8 @@ public class AdminMediaController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(name = "page_size", defaultValue = "24") int pageSize,
             @RequestParam(defaultValue = "") String query,
-            @RequestParam(defaultValue = "desc") String order,
-            @RequestParam(name = "qr_only", defaultValue = "false") boolean qrOnly) {
-        return ApiResponse.success(media.list(page, pageSize, query, order, qrOnly));
+            @RequestParam(defaultValue = "desc") String order) {
+        return ApiResponse.success(media.list(page, pageSize, query, order));
     }
 
     @GetMapping("/inspection")

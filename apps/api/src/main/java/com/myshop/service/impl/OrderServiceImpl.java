@@ -65,8 +65,6 @@ public class OrderServiceImpl implements OrderService {
     private SupplierCheckout supplierCheckout;
     private SubsitePricingService subsitePricingService;
     private SubsiteRepository subsiteRepository;
-    private com.myshop.service.SiteConfigService siteConfigService;
-    @Autowired public void setSiteConfigService(com.myshop.service.SiteConfigService service) { this.siteConfigService = service; }
     @Autowired public void setSubsitePricingService(SubsitePricingService service) { this.subsitePricingService = service; }
     @Autowired public void setSubsiteRepository(SubsiteRepository repository) { this.subsiteRepository = repository; }
     private TransactionTemplate transactions;
@@ -184,10 +182,6 @@ public class OrderServiceImpl implements OrderService {
                     .filter(Subsite::isEnabled)
                     .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN, "分站已停用，暂不能下单"));
         }
-        // Existing guest orders remain accessible; only creation of a new
-        // subsite guest order requires configured main-site support.
-        if (site != null && userId == null && (siteConfigService == null || !siteConfigService.hasMainSiteContact()))
-            throw new BusinessException(ErrorCode.FORBIDDEN, "主站暂未配置游客售后联系方式，请联系管理员后再购买");
         UUID productId = UUID.fromString((String) req.get("product_id"));
         UUID specId = req.get("spec_id") != null ? UUID.fromString((String) req.get("spec_id")) : null;
         int quantity = ((Number) req.get("quantity")).intValue();

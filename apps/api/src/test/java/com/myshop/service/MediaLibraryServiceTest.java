@@ -28,15 +28,13 @@ class MediaLibraryServiceTest {
         Path outside = temporary.resolve("outside.png"); Files.write(outside, png);
         Files.createSymbolicLink(storage.directory().resolve("22222222-2222-2222-2222-222222222222.png"), outside);
         MediaLibraryService media = new MediaLibraryService(storage, "/api/uploads");
-        assertEquals(2, media.list(1, 24, "", "desc", false).total());
-        assertEquals("商品封面.png", media.list(1, 24, "封面", "desc", false).items().getFirst().name());
-        assertEquals(url, media.list(1, 24, "", "desc", true).items().getFirst().url());
-        assertEquals(1, media.list(1, 24, "", "desc", true).total());
-        assertTrue(media.list(1, 1, "", "asc", false).items().getFirst().url().endsWith(old));
-        assertEquals(1, media.list(2, 1, "", "asc", false).items().size());
+        assertEquals(2, media.list(1, 24, "", "desc").total());
+        assertEquals("商品封面.png", media.list(1, 24, "封面", "desc").items().getFirst().name());
+        assertTrue(media.list(1, 1, "", "asc").items().getFirst().url().endsWith(old));
+        assertEquals(1, media.list(2, 1, "", "asc").items().size());
         assertFalse(storage.isSafePublicFile("../outside.png"));
         assertFalse(storage.isSafePublicFile("avatars/../" + old));
         assertFalse(storage.isSafePublicFile("22222222-2222-2222-2222-222222222222.png"));
-        assertThrows(BusinessException.class, () -> media.list(1, 1000, "", "desc", false));
+        assertThrows(BusinessException.class, () -> media.list(1, 1000, "", "desc"));
     }
 }

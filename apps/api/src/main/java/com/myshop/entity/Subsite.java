@@ -11,7 +11,6 @@ public class Subsite extends BaseEntity {
     @Column(nullable = false, unique = true, length = 63, updatable = false) private String prefix;
     @Column(nullable = false, length = 100) private String name;
     @Column(nullable = false) private boolean enabled = true;
-    @Column(name = "logo_url", length = 500) private String logoUrl;
-    @Column(name = "customer_service", length = 500) private String customerService;
+    @Column(name = "favicon_url", length = 500) private String faviconUrl;
     @Column(columnDefinition = "text") private String announcement;
 }

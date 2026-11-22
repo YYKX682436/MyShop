@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "migration_count": 61,
-  "latest_migration_version": "61",
+  "migration_count": 62,
+  "latest_migration_version": "62",
   "tables": {
     "media_deleted_files": ["filename", "deleted_at"],
     "users": ["id", "username", "role", "subsite_id"],
@@ -29,7 +29,7 @@
     "site_announcements": ["id", "site_id", "site_scope", "source_key", "title", "body", "status", "publish_version", "published_at"],
     "site_announcement_channels": ["site_id", "site_scope", "channel", "announcement_id", "enabled"],
     "site_announcement_reads": ["id", "announcement_id", "user_id", "guest_token_hash", "read_version", "read_at"],
-    "subsites": ["id", "owner_id", "prefix", "name", "enabled", "logo_url", "customer_service", "announcement"],
+    "subsites": ["id", "owner_id", "prefix", "name", "enabled", "favicon_url", "announcement"],
     "subsite_settings": ["id", "self_service_enabled", "opening_price", "supply_level_id"],
     "subsite_allowed_levels": ["level_id"],
     "subsite_opening_records": ["subsite_id", "owner_id", "amount", "balance_before", "balance_after", "operator_id", "balance_transaction_id"],

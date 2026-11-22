@@ -2,9 +2,6 @@ package com.myshop.service;
 
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -39,7 +36,6 @@ public class MediaMaintenanceService {
     private final Semaphore optimizePermit = new Semaphore(1, true);
     @org.springframework.beans.factory.annotation.Value("${app.public-site-url:http://localhost:3000}")
     private String publicSiteUrl = "http://localhost:3000";
-    private final ObjectMapper json = new ObjectMapper();
 
     public MediaMaintenanceService(UploadStorage storage, MediaFileGuard guard, ImageProcessor processor,
                                    @org.springframework.beans.factory.annotation.Value("${upload.url-prefix:/api/uploads}") String prefix) {
@@ -65,17 +61,16 @@ public class MediaMaintenanceService {
             String absoluteUrl = publicSiteUrl.replaceAll("/+$", "") + oldUrl;
             clearProductCovers(connection, filename);
             try (var statement = connection.prepareStatement(
-                    "UPDATE site_configs SET config_value = '' WHERE config_key IN ('logo_url', 'favicon_url') AND config_value IN (?, ?)")) {
+                    "UPDATE site_configs SET config_value = '' WHERE config_key = 'favicon_url' AND config_value IN (?, ?)")) {
                 statement.setString(1, oldUrl);
                 statement.setString(2, absoluteUrl);
                 statement.executeUpdate();
             }
-            try (var statement = connection.prepareStatement("UPDATE subsites SET logo_url = NULL WHERE logo_url IN (?, ?)")) {
+            try (var statement = connection.prepareStatement("UPDATE subsites SET favicon_url = NULL WHERE favicon_url IN (?, ?)")) {
                 statement.setString(1, oldUrl);
                 statement.setString(2, absoluteUrl);
                 statement.executeUpdate();
             }
-            clearContactQr(connection, oldUrl, absoluteUrl);
             try (var query = connection.prepareStatement("INSERT INTO media_deleted_files(filename) VALUES (?) ON CONFLICT DO NOTHING")) {
                 query.setString(1, filename.toLowerCase(Locale.ROOT));
                 query.executeUpdate();
@@ -138,41 +133,6 @@ public class MediaMaintenanceService {
             }
         }
         return covers;
-    }
-
-    private void clearContactQr(Connection connection, String relative, String absolute) throws Exception {
-        String value;
-        try (var query = connection.prepareStatement("SELECT config_value FROM site_configs WHERE config_key = 'contact_items' FOR UPDATE NOWAIT")) {
-            try (var result = query.executeQuery()) {
-                if (!result.next()) return;
-                value = result.getString(1);
-            }
-        }
-        if (value == null) return;
-        final JsonNode root;
-        try { root = json.readTree(value); }
-        catch (IOException ignored) { return; } // Preserve unknown or malformed historical content.
-        if (root == null || !root.isArray()) return;
-        boolean changed = false;
-        for (JsonNode item : root) {
-            if (item instanceof ObjectNode object && object.path("qr_url").isTextual()
-                    && (relative.equals(object.path("qr_url").asText()) || absolute.equals(object.path("qr_url").asText()))) {
-                object.remove("qr_url");
-                changed = true;
-            }
-        }
-        if (!changed) return;
-        String updated = json.writeValueAsString(root);
-        // Existing historical references elsewhere in the same JSON column may
-        // not be reintroduced by a column update; leave that JSON unchanged.
-        try (var query = connection.prepareStatement("SELECT EXISTS (SELECT 1 FROM media_deleted_files WHERE position(filename IN public.myshop_media_normalize(?)) > 0)")) {
-            query.setString(1, updated);
-            try (var result = query.executeQuery()) { result.next(); if (result.getBoolean(1)) return; }
-        }
-        try (var update = connection.prepareStatement("UPDATE site_configs SET config_value = ? WHERE config_key = 'contact_items'")) {
-            update.setString(1, updated);
-            update.executeUpdate();
-        }
     }
 
     public Optimization optimize(String filename) {

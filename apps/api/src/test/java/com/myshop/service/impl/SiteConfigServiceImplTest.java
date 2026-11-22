@@ -1,6 +1,5 @@
 package com.myshop.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.entity.SiteConfig;
 import com.myshop.entity.UserNumberSequence;
 import com.myshop.exception.BusinessException;
@@ -11,10 +10,6 @@ import com.myshop.repository.UserRepository;
 import com.myshop.service.AnnouncementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,12 +17,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -55,62 +47,40 @@ class SiteConfigServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new SiteConfigServiceImpl(repository, new ObjectMapper(), userNumberSequenceRepository, userRepository, announcements);
+        service = new SiteConfigServiceImpl(repository, userNumberSequenceRepository, userRepository, announcements);
     }
 
     @Test
-    void supportAvailabilityRejectsMissingAndMalformedContacts() {
-        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
-            String key=invocation.getArgument(0);
-            return switch (key) {
-                case "contact_email" -> Optional.of(configValue("not-an-email"));
-                case "contact_items" -> Optional.of(configValue("[{\"name\":\"客服\",\"url\":\"javascript:bad\"}]"));
-                default -> Optional.empty();
-            };
+    void siteBrandUsesOnlyTheCurrentSiteAndNeverInheritsMainFavicon() {
+        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> switch ((String) invocation.getArgument(0)) {
+            case "site_name" -> Optional.of(configValue("主站"));
+            case "favicon_url" -> Optional.of(configValue("/api/uploads/main.png"));
+            default -> Optional.empty();
         });
-        assertFalse(service.hasMainSiteContact());
-        assertEquals(false, service.getPublicConfig().get("main_site_has_contact"));
-    }
-
-    @Test
-    void supportAvailabilityAcceptsConfiguredEmailOrValidatedContactItem() {
-        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
-            String key=invocation.getArgument(0);
-            return switch (key) {
-                case "contact_email" -> Optional.of(configValue("support@example.com"));
-                case "contact_items" -> Optional.of(configValue("[]"));
-                default -> Optional.empty();
-            };
-        });
-        assertTrue(service.hasMainSiteContact());
-        assertEquals(true, service.getPublicConfig().get("main_site_has_contact"));
-    }
-
-    @Test
-    void textSupportIsAvailableOnMainAndInheritedUntilSubsiteOverridesIt() {
-        when(repository.findByConfigKey(anyString())).thenAnswer(invocation ->
-                "customer_service".equals(invocation.getArgument(0))
-                        ? Optional.of(configValue("客服：demo-account")) : Optional.empty());
-        assertTrue(service.hasMainSiteContact());
-        assertEquals("客服：demo-account", service.getPublicConfig().get("customer_service"));
+        assertEquals("主站", service.getPublicConfig().get("site_name"));
+        assertEquals("/api/uploads/main.png", service.getPublicConfig().get("favicon_url"));
         var site = new com.myshop.entity.Subsite();
         site.setName("分站");
         com.myshop.context.SiteRequestContext.set(site);
         try {
-            assertEquals("客服：demo-account", service.getPublicConfig().get("customer_service"));
-            site.setCustomerService("分站客服");
-            assertEquals("分站客服", service.getPublicConfig().get("customer_service"));
+            assertEquals("分站", service.getPublicConfig().get("site_name"));
+            assertEquals(null, service.getPublicConfig().get("favicon_url"));
+            site.setFaviconUrl("/api/uploads/subsite.png");
+            assertEquals("/api/uploads/subsite.png", service.getPublicConfig().get("favicon_url"));
+            var other = new com.myshop.entity.Subsite();
+            other.setName("另一个分站"); other.setFaviconUrl("/api/uploads/other.png");
+            com.myshop.context.SiteRequestContext.set(other);
+            assertEquals("另一个分站", service.getPublicConfig().get("site_name"));
+            assertEquals("/api/uploads/other.png", service.getPublicConfig().get("favicon_url"));
+            assertFalse(service.getPublicConfig().containsKey("main_site_has_contact"));
         } finally { com.myshop.context.SiteRequestContext.clear(); }
     }
 
     @Test
-    void rejectsInvalidTextSupport() {
-        assertThrows(BusinessException.class,
-                () -> service.updateConfigs(List.of(config("customer_service", "客服\u0001账号"))));
-        assertThrows(BusinessException.class,
-                () -> service.updateConfigs(List.of(config("customer_service", "a".repeat(501)))));
+    void retiredBrandAndContactKeysCannotBeUpdated() {
+        service.updateConfigs(List.of(config("logo_url", "/old.png"), config("contact_items", "[]"), config("site_slogan", "old")));
+        verify(repository, never()).save(any(SiteConfig.class));
     }
-
 
     @Test
     void generalSiteSettingsRejectInvalidSharedRiskValues() {
@@ -132,60 +102,6 @@ class SiteConfigServiceImplTest {
 
         assertEquals(false, result.get("turnstile_enabled"));
         assertFalse(result.containsKey("turnstile_site_key"));
-    }
-
-    @Test
-    void invalidStoredTextDoesNotEnableGuestSupportAndBooleanLikeTextStaysText() {
-        when(repository.findByConfigKey(anyString())).thenAnswer(invocation ->
-                "customer_service".equals(invocation.getArgument(0))
-                        ? Optional.of(configValue("客服\u0001账号")) : Optional.empty());
-        assertFalse(service.hasMainSiteContact());
-        when(repository.findByConfigKey("customer_service")).thenReturn(Optional.of(configValue("true")));
-        assertEquals("true", service.getPublicConfig().get("customer_service"));
-    }
-
-    @Test
-    void acceptsZeroContactItemsAndStoresCanonicalJson() {
-        saveContactItems("[]");
-    }
-
-    @Test
-    void acceptsOneContactItemAndNormalizesText() {
-        saveContactItems("[{\"name\":\"  邮箱  \",\"url\":\" https://example.com/support \"}]",
-                "[{\"name\":\"邮箱\",\"url\":\"https://example.com/support\"}]");
-    }
-
-    @Test
-    void acceptsThreeContactItemsInSubmittedOrder() {
-        saveContactItems("[{\"name\":\"A\",\"url\":\"https://a.example\"},"
-                        + "{\"name\":\"B\",\"qr_url\":\"/api/uploads/b.png\"},"
-                        + "{\"name\":\"C\",\"url\":\"http://c.example\",\"qr_url\":\"https://c.example/qr.png\"}]");
-    }
-
-    @ParameterizedTest
-    @MethodSource("invalidContactItems")
-    void rejectsInvalidContactItemsWithBusinessError(String raw, String messageFragment) {
-        BusinessException exception = assertThrows(BusinessException.class,
-                () -> service.updateConfigs(List.of(config("contact_items", raw))));
-
-        assertEquals(10001, exception.getCode());
-        assertTrue(exception.getMessage().contains(messageFragment), exception.getMessage());
-    }
-
-    @Test
-    void exposesContactItemsAsAnArrayRatherThanStoredJsonText() {
-        when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
-            String key = invocation.getArgument(0);
-            return "contact_items".equals(key)
-                    ? Optional.of(configValue("[{\"name\":\"客服\",\"url\":\"https://example.com\"}]"))
-                    : Optional.empty();
-        });
-
-        Object value = service.getPublicConfig().get("contact_items");
-
-        assertNotNull(value);
-        assertInstanceOf(List.class, value);
-        assertEquals(List.of(Map.of("name", "客服", "url", "https://example.com")), value);
     }
 
     @Test
@@ -301,41 +217,13 @@ class SiteConfigServiceImplTest {
         assertEquals(20000L, sequence.getNextUserNo());
     }
 
-    private void saveContactItems(String raw) {
-        saveContactItems(raw, raw);
-    }
-
-    private void saveContactItems(String raw, String expected) {
-        when(repository.findByConfigKey(anyString())).thenReturn(Optional.empty());
-        when(repository.save(any(SiteConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        service.updateConfigs(List.of(config("contact_items", raw)));
-
-        ArgumentCaptor<SiteConfig> captor = ArgumentCaptor.forClass(SiteConfig.class);
-        verify(repository).save(captor.capture());
-        assertEquals(expected, captor.getValue().getConfigValue());
-    }
-
-    private static Stream<Arguments> invalidContactItems() {
-        return Stream.of(
-                Arguments.of("[{\"name\":\"客服\",\"url\":\"https://a.example\"},"
-                        + "{\"name\":\"客服2\",\"url\":\"https://b.example\"},"
-                        + "{\"name\":\"客服3\",\"url\":\"https://c.example\"},"
-                        + "{\"name\":\"客服4\",\"url\":\"https://d.example\"}]", "最多"),
-                Arguments.of("[{\"name\":\"   \",\"url\":\"https://example.com\"}]", "不能为空"),
-                Arguments.of("[{\"name\":\"客服\"}]", "链接或二维码"),
-                Arguments.of("[{\"name\":\"客服\",\"url\":\"javascript:alert(1)\"}]", "http/https"),
-                Arguments.of("[{\"name\":\"客服\",\"qr_url\":\"data:image/png;base64,abc\"}]", "二维码地址"),
-                Arguments.of("[{\"name\":\"客服\",\"url\":\"https://example.com\",\"extra\":\"x\"}]", "不支持的字段")
-        );
-    }
-
     private Map<String, String> config(String key, String value) {
         return Map.of("config_key", key, "config_value", value);
     }
 
     private SiteConfig configValue(String value) {
         SiteConfig config = new SiteConfig();
-        config.setConfigKey("contact_items");
+        config.setConfigKey("test_key");
         config.setConfigValue(value);
         return config;
     }

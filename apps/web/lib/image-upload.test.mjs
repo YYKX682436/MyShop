@@ -6,9 +6,7 @@ import {
   AVATAR_ALLOWED_IMAGE_ACCEPT,
   MAX_AVATAR_SIZE_BYTES,
   getAvatarFileValidationError,
-  QR_ALLOWED_IMAGE_ACCEPT,
   validateImageFile,
-  validateQrImageFile,
 } from "./image-upload.ts"
 
 const dropzoneSource = readFileSync(new URL("../components/admin/image-upload-dropzone.tsx", import.meta.url), "utf8")
@@ -19,14 +17,6 @@ test("image upload validation matches the backend-safe formats and size", () => 
   assert.equal(validateImageFile({ type: "image/svg+xml", size: 1 }), "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP")
   assert.equal(validateImageFile({ type: "image/png", size: 10 * 1024 * 1024 + 1 }), "图片大小不能超过 10MB")
   assert.equal(ALLOWED_IMAGE_ACCEPT.includes(".svg"), false)
-})
-
-test("QR upload validation only allows PNG/JPG/JPEG/WebP", () => {
-  assert.equal(validateQrImageFile({ type: "image/png", size: 1 }), null)
-  assert.equal(validateQrImageFile({ type: "image/jpeg", size: 1 }), null)
-  assert.equal(validateQrImageFile({ type: "image/webp", size: 1 }), null)
-  assert.equal(validateQrImageFile({ type: "image/gif", size: 1 }), "二维码仅支持 JPG/PNG/WebP 格式")
-  assert.equal(QR_ALLOWED_IMAGE_ACCEPT.includes(".bmp"), false)
 })
 
 test("avatar upload validation is limited to JPG/PNG/WebP and 5MB", () => {

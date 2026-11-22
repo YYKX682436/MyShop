@@ -149,8 +149,8 @@ export function AdminSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton asChild size="lg" tooltip={config?.site_name || t("admin.brand")}>
               <Link href="/admin/dashboard" className="group/brand">
-                {config?.logo_url ? (
-                  <Image src={config.logo_url} alt={config.site_name || t("admin.brand")} width={32} height={32} unoptimized className="size-8 rounded-control object-contain" />
+                {config?.favicon_url ? (
+                  <Image src={config.favicon_url} alt={config.site_name || t("admin.brand")} width={32} height={32} unoptimized className="size-8 rounded-control object-contain" />
                 ) : (
                   <span className="flex size-8 items-center justify-center rounded-control bg-sidebar-primary text-sidebar-primary-foreground shadow-sm transition-transform duration-180 group-hover/brand:scale-[1.03]">
                     <Package className="size-4" aria-hidden="true" />
