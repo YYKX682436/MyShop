@@ -1637,10 +1637,10 @@ class MigrationChainIntegrationTest {
         flyway("60").migrate();
         UUID userId = UUID.randomUUID();
         jdbcTemplate.update("""
-                INSERT INTO users(id, username, email, password_hash, role, balance, user_level_id,
+                INSERT INTO users(id, username, email, password_hash, role, balance, user_level_id, user_no,
                                   failed_login_attempts, lock_until)
                 VALUES (?, 'lock-cleanup-user', 'lock-cleanup@example.com',
-                        'preserved-password-hash', 'USER', 12.34, ?, 4, '2026-11-22 22:58:00')
+                        'preserved-password-hash', 'USER', 12.34, ?, 123456, 4, '2026-11-22 22:58:00')
                 """, userId, defaultUserLevelId());
         jdbcTemplate.update("""
                 INSERT INTO site_configs(config_key, config_value, config_group)
