@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+for helper in myshop-compose.sh write-deploy-state.sh check-production-schema.sh create-predeploy-backup.sh cleanup-docker-retention.sh; do
+  [[ -x "$script_dir/$helper" ]] || { printf 'deployment helper is not executable: %s\n' "$helper" >&2; exit 1; }
+done
 grep -Fq 'DEPLOY_TEST_FAIL' "$(dirname -- "$0")/deploy-production.sh"
 grep -Fq 'CRITICAL_ROLLBACK_FAILED' "$(dirname -- "$0")/deploy-production.sh"
 grep -Fq 'health-after-start' "$(dirname -- "$0")/deploy-production.sh"
