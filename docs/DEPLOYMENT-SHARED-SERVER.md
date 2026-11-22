@@ -172,7 +172,9 @@ and archive directory, then verify it with
 Transfer the archives, manifest, bundle, and runtime files over an authenticated
 channel. On the host, `scripts/import-offline-image-bundle.sh <manifest>
 <bundle> <archive-dir>` checks archive hashes, tags, full config digests, and
-`linux/amd64`, then loads the images without creating containers. Docker may
+`linux/amd64`, then loads application images without creating containers. It
+reuses infrastructure images only when their runtime configuration and layer
+identities match the verified archives; otherwise it loads those archives. Docker may
 normalize local image metadata during import, so the importer also compares the
 runtime config and all filesystem layer diff IDs against the checked archive,
 then records the daemon's local image IDs. With `MYSHOP_OFFLINE_IMAGES=1`,

@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,8 +21,8 @@ from pathlib import Path
 
 REPO = "YYKX682436/MyShop"
 FILES = {"api.tar", "web.tar", "release-manifest.json", "manifest-carrier-digest.txt", "SHA256SUMS"}
-CHUNK_SIZE = 8 * 1024 * 1024
-WORKERS = 12
+CHUNK_SIZE = 1024 * 1024
+WORKERS = 32
 
 
 def gh_api(endpoint: str) -> dict:
@@ -60,10 +62,28 @@ def artifact_url(artifact_id: int) -> str:
     raise ValueError("GitHub did not return a secure artifact download location")
 
 
-def download_part(url: str, destination: Path, start: int, length: int) -> None:
+class ArtifactURL:
+    """Refresh the short-lived download URL during slow transfers."""
+    def __init__(self, artifact_id: int):
+        self.artifact_id = artifact_id
+        self.lock = threading.Lock()
+        self.url = ""
+        self.refresh_at = 0.0
+
+    def get(self) -> str:
+        with self.lock:
+            now = time.monotonic()
+            if not self.url or now >= self.refresh_at:
+                self.url = artifact_url(self.artifact_id)
+                self.refresh_at = time.monotonic() + 240
+            return self.url
+
+
+def download_part(url, destination: Path, start: int, length: int) -> None:
     # Supply the short-lived signed URL on stdin, never as a process argument.
-    config = f'url = {json.dumps(url)}\nrange = "{start}-{start + length - 1}"\n'
     for attempt in range(3):
+        current_url = url() if callable(url) else url
+        config = f'url = {json.dumps(current_url)}\nrange = "{start}-{start + length - 1}"\n'
         result = subprocess.run(
             ["curl", "--silent", "--show-error", "--fail", "--connect-timeout", "20", "--max-time", "180",
              "--output", str(destination), "--write-out", "%{http_code}", "--config", "-"],
@@ -122,13 +142,13 @@ def main() -> None:
     size, expected = artifact.get("size_in_bytes"), artifact.get("digest", "")
     if not isinstance(size, int) or size <= 0 or size > 2 * 1024**3 or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected):
         raise ValueError("GitHub artifact size or digest is invalid")
-    url = artifact_url(artifact["id"])
+    url = ArtifactURL(artifact["id"])
     with tempfile.TemporaryDirectory(prefix="myshop-release-archives-", dir=target.parent) as temporary:
         root = Path(temporary)
         parts = [(i, start, min(CHUNK_SIZE, size - start)) for i, start in enumerate(range(0, size, CHUNK_SIZE))]
         print(f"Downloading run {run_id}: {len(parts)} ranges, up to {WORKERS} at a time", flush=True)
         with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as pool:
-            futures = [pool.submit(download_part, url, root / str(i), start, length) for i, start, length in parts]
+            futures = [pool.submit(download_part, url.get, root / str(i), start, length) for i, start, length in parts]
             for future in concurrent.futures.as_completed(futures):
                 future.result()
         archive = root / "release.zip"

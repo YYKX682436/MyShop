@@ -73,6 +73,15 @@ class ReleaseArchiveTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     release.download_part("https://example.invalid/artifact", destination, 0, 1)
 
+    def test_expiring_download_url_is_refreshed(self):
+        with mock.patch.object(release, "artifact_url", side_effect=["https://first.invalid", "https://second.invalid"]) as fetch, \
+             mock.patch.object(release.time, "monotonic", side_effect=[0, 0, 239, 240, 240]):
+            source = release.ArtifactURL(7)
+            self.assertEqual(source.get(), "https://first.invalid")
+            self.assertEqual(source.get(), "https://first.invalid")
+            self.assertEqual(source.get(), "https://second.invalid")
+            self.assertEqual(fetch.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
