@@ -389,6 +389,7 @@ export interface SupportConversation {
   preview: string
   unread: number
   waiting_for: "ADMIN" | "CUSTOMER" | null
+  needs_attention: boolean
 }
 
 export interface SupportAttachment { id: string; url: string; content_type: string; file_size: number }

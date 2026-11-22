@@ -64,7 +64,7 @@ function Workbench() {
         <div className="overflow-hidden rounded-card border border-border-subtle bg-surface">{rows.map(row => <button key={row.id} type="button" onClick={() => router.push(`/admin/support?conversation=${row.id}`)} className={`block w-full border-b border-border-subtle px-3 py-3 text-left last:border-0 ${selected === row.id ? "bg-primary/10" : "hover:bg-surface-muted"}`}>
           <span className="flex justify-between gap-2 text-sm font-medium"><span className="truncate">{row.order_no ? `订单 #${row.order_no}` : "普通咨询"}</span>{row.unread > 0 && <span className="rounded-full bg-destructive px-1.5 text-xs text-white">{row.unread}</span>}</span>
           <span className="mt-1 block truncate text-xs text-muted-foreground">{row.site_name || "主站"} · {row.customer_name || "游客"} · {row.preview || "暂无消息"}</span>
-          <span className="mt-1 flex justify-between text-xs text-muted-foreground"><span>{row.waiting_for === "ADMIN" ? "待处理" : row.waiting_for === "CUSTOMER" ? "等待顾客" : ""}</span>{row.latest_at && <time>{formatDateTime(row.latest_at)}</time>}</span>
+          <span className="mt-1 flex justify-between text-xs text-muted-foreground"><span>{row.needs_attention ? "待处理" : row.waiting_for === "CUSTOMER" ? "等待顾客" : ""}</span>{row.latest_at && <time>{formatDateTime(row.latest_at)}</time>}</span>
         </button>)}{!rows.length && <p className="p-4 text-sm text-muted-foreground">暂无会话</p>}</div>
         <div className="flex justify-between"><Button type="button" variant="ghost" size="sm" disabled={page === 0} onClick={() => setPage(value => value - 1)}>上一页</Button><Button type="button" variant="ghost" size="sm" disabled={rows.length < 30} onClick={() => setPage(value => value + 1)}>下一页</Button></div>
       </section>

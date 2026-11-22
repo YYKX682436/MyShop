@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type PointerEvent as ReactPointerEvent } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { House, ReceiptText, MessageCircle, UserRound, type LucideIcon } from "lucide-react"
 import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
@@ -64,6 +64,8 @@ export function StoreBottomNav() {
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
   const isDraggingRef = useRef(false)
   const dragMovedRef = useRef(false)
+  const dragOriginXRef = useRef(0)
+  const dragPointerRef = useRef<{ id: number; x: number } | null>(null)
   const suppressTapRef = useRef(false)
   const animationRef = useRef<ReturnType<typeof animate> | null>(null)
   const pendingTargetRef = useRef<string | null>(null)
@@ -225,6 +227,14 @@ export function StoreBottomNav() {
     [activeKey, navigateToKey],
   )
 
+  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    dragOriginXRef.current = indicatorX.get()
+    dragPointerRef.current = { id: event.pointerId, x: event.clientX }
+    dragMovedRef.current = false
+    suppressTapRef.current = false
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }, [indicatorX])
+
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true
     dragMovedRef.current = false
@@ -241,7 +251,7 @@ export function StoreBottomNav() {
     if (key) setDragPreviewKey(key)
   }, [indicatorX, metrics, navItems])
 
-  const finishDrag = useCallback(() => {
+  const finishDrag = useCallback((offsetX: number) => {
     if (!isDraggingRef.current) return
     isDraggingRef.current = false
 
@@ -253,7 +263,10 @@ export function StoreBottomNav() {
     }
 
     suppressTapRef.current = true
-    const currentCenter = metrics.slotCenters[0] + indicatorX.get()
+    // The motion value can lag behind the final pointer event, especially for
+    // a quick swipe. Use the gesture's final offset for the release target.
+    const finalX = Math.max(0, Math.min(metrics.maxX, dragOriginXRef.current + offsetX))
+    const currentCenter = metrics.slotCenters[0] + finalX
     const nearestIndex = getNearestDockIndex(currentCenter, metrics.slotCenters)
     const targetItem = navItems[nearestIndex]
 
@@ -267,7 +280,21 @@ export function StoreBottomNav() {
     }
 
     setDragPreviewKey(null)
-  }, [activeIndex, getOffsetForIndex, indicatorX, metrics, navItems, navigateToKey, snapIndicator])
+  }, [activeIndex, getOffsetForIndex, metrics, navItems, navigateToKey, snapIndicator])
+
+  const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = dragPointerRef.current
+    dragPointerRef.current = null
+    if (!start || start.id !== event.pointerId || isDraggingRef.current || dragMovedRef.current) return
+    const offsetX = event.clientX - start.x
+    // Motion batches drag events per frame. A complete fast gesture can end
+    // before its first frame, so handle that release using the pointer delta.
+    if (Math.abs(offsetX) > 3) {
+      isDraggingRef.current = true
+      dragMovedRef.current = true
+      finishDrag(offsetX)
+    }
+  }, [finishDrag])
 
   const cancelDrag = useCallback(() => {
     if (!isDraggingRef.current) return
@@ -348,10 +375,12 @@ export function StoreBottomNav() {
                 dragElastic={0}
                 dragMomentum={false}
                 onTap={handleIndicatorTap}
+                onPointerDown={handlePointerDown}
+                onPointerUp={handlePointerUp}
                 onPointerCancel={cancelDrag}
                 onDragStart={handleDragStart}
                 onDrag={updateDragPreview}
-                onDragEnd={finishDrag}
+                onDragEnd={(_, info) => finishDrag(info.offset.x)}
               />
             </>
           )}

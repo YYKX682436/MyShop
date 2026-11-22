@@ -18,6 +18,8 @@ import javax.sql.DataSource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -64,6 +66,7 @@ class SupportPostgresIntegrationTest {
     @Autowired AfterSaleService afterSales;
     @Autowired WebApplicationContext webContext;
     @Autowired FilterChainProxy security;
+    @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach void reset() {
         jdbc.update("DELETE FROM support_read_states"); jdbc.update("DELETE FROM support_attachments");
@@ -88,12 +91,24 @@ class SupportPostgresIntegrationTest {
         jdbc.update("INSERT INTO users(id,username,email,password_hash,role,is_deleted) VALUES (?,? ,?,'test','ADMIN',0)",admin,"admin-"+admin,admin+"@example.com");
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
         assertEquals(1L,support.detail(conversation,true,null).get("unread"));
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertTrue(isPending(conversation));
         var events=items(support.activities(conversation,true,null,null,null,40));
         long first=Long.parseLong((String)events.getFirst().get("cursor"));
         support.markRead(conversation,true,null,first);
         assertEquals(0L,support.detail(conversation,true,null).get("unread"));
-        support.send(conversation,null,UUID.randomUUID(),"客服回复",List.of(),true,null);
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertTrue(isPending(conversation));
+        UUID adminKey=UUID.randomUUID();
+        support.send(conversation,null,adminKey,"客服回复",List.of(),true,null);
+        assertEquals(false,support.detail(conversation,true,null).get("needs_attention"));
+        assertFalse(isPending(conversation));
         RequestContext.clear();
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            support.send(conversation,null,UUID.randomUUID(),"回滚的咨询",List.of(),false,"guest-a");
+            status.setRollbackOnly();
+        });
+        assertEquals(false,support.detail(conversation,false,"guest-a").get("needs_attention"));
         assertEquals(1L,support.detail(conversation,false,"guest-a").get("unread"));
         assertEquals(1L,support.customerSummary("guest-a").get("unread"));
         var next=items(support.activities(conversation,false,"guest-a",first,null,40));
@@ -103,8 +118,73 @@ class SupportPostgresIntegrationTest {
         support.markRead(conversation,false,"guest-a",first);
         assertEquals(0L,support.detail(conversation,false,"guest-a").get("unread"));
         assertEquals(second,jdbc.queryForObject("SELECT read_seq FROM support_read_states WHERE conversation_id=? AND viewer_type='CUSTOMER'",Long.class,conversation));
+
+        support.send(conversation,null,UUID.randomUUID(),"再次咨询",List.of(),false,"guest-a");
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertTrue(isPending(conversation));
+        // Replaying an older successful reply, system events, validation failures,
+        // and rolled-back replies cannot resolve a later customer message.
+        support.send(conversation,null,adminKey,"客服回复",List.of(),true,null);
+        jdbc.update("INSERT INTO support_activity(conversation_id,source_type,source_id,notify_customer,notify_admin) VALUES (?,'SUPPLIER_UPDATE',?,true,true)",conversation,UUID.randomUUID());
+        assertThrows(BusinessException.class,() -> support.send(conversation,null,UUID.randomUUID(),"",List.of(),true,null));
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            support.send(conversation,null,UUID.randomUUID(),"回滚的回复",List.of(),true,null);
+            status.setRollbackOnly();
+        });
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertTrue(isPending(conversation));
+        assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM support_messages WHERE content='回滚的回复'",Integer.class));
+        RequestContext.clear();
         Subsite other=new Subsite(); other.setId(UUID.randomUUID()); SiteRequestContext.set(other);
         assertThrows(BusinessException.class,() -> support.detail(conversation,false,"guest-a"));
+        assertTrue(support.list(false,"guest-a",null,null,false,false,0,30).isEmpty());
+    }
+
+    @Test void imageOnlyConsultationIsPendingAndHasAnImagePreview() {
+        var image=new MockMultipartFile("attachments","proof.png","image/png",new byte[]{(byte)0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1});
+        UUID conversation=(UUID)support.send(null,null,UUID.randomUUID(),"",List.of(image),false,"guest-image").get("conversation_id");
+        assertEquals("[图片]",support.detail(conversation,false,"guest-image").get("preview"));
+        assertThrows(BusinessException.class,() -> support.detail(conversation,false,"another-guest"));
+        UUID admin=UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",admin,"admin-"+admin,admin+"@example.com");
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals(1L,support.detail(conversation,true,null).get("unread"));
+        assertTrue(isPending(conversation));
+        support.send(conversation,null,UUID.randomUUID(),"",List.of(image),true,null);
+        assertEquals(false,support.detail(conversation,true,null).get("needs_attention"));
+        assertEquals("[图片]",support.detail(conversation,true,null).get("preview"));
+        RequestContext.clear();
+        support.send(conversation,null,UUID.randomUUID(),"文字优先",List.of(image),false,"guest-image");
+        assertEquals("文字优先",support.detail(conversation,false,"guest-image").get("preview"));
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertTrue(isPending(conversation));
+    }
+
+    @Test void consultationAttentionRemainsIsolatedBySiteAndCustomer() {
+        UUID owner=UUID.randomUUID(), first=UUID.randomUUID(), second=UUID.randomUUID();
+        UUID site=UUID.randomUUID(), admin=UUID.randomUUID();
+        for (UUID id:List.of(owner,first,second)) {
+            jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                    id,"user-"+id,id+"@example.com",Math.abs((long)id.hashCode())+10_000_000_000L);
+        }
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",admin,"admin-"+admin,admin+"@example.com");
+        jdbc.update("INSERT INTO subsites(id,owner_id,prefix,name,enabled) VALUES (?,?,?,'隔离分站',true)",site,owner,"r1-"+site.toString().substring(0,8));
+        Subsite current=new Subsite(); current.setId(site); SiteRequestContext.set(current);
+        RequestContext.set(new RequestContext.UserInfo(first,"first","USER"));
+        UUID conversation=(UUID)support.send(null,null,UUID.randomUUID(),"分站咨询",List.of(),false,null).get("conversation_id");
+        assertEquals(true,support.detail(conversation,false,null).get("needs_attention"));
+        RequestContext.set(new RequestContext.UserInfo(second,"second","USER"));
+        assertThrows(BusinessException.class,() -> support.detail(conversation,false,null));
+        assertTrue(support.list(false,null,null,null,false,false,0,30).isEmpty());
+        RequestContext.set(new RequestContext.UserInfo(first,"first","USER"));
+        SiteRequestContext.clear();
+        assertThrows(BusinessException.class,() -> support.detail(conversation,false,null));
+        assertTrue(support.list(false,null,null,null,false,false,0,30).isEmpty());
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertTrue(support.list(true,null,site.toString(),null,false,true,0,30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
+        assertTrue(support.list(true,null,UUID.randomUUID().toString(),null,false,true,0,30).isEmpty());
     }
 
     @Test void guestOrderAndPrivateAttachmentRequireTheOriginalSession() {
@@ -162,7 +242,17 @@ class SupportPostgresIntegrationTest {
         support.markRead(conversation,true,null,Long.parseLong((String)adminEvents.getLast().get("cursor")));
         assertEquals(0L,support.detail(conversation,true,null).get("unread"));
         assertEquals("ADMIN",support.detail(conversation,true,null).get("waiting_for"));
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
         assertTrue(support.list(true,null,null,null,false,true,0,30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
+        support.replyAfterSale(conversation,UUID.randomUUID(),"请补充",List.of(),true,null);
+        assertEquals("CUSTOMER",support.detail(conversation,true,null).get("waiting_for"));
+        assertEquals(false,support.detail(conversation,true,null).get("needs_attention"));
+        assertFalse(isPending(conversation));
+        RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
+        support.replyAfterSale(conversation,UUID.randomUUID(),"补充材料",List.of(),false,null);
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertTrue(isPending(conversation));
         afterSales.reject(order,"已处理");
         RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
         support.send(conversation,null,key,"补充说明",List.of(),false,null);
@@ -171,6 +261,12 @@ class SupportPostgresIntegrationTest {
         support.send(conversation,null,UUID.randomUUID(),"继续咨询",List.of(),false,null);
         assertEquals("REJECTED",jdbc.queryForObject("SELECT status FROM after_sale_requests WHERE id=?",String.class,sale));
         assertEquals("PAID",jdbc.queryForObject("SELECT status FROM orders WHERE id=?",String.class,order));
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        assertNull(support.detail(conversation,true,null).get("waiting_for"));
+        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
+        assertTrue(isPending(conversation));
+        support.send(conversation,null,UUID.randomUUID(),"后续回复",List.of(),true,null);
+        assertFalse(isPending(conversation));
     }
 
     @Test void cursorDoesNotAdvancePastAnUncommittedEarlierMessage() throws Exception {
@@ -258,6 +354,9 @@ class SupportPostgresIntegrationTest {
         assertEquals(3,caughtUp.stream().map(row -> row.get("id")).distinct().count());
     }
 
+    private boolean isPending(UUID conversation) {
+        return support.list(true,null,null,null,false,true,0,30).stream().anyMatch(row -> conversation.equals(row.get("id")));
+    }
     @SuppressWarnings("unchecked") private List<Map<String,Object>> items(Map<String,Object> page) { return (List<Map<String,Object>>)page.get("items"); }
     private static Path temporaryDirectory() {
         try { return Files.createTempDirectory("myshop-support-test-"); }

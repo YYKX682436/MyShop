@@ -10,6 +10,7 @@
     "test": "pnpm run test:logic",
     "test:logic": "node --experimental-strip-types --test lib/*.test.mjs",
     "test:dock-race": "node scripts/test-dock-race.mjs",
+    "test:support-viewport": "node scripts/test-support-viewport.mjs",
     "test:card-ui": "node scripts/test-card-ui.mjs",
     "test:supplier-ui": "node scripts/test-supplier-ui.mjs",
     "test:supplier-editor-ui": "node scripts/test-supplier-editor-ui.mjs",

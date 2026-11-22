@@ -156,13 +156,18 @@ public class SupportService {
                   SELECT c.id,c.site_id,s.name AS site_name,c.order_id,o.order_no,o.status AS order_status,
                     CASE WHEN c.user_id IS NULL THEN '游客' ELSE buyer.username END AS customer_name,
                     latest.seq AS latest_seq,latest.happened_at AS latest_at,latest.source_type AS latest_type,
-                    coalesce(sm.content,am.content,CASE latest.source_type
-                      WHEN 'AFTER_SALE_APPLY' THEN '申请售后' WHEN 'AFTER_SALE_REJECT' THEN '售后已处理'
-                      WHEN 'ORDER_REFUND' THEN '退款成功' WHEN 'SUPPLIER_UPDATE' THEN '上游处理更新' ELSE '' END) AS preview,
+                    CASE WHEN latest.source_type='SUPPORT_MESSAGE' AND btrim(sm.content)=''
+                           AND EXISTS (SELECT 1 FROM support_attachments attachment WHERE attachment.message_id=sm.id)
+                      THEN '[图片]' ELSE coalesce(sm.content,am.content,CASE latest.source_type
+                        WHEN 'AFTER_SALE_APPLY' THEN '申请售后' WHEN 'AFTER_SALE_REJECT' THEN '售后已处理'
+                        WHEN 'ORDER_REFUND' THEN '退款成功' WHEN 'SUPPLIER_UPDATE' THEN '上游处理更新' ELSE '' END)
+                    END AS preview,
                     (SELECT count(*) FROM support_activity a WHERE a.conversation_id=c.id AND NOT a.legacy
                       AND a.seq>coalesce(rr.read_seq,0) AND a.""" + notifyColumn + """
                     ) AS unread,
-                    pending.waiting_for
+                    pending.waiting_for,
+                    CASE WHEN pending.id IS NOT NULL THEN pending.waiting_for='ADMIN'
+                      ELSE coalesce(last_support.sender_type='CUSTOMER',false) END AS needs_attention
                   FROM support_conversations c
                   LEFT JOIN subsites s ON s.id=c.site_id
                   LEFT JOIN users buyer ON buyer.id=c.user_id
@@ -173,12 +178,18 @@ public class SupportService {
                     FROM support_activity a WHERE a.conversation_id=c.id ORDER BY a.seq DESC LIMIT 1) latest ON true
                   LEFT JOIN support_messages sm ON latest.source_type='SUPPORT_MESSAGE' AND sm.id=latest.source_id
                   LEFT JOIN after_sale_messages am ON latest.source_type='AFTER_SALE_MESSAGE' AND am.id=latest.source_id
-                  LEFT JOIN LATERAL (SELECT waiting_for FROM after_sale_requests r
+                  LEFT JOIN LATERAL (SELECT r.id,r.waiting_for FROM after_sale_requests r
                     WHERE r.order_id=c.order_id AND r.status='PENDING' ORDER BY r.submitted_at DESC LIMIT 1) pending ON true
+                  LEFT JOIN LATERAL (
+                    SELECT message.sender_type FROM support_activity activity
+                    JOIN support_messages message ON message.id=activity.source_id
+                    WHERE activity.conversation_id=c.id AND activity.source_type='SUPPORT_MESSAGE'
+                    ORDER BY activity.seq DESC LIMIT 1
+                  ) last_support ON true
                 """ + where + """
                 ) rows WHERE true
                 """ + (unreadOnly ? " AND unread>0 " : "")
-                + (pendingOnly ? " AND waiting_for='ADMIN' " : "")
+                + (pendingOnly ? " AND needs_attention " : "")
                 + " ORDER BY latest_seq DESC NULLS LAST,id DESC LIMIT ? OFFSET ?";
         List<Object> bindings = new ArrayList<>();
         if (admin) bindings.add(adminId);
@@ -198,6 +209,7 @@ public class SupportService {
             row.put("preview", rs.getString("preview"));
             row.put("unread", rs.getLong("unread"));
             row.put("waiting_for", rs.getString("waiting_for"));
+            row.put("needs_attention", rs.getBoolean("needs_attention"));
             return row;
         }, bindings.toArray());
     }

@@ -47,7 +47,9 @@ export function SupportThread({ id, orderId, orderNo, admin = false, identity, o
   const reading = useRef(false)
   const lifecycle = useRef<AbortController | null>(null)
   const root = useRef<HTMLDivElement>(null)
+  const fitViewport = useRef<(() => void) | null>(null)
   const [height, setHeight] = useState<number | undefined>()
+  const [keyboardSpace, setKeyboardSpace] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController(); lifecycle.current = controller
@@ -58,13 +60,39 @@ export function SupportThread({ id, orderId, orderNo, admin = false, identity, o
     const resize = () => {
       if (!root.current) return
       const bottom = viewport ? viewport.height + viewport.offsetTop : window.innerHeight
-      setHeight(Math.max(260, Math.floor(bottom - root.current.getBoundingClientRect().top - 8)))
+      const top = Math.max(root.current.getBoundingClientRect().top, viewport?.offsetTop ?? 0)
+      setHeight(Math.max(260, Math.floor(bottom - top - 8)))
       if (nearBottom.current) scrollAfterRender.current = true
     }
-    resize(); viewport?.addEventListener("resize", resize); viewport?.addEventListener("scroll", resize)
-    window.addEventListener("resize", resize)
-    return () => { viewport?.removeEventListener("resize", resize); viewport?.removeEventListener("scroll", resize); window.removeEventListener("resize", resize) }
+    const adjust = () => {
+      if (!root.current) return
+      const bottom = viewport ? viewport.height + viewport.offsetTop : window.innerHeight
+      const top = Math.max(root.current.getBoundingClientRect().top, viewport?.offsetTop ?? 0)
+      const shortage = 260 - (bottom - top - 8)
+      if (shortage > 0) window.scrollBy({ top: shortage, behavior: "instant" })
+      resize()
+    }
+    const fit = () => {
+      const focused = !!root.current?.contains(document.activeElement)
+      setKeyboardSpace(focused && viewport ? Math.max(0, Math.ceil(window.innerHeight - viewport.height)) : 0)
+      adjust()
+    }
+    fitViewport.current = adjust
+    const observer = new ResizeObserver(resize)
+    observer.observe(document.body)
+    if (root.current?.parentElement) observer.observe(root.current.parentElement)
+    const element = root.current
+    fit(); viewport?.addEventListener("resize", fit); viewport?.addEventListener("scroll", resize)
+    window.addEventListener("resize", fit); window.addEventListener("scroll", resize, { passive: true })
+    element?.addEventListener("focusin", fit)
+    return () => {
+      observer.disconnect(); element?.removeEventListener("focusin", fit)
+      viewport?.removeEventListener("resize", fit); viewport?.removeEventListener("scroll", resize)
+      window.removeEventListener("resize", fit); window.removeEventListener("scroll", resize)
+      fitViewport.current = null
+    }
   }, [])
+  useLayoutEffect(() => { fitViewport.current?.() }, [keyboardSpace])
 
   const poll = useCallback(async (signal: AbortSignal) => {
     if (!id) return
@@ -189,7 +217,7 @@ export function SupportThread({ id, orderId, orderNo, admin = false, identity, o
     void deliver(message)
   }
 
-  return <div ref={root} style={{ height }} className="flex min-h-[260px] flex-col overflow-hidden rounded-card border border-border-subtle bg-surface">
+  return <div ref={root} style={{ height, marginBottom: keyboardSpace }} className="flex min-h-[260px] flex-col overflow-hidden rounded-card border border-border-subtle bg-surface">
     <header className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-border-subtle px-4 py-2">
       <div className="min-w-0"><h2 className="truncate font-semibold">{conversation?.order_no || orderNo ? `订单 #${conversation?.order_no || orderNo}` : "主站客服"}</h2>
         {admin && <p className="truncate text-xs text-muted-foreground">{conversation?.site_name || "主站"}</p>}</div>
@@ -205,10 +233,10 @@ export function SupportThread({ id, orderId, orderNo, admin = false, identity, o
         <div className="mt-1 text-xs text-muted-foreground">{item.state === "sending" ? "发送中…" : item.state === "sent" ? "已发送" : <span role="alert">{item.error || "发送失败"} <button type="button" className="text-primary underline" onClick={() => void deliver(item)}>重试</button></span>}</div>
       </div>)}
     </div>
-    <form onSubmit={send} className="shrink-0 space-y-2 border-t border-border-subtle p-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
-      {files.length > 0 && <div className="flex flex-wrap gap-2">{files.map((file, index) => <button type="button" key={`${file.name}:${index}`} className="rounded bg-muted px-2 py-1 text-xs" onClick={() => setFiles(value => value.filter((_, i) => i !== index))}>{file.name} ×</button>)}</div>}
-      <Textarea aria-label="消息内容" className="min-h-11 resize-y text-base" rows={2} maxLength={1000} value={content} onChange={e => setContent(e.target.value)} placeholder="输入消息" disabled={!!id && !conversation} />
-      <div className="flex items-center justify-between gap-2"><label className="cursor-pointer text-sm text-primary">添加图片<input type="file" className="sr-only" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml" onChange={e => { const selected = Array.from(e.target.files || []); setFiles(value => [...value, ...selected].slice(0, 5)); e.currentTarget.value = "" }} /></label>
+    <form onSubmit={send} className="flex min-h-0 flex-col gap-2 border-t border-border-subtle p-3" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
+      {files.length > 0 && <div className="flex min-h-0 max-h-16 shrink flex-wrap gap-2 overflow-y-auto">{files.map((file, index) => <button type="button" key={`${file.name}:${index}`} className="max-w-full truncate rounded bg-muted px-2 py-1 text-xs" onClick={() => setFiles(value => value.filter((_, i) => i !== index))}>{file.name} ×</button>)}</div>}
+      <Textarea aria-label="消息内容" className="min-h-11 max-h-24 resize-y text-base" rows={2} maxLength={1000} value={content} onChange={e => setContent(e.target.value)} placeholder="输入消息" disabled={!!id && !conversation} />
+      <div className="flex shrink-0 items-center justify-between gap-2"><label className="cursor-pointer text-sm text-primary">添加图片<input type="file" className="sr-only" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml" onChange={e => { const selected = Array.from(e.target.files || []); setFiles(value => [...value, ...selected].slice(0, 5)); e.currentTarget.value = "" }} /></label>
         <Button type="submit" disabled={(!!id && !conversation) || (!content.trim() && (!files.length || !!conversation?.waiting_for))}>发送</Button></div>
     </form>
   </div>

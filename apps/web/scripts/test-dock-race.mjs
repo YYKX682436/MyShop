@@ -332,7 +332,51 @@ async function runDockRaceVerification() {
     const s5B = await checkDockState("orders", "游客")
     assert.equal(s5B.pathname, "/my/orders", "Scenario 5B: canceled drag must snap back to active tab Orders")
 
-    console.log("\n[SUCCESS] All 5 hardened async dock race scenarios passed verification!")
+    // Scenario 6: the final pointer position wins even when motion rendering
+    // has not caught up with a quick release.
+    await page.locator('[data-testid="store-dock-home"]').click()
+    await page.waitForURL(`${BASE_URL}/`)
+    await page.waitForTimeout(500)
+    const hit = await page.locator(".store-dock-drag-hit-area").boundingBox()
+    const messages = await page.locator('[data-testid="store-dock-messages"]').boundingBox()
+    assert.ok(hit && messages, "Drag handle and Messages target must exist")
+    await page.mouse.move(hit.x + hit.width / 2, hit.y + hit.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(messages.x + messages.width / 2, messages.y + messages.height / 2, { steps: 15 })
+    await page.mouse.up()
+    await page.waitForURL(`${BASE_URL}/messages`)
+    await page.waitForTimeout(500)
+    await checkDockState("messages", "消息")
+    const messageHit = await page.locator(".store-dock-drag-hit-area").boundingBox()
+    const home = await page.locator('[data-testid="store-dock-home"]').boundingBox()
+    assert.ok(messageHit && home, "Drag handle and Home target must exist")
+    await page.mouse.move(messageHit.x + messageHit.width / 2, messageHit.y + messageHit.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(home.x + home.width / 2, home.y + home.height / 2, { steps: 15 })
+    await page.mouse.up()
+    await page.waitForURL(`${BASE_URL}/`)
+    await page.waitForTimeout(500)
+    await checkDockState("home")
+
+    // Exercise touch pointer capture as well as mouse input on a mobile viewport.
+    const touchHit = await page.locator(".store-dock-drag-hit-area").boundingBox()
+    const touchTarget = await page.locator('[data-testid="store-dock-messages"]').boundingBox()
+    assert.ok(touchHit && touchTarget, "Touch drag targets must exist")
+    const startTouchX = touchHit.x + touchHit.width / 2
+    const targetTouchX = touchTarget.x + touchTarget.width / 2
+    const touchY = touchHit.y + touchHit.height / 2
+    const cdp = await context.newCDPSession(page)
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: startTouchX, y: touchY, id: 1 }] })
+    for (let i = 1; i <= 10; i++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: startTouchX + (targetTouchX - startTouchX) * i / 10, y: touchY, id: 1 }] })
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+    await page.waitForURL(`${BASE_URL}/messages`)
+    await page.waitForTimeout(500)
+    await checkDockState("messages", "消息")
+    await cdp.detach()
+
+    console.log("\n[SUCCESS] All 6 async dock race scenarios passed verification!")
   } finally {
     await browser.close()
   }
