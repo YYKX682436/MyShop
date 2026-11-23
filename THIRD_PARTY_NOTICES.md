@@ -22,3 +22,13 @@ MyShop uses [Thumbnailator](https://github.com/coobird/thumbnailator) (MIT)
 for image resizing and [metadata-extractor](https://github.com/drewnoakes/metadata-extractor)
 (Apache-2.0) to read image orientation. Metadata-extractor depends on
 [Adobe XMP Core](https://github.com/adobe/XMP-Toolkit-SDK) (BSD-3-Clause).
+
+MyShop includes the renderer dependency closure from
+[Liquid Glass WebGL](https://github.com/martin65536/liquid-glass-webgl) at
+`b4e0a6910443cea7cdd4b1bfcf7b2394e0a15e48`, copyright 2025 Liquid Glass
+WebGL Port Contributors, under Apache-2.0. Its complete license and details of
+MyShop's changes are retained in `apps/web/lib/vendor/liquid-glass/`.
+
+MyShop uses [SnapDOM](https://github.com/zumerlab/snapdom) `3.8.2` for bounded
+page capture, copyright 2025 ZumerLab, under the MIT license. The complete
+license is retained in `apps/web/lib/vendor/snapdom.LICENSE`.

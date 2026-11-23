@@ -1470,3 +1470,86 @@ dialog.media-manage-dialog::backdrop {
   overflow: hidden;
   overscroll-behavior: contain;
 }
+
+/* Store navigation: the drawing surface includes room for the glass and shadow. */
+.storefront-main--bottom-navigation {
+  padding-bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
+}
+.store-liquid-surface {
+  --store-liquid-bleed: clamp(60px, calc(30vw - 57px), 76px);
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  bottom: env(safe-area-inset-bottom, 0px);
+  width: min(584px, 100vw);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.store-liquid-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.store-liquid-nav {
+  position: absolute;
+  left: var(--store-liquid-bleed);
+  right: var(--store-liquid-bleed);
+  height: 64px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  pointer-events: auto;
+  touch-action: pan-y;
+  border-radius: 999px;
+  -webkit-tap-highlight-color: transparent;
+}
+.store-liquid-nav[data-mode="fallback"] {
+  background: rgb(250 250 250 / 86%);
+  box-shadow: 0 4px 24px rgb(0 0 0 / 15%);
+}
+.dark .store-liquid-nav[data-mode="fallback"] { background: rgb(24 24 24 / 88%); }
+.store-liquid-link {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  border-radius: 999px;
+  outline-offset: 2px;
+}
+.store-liquid-link:focus-visible { outline: 2px solid #0088ff; }
+.store-liquid-nav[data-mode="fallback"] .store-liquid-link[aria-current="page"] {
+  background: rgb(0 136 255 / 13%);
+  color: #0088ff;
+}
+.store-liquid-fallback-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+.store-liquid-nav[data-mode="webgl"] .store-liquid-fallback-content { visibility: hidden; }
+.store-liquid-badge {
+  position: absolute;
+  top: 5px;
+  left: calc(50% + 7px);
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #dc2626;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
+@media (forced-colors: active) {
+  .store-liquid-nav[data-mode="fallback"] { border: 1px solid CanvasText; }
+  .store-liquid-link[aria-current="page"] { outline: 2px solid Highlight; }
+}

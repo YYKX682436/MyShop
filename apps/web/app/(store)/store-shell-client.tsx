@@ -1,11 +1,12 @@
 "use client"
 
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Wrench } from "lucide-react"
 import { VisitTracker } from "@/components/store/visit-tracker"
 import { MessageSummaryProvider } from "@/components/store/message-summary"
+import { StoreBottomNavigation } from "@/components/store/liquid-tabs/store-bottom-navigation"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
 import { MarkdownContent } from "@/components/shared/markdown-content"
@@ -108,6 +109,8 @@ export function StoreShellClient({ children }: { children: React.ReactNode }) {
   const { config, isLoading } = useSiteConfig()
   const { user, isLoggedIn, authLoaded } = useAuth()
   const pathname = usePathname()
+  const shellRef = useRef<HTMLDivElement>(null)
+  const hasBottomNavigation = ["/", "/my/orders", "/messages", "/my"].includes(pathname)
 
   // 维护模式判断需要 config + auth 都就绪才能准确决策
   const configReady = !isLoading && !!config
@@ -123,16 +126,16 @@ export function StoreShellClient({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <MessageSummaryProvider><div className="store-shell flex min-h-screen flex-col bg-background">
+    <MessageSummaryProvider><div ref={shellRef} className="store-shell flex min-h-screen flex-col bg-background">
       <VisitTracker />
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
       <AnnouncementBar />
       <main
-        className="storefront-main storefront-main--without-header mx-auto w-full max-w-[var(--storefront-max-width)] flex-1 px-[var(--storefront-gutter)]"
+        className={`storefront-main storefront-main--without-header mx-auto w-full max-w-[var(--storefront-max-width)] flex-1 px-[var(--storefront-gutter)]${hasBottomNavigation ? " storefront-main--bottom-navigation" : ""}`}
       >
         {children}
       </main>
       <PopupAnnouncement />
-    </div></MessageSummaryProvider>
+    </div><StoreBottomNavigation sourceRef={shellRef} /></MessageSummaryProvider>
   )
 }
