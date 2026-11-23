@@ -2,13 +2,14 @@
 
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { ZoomIn } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Dialog, DialogOverlay, DialogPortal, DialogTrigger } from "@/components/ui/dialog"
 import { ProductImage } from "@/components/store/product-image"
 import { useLocale } from "@/lib/context"
 
 type CloseWatcher = EventTarget & { destroy: () => void }
 type BackdropPointer = { target: EventTarget; x: number; y: number; scrollTop: number }
+const viewerHistoryKey = "__myshopProductImageViewer"
 
 /** The preview stays optimized; the viewer mounts the original only when opened. */
 export function ProductImageViewer({ src, previewSrc = src, title }: { src: string; previewSrc?: string; title: string }) {
@@ -22,6 +23,64 @@ export function ProductImageViewer({ src, previewSrc = src, title }: { src: stri
   const restoreFrame = useRef<number | null>(null)
   const scrollPosition = useRef({ x: 0, y: 0 })
   const backdropPointer = useRef<BackdropPointer | null>(null)
+  const historyToken = useRef<string | null>(null)
+  const historyCleanupPending = useRef(false)
+  const reopenAfterCleanup = useRef(false)
+
+  const beginOpen = useCallback(() => {
+    if (restoreFrame.current !== null) cancelAnimationFrame(restoreFrame.current)
+    scrollPosition.current = { x: window.scrollX, y: window.scrollY }
+    setFailed(false)
+    setShape("portrait")
+    const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    try {
+      const current = window.history.state
+      window.history.pushState({ ...(current && typeof current === "object" ? current : {}), [viewerHistoryKey]: token }, "")
+      historyToken.current = token
+    } catch {
+      // An unavailable history API leaves the other close methods intact.
+      historyToken.current = null
+    }
+    openRef.current = true
+    setOpen(true)
+  }, [])
+
+  const changeOpen = useCallback((next: boolean) => {
+    if (next) {
+      if (historyCleanupPending.current) { reopenAfterCleanup.current = true; return }
+      beginOpen()
+      return
+    }
+    reopenAfterCleanup.current = false
+    openRef.current = false
+    setOpen(false)
+    const token = historyToken.current
+    historyToken.current = null
+    if (token && window.history.state?.[viewerHistoryKey] === token) {
+      historyCleanupPending.current = true
+      window.history.back()
+    }
+  }, [beginOpen])
+
+  useEffect(() => {
+    const onPopState = (event: PopStateEvent) => {
+      if (historyCleanupPending.current) {
+        historyCleanupPending.current = false
+        if (reopenAfterCleanup.current && triggerRef.current?.isConnected) {
+          reopenAfterCleanup.current = false
+          beginOpen()
+        }
+        return
+      }
+      if (openRef.current && historyToken.current && event.state?.[viewerHistoryKey] !== historyToken.current) {
+        historyToken.current = null
+        openRef.current = false
+        setOpen(false)
+      }
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [beginOpen])
 
   useEffect(() => {
     if (!open) return
@@ -31,27 +90,16 @@ export function ProductImageViewer({ src, previewSrc = src, title }: { src: stri
     if (!Watcher) return
     try {
       const watcher = new Watcher()
-      watcher.addEventListener("close", () => { openRef.current = false; setOpen(false) })
+      watcher.addEventListener("close", () => changeOpen(false))
       return () => watcher.destroy()
     } catch {
       // Browsers that cannot create a watcher still support the other exits.
     }
-  }, [open])
+  }, [open, changeOpen])
 
   useEffect(() => () => {
     if (restoreFrame.current !== null) cancelAnimationFrame(restoreFrame.current)
   }, [])
-
-  const changeOpen = (next: boolean) => {
-    openRef.current = next
-    if (next) {
-      if (restoreFrame.current !== null) cancelAnimationFrame(restoreFrame.current)
-      scrollPosition.current = { x: window.scrollX, y: window.scrollY }
-      setFailed(false)
-      setShape("portrait")
-    }
-    setOpen(next)
-  }
 
   const isBackground = (target: EventTarget | null, scrollArea: HTMLElement) => (
     target === scrollArea || (target instanceof HTMLElement && target.dataset.viewerBackground === "true")

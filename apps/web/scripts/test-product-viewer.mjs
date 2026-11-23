@@ -216,6 +216,11 @@ try {
   } else {
     await closeBackdrop()
   }
+  await imageButton().click()
+  await dialog().waitFor()
+  await page.goBack()
+  await dialog().waitFor({ state: "hidden" })
+  assert.equal(new URL(page.url()).pathname, "/product/square", "browser back should close the viewer before leaving the product")
   for (let i = 0; i < 3; i++) {
     await imageButton().click()
     await dialog().waitFor()
@@ -295,8 +300,16 @@ try {
   await navigate("square")
   assert.equal(await page.locator("html").evaluate(el => el.classList.contains("dark")), true, "detail must follow dark theme")
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "dark theme must not overflow")
+  await page.goto(base, { waitUntil: "domcontentloaded" })
+  await page.getByRole("link", { name: "测试商品 square" }).click()
+  await imageButton().click()
+  await dialog().waitFor()
+  await closeBackdrop()
+  await page.waitForFunction(() => !window.history.state?.__myshopProductImageViewer)
+  await page.goBack()
+  assert.equal(new URL(page.url()).pathname, "/", "closing the viewer must not leave an extra back step")
   await context.close()
-  console.log(`PRODUCT_VIEWER_UI_OK widths=320,390,430,768 desktop=1280 themes=light,dark thumbnail=ok original=on-demand square=ok portrait-scroll=mouse,touch landscape=ok backdrop=mouse,touch drag=ok keyboard=ok close-watcher=${closeWatcherTested ? "request-tested" : "unsupported"} restore=ok purchase=ok failure=ok no-image=ok`)
+  console.log(`PRODUCT_VIEWER_UI_OK widths=320,390,430,768 desktop=1280 themes=light,dark thumbnail=ok original=on-demand square=ok portrait-scroll=mouse,touch landscape=ok backdrop=mouse,touch drag=ok keyboard=ok browser-back=ok close-watcher=${closeWatcherTested ? "request-tested" : "unsupported"} restore=ok purchase=ok failure=ok no-image=ok`)
 } finally {
   if (browser) await browser.close()
   server.kill("SIGTERM")
