@@ -11,6 +11,7 @@ import type { Metadata } from "next"
 import type { PublicPaymentChannel } from "@/types"
 import { serializeJsonLd } from "@/lib/json-ld"
 import { requestSiteUrl } from "@/lib/request-site"
+import { managedProductImagePath } from "@/lib/managed-product-image"
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params
@@ -43,15 +44,19 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 export default async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  const [product, channels] = await Promise.all([
+  const [product, channels, siteConfig] = await Promise.all([
     getViewerProductDetail(id).catch(() => null),
     getPaymentChannels().catch(() => [] as PublicPaymentChannel[]),
+    getSiteConfig().catch(() => null),
   ])
 
   if (!product) notFound()
 
   const inStock = product.unlimited || product.specs?.some(spec => spec.unlimited || (spec.stock_available ?? 0) > 0) || (product.stock_available ?? 0) > 0
   const baseUrl = await requestSiteUrl()
+  const allowedImageOrigins = [baseUrl]
+  try { if (siteConfig?.main_site_url) allowedImageOrigins.push(new URL(siteConfig.main_site_url).origin) } catch { /* Ignore invalid configuration. */ }
+  const previewSrc = product.cover_url ? managedProductImagePath(product.cover_url, allowedImageOrigins) ?? product.cover_url : ""
   const categoryPath = [product.primary_category_name, product.secondary_category_name]
     .filter((name): name is string => Boolean(name))
 
@@ -82,7 +87,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
   }
 
   return (
-    <div className="product-detail-page storefront-content-width flex flex-col gap-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))] sm:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
+    <div className="product-detail-page storefront-content-width flex flex-col gap-4 pb-[calc(6.5rem+env(safe-area-inset-bottom))] lg:gap-8 sm:pb-[calc(7.5rem+env(safe-area-inset-bottom))]">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
@@ -99,11 +104,11 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         {/* Left: Image — server rendered */}
         <div className="product-visual-column min-w-0">
           {product.cover_url ? (
-            <ProductImageViewer src={product.cover_url} title={product.title} />
+            <ProductImageViewer src={product.cover_url} previewSrc={previewSrc} title={product.title} />
           ) : (
             <div className="product-image-stage product-image-stage--detail">
               <div className="flex h-full w-full items-center justify-center">
-                <Package className="size-20 text-muted-foreground/20" aria-hidden="true" />
+                <Package className="size-10 text-muted-foreground/20 lg:size-20" aria-hidden="true" />
               </div>
             </div>
           )}

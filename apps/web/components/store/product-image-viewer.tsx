@@ -1,58 +1,126 @@
 "use client"
 
 import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { X, ZoomIn } from "lucide-react"
-import { useRef } from "react"
+import { ZoomIn } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import { Dialog, DialogOverlay, DialogPortal, DialogTrigger } from "@/components/ui/dialog"
 import { ProductImage } from "@/components/store/product-image"
 import { useLocale } from "@/lib/context"
 
-/** The list and detail preview stay optimized; the viewer loads the original on demand. */
-export function ProductImageViewer({ src, title }: { src: string; title: string }) {
+type CloseWatcher = EventTarget & { destroy: () => void }
+type BackdropPointer = { target: EventTarget; x: number; y: number; scrollTop: number }
+
+/** The preview stays optimized; the viewer mounts the original only when opened. */
+export function ProductImageViewer({ src, previewSrc = src, title }: { src: string; previewSrc?: string; title: string }) {
   const { t } = useLocale()
+  const [open, setOpen] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [shape, setShape] = useState<"portrait" | "wide">("portrait")
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const openRef = useRef(false)
+  const restoreFrame = useRef<number | null>(null)
   const scrollPosition = useRef({ x: 0, y: 0 })
+  const backdropPointer = useRef<BackdropPointer | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    // CloseWatcher handles Android's back action where supported; Radix still
+    // handles Escape and the accessible close control on other browsers.
+    const Watcher = (window as Window & { CloseWatcher?: new () => CloseWatcher }).CloseWatcher
+    if (!Watcher) return
+    try {
+      const watcher = new Watcher()
+      watcher.addEventListener("close", () => { openRef.current = false; setOpen(false) })
+      return () => watcher.destroy()
+    } catch {
+      // Browsers that cannot create a watcher still support the other exits.
+    }
+  }, [open])
+
+  useEffect(() => () => {
+    if (restoreFrame.current !== null) cancelAnimationFrame(restoreFrame.current)
+  }, [])
+
+  const changeOpen = (next: boolean) => {
+    openRef.current = next
+    if (next) {
+      if (restoreFrame.current !== null) cancelAnimationFrame(restoreFrame.current)
+      scrollPosition.current = { x: window.scrollX, y: window.scrollY }
+      setFailed(false)
+      setShape("portrait")
+    }
+    setOpen(next)
+  }
+
+  const isBackground = (target: EventTarget | null, scrollArea: HTMLElement) => (
+    target === scrollArea || (target instanceof HTMLElement && target.dataset.viewerBackground === "true")
+  )
 
   return (
-    <Dialog onOpenChange={(open) => {
-      if (open) scrollPosition.current = { x: window.scrollX, y: window.scrollY }
-    }}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogTrigger asChild>
         <button ref={triggerRef} type="button" className="product-image-stage product-image-stage--detail block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`${t("product.viewImage")}: ${title}`}>
-          <ProductImage src={src} alt={title} priority sizes="(min-width: 1024px) 60vw, 100vw" className="product-image-stage-image" />
-          <span aria-hidden="true" className="pointer-events-none absolute bottom-3 right-3 inline-flex items-center gap-1 rounded-control bg-black/70 px-2.5 py-1.5 text-xs font-medium text-white">
-            <ZoomIn className="size-4" />{t("product.viewImage")}
+          <ProductImage src={previewSrc} alt={title} priority sizes="(min-width: 1024px) 55vw, (min-width: 640px) 192px, (min-width: 426px) 145px, (min-width: 324px) 34vw, 110px" className="product-image-stage-image" />
+          <span aria-hidden="true" className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-full bg-black/65 p-1.5 text-white">
+            <ZoomIn className="size-3.5" />
           </span>
         </button>
       </DialogTrigger>
       <DialogPortal>
-        {/* Keep the scroll lock and viewer content in the same unmount cycle. */}
-        <DialogOverlay className="z-[60] bg-black/95" style={{ animation: "none" }} />
+        <DialogOverlay className="z-[60] bg-black" style={{ animation: "none" }} />
         <DialogPrimitive.Content
           className="product-image-viewer fixed inset-0 z-[60] flex flex-col bg-black text-white outline-none"
           aria-describedby={undefined}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault()
+            scrollRef.current?.focus({ preventScroll: true })
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault()
+            if (openRef.current) return
             triggerRef.current?.focus({ preventScroll: true })
             const { x, y } = scrollPosition.current
-            requestAnimationFrame(() => {
-              if (triggerRef.current?.isConnected) window.scrollTo({ left: x, top: y, behavior: "instant" })
+            restoreFrame.current = requestAnimationFrame(() => {
+              restoreFrame.current = null
+              if (triggerRef.current?.isConnected && !openRef.current) window.scrollTo({ left: x, top: y, behavior: "instant" })
             })
           }}
         >
           <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
-          <div className="product-image-viewer-inset flex shrink-0 justify-end pb-1 pt-[max(0.5rem,env(safe-area-inset-top))]">
-            <DialogPrimitive.Close className="flex size-11 items-center justify-center rounded-full bg-white/15 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" aria-label={t("common.close")}>
-              <X className="size-6" aria-hidden="true" />
-            </DialogPrimitive.Close>
-          </div>
-          <div className="product-image-viewer-inset min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[max(0.75rem,env(safe-area-inset-bottom))]" tabIndex={0}>
-            <div className="flex min-h-full items-center justify-center">
-              {/* The original URL is intentionally not sent through the thumbnail optimizer. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={src} alt={title} className="block h-auto max-w-full" referrerPolicy="no-referrer" />
+          <div
+            ref={scrollRef}
+            className="product-image-viewer-scroll outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+            tabIndex={0}
+            onPointerDown={(event) => {
+              backdropPointer.current = event.isPrimary && event.button === 0 && isBackground(event.target, event.currentTarget)
+                ? { target: event.target, x: event.clientX, y: event.clientY, scrollTop: event.currentTarget.scrollTop }
+                : null
+            }}
+            onPointerCancel={() => { backdropPointer.current = null }}
+            onClick={(event) => {
+              const start = backdropPointer.current
+              backdropPointer.current = null
+              if (start && event.target === start.target && isBackground(event.target, event.currentTarget)
+                && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 8
+                && Math.abs(event.currentTarget.scrollTop - start.scrollTop) < 2) changeOpen(false)
+            }}
+          >
+            <div className="product-image-viewer-canvas" data-viewer-background="true">
+              {failed ? (
+                <p role="alert" className="pointer-events-none text-sm text-white/80">{t("product.imageLoadFailed")}</p>
+              ) : (
+                // The original URL is intentionally not sent through the thumbnail optimizer.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={src} alt={title} className="product-image-viewer-original" data-shape={shape} referrerPolicy="no-referrer"
+                  onLoad={(event) => setShape(event.currentTarget.naturalHeight > event.currentTarget.naturalWidth ? "portrait" : "wide")}
+                  onError={() => setFailed(true)} />
+              )}
             </div>
           </div>
+          <DialogPrimitive.Close className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-10 focus:rounded-control focus:bg-white focus:px-4 focus:py-3 focus:text-black">
+            {t("common.close")}
+          </DialogPrimitive.Close>
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>

@@ -24,22 +24,26 @@ export function ProductSummary({ product }: { product: ProductDetail }) {
 
   return (
     <div className="product-summary">
-      <h1 className="max-w-3xl break-words text-xl font-semibold leading-snug tracking-tight text-foreground sm:text-5xl sm:leading-[1.08]">
-        {product.title}
-      </h1>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
-          {formatYuan(product.price)}
-        </span>
-        {product.has_specs && <span className="text-sm text-muted-foreground">{t("home.startFrom")}</span>}
+      <div className="product-summary-main">
+        <h1 className="max-w-3xl text-xl font-semibold leading-snug tracking-tight text-foreground lg:text-5xl lg:leading-[1.08]">
+          {product.title}
+        </h1>
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+          <span className="min-w-0 break-all text-2xl font-semibold tracking-tight text-foreground lg:text-4xl">
+            {formatYuan(product.price)}
+          </span>
+          {product.has_specs && <span className="shrink-0 text-sm text-muted-foreground">{t("home.startFrom")}</span>}
+        </div>
+        <p className="product-summary-delivery text-footnote text-muted-foreground lg:hidden">{deliveryLabel}</p>
       </div>
       <p className={cn(
-        "text-footnote text-muted-foreground",
+        "product-summary-meta text-footnote text-muted-foreground",
         !inStock && "font-medium text-destructive/80",
       )}>
         {inStock
-          ? `${stockLabel} · ${t("product.sold")} ${sales} · ${deliveryLabel}`
-          : `${t("product.soldOut")} · ${t("product.sold")} ${sales} · ${deliveryLabel}`}
+          ? `${stockLabel} · ${t("product.sold")} ${sales}`
+          : `${t("product.soldOut")} · ${t("product.sold")} ${sales}`}
+        <span className="hidden lg:inline"> · {deliveryLabel}</span>
       </p>
     </div>
   )

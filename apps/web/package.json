@@ -12,6 +12,7 @@
     "test:dock-race": "node scripts/test-dock-race.mjs",
     "test:support-viewport": "node scripts/test-support-viewport.mjs",
     "test:card-ui": "node scripts/test-card-ui.mjs",
+    "test:product-viewer": "node scripts/test-product-viewer.mjs",
     "test:supplier-ui": "node scripts/test-supplier-ui.mjs",
     "test:supplier-editor-ui": "node scripts/test-supplier-editor-ui.mjs",
     "test:supplier-order-ui": "node scripts/test-supplier-order-ui.mjs",

@@ -16,8 +16,8 @@ export function ProductBreadcrumb({ title }: { title: string }) {
         <ArrowLeft className="h-3.5 w-3.5" />
         {t("common.back")}
       </Link>
-      <span>/</span>
-      <span className="truncate max-w-[200px] sm:max-w-none">{title}</span>
+      <span className="hidden lg:inline">/</span>
+      <span className="hidden truncate lg:inline">{title}</span>
     </div>
   )
 }
