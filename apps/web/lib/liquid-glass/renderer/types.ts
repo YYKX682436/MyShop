@@ -154,6 +154,12 @@ export interface TextSpec {
      *  purposes (matching ContentScale.Inside behavior). */
     layoutSize?: number
   }
+  /** Optional badge drawn on top-right of the icon (e.g. unread count). */
+  badge?: {
+    text: string
+    color?: [number, number, number, number]
+    textColor?: [number, number, number, number]
+  }
 }
 
 export interface GlassElementConfig extends GlassButtonConfig {

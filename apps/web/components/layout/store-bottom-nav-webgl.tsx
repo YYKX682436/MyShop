@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -17,17 +18,11 @@ import {
   LIGHT_PALETTE,
   type ThemePalette,
 } from "@/lib/liquid-glass/catalog/palettes"
+import type { ElementInteraction, GestureState } from "@/lib/liquid-glass/context/types"
+import { useGestureHandlers } from "@/lib/liquid-glass/context/pointer-handlers"
 
 export interface StoreBottomNavWebGLHandle {
   selectTab: (index: number) => void
-  beginDrag: (index: number) => void
-  drag: (
-    index: number,
-    currentX: number,
-    startX: number,
-    tabWidth: number
-  ) => void
-  endDrag: () => number
   isReady: () => boolean
 }
 
@@ -36,61 +31,48 @@ interface StoreBottomNavWebGLProps {
   height: number
   activeIndex: number
   isDark: boolean
+  labels: readonly [string, string, string, string]
+  unread: number
   onSelectTab: (index: number) => void
   onAvailabilityChange?: (available: boolean) => void
-}
-
-/**
- * Creates a localized background texture representing the page background
- * behind the dock pill for WebGL refraction.
- */
-function createLocalizedBackdrop(isDark: boolean): HTMLCanvasElement {
-  const canvas = document.createElement("canvas")
-  canvas.width = 256
-  canvas.height = 64
-  const ctx = canvas.getContext("2d")
-  if (!ctx) return canvas
-
-  // Soft vertical gradient matching MyShop storefront background
-  const grad = ctx.createLinearGradient(0, 0, 0, 64)
-  if (isDark) {
-    grad.addColorStop(0, "rgba(9, 9, 11, 1)")
-    grad.addColorStop(0.5, "rgba(18, 18, 22, 1)")
-    grad.addColorStop(1, "rgba(24, 24, 28, 1)")
-  } else {
-    grad.addColorStop(0, "rgba(255, 255, 255, 1)")
-    grad.addColorStop(0.5, "rgba(248, 250, 252, 1)")
-    grad.addColorStop(1, "rgba(241, 245, 249, 1)")
-  }
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, 256, 64)
-
-  // Subtle ambient highlight
-  ctx.fillStyle = isDark
-    ? "rgba(255, 255, 255, 0.04)"
-    : "rgba(255, 255, 255, 0.6)"
-  ctx.fillRect(0, 0, 256, 1)
-
-  return canvas
 }
 
 export const StoreBottomNavWebGL = forwardRef<
   StoreBottomNavWebGLHandle,
   StoreBottomNavWebGLProps
 >(function StoreBottomNavWebGL(
-  { width, height, activeIndex, isDark, onSelectTab, onAvailabilityChange },
+  { width, height, activeIndex, isDark, labels, unread, onSelectTab, onAvailabilityChange },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rendererRef = useRef<LiquidGlassRenderer | null>(null)
-  const tabsResultRef = useRef<StoreBottomTabsResult | null>(null)
+  const elementsRef = useRef<StoreBottomTabsResult["elements"]>([])
+  const interactionsRef = useRef<Record<string, ElementInteraction>>({})
+  const gesturesRef = useRef<Map<number, GestureState>>(new Map())
+  const prevPinchRef = useRef<{ dist: number; angle: number; cx: number; cy: number } | null>(null)
   const [isSupported, setIsSupported] = useState(true)
-  const isDraggingRef = useRef(false)
-  const lastActiveIndexRef = useRef(activeIndex)
 
   const palette: ThemePalette = isDark ? DARK_PALETTE : LIGHT_PALETTE
 
-  // Expose imperative API to synchronize gestures and active tab changes
+  // Build tabs configuration and update refs
+  const updateTabs = useCallback(() => {
+    if (width <= 0) return
+    const res = buildStoreBottomTabs(
+      width,
+      height,
+      activeIndex,
+      onSelectTab,
+      rendererRef,
+      palette,
+      labels,
+      unread
+    )
+    elementsRef.current = res.elements
+    interactionsRef.current = res.interactions
+    rendererRef.current?.setElements(res.elements)
+  }, [width, height, activeIndex, onSelectTab, palette, labels, unread])
+
+  // Expose imperative API to synchronize external active tab changes
   useImperativeHandle(
     ref,
     () => ({
@@ -99,34 +81,12 @@ export const StoreBottomNavWebGL = forwardRef<
         if (!r || !isSupported) return
         r.setTabSelected("store-dock", index, 4)
       },
-      beginDrag: (index: number) => {
-        const r = rendererRef.current
-        if (!r || !isSupported) return
-        isDraggingRef.current = true
-        r.beginTabDrag("store-dock", index, 4)
-      },
-      drag: (
-        index: number,
-        currentX: number,
-        startX: number,
-        tabWidth: number
-      ) => {
-        const r = rendererRef.current
-        if (!r || !isSupported) return
-        r.dragTab("store-dock", index, currentX, startX, tabWidth, 4)
-      },
-      endDrag: () => {
-        const r = rendererRef.current
-        isDraggingRef.current = false
-        if (!r || !isSupported) return activeIndex
-        return r.endTabDrag("store-dock", 4)
-      },
       isReady: () => Boolean(rendererRef.current && isSupported),
     }),
-    [activeIndex, isSupported]
+    [isSupported]
   )
 
-  // Initialize WebGL renderer
+  // Initialize WebGL renderer and assets
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -136,22 +96,22 @@ export const StoreBottomNavWebGL = forwardRef<
       renderer = new LiquidGlassRenderer(canvas)
       rendererRef.current = renderer
       renderer.dpr = Math.min(window.devicePixelRatio || 1, 3)
-
-      const backdropCanvas = createLocalizedBackdrop(isDark)
-      renderer.loadWallpaperFromCanvas(backdropCanvas)
       renderer.noContinuousSdf = false
       renderer.directBackdropSample = true
+
+      // Load authentic upstream wallpaper and SDF texture
+      renderer.loadWallpaper("/wallpaper/wallpaper_light.webp").catch(() => {})
+      renderer.loadSdfTexture("/clock_sdf.webp").catch(() => {})
 
       onAvailabilityChange?.(true)
       setIsSupported(true)
     } catch (err) {
-      console.warn("[LiquidGlassWebGL] WebGL initialization failed, falling back to CSS:", err)
+      console.warn("[LiquidGlassWebGL] WebGL initialization failed, falling back to static CSS:", err)
       setIsSupported(false)
       onAvailabilityChange?.(false)
       return
     }
 
-    // Visibility change handler to stop unnecessary animations when page is backgrounded
     const handleVisibilityChange = () => {
       if (document.hidden) {
         renderer?.stopAnimation()
@@ -159,76 +119,65 @@ export const StoreBottomNavWebGL = forwardRef<
         renderer?.requestRender()
       }
     }
+
     document.addEventListener("visibilitychange", handleVisibilityChange)
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange)
-      if (renderer) {
-        try {
-          renderer.dispose()
-        } catch {
-          // ignore cleanup errors
-        }
-      }
+      renderer?.dispose()
       rendererRef.current = null
-      tabsResultRef.current = null
     }
-  }, [isDark, onAvailabilityChange])
+  }, [onAvailabilityChange])
 
-  // Update localized backdrop on theme change
+  // Resize renderer when container dimensions change
   useEffect(() => {
     const renderer = rendererRef.current
-    if (!renderer || !isSupported) return
-    const backdropCanvas = createLocalizedBackdrop(isDark)
-    renderer.loadWallpaperFromCanvas(backdropCanvas)
-  }, [isDark, isSupported])
-
-  // Build and configure elements on resize or dimensions change
-  useEffect(() => {
-    const renderer = rendererRef.current
-    if (!renderer || !isSupported || width <= 0 || height <= 0) return
-
+    if (!renderer || width <= 0 || height <= 0) return
     renderer.resize(width, height)
+    updateTabs()
+  }, [width, height, updateTabs])
 
-    const result = buildStoreBottomTabs(
-      width,
-      height,
-      activeIndex,
-      onSelectTab,
-      rendererRef,
-      palette
-    )
-    tabsResultRef.current = result
-    renderer.setElements(result.elements)
-
-    // Ensure tab index is set without fighting an ongoing drag
-    if (!isDraggingRef.current) {
-      renderer.setTabSelected("store-dock", activeIndex, 4)
-    }
-    renderer.requestRender()
-  }, [activeIndex, height, isDark, isSupported, onSelectTab, palette, width])
-
-  // Sync activeIndex changes when not dragging
+  // Synchronize tab target on activeIndex change
   useEffect(() => {
-    const renderer = rendererRef.current
-    if (!renderer || !isSupported || isDraggingRef.current) return
-    if (lastActiveIndexRef.current !== activeIndex) {
-      lastActiveIndexRef.current = activeIndex
-      renderer.setTabSelected("store-dock", activeIndex, 4)
-    }
+    const r = rendererRef.current
+    if (!r || !isSupported) return
+    r.setTabSelected("store-dock", activeIndex, 4)
   }, [activeIndex, isSupported])
+
+  // Re-build tabs when labels, unread, or theme palette change
+  useEffect(() => {
+    updateTabs()
+  }, [updateTabs])
+
+  // Gesture handling directly via upstream useGestureHandlers
+  const { handlePointerDown, handlePointerMove, handlePointerUp } = useGestureHandlers({
+    canvasRef,
+    rendererRefInternal: rendererRef,
+    elementsRef,
+    interactionsRef,
+    gesturesRef,
+    prevPinchRef,
+  })
 
   if (!isSupported) return null
 
   return (
     <canvas
       ref={canvasRef}
-      className="pointer-events-none absolute inset-0 size-full"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerUp}
+      onPointerCancel={handlePointerUp}
       style={{
-        borderRadius: "inherit",
-        zIndex: 0,
+        display: "block",
+        width: `${width}px`,
+        height: `${height}px`,
+        cursor: "pointer",
+        touchAction: "none",
+        position: "relative",
+        zIndex: 1,
       }}
-      aria-hidden="true"
     />
   )
 })

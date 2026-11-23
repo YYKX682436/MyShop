@@ -4,6 +4,7 @@ import { DP } from './spring'
 declare module './index' {
   interface LiquidGlassRenderer {
     setTabSelected(groupId: string, tabIndex: number, tabsCount: number): void
+    setTabPressed(groupId: string, pressed: boolean, tabsCount?: number): void
     beginTabDrag(groupId: string, startTabIndex: number, tabsCount: number): void
     dragTab(
       groupId: string,
@@ -65,6 +66,37 @@ export const tabsMethods = {
       st.targetPress = 1
       st.targetScaleX = st.pressedScale
       st.targetScaleY = st.pressedScale
+    }
+    this.markGroupDirty(groupId)
+    this.startAnimation()
+  },
+
+  /**
+   * Immediately set the tab indicator's press state (scale → 78/56)
+   * on finger down without requiring movement or entering drag mode.
+   */
+  setTabPressed(
+    this: LiquidGlassRenderer,
+    groupId: string,
+    pressed: boolean,
+    tabsCount = 4
+  ) {
+    const st = this.ensureToggleState(
+      groupId,
+      0,
+      LiquidGlassRenderer.TAB_PRESSED_SCALE,
+      tabsCount - 1
+    )
+    if (pressed) {
+      st.targetPress = 1
+      st.targetScaleX = st.pressedScale
+      st.targetScaleY = st.pressedScale
+    } else {
+      if (!st.isDragging) {
+        st.targetPress = 0
+        st.targetScaleX = 1
+        st.targetScaleY = 1
+      }
     }
     this.markGroupDirty(groupId)
     this.startAnimation()

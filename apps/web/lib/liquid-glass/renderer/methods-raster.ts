@@ -202,6 +202,42 @@ export const rasterMethods = {
       ctx.fill(p)
       ctx.restore()
       textYOffset = (iconLayoutSize + gap) / 2
+
+      // Draw optional unread badge at top-right of icon
+      if (t.badge && t.badge.text) {
+        ctx.save()
+        const badgeText = t.badge.text
+        const badgeRadius = 6.5
+        const badgeFontSize = 9
+        ctx.font = `700 ${badgeFontSize}px ${fontFamily}`
+        const textMetrics = ctx.measureText(badgeText)
+        const textW = textMetrics.width
+        const badgeW = Math.max(badgeRadius * 2, textW + 6)
+        const badgeH = badgeRadius * 2
+        const badgeX = iconCx + iconDrawSize / 2 + 3
+        const badgeY = iconCy - iconDrawSize / 2 + 2
+
+        const bg = t.badge.color ?? [0.937, 0.267, 0.267, 1]
+        ctx.fillStyle = `rgba(${Math.round(bg[0] * 255)}, ${Math.round(
+          bg[1] * 255
+        )}, ${Math.round(bg[2] * 255)}, ${bg[3]})`
+        ctx.beginPath()
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(badgeX - badgeW / 2, badgeY - badgeH / 2, badgeW, badgeH, badgeRadius)
+        } else {
+          ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2)
+        }
+        ctx.fill()
+
+        const tc = t.badge.textColor ?? [1, 1, 1, 1]
+        ctx.fillStyle = `rgba(${Math.round(tc[0] * 255)}, ${Math.round(
+          tc[1] * 255
+        )}, ${Math.round(tc[2] * 255)}, ${tc[3]})`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(badgeText, badgeX, badgeY + 0.5)
+        ctx.restore()
+      }
     }
 
     if (t.align === 'center') {

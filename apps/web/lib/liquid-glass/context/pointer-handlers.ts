@@ -224,6 +224,10 @@ export function useGestureHandlers(
         }
       }
 
+      if (hit && interactions?.[hit.id]?.onPointerDown) {
+        interactions[hit.id].onPointerDown!({ x, y })
+      }
+
       try {
         canvas.setPointerCapture(e.pointerId)
       } catch {
@@ -495,6 +499,7 @@ export function useGestureHandlers(
             // Treat as a tap (no scroll takeover happened and no drag started).
             interactionsRef.current?.[id]?.onTap?.({ x, y })
           }
+          interactionsRef.current?.[id]?.onPointerUp?.({ x, y })
         }
       }
 

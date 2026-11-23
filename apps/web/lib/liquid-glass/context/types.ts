@@ -120,6 +120,12 @@ export interface ElementInteraction {
    *  Faithful to Compose's detectTransformGestures. Only fires when 2+ pointers
    *  are active on the element. */
   onTransform?: (pan: { x: number; y: number }, gestureZoom: number, gestureRotate: number) => void
+  /** Optional pointerdown hook — fires immediately when pointer lands on element */
+  onPointerDown?: (pos: { x: number; y: number }) => void
+  /** Optional pointerup hook — fires when pointer lifts from element */
+  onPointerUp?: (pos: { x: number; y: number }) => void
+  /** Optional pointercancel hook — fires when pointer leaves or gesture is cancelled */
+  onPointerCancel?: () => void
 }
 
 /** Internal gesture mode — set on pointerdown, may transition during move. */

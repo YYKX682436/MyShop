@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { ChevronUp, Loader2, Minus, Plus, ShoppingCart } from "lucide-react"
+import { ChevronUp, Loader2, Minus, Plus, ShoppingCart, X } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
@@ -18,6 +18,7 @@ import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { PaymentSelector } from "@/components/shared/payment-selector"
 import {
   Drawer,
+  DrawerClose,
   DrawerContent,
   DrawerDescription,
   DrawerHeader,
@@ -349,10 +350,16 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
         </div>
       </div>
 
-      <DrawerContent className="storefront-content-width static-material action-bar-material mx-auto max-w-lg origin-bottom outline-none rounded-t-[1.75rem] border-x border-t border-border-subtle/80 bg-surface/90 shadow-2xl backdrop-blur-2xl">
-        <div className="flex max-h-[min(78dvh,760px)] flex-col pb-[env(safe-area-inset-bottom)]">
-          <DrawerHeader className="shrink-0 border-b border-border-subtle/60 px-4 pb-2.5 pt-2 text-left sm:px-6 sm:pt-3">
-            <DrawerTitle className="text-base font-semibold">{t("product.buyNow")}</DrawerTitle>
+      <DrawerContent className="storefront-content-width static-material action-bar-material mx-auto max-w-lg origin-bottom outline-none rounded-t-[1.75rem] border-x border-t border-border-subtle/80 bg-surface shadow-2xl backdrop-blur-2xl">
+        <div className="flex max-h-[min(82dvh,760px)] flex-col">
+          <DrawerHeader className="shrink-0 border-b border-border-subtle/60 px-4 pb-2.5 pt-3 text-left sm:px-6">
+            <div className="flex items-center justify-between">
+              <DrawerTitle className="text-base font-semibold">{t("product.buyNow")}</DrawerTitle>
+              <DrawerClose className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground">
+                <span className="sr-only">{t("common.close")}</span>
+                <X className="size-4" />
+              </DrawerClose>
+            </div>
             <DrawerDescription className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
               {product.title}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
             </DrawerDescription>
@@ -573,7 +580,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
               <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mt-4" />
             </div>
 
-            <div data-slot="purchase-drawer-footer" className="shrink-0 border-t border-border-subtle/80 bg-surface/90 px-4 py-3 backdrop-blur-xl sm:px-6">
+            <div data-slot="purchase-drawer-footer" className="shrink-0 border-t border-border-subtle/50 bg-surface px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
               {paymentFallbackAction && (
                 <div className="mb-3 flex flex-col items-center gap-2 rounded-xl border border-primary/20 bg-primary/[0.06] px-3 py-2.5 text-center" role="alert">
                   <p className="text-xs text-muted-foreground">{t("payment.actionFallback")}</p>

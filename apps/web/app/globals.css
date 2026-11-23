@@ -1131,6 +1131,7 @@
 .store-dock {
   position: relative;
   width: min(calc(100vw - 1.5rem), 26rem);
+  height: 4rem;
   overflow: hidden;
   pointer-events: auto;
   border-radius: var(--radius-pill);
@@ -1142,14 +1143,6 @@
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-}
-
-.store-dock[data-webgl-active="true"] .store-dock-active {
-  opacity: 0;
-  pointer-events: none;
-  border: 0;
-  box-shadow: none;
-  background: transparent;
 }
 
 .store-dock-track {
@@ -1213,39 +1206,6 @@
 
 .store-dock-item[data-preview-active="true"] .store-dock-label {
   font-weight: 700;
-}
-
-.store-dock-active {
-  position: absolute;
-  top: 0.25rem;
-  bottom: 0.25rem;
-  z-index: 0;
-  border: 1px solid hsl(var(--material-border) / 0.3);
-  border-radius: var(--radius-pill);
-  background-color: hsl(var(--material-regular) / 0.55);
-  background-image: linear-gradient(180deg, hsl(0 0% 100% / 0.24), hsl(0 0% 100% / 0) 58%);
-  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.5), var(--shadow-sm);
-  pointer-events: none;
-  user-select: none;
-}
-
-.store-dock-drag-hit-area {
-  position: absolute;
-  top: 0.25rem;
-  bottom: 0.25rem;
-  z-index: 3;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  cursor: grab;
-  pointer-events: auto;
-  touch-action: pan-y;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
-.store-dock-drag-hit-area:active {
-  cursor: grabbing;
 }
 
 .storefront-main--with-dock {
@@ -1405,7 +1365,6 @@
   .store-dock-viewport { bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
   .store-dock { width: min(calc(100vw - var(--storefront-gutter) - var(--storefront-gutter)), 26rem); border-radius: 1.125rem; }
   .store-dock-item { min-height: 3.25rem; }
-  .store-dock-active { border: 0; border-radius: 0.875rem; background: hsl(var(--primary) / 0.12); box-shadow: none; }
   .store-dock-item[data-preview-active="true"] { color: hsl(var(--primary)); }
   .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
   .product-purchase-dock-viewport .action-bar-material { border-radius: 0.875rem; }

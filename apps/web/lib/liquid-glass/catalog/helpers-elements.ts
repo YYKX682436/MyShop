@@ -72,6 +72,7 @@ export function makeText(
     maxLines?: number
     halo?: 'auto' | 'light' | 'dark' | 'none'
     icon?: { path: string; size: number; color: [number, number, number, number]; viewport?: number; layoutSize?: number }
+    badge?: { text: string; color?: [number, number, number, number]; textColor?: [number, number, number, number] }
     /** Press tint color for interactive text items (ripple color).
      *  Faithful to MainContent.kt: black in light theme, white in dark. */
     pressTintColor?: [number, number, number, number]
@@ -113,6 +114,7 @@ export function makeText(
       maxLines: opts.maxLines,
       halo: opts.halo ?? 'auto',
       icon: opts.icon,
+      badge: opts.badge,
     },
   }
 }

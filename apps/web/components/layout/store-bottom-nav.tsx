@@ -1,9 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type PointerEvent as ReactPointerEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { House, ReceiptText, MessageCircle, UserRound, type LucideIcon } from "lucide-react"
-import { animate, motion, useMotionValue, useReducedMotion } from "motion/react"
+import { useReducedMotion } from "motion/react"
 import { useLocale } from "@/lib/context"
 import type { TranslationKey } from "@/lib/i18n"
 import { getStorefrontDockAction } from "@/lib/storefront-dock"
@@ -27,33 +27,13 @@ const DOCK_ITEM_DEFINITIONS: readonly StoreDockItemDefinition[] = [
   { key: "me", labelKey: "nav.me", icon: UserRound },
 ]
 
-interface DockMetrics {
-  slotWidth: number
-  slotLefts: number[]
-  slotCenters: number[]
-  minX: number
-  maxX: number
-}
-
-function getNearestDockIndex(center: number, slotCenters: readonly number[]): number {
-  if (slotCenters.length === 0) return 0
-  let nearestIndex = 0
-  let minDistance = Math.abs(center - slotCenters[0])
-  for (let i = 1; i < slotCenters.length; i++) {
-    const dist = Math.abs(center - slotCenters[i])
-    if (dist < minDistance) {
-      nearestIndex = i
-      minDistance = dist
-    }
-  }
-  return nearestIndex
-}
+const DOCK_HEIGHT = 64
 
 export function StoreBottomNav() {
   const pathname = usePathname()
   const router = useRouter()
   const reducedMotion = useReducedMotion() ?? false
-  const [isNavigationPending, startNavigationTransition] = useTransition()
+  const [, startNavigationTransition] = useTransition()
   const { t } = useLocale()
   const summary = useMessageSummary()
   const unread = summary.announcements.unread + summary.support.unread
@@ -62,22 +42,12 @@ export function StoreBottomNav() {
   const activeKey = isVisible ? getStorefrontActiveTab(pathname) : null
 
   const dockRef = useRef<HTMLDivElement>(null)
-  const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const isDraggingRef = useRef(false)
-  const dragMovedRef = useRef(false)
-  const dragOriginXRef = useRef(0)
-  const dragPointerRef = useRef<{ id: number; x: number } | null>(null)
-  const suppressTapRef = useRef(false)
-  const animationRef = useRef<ReturnType<typeof animate> | null>(null)
   const pendingTargetRef = useRef<string | null>(null)
+  const webglRef = useRef<StoreBottomNavWebGLHandle | null>(null)
 
-  const indicatorX = useMotionValue(0)
-  const [metrics, setMetrics] = useState<DockMetrics | null>(null)
-  const [dragPreviewKey, setDragPreviewKey] = useState<DockKey | null>(null)
   const [dockDimensions, setDockDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 64 })
   const [webglAvailable, setWebglAvailable] = useState(false)
   const [isDark, setIsDark] = useState(false)
-  const webglRef = useRef<StoreBottomNavWebGLHandle | null>(null)
 
   useEffect(() => {
     const updateDark = () => setIsDark(document.documentElement.classList.contains("dark"))
@@ -92,39 +62,28 @@ export function StoreBottomNav() {
     [t],
   )
 
+  const labels = useMemo<readonly [string, string, string, string]>(
+    () => [
+      navItems[0]?.label || "首页",
+      navItems[1]?.label || "订单",
+      navItems[2]?.label || "消息",
+      navItems[3]?.label || "我的",
+    ],
+    [navItems],
+  )
+
+  const activeIndex = activeKey ? navItems.findIndex((item) => item.key === activeKey) : 0
+
   // Measure dock layout
   const measureDock = useCallback(() => {
     const dock = dockRef.current
     if (!dock) return
-    const elements = itemRefs.current.slice(0, navItems.length)
-    if (elements.some((el) => !el)) return
-
     const dockRect = dock.getBoundingClientRect()
-    setDockDimensions({
-      width: Math.round(dockRect.width),
-      height: Math.round(dockRect.height) || 64,
-    })
-    const slotRects = elements.map((el) => el!.getBoundingClientRect())
-    const slotLefts = slotRects.map((r) => r.left - dockRect.left)
-    const slotCenters = slotRects.map((r) => r.left + r.width / 2)
-    const minX = slotLefts[0]
-    const maxX = slotLefts[slotLefts.length - 1] - minX
-    const slotWidth = slotRects[0].width
-
-    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || slotWidth <= 0) return
-
-    setMetrics((prev) => {
-      if (
-        prev &&
-        Math.abs(prev.slotWidth - slotWidth) < 0.5 &&
-        Math.abs(prev.minX - minX) < 0.5 &&
-        Math.abs(prev.maxX - maxX) < 0.5
-      ) {
-        return prev
-      }
-      return { slotWidth, slotLefts, slotCenters, minX, maxX }
-    })
-  }, [navItems.length])
+    const width = Math.round(dockRect.width)
+    if (width > 0) {
+      setDockDimensions((prev) => (prev.width === width && prev.height === DOCK_HEIGHT ? prev : { width, height: DOCK_HEIGHT }))
+    }
+  }, [])
 
   useEffect(() => {
     if (!isVisible) return
@@ -140,45 +99,6 @@ export function StoreBottomNav() {
     }
   }, [isVisible, measureDock])
 
-  // Move indicator to a target offset
-  const snapIndicator = useCallback(
-    (target: number, onComplete?: () => void) => {
-      animationRef.current?.stop()
-      animationRef.current = null
-
-      if (reducedMotion) {
-        indicatorX.set(target)
-        onComplete?.()
-        return
-      }
-
-      const anim = animate(indicatorX, target, {
-        type: "spring",
-        stiffness: 480,
-        damping: 38,
-        mass: 0.5,
-      })
-      animationRef.current = anim
-      anim.then(() => {
-        if (animationRef.current === anim) {
-          animationRef.current = null
-          onComplete?.()
-        }
-      })
-    },
-    [indicatorX, reducedMotion],
-  )
-
-  const activeIndex = activeKey ? navItems.findIndex((item) => item.key === activeKey) : 0
-
-  const getOffsetForIndex = useCallback(
-    (idx: number, m: DockMetrics) => {
-      if (idx < 0 || idx >= m.slotLefts.length) return 0
-      return m.slotLefts[idx] - m.minX
-    },
-    [],
-  )
-
   // Clear pending target when destination is reached
   useEffect(() => {
     if (pendingTargetRef.current) {
@@ -187,26 +107,6 @@ export function StoreBottomNav() {
       }
     }
   }, [pathname])
-
-  // Settle navigation intent and recover indicator when transition completes
-  useEffect(() => {
-    if (!isNavigationPending && pendingTargetRef.current) {
-      const target = pendingTargetRef.current
-      pendingTargetRef.current = null
-      if (metrics && activeKey && normalizeStorefrontPath(pathname) !== normalizeStorefrontPath(target)) {
-        snapIndicator(getOffsetForIndex(activeIndex, metrics))
-      }
-    }
-  }, [isNavigationPending, pathname, activeKey, activeIndex, metrics, getOffsetForIndex, snapIndicator])
-
-  // Keep indicator in sync with authoritative pathname when idle
-  useEffect(() => {
-    if (!metrics || isDraggingRef.current || pendingTargetRef.current) return
-    const targetOffset = getOffsetForIndex(activeIndex, metrics)
-    snapIndicator(targetOffset)
-    setDragPreviewKey(null)
-    webglRef.current?.selectTab(activeIndex)
-  }, [activeIndex, getOffsetForIndex, metrics, snapIndicator])
 
   // Navigate immediately to a dock item, accounting for any in-flight navigation intent
   const navigateToKey = useCallback(
@@ -218,9 +118,6 @@ export function StoreBottomNav() {
       pendingTargetRef.current = targetPathname
 
       const targetIndex = navItems.findIndex((item) => item.key === key)
-      if (metrics && targetIndex >= 0) {
-        snapIndicator(getOffsetForIndex(targetIndex, metrics))
-      }
       if (targetIndex >= 0) {
         webglRef.current?.selectTab(targetIndex)
       }
@@ -231,13 +128,10 @@ export function StoreBottomNav() {
         })
       } catch {
         pendingTargetRef.current = null
-        if (metrics && activeKey) {
-          snapIndicator(getOffsetForIndex(activeIndex, metrics))
-        }
       }
       return true
     },
-    [activeKey, activeIndex, getOffsetForIndex, metrics, navItems, pathname, router, snapIndicator, startNavigationTransition],
+    [navItems, pathname, router, startNavigationTransition],
   )
 
   const requestDockAction = useCallback(
@@ -248,109 +142,26 @@ export function StoreBottomNav() {
     [activeKey, navigateToKey],
   )
 
-  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    dragOriginXRef.current = indicatorX.get()
-    dragPointerRef.current = { id: event.pointerId, x: event.clientX }
-    dragMovedRef.current = false
-    suppressTapRef.current = false
-    event.currentTarget.setPointerCapture(event.pointerId)
-  }, [indicatorX])
-
-  const handleDragStart = useCallback(() => {
-    isDraggingRef.current = true
-    dragMovedRef.current = false
-    suppressTapRef.current = false
-    animationRef.current?.stop()
-    webglRef.current?.beginDrag(activeIndex)
-  }, [activeIndex])
-
-  const updateDragPreview = useCallback(() => {
-    if (!metrics || !isDraggingRef.current) return
-    dragMovedRef.current = true
-    const currentCenter = metrics.slotCenters[0] + indicatorX.get()
-    const nearestIndex = getNearestDockIndex(currentCenter, metrics.slotCenters)
-    const key = navItems[nearestIndex]?.key
-    if (key) setDragPreviewKey(key)
-
-    const dragDelta = indicatorX.get() - dragOriginXRef.current
-    const startX = dragPointerRef.current?.x ?? 0
-    webglRef.current?.drag(activeIndex, startX + dragDelta, startX, metrics.slotWidth)
-  }, [activeIndex, indicatorX, metrics, navItems])
-
-  const finishDrag = useCallback((offsetX: number) => {
-    if (!isDraggingRef.current) return
-    isDraggingRef.current = false
-    const finalSnappedIndex = webglRef.current?.endDrag()
-
-    if (!metrics || !dragMovedRef.current) {
-      dragMovedRef.current = false
-      setDragPreviewKey(null)
-      if (metrics) snapIndicator(getOffsetForIndex(activeIndex, metrics))
-      return
-    }
-
-    suppressTapRef.current = true
-    // The motion value can lag behind the final pointer event, especially for
-    // a quick swipe. Use the gesture's final offset for the release target.
-    const finalX = Math.max(0, Math.min(metrics.maxX, dragOriginXRef.current + offsetX))
-    const currentCenter = metrics.slotCenters[0] + finalX
-    const nearestIndex = finalSnappedIndex ?? getNearestDockIndex(currentCenter, metrics.slotCenters)
-    const targetItem = navItems[nearestIndex]
-
-    if (targetItem) {
-      const navigated = navigateToKey(targetItem.key)
-      if (!navigated) {
-        snapIndicator(getOffsetForIndex(nearestIndex, metrics))
+  const finishDrag = useCallback(
+    (targetIndex: number) => {
+      const targetItem = navItems[targetIndex]
+      if (targetItem) {
+        navigateToKey(targetItem.key)
       }
-    } else {
-      snapIndicator(getOffsetForIndex(activeIndex, metrics))
-    }
-
-    setDragPreviewKey(null)
-  }, [activeIndex, getOffsetForIndex, metrics, navItems, navigateToKey, snapIndicator])
-
-  const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const start = dragPointerRef.current
-    dragPointerRef.current = null
-    if (!start || start.id !== event.pointerId || isDraggingRef.current || dragMovedRef.current) return
-    const offsetX = event.clientX - start.x
-    // Motion batches drag events per frame. A complete fast gesture can end
-    // before its first frame, so handle that release using the pointer delta.
-    if (Math.abs(offsetX) > 3) {
-      isDraggingRef.current = true
-      dragMovedRef.current = true
-      finishDrag(offsetX)
-    }
-  }, [finishDrag])
-
-  const cancelDrag = useCallback(() => {
-    if (!isDraggingRef.current) return
-    isDraggingRef.current = false
-    dragMovedRef.current = false
-    suppressTapRef.current = true
-    setDragPreviewKey(null)
-    webglRef.current?.endDrag()
-    if (metrics) snapIndicator(getOffsetForIndex(activeIndex, metrics))
-  }, [activeIndex, getOffsetForIndex, metrics, snapIndicator])
-
-  const handleIndicatorTap = useCallback(() => {
-    if (suppressTapRef.current || dragMovedRef.current) {
-      suppressTapRef.current = false
-      dragMovedRef.current = false
-      return
-    }
-    if (activeKey) requestDockAction(activeKey)
-  }, [activeKey, requestDockAction])
-
-  const visualActiveKey = dragPreviewKey ?? activeKey
+    },
+    [navItems, navigateToKey],
+  )
 
   if (!isVisible || !activeKey) return null
+
+  const isWebGLActive = webglAvailable && !reducedMotion
 
   return (
     <div className="store-dock-viewport">
       <nav
+        ref={dockRef}
         className="store-dock static-material"
-        data-webgl-active={webglAvailable && !reducedMotion ? "true" : "false"}
+        data-webgl-active={isWebGLActive ? "true" : "false"}
         aria-label={t("nav.main")}
       >
         {!reducedMotion && dockDimensions.width > 0 && (
@@ -360,76 +171,50 @@ export function StoreBottomNav() {
             height={dockDimensions.height}
             activeIndex={activeIndex}
             isDark={isDark}
-            onSelectTab={(idx) => {
-              const item = navItems[idx]
-              if (item) requestDockAction(item.key)
-            }}
+            labels={labels}
+            unread={unread}
+            onSelectTab={finishDrag}
             onAvailabilityChange={setWebglAvailable}
           />
         )}
-        <div ref={dockRef} className="store-dock-track">
-          {navItems.map((item, index) => {
+
+        {/* Accessible navigation layer */}
+        <div className={cn("store-dock-track", isWebGLActive && "sr-only")}>
+          {navItems.map((item) => {
             const Icon = item.icon
             const isActive = activeKey === item.key
-            const isPreviewed = visualActiveKey === item.key
 
             return (
               <button
                 key={item.key}
-                ref={(element) => {
-                  itemRefs.current[index] = element
-                }}
                 type="button"
                 data-testid={`store-dock-${item.key}`}
                 onClick={() => requestDockAction(item.key)}
                 aria-label={item.key === "messages" && unread > 0 ? `${item.label}，${unread} 条未读` : item.label}
                 aria-current={isActive ? "page" : undefined}
                 aria-pressed={isActive}
-                data-preview-active={isPreviewed ? "true" : "false"}
                 className={cn(
                   "store-dock-item",
-                  isPreviewed ? "text-foreground" : "text-muted-foreground",
+                  isActive ? "text-primary font-semibold" : "text-muted-foreground",
                 )}
               >
                 <span className="store-dock-item-content">
-                  <span className="relative"><Icon
-                    className="size-[18px]"
-                    strokeWidth={isPreviewed ? 2.1 : 1.75}
-                    aria-hidden="true"
-                  />{item.key === "messages" && unread > 0 && <span aria-hidden="true" className="absolute -right-2 -top-1 min-w-3 rounded-full bg-destructive px-1 text-center text-[9px] leading-3 text-white">{unread > 99 ? "99+" : unread}</span>}</span>
+                  <span className="relative">
+                    <Icon className="size-[18px]" strokeWidth={isActive ? 2.1 : 1.75} aria-hidden="true" />
+                    {item.key === "messages" && unread > 0 && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-2 -top-1 min-w-3 rounded-full bg-destructive px-1 text-center text-[9px] leading-3 text-white"
+                      >
+                        {unread > 99 ? "99+" : unread}
+                      </span>
+                    )}
+                  </span>
                   <span className="store-dock-label">{item.label}</span>
                 </span>
               </button>
             )
           })}
-
-          {metrics && activeKey && (
-            <>
-              <motion.div
-                aria-hidden="true"
-                role="presentation"
-                className="store-dock-active"
-                style={{ left: metrics.minX, width: metrics.slotWidth, x: indicatorX }}
-              />
-              <motion.div
-                aria-hidden="true"
-                role="presentation"
-                className="store-dock-drag-hit-area"
-                style={{ left: metrics.minX, width: metrics.slotWidth, x: indicatorX }}
-                drag="x"
-                dragConstraints={{ left: 0, right: metrics.maxX }}
-                dragElastic={0}
-                dragMomentum={false}
-                onTap={handleIndicatorTap}
-                onPointerDown={handlePointerDown}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={cancelDrag}
-                onDragStart={handleDragStart}
-                onDrag={updateDragPreview}
-                onDragEnd={(_, info) => finishDrag(info.offset.x)}
-              />
-            </>
-          )}
         </div>
       </nav>
     </div>
