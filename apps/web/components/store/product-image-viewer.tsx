@@ -1,7 +1,6 @@
 "use client"
 
 import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { ZoomIn } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Dialog, DialogOverlay, DialogPortal, DialogTrigger } from "@/components/ui/dialog"
 import { ProductImage } from "@/components/store/product-image"
@@ -110,9 +109,6 @@ export function ProductImageViewer({ src, previewSrc = src, title }: { src: stri
       <DialogTrigger asChild>
         <button ref={triggerRef} type="button" className="product-image-stage product-image-stage--detail block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`${t("product.viewImage")}: ${title}`}>
           <ProductImage src={previewSrc} alt={title} priority sizes="(min-width: 1024px) 55vw, (min-width: 640px) 192px, (min-width: 426px) 145px, (min-width: 324px) 34vw, 110px" className="product-image-stage-image" />
-          <span aria-hidden="true" className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-full bg-black/65 p-1.5 text-white">
-            <ZoomIn className="size-3.5" />
-          </span>
         </button>
       </DialogTrigger>
       <DialogPortal>

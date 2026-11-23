@@ -123,7 +123,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       {/* Product Description */}
       {(product.detail_md?.trim() || product.description?.trim()) && (
         <div className="product-description-region">
-          <ProductDescription product={product} />
+          <ProductDescription product={product} separated={false} />
         </div>
       )}
 

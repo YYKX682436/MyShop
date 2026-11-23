@@ -138,13 +138,14 @@ try {
         const r = document.querySelector(selector).getBoundingClientRect()
         return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }
       }
-      return { image: rect(".product-image-stage--detail"), title: rect(".product-summary h1"), price: rect(".product-summary-main div"), meta: rect(".product-summary-meta"), scrollWidth: document.documentElement.scrollWidth, viewport: innerWidth, delivery: document.querySelector(".product-summary-delivery").textContent }
+      return { image: rect(".product-image-stage--detail"), title: rect(".product-summary h1"), price: rect(".product-summary-main div"), meta: rect(".product-summary-meta"), breadcrumb: getComputedStyle(document.querySelector(".product-breadcrumb")).display, scrollWidth: document.documentElement.scrollWidth, viewport: innerWidth, delivery: document.querySelector(".product-summary-delivery").textContent }
     })
     assert.ok(Math.abs(measurements.image.width - expected) < 2, `${width}px preview width: ${JSON.stringify(measurements)}`)
     assert.ok(Math.abs(measurements.image.width - measurements.image.height) < 1, `${width}px preview must be square`)
     assert.ok(measurements.title.left >= measurements.image.right && measurements.title.right <= width, "title must fit beside image")
     assert.ok(measurements.price.top >= measurements.title.bottom - 1 && measurements.price.right <= width, "price must follow title without overflow")
-    assert.ok(measurements.meta.top >= Math.max(measurements.image.bottom, measurements.price.bottom) - 1, "stock and sales must follow the summary row")
+    assert.ok(measurements.meta.left >= measurements.image.right && measurements.meta.right <= width && measurements.meta.top >= measurements.price.bottom - 1, "stock and sales must fit beside the image after the price")
+    assert.equal(measurements.breadcrumb, "none", "mobile detail should not reserve a back row")
     assert.ok(measurements.scrollWidth <= measurements.viewport, "page must not overflow horizontally")
     assert.equal(measurements.delivery, "手动发货")
   }
@@ -170,6 +171,12 @@ try {
   const previewUrl = await page.locator(".product-image-stage--detail img").evaluate(img => img.currentSrc)
   assert.ok(new URL(previewUrl).pathname === "/_next/image" && Number(new URL(previewUrl).searchParams.get("w")) <= 384,
     "mobile preview must request a small optimized image")
+  assert.equal(await imageButton().locator("svg").count(), 0, "preview should not cover the image with an icon")
+  const separators = await page.evaluate(() => [
+    getComputedStyle(document.querySelector(".product-description-region")).borderTopWidth,
+    getComputedStyle(document.querySelector(".product-description-content > div")).borderBottomWidth,
+  ])
+  assert.deepEqual(separators, ["0px", "0px"], "product details should not be separated by lines")
   await page.getByRole("button", { name: "立即购买" }).click()
   const purchase = page.getByRole("dialog", { name: "立即购买" })
   await purchase.getByRole("button", { name: "季卡" }).click()
@@ -295,6 +302,7 @@ try {
   await navigate("square")
   const desktop = await page.locator(".product-image-stage--detail").boundingBox()
   assert.ok(Math.abs(desktop.width / desktop.height - 0.8) < 0.01, "desktop preview retains the existing 4:5 layout")
+  assert.equal(await page.locator(".product-breadcrumb").isVisible(), true, "desktop breadcrumb should remain available")
   await page.emulateMedia({ colorScheme: "dark" })
   await page.setViewportSize({ width: 390, height: 844 })
   await navigate("square")
