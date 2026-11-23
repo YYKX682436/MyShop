@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url)
 const nextBin = require.resolve("next/dist/bin/next")
 const image = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#3188dc"/><path d="M0 100H400V200H0z" fill="#f4dd36"/><path d="M200 0V400" stroke="#f43f5e" stroke-width="28"/><text x="20" y="290" font-size="48">PRODUCT</text></svg>`)).png().toBuffer()
 const products = Array.from({ length: 30 }, (_, index) => ({
-  id: `fixture-${index}`, title: `测试商品 ${index}`, price: index + 1,
+  id: `fixture-${index}`, title: index === 10 ? "原始中文商品标题包含很多文字用于验证两行省略和真实背景截图".repeat(5) : `测试商品 ${index}`, price: index + 1,
   cover_url: `/api/uploads/nav-fixture-${index}.png`, stock_available: 10, unlimited: false, has_specs: false,
   retail_price: index + 1, description: "测试商品", detail_md: null, specs: [], delivery_type: "AUTO",
   sales_count: 0, initial_sales: 0, customer_input_fields: [],
@@ -70,6 +70,27 @@ try {
   const context = await browser.newContext({ viewport: { width: 390, height: 600 }, deviceScaleFactor: 1, hasTouch: true })
   await context.addInitScript(() => {
     window.__navResources = { textures: 0, framebuffers: 0, draws: 0 }
+    const data = Object.getOwnPropertyDescriptor(CharacterData.prototype, "data")
+    Object.defineProperty(CharacterData.prototype, "data", {
+      ...data,
+      set(value) {
+        data.set.call(this, value)
+        if (this.parentElement === window.__clampTarget && String(value).endsWith("…")) {
+          window.__clampWrites = (window.__clampWrites || 0) + 1
+          if (window.__businessTitleToWrite) {
+            const next = window.__businessTitleToWrite
+            window.__businessTitleToWrite = null
+            queueMicrotask(() => {
+              this.data = next
+              window.__navTextureLog = []
+              window.__recordNavTextures = true
+              window.__businessTitleInjected = true
+            })
+          }
+        }
+        if (this.parentElement === window.__ellipsisTarget && String(value).endsWith("…")) window.__ellipsisWrites = (window.__ellipsisWrites || 0) + 1
+      },
+    })
     for (const [create, remove, field] of [["createTexture", "deleteTexture", "textures"], ["createFramebuffer", "deleteFramebuffer", "framebuffers"]]) {
       const nativeCreate = WebGLRenderingContext.prototype[create]
       const nativeDelete = WebGLRenderingContext.prototype[remove]
@@ -106,7 +127,10 @@ try {
       WebGLRenderingContext.prototype[method] = function (...args) {
         const source = args.at(-1)
         if (this.canvas.classList.contains("store-liquid-canvas") && source instanceof HTMLCanvasElement &&
-            source.width === this.canvas.width && source.height === this.canvas.height) window.__navBackdrop = source.toDataURL()
+            source.width === this.canvas.width && source.height === this.canvas.height) {
+          window.__navBackdrop = source.toDataURL()
+          if (window.__recordNavTextures) window.__navTextureLog.push(window.__navBackdrop)
+        }
         return nativeUpload.apply(this, args)
       }
     }
@@ -151,6 +175,69 @@ try {
   }
   await gotoHome()
   await checkMutedContent()
+
+  // Exercise SnapDOM's real live-text clamp and single-line ellipsis work in
+  // the capture window, then leave the page idle long enough to catch loops.
+  const longTitle = page.locator(".product-card-title").nth(10)
+  await longTitle.waitFor()
+  await page.evaluate(() => {
+    const title = document.querySelectorAll(".product-card-title")[10]
+    const single = document.createElement("span")
+    single.className = "truncate"
+    single.style.cssText = "display:block;max-width:100%;font-size:14px"
+    single.textContent = "这一行很长的中文内容必须触发单行省略并参与背景捕获".repeat(5)
+    title.after(single)
+    window.__clampTarget = title
+    window.__ellipsisTarget = single
+    window.scrollTo(0, window.scrollY + title.getBoundingClientRect().top - (innerHeight - 77))
+  })
+  await page.waitForFunction(() => {
+    const title = window.__clampTarget, single = window.__ellipsisTarget
+    const nav = document.querySelector(".store-liquid-nav")
+    return title?.scrollHeight > title?.clientHeight && single?.scrollWidth > single?.clientWidth &&
+      window.__clampWrites > 0 && window.__ellipsisWrites > 0 && nav?.dataset.mode === "webgl" && nav.dataset.backdropPending === "false"
+  }, null, { timeout: 20000 })
+  await page.waitForTimeout(1000)
+  const idleCount = Number(await page.locator(".store-liquid-nav").getAttribute("data-capture-count"))
+  await page.waitForTimeout(5200)
+  assert.equal(await page.locator(".store-liquid-nav").getAttribute("data-mode"), "webgl", "long clamped text must remain in WebGL mode")
+  assert.equal(Number(await page.locator(".store-liquid-nav").getAttribute("data-capture-count")), idleCount, "clamped text must not trigger endless captures")
+  const oldBackdrop = await page.evaluate(() => window.__navBackdrop)
+  const changedTitle = "更新后的真实商品内容显示新的中文名称与另一组文字".repeat(5)
+  await page.evaluate(next => {
+    window.__businessTitleToWrite = next
+    window.__clampTarget.classList.toggle("nav-test-trigger")
+  }, changedTitle)
+  await page.waitForFunction(() => window.__businessTitleInjected, null, { timeout: 15000 })
+  await page.waitForFunction(() => window.__navTextureLog?.length > 0, null, { timeout: 15000 })
+  await page.waitForFunction(() => {
+    const nav = document.querySelector(".store-liquid-nav")
+    return nav?.dataset.mode === "webgl" && nav.dataset.backdropPending === "false"
+  }, null, { timeout: 15000 })
+  assert.equal(await longTitle.textContent(), changedTitle, "SnapDOM must not restore the old business title")
+  const firstNewBackdrop = await page.evaluate(() => {
+    window.__recordNavTextures = false
+    return window.__navTextureLog[0]
+  })
+  const titleBox = await longTitle.boundingBox()
+  const drawingBox = await page.locator(".store-liquid-canvas").boundingBox()
+  const region = { left: Math.ceil(titleBox.x), top: Math.ceil(titleBox.y),
+    width: Math.floor(titleBox.width) - 1, height: Math.floor(titleBox.height) - 1 }
+  assert.ok(region.top >= 0 && region.top + region.height <= 600 && region.left >= 0 && region.left + region.width <= 390)
+  await page.evaluate(() => { document.querySelector(".store-liquid-surface").style.display = "none" })
+  const pagePixels = await sharp(await page.screenshot()).extract(region).removeAlpha().raw().toBuffer()
+  await page.evaluate(() => { document.querySelector(".store-liquid-surface").style.display = "" })
+  const textureRegion = { ...region, left: Math.round(region.left - drawingBox.x), top: Math.round(region.top - drawingBox.y) }
+  const readTexture = data => sharp(Buffer.from(data.split(",")[1], "base64")).extract(textureRegion).removeAlpha().raw().toBuffer()
+  const previousPixels = await readTexture(oldBackdrop)
+  const newPixels = await readTexture(firstNewBackdrop)
+  const meanError = pixels => pixels.reduce((sum, value, i) => sum + Math.abs(value - pagePixels[i]), 0) / pixels.length
+  const oldError = meanError(previousPixels), newError = meanError(newPixels)
+  assert.ok(oldError > 1 && newError + 0.5 < oldError, `first accepted frame should contain the new title (old error ${oldError}, new error ${newError})`)
+  await page.evaluate(() => { window.__ellipsisTarget.remove(); window.scrollTo(0, 0) })
+  await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
+  await page.waitForTimeout(500)
+
   await page.evaluate(() => {
     window.__originalCanvas = document.querySelector(".store-liquid-canvas")
     window.__navReplacements = []
@@ -190,6 +277,43 @@ try {
     window.__navModeObserver.disconnect()
     return window.__navModes.includes("fallback")
   }), false, "healthy route changes must not flash the fallback navigation")
+
+  // A hold released vertically outside its original tab is a cancellation,
+  // even though pointer capture delivers pointerup back to the navigation.
+  box = await boxes(); start = center(box[1])
+  await page.mouse.move(start.x, start.y); await page.mouse.down()
+  await page.mouse.move(start.x, box[1].y - 30, { steps: 4 }); await page.mouse.up()
+  await page.waitForTimeout(300)
+  assert.equal(new URL(page.url()).pathname, "/", "a non-drag release outside the initial tab must not navigate")
+  assert.equal(await page.locator('.store-liquid-link[aria-current="page"]').getAttribute("href"), "/")
+
+  // A blur can leave a suppressed pointer id without a corresponding click.
+  // The same mouse pointer must still be allowed to perform native modified clicks.
+  await page.evaluate(() => {
+    window.__cancelClicks = 0
+    document.querySelector(".store-liquid-nav").addEventListener("click", () => window.__cancelClicks++, { capture: true })
+  })
+  box = await boxes(); start = center(box[1])
+  await page.mouse.move(start.x, start.y); await page.mouse.down()
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")))
+  await page.mouse.move(start.x, box[1].y - 30); await page.mouse.up()
+  assert.equal(await page.evaluate(() => window.__cancelClicks), 0, "cancel setup must not consume its suppression with a click")
+  const ctrlAllowed = await page.evaluate(() => {
+    const nav = document.querySelector(".store-liquid-nav"), link = nav.querySelectorAll("a")[1]
+    let reached = false
+    nav.addEventListener("click", event => { reached = !event.defaultPrevented; event.preventDefault() }, { once: true })
+    link.dispatchEvent(new PointerEvent("click", { bubbles: true, cancelable: true, pointerId: 1, button: 0, detail: 1, ctrlKey: true }))
+    return reached
+  })
+  assert.equal(ctrlAllowed, true, "Ctrl-click must not be suppressed after cancellation")
+  // Chromium may open a modified-link tab with noopener, so observe the
+  // browser context instead of requiring a page "popup" event.
+  const popupPromise = context.waitForEvent("page", { timeout: 7000 })
+  await page.locator(".store-liquid-link").nth(1).click({ modifiers: ["Meta"] })
+  const popup = await popupPromise
+  await popup.waitForURL("**/my/orders")
+  assert.equal(new URL(page.url()).pathname, "/", "modified click should leave the original page in place")
+  await popup.close()
 
   const cdp = await context.newCDPSession(page)
   box = await boxes(); start = center(box[0]); dest = center(box[2])

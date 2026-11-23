@@ -240,11 +240,11 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     backdropRef.current?.invalidate("主题变化", "theme")
   }, [active, resolvedTheme])
 
-  const cancel = useCallback((id?: number) => {
+  const cancel = useCallback((id?: number, position?: { x: number; y: number }) => {
     const pointer = pointerRef.current
     if (!pointer || id !== undefined && pointer.id !== id) return
     pointerRef.current = null
-    suppressed.current = { id: pointer.id, x: pointer.lastX, y: pointer.lastY, until: Date.now() + 700 }
+    suppressed.current = { id: pointer.id, x: position?.x ?? pointer.lastX, y: position?.y ?? pointer.lastY, until: Date.now() + 700 }
     const renderer = rendererRef.current
     if (renderer) restoreRoute(renderer, Math.max(0, selectedRef.current))
     const nav = navRef.current
@@ -291,6 +291,14 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     const pointer = pointerRef.current
     const renderer = rendererRef.current
     if (!pointer || pointer.id !== event.pointerId || !renderer) return
+    if (!pointer.dragged) {
+      const link = event.currentTarget.querySelector<HTMLAnchorElement>(`a[data-tab="${pointer.clicked}"]`)
+      const rect = link?.getBoundingClientRect()
+      if (!rect || event.clientX < rect.left || event.clientX >= rect.right || event.clientY < rect.top || event.clientY >= rect.bottom) {
+        cancel(event.pointerId, { x: event.clientX, y: event.clientY })
+        return
+      }
+    }
     if (pointer.dragged) renderer.dragTab(GROUP, pointer.startTarget, event.clientX, pointer.startX,
       (event.currentTarget.getBoundingClientRect().width - 8) / 4, 4)
     const target = renderer.endTabDrag(GROUP, 4)
@@ -303,8 +311,9 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     navigate(destination)
   }
   function suppressClick(event: MouseEvent<HTMLElement>) {
+    if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.detail === 0) return
     const last = suppressed.current
-    if (!last || Date.now() > last.until || event.detail === 0) return
+    if (!last || Date.now() > last.until) return
     const pointerId = (event.nativeEvent as globalThis.MouseEvent & { pointerId?: number }).pointerId
     if (pointerId === last.id || pointerId === undefined && Math.abs(event.clientX - last.x) < 2 && Math.abs(event.clientY - last.y) < 2) {
       suppressed.current = null

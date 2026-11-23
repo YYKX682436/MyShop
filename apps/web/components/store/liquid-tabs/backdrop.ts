@@ -47,6 +47,7 @@ export class StoreBackdrop {
   private presentedSize: { width: number; height: number; cssWidth: number; cssHeight: number } | null = null
   private failed: { version: number; rect: Rect; reason: string; warnings: string[]; pending?: boolean } | null = null
   private nextTight = false
+  private captureTextChanges: Map<Node, string | null> | null = null
   private observer: MutationObserver
   private resizeObserver: ResizeObserver
   private frame = document.createElement("canvas")
@@ -55,23 +56,7 @@ export class StoreBackdrop {
   constructor(private source: HTMLElement, private surface: HTMLCanvasElement,
     private renderer: LiquidGlassRenderer, private status: (value: Status) => void) {
     if (!this.frameContext) throw new Error("Canvas 2D unavailable")
-    this.observer = new MutationObserver(records => {
-      // SnapDOM temporarily measures clamped text by changing and restoring
-      // text nodes. Compare the first old value with the final value of each
-      // node so those internal, net-zero measurements do not cause a loop.
-      const first = new Map<Node, Map<string, string | null>>()
-      for (const record of records) {
-        if (record.type === "childList") { this.invalidate("内容变化"); return }
-        const key = record.type === "characterData" ? "#text" : record.attributeName!
-        let values = first.get(record.target)
-        if (!values) { values = new Map(); first.set(record.target, values) }
-        if (!values.has(key)) values.set(key, record.oldValue)
-      }
-      for (const [node, values] of first) for (const [key, old] of values) {
-        const current = key === "#text" ? node.nodeValue : (node as Element).getAttribute(key)
-        if (current !== old) { this.invalidate("内容变化"); return }
-      }
-    })
+    this.observer = new MutationObserver(records => this.processMutations(records))
     this.observer.observe(source, { subtree: true, childList: true, characterData: true, attributes: true,
       characterDataOldValue: true, attributeOldValue: true,
       attributeFilter: ["class", "src", "srcset", "sizes", "hidden", "aria-busy"] })
@@ -85,6 +70,39 @@ export class StoreBackdrop {
     window.visualViewport?.addEventListener("scroll", this.viewportChanged, { passive: true })
     void document.fonts.ready.then(() => { if (!this.disposed) this.invalidate("字体就绪") })
     this.invalidate("初始捕获")
+  }
+
+  private processMutations(records: MutationRecord[]) {
+    let changed = false
+    const first = new Map<Node, Map<string, string | null>>()
+    for (const record of records) {
+      if (record.type === "childList") { changed = true; continue }
+      if (record.type === "characterData" && this.captureTextChanges) {
+        if (!this.captureTextChanges.has(record.target)) this.captureTextChanges.set(record.target, record.oldValue)
+        continue
+      }
+      const key = record.type === "characterData" ? "#text" : record.attributeName!
+      let values = first.get(record.target)
+      if (!values) { values = new Map(); first.set(record.target, values) }
+      if (!values.has(key)) values.set(key, record.oldValue)
+    }
+    for (const [node, values] of first) for (const [key, old] of values) {
+      const current = key === "#text" ? node.nodeValue : (node as Element).getAttribute(key)
+      if (current !== old) changed = true
+    }
+    if (changed) this.invalidate("内容变化")
+  }
+
+  private finishCaptureTextChanges() {
+    const changes = this.captureTextChanges
+    if (!changes) return
+    // SnapDOM restores its temporary text writes before its promise settles.
+    // Include records still queued for delivery before validating the result.
+    this.processMutations(this.observer.takeRecords())
+    this.captureTextChanges = null
+    for (const [node, original] of changes) {
+      if (node.nodeValue !== original) { this.invalidate("内容变化"); break }
+    }
   }
 
   private imageChanged = (event: Event) => {
@@ -208,6 +226,8 @@ export class StoreBackdrop {
   }
   private async capture() {
     if (this.disposed || this.suspended || this.inFlight) return
+    // Flush pre-existing business mutations before opening the capture window.
+    this.processMutations(this.observer.takeRecords())
     const frameRect = this.surfaceRect()
     const visible = intersection(frameRect, this.pageBounds())
     if (!visible) { this.notify(false, "背景范围为空"); return }
@@ -232,10 +252,12 @@ export class StoreBackdrop {
     }
     this.inFlight = true
     this.pending = false
+    this.captureTextChanges = new Map()
     const started = performance.now()
     try {
       const result = await snapdom(this.source, { clip, dpr: Math.max(1, Math.min(window.devicePixelRatio || 1, 1.5)), scale: 1, fast: false, invalidate: true, reconcile: true })
       const canvas = await result.toCanvas()
+      this.finishCaptureTextChanges()
       this.lastMs = performance.now() - started
       this.captures++
       const warnings = result.warnings.map(w => {
@@ -272,6 +294,7 @@ export class StoreBackdrop {
       this.failed = null
       this.present()
     } catch (error) {
+      this.finishCaptureTextChanges()
       if (!this.disposed && version === this.version) {
         const reason = error instanceof Error ? error.message : String(error)
         this.failed = { version, rect: clip, reason: `背景捕获失败: ${reason}`, warnings: [] }
@@ -279,6 +302,7 @@ export class StoreBackdrop {
         this.notify(false, `背景捕获失败: ${reason}`)
       }
     } finally {
+      this.finishCaptureTextChanges()
       this.inFlight = false
       if (this.pending && !this.disposed && !this.suspended) this.schedule(60)
     }
@@ -297,6 +321,7 @@ export class StoreBackdrop {
   }
   dispose() {
     this.disposed = true
+    this.captureTextChanges = null
     this.observer.disconnect()
     this.resizeObserver.disconnect()
     if (this.timer !== null) clearTimeout(this.timer)
