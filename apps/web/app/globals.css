@@ -1476,12 +1476,14 @@ dialog.media-manage-dialog::backdrop {
   padding-bottom: calc(11rem + env(safe-area-inset-bottom, 0px));
 }
 .store-liquid-surface {
-  --store-liquid-bleed: clamp(60px, calc(30vw - 57px), 76px);
+  --store-liquid-bleed: 76px;
   position: fixed;
   z-index: 40;
   left: 50%;
-  bottom: env(safe-area-inset-bottom, 0px);
-  width: min(584px, 100vw);
+  /* The canvas has 48px of lower drawing room; place the capsule 12px
+     above the safe area without reducing that room. */
+  bottom: calc(env(safe-area-inset-bottom, 0px) - 36px);
+  width: min(584px, calc(80vw + 152px));
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -1499,8 +1501,10 @@ dialog.media-manage-dialog::backdrop {
   height: 64px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  color: hsl(var(--muted-foreground));
   pointer-events: auto;
   touch-action: pan-y;
+  -webkit-touch-callout: none;
   border-radius: 999px;
   -webkit-tap-highlight-color: transparent;
 }
@@ -1534,6 +1538,9 @@ dialog.media-manage-dialog::backdrop {
   line-height: 1;
 }
 .store-liquid-nav[data-mode="webgl"] .store-liquid-fallback-content { visibility: hidden; }
+/* A touch hold targets the navigation while preserving ordinary link hit
+   testing for mouse, modifier keys and keyboard navigation. */
+.store-liquid-nav[data-touch-active] .store-liquid-link { pointer-events: none; }
 .store-liquid-badge {
   position: absolute;
   top: 5px;

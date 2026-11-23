@@ -13,7 +13,14 @@ import { BAR_TOP, buildElements, DRAWING_HEIGHT, GROUP, LABELS, PATHS } from "./
 const Icons = [House, ClipboardList, MessageCircle, UserRound]
 const DRAG_THRESHOLD = 8
 
-type ActivePointer = { id: number; startX: number; startY: number; lastX: number; lastY: number; startTarget: number; clicked: number; dragged: boolean }
+function tabContentColor(nav: HTMLElement, dark: boolean): [number, number, number, number] {
+  // Read the same resolved theme token used by the catalog's category text.
+  const rgb = getComputedStyle(nav).color.match(/[\d.]+/g)?.map(Number)
+  if (rgb && rgb.length >= 3) return [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, 1]
+  return dark ? [168 / 255, 177 / 255, 189 / 255, 1] : [101 / 255, 117 / 255, 139 / 255, 1]
+}
+
+type ActivePointer = { id: number; type: string; startX: number; startY: number; lastX: number; lastY: number; startTarget: number; clicked: number; dragged: boolean }
 type SuppressedClick = { id: number; x: number; y: number; until: number }
 
 /** Stop an interrupted hold without committing its target. */
@@ -86,6 +93,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
       pointerRef.current = null
       suppressed.current = { id: pointer.id, x: pointer.lastX, y: pointer.lastY, until: Date.now() + 700 }
       const nav = navRef.current
+      if (nav) delete nav.dataset.touchActive
       if (nav?.hasPointerCapture(pointer.id)) nav.releasePointerCapture(pointer.id)
       if (rendererRef.current) restoreRoute(rendererRef.current, selected)
     }
@@ -122,7 +130,8 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
         const width = nav.getBoundingClientRect().width
         renderer.dpr = Math.min(window.devicePixelRatio || 1, 1.5)
         renderer.resize(rect.width, rect.height)
-        renderer.setElements(buildElements(width, themeRef.current === "dark", (rect.width - width) / 2))
+        const dark = themeRef.current === "dark"
+        renderer.setElements(buildElements(width, dark, (rect.width - width) / 2, tabContentColor(nav, dark)))
         backdrop?.invalidate("导航尺寸变化", "layout")
       }
       configure()
@@ -130,6 +139,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
         if (disposed) return
         nav.dataset.mode = info.ready ? "webgl" : "fallback"
         nav.dataset.backdropReason = info.reason ?? ""
+        nav.dataset.backdropPending = String(info.pending ?? false)
         nav.dataset.captureCount = String(info.captures)
         nav.dataset.captureMs = info.lastMs.toFixed(1)
         nav.dataset.captureWarnings = info.warnings.join("; ")
@@ -156,6 +166,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
           renderer.rafId = renderer.animRafId = null
           const pointer = pointerRef.current
           pointerRef.current = null
+          delete nav.dataset.touchActive
           ignoredPointers.current.clear()
           if (pointer) {
             suppressed.current = { id: pointer.id, x: pointer.lastX, y: pointer.lastY, until: Date.now() + 700 }
@@ -173,6 +184,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
         event.preventDefault()
         const pointer = pointerRef.current
         pointerRef.current = null
+        delete nav.dataset.touchActive
         ignoredPointers.current.clear()
         if (pointer) {
           suppressed.current = { id: pointer.id, x: pointer.lastX, y: pointer.lastY, until: Date.now() + 700 }
@@ -223,7 +235,8 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     if (!renderer || !canvas || !nav || !active) return
     const canvasWidth = canvas.getBoundingClientRect().width
     const width = nav.getBoundingClientRect().width
-    renderer.setElements(buildElements(width, resolvedTheme === "dark", (canvasWidth - width) / 2))
+    const dark = resolvedTheme === "dark"
+    renderer.setElements(buildElements(width, dark, (canvasWidth - width) / 2, tabContentColor(nav, dark)))
     backdropRef.current?.invalidate("主题变化", "theme")
   }, [active, resolvedTheme])
 
@@ -235,6 +248,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     const renderer = rendererRef.current
     if (renderer) restoreRoute(renderer, Math.max(0, selectedRef.current))
     const nav = navRef.current
+    if (nav) delete nav.dataset.touchActive
     if (nav?.hasPointerCapture(pointer.id)) nav.releasePointerCapture(pointer.id)
   }, [])
   useEffect(() => {
@@ -248,10 +262,12 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     if (pointerRef.current) { ignoredPointers.current.add(event.pointerId); return }
     const renderer = rendererRef.current
     const target = (event.target as Element).closest<HTMLAnchorElement>("a[data-tab]")
-    if (!renderer || !target || !event.currentTarget.contains(target)) return
-    const clicked = Number(target.dataset.tab)
-    pointerRef.current = { id: event.pointerId, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY,
+    if (!renderer || target && !event.currentTarget.contains(target) || !target && event.target !== event.currentTarget) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const clicked = target ? Number(target.dataset.tab) : Math.max(0, Math.min(3, Math.floor((event.clientX - rect.left) / (rect.width / 4))))
+    pointerRef.current = { id: event.pointerId, type: event.pointerType, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY,
       startTarget: renderer.getTabTarget(GROUP), clicked, dragged: false }
+    if (event.pointerType === "touch") event.currentTarget.dataset.touchActive = "true"
     event.currentTarget.setPointerCapture(event.pointerId)
     renderer.beginTabDrag(GROUP, pointerRef.current.startTarget, 4)
   }
@@ -281,6 +297,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     const destination = pointer.dragged ? target : pointer.clicked
     if (!pointer.dragged && destination !== target) renderer.setTabSelected(GROUP, destination, 4)
     pointerRef.current = null
+    delete event.currentTarget.dataset.touchActive
     suppressed.current = { id: event.pointerId, x: event.clientX, y: event.clientY, until: Date.now() + 700 }
     if (event.currentTarget.hasPointerCapture(pointer.id)) event.currentTarget.releasePointerCapture(pointer.id)
     navigate(destination)
@@ -309,13 +326,17 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
       <canvas ref={canvasRef} className="store-liquid-canvas" style={{ visibility: ready ? "visible" : "hidden" }} aria-hidden="true" />
       <nav ref={navRef} aria-label="店铺导航" data-mode={ready ? "webgl" : "fallback"}
         className="store-liquid-nav" style={{ top: BAR_TOP }} onDragStart={event => event.preventDefault()} onPointerDown={down} onPointerMove={move} onPointerUp={up}
+        onContextMenu={event => {
+          const pointerType = (event.nativeEvent as globalThis.MouseEvent & { pointerType?: string }).pointerType
+          if (pointerRef.current?.type === "touch" || pointerType === "touch") event.preventDefault()
+        }}
         onPointerCancel={event => { ignoredPointers.current.delete(event.pointerId); cancel(event.pointerId) }}
         onLostPointerCapture={event => cancel(event.pointerId)} onClickCapture={suppressClick}>
         {PATHS.map((path, index) => {
           const Icon = Icons[index]
           return <Link key={path} href={path} replace scroll={false} draggable={false} data-tab={index} aria-current={index === selected ? "page" : undefined}
             onClick={event => click(event, index)} className="store-liquid-link">
-            <span className="store-liquid-fallback-content" aria-hidden="true"><Icon size={24} /><span>{LABELS[index]}</span></span>
+            <span className="store-liquid-fallback-content" aria-hidden="true"><Icon size={24} strokeWidth={1.8} /><span>{LABELS[index]}</span></span>
             <span className="sr-only">{LABELS[index]}</span>
             {index === 2 && unread > 0 && <span className="store-liquid-badge" aria-label={`${unread} 条未读消息`}>{unread > 99 ? "99+" : unread}</span>}
           </Link>

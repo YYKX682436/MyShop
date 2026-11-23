@@ -137,10 +137,29 @@ try {
   }
   const boxes = async () => Promise.all((await page.locator(".store-liquid-link").all()).map(link => link.boundingBox()))
   const clickTab = async index => { await page.locator(".store-liquid-link").nth(index).click() }
+  const checkMutedContent = async () => {
+    const color = await page.locator('.segmented-control-item[data-active="false"]').first().evaluate(element => getComputedStyle(element).color)
+    assert.equal(await page.locator(".store-liquid-nav").evaluate(element => getComputedStyle(element).color), color)
+    const target = color.match(/\d+/g).slice(0, 3).map(Number)
+    const bounds = await page.locator(".store-liquid-link").nth(1).boundingBox()
+    const pixels = await sharp(await page.screenshot()).extract({ left: Math.round(bounds.x), top: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) }).removeAlpha().raw().toBuffer()
+    let matches = 0
+    for (let i = 0; i < pixels.length; i += 3) {
+      if (target.every((value, channel) => Math.abs(pixels[i + channel] - value) <= 5)) matches++
+    }
+    assert.ok(matches > 5, `unselected WebGL content should use the category color ${color}; found ${matches} matching pixels`)
+  }
   await gotoHome()
+  await checkMutedContent()
   await page.evaluate(() => {
     window.__originalCanvas = document.querySelector(".store-liquid-canvas")
     window.__navReplacements = []
+    window.__navModes = []
+    const nav = document.querySelector(".store-liquid-nav")
+    window.__navModeObserver = new MutationObserver(records => {
+      for (const record of records) window.__navModes.push(record.oldValue, nav.dataset.mode)
+    })
+    window.__navModeObserver.observe(nav, { attributes: true, attributeFilter: ["data-mode"], attributeOldValue: true })
     const replace = history.replaceState.bind(history)
     history.replaceState = (state, unused, url) => { window.__navReplacements.push(String(url)); return replace(state, unused, url) }
   })
@@ -165,6 +184,12 @@ try {
   await clickTab(1); await page.waitForURL("**/my/orders")
   await clickTab(3); await page.waitForURL("**/my")
   await clickTab(0); await page.waitForURL(base + "/")
+  await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
+  await page.waitForTimeout(300)
+  assert.equal(await page.evaluate(() => {
+    window.__navModeObserver.disconnect()
+    return window.__navModes.includes("fallback")
+  }), false, "healthy route changes must not flash the fallback navigation")
 
   const cdp = await context.newCDPSession(page)
   box = await boxes(); start = center(box[0]); dest = center(box[2])
@@ -211,10 +236,11 @@ try {
     await page.waitForTimeout(300)
     const dimensions = await page.evaluate(() => {
       const nav = document.querySelector(".store-liquid-nav").getBoundingClientRect()
-      return { scrollWidth: document.documentElement.scrollWidth, width: innerWidth, left: nav.left, right: nav.right }
+      return { scrollWidth: document.documentElement.scrollWidth, width: innerWidth, left: nav.left, right: nav.right, navWidth: nav.width }
     })
     assert.ok(dimensions.scrollWidth <= dimensions.width, `${width}px horizontal overflow: ${JSON.stringify(dimensions)}`)
     assert.ok(dimensions.left >= 0 && dimensions.right <= width, `${width}px navigation overflow`)
+    if (width <= 430) assert.ok(Math.abs(dimensions.navWidth / width - 0.8) < 0.01, `${width}px navigation proportion: ${dimensions.navWidth}`)
     await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
     box = await boxes(); start = center(box[0]); dest = center(box[3])
     await page.evaluate(() => { window.__navBoundaryMax = 0; window.__checkNavBoundary = true })
@@ -260,6 +286,10 @@ try {
   })
   await page.waitForFunction(() => window.__imageFetchBlocked, null, { timeout: 15000 })
   await clickTab(1); await page.waitForURL("**/my/orders")
+  assert.equal(await page.locator(".store-liquid-nav").getAttribute("data-mode"), "webgl", "a delayed old capture must not blank the previous frame")
+  assert.equal(await page.locator(".store-liquid-nav").getAttribute("data-backdrop-pending"), "true")
+  await page.waitForTimeout(850)
+  assert.equal(await page.locator(".store-liquid-nav").getAttribute("data-mode"), "fallback", "an indefinitely delayed capture must not display a stale frame forever")
   await page.evaluate(() => { window.__holdImageFetch = false; window.__releaseImageFetch?.() })
   await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
   await page.waitForTimeout(300)
@@ -270,8 +300,12 @@ try {
   await page.evaluate(() => { document.querySelector(".store-liquid-surface").style.display = "none" })
   const screenshot = await page.screenshot()
   await page.evaluate(() => { document.querySelector(".store-liquid-surface").style.display = "" })
-  const expected = await sharp(screenshot).extract({ left: Math.round(surface.x), top: Math.round(surface.y), width: Math.round(surface.width), height: Math.round(surface.height) }).removeAlpha().raw().toBuffer()
-  const actual = await sharp(backdrop).removeAlpha().raw().toBuffer()
+  const viewport = page.viewportSize()
+  const left = Math.max(0, Math.round(surface.x)), top = Math.max(0, Math.round(surface.y))
+  const visibleWidth = Math.min(viewport.width, Math.round(surface.x + surface.width)) - left
+  const visibleHeight = Math.min(viewport.height, Math.round(surface.y + surface.height)) - top
+  const expected = await sharp(screenshot).extract({ left, top, width: visibleWidth, height: visibleHeight }).removeAlpha().raw().toBuffer()
+  const actual = await sharp(backdrop).extract({ left: Math.round(left - surface.x), top: Math.round(top - surface.y), width: visibleWidth, height: visibleHeight }).removeAlpha().raw().toBuffer()
   assert.equal(actual.length, expected.length)
   const meanDifference = actual.reduce((sum, value, index) => sum + Math.abs(value - expected[index]), 0) / actual.length
   assert.ok(meanDifference < 18, `late capture does not match the current page (mean RGB error ${meanDifference})`)
@@ -323,6 +357,8 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark")), true)
   await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
   await clickTab(0); await page.waitForURL(base + "/")
+  await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
+  await checkMutedContent()
 
   await page.locator(".product-card").first().click(); await page.waitForURL("**/product/fixture-0")
   assert.equal(await page.locator(".store-liquid-nav").count(), 0)
@@ -390,8 +426,71 @@ try {
     const nav = document.querySelector(".store-liquid-nav")
     return nav?.dataset.mode === "fallback" && nav.dataset.captureWarnings?.includes("image-fallback")
   }, null, { timeout: 15000 })
-  console.log(JSON.stringify({ result: "passed", chromium: browser.version(), resourcesBefore: before, resourcesAfter: after }))
   await context.close()
+
+  // The centered surface at this real desktop size begins halfway between
+  // SnapDOM's 1.5-DPR pixels. It must not remain in fallback or recapture
+  // forever, including on short pages whose surface extends past the document.
+  const desktop = await browser.newContext({ viewport: { width: 1674, height: 1098 }, deviceScaleFactor: 2 })
+  const desktopPage = await desktop.newPage()
+  await desktopPage.route("**/api/**", async route => {
+    const url = new URL(route.request().url())
+    const result = await route.fetch({ url: `http://127.0.0.1:${backendPort}${url.pathname}${url.search}` })
+    await route.fulfill({ response: result })
+  })
+  const desktopCaptures = {}
+  for (const path of ["/", "/my/orders", "/messages", "/my"]) {
+    await desktopPage.goto(base + path, { waitUntil: "domcontentloaded" })
+    await desktopPage.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 20000 })
+    await desktopPage.waitForTimeout(1200)
+    const nav = desktopPage.locator(".store-liquid-nav")
+    const count = Number(await nav.getAttribute("data-capture-count"))
+    const gap = await nav.evaluate(element => innerHeight - element.getBoundingClientRect().bottom)
+    assert.ok(Math.abs(gap - 12) < 1, `${path}: unexpected desktop bottom gap ${gap}`)
+    await desktopPage.waitForTimeout(1000)
+    assert.equal(await nav.getAttribute("data-mode"), "webgl", `${path}: desktop must keep WebGL mode`)
+    assert.equal(Number(await nav.getAttribute("data-capture-count")), count, `${path}: idle capture must stop`)
+    assert.equal(await desktopPage.locator('.store-liquid-link[aria-current="page"]').getAttribute("href"), path)
+    desktopCaptures[path] = count
+  }
+  await desktopPage.evaluate(() => document.addEventListener("contextmenu", event => {
+    setTimeout(() => { window.__rightClickPrevented = event.defaultPrevented }, 0)
+  }, { once: true }))
+  await desktopPage.locator(".store-liquid-link").nth(1).click({ button: "right" })
+  await desktopPage.waitForFunction(() => window.__rightClickPrevented !== undefined)
+  assert.equal(await desktopPage.evaluate(() => window.__rightClickPrevented), false, "mouse context menu must remain available")
+  await desktop.close()
+
+  const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true })
+  const mobilePage = await mobile.newPage()
+  await mobilePage.route("**/api/**", async route => {
+    const url = new URL(route.request().url())
+    const result = await route.fetch({ url: `http://127.0.0.1:${backendPort}${url.pathname}${url.search}` })
+    await route.fulfill({ response: result })
+  })
+  await mobilePage.goto(base, { waitUntil: "domcontentloaded" })
+  await mobilePage.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 20000 })
+  assert.equal(await mobilePage.evaluate(() => matchMedia("(pointer: coarse)").matches), true)
+  const mobileBoxes = await Promise.all((await mobilePage.locator(".store-liquid-link").all()).map(link => link.boundingBox()))
+  const mobileStart = center(mobileBoxes[0]), mobileEnd = center(mobileBoxes[2])
+  assert.equal(await mobilePage.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest("a"), mobileStart), true,
+    "idle links must remain available to ordinary pointer input")
+  const mobileCdp = await mobile.newCDPSession(mobilePage)
+  await mobileCdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ ...mobileStart, id: 1 }] })
+  await mobilePage.waitForTimeout(1300)
+  assert.equal(await mobilePage.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.classList.contains("store-liquid-nav"), mobileStart), true,
+    "an active touch hold must not target the anchor")
+  assert.equal(new URL(mobilePage.url()).pathname, "/", "touch hold must not navigate")
+  await mobileCdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...mobileEnd, id: 1 }] })
+  await mobileCdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+  await mobilePage.waitForURL("**/messages")
+  await mobilePage.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
+  assert.equal(await mobilePage.locator(".store-liquid-nav").getAttribute("data-touch-active"), null)
+  await mobilePage.locator(".store-liquid-link").nth(1).focus()
+  await mobilePage.keyboard.press("Enter")
+  await mobilePage.waitForURL("**/my/orders")
+  await mobile.close()
+  console.log(JSON.stringify({ result: "passed", chromium: browser.version(), resourcesBefore: before, resourcesAfter: after, desktopCaptures }))
 } finally {
   await browser?.close()
   server.kill("SIGTERM")

@@ -4,9 +4,12 @@ import type { LiquidGlassRenderer } from "@/lib/vendor/liquid-glass/renderer"
 type Rect = { x: number; y: number; width: number; height: number }
 type Stamp = { route: string; theme: string; layoutVersion: number; contentVersion: number }
 type Cache = { canvas: HTMLCanvasElement; rect: Rect; contentX: number; contentY: number; viewWidth: number; viewHeight: number; version: number; stamp: Stamp; tight: boolean; warnings: string[] }
-type Status = { ready: boolean; reason?: string; captures: number; lastMs: number; warnings: string[] }
+type Status = { ready: boolean; pending?: boolean; reason?: string; captures: number; lastMs: number; warnings: string[] }
 const MARGIN = 360
 const PREFETCH = 110
+// SnapDOM aligns the clip to its output pixel grid. The maximum rounding
+// difference is half a CSS pixel at the minimum capture DPR of 1.
+const CLIP_ROUNDING = 0.51
 const INVALID_WARNINGS = new Set([
   "image-fallback", "canvas-tainted", "canvas-clamp", "raster-clamp", "embed-fallback",
   "reconcile-risk", "reconcile-failed", "backdrop-filter-failed", "pseudo-failed", "shrink-failed",
@@ -14,8 +17,16 @@ const INVALID_WARNINGS = new Set([
 ])
 
 function contains(outer: Rect, inner: Rect, margin = 0) {
-  return inner.x >= outer.x + margin && inner.y >= outer.y + margin &&
-    inner.x + inner.width <= outer.x + outer.width - margin && inner.y + inner.height <= outer.y + outer.height - margin
+  return inner.x >= outer.x + margin - CLIP_ROUNDING && inner.y >= outer.y + margin - CLIP_ROUNDING &&
+    inner.x + inner.width <= outer.x + outer.width - margin + CLIP_ROUNDING &&
+    inner.y + inner.height <= outer.y + outer.height - margin + CLIP_ROUNDING
+}
+
+function intersection(a: Rect, b: Rect): Rect | null {
+  const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y)
+  const right = Math.min(a.x + a.width, b.x + b.width)
+  const bottom = Math.min(a.y + a.height, b.y + b.height)
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
 }
 
 /** One clipped DOM capture at a time; scrolling crops the current bounded cache. */
@@ -28,11 +39,13 @@ export class StoreBackdrop {
   private disposed = false
   private suspended = false
   private timer: ReturnType<typeof setTimeout> | null = null
+  private waitingTimer: ReturnType<typeof setTimeout> | null = null
   private scheduledAt = 0
   private scrollRaf: number | null = null
   private captures = 0
   private lastMs = 0
-  private failed: { version: number; rect: Rect; reason: string; warnings: string[] } | null = null
+  private presentedSize: { width: number; height: number; cssWidth: number; cssHeight: number } | null = null
+  private failed: { version: number; rect: Rect; reason: string; warnings: string[]; pending?: boolean } | null = null
   private nextTight = false
   private observer: MutationObserver
   private resizeObserver: ResizeObserver
@@ -96,12 +109,35 @@ export class StoreBackdrop {
   private captureRect(frame: Rect, tight: boolean): Rect {
     const page = this.pageBounds()
     const margin = tight ? 32 : MARGIN
+    // A centered canvas can start on a half output pixel. Leave a small
+    // horizontal allowance so rounding the clip does not cut off that edge.
+    const left = Math.max(page.x, Math.floor(frame.x - 2))
+    const right = Math.min(page.x + page.width, Math.ceil(frame.x + frame.width + 2))
     const top = Math.max(page.y, Math.floor(frame.y - margin))
     const bottom = Math.min(page.y + page.height, Math.ceil(frame.y + frame.height + margin))
-    return { x: frame.x, y: top, width: frame.width, height: Math.max(1, bottom - top) }
+    return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) }
   }
   private notify(ready: boolean, reason?: string, warnings: string[] = []) {
+    if (this.waitingTimer !== null) clearTimeout(this.waitingTimer)
+    this.waitingTimer = null
+    if (!ready) this.presentedSize = null
     this.status({ ready, reason, captures: this.captures, lastMs: this.lastMs, warnings })
+  }
+  private notifyWaiting(reason: string) {
+    const size = this.presentedSize
+    const rect = this.surface.getBoundingClientRect()
+    // Keep the last complete frame visible while its replacement is captured.
+    // A resized surface cannot reuse it because the drawing regions differ.
+    if (!size || size.width !== this.surface.width || size.height !== this.surface.height ||
+      size.cssWidth !== rect.width || size.cssHeight !== rect.height) {
+      this.notify(false, reason)
+      return
+    }
+    this.status({ ready: true, pending: true, reason, captures: this.captures, lastMs: this.lastMs, warnings: [] })
+    if (this.waitingTimer === null) this.waitingTimer = setTimeout(() => {
+      this.waitingTimer = null
+      if (!this.disposed && !this.suspended) this.notify(false, "背景更新超时")
+    }, 750)
   }
   invalidate(reason: string, kind: "route" | "theme" | "layout" | "content" = "content") {
     if (this.disposed) return
@@ -113,8 +149,10 @@ export class StoreBackdrop {
     this.cache = null
     this.failed = null
     this.nextTight = false
-    this.notify(false, reason)
-    this.schedule(80)
+    this.notifyWaiting(reason)
+    // The route has already committed its DOM; start its replacement frame
+    // promptly while ordinary content mutations remain coalesced.
+    this.schedule(kind === "route" ? 0 : 80)
   }
   private schedule(delay: number) {
     if (this.disposed || this.suspended) return
@@ -130,10 +168,14 @@ export class StoreBackdrop {
   private present() {
     if (this.disposed || this.suspended) return
     const rect = this.surfaceRect()
+    const visible = intersection(rect, this.pageBounds())
+    if (!visible) { this.notify(false, "背景范围为空"); return }
     const cache = this.cache
-    if (!cache || cache.version !== this.version || !contains(cache.rect, rect)) {
-      const failure = this.failed?.version === this.version && contains(this.failed.rect, rect) ? this.failed : null
-      this.notify(false, failure?.reason ?? "等待页面背景", failure?.warnings ?? [])
+    if (!cache || cache.version !== this.version || !contains(cache.rect, visible)) {
+      const failure = this.failed?.version === this.version && contains(this.failed.rect, visible) ? this.failed : null
+      if (failure?.pending) this.notifyWaiting(failure.reason)
+      else if (failure) this.notify(false, failure.reason, failure.warnings)
+      else this.notifyWaiting("等待页面背景")
       if (!failure) this.schedule(30)
       return
     }
@@ -146,10 +188,13 @@ export class StoreBackdrop {
     const sy = cache.canvas.height / cache.viewHeight
     ctx.clearRect(0, 0, this.frame.width, this.frame.height)
     ctx.drawImage(cache.canvas,
-      (cache.contentX + rect.x - cache.rect.x) * sx, (cache.contentY + rect.y - cache.rect.y) * sy,
-      rect.width * sx, rect.height * sy, 0, 0, this.frame.width, this.frame.height)
+      (cache.contentX + visible.x - cache.rect.x) * sx, (cache.contentY + visible.y - cache.rect.y) * sy,
+      visible.width * sx, visible.height * sy,
+      (visible.x - rect.x) / rect.width * this.frame.width, (visible.y - rect.y) / rect.height * this.frame.height,
+      visible.width / rect.width * this.frame.width, visible.height / rect.height * this.frame.height)
     try {
       this.renderer.setBackdropFrame(this.frame, { ...rect, version: cache.version, ...cache.stamp })
+      this.presentedSize = { width: this.surface.width, height: this.surface.height, cssWidth: rect.width, cssHeight: rect.height }
       this.notify(true, undefined, cache.warnings)
     } catch (error) {
       this.notify(false, `背景纹理不可用: ${error instanceof Error ? error.message : String(error)}`)
@@ -164,6 +209,8 @@ export class StoreBackdrop {
   private async capture() {
     if (this.disposed || this.suspended || this.inFlight) return
     const frameRect = this.surfaceRect()
+    const visible = intersection(frameRect, this.pageBounds())
+    if (!visible) { this.notify(false, "背景范围为空"); return }
     const tight = this.nextTight
     this.nextTight = false
     const clip = this.captureRect(frameRect, tight)
@@ -178,15 +225,16 @@ export class StoreBackdrop {
     })
     if (missing) {
       const reason = `图片${missing.complete ? "加载失败" : "尚未加载"}: ${new URL(missing.currentSrc || missing.src, location.href).origin}`
-      this.failed = { version, rect: clip, reason, warnings: [] }
-      this.notify(false, reason)
+      this.failed = { version, rect: clip, reason, warnings: [], pending: !missing.complete }
+      if (missing.complete) this.notify(false, reason)
+      else this.notifyWaiting(reason)
       return
     }
     this.inFlight = true
     this.pending = false
     const started = performance.now()
     try {
-      const result = await snapdom(this.source, { clip, dpr: Math.min(window.devicePixelRatio || 1, 1.5), scale: 1, fast: false, invalidate: true, reconcile: true })
+      const result = await snapdom(this.source, { clip, dpr: Math.max(1, Math.min(window.devicePixelRatio || 1, 1.5)), scale: 1, fast: false, invalidate: true, reconcile: true })
       const canvas = await result.toCanvas()
       this.lastMs = performance.now() - started
       this.captures++
@@ -212,6 +260,13 @@ export class StoreBackdrop {
       }
       const actual = result.meta.clip
       if (!actual || canvas.width < 1 || canvas.height < 1) throw new Error("捕获区域为空")
+      if (!contains(actual, visible)) {
+        // Do not keep recapturing an unchanged frame if the library cannot
+        // provide its requested area; a later scroll or invalidation may retry.
+        this.failed = { version, rect: visible, reason: "背景范围不完整", warnings }
+        this.notify(false, "背景范围不完整", warnings)
+        return
+      }
       this.cache = { canvas, rect: { ...actual }, contentX: result.meta.contentX, contentY: result.meta.contentY,
         viewWidth: result.meta.vbW, viewHeight: result.meta.vbH, version, stamp, tight, warnings }
       this.failed = null
@@ -232,6 +287,8 @@ export class StoreBackdrop {
     this.suspended = value
     if (value) {
       if (this.timer !== null) clearTimeout(this.timer)
+      if (this.waitingTimer !== null) clearTimeout(this.waitingTimer)
+      this.waitingTimer = null
       this.timer = null
       this.scheduledAt = 0
       if (this.scrollRaf !== null) cancelAnimationFrame(this.scrollRaf)
@@ -243,6 +300,7 @@ export class StoreBackdrop {
     this.observer.disconnect()
     this.resizeObserver.disconnect()
     if (this.timer !== null) clearTimeout(this.timer)
+    if (this.waitingTimer !== null) clearTimeout(this.waitingTimer)
     if (this.scrollRaf !== null) cancelAnimationFrame(this.scrollRaf)
     this.source.removeEventListener("load", this.imageChanged, true)
     this.source.removeEventListener("error", this.imageChanged, true)

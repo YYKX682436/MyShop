@@ -1,3 +1,4 @@
+// Modified by MyShop: support outlined icons in the existing foreground mask.
 import type { LiquidGlassRenderer } from './index'
 import type { GlassElementConfig } from './types'
 import { wrapText } from './gl-utils'
@@ -196,10 +197,19 @@ export const rasterMethods = {
       ctx.scale(iconDrawSize / vp, iconDrawSize / vp)
       const p = new Path2D(t.icon.path)
       const ic = t.icon.color
-      ctx.fillStyle = `rgba(${Math.round(ic[0] * 255)}, ${Math.round(
+      const iconColor = `rgba(${Math.round(ic[0] * 255)}, ${Math.round(
         ic[1] * 255
       )}, ${Math.round(ic[2] * 255)}, ${ic[3]})`
-      ctx.fill(p)
+      if (t.icon.strokeWidth) {
+        ctx.strokeStyle = iconColor
+        ctx.lineWidth = t.icon.strokeWidth
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.stroke(p)
+      } else {
+        ctx.fillStyle = iconColor
+        ctx.fill(p)
+      }
       ctx.restore()
       textYOffset = (iconLayoutSize + gap) / 2
     }

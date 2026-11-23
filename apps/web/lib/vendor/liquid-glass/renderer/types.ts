@@ -1,3 +1,4 @@
+// Modified by MyShop: text icons can use an optional outline stroke.
 /* ------------------------------------------------------------------ *
  * Types — mirror the Kotlin modifier parameters.
  * ------------------------------------------------------------------ */
@@ -145,6 +146,8 @@ export interface TextSpec {
      *  e.g. 24 for Material icons with defaultWidth=24.dp). */
     size: number
     color: [number, number, number, number]
+    /** Outline width in viewport units; omitted paths retain upstream fill. */
+    strokeWidth?: number
     /** SVG viewport size the path is defined in (default 24). Use 960 for
      *  paths ported from Compose ImageVector (Material icons). */
     viewport?: number
