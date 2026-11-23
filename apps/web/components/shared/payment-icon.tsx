@@ -11,7 +11,7 @@ interface PaymentIconProps {
 
 /** 统一归一化支付方式 code（大小写不敏感） */
 function normalize(method: string): string {
-  return method.toLowerCase()
+  return (method || "").toLowerCase()
 }
 
 /** 支付方式 code → 官方 SVG Logo 路径 */

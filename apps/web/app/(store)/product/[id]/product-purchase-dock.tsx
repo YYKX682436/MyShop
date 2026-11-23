@@ -308,22 +308,22 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
         aria-hidden={open}
         inert={open}
         className={cn(
-          "product-purchase-dock-viewport pointer-events-none fixed inset-x-0 bottom-0 z-40 transition-[opacity,transform] duration-180 motion-reduce:transition-none",
+          "product-purchase-dock-viewport pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 transition-[opacity,transform] duration-180 motion-reduce:transition-none",
           open ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100",
         )}
       >
         <div className={cn(
-          "storefront-content-width pointer-events-auto flex items-center gap-3 p-2",
+          "pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-full border border-border-subtle/80 bg-surface/85 p-2 shadow-lg backdrop-blur-xl transition-all sm:max-w-lg",
           !open && "static-material action-bar-material",
           open && "pointer-events-none",
         )}>
-          <div className="min-w-0 flex-1 px-2">
+          <div className="min-w-0 flex-1 px-3">
             <p className="truncate text-[11px] text-muted-foreground">
               {t("product.unitPrice")}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
             </p>
             <p className={cn(
-              "text-xl font-semibold tracking-tight",
-              isOutOfStock ? "text-muted-foreground" : "text-foreground",
+              "text-xl font-bold tracking-tight text-primary",
+              isOutOfStock ? "text-muted-foreground" : "text-primary",
             )}>
               {formatYuan(currentPrice)}
             </p>
@@ -332,7 +332,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
             <button
               type="button"
               disabled={isOutOfStock || !authLoaded}
-              className="inline-flex min-h-11 min-w-[6.5rem] shrink-0 items-center justify-center gap-2 rounded-control bg-primary px-3 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
+              className="inline-flex min-h-10 min-w-[6.5rem] shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
               aria-label={isOutOfStock ? t("product.soldOut") : t("product.buyNow")}
             >
               {isOutOfStock ? (
@@ -341,7 +341,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                 <>
                   <ShoppingCart className="size-4" aria-hidden="true" />
                   <span>{t("product.buyNow")}</span>
-                  <ChevronUp className="size-4" aria-hidden="true" />
+                  <ChevronUp className="size-3.5" aria-hidden="true" />
                 </>
               )}
             </button>
@@ -349,12 +349,12 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
         </div>
       </div>
 
-      <DrawerContent className="storefront-content-width static-material action-bar-material origin-bottom outline-none">
-        <div className="flex max-h-[min(75dvh,760px)] flex-col pb-[env(safe-area-inset-bottom)]">
-          <DrawerHeader className="shrink-0 border-b border-border-subtle px-4 pb-3 pt-2 text-left sm:px-6 sm:pt-3">
-            <DrawerTitle className="text-base">{t("product.buyNow")}</DrawerTitle>
-            <DrawerDescription className="mt-1 line-clamp-1 text-xs">
-              {product.title}{selectedSpec ? ` · ${selectedSpec.name}` : ""} · {formatYuan(totalPrice)}
+      <DrawerContent className="storefront-content-width static-material action-bar-material mx-auto max-w-lg origin-bottom outline-none rounded-t-[1.75rem] border-x border-t border-border-subtle/80 bg-surface/90 shadow-2xl backdrop-blur-2xl">
+        <div className="flex max-h-[min(78dvh,760px)] flex-col pb-[env(safe-area-inset-bottom)]">
+          <DrawerHeader className="shrink-0 border-b border-border-subtle/60 px-4 pb-2.5 pt-2 text-left sm:px-6 sm:pt-3">
+            <DrawerTitle className="text-base font-semibold">{t("product.buyNow")}</DrawerTitle>
+            <DrawerDescription className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+              {product.title}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
             </DrawerDescription>
           </DrawerHeader>
 
@@ -365,20 +365,26 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
               void handleBuyNow()
             }}
           >
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3.5 sm:px-6 sm:py-4">
               {(product.specs ?? []).length > 1 && (
-                <section className="mb-5" aria-labelledby="purchase-spec-title">
-                  <h2 id="purchase-spec-title" className="mb-2 text-sm font-medium text-foreground">
-                    {t("product.selectSpec")}
-                  </h2>
+                <section className="mb-4" aria-labelledby="purchase-spec-title">
+                  <div className="mb-2 flex items-center justify-between">
+                    <h2 id="purchase-spec-title" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {t("product.selectSpec")}
+                    </h2>
+                    {selectedSpec && (
+                      <span className="text-xs font-medium text-primary">{selectedSpec.name}</span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {(product.specs ?? []).map((spec) => {
                       const specOutOfStock = isSpecOutOfStock(spec)
+                      const isSelected = selectedSpec?.id === spec.id
                       return (
                         <button
                           key={spec.id}
                           type="button"
-                          aria-pressed={selectedSpec?.id === spec.id}
+                          aria-pressed={isSelected}
                           disabled={specOutOfStock}
                           onClick={() => {
                             setSelectedSpec(spec)
@@ -387,17 +393,17 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                             setCustomerInputErrors({})
                           }}
                           className={cn(
-                            "min-h-11 rounded-control border px-3 py-2 text-left text-sm font-medium transition-[border-color,background-color,opacity] duration-180",
-                            selectedSpec?.id === spec.id
-                              ? "border-primary/30 bg-primary/10 text-primary"
-                              : "border-border-subtle text-foreground hover:border-border-strong hover:bg-surface-muted",
-                            specOutOfStock && "cursor-not-allowed opacity-50",
+                            "min-h-10 rounded-xl border px-3 py-2 text-left text-sm font-medium transition-all duration-180",
+                            isSelected
+                              ? "border-primary bg-primary/10 text-primary shadow-xs ring-1 ring-primary/40 font-semibold"
+                              : "border-border-subtle bg-surface-muted/50 text-foreground hover:border-border-strong hover:bg-surface-muted",
+                            specOutOfStock && "cursor-not-allowed opacity-40 grayscale",
                           )}
                         >
                           <span className="block truncate">{spec.name}</span>
                           {specOutOfStock && (
-                            <span className="mt-0.5 block text-[11px] font-normal text-muted-foreground">
-                              {t("product.outOfStock")}
+                            <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                              {t("product.soldOut")}
                             </span>
                           )}
                         </button>
@@ -407,22 +413,24 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                 </section>
               )}
 
-              <section className="mb-5" aria-labelledby="purchase-quantity-title">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <h2 id="purchase-quantity-title" className="text-sm font-medium text-foreground">
+              <section className="mb-4 flex items-center justify-between gap-3 py-1" aria-labelledby="purchase-quantity-title">
+                <div>
+                  <h2 id="purchase-quantity-title" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("product.quantity")}
                   </h2>
-                  <span className="text-xs text-muted-foreground">{formatYuan(currentPrice)} / {t("product.perPiece")}</span>
+                  <p className="mt-0.5 text-xs text-muted-foreground/80">
+                    {formatYuan(currentPrice)} / {t("product.perPiece")}
+                  </p>
                 </div>
-                <div className="inline-flex items-center rounded-control border border-border-subtle bg-surface-muted p-1">
+                <div className="inline-flex items-center rounded-xl border border-border-subtle bg-surface-muted/60 p-0.5">
                   <button
                     type="button"
                     onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
                     disabled={quantity <= 1}
                     aria-label={t("product.decreaseQuantity")}
                   >
-                    <Minus className="size-4" aria-hidden="true" />
+                    <Minus className="size-3.5" aria-hidden="true" />
                   </button>
                   <input
                     type="number"
@@ -435,28 +443,23 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                         ? Math.max(1, value)
                         : Math.min(Math.max(1, value), Math.max(1, finiteStock)))
                     }}
-                    className="h-10 w-16 border-x border-border-subtle bg-transparent text-center text-base text-foreground [appearance:textfield] focus:outline-none focus:ring-2 focus:ring-ring/40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="h-9 w-14 border-x border-border-subtle/80 bg-transparent text-center text-sm font-semibold text-foreground [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-primary/40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     aria-label={t("product.quantity")}
                   />
                   <button
                     type="button"
                     onClick={() => setQuantity(unlimited ? quantity + 1 : Math.min(quantity + 1, Math.max(1, finiteStock)))}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-control text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
                     disabled={!unlimited && quantity >= finiteStock}
                     aria-label={t("product.increaseQuantity")}
                   >
-                    <Plus className="size-4" aria-hidden="true" />
+                    <Plus className="size-3.5" aria-hidden="true" />
                   </button>
                 </div>
               </section>
 
-              <div className="mb-5 flex items-center justify-between gap-4 rounded-control border border-border-subtle bg-surface-muted px-3.5 py-3">
-                <span className="text-sm text-muted-foreground">{t("product.totalPrice")}</span>
-                <span className="text-2xl font-semibold tracking-tight text-foreground">{formatYuan(totalPrice)}</span>
-              </div>
-
               {customerInputFields.length > 0 && (
-                <section className="mb-5 space-y-4" aria-label={t("product.customerInputSection")}>
+                <section className="mb-4 space-y-3" aria-label={t("product.customerInputSection")}>
                   {customerInputFields.map((field) => {
                     const error = customerInputErrors[field.id]
                     const errorId = `customer-input-error-${field.id}`
@@ -471,8 +474,8 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                       if (nextError) setCustomerInputErrors((current) => ({ ...current, [field.id]: `${field.label}：${nextError}` }))
                     }
                     const className = cn(
-                      "w-full rounded-control border bg-surface px-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/40",
-                      field.type === "MULTILINE" ? "min-h-24 py-2" : "h-11",
+                      "w-full rounded-xl border bg-surface/80 px-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm",
+                      field.type === "MULTILINE" ? "min-h-20 py-2" : "h-10",
                       error ? "border-destructive" : "border-input",
                     )
                     const common = { id: `customer-input-${field.id}`, value: customerInputs[field.id] ?? "",
@@ -480,7 +483,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                       "aria-describedby": error ? errorId : undefined, className, onBlur: blur }
                     return (
                       <div key={field.id}>
-                        <label htmlFor={`customer-input-${field.id}`} className="mb-1.5 block text-sm font-medium text-foreground">
+                        <label htmlFor={`customer-input-${field.id}`} className="mb-1 block text-xs font-medium text-foreground">
                           {field.label} {field.required !== false && <span className="text-destructive" aria-hidden="true">*</span>}
                         </label>
                         {field.type === "SELECT" ? <select {...common} ref={(element) => { customerInputRefs.current[field.id] = element }} onChange={(event) => change(event.target.value)}>
@@ -495,21 +498,21 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                 </section>
               )}
 
-              <section aria-labelledby="purchase-payment-title">
-                <h2 id="purchase-payment-title" className="mb-2 text-sm font-medium text-foreground">
+              <section aria-labelledby="purchase-payment-title" className="mb-4">
+                <h2 id="purchase-payment-title" className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("product.paymentMethod")}
                 </h2>
                 {adminPickup ? (
-                  <div className="rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-sm font-medium text-primary">
+                  <div className="rounded-xl border border-primary/20 bg-primary/[0.06] px-3.5 py-2.5 text-sm font-medium text-primary">
                     {t("payment.adminPickup")}
                   </div>
                 ) : zeroPricePurchase ? (
-                  <p className="rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-sm font-medium text-primary">{t("product.zeroPrice")}</p>
+                  <p className="rounded-xl border border-primary/20 bg-primary/[0.06] px-3.5 py-2.5 text-sm font-medium text-primary">{t("product.zeroPrice")}</p>
                 ) : zeroPriceUnavailable ? (
-                  <p className="rounded-control border border-destructive/30 px-3 py-3 text-sm text-destructive">{t("product.zeroUnavailable")}</p>
+                  <p className="rounded-xl border border-destructive/30 px-3.5 py-2.5 text-sm text-destructive">{t("product.zeroUnavailable")}</p>
                 ) : (
                   <>
-                    <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label={t("product.paymentMethod")}>
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t("product.paymentMethod")}>
                       <button
                         type="button"
                         role="radio"
@@ -517,18 +520,20 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                         disabled={!balanceAvailability.selectable}
                         onClick={() => setSelectedPaymentMethod("BALANCE")}
                         className={cn(
-                          "flex min-h-16 flex-col items-start justify-center rounded-control border px-3 py-2.5 text-left text-sm transition-[border-color,background-color,opacity] duration-180",
-                          selectedPaymentMethod === "BALANCE" ? "border-primary/25 bg-primary/10" : "border-border-subtle hover:border-border-strong hover:bg-surface-muted",
-                          !balanceAvailability.selectable && "cursor-not-allowed opacity-60",
+                          "flex flex-col items-start justify-center rounded-xl border p-2.5 text-left transition-all duration-180",
+                          selectedPaymentMethod === "BALANCE"
+                            ? "border-primary bg-primary/10 text-primary shadow-xs ring-1 ring-primary/40 font-semibold"
+                            : "border-border-subtle bg-surface-muted/50 text-foreground hover:bg-surface-muted",
+                          !balanceAvailability.selectable && "cursor-not-allowed opacity-45",
                         )}
                       >
-                        <span className="font-medium text-foreground">{t("product.balancePayment")}</span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-sm font-medium">{t("product.balancePayment")}</span>
+                        <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
                           {balanceAvailability.reason === "login_required"
                             ? t("product.balanceLoginRequired")
                             : balanceAvailability.reason === "insufficient"
-                              ? `${t("product.balanceInsufficient")}（${t("product.balanceCurrent").replace("{balance}", formatYuan(user?.balance ?? 0))}）`
-                              : t("product.balanceCurrent").replace("{balance}", formatYuan(user?.balance ?? 0))}
+                              ? t("product.balanceInsufficient")
+                              : `${formatYuan(user?.balance ?? 0)}`}
                         </span>
                       </button>
                       <button
@@ -537,16 +542,20 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                         aria-checked={selectedPaymentMethod === "ONLINE"}
                         onClick={() => setSelectedPaymentMethod("ONLINE")}
                         className={cn(
-                          "flex min-h-16 flex-col items-start justify-center rounded-control border px-3 py-2.5 text-left text-sm transition-[border-color,background-color] duration-180",
-                          selectedPaymentMethod === "ONLINE" ? "border-primary/25 bg-primary/10" : "border-border-subtle hover:border-border-strong hover:bg-surface-muted",
+                          "flex flex-col items-start justify-center rounded-xl border p-2.5 text-left transition-all duration-180",
+                          selectedPaymentMethod === "ONLINE"
+                            ? "border-primary bg-primary/10 text-primary shadow-xs ring-1 ring-primary/40 font-semibold"
+                            : "border-border-subtle bg-surface-muted/50 text-foreground hover:bg-surface-muted",
                         )}
                       >
-                        <span className="font-medium text-foreground">{t("product.onlinePayment")}</span>
-                        <span className="text-xs text-muted-foreground">{channels.length > 0 ? t("product.paymentHint") : t("product.noOnlineChannels")}</span>
+                        <span className="text-sm font-medium">{t("product.onlinePayment")}</span>
+                        <span className="mt-0.5 w-full truncate text-[11px] text-muted-foreground">
+                          {channels.length > 0 ? t("product.paymentHint") : t("product.noOnlineChannels")}
+                        </span>
                       </button>
                     </div>
                     {selectedPaymentMethod === "ONLINE" && channels.length > 0 && (
-                      <div className="mt-3">
+                      <div className="mt-2.5">
                         <PaymentSelector
                           channels={channels}
                           selected={selectedPaymentChannelCode}
@@ -561,38 +570,46 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                 )}
               </section>
 
-              <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mt-5" />
+              <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mt-4" />
             </div>
 
-            <div className="shrink-0 border-t border-border-subtle bg-surface-raised/95 px-4 py-3 sm:px-6">
+            <div data-slot="purchase-drawer-footer" className="shrink-0 border-t border-border-subtle/80 bg-surface/90 px-4 py-3 backdrop-blur-xl sm:px-6">
               {paymentFallbackAction && (
-                <div className="mb-3 flex flex-col items-center gap-2 rounded-control border border-primary/20 bg-primary/[0.06] px-3 py-3 text-center" role="alert">
+                <div className="mb-3 flex flex-col items-center gap-2 rounded-xl border border-primary/20 bg-primary/[0.06] px-3 py-2.5 text-center" role="alert">
                   <p className="text-xs text-muted-foreground">{t("payment.actionFallback")}</p>
                   <button
                     type="button"
                     onClick={retryPaymentExecution}
-                    className="inline-flex h-9 items-center rounded-control bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                    className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
                   >
                     {t("payment.continuePay")}
                   </button>
                 </div>
               )}
-              <button
-                type="submit"
-                disabled={submitting || isOutOfStock || !paymentReady}
-                className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-control bg-primary text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.99] disabled:pointer-events-none disabled:opacity-50"
-              >
-                {submitting && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
-                {!submitting && isOutOfStock
-                  ? t("product.soldOut")
-                  : !submitting && adminPickup
-                    ? t("product.adminPickup")
-                    : !submitting && !paymentReady
-                      ? t("product.paymentUnavailable")
-                      : submitting
-                        ? t("common.processing")
-                        : t("product.buyNow")}
-              </button>
+              <div className="flex items-center gap-3">
+                <div className="min-w-0 pr-1">
+                  <p className="mb-1 text-[11px] font-medium leading-none text-muted-foreground">{t("product.totalPrice")}</p>
+                  <p className="text-2xl font-bold tracking-tight text-primary leading-none">
+                    {formatYuan(totalPrice)}
+                  </p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={submitting || isOutOfStock || !paymentReady}
+                  className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-md transition-all duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:opacity-40"
+                >
+                  {submitting && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+                  {!submitting && isOutOfStock
+                    ? t("product.soldOut")
+                    : !submitting && adminPickup
+                      ? t("product.adminPickup")
+                      : !submitting && !paymentReady
+                        ? t("product.paymentUnavailable")
+                        : submitting
+                          ? t("common.processing")
+                          : t("product.buyNow")}
+                </button>
+              </div>
             </div>
           </form>
         </div>

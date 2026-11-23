@@ -1,0 +1,32 @@
+Liquid Glass WebGL (Vendored Core)
+Copyright (c) 2026 martin65536 and contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+Upstream Source:
+- Repository: https://github.com/martin65536/liquid-glass-webgl
+- Commit SHA: b4e0a6910443cea7cdd4b1bfcf7b2394e0a15e48
+- Upstream License: Apache License 2.0 (verified as of commit b4e0a6910443cea7cdd4b1bfcf7b2394e0a15e48)
+
+Imported Modules & Files:
+- renderer/ (LiquidGlassRenderer, WebGL pipeline, ping-pong FBOs, continuous SDF curvature, spring physics, velocity tracker, tabs/toggle methods)
+- shaders/ (Vertex, element, highlight, inner-shadow, kawase/separable blur, SDF, shadow, background/foreground shaders)
+- shapes/ (continuous-corners)
+- catalog/ (build-bottom-tabs.ts, helpers-drag.ts, helpers-elements.ts, helpers-layout.ts, palettes.ts, constants.ts, types.ts)
+- context/ & context.tsx (LiquidGlassCanvas, pointer & gesture management, prop synchronization)
+
+Modifications for MyShop:
+- Integrated with MyShop Next.js App Router and responsive viewport layout.
+- Added transparent clear mode and custom background sampling to integrate seamlessly with MyShop store theme (light/dark mode).
+- Adapted for store bottom navigation dock and mobile purchase dock integration.

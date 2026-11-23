@@ -1136,6 +1136,22 @@
   border-radius: var(--radius-pill);
 }
 
+.store-dock[data-webgl-active="true"] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.store-dock[data-webgl-active="true"] .store-dock-active {
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
 .store-dock-track {
   position: relative;
   display: flex;

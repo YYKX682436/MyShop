@@ -10,6 +10,7 @@ import { getStorefrontDockAction } from "@/lib/storefront-dock"
 import { getStorefrontActiveTab, isStorefrontDockVisible, normalizeStorefrontPath, type StorefrontNavKey } from "@/lib/storefront-routes"
 import { cn } from "@/lib/utils"
 import { useMessageSummary } from "@/components/store/message-summary"
+import { StoreBottomNavWebGL, type StoreBottomNavWebGLHandle } from "./store-bottom-nav-webgl"
 
 type DockKey = StorefrontNavKey
 
@@ -73,6 +74,18 @@ export function StoreBottomNav() {
   const indicatorX = useMotionValue(0)
   const [metrics, setMetrics] = useState<DockMetrics | null>(null)
   const [dragPreviewKey, setDragPreviewKey] = useState<DockKey | null>(null)
+  const [dockDimensions, setDockDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 64 })
+  const [webglAvailable, setWebglAvailable] = useState(false)
+  const [isDark, setIsDark] = useState(false)
+  const webglRef = useRef<StoreBottomNavWebGLHandle | null>(null)
+
+  useEffect(() => {
+    const updateDark = () => setIsDark(document.documentElement.classList.contains("dark"))
+    updateDark()
+    const observer = new MutationObserver(updateDark)
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
+    return () => observer.disconnect()
+  }, [])
 
   const navItems = useMemo(
     () => DOCK_ITEM_DEFINITIONS.map((item) => ({ ...item, label: t(item.labelKey) })),
@@ -87,6 +100,10 @@ export function StoreBottomNav() {
     if (elements.some((el) => !el)) return
 
     const dockRect = dock.getBoundingClientRect()
+    setDockDimensions({
+      width: Math.round(dockRect.width),
+      height: Math.round(dockRect.height) || 64,
+    })
     const slotRects = elements.map((el) => el!.getBoundingClientRect())
     const slotLefts = slotRects.map((r) => r.left - dockRect.left)
     const slotCenters = slotRects.map((r) => r.left + r.width / 2)
@@ -188,6 +205,7 @@ export function StoreBottomNav() {
     const targetOffset = getOffsetForIndex(activeIndex, metrics)
     snapIndicator(targetOffset)
     setDragPreviewKey(null)
+    webglRef.current?.selectTab(activeIndex)
   }, [activeIndex, getOffsetForIndex, metrics, snapIndicator])
 
   // Navigate immediately to a dock item, accounting for any in-flight navigation intent
@@ -202,6 +220,9 @@ export function StoreBottomNav() {
       const targetIndex = navItems.findIndex((item) => item.key === key)
       if (metrics && targetIndex >= 0) {
         snapIndicator(getOffsetForIndex(targetIndex, metrics))
+      }
+      if (targetIndex >= 0) {
+        webglRef.current?.selectTab(targetIndex)
       }
 
       try {
@@ -240,7 +261,8 @@ export function StoreBottomNav() {
     dragMovedRef.current = false
     suppressTapRef.current = false
     animationRef.current?.stop()
-  }, [])
+    webglRef.current?.beginDrag(activeIndex)
+  }, [activeIndex])
 
   const updateDragPreview = useCallback(() => {
     if (!metrics || !isDraggingRef.current) return
@@ -249,11 +271,16 @@ export function StoreBottomNav() {
     const nearestIndex = getNearestDockIndex(currentCenter, metrics.slotCenters)
     const key = navItems[nearestIndex]?.key
     if (key) setDragPreviewKey(key)
-  }, [indicatorX, metrics, navItems])
+
+    const dragDelta = indicatorX.get() - dragOriginXRef.current
+    const startX = dragPointerRef.current?.x ?? 0
+    webglRef.current?.drag(activeIndex, startX + dragDelta, startX, metrics.slotWidth)
+  }, [activeIndex, indicatorX, metrics, navItems])
 
   const finishDrag = useCallback((offsetX: number) => {
     if (!isDraggingRef.current) return
     isDraggingRef.current = false
+    const finalSnappedIndex = webglRef.current?.endDrag()
 
     if (!metrics || !dragMovedRef.current) {
       dragMovedRef.current = false
@@ -267,7 +294,7 @@ export function StoreBottomNav() {
     // a quick swipe. Use the gesture's final offset for the release target.
     const finalX = Math.max(0, Math.min(metrics.maxX, dragOriginXRef.current + offsetX))
     const currentCenter = metrics.slotCenters[0] + finalX
-    const nearestIndex = getNearestDockIndex(currentCenter, metrics.slotCenters)
+    const nearestIndex = finalSnappedIndex ?? getNearestDockIndex(currentCenter, metrics.slotCenters)
     const targetItem = navItems[nearestIndex]
 
     if (targetItem) {
@@ -302,6 +329,7 @@ export function StoreBottomNav() {
     dragMovedRef.current = false
     suppressTapRef.current = true
     setDragPreviewKey(null)
+    webglRef.current?.endDrag()
     if (metrics) snapIndicator(getOffsetForIndex(activeIndex, metrics))
   }, [activeIndex, getOffsetForIndex, metrics, snapIndicator])
 
@@ -320,7 +348,25 @@ export function StoreBottomNav() {
 
   return (
     <div className="store-dock-viewport">
-      <nav className="store-dock static-material" aria-label={t("nav.main")}>
+      <nav
+        className="store-dock static-material"
+        data-webgl-active={webglAvailable && !reducedMotion ? "true" : "false"}
+        aria-label={t("nav.main")}
+      >
+        {!reducedMotion && dockDimensions.width > 0 && (
+          <StoreBottomNavWebGL
+            ref={webglRef}
+            width={dockDimensions.width}
+            height={dockDimensions.height}
+            activeIndex={activeIndex}
+            isDark={isDark}
+            onSelectTab={(idx) => {
+              const item = navItems[idx]
+              if (item) requestDockAction(item.key)
+            }}
+            onAvailabilityChange={setWebglAvailable}
+          />
+        )}
         <div ref={dockRef} className="store-dock-track">
           {navItems.map((item, index) => {
             const Icon = item.icon
