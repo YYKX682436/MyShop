@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 const read = (relativePath) => readFileSync(new URL(relativePath, import.meta.url), "utf8")
-const dock = read("../components/layout/store-bottom-nav.tsx")
 const form = read("../components/admin/products/product-form.tsx")
 const editorPage = read("../components/admin/products/product-editor-page.tsx")
 const styles = read("../app/globals.css")
@@ -19,13 +18,6 @@ const persistentSurfaces = [
   read("../app/(store)/product/[id]/product-purchase-dock.tsx"),
 ]
 
-test("the storefront Dock stays full size without scroll-direction work", () => {
-  assert.doesNotMatch(dock, /dockCompact|lastScrollYRef|scrollFrameRef|data-compact|addEventListener\(["']scroll/)
-  assert.match(dock, /className="store-dock-viewport"/)
-  assert.match(dock, /className="store-dock static-material"/)
-  assert.match(dock, /useReducedMotion/)
-})
-
 test("persistent surfaces use static materials and touch devices skip backdrop sampling", () => {
   const staticMaterial = styles.match(/\.static-material\s*\{[^}]*\}/s)?.[0]
   const largeMaterial = styles.match(/\.large-material\s*\{[^}]*\}/s)?.[0]
@@ -35,7 +27,6 @@ test("persistent surfaces use static materials and touch devices skip backdrop s
   assert.doesNotMatch(largeMaterial, /backdrop-filter/i)
   assert.match(styles, /\.transient-glass\s*\{[^}]*backdrop-filter:\s*blur\(4px\)/s)
   assert.match(styles, /@media\s*\(pointer:\s*coarse\),\s*\(any-pointer:\s*coarse\)[\s\S]*?backdrop-filter:\s*none/)
-  assert.doesNotMatch(styles, /store-dock-viewport\[data-compact/)
   assert.match(styles, /padding:\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*0\.25rem\)/)
   for (const source of persistentSurfaces) {
     assert.match(source, /static-material|large-material/)

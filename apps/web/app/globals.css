@@ -101,7 +101,7 @@
 
     --storefront-max-width: 90rem;
     --storefront-gutter: max(1rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
-    --store-dock-reserve: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+    --product-purchase-scroll-margin: calc(5.5rem + env(safe-area-inset-bottom, 0px));
 
     --motion-fast: 140ms;
     --motion-standard: 180ms;
@@ -1116,105 +1116,9 @@
   }
 }
 
-/* Storefront navigation and dock. */
-.store-dock-viewport {
-  position: fixed;
-  right: 0;
-  bottom: calc(0.75rem + env(safe-area-inset-bottom));
-  left: 0;
-  z-index: 50;
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.store-dock {
-  position: relative;
-  width: min(calc(100vw - 1.5rem), 26rem);
-  height: 4rem;
-  overflow: hidden;
-  pointer-events: auto;
-  border-radius: var(--radius-pill);
-}
-
-.store-dock[data-webgl-active="true"] {
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.store-dock-track {
-  position: relative;
-  display: flex;
-  align-items: stretch;
-  gap: 0.125rem;
-  padding: 0.25rem;
-  isolation: isolate;
-  user-select: none;
-}
-
-.store-dock-item {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  min-width: 0;
-  min-height: 3.5rem;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 0;
-  color: hsl(var(--text-secondary));
-  opacity: 0.78;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: pan-y;
-  transition: color var(--motion-standard) ease, opacity var(--motion-standard) ease;
-}
-
-.store-dock-item:hover,
-.store-dock-item[data-preview-active="true"] {
-  color: hsl(var(--text-primary));
-  opacity: 1;
-}
-
-.store-dock-item:active {
-  opacity: 0.82;
-}
-
-.store-dock-item-content {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.125rem;
-}
-
-.store-dock-label {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.6875rem;
-  font-weight: 550;
-  line-height: 1.15;
-}
-
-.store-dock-item[data-preview-active="true"] .store-dock-label {
-  font-weight: 700;
-}
-
-.storefront-main--with-dock {
-  padding-bottom: var(--store-dock-reserve);
-}
-
-.storefront-main--with-dock :is(a, button, input, select, textarea),
+/* Product detail controls scroll clear of the fixed purchase bar. */
 .product-detail-page :is(a, button, input, select, textarea) {
-  scroll-margin-bottom: var(--store-dock-reserve);
+  scroll-margin-bottom: var(--product-purchase-scroll-margin);
 }
 
 .product-image-viewer {
@@ -1303,10 +1207,10 @@
 
 }
 
-/* Mobile layouts share the same page gutter, dock reservation and card rhythm. */
+/* Mobile layouts share the same page gutter and card rhythm. */
 @media (max-width: 767px) {
   :root {
-    --store-dock-reserve: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+    --product-purchase-scroll-margin: calc(4.75rem + env(safe-area-inset-bottom, 0px));
   }
 
   .storefront-main,
@@ -1314,8 +1218,6 @@
     padding-top: max(1rem, env(safe-area-inset-top, 0px));
     padding-bottom: 1rem;
   }
-  .storefront-main--with-dock { padding-bottom: var(--store-dock-reserve); }
-
   .store-home { gap: 1.25rem; }
   .store-catalog { gap: 0.75rem; }
   .store-catalog-controls .segmented-control {
@@ -1362,10 +1264,6 @@
   .account-balance-row { min-height: 5rem; justify-content: flex-start; padding: 0.75rem 1rem; }
   .auth-page { min-height: 0; gap: 1rem; padding-block: 0; }
   .auth-form-panel { padding-top: 1rem; }
-  .store-dock-viewport { bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
-  .store-dock { width: min(calc(100vw - var(--storefront-gutter) - var(--storefront-gutter)), 26rem); border-radius: 1.125rem; }
-  .store-dock-item { min-height: 3.25rem; }
-  .store-dock-item[data-preview-active="true"] { color: hsl(var(--primary)); }
   .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
   .product-purchase-dock-viewport .action-bar-material { border-radius: 0.875rem; }
   .admin-header-layer { padding: max(0.5rem, env(safe-area-inset-top, 0px)) 1rem 0; }
@@ -1408,18 +1306,6 @@
   .dashboard-detail-orders {
     grid-row: span 2;
   }
-}
-
-@media (min-width: 768px) {
-  .store-dock-track {
-    gap: 0.25rem;
-    padding: 0.3125rem;
-  }
-
-  .store-dock-item {
-    min-height: 3.75rem;
-  }
-
 }
 
 @keyframes myshop-fade-in {

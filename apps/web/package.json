@@ -9,7 +9,6 @@
     "perf:smoke": "node scripts/perf-smoke.mjs",
     "test": "pnpm run test:logic",
     "test:logic": "node --experimental-strip-types --test lib/*.test.mjs",
-    "test:dock-race": "node scripts/test-dock-race.mjs",
     "test:support-viewport": "node scripts/test-support-viewport.mjs",
     "test:card-ui": "node scripts/test-card-ui.mjs",
     "test:product-viewer": "node scripts/test-product-viewer.mjs",
@@ -48,8 +47,7 @@
     "sharp": "^0.34.5",
     "sonner": "^1.7.1",
     "tailwind-merge": "^2.5.5",
-    "tailwindcss-animate": "^1.0.7",
-    "vaul": "^1.1.2"
+    "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@types/node": "^22",

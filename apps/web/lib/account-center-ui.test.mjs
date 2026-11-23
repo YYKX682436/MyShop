@@ -17,7 +17,7 @@ test("account home owns the complete logged-in summary and scoped account action
   for (const route of ["/my/subsite", "/my/security", "/my/settings"]) {
     assert.equal(source.includes(`href="${route}"`), true, route)
   }
-  assert.match(readSource("./storefront-routes.ts"), /pathname: "\/my\/orders"/)
+  assert.doesNotThrow(() => readSource("../app/(store)/my/orders/page.tsx"))
   assert.match(source, /user\.avatar_url/)
   assert.match(source, /user\.user_no/)
   assert.match(source, /user\.balance/)
@@ -125,7 +125,6 @@ test("settings flow delegates language and all three theme modes to existing con
 })
 
 test("the removed profile page has no storefront route or page implementation", () => {
-  assert.equal(readSource("./storefront-routes.ts").includes("/profile"), false)
   assert.throws(() => readFileSync(new URL("../app/(store)/profile/page.tsx", import.meta.url)), /ENOENT/)
 })
 

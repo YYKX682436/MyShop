@@ -324,13 +324,6 @@ async function locateTabPanel(page, key) {
   return page.locator('[role="tabpanel"][data-state="active"]')
 }
 
-async function locateDockItem(page, key) {
-  const testIdLocator = page.getByTestId(`store-dock-${key}`)
-  if (await testIdLocator.count() > 0) return testIdLocator
-  const slot = { home: 0, orders: 1, me: 2 }[key]
-  return page.locator(".store-dock-item").nth(slot)
-}
-
 async function createAuthSession(browser, role) {
   const admin = role === "admin"
   const storageStatePath = process.env[admin ? "PERF_ADMIN_STORAGE_STATE" : "PERF_USER_STORAGE_STATE"]
@@ -380,28 +373,6 @@ async function runHomeScroll(browser) {
   const measurements = await capture.finish("home-scroll")
   await context.close()
   return { status: "passed", scrollDurationMs: Math.round(scrollDurationMs), ...measurements }
-}
-
-async function runDockNavigation(page) {
-  await waitForStorePage(page)
-  const capture = await startCapture(page)
-  await capture.startRuntimeMetrics()
-  const targetPaths = { orders: "/my/orders", me: "/my", home: "/" }
-  const sequence = ["orders", "me", "home", "orders", "me", "home"]
-  const navigations = []
-
-  for (const key of sequence) {
-    const before = performance.now()
-    const button = await locateDockItem(page, key)
-    await button.click()
-    await page.waitForURL((url) => url.pathname.replace(/\/+$/, "") === targetPaths[key].replace(/\/+$/, "") || (key === "home" && url.pathname === "/"), { timeout: 15_000 })
-    const activeButton = await locateByTestIdOrSelector(page, `store-dock-${key}`, `.store-dock-item[aria-current="page"]`)
-    await activeButton.waitFor({ state: "visible", timeout: 10_000 })
-    navigations.push({ key, durationMs: Math.round(performance.now() - before) })
-  }
-
-  const measurements = await capture.finish("dock-navigation")
-  return { status: "passed", sequence, navigations, ...measurements }
 }
 
 async function runDashboardScroll(page) {
@@ -544,22 +515,14 @@ async function main() {
   try {
     await runScenario(report, "A_home_scroll", () => runHomeScroll(browser))
 
-    const user = await createAuthSession(browser, "user")
-    if (user.page) {
-      await runScenario(report, "B_dock_navigation", () => runDockNavigation(user.page))
-      await user.context.close()
-    } else {
-      report.scenarios.B_dock_navigation = { status: "skipped", reason: user.skipped }
-    }
-
     const admin = await createAuthSession(browser, "admin")
     if (admin.page) {
-      await runScenario(report, "C_dashboard_scroll", () => runDashboardScroll(admin.page))
-      await runScenario(report, "D_product_open_E_tabs_F_sheet_close", () => runProductEditor(browser, admin.page, CATEGORY_DELAY_MS))
+      await runScenario(report, "B_dashboard_scroll", () => runDashboardScroll(admin.page))
+      await runScenario(report, "C_product_open_tabs_sheet_close", () => runProductEditor(browser, admin.page, CATEGORY_DELAY_MS))
       await admin.context.close()
     } else {
-      report.scenarios.C_dashboard_scroll = { status: "skipped", reason: admin.skipped }
-      report.scenarios.D_product_open_E_tabs_F_sheet_close = { status: "skipped", reason: admin.skipped }
+      report.scenarios.B_dashboard_scroll = { status: "skipped", reason: admin.skipped }
+      report.scenarios.C_product_open_tabs_sheet_close = { status: "skipped", reason: admin.skipped }
     }
   } finally {
     await browser.close()
