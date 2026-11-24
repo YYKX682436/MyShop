@@ -269,6 +269,7 @@ if [[ "$mode" == retention ]]; then
         repo=${target%%@*}
         digest=${target#*@}
         [[ "$repo" != "$target" ]] || digest=$(digest_for_sha "$source_sha")
+        if [[ -e "$root/removed-${repo##*/}-$source_sha" ]]; then exit 1; fi
         if [[ "$format" == '{{.Id}}' ]]; then
           printf '%s\n' "$(digest_for_sha "$source_sha")"
         else
@@ -284,7 +285,17 @@ if [[ "$mode" == retention ]]; then
           printf 'myshop-api|friend-custom|sha256:%s|sha256:%s\n' "$(printf '7%.0s' {1..64})" "$(printf '7%.0s' {1..64})"
         fi
       else
-        printf '%s\n' "${3:-}" >>"${FAKE_REMOVAL_LOG:?}"
+        ref=${3:-}
+        source_sha=$(source_sha_for_ref "$ref")
+        repo=${ref%%@*}
+        [[ "$repo" != "$ref" ]] || repo=${ref%:*}
+        if [[ "$ref" == "$repo:$rollback2_sha" ]]; then
+          # A tag removal also drops the digest alias in this Docker fixture.
+          touch "$root/removed-${repo##*/}-$source_sha"
+        elif [[ "$ref" == "$repo@$(digest_for_sha "$rollback2_sha")" && -e "$root/removed-${repo##*/}-$source_sha" ]]; then
+          exit 1
+        fi
+        printf '%s\n' "$ref" >>"${FAKE_REMOVAL_LOG:?}"
       fi
       ;;
     system)

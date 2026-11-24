@@ -200,9 +200,15 @@ def main() -> int:
             for ref in refs:
                 if ref in accepted_refs or image_id in accepted_ids:
                     continue
-                print(f"[myshop-retention] {'would remove' if args.dry_run else 'remove'} image: {ref}")
-                if not args.dry_run:
-                    docker("image", "rm", ref)
+                if args.dry_run:
+                    print(f"[myshop-retention] would remove image: {ref}")
+                    continue
+                # Removing a tag can also remove its RepoDigest alias. Recheck
+                # each listed reference so a stale second alias is idempotent.
+                if not docker("image", "inspect", "--format", "{{.Id}}", ref, check=False).strip():
+                    continue
+                print(f"[myshop-retention] remove image: {ref}")
+                docker("image", "rm", ref)
 
         # The accepted set is the post-commit invariant. Verify it after the
         # deletion pass as well as before it; a partial Docker failure must be
