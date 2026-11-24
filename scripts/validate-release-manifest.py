@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the MyShop source-SHA manifest carried by GHCR."""
+"""Validate a complete release manifest with per-service image provenance."""
 from __future__ import annotations
 
 import json
@@ -29,10 +29,11 @@ try:
     manifest = json.loads(path.read_text(encoding="utf-8"))
 except Exception as exc:
     fail(f"manifest JSON is invalid: {exc}")
-if (not isinstance(manifest, dict) or set(manifest) != {"version", "project", "source_sha", "created_at", "images"}
-        or type(manifest.get("version")) is not int or manifest.get("version") != 1 or manifest.get("project") != project
-        or project != "myshop"):
-    fail("manifest version/project/fields are unsupported")
+if not isinstance(manifest, dict) or manifest.get("project") != project or project != "myshop":
+    fail("manifest project is unsupported")
+version = manifest.get("version")
+if type(version) is not int or version not in (1, 2):
+    fail("manifest version is unsupported")
 source_sha = manifest.get("source_sha")
 if not isinstance(source_sha, str) or not SHA.fullmatch(source_sha):
     fail("source_sha must be a full lowercase SHA")
@@ -45,20 +46,69 @@ except ValueError:
     fail("created_at must be an ISO-8601 timestamp")
 if created_time.tzinfo is None:
     fail("created_at must include a timezone")
+
 images = manifest.get("images")
 if not isinstance(images, dict) or set(images) != set(SERVICES):
     fail(f"images must contain exactly {SERVICES}")
-normalized = {"version": 1, "project": project, "source_sha": source_sha, "created_at": created_at, "images": {}}
+if version == 1:
+    if set(manifest) != {"version", "project", "source_sha", "created_at", "images"}:
+        fail("legacy manifest fields are unsupported")
+    built_services = list(SERVICES)
+    # A v1 manifest has no change-scope metadata. Treat it as migration-capable
+    # so production keeps the strict API stop/backup/schema transaction.
+    database_migration = True
+else:
+    if set(manifest) != {"version", "project", "source_sha", "created_at", "built_services", "database_migration", "images"}:
+        fail("manifest v2 fields are unsupported")
+    built_services = manifest.get("built_services")
+    if (not isinstance(built_services, list)
+            or any(not isinstance(item, str) or item not in SERVICES for item in built_services)
+            or len(set(built_services)) != len(built_services)
+            or built_services != sorted(built_services)):
+        fail("built_services must be a sorted unique subset of api/web")
+    database_migration = manifest.get("database_migration")
+    if type(database_migration) is not bool:
+        fail("database_migration must be a boolean")
+
+normalized = {
+    "version": 2,
+    "project": project,
+    "source_sha": source_sha,
+    "created_at": created_at,
+    "built_services": built_services,
+    "database_migration": database_migration,
+    "images": {},
+}
 for service in SERVICES:
     item = images.get(service)
-    if not isinstance(item, dict) or set(item) != {"ref", "digest"}:
-        fail(f"images.{service} fields do not match the manifest schema")
-    ref = item.get("ref")
-    expected_ref = f"{registry}/myshop-{service}:{source_sha}"
-    if ref != expected_ref:
-        fail(f"images.{service}.ref must be the exact full-SHA ref {expected_ref}")
+    if not isinstance(item, dict):
+        fail(f"images.{service} must be an object")
+    if version == 1:
+        if set(item) != {"ref", "digest"}:
+            fail(f"legacy images.{service} fields do not match the manifest schema")
+        image_source_sha = source_sha
+    else:
+        if set(item) != {"ref", "digest", "source_sha"}:
+            fail(f"images.{service} fields do not match the manifest schema")
+        image_source_sha = item.get("source_sha")
+        if not isinstance(image_source_sha, str) or not SHA.fullmatch(image_source_sha):
+            fail(f"images.{service}.source_sha must be a full lowercase SHA")
     digest = item.get("digest")
     if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
         fail(f"images.{service}.digest is invalid")
-    normalized["images"][service] = {"ref": expected_ref, "digest": digest}
+    ref = item.get("ref")
+    if version == 1:
+        legacy_ref = f"{registry}/myshop-{service}:{source_sha}"
+        if ref != legacy_ref:
+            fail(f"legacy images.{service}.ref must equal the full-SHA ref {legacy_ref}")
+        expected_ref = f"{registry}/myshop-{service}@{digest}"
+    else:
+        expected_ref = f"{registry}/myshop-{service}@{digest}"
+        if ref != expected_ref:
+            fail(f"images.{service}.ref must be the exact digest-pinned ref {expected_ref}")
+    normalized["images"][service] = {
+        "ref": expected_ref,
+        "digest": digest,
+        "source_sha": image_source_sha,
+    }
 print(json.dumps(normalized, sort_keys=True))

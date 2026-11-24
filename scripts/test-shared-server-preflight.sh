@@ -83,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix="myshop-preflight-path-") as temporary:
 
 assert 'str(configured_root) != "/srv/myshop-friend"' in body
 assert 'script_dir = Path(sys.argv[6])' in body
-assert 'verify_script = script_dir / "verify-offline-image-bundle.py"' in body
+assert 'MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE' in body
 assert 'edge_ip_range = ipaddress.ip_network(subnets[0].get("ip_range", ""), strict=True)' in body
 assert 'if caddy_ip in edge_ip_range:' in body
 assert 'configured subnet or dynamic IP range' in body

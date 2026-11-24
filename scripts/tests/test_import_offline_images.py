@@ -1,4 +1,4 @@
-"""The importer may reuse infrastructure only after its identity is verified."""
+"""Offline imports carry app images and verify pinned infrastructure in place."""
 import json
 import os
 from pathlib import Path
@@ -60,16 +60,17 @@ if '--verify-local' in sys.argv:
         self.assertEqual(loads, ["api.tar", "web.tar"])
         self.assertTrue(verified)
 
-    def test_unverified_infrastructure_is_loaded_and_checked_again(self):
+    def test_unverified_infrastructure_fails_without_exporting_or_loading_it(self):
         result, loads, verified = self.run_import(1)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(loads, ["api.tar", "web.tar", "postgres.tar", "caddy.tar", "node-exporter.tar"])
-        self.assertTrue(verified)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("preinstalled pinned infrastructure", result.stderr)
+        self.assertEqual(loads, ["api.tar", "web.tar"])
+        self.assertFalse(verified)
 
     def test_mismatch_after_import_fails_closed(self):
         result, _, verified = self.run_import(2)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("runtime configuration or layers differ", result.stderr)
+        self.assertIn("preinstalled pinned infrastructure", result.stderr)
         self.assertFalse(verified)
 
 

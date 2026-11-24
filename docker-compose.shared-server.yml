@@ -28,7 +28,7 @@ services:
       - database
 
   api:
-    image: ${MYSHOP_API_IMAGE:?MYSHOP_API_IMAGE must be a registry image tagged with the full 40-character release SHA}
+    image: ${MYSHOP_API_IMAGE:?MYSHOP_API_IMAGE must be pinned to an immutable registry digest}
     logging: *default-logging
     environment:
       TZ: Asia/Shanghai
@@ -127,7 +127,7 @@ services:
       - metrics
 
   web:
-    image: ${MYSHOP_WEB_IMAGE:?MYSHOP_WEB_IMAGE must be a registry image tagged with the full 40-character release SHA}
+    image: ${MYSHOP_WEB_IMAGE:?MYSHOP_WEB_IMAGE must be pinned to an immutable registry digest or verified offline tag}
     logging: *default-logging
     environment:
       TZ: Asia/Shanghai

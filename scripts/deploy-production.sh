@@ -54,6 +54,8 @@ offline_images=${MYSHOP_OFFLINE_IMAGES:-$(read_env_setting MYSHOP_OFFLINE_IMAGES
 offline_images=${offline_images:-0}
 [[ "$offline_images" == 0 || "$offline_images" == 1 ]] || die 'MYSHOP_OFFLINE_IMAGES must be 0 or 1'
 offline_bundle=${MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE:-$(read_env_setting MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE)}
+recovery_bundle=${MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE:-$(read_env_setting MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE)}
+recovery_manifest=${MYSHOP_FORWARD_RECOVERY_MANIFEST_FILE:-$(read_env_setting MYSHOP_FORWARD_RECOVERY_MANIFEST_FILE)}
 OFFLINE_IMAGE_VERIFIER=${MYSHOP_OFFLINE_IMAGE_VERIFIER:-$SCRIPT_DIR/verify-offline-image-bundle.py}
 if [[ "$offline_images" == 1 ]]; then
   (( shared_server_mode )) || die 'offline image imports are supported only for the isolated shared-server project'
@@ -93,13 +95,18 @@ manifest_json=$(python3 "$SCRIPT_DIR/validate-release-manifest.py" "$manifest" "
 candidate_sha=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["source_sha"])')
 api_ref=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["api"]["ref"])')
 api_digest=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["api"]["digest"])')
+api_source_sha=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["api"]["source_sha"])')
 web_ref=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["web"]["ref"])')
 web_digest=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["web"]["digest"])')
+web_source_sha=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["images"]["web"]["source_sha"])')
+database_migration=$(printf '%s' "$manifest_json" | python3 -c 'import json,sys; print("1" if json.load(sys.stdin)["database_migration"] else "0")')
 
 tmp_dir=$(mktemp -d)
 state_backup="$tmp_dir/state.json"
 state_existed=0
 candidate_started=0
+api_candidate_started=0
+web_candidate_started=0
 api_stop_attempted=0
 committed=0
 shared_bootstrap=0
@@ -115,11 +122,21 @@ if [[ -f "$STATE_FILE" ]]; then
   cp -p -- "$STATE_FILE" "$state_backup"
   state_existed=1
 fi
-declare -A before_ref before_digest before_image_id baseline_container_ref candidate_ref candidate_digest candidate_image_id
+declare -A before_ref before_digest before_image_id baseline_container_ref candidate_ref candidate_runtime_ref candidate_tag_ref candidate_source_sha candidate_digest candidate_image_id
 candidate_ref[api]=$api_ref
 candidate_ref[web]=$web_ref
+candidate_runtime_ref[api]=$api_ref
+candidate_runtime_ref[web]=$web_ref
+candidate_tag_ref[api]="$approved_registry/myshop-api:$api_source_sha"
+candidate_tag_ref[web]="$approved_registry/myshop-web:$web_source_sha"
+candidate_source_sha[api]=$api_source_sha
+candidate_source_sha[web]=$web_source_sha
 candidate_digest[api]=$api_digest
 candidate_digest[web]=$web_digest
+api_changed=0
+web_changed=0
+api_digest_changed=0
+web_digest_changed=0
 
 read_state_active() {
   [[ -f "$STATE_FILE" ]] || return 1
@@ -141,16 +158,31 @@ for service in ('api', 'web'):
     image_id = image.get('image_id', '')
     if image_id and not re.fullmatch(r'sha256:[0-9a-f]{64}', str(image_id)):
         raise SystemExit(f'malformed active image_id: {service}')
-    print(f'{service}\t{image["ref"]}\t{image["digest"]}\t{image_id}')
-print(f'active_sha\t{active["source_sha"]}')
+    image_sha = image.get('source_sha', active['source_sha'])
+    repo = f'ghcr.io/yykx682436/myshop-{service}'
+    canonical_ref = f'{repo}@{image["digest"]}'
+    tag_ref = f'{repo}:{image_sha}'
+    if (not re.fullmatch(r'[0-9a-f]{40}', str(image_sha))
+            or image['ref'] not in {canonical_ref, tag_ref}
+            or image.get('tag_ref', tag_ref) != tag_ref):
+        raise SystemExit(f'malformed active image provenance: {service}')
+    runtime_ref = image.get('runtime_ref', image['ref'])
+    if runtime_ref not in {image['ref'], tag_ref}:
+        raise SystemExit(f'malformed active runtime ref: {service}')
+    print(f'{service}|{image["ref"]}|{image["digest"]}|{image_id}|{runtime_ref}')
+print(f'active_sha|{active["source_sha"]}')
 PY
 }
 
 active_sha=bootstrap
 if (( state_existed )); then
-  while IFS=$'\t' read -r key value digest image_id; do
+  while IFS='|' read -r key value digest image_id runtime_ref; do
     case "$key" in
-      api|web) before_ref[$key]=$value; before_digest[$key]=$digest; before_image_id[$key]=$image_id ;;
+      api|web)
+        before_ref[$key]=$runtime_ref
+        before_digest[$key]=$digest
+        before_image_id[$key]=$image_id
+        ;;
       active_sha) active_sha=$value ;;
     esac
   done < <(read_state_active) || die 'accepted deployment state is malformed'
@@ -197,6 +229,12 @@ if (( shared_server_mode && state_existed )); then
   [[ "$candidate_sha" != "$active_sha" ]] || die 'candidate is already the accepted release'
   git --git-dir="$release_repository" merge-base --is-ancestor "$active_sha" "$candidate_sha" \
     || die 'candidate does not descend from the accepted release'
+  for service in api web; do
+    image_sha=${candidate_source_sha[$service]}
+    git --git-dir="$release_repository" cat-file -e "$image_sha^{commit}" \
+      && git --git-dir="$release_repository" merge-base --is-ancestor "$image_sha" "$candidate_sha" \
+      || die "${service} image provenance is missing from or not ancestral to the release history"
+  done
 fi
 
 verify_baseline() {
@@ -217,17 +255,52 @@ if [[ -n "$recovery_failed_sha" ]]; then
   (( shared_server_mode && state_existed )) || die 'forward recovery requires an accepted shared-server deployment'
   [[ "$offline_images" == 1 && "$recovery_failed_sha" =~ ^[0-9a-f]{40}$ && "$recovery_failed_sha" != "$candidate_sha" && "$candidate_sha" != "$active_sha" ]] \
     || die 'forward recovery requires a new candidate and a verified failed offline release'
+  [[ -n "$recovery_bundle" && -f "$recovery_bundle" && ! -L "$recovery_bundle" ]] \
+    || die 'forward recovery requires the failed release offline bundle separately from the candidate bundle'
+  [[ -n "$recovery_manifest" && -f "$recovery_manifest" && ! -L "$recovery_manifest" ]] \
+    || die 'forward recovery requires the failed release manifest separately from the candidate manifest'
+  python3 "$OFFLINE_IMAGE_VERIFIER" "$recovery_bundle" --manifest "$recovery_manifest" \
+    --verify-local --expected-source-sha "$recovery_failed_sha" >/dev/null \
+    || die 'failed release recovery bundle is invalid or not loaded locally'
   [[ -x "$SCRIPT_DIR/preflight-shared-server.sh" ]] || die 'forward recovery preflight is unavailable'
   MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_ENV_FILE="$ENV_FILE" MYSHOP_COMPOSE_FILE="$COMPOSE_FILE" \
     MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$recovery_failed_sha" \
-    MYSHOP_API_IMAGE="$approved_registry/myshop-api:$recovery_failed_sha" \
-    MYSHOP_WEB_IMAGE="$approved_registry/myshop-web:$recovery_failed_sha" \
+    MYSHOP_RELEASE_MANIFEST_FILE="$manifest" \
+    MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="$offline_bundle" \
+    MYSHOP_FORWARD_RECOVERY_MANIFEST_FILE="$recovery_manifest" \
+    MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE="$recovery_bundle" \
+    MYSHOP_API_IMAGE="$(python3 "$OFFLINE_IMAGE_VERIFIER" "$recovery_bundle" --get-runtime-ref api)" \
+    MYSHOP_WEB_IMAGE="$(python3 "$OFFLINE_IMAGE_VERIFIER" "$recovery_bundle" --get-runtime-ref web)" \
     "$SCRIPT_DIR/preflight-shared-server.sh" --mode forward-recovery \
     || die 'forward recovery preflight failed'
   forward_recovery=1
   printf 'FORWARD_RECOVERY_VERIFIED failed=%s candidate=%s\n' "$recovery_failed_sha" "$candidate_sha"
 elif (( ! shared_bootstrap )); then
   verify_baseline || die 'running production does not match the accepted baseline image refs/digests'
+fi
+
+if (( shared_bootstrap )); then
+  api_changed=1
+  web_changed=1
+  api_digest_changed=1
+  web_digest_changed=1
+else
+  if [[ "${candidate_digest[api]}" != "${before_digest[api]}" ]]; then
+    api_changed=1
+    api_digest_changed=1
+  fi
+  if [[ "${candidate_digest[web]}" != "${before_digest[web]}" ]]; then
+    web_changed=1
+    web_digest_changed=1
+  fi
+  if (( api_changed == 0 )); then
+    candidate_runtime_ref[api]=${before_ref[api]}
+    candidate_image_id[api]=${before_image_id[api]:-}
+  fi
+  if (( web_changed == 0 )); then
+    candidate_runtime_ref[web]=${before_ref[web]}
+    candidate_image_id[web]=${before_image_id[web]:-}
+  fi
 fi
 
 storage_gate() {
@@ -261,19 +334,37 @@ verify_remote_digest() {
 }
 
 pull_candidate() {
+  local service bundle_image_id bundle_runtime_ref
   if [[ "$offline_images" == 1 ]]; then
     python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --manifest "$manifest" --verify-local >/dev/null \
       || die 'preloaded image bundle does not match the release manifest or local image IDs'
     for service in api web; do
-      candidate_image_id[$service]=$(python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --get-loaded-image-id "$service") \
+      bundle_image_id=$(python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --get-loaded-image-id "$service") \
         || die "could not read preloaded ${service} image identity"
+      bundle_runtime_ref=$(python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --get-runtime-ref "$service") \
+        || die "could not read preloaded ${service} runtime ref"
+      if [[ "$service" == api && "$api_changed" == 1 || "$service" == web && "$web_changed" == 1 ]]; then
+        candidate_image_id[$service]=$bundle_image_id
+        candidate_runtime_ref[$service]=$bundle_runtime_ref
+      else
+        candidate_image_id[$service]=$bundle_image_id
+        candidate_runtime_ref[$service]=${before_ref[$service]}
+      fi
     done
     return 0
   fi
-  docker pull "$api_ref"
-  docker pull "$web_ref"
-  verify_remote_digest "$api_ref" "$api_digest" || die 'API RepoDigest does not match release manifest'
-  verify_remote_digest "$web_ref" "$web_digest" || die 'Web RepoDigest does not match release manifest'
+  for service in api web; do
+    [[ "$service" == api && "$api_digest_changed" == 1 || "$service" == web && "$web_digest_changed" == 1 ]] || continue
+    docker pull "${candidate_ref[$service]}"
+    verify_remote_digest "${candidate_ref[$service]}" "${candidate_digest[$service]}" \
+      || die "${service} RepoDigest does not match release manifest"
+    candidate_image_id[$service]=$(docker image inspect --format '{{.Id}}' "${candidate_ref[$service]}") \
+      || die "could not inspect pulled ${service} image"
+    docker tag "${candidate_ref[$service]}" "${candidate_tag_ref[$service]}" \
+      || die "could not create the local ${service} retention tag"
+    [[ "$(docker image inspect --format '{{.Id}}' "${candidate_tag_ref[$service]}")" == "${candidate_image_id[$service]}" ]] \
+      || die "${service} retention tag changed image identity"
+  done
 }
 
 run_compose() {
@@ -281,9 +372,43 @@ run_compose() {
     MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" \
     MYSHOP_COMPOSE_FILE="$COMPOSE_FILE" MYSHOP_SHARED_SERVER="$shared_server_mode" \
     MYSHOP_ENV_FILE="$ENV_FILE" MYSHOP_APPROVED_REGISTRY="$approved_registry" \
-    MYSHOP_API_IMAGE="${candidate_ref[api]}" MYSHOP_WEB_IMAGE="${candidate_ref[web]}" \
+    MYSHOP_API_IMAGE="${candidate_runtime_ref[api]}" MYSHOP_WEB_IMAGE="${candidate_runtime_ref[web]}" \
     "$COMPOSE_WRAPPER" --env-file "$ENV_FILE" "$@"
 }
+
+compose_service_hash() {
+  local service=$1 line hash found=
+  while IFS= read -r line; do
+    read -r name hash _ <<<"$line"
+    if [[ "$name" == "$service" && "$hash" =~ ^[0-9a-f]{64}$ ]]; then
+      found=$hash
+      break
+    fi
+  done < <(run_compose config --hash "$service")
+  [[ -n "$found" ]] || die "Docker Compose did not return a valid $service service config hash"
+  printf '%s' "$found"
+}
+
+service_config_matches_running() {
+  local service=$1 desired_hash container_id running_hash
+  desired_hash=$(compose_service_hash "$service") || die "could not calculate the desired $service service config hash"
+  container_id=$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+    --filter "label=com.docker.compose.service=$service" -q \
+    | awk 'NF {count++; value=$0} END {if (count == 1) print value; else exit 1}') \
+    || die "could not identify the running $service service container"
+  running_hash=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$container_id") \
+    || die "could not inspect the running $service service config hash"
+  [[ -n "$running_hash" ]] || die "the running $service service has no Compose config hash"
+  [[ "$desired_hash" == "$running_hash" ]]
+}
+
+if (( ! shared_bootstrap )); then
+  if ! service_config_matches_running api; then api_changed=1; fi
+  if ! service_config_matches_running web; then web_changed=1; fi
+fi
+if (( database_migration && api_digest_changed == 0 )); then
+  die 'manifest declares a database migration without changing the API image digest'
+fi
 
 run_before_compose() {
   MYSHOP_RUNTIME_ROOT="$PROJECT_ROOT" MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" \
@@ -317,14 +442,14 @@ verify_candidate_identity() {
   for service in api web; do
     container_id=$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" --filter "label=com.docker.compose.service=$service" -q | head -n 1)
     [[ -n "$container_id" ]] || return 1
-    [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${candidate_ref[$service]}" ]] || return 1
+    [[ "$(docker inspect --format '{{.Config.Image}}' "$container_id")" == "${candidate_runtime_ref[$service]}" ]] || return 1
     image_id=$(docker inspect --format '{{.Image}}' "$container_id")
-    expected_id=$(docker image inspect --format '{{.Id}}' "${candidate_ref[$service]}") || return 1
+    expected_id=$(docker image inspect --format '{{.Id}}' "${candidate_runtime_ref[$service]}") || return 1
     [[ "$image_id" == "$expected_id" ]] || return 1
     if [[ "$offline_images" == 1 ]]; then
       [[ "$image_id" == "${candidate_image_id[$service]}" ]] || return 1
     else
-      docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${candidate_ref[$service]}" \
+      docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "${candidate_runtime_ref[$service]}" \
         | grep -F "@${candidate_digest[$service]}" >/dev/null || return 1
     fi
   done
@@ -353,17 +478,23 @@ SQL
 }
 
 verify_recovery_contracts() {
-  local service_ref destination db_id actual expected staged_history
-  for service_ref in "$approved_registry/myshop-api:$recovery_failed_sha" "${candidate_ref[api]}"; do
-    destination="$tmp_dir/contract-${service_ref##*:}.json"
+  local failed_api_ref image_ref service_ref destination db_id actual expected staged_history
+  failed_api_ref=$(python3 "$OFFLINE_IMAGE_VERIFIER" "$recovery_bundle" --get-runtime-ref api) || return 1
+  for service_ref in failed candidate; do
+    if [[ "$service_ref" == failed ]]; then
+      image_ref=$failed_api_ref
+    else
+      image_ref=${candidate_runtime_ref[api]}
+    fi
+    destination="$tmp_dir/contract-${service_ref}-api.json"
     # Create an isolated, never-started container solely to read the immutable
     # image's contract; no production volume or network is attached.
-    inspection_id=$(docker create --network none --entrypoint /bin/false "$service_ref") || return 1
+    inspection_id=$(docker create --network none --entrypoint /bin/false "$image_ref") || return 1
     docker cp "$inspection_id:/app/production-schema-contract.json" "$destination" >/dev/null || return 1
     docker rm "$inspection_id" >/dev/null || return 1
     inspection_id=
   done
-  expected=$(python3 - "$tmp_dir/contract-$recovery_failed_sha.json" "$tmp_dir/contract-$candidate_sha.json" <<'PY'
+  expected=$(python3 - "$tmp_dir/contract-failed-api.json" "$tmp_dir/contract-candidate-api.json" <<'PY'
 import json, re, sys
 old, new = (json.load(open(path, encoding='utf-8')) for path in sys.argv[1:])
 if old != new or new.get('version') != 1:
@@ -392,7 +523,7 @@ SQL
   # release with exactly the same final contract must be able to finish that
   # staged cutover. Do not generalize this exception to other migrations.
   [[ "$expected" == '64|64|0' && "$actual" == '63|63|0' ]] || return 1
-  python3 - "$tmp_dir/contract-$candidate_sha.json" <<'PY' || return 1
+  python3 - "$tmp_dir/contract-candidate-api.json" <<'PY' || return 1
 import json, sys
 contract = json.load(open(sys.argv[1], encoding='utf-8'))
 tables = contract.get('tables', {})
@@ -429,6 +560,8 @@ prepare_prospective_state() {
     cp -p -- "$state_backup" "$prospective_state"
   fi
   MYSHOP_OFFLINE_IMAGES="$offline_images" MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="$offline_bundle" \
+    MYSHOP_API_RUNTIME_REF="${candidate_runtime_ref[api]}" MYSHOP_WEB_RUNTIME_REF="${candidate_runtime_ref[web]}" \
+    MYSHOP_API_IMAGE_ID="${candidate_image_id[api]:-}" MYSHOP_WEB_IMAGE_ID="${candidate_image_id[web]:-}" \
     "$STATE_WRITER" "$prospective_state" "$manifest" >/dev/null
 }
 
@@ -620,21 +753,36 @@ restore_old() {
     run_compose stop api web caddy || return 1
     return 0
   fi
-  if (( candidate_started )); then
-    # The candidate may still be migrating or serving writes. Stop it before
-    # checking history; otherwise the database can change after the check.
-    run_compose stop api web caddy || return 1
-    current_schema=$(database_schema_fingerprint) || return 2
-    [[ -n "${baseline_schema_fingerprint:-}" && "$current_schema" == "$baseline_schema_fingerprint" ]] || return 2
-  fi
-  if (( ! state_existed && ! candidate_started && ! api_stop_attempted )); then
+  if (( ! candidate_started && ! api_stop_attempted )); then
     verify_baseline || return 1
     unset DEPLOY_TEST_FAIL
     smoke || return 1
     return 0
   fi
-  run_before_compose config --quiet || return 1
-  run_before_compose up -d || return 1
+
+  if (( database_migration && (candidate_started || api_stop_attempted) )); then
+    # A migration rollback is safe only with unchanged Flyway history. Keep
+    # the existing fail-closed behavior for all app-facing services here.
+    run_compose stop api web caddy || return 1
+    current_schema=$(database_schema_fingerprint) || return 2
+    [[ -n "${baseline_schema_fingerprint:-}" && "$current_schema" == "$baseline_schema_fingerprint" ]] || return 2
+    run_before_compose config --quiet || return 1
+    run_before_compose up -d --pull never --no-deps api || return 1
+    run_before_compose up -d --pull never --no-deps web || return 1
+    run_before_compose up -d --pull never --no-deps caddy || return 1
+  else
+    if (( api_changed && (api_candidate_started || api_stop_attempted) )); then
+      run_compose stop api || return 1
+      current_schema=$(database_schema_fingerprint) || return 2
+      [[ -n "${baseline_schema_fingerprint:-}" && "$current_schema" == "$baseline_schema_fingerprint" ]] || return 2
+      run_before_compose config --quiet || return 1
+      run_before_compose up -d --pull never --no-deps api || return 1
+    fi
+    if (( web_changed && web_candidate_started )); then
+      run_before_compose config --quiet || return 1
+      run_before_compose up -d --pull never --no-deps web || return 1
+    fi
+  fi
   wait_health "$COMPOSE_PROJECT" || return 1
   unset DEPLOY_TEST_FAIL
   smoke || return 1
@@ -699,9 +847,9 @@ pull_candidate || pre_commit_fail pull
 if (( forward_recovery )); then
   verify_recovery_contracts || pre_commit_fail schema-compatibility
 fi
-# Later releases already have an accepted running version, so pull and digest
-# verification first to avoid backup churn for an unavailable candidate.
-if (( ! shared_bootstrap )); then
+# The database is untouched by a pure Web release. API changes retain their
+# recovery point; migration releases still stop the API before startup.
+if (( ! shared_bootstrap && api_changed )); then
   create_predeploy_backup || pre_commit_fail backup
   baseline_schema_fingerprint=$(database_schema_fingerprint) || pre_commit_fail baseline-schema
 fi
@@ -709,27 +857,46 @@ fi
 run_compose config --quiet || pre_commit_fail compose
 prepare_bootstrap_rollback_refs || pre_commit_fail bootstrap-rollback-prepare
 [[ "${DEPLOY_TEST_FAIL:-}" != start ]] || pre_commit_fail start
-# The media index is populated between forward migrations.  Stop every API
-# instance in this Compose project before the candidate starts so that an old
-# process cannot write references while the index is being populated.
-if (( ! shared_bootstrap )); then
-  # A failed stop can still have stopped some containers, so recovery must
-  # restart the baseline even if Compose reports an error before startup.
+
+if (( shared_bootstrap )); then
+  candidate_started=1
+  run_compose up -d --pull never || pre_commit_fail start
+  wait_health "$COMPOSE_PROJECT" 180 || pre_commit_fail health
+  [[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || pre_commit_fail schema
+  MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" "$SCHEMA_SCRIPT" || pre_commit_fail schema
+else
+  # Migration startup must run with every previous API process stopped so no
+  # old writer can race the new Flyway migration or media index.
+  if (( api_changed && database_migration )); then
   api_stop_attempted=1
-  run_compose stop api || pre_commit_fail stop-before-migration
-  running_apis=$(docker ps -q \
-    --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
-    --filter 'label=com.docker.compose.service=api') || pre_commit_fail verify-api-stopped
-  [[ -z "$running_apis" ]] || pre_commit_fail verify-api-stopped
+    run_compose stop api || pre_commit_fail stop-before-migration
+    running_apis=$(docker ps -q \
+      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+      --filter 'label=com.docker.compose.service=api') || pre_commit_fail verify-api-stopped
+    [[ -z "$running_apis" ]] || pre_commit_fail verify-api-stopped
+  fi
+  if (( api_changed )); then
+    candidate_started=1
+    api_candidate_started=1
+    run_compose up -d --pull never --no-deps api || pre_commit_fail start
+    # First media indexing runs during API startup and may outlast the ordinary
+    # health budget on a CPU-constrained host.
+    wait_health "$COMPOSE_PROJECT" 180 || pre_commit_fail health
+    [[ "${DEPLOY_TEST_FAIL:-}" != health-after-start ]] || pre_commit_fail health-after-start
+    [[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || pre_commit_fail schema
+    MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" "$SCHEMA_SCRIPT" || pre_commit_fail schema
+  fi
+  if (( web_changed )); then
+    candidate_started=1
+    web_candidate_started=1
+    run_compose up -d --pull never --no-deps web || pre_commit_fail start
+    wait_health "$COMPOSE_PROJECT" 180 || pre_commit_fail health
+  fi
+  if (( ! api_changed && ! web_changed )); then
+    wait_health "$COMPOSE_PROJECT" || pre_commit_fail health
+  fi
 fi
-candidate_started=1
-run_compose up -d || pre_commit_fail start
-# First media indexing runs during API startup and may outlast the ordinary
-# rollback-health budget, particularly on CPU-constrained hosts.
-wait_health "$COMPOSE_PROJECT" 180 || pre_commit_fail health
 [[ "${DEPLOY_TEST_FAIL:-}" != health-after-start ]] || pre_commit_fail health-after-start
-[[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || pre_commit_fail schema
-MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" "$SCHEMA_SCRIPT" || pre_commit_fail schema
 smoke || pre_commit_fail smoke
 post_candidate_status=0
 storage_gate || post_candidate_status=$?
@@ -757,6 +924,8 @@ HOST_DEPLOY_LOCK_HELD=1 HOST_DEPLOY_LOCK_FILE="$HOST_LOCK" \
 # successfully, application rollback is forbidden; only post-commit
 # maintenance may fail.
 MYSHOP_OFFLINE_IMAGES="$offline_images" MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="$offline_bundle" \
+  MYSHOP_API_RUNTIME_REF="${candidate_runtime_ref[api]}" MYSHOP_WEB_RUNTIME_REF="${candidate_runtime_ref[web]}" \
+  MYSHOP_API_IMAGE_ID="${candidate_image_id[api]:-}" MYSHOP_WEB_IMAGE_ID="${candidate_image_id[web]:-}" \
   "$STATE_WRITER" "$STATE_FILE" "$manifest" >/dev/null || pre_commit_fail promote
 committed=1
 printf 'DEPLOYMENT TRANSACTION COMMITTED source=%s active_state=%s\n' "$candidate_sha" "$STATE_FILE"

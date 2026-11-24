@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a root-only manifest for verified Docker-archive image transfers."""
+"""Describe digest-pinned release images exported by the emergency workflow."""
 from __future__ import annotations
 
 import hashlib
@@ -15,20 +15,23 @@ from pathlib import Path, PurePosixPath
 REGISTRY = "ghcr.io/yykx682436"
 INFRA = {
     "postgres": (
-        f"{REGISTRY}/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
+        f"{REGISTRY}/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
         "sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
     ),
     "caddy": (
-        f"{REGISTRY}/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
+        f"{REGISTRY}/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
         "sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
     ),
     "node-exporter": (
-        f"{REGISTRY}/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
+        f"{REGISTRY}/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
         "sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
     ),
 }
-SERVICES = ("api", "web", "postgres", "caddy", "node-exporter")
+APP_SERVICES = ("api", "web")
+INFRA_SERVICES = ("postgres", "caddy", "node-exporter")
+SERVICES = (*APP_SERVICES, *INFRA_SERVICES)
 SHA = re.compile(r"^[0-9a-f]{40}$")
+DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def fail(message: str) -> "NoReturn":
@@ -51,29 +54,34 @@ def canonical_sha256(value: object) -> str:
 if len(sys.argv) != 4:
     raise SystemExit("usage: create-offline-image-bundle.py <release-manifest.json> <archive-directory> <bundle.json>")
 manifest_path, archive_dir, output_path = map(Path, sys.argv[1:])
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-if manifest.get("version") != 1 or manifest.get("project") != "myshop":
-    fail("release manifest version/project is unsupported")
-sha = manifest.get("source_sha")
-if not isinstance(sha, str) or not SHA.fullmatch(sha):
+validator = Path(__file__).with_name("validate-release-manifest.py")
+result = __import__("subprocess").run(
+    [sys.executable, str(validator), str(manifest_path), REGISTRY, "myshop"],
+    check=False, text=True, capture_output=True,
+)
+if result.returncode:
+    fail(f"release manifest is invalid: {result.stderr.strip()}")
+manifest = json.loads(result.stdout)
+sha = manifest["source_sha"]
+if not SHA.fullmatch(sha):
     fail("release manifest source_sha must be a full lowercase SHA")
 archive_dir = archive_dir.resolve(strict=True)
-images: dict[str, dict[str, str]] = {}
-for service in SERVICES:
+images: dict[str, dict[str, object]] = {}
+
+for service in APP_SERVICES:
     archive_name = f"{service}.tar"
-    archive = archive_dir / archive_name
-    if archive.is_symlink() or not archive.is_file() or archive.resolve(strict=True).parent != archive_dir:
+    archive_path = archive_dir / archive_name
+    if archive_path.is_symlink() or not archive_path.is_file() or archive_path.resolve(strict=True).parent != archive_dir:
         fail(f"{service} Docker archive is missing, symlinked, or outside the archive directory")
-    if service in ("api", "web"):
-        release_image = manifest.get("images", {}).get(service, {})
-        expected_ref = f"{REGISTRY}/myshop-{service}:{sha}"
-        if release_image.get("ref") != expected_ref:
-            fail(f"release manifest {service} ref is not the expected full-SHA image")
-        ref, source_digest = release_image["ref"], release_image["digest"]
-    else:
-        ref, source_digest = INFRA[service]
+    release_image = manifest["images"][service]
+    source_ref = release_image["ref"]
+    source_digest = release_image["digest"]
+    image_source_sha = release_image["source_sha"]
+    archive_ref = f"{REGISTRY}/myshop-{service}:{image_source_sha}"
+    if not DIGEST.fullmatch(source_digest):
+        fail(f"{service} source digest is invalid")
     try:
-        with tarfile.open(archive, "r:") as tar:
+        with tarfile.open(archive_path, "r:") as tar:
             members = {member.name: member for member in tar.getmembers() if member.isfile()}
             manifest_member = members.get("manifest.json")
             if manifest_member is None:
@@ -82,8 +90,8 @@ for service in SERVICES:
             if not isinstance(docker_manifest, list) or len(docker_manifest) != 1:
                 fail(f"{service} Docker archive must contain exactly one platform image")
             record = docker_manifest[0]
-            if record.get("RepoTags") != [ref]:
-                fail(f"{service} Docker archive tag does not match its approved ref")
+            if record.get("RepoTags") != [archive_ref]:
+                fail(f"{service} Docker archive tag does not match its source image")
             config_name = record.get("Config")
             if not isinstance(config_name, str) or PurePosixPath(config_name).is_absolute() or ".." in PurePosixPath(config_name).parts:
                 fail(f"{service} Docker archive config path is unsafe")
@@ -106,18 +114,38 @@ for service in SERVICES:
         raise
     except Exception as exc:
         fail(f"{service} Docker archive is invalid: {exc}")
-    images[service] = {
-        "ref": ref,
+    image = {
+        "source_ref": source_ref,
         "source_digest": source_digest,
+        "source_sha": image_source_sha,
+        "archive_ref": archive_ref,
         "config_digest": config_digest,
         "runtime_config_digest": canonical_sha256(config.get("config", {})),
-        "rootfs_diff_ids": config["rootfs"]["diff_ids"],
+        "rootfs_diff_ids": config.get("rootfs", {}).get("diff_ids"),
         "loaded_image_id": "",
         "archive": archive_name,
-        "archive_sha256": sha256_file(archive),
+        "archive_sha256": sha256_file(archive_path),
+    }
+    if not isinstance(image["rootfs_diff_ids"], list) or not image["rootfs_diff_ids"]:
+        fail(f"{service} image has no root filesystem layer identities")
+    images[service] = image
+
+for service in INFRA_SERVICES:
+    source_ref, source_digest = INFRA[service]
+    images[service] = {
+        "source_ref": source_ref,
+        "source_digest": source_digest,
+        "source_sha": "",
+        "archive_ref": source_ref.split("@", 1)[0],
+        "config_digest": "",
+        "runtime_config_digest": "",
+        "rootfs_diff_ids": [],
+        "loaded_image_id": "",
+        "archive": "",
+        "archive_sha256": "",
     }
 
-bundle = {"version": 2, "source_sha": sha, "platform": "linux/amd64", "images": images}
+bundle = {"version": 4, "source_sha": sha, "platform": "linux/amd64", "images": images}
 output_path.parent.mkdir(parents=True, exist_ok=True)
 fd, temporary = tempfile.mkstemp(prefix=f".{output_path.name}.", dir=output_path.parent)
 try:

@@ -152,14 +152,14 @@ if name == 'docker':
         log('pull:' + args[1])
     elif action == 'image' and args[1] == 'inspect':
         ref = args[-1]
-        service = 'api' if '/myshop-api:' in ref else 'web'
+        service = 'api' if '/myshop-api' in ref else 'web'
         if '{{.Id}}' in args:
             print('image-' + service)
         else:
             digit = '1' if service == 'api' else '2'
             if os.getenv('FAIL_DIGEST') == service:
                 digit = '9'
-            print(ref.rsplit(':',1)[0] + '@sha256:' + digit*64)
+            print(ref.split('@',1)[0] + '@sha256:' + digit*64)
     elif action == 'inspect':
         fmt, ident = args[2], args[3]
         service = ident.removeprefix('cid-')

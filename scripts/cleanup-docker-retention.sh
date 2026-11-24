@@ -59,8 +59,21 @@ def record(value: object, label: str, services: set[str] = SERVICES) -> dict:
         if not isinstance(item, dict):
             die(f"{label}.images.{service} must be an object")
         ref, digest = item.get("ref"), item.get("digest")
-        if not isinstance(ref, str) or not ref or ":latest" in ref or ":local" in ref or not isinstance(digest, str) or not DIGEST.fullmatch(digest):
-            die(f"{label}.images.{service} is mutable or has an invalid digest")
+        image_sha = item.get("source_sha", sha)
+        runtime_ref = item.get("runtime_ref", ref)
+        tag_ref = item.get("tag_ref", ref)
+        repo = f"ghcr.io/yykx682436/myshop-{service}"
+        if (not isinstance(digest, str) or not DIGEST.fullmatch(digest)
+                or not isinstance(image_sha, str) or not SHA.fullmatch(image_sha)):
+            die(f"{label}.images.{service} has an invalid digest/source SHA")
+        if ref != f"{repo}@{digest}":
+            # Version-1 accepted records used a full-SHA tag as ref.
+            if ref != f"{repo}:{sha}":
+                die(f"{label}.images.{service}.ref is not the accepted digest ref")
+        if runtime_ref not in {ref, f"{repo}:{image_sha}"}:
+            die(f"{label}.images.{service}.runtime_ref is invalid")
+        if tag_ref != f"{repo}:{image_sha}":
+            die(f"{label}.images.{service}.tag_ref is invalid")
         image_id = item.get("image_id")
         if image_id is not None and (not isinstance(image_id, str) or not DIGEST.fullmatch(image_id)):
             die(f"{label}.images.{service}.image_id is invalid")
@@ -92,7 +105,10 @@ def load_records(state_path: Path) -> list[dict]:
     return records
 
 
-def image_matches(ref: str, expected_digest: str, expected_image_id: str = "") -> tuple[str, bool]:
+def image_matches(image: dict) -> tuple[str, bool]:
+    ref = image.get("runtime_ref", image["ref"])
+    expected_digest = image["digest"]
+    expected_image_id = image.get("image_id", "")
     image_id = docker("image", "inspect", "--format", "{{.Id}}", ref, check=False).strip()
     if not image_id:
         return "", False
@@ -133,17 +149,17 @@ def main() -> int:
         for item in records:
             for service, image in item["images"].items():
                 ref = image["ref"]
-                repo, tag = ref.rsplit(":", 1)
+                runtime_ref = image.get("runtime_ref", ref)
+                tag_ref = image.get("tag_ref", ref)
+                repo = ref.split("@", 1)[0] if "@" in ref else ref.rsplit(":", 1)[0]
                 if service == "api" and not (repo == "myshop-api" or repo.endswith("/myshop-api")):
                     die(f"API image is outside MyShop namespace: {repo}")
                 if service == "web" and not (repo == "myshop-web" or repo.endswith("/myshop-web")):
                     die(f"Web image is outside MyShop namespace: {repo}")
-                if tag != item["source_sha"]:
-                    die(f"accepted image tag does not match source SHA: {ref}")
-                image_id, matches = image_matches(ref, image["digest"], image.get("image_id", ""))
+                image_id, matches = image_matches(image)
                 if not matches:
-                    die(f"accepted image digest cannot be verified locally: {ref}")
-                accepted_refs.add(ref)
+                    die(f"accepted image digest cannot be verified locally: {runtime_ref}")
+                accepted_refs.update((ref, runtime_ref, tag_ref))
                 repositories.add(repo)
                 accepted_ids.add(image_id)
 
@@ -157,26 +173,32 @@ def main() -> int:
                 matches = [line.split("|", 1) for line in rows.splitlines() if "|" in line]
                 if len(matches) != 1:
                     die(f"expected one active MyShop {service} container, found {len(matches)}")
-                if matches[0][1] != expected["ref"]:
+                runtime_ref = expected.get("runtime_ref", expected["ref"])
+                if matches[0][1] != runtime_ref:
                     die(f"active MyShop {service} image differs from state")
                 running_id = docker("inspect", "--format", "{{.Image}}", matches[0][0]).strip()
                 if running_id not in accepted_ids:
                     die(f"active MyShop {service} image ID is not protected")
 
-        rows = docker("image", "ls", "-a", "--no-trunc", "--format", "{{.Repository}}|{{.Tag}}|{{.ID}}").splitlines()
+        rows = docker("image", "ls", "-a", "--digests", "--no-trunc", "--format", "{{.Repository}}|{{.Tag}}|{{.Digest}}|{{.ID}}").splitlines()
         for row in rows:
-            fields = row.split("|", 2)
-            if len(fields) != 3:
+            fields = row.split("|", 3)
+            if len(fields) != 4:
                 continue
-            repo, tag, image_id = fields
-            if repo not in owned_repositories or not tag or tag == "<none>":
+            repo, tag, digest, image_id = fields
+            if repo not in owned_repositories:
                 continue
-            ref = f"{repo}:{tag}"
-            if ref in accepted_refs or image_id in accepted_ids:
-                continue
-            print(f"[myshop-retention] {'would remove' if args.dry_run else 'remove'} image: {ref}")
-            if not args.dry_run:
-                docker("image", "rm", ref)
+            refs = []
+            if tag and tag != "<none>":
+                refs.append(f"{repo}:{tag}")
+            if digest and digest != "<none>":
+                refs.append(f"{repo}@{digest}")
+            for ref in refs:
+                if ref in accepted_refs or image_id in accepted_ids:
+                    continue
+                print(f"[myshop-retention] {'would remove' if args.dry_run else 'remove'} image: {ref}")
+                if not args.dry_run:
+                    docker("image", "rm", ref)
 
         # The accepted set is the post-commit invariant. Verify it after the
         # deletion pass as well as before it; a partial Docker failure must be
@@ -184,9 +206,9 @@ def main() -> int:
         # restoring an older deployment state.
         for item in records:
             for image in item["images"].values():
-                _, matches = image_matches(image["ref"], image["digest"], image.get("image_id", ""))
+                _, matches = image_matches(image)
                 if not matches:
-                    die(f"accepted image disappeared or changed: {image['ref']}")
+                    die(f"accepted image disappeared or changed: {image.get('runtime_ref', image['ref'])}")
 
         print(docker("system", "df", "-v"), end="")
         print(subprocess.run(["df", "-h", STORAGE_MOUNTPOINT], check=False, text=True, capture_output=True).stdout, end="")

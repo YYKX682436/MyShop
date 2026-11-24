@@ -71,8 +71,8 @@ case "${1:-}" in
       ls)
         if [[ "$mode" == retention ]]; then
           for svc in api web; do
-            printf '%s/myshop-%s|%s|sha256:%s\n' "$REGISTRY" "$svc" "$SHA" "$(printf '1%.0s' {1..64})"
-            printf '%s/myshop-%s|oldlegacy|sha256:%s\n' "$REGISTRY" "$svc" "$(printf '9%.0s' {1..64})"
+            printf '%s/myshop-%s|%s|sha256:%s|sha256:accepted\n' "$REGISTRY" "$svc" "$SHA" "$(printf '1%.0s' {1..64})"
+            printf '%s/myshop-%s|oldlegacy|sha256:%s|sha256:obsolete\n' "$REGISTRY" "$svc" "$(printf '9%.0s' {1..64})"
           done
           printf 'myshop-api|friend-custom|sha256:%s\n' "$(printf '8%.0s' {1..64})"
           printf 'friend-marketplace/api|latest|sha256:%s\n' "$(printf '7%.0s' {1..64})"

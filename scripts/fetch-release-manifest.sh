@@ -2,90 +2,89 @@
 set -Eeuo pipefail
 
 die() { printf '[myshop-manifest-fetch] ERROR: %s\n' "$*" >&2; exit 1; }
-(( $# == 3 )) || die 'usage: fetch-release-manifest.sh <source_sha> <carrier_registry_digest> <output-path>'
+(( $# == 2 )) || die 'usage: fetch-release-manifest.sh <source_sha> <output-path>'
 source_sha=$1
-carrier_digest=$2
-output=$3
+output=$2
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || die 'source SHA must be exactly 40 lowercase hexadecimal characters'
-[[ "$carrier_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'carrier registry digest must be exactly sha256:<64 lowercase hexadecimal characters>'
 [[ -n "$output" ]] || die 'output path is empty'
-docker_command=${MYSHOP_DOCKER_COMMAND:-docker}
-command -v "$docker_command" >/dev/null 2>&1 || die 'docker is unavailable'
+command -v gh >/dev/null 2>&1 || die 'gh is unavailable'
 command -v python3 >/dev/null 2>&1 || die 'python3 is required'
 
 script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 registry=ghcr.io/yykx682436
-source_url=https://github.com/YYKX682436/MyShop
-carrier_repository="$registry/myshop-release-manifest"
-carrier_tag="$carrier_repository:$source_sha"
-pinned_ref="$carrier_repository@$carrier_digest"
-output_dir=$(dirname -- "$output")
-mkdir -p -- "$output_dir"
-[[ ! -d "$output" ]] || die 'output path is a directory'
-tmp_dir=$(mktemp -d)
-container_id=
-cleanup() {
-  if [[ -n "$container_id" ]]; then "$docker_command" rm -f "$container_id" >/dev/null 2>&1 || true; fi
-  rm -rf -- "$tmp_dir"
-}
-trap cleanup EXIT
+exec python3 - "$script_dir" "$registry" "$source_sha" "$output" <<'PY'
+from __future__ import annotations
 
-"$docker_command" pull "$pinned_ref" >/dev/null || die "manifest carrier digest could not be pulled for source $source_sha"
-"$docker_command" pull "$carrier_tag" >/dev/null || die "manifest carrier tag could not be pulled for source $source_sha"
-tag_repo_digests=$("$docker_command" image inspect --format '{{json .RepoDigests}}' "$carrier_tag") || die 'cannot inspect manifest carrier tag RepoDigests'
-if ! python3 - "$tag_repo_digests" "$pinned_ref" <<'PY'
-import json, sys
-try:
-    repo_digests = json.loads(sys.argv[1])
-except Exception:
-    raise SystemExit(1)
-if not isinstance(repo_digests, list) or sys.argv[2] not in repo_digests:
-    raise SystemExit(1)
-PY
-then
-    die 'CARRIER_TAG_DIGEST_MISMATCH'
-fi
-revision=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.revision"}}{{end}}' "$pinned_ref") || die 'cannot inspect pinned manifest carrier revision label'
-[[ "$revision" == "$source_sha" ]] || die 'manifest carrier revision label does not match the requested source SHA'
-source_label=$("$docker_command" image inspect --format '{{if .Config.Labels}}{{index .Config.Labels "org.opencontainers.image.source"}}{{end}}' "$pinned_ref") || die 'cannot inspect pinned manifest carrier source label'
-[[ "$source_label" == "$source_url" ]] || die 'manifest carrier source label does not match the MyShop repository'
-container_id=$("$docker_command" create --entrypoint /release-manifest.json "$pinned_ref") || die 'cannot create pinned manifest carrier extraction container'
-[[ -n "$container_id" ]] || die 'Docker returned an empty manifest carrier container id'
-"$docker_command" cp "$container_id:/release-manifest.json" "$tmp_dir/release-manifest.json" >/dev/null || die 'manifest carrier does not contain /release-manifest.json'
-
-python3 "$script_dir/validate-release-manifest.py" "$tmp_dir/release-manifest.json" "$registry" myshop >"$tmp_dir/validated.json" || die 'release manifest validation failed'
-python3 - "$tmp_dir/validated.json" "$source_sha" <<'PY'
-import json, sys
-manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-if manifest["source_sha"] != sys.argv[2]:
-    raise SystemExit("manifest source SHA does not match the requested carrier SHA")
-PY
-
-python3 - "$tmp_dir/release-manifest.json" "$output" <<'PY'
-import os, stat, sys, tempfile
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
-source, destination = Path(sys.argv[1]), Path(sys.argv[2])
-destination.parent.mkdir(parents=True, exist_ok=True)
-fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
-try:
-    with source.open("rb") as input_file, os.fdopen(fd, "wb") as output_file:
-        fd = -1
-        while chunk := input_file.read(1024 * 1024):
-            output_file.write(chunk)
-        output_file.flush()
-        os.fsync(output_file.fileno())
-    os.chmod(temporary, stat.S_IRUSR | stat.S_IWUSR)
-    os.replace(temporary, destination)
-    dir_fd = os.open(destination.parent, os.O_RDONLY)
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
-finally:
-    if fd >= 0:
-        os.close(fd)
-    if os.path.exists(temporary):
-        os.unlink(temporary)
+script_dir, registry, source_sha, output_text = sys.argv[1:]
+repo = "YYKX682436/MyShop"
+sha_re = re.compile(r"^[0-9a-f]{40}$")
+if not sha_re.fullmatch(source_sha):
+    raise SystemExit("[myshop-manifest-fetch] invalid source SHA")
+
+
+def gh_json(*args: str) -> dict:
+    return json.loads(subprocess.check_output(["gh", "api", *args], text=True, timeout=60))
+
+
+runs = gh_json(f"repos/{repo}/actions/workflows/cicd.yml/runs?head_sha={source_sha}&status=success&per_page=100")
+selected = None
+for run in runs.get("workflow_runs", []):
+    if run.get("head_sha") != source_sha or run.get("conclusion") != "success":
+        continue
+    jobs = gh_json(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+    if any(job.get("name") == "Publish immutable release manifest" and job.get("conclusion") == "success"
+           for job in jobs.get("jobs", [])):
+        selected = run
+        break
+if selected is None:
+    raise SystemExit("[myshop-manifest-fetch] no successful immutable release manifest exists for this SHA")
+
+artifacts = gh_json(f"repos/{repo}/actions/runs/{selected['id']}/artifacts")
+artifact_name = f"myshop-release-manifest-{source_sha}"
+if not any(item.get("name") == artifact_name and not item.get("expired") for item in artifacts.get("artifacts", [])):
+    raise SystemExit("[myshop-manifest-fetch] the successful manifest artifact is missing or expired")
+
+target = Path(output_text)
+target.parent.mkdir(parents=True, exist_ok=True)
+if target.is_dir() or target.is_symlink():
+    raise SystemExit("[myshop-manifest-fetch] output must be a regular file path")
+with tempfile.TemporaryDirectory(prefix="myshop-manifest-fetch-", dir=target.parent) as temp_name:
+    temp = Path(temp_name)
+    subprocess.run(["gh", "run", "download", str(selected["id"]), "--repo", repo,
+                    "--name", artifact_name, "--dir", str(temp)], check=True, timeout=180)
+    expected_files = {"release-manifest.json", "SHA256SUMS"}
+    actual_files = {path.name for path in temp.iterdir()}
+    if actual_files != expected_files or any(path.is_symlink() or not path.is_file() for path in temp.iterdir()):
+        raise SystemExit("[myshop-manifest-fetch] artifact has unexpected files")
+    checksums = (temp / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+    if len(checksums) != 1:
+        raise SystemExit("[myshop-manifest-fetch] artifact checksum list is invalid")
+    match = re.fullmatch(r"([0-9a-f]{64})  release-manifest\.json", checksums[0])
+    if not match:
+        raise SystemExit("[myshop-manifest-fetch] artifact checksum entry is invalid")
+    content = (temp / "release-manifest.json").read_bytes()
+    if hashlib.sha256(content).hexdigest() != match.group(1):
+        raise SystemExit("[myshop-manifest-fetch] artifact manifest checksum mismatch")
+    raw_path = temp / "release-manifest.json"
+    validated = subprocess.run([sys.executable, str(Path(script_dir) / "validate-release-manifest.py"),
+                                str(raw_path), registry, "myshop"], check=True, text=True,
+                               capture_output=True, timeout=30)
+    manifest = json.loads(validated.stdout)
+    if manifest["source_sha"] != source_sha:
+        raise SystemExit("[myshop-manifest-fetch] manifest source SHA does not match request")
+    temporary = target.with_name(f".{target.name}.partial")
+    temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, target)
+
+print(f"RELEASE_MANIFEST_FETCHED source_sha={source_sha} run={selected['id']} path={target}")
 PY
-printf 'RELEASE_MANIFEST_FETCHED source_sha=%s path=%s\n' "$source_sha" "$output"

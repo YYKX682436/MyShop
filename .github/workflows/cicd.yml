@@ -16,21 +16,27 @@ permissions:
 env:
   DOCKER_BUILD_RECORD_UPLOAD: "false"
   NEXT_TELEMETRY_DISABLED: "1"
+  MYSHOP_REGISTRY: ghcr.io/yykx682436
 
 jobs:
   scope:
-    name: Select checks from a verified CI baseline
+    name: Select test and image scopes
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.changes.outputs.api }}
-      web: ${{ steps.changes.outputs.web }}
-      compose: ${{ steps.changes.outputs.compose }}
+      api_test: ${{ steps.changes.outputs.api_test }}
+      web_test: ${{ steps.changes.outputs.web_test }}
+      compose_test: ${{ steps.changes.outputs.compose_test }}
+      api_image: ${{ steps.changes.outputs.api_image }}
+      web_image: ${{ steps.changes.outputs.web_image }}
       runtime: ${{ steps.changes.outputs.runtime }}
+      migration: ${{ steps.changes.outputs.migration }}
+      baseline_sha: ${{ steps.changes.outputs.baseline_sha }}
+      baseline_run_id: ${{ steps.changes.outputs.baseline_run_id }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Compare with the latest successful ancestor release
+      - name: Compare with the latest successful release
         id: changes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,18 +44,19 @@ jobs:
 
   api:
     needs: scope
-    if: ${{ needs.scope.outputs.api == 'true' }}
+    if: ${{ needs.scope.outputs.api_test == 'true' }}
     name: API build and tests
     runs-on: ubuntu-24.04
+    outputs:
+      image_digest: ${{ steps.publish.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Java 25
-        uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "25"
           cache: maven
-      - name: Install image and video processing dependencies
+      - name: Install image and video processing test dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes libvips-tools libheif1 libheif-examples libheif-plugin-libde265 libheif-plugin-aomdec icc-profiles-free ffmpeg
@@ -58,35 +65,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          # Local developers may use disposable loopback databases or skip
-          # Docker-backed tests. CI must prove Docker is available and fail if
-          # any PostgreSQL integration test was skipped.
           docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
           docker info --format 'server={{.ServerVersion}} containers={{.Containers}}'
-
-          reports=(
-            target/surefire-reports/TEST-com.myshop.service.impl.AdminProductAssignedUuidIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.MigrationChainIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.OrderNumberConcurrencyIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.OrderRefundConcurrencyIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.SubsiteConcurrencyIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.SupplierPurchasePostgresIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.PostgresDeliveryIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.AfterSaleConcurrencyIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.BalanceAdjustmentConcurrencyIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.UserAvatarTransactionIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.CoreStabilityPostgresIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.MediaMaintenancePostgresIntegrationTest.xml
-            target/surefire-reports/TEST-com.myshop.controller.UploadControllerTest.xml
-            target/surefire-reports/TEST-com.myshop.service.impl.UserLevelConcurrencyIntegrationTest.xml
-          )
-          rm -f "${reports[@]}"
-          # Run the entire suite once; the report checks below still require
-          # every critical PostgreSQL suite to execute without skips.
+          reports='target/surefire-reports/TEST-com.myshop.service.impl.AdminProductAssignedUuidIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.MigrationChainIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.OrderNumberConcurrencyIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.OrderRefundConcurrencyIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.SubsiteConcurrencyIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.SupplierPurchasePostgresIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.PostgresDeliveryIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.AfterSaleConcurrencyIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.BalanceAdjustmentConcurrencyIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.UserAvatarTransactionIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.CoreStabilityPostgresIntegrationTest.xml target/surefire-reports/TEST-com.myshop.service.impl.MediaMaintenancePostgresIntegrationTest.xml target/surefire-reports/TEST-com.myshop.controller.UploadControllerTest.xml target/surefire-reports/TEST-com.myshop.service.impl.UserLevelConcurrencyIntegrationTest.xml'
+          rm -f $reports
           mvn -B verify
-
-          REPORTS="${reports[*]}" python3 - <<'PY'
+          REPORTS="$reports" python3 - <<'PY'
           import os
           import xml.etree.ElementTree as ET
           from pathlib import Path
@@ -96,41 +80,127 @@ jobs:
           for report in reports:
               if not report.is_file():
                   raise SystemExit(f"Missing Surefire report: {report}")
-
               suite = ET.parse(report).getroot()
               tests = int(suite.attrib.get("tests", "0"))
               failures = int(suite.attrib.get("failures", "0"))
               errors = int(suite.attrib.get("errors", "0"))
               skipped = int(suite.attrib.get("skipped", "0"))
-              result = (
-                  f"{report.stem.removeprefix('TEST-com.myshop.service.impl.')} "
-                  "PostgreSQL/Testcontainers: "
-                  f"Tests run: {tests}, Failures: {failures}, "
-                  f"Errors: {errors}, Skipped: {skipped}"
-              )
+              result = (f"{report.stem}: Tests run: {tests}, Failures: {failures}, "
+                        f"Errors: {errors}, Skipped: {skipped}")
               results.append((result, tests, failures, errors, skipped))
               print(result)
-
           summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
           if summary_path:
               with open(summary_path, "a", encoding="utf-8") as summary:
-                  summary.write("### PostgreSQL/Testcontainers integration tests\n\n")
+                  summary.write("### Required PostgreSQL/Testcontainers integration tests\n\n")
                   for result, *_ in results:
                       summary.write(f"- {result}\n")
-
           invalid = [result for result, tests, failures, errors, skipped in results
                      if tests <= 0 or failures != 0 or errors != 0 or skipped != 0]
           if invalid:
-              raise SystemExit(
-                  "PostgreSQL/Testcontainers integration test execution contract failed:\n"
-                  + "\n".join(invalid)
-              )
+              raise SystemExit("PostgreSQL integration contract failed:\n" + "\n".join(invalid))
           PY
+      - name: Package the exact tested API JAR and schema contract
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        id: api-artifact
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          ARTIFACT_DIR: ${{ runner.temp }}/myshop-api-build
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$ARTIFACT_DIR"
+          python3 - <<'PY'
+          import hashlib, json, os, zipfile
+          from pathlib import Path
+          sha=os.environ["SOURCE_SHA"]
+          jars=[p for p in Path("apps/api/target").glob("myshop-api-*.jar")
+                if p.is_file() and not p.name.endswith((".jar.original", "-sources.jar", "-javadoc.jar"))]
+          if len(jars)!=1: raise SystemExit(f"expected exactly one executable API JAR, found {len(jars)}")
+          artifact=Path(os.environ["ARTIFACT_DIR"])
+          jar_bytes=jars[0].read_bytes()
+          with zipfile.ZipFile(jars[0]) as archive:
+              contract=archive.read("BOOT-INF/classes/db/production-schema-contract.json")
+          (artifact/"app.jar").write_bytes(jar_bytes)
+          (artifact/"production-schema-contract.json").write_bytes(contract)
+          payload={"version":1,"source_sha":sha,
+                   "jar_sha256":hashlib.sha256(jar_bytes).hexdigest(),
+                   "schema_contract_sha256":hashlib.sha256(contract).hexdigest()}
+          (artifact/"api-build-manifest.json").write_text(json.dumps(payload,sort_keys=True,indent=2)+"\n",encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8") as f:
+              f.write(f"jar_sha256={payload['jar_sha256']}\n")
+          PY
+          python3 scripts/validate-api-build-artifact.py "$ARTIFACT_DIR" "$SOURCE_SHA"
+      - uses: actions/upload-artifact@v4
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        with:
+          name: myshop-api-build-${{ github.sha }}
+          path: ${{ runner.temp }}/myshop-api-build/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Log in to GHCR
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Buildx and image cache
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        uses: docker/setup-buildx-action@v3
+      - name: Expose Actions cache to Buildx
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: Build and check runtime image from the tested JAR
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          API_JAR_SHA256: ${{ steps.api-artifact.outputs.jar_sha256 }}
+        run: |
+          set -Eeuo pipefail
+          image="$MYSHOP_REGISTRY/myshop-api:$SOURCE_SHA"
+          context="$RUNNER_TEMP/myshop-api-image-context"
+          mkdir -p "$context"
+          cp "$RUNNER_TEMP/myshop-api-build/app.jar" "$context/app.jar"
+          cp "$RUNNER_TEMP/myshop-api-build/production-schema-contract.json" "$context/production-schema-contract.json"
+          python3 scripts/validate-api-build-artifact.py "$RUNNER_TEMP/myshop-api-build" "$SOURCE_SHA"
+          docker buildx build --platform linux/amd64 --provenance=false \
+            --file "$GITHUB_WORKSPACE/Dockerfile.api" --tag "$image" \
+            --build-arg "SOURCE_SHA=$SOURCE_SHA" --build-arg "API_JAR_SHA256=$API_JAR_SHA256" \
+            --cache-from type=gha,scope=myshop-api --cache-to type=gha,mode=max,scope=myshop-api \
+            --load "$context"
+          [[ "$(docker image inspect --format '{{index .Config.Labels "io.myshop.api.jar.sha256"}}' "$image")" == "$API_JAR_SHA256" ]]
+          [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" == "$SOURCE_SHA" ]]
+          printf '%s  /app/app.jar\n' "$API_JAR_SHA256" | docker run --rm -i --entrypoint /bin/sh "$image" -c 'sha256sum -c -'
+          docker run --rm --entrypoint /bin/sh "$image" -c 'test "$(id -u)" = 10001 && test -x "$(command -v vipsthumbnail)" && test -x "$(command -v heif-info)"'
+          docker run --rm --entrypoint /bin/sh \
+            --volume "$GITHUB_WORKSPACE/scripts/probe-vips-image-formats.sh:/probe.sh:ro" \
+            --volume "$GITHUB_WORKSPACE/apps/api/src/test/resources/media-formats:/samples:ro" \
+            "$image" /probe.sh /samples/fox-derived.heic /samples/fox.avif
+      - name: Push API image and verify registry digest
+        if: ${{ needs.scope.outputs.api_image == 'true' }}
+        id: publish
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          image="$MYSHOP_REGISTRY/myshop-api:$SOURCE_SHA"
+          if ! push_log=$(docker push "$image" 2>&1); then printf '%s\n' "$push_log"; exit 1; fi
+          printf '%s\n' "$push_log"
+          digest=$(printf '%s\n' "$push_log" | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' | tail -n 1)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          remote_manifest=$(docker buildx imagetools inspect --raw "$image@$digest")
+          image_id=$(docker image inspect --format '{{.Id}}' "$image")
+          printf '%s' "$remote_manifest" | python3 -c 'import json,sys; m=json.load(sys.stdin); d=m.get("config",{}).get("digest"); expected=sys.argv[1]; assert d==expected,(d,expected)' "$image_id"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
   web:
     needs: scope
-    if: ${{ needs.scope.outputs.web == 'true' }}
-    name: Web typecheck, lint, and build
+    if: ${{ needs.scope.outputs.web_test == 'true' }}
+    name: Web checks and image
     runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.publish.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -145,50 +215,101 @@ jobs:
       - run: pnpm --filter @myshop/web test:logic
       - run: pnpm --filter @myshop/web test:legacy-image-cache
       - run: pnpm --filter @myshop/web lint
+      - name: Build Next.js once for the image when Web changed
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        run: pnpm --filter @myshop/web build
+      - name: Stage standalone Web runtime output
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        run: |
+          set -Eeuo pipefail
+          context="$RUNNER_TEMP/myshop-web-image-context"
+          mkdir -p "$context/apps/web/.next"
+          cp -a apps/web/.next/standalone/. "$context/"
+          cp -a apps/web/.next/static "$context/apps/web/.next/static"
+          cp -a apps/web/public "$context/apps/web/public"
+          test -f "$context/apps/web/server.js"
+      - name: Log in to GHCR
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Buildx and image cache
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        uses: docker/setup-buildx-action@v3
+      - name: Expose Actions cache to Buildx
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+      - name: Build Web image from the checked standalone output
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          image="$MYSHOP_REGISTRY/myshop-web:$SOURCE_SHA"
+          docker buildx build --platform linux/amd64 --provenance=false \
+            --file "$GITHUB_WORKSPACE/Dockerfile.web" --tag "$image" \
+            --build-arg "SOURCE_SHA=$SOURCE_SHA" \
+            --cache-from type=gha,scope=myshop-web --cache-to type=gha,mode=max,scope=myshop-web \
+            --load "$RUNNER_TEMP/myshop-web-image-context"
+          [[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" == "$SOURCE_SHA" ]]
+          docker tag "$image" myshop-web:ci
+          bash scripts/test-web-image-host-routing.sh
+      - name: Push Web image and verify registry digest
+        if: ${{ needs.scope.outputs.web_image == 'true' }}
+        id: publish
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          image="$MYSHOP_REGISTRY/myshop-web:$SOURCE_SHA"
+          if ! push_log=$(docker push "$image" 2>&1); then printf '%s\n' "$push_log"; exit 1; fi
+          printf '%s\n' "$push_log"
+          digest=$(printf '%s\n' "$push_log" | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' | tail -n 1)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          remote_manifest=$(docker buildx imagetools inspect --raw "$image@$digest")
+          image_id=$(docker image inspect --format '{{.Id}}' "$image")
+          printf '%s' "$remote_manifest" | python3 -c 'import json,sys; m=json.load(sys.stdin); d=m.get("config",{}).get("digest"); expected=sys.argv[1]; assert d==expected,(d,expected)' "$image_id"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
   compose:
     needs: scope
-    if: ${{ needs.scope.outputs.compose == 'true' }}
-    name: Compose configuration smoke test
+    if: ${{ needs.scope.outputs.compose_test == 'true' }}
+    name: Deployment contract tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Test GHCR release manifest carrier and fetcher contract
+      - name: Test manifest, offline bundle, and release helpers
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - name: Run storage lifecycle regression tests
-        run: bash scripts/test-storage-lifecycle.sh
-      - name: Run deployment transaction regression tests
-        run: bash scripts/test-deployment-transaction.sh
-      - name: Check production shell entry syntax
-        run: bash -n scripts/deploy-production.sh scripts/myshop-compose.sh
-      - name: Run production schema contract regression tests
-        run: bash scripts/test-production-schema-contract.sh
-      - name: Check shared-server isolation, proxy and preflight
+      - run: bash scripts/test-storage-lifecycle.sh
+      - run: bash scripts/test-deployment-transaction.sh
+      - name: Check production shell syntax
+        run: bash -n scripts/deploy-production.sh scripts/myshop-compose.sh scripts/fetch-release-manifest.sh scripts/import-offline-image-bundle.sh
+      - run: bash scripts/test-production-schema-contract.sh
+      - name: Check shared-server isolation, proxy, and preflight
         run: |
           bash scripts/test-shared-server-images.sh
           bash scripts/test-shared-server-proxy-config.sh
           bash scripts/test-shared-server-isolation.sh
           bash scripts/test-shared-server-preflight.sh
           bash scripts/test-shared-server-audit.sh
-      - name: Validate required Compose variables
-        run: bash scripts/check-compose.sh
+      - run: bash scripts/check-compose.sh
 
-  publish-images:
-    name: Publish immutable production images
+  release-manifest:
+    name: Publish immutable release manifest
     needs: [scope, api, web, compose]
     if: >-
       ${{ !cancelled() && github.ref == 'refs/heads/main' &&
           needs.scope.result == 'success' && needs.scope.outputs.runtime == 'true' &&
-          (needs.api.result == 'success' || (needs.scope.outputs.api == 'false' && needs.api.result == 'skipped')) &&
-          (needs.web.result == 'success' || (needs.scope.outputs.web == 'false' && needs.web.result == 'skipped')) &&
-          (needs.compose.result == 'success' || (needs.scope.outputs.compose == 'false' && needs.compose.result == 'skipped')) }}
+          (needs.api.result == 'success' || (needs.scope.outputs.api_test == 'false' && needs.api.result == 'skipped')) &&
+          (needs.web.result == 'success' || (needs.scope.outputs.web_test == 'false' && needs.web.result == 'skipped')) &&
+          (needs.compose.result == 'success' || (needs.scope.outputs.compose_test == 'false' && needs.compose.result == 'skipped')) }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    env:
-      DOCKER_BUILD_RECORD_UPLOAD: "false"
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Confirm release SHA is still current on main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -199,119 +320,32 @@ jobs:
             printf 'Refusing stale release SHA %s; main is now %s\n' "$GITHUB_SHA" "$main_sha" >&2
             exit 1
           }
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Expose Actions cache to Buildx
-        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
-      - name: Build images and offline archives in parallel
-        id: images
+      - name: Fetch the previous validated full-service manifest
+        if: ${{ needs.scope.outputs.baseline_sha != '' }}
+        env:
+          BASELINE_SHA: ${{ needs.scope.outputs.baseline_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/fetch-release-manifest.sh "$BASELINE_SHA" "$RUNNER_TEMP/base-release-manifest.json"
+      - name: Compose the complete current release manifest
         env:
           SOURCE_SHA: ${{ github.sha }}
-          ARCHIVE_DIR: ${{ runner.temp }}/myshop-release-archives
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          mkdir -p "$ARCHIVE_DIR"
-          build_image() {
-            local service=$1
-            local extra=()
-            [[ "$service" != api ]] || extra+=(--build-arg SKIP_TESTS=true)
-            docker buildx build --platform linux/amd64 --provenance=false \
-              --file "Dockerfile.$service" --tag "ghcr.io/yykx682436/myshop-$service:$SOURCE_SHA" \
-              --cache-from "type=gha,scope=myshop-$service" \
-              --cache-to "type=gha,mode=max,scope=myshop-$service" \
-              --output type=registry --output "type=docker,dest=$ARCHIVE_DIR/$service.tar" \
-              --metadata-file "$RUNNER_TEMP/$service-metadata.json" "${extra[@]}" .
-          }
-          build_image api >"$RUNNER_TEMP/api-build.log" 2>&1 & api_pid=$!
-          build_image web >"$RUNNER_TEMP/web-build.log" 2>&1 & web_pid=$!
-          api_status=0; wait "$api_pid" || api_status=$?
-          web_status=0; wait "$web_pid" || web_status=$?
-          cat "$RUNNER_TEMP/api-build.log" "$RUNNER_TEMP/web-build.log"
-          (( api_status == 0 && web_status == 0 )) || exit 1
-          python3 - <<'PYCODE'
-          import hashlib, json, os, re, subprocess, tarfile
-          from pathlib import Path
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              for service in ("api", "web"):
-                  metadata = json.loads(Path(os.environ["RUNNER_TEMP"], f"{service}-metadata.json").read_text())
-                  digest = metadata.get("containerimage.digest", "")
-                  if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
-                      raise SystemExit(f"invalid {service} registry digest")
-                  ref = f"ghcr.io/yykx682436/myshop-{service}:{os.environ['SOURCE_SHA']}"
-                  def inspect(image):
-                      return json.loads(subprocess.check_output(["docker", "buildx", "imagetools", "inspect", "--raw", image]))
-                  registry_manifest = inspect(f"{ref}@{digest}")
-                  if "manifests" in registry_manifest:
-                      matches = [item for item in registry_manifest["manifests"]
-                                 if item.get("platform", {}).get("os") == "linux"
-                                 and item.get("platform", {}).get("architecture") == "amd64"]
-                      if len(matches) != 1:
-                          raise SystemExit(f"{service} registry index does not contain exactly one linux/amd64 image")
-                      registry_manifest = inspect(f"{ref}@{matches[0]['digest']}")
-                  with tarfile.open(Path(os.environ["ARCHIVE_DIR"], f"{service}.tar"), "r:") as archive:
-                      records = json.load(archive.extractfile("manifest.json"))
-                      if len(records) != 1 or records[0].get("RepoTags") != [ref]:
-                          raise SystemExit(f"{service} archive tag does not match the release")
-                      config = archive.extractfile(records[0]["Config"]).read()
-                  config_digest = "sha256:" + hashlib.sha256(config).hexdigest()
-                  if config_digest != registry_manifest.get("config", {}).get("digest"):
-                      raise SystemExit(f"{service} archive differs from the published image")
-                  output.write(f"{service}_digest={digest}\n")
-          PYCODE
-          docker load --input "$ARCHIVE_DIR/web.tar"
-          docker tag "ghcr.io/yykx682436/myshop-web:$SOURCE_SHA" myshop-web:ci
-          bash scripts/test-web-image-host-routing.sh
-          # Test the exact archive that will be deployed, including the Noble
-          # HEIC/AVIF decoders and the runtime's non-root identity.
-          docker load --input "$ARCHIVE_DIR/api.tar"
-          docker run --rm --entrypoint /bin/sh \
-            --volume "$PWD/scripts/probe-vips-image-formats.sh:/probe.sh:ro" \
-            --volume "$PWD/apps/api/src/test/resources/media-formats:/samples:ro" \
-            "ghcr.io/yykx682436/myshop-api:$SOURCE_SHA" /probe.sh \
-            /samples/fox-derived.heic /samples/fox.avif
-      - name: Generate immutable release manifest
+          BASELINE_SHA: ${{ needs.scope.outputs.baseline_sha }}
+          API_BUILD: ${{ needs.scope.outputs.api_image }}
+          API_DIGEST: ${{ needs.api.outputs.image_digest }}
+          WEB_BUILD: ${{ needs.scope.outputs.web_image }}
+          WEB_DIGEST: ${{ needs.web.outputs.image_digest }}
+          DATABASE_MIGRATION: ${{ needs.scope.outputs.migration }}
+          OUTPUT_FILE: ${{ runner.temp }}/release-manifest.json
+        run: python3 scripts/create-release-manifest.py
+      - name: Validate full manifest and per-image ancestry
         env:
           SOURCE_SHA: ${{ github.sha }}
-          API_DIGEST: ${{ steps.images.outputs.api_digest }}
-          WEB_DIGEST: ${{ steps.images.outputs.web_digest }}
-        shell: bash
+          MANIFEST: ${{ runner.temp }}/release-manifest.json
         run: |
           set -Eeuo pipefail
-          python3 - <<'PY'
-          import json, os, re
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          sha = os.environ["SOURCE_SHA"]
-          api_digest = os.environ["API_DIGEST"]
-          web_digest = os.environ["WEB_DIGEST"]
-          if not re.fullmatch(r"[0-9a-f]{40}", sha):
-              raise SystemExit("invalid source SHA")
-          for value in (api_digest, web_digest):
-              if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
-                  raise SystemExit(f"invalid builder digest: {value}")
-          manifest = {
-              "version": 1,
-              "project": "myshop",
-              "source_sha": sha,
-              "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-              "images": {
-                  "api": {"ref": f"ghcr.io/yykx682436/myshop-api:{sha}", "digest": api_digest},
-                  "web": {"ref": f"ghcr.io/yykx682436/myshop-web:{sha}", "digest": web_digest},
-              },
-          }
-          Path("release-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-          PY
-          python3 scripts/validate-release-manifest.py release-manifest.json ghcr.io/yykx682436 myshop > "$RUNNER_TEMP/validated-release-manifest.json"
-      - name: Confirm release SHA is still current before publishing manifest
+          python3 scripts/validate-release-manifest.py "$MANIFEST" "$MYSHOP_REGISTRY" myshop > "$RUNNER_TEMP/validated-release-manifest.json"
+          python3 scripts/validate-release-ancestry.py "$MANIFEST" "$SOURCE_SHA"
+      - name: Confirm release SHA remains current before publishing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -321,54 +355,19 @@ jobs:
             printf 'Refusing stale release SHA %s; main is now %s\n' "$GITHUB_SHA" "$main_sha" >&2
             exit 1
           }
-      - name: Push the immutable manifest carrier
+      - name: Prepare checksummed manifest artifact
         env:
           SOURCE_SHA: ${{ github.sha }}
-          CARRIER_CONTEXT: ${{ runner.temp }}/myshop-manifest-carrier/${{ github.sha }}
-        shell: bash
         run: |
           set -Eeuo pipefail
-          source_url=https://github.com/YYKX682436/MyShop
-          carrier_ref="ghcr.io/yykx682436/myshop-release-manifest:${SOURCE_SHA}"
-          mkdir -p "$CARRIER_CONTEXT"
-          cp release-manifest.json "$CARRIER_CONTEXT/release-manifest.json"
-          cat > "$CARRIER_CONTEXT/Dockerfile" <<'DOCKERFILE'
-          FROM scratch
-          COPY release-manifest.json /release-manifest.json
-          DOCKERFILE
-          docker build --platform linux/amd64 \
-            --label "org.opencontainers.image.source=$source_url" \
-            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
-            --tag "$carrier_ref" "$CARRIER_CONTEXT"
-          if ! push_log=$(docker push "$carrier_ref" 2>&1); then
-            printf '%s\n' "$push_log"
-            exit 1
-          fi
-          printf '%s\n' "$push_log"
-          carrier_digest=$(printf '%s\n' "$push_log" | sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' | tail -n 1)
-          [[ "$carrier_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { printf 'could not parse manifest carrier registry digest\n' >&2; exit 1; }
-          {
-            printf 'source_sha=%s\nmanifest_carrier_ref=%s\nmanifest_carrier_digest=%s\n' \
-              "$SOURCE_SHA" "$carrier_ref" "$carrier_digest"
-          } >> "$GITHUB_STEP_SUMMARY"
-          printf '%s\n' "$carrier_digest" > "$RUNNER_TEMP/manifest-carrier-digest.txt"
-      - name: Prepare verified offline release archives
-        id: prepare-offline-archives
-        env:
-          SOURCE_SHA: ${{ github.sha }}
-          ARCHIVE_DIR: ${{ runner.temp }}/myshop-release-archives
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          cp release-manifest.json "$ARCHIVE_DIR/release-manifest.json"
-          cp "$RUNNER_TEMP/manifest-carrier-digest.txt" "$ARCHIVE_DIR/manifest-carrier-digest.txt"
-          (cd "$ARCHIVE_DIR" && sha256sum api.tar web.tar release-manifest.json manifest-carrier-digest.txt > SHA256SUMS)
-      - name: Upload offline release archives
-        id: offline-archives
-        uses: actions/upload-artifact@v4
+          artifact="$RUNNER_TEMP/myshop-release-manifest-$SOURCE_SHA"
+          mkdir -p "$artifact"
+          cp "$RUNNER_TEMP/release-manifest.json" "$artifact/"
+          (cd "$artifact" && sha256sum release-manifest.json > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
         with:
-          name: myshop-release-${{ github.sha }}
-          path: ${{ runner.temp }}/myshop-release-archives/
+          name: myshop-release-manifest-${{ github.sha }}
+          path: ${{ runner.temp }}/myshop-release-manifest-${{ github.sha }}/
           if-no-files-found: error
-          compression-level: 1
-          retention-days: 2
+          compression-level: 6
+          retention-days: 90

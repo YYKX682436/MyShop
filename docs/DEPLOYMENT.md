@@ -97,10 +97,12 @@ backup, image identity, health, schema, HTTPS, or storage gates. Building on
 the host is authorized for this one-time initial release before the store is
 running; future releases follow the normal immutable-image workflow.
 
-CI publishes `myshop-api:<full-source-sha>` and
-`myshop-web:<full-source-sha>` to the approved registry and uploads a JSON
-manifest containing `source_sha`, exact refs, and builder-reported digests.
-The operator supplies only that manifest:
+The manually dispatched CI workflow publishes each changed app image under a
+full source-SHA tag, records its immutable digest, and uploads a checksummed
+full-release manifest. The manifest has one entry per service; an unchanged
+service may keep its previously validated digest and source SHA. CI release SHA
+and production accepted SHA are recorded separately. The operator supplies the
+successful run's manifest:
 
 ```bash
 bash /opt/myshop/scripts/deploy-production.sh /path/to/release-manifest.json
@@ -112,22 +114,23 @@ and performs the following sequence:
 1. Verify the `/data` mount and disk watermark.
 2. Read the previous accepted state, or capture the currently running image
    refs/digests for the first bootstrap.
-3. Pull exact candidate refs and require local RepoDigest equality with the
-   manifest digest. A failed registry pull stops before a backup is created.
-4. Create a fresh PostgreSQL custom backup in the transaction and verify it
-   with `pg_restore -l`; emit a mode-600 backup manifest containing source
-   active SHA, candidate SHA, database identity, file size, SHA-256, and
-   validation result.
-5. Start the candidate, wait for health, run public smoke checks, run the
-   artifact-packaged Flyway/schema contract, and run the candidate storage
-   gate.
+3. Compare candidate digests with accepted digests. Pull only changed app images
+   by digest and require local RepoDigest equality. A Web-only update does not
+   pull or restart API; an API-only update does not pull or restart Web.
+4. When API changes, create a fresh PostgreSQL custom backup in the transaction
+   and verify it with `pg_restore -l`; emit a mode-600 backup manifest containing
+   source active SHA, candidate SHA, database identity, file size, SHA-256, and
+   validation result. Web-only releases do not back up or touch the database.
+5. Start only the changed app services and wait for health. API updates run the
+   artifact-packaged Flyway/schema contract; all releases run public smoke and
+   candidate storage gates. A migration still stops API writers before startup.
 6. Promote the manifest into state atomically, run MyShop-scoped retention,
    and run the post-retention storage gate.
 7. Verify running image refs and digests and print `DEPLOYMENT ACCEPTED`.
 
-Any failure before acceptance writes a small `FAILED` candidate marker, restores
-the previous accepted image refs, runs `compose up -d` for the old stack, and
-verifies old health and smoke. The state file is unchanged. If restoration
+Any failure before acceptance writes a small `FAILED` candidate marker and
+restores only services that were changed or stopped. The state file is
+unchanged. If restoration
 fails, the command returns `CRITICAL_ROLLBACK_FAILED` and does not run
 retention. The regression suite injects pull, health, smoke, schema, and
 post-storage failures and checks this contract.
@@ -143,8 +146,20 @@ post-storage failures and checks this contract.
     "source_sha": "<full sha>",
     "accepted_at": "<UTC>",
     "images": {
-      "api": {"ref": "<approved>/myshop-api:<sha>", "digest": "sha256:<64 hex>"},
-      "web": {"ref": "<approved>/myshop-web:<sha>", "digest": "sha256:<64 hex>"}
+      "api": {
+        "ref": "<approved>/myshop-api@sha256:<64 hex>",
+        "digest": "sha256:<64 hex>",
+        "source_sha": "<image source sha>",
+        "runtime_ref": "<same digest or verified offline tag>",
+        "tag_ref": "<approved>/myshop-api:<image source sha>"
+      },
+      "web": {
+        "ref": "<approved>/myshop-web@sha256:<64 hex>",
+        "digest": "sha256:<64 hex>",
+        "source_sha": "<image source sha>",
+        "runtime_ref": "<same digest or verified offline tag>",
+        "tag_ref": "<approved>/myshop-web:<image source sha>"
+      }
     }
   },
   "rollback": [],

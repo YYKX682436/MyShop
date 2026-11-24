@@ -15,7 +15,7 @@ compose="$repo_dir/docker-compose.prod.yml"
 ! grep -Eq '(:latest|:local)([[:space:]@]|$)' "$compose" || fail 'production Compose contains mutable tags'
 grep -Fq 'driver: local' "$compose" || fail 'production Compose has no bounded logging policy'
 grep -Eq 'image: [^$[:space:]]+@sha256:' "$compose" || fail 'infrastructure images are not digest-pinned'
-grep -Fq 'api_prefix=' "$wrapper" || fail 'wrapper still embeds registry in a regex'
+grep -Fq 'prefix="$approved_registry/myshop-$1"' "$wrapper" || fail 'wrapper does not derive app-image namespaces from the approved registry'
 grep -Fq 'os.fsync' "$state_writer" || fail 'state writer has no fsync'
 ! grep -Fq 'rollback-sha' "$repo_dir/scripts/deploy-production.sh" || fail 'deployment accepts caller rollback SHA'
 ! grep -Eiq 'RELEASE_ROOT|/releases/' "$retention" || fail 'retention still depends on source releases'
@@ -25,7 +25,7 @@ grep -Fq 'os.fsync' "$state_writer" || fail 'state writer has no fsync'
 grep -Fq '0|1|2|3|4' "$repo_dir/ops/host-ops/storage-lifecycle.sh" || fail 'orchestrator does not continue all safe high-water prechecks'
 ! grep -Fq 'accepted-images.env' "$repo_dir/scripts/deploy-production.sh" "$repo_dir/scripts/myshop-compose.sh" "$repo_dir/scripts/write-deploy-state.sh" || fail 'production path still depends on accepted-images.env'
 grep -Fq 'candidate_started=0' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap candidate start tracking is missing'
-grep -Fq '! state_existed && ! candidate_started' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap pre-start rollback is not fail-closed'
+grep -Fq 'if (( ! candidate_started && ! api_stop_attempted )); then' "$repo_dir/scripts/deploy-production.sh" || fail 'pre-start rollback does not preserve the accepted baseline'
 grep -Fq 'prepare_bootstrap_rollback_refs' "$repo_dir/scripts/deploy-production.sh" || fail 'bootstrap post-start rollback does not normalize legacy image refs'
 grep -Fq 'ENV_FILE=${MYSHOP_ENV_FILE:-/opt/myshop/.env}' "$repo_dir/scripts/deploy-production.sh" || fail 'production secret path is not separated from runtime artifacts'
 grep -Fq '(^|\/)myshop-(api|web)$' "$repo_dir/ops/host-ops/check-storage-health.sh" || fail 'storage health image count does not match registry-qualified MyShop repositories'
@@ -40,7 +40,7 @@ state="$tmp_dir/deploy-state.json"
 python3 - "$manifest" "$sha1" "$digest" <<'PY'
 import json, sys
 path, sha, digest = sys.argv[1:]
-json.dump({"version": 1, "project": "myshop", "source_sha": sha, "created_at": "builder", "images": {
+json.dump({"version": 1, "project": "myshop", "source_sha": sha, "created_at": "2026-11-25T00:00:00Z", "images": {
     "api": {"ref": f"ghcr.io/yykx682436/myshop-api:{sha}", "digest": digest},
     "web": {"ref": f"ghcr.io/yykx682436/myshop-web:{sha}", "digest": digest},
 }}, open(path, "w", encoding="utf-8"))
@@ -100,7 +100,7 @@ PATH="$wrapper_bin:$PATH" \
   MYSHOP_APPROVED_REGISTRY='ghcr.io/yykx682436' \
   WRAPPER_LOG="$wrapper_log" \
   bash "$wrapper" config --quiet
-grep -Fq "ghcr.io/yykx682436/myshop-api:$sha3|ghcr.io/yykx682436/myshop-web:$sha3" "$wrapper_log" || fail 'wrapper did not read active refs from deploy-state.json'
+grep -Fq "ghcr.io/yykx682436/myshop-api@$digest|ghcr.io/yykx682436/myshop-web@$digest" "$wrapper_log" || fail 'wrapper did not read active digest refs from deploy-state.json'
 pass 'production wrapper reads active refs from deploy-state.json without a second state file'
 
 rm -f -- "$state"
@@ -132,7 +132,7 @@ rm -f -- "$state"
 python3 - "$manifest" "$sha3" "$digest" <<'PY'
 import json, sys
 path, sha, digest = sys.argv[1:]
-json.dump({"version": 1, "project": "myshop", "source_sha": sha, "created_at": "builder", "images": {
+json.dump({"version": 1, "project": "myshop", "source_sha": sha, "created_at": "2026-11-25T00:00:00Z", "images": {
     "api": {"ref": f"ghcr.io/yykx682436/myshop-api:{sha}", "digest": digest},
     "web": {"ref": f"ghcr.io/yykx682436/myshop-web:{sha}", "digest": digest},
 }}, open(path, "w", encoding="utf-8"))
@@ -145,18 +145,19 @@ cat >"$fake_bin/docker" <<'DOCKER'
 set -Eeuo pipefail
 log=${FAKE_DOCKER_LOG:?}; active=${FAKE_ACTIVE_SHA:?}; digest=${FAKE_DIGEST:?}
 if [[ "$1" == ps && "$*" == *"--format"* ]]; then
-  [[ "$*" == *"service=api"* ]] && printf 'api-container|ghcr.io/yykx682436/myshop-api:%s\n' "$active"
-  [[ "$*" == *"service=web"* ]] && printf 'web-container|ghcr.io/yykx682436/myshop-web:%s\n' "$active"
+  [[ "$*" == *"service=api"* ]] && printf 'api-container|ghcr.io/yykx682436/myshop-api@%s\n' "$digest"
+  [[ "$*" == *"service=web"* ]] && printf 'web-container|ghcr.io/yykx682436/myshop-web@%s\n' "$digest"
 elif [[ "$1" == ps && "$2" == -aq ]]; then printf 'api-container\nweb-container\nstopped-container\n'
 elif [[ "$1" == inspect ]]; then case "${4:-}" in api-container|web-container) printf 'sha256:accepted\n';; stopped-container) printf 'sha256:stopped\n';; esac
 elif [[ "$1" == image && "$2" == inspect ]]; then
   target=${5:-}
-  [[ "${4:-}" == "{{.Id}}" ]] && printf 'sha256:accepted\n' || printf 'ghcr.io/yykx682436/%s@%s\n' "$(basename "${target%:*}")" "$digest"
+  repo=${target%%@*}
+  [[ "${4:-}" == "{{.Id}}" ]] && printf 'sha256:accepted\n' || printf '%s@%s\n' "$repo" "$digest"
 elif [[ "$1" == image && "$2" == ls ]]; then
-  printf 'ghcr.io/yykx682436/myshop-api|%s|sha256:accepted\n' "$active"
-  printf 'ghcr.io/yykx682436/myshop-api|candidate|sha256:candidate\n'
-  printf 'ghcr.io/yykx682436/myshop-web|%s|sha256:accepted\n' "$active"
-  printf 'ghcr.io/yykx682436/myshop-web|candidate|sha256:candidate-web\n'
+  printf 'ghcr.io/yykx682436/myshop-api|%s|sha256:accepted|sha256:accepted\n' "$active"
+  printf 'ghcr.io/yykx682436/myshop-api|candidate|sha256:candidate|sha256:candidate\n'
+  printf 'ghcr.io/yykx682436/myshop-web|%s|sha256:accepted|sha256:accepted\n' "$active"
+  printf 'ghcr.io/yykx682436/myshop-web|candidate|sha256:candidate-web|sha256:candidate-web\n'
 elif [[ "$1" == image && "$2" == rm ]]; then printf '%s\n' "$3" >>"$log"
 elif [[ "$1" == system && "$2" == df ]]; then printf 'fake docker system df\n'
 else exit 99; fi

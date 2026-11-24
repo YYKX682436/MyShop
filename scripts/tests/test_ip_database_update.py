@@ -24,6 +24,15 @@ class IpDatabaseUpdateTest(unittest.TestCase):
             'MYSHOP_WEB_IMAGE=ghcr.io/yykx682436/myshop-web:' + 'a' * 40 + '\n')
         self.log = self.root / 'commands'
         self.lock = self.root / 'deployment.lock'
+        # macOS does not ship the util-linux `flock` command. Keep this shell
+        # contract test portable while preserving the kernel lock behavior.
+        self.script('flock', '''#!/usr/bin/env python3
+import fcntl, sys
+try:
+    fcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise SystemExit(1)
+''')
         self.script('docker', '#!/bin/sh\nprintf "docker %s\\n" "$*" >> "$TEST_COMMAND_LOG"\nexit 0\n')
         # The download is intentionally stopped; no network or live data is touched.
         self.script('curl', '#!/bin/sh\nprintf "curl\\n" >> "$TEST_COMMAND_LOG"\nexit 42\n')

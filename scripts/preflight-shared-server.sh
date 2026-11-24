@@ -29,10 +29,48 @@ docker compose version >/dev/null 2>&1 || die 'Docker Compose v2 is unavailable'
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf -- "$tmp_dir"' EXIT
-MYSHOP_COMPOSE_PROJECT_NAME="$PROJECT_NAME" COMPOSE_PROJECT_NAME="$PROJECT_NAME" \
-  docker compose --project-directory "$PROJECT_ROOT" --file "$COMPOSE_FILE" \
-  --env-file "$ENV_FILE" config --format json >"$tmp_dir/compose.json" \
+python3 - "$PROJECT_ROOT" "$COMPOSE_FILE" "$ENV_FILE" "$PROJECT_NAME" "$MODE" "$SCRIPT_DIR" >"$tmp_dir/compose.json" <<'PY' \
   || die 'Compose configuration could not be rendered'
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+root, compose_file, env_file, project, mode, script_dir = sys.argv[1:]
+env = os.environ.copy()
+env["MYSHOP_COMPOSE_PROJECT_NAME"] = project
+env["COMPOSE_PROJECT_NAME"] = project
+if mode in {"upgrade", "forward-recovery"}:
+    state_path = Path(env.get("MYSHOP_DEPLOY_STATE", str(Path(root) / "deploy-state.json")))
+    if state_path.is_file():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        active = state.get("active", {})
+        images = active.get("images", {})
+        for service in ("api", "web"):
+            item = images.get(service, {})
+            ref = item.get("runtime_ref", item.get("ref", ""))
+            if not re.fullmatch(rf"ghcr\.io/yykx682436/myshop-{service}(?:@sha256:[0-9a-f]{{64}}|:[0-9a-f]{{40}})", str(ref)):
+                raise SystemExit(f"accepted {service} runtime ref is invalid")
+            env[f"MYSHOP_{service.upper()}_IMAGE"] = ref
+if mode == "forward-recovery":
+    recovery_bundle = Path(env.get("MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE", ""))
+    if not recovery_bundle.is_file() or recovery_bundle.is_symlink():
+        raise SystemExit("forward recovery bundle is missing or unsafe")
+    verifier = str(Path(script_dir) / "verify-offline-image-bundle.py")
+    for service in ("api", "web"):
+        env[f"MYSHOP_{service.upper()}_IMAGE"] = subprocess.check_output(
+            [sys.executable, verifier, str(recovery_bundle), "--get-runtime-ref", service],
+            text=True,
+        ).strip()
+result = subprocess.run(
+    ["docker", "compose", "--project-directory", root, "--file", compose_file,
+     "--env-file", env_file, "config", "--format", "json"],
+    check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+)
+sys.stdout.write(result.stdout)
+PY
 
 python3 - "$tmp_dir/compose.json" "$ENV_FILE" "$PROJECT_NAME" "$MODE" "$PROJECT_ROOT" "$SCRIPT_DIR" <<'PY'
 from __future__ import annotations
@@ -178,16 +216,19 @@ if set(services) != {"db", "api", "web", "node-exporter", "caddy"}:
 if any("build" in service for service in services.values()):
     fail("shared-host Compose must use prebuilt images only")
 
-image_pattern = re.compile(r"^ghcr\.io/yykx682436/myshop-(api|web):([0-9a-f]{40})$")
-app_shas = set()
+image_digest_pattern = re.compile(r"^ghcr\.io/yykx682436/myshop-(api|web)@(sha256:[0-9a-f]{64})$")
+image_tag_pattern = re.compile(r"^ghcr\.io/yykx682436/myshop-(api|web):([0-9a-f]{40})$")
+app_refs: dict[str, str] = {}
 for service_name in ("api", "web"):
     image = str(services[service_name].get("image", ""))
-    match = image_pattern.fullmatch(image)
+    match = image_digest_pattern.fullmatch(image)
+    if match and match.group(1) == service_name:
+        pass
+    else:
+        match = image_tag_pattern.fullmatch(image)
     if not match or match.group(1) != service_name:
-        fail(f"{service_name} image must use an immutable GHCR full-SHA tag")
-    app_shas.add(match.group(2))
-if len(app_shas) != 1:
-    fail("API and Web images must use the same release SHA")
+        fail(f"{service_name} image must be digest-pinned or use a full-SHA offline tag")
+    app_refs[service_name] = image
 expected_digest_refs = {
     "db": "ghcr.io/yykx682436/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685",
     "caddy": "ghcr.io/yykx682436/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
@@ -271,6 +312,7 @@ for line in data_root_raw.splitlines():
         continue
     key, value = line.split("=", 1)
     env_values[key] = value.strip().strip("\"'")
+env_values.update(os.environ)
 offline_images = env_values.get("MYSHOP_OFFLINE_IMAGES", "0")
 if offline_images not in {"0", "1"}:
     fail("MYSHOP_OFFLINE_IMAGES must be 0 or 1")
@@ -290,9 +332,13 @@ if offline_images == "1":
         fail("offline image mode requires a regular, non-symlink release manifest file")
     verify_script = script_dir / "verify-offline-image-bundle.py"
     try:
+        release_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        release_sha = str(release_manifest.get("source_sha", ""))
+        if not re.fullmatch(r"[0-9a-f]{40}", release_sha):
+            fail("offline release manifest source SHA is invalid")
         subprocess.run([
             sys.executable, str(verify_script), str(bundle_path), "--manifest", str(manifest_path),
-            "--verify-local", "--expected-source-sha", next(iter(app_shas), ""),
+            "--verify-local", "--expected-source-sha", release_sha,
         ], check=True)
     except Exception as exc:
         fail(f"offline image bundle verification failed: {exc}")
@@ -396,7 +442,7 @@ elif mode == "bootstrap-retry":
         for _container_id, _name, image, state in rows_by_service.get(service, []):
             if state != "exited":
                 fail(f"bootstrap-retry requires the previous failed {service} candidate to be stopped")
-            match = image_pattern.fullmatch(image)
+            match = image_tag_pattern.fullmatch(image)
             if not match or match.group(2) not in failed_shas:
                 fail(f"bootstrap-retry {service} container is not recorded as a failed MyShop candidate")
     if any(state != "exited" for _container_id, _name, _image, state in rows_by_service.get("caddy", [])):
@@ -422,13 +468,37 @@ else:
             raise ValueError("invalid accepted state")
         if mode == "forward-recovery":
             failed_sha = os.environ.get("MYSHOP_FORWARD_RECOVERY_FAILED_SHA", "")
-            if app_shas != {failed_sha}:
-                fail("forward recovery Compose images must identify the failed candidate")
+            release_manifest_path = Path(env_values.get("MYSHOP_FORWARD_RECOVERY_MANIFEST_FILE", ""))
+            if not release_manifest_path.is_file() or release_manifest_path.is_symlink():
+                fail("forward recovery requires the failed release manifest")
+            failed_manifest = json.loads(release_manifest_path.read_text(encoding="utf-8"))
+            if failed_manifest.get("source_sha") != failed_sha:
+                fail("forward recovery release manifest does not match the failed candidate")
+            recovery_bundle_path = Path(env_values.get("MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE", ""))
+            if not recovery_bundle_path.is_file() or recovery_bundle_path.is_symlink():
+                fail("forward recovery requires the failed release offline bundle")
+            try:
+                subprocess.run([
+                    sys.executable, str(script_dir / "verify-offline-image-bundle.py"),
+                    str(recovery_bundle_path), "--manifest", str(release_manifest_path),
+                    "--verify-local", "--expected-source-sha", failed_sha,
+                ], check=True)
+            except Exception as exc:
+                fail(f"failed release recovery bundle verification failed: {exc}")
             for service in ("api", "web"):
                 record = active["images"][service]
-                if (record.get("ref") != f"ghcr.io/yykx682436/myshop-{service}:{active_sha}"
-                        or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(record.get("digest", "")))):
+                digest = str(record.get("digest", ""))
+                canonical_ref = f"ghcr.io/yykx682436/myshop-{service}@{digest}"
+                image_sha = str(record.get("source_sha", active_sha))
+                runtime_ref = str(record.get("runtime_ref", record.get("ref", "")))
+                if (not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+                        or record.get("ref") not in {canonical_ref, f"ghcr.io/yykx682436/myshop-{service}:{active_sha}"}
+                        or runtime_ref not in {record.get("ref"), f"ghcr.io/yykx682436/myshop-{service}:{image_sha}"}):
                     fail("forward recovery requires a complete accepted baseline")
+                failed_runtime_ref = run(sys.executable, str(script_dir / "verify-offline-image-bundle.py"),
+                                         str(recovery_bundle_path), "--get-runtime-ref", service)
+                if app_refs[service] != failed_runtime_ref:
+                    fail(f"forward recovery Compose {service} image differs from the verified failed bundle")
             if (rows_by_service["caddy"][0][3] != "exited" or rows_by_service["db"][0][3] != "running"
                     or rows_by_service["node-exporter"][0][3] != "running"):
                 fail("forward recovery requires stopped Caddy and running database and metrics services")
@@ -439,10 +509,10 @@ else:
             verify_recovery_records(runtime_root, Path(env_values.get("MYSHOP_BACKUP_DIR", "")), expected_project, active_sha, failed_sha, database_identity)
             for service in ("api", "web"):
                 container_id, _name, image, state = rows_by_service[service][0]
-                expected_ref = f"ghcr.io/yykx682436/myshop-{service}:{failed_sha}"
+                expected_ref = app_refs[service]
                 if state != "exited" or image != expected_ref:
                     fail(f"forward recovery requires the failed {service} container to be stopped")
-                expected_id = run(sys.executable, str(script_dir / "verify-offline-image-bundle.py"), str(bundle_path), "--get-loaded-image-id", service)
+                expected_id = run(sys.executable, str(script_dir / "verify-offline-image-bundle.py"), str(recovery_bundle_path), "--get-loaded-image-id", service)
                 if run("docker", "inspect", "--format", "{{.Image}}", container_id) != expected_id:
                     fail(f"failed {service} container image differs from the verified bundle")
             failures = run("docker", "exec", db_id, "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atq -c "SELECT COUNT(*) FROM flyway_schema_history WHERE NOT success"')
@@ -450,8 +520,19 @@ else:
                 fail("forward recovery requires a readable Flyway history without failures")
         else:
             for service in ("api", "web"):
-                expected_ref = active["images"][service]["ref"]
-                if rows_by_service[service][0][2] != expected_ref:
+                record = active["images"][service]
+                digest = str(record.get("digest", ""))
+                canonical_ref = f"ghcr.io/yykx682436/myshop-{service}@{digest}"
+                image_sha = str(record.get("source_sha", active_sha))
+                runtime_ref = str(record.get("runtime_ref", record.get("ref", "")))
+                allowed_ref = {canonical_ref, f"ghcr.io/yykx682436/myshop-{service}:{active_sha}"}
+                allowed_runtime = {record.get("ref"), f"ghcr.io/yykx682436/myshop-{service}:{image_sha}"}
+                if (not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+                        or record.get("ref") not in allowed_ref or runtime_ref not in allowed_runtime):
+                    fail(f"accepted {service} state does not contain a valid immutable image identity")
+                if app_refs[service] != runtime_ref:
+                    fail(f"rendered Compose {service} image differs from accepted state")
+                if rows_by_service[service][0][2] != runtime_ref:
                     fail(f"running {service} image does not match the accepted deployment state")
     except Exception as exc:
         fail(f"upgrade mode requires a valid accepted deployment state: {exc}")

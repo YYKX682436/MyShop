@@ -169,8 +169,9 @@ phase=pull
 docker pull "$api_ref"
 docker pull "$web_ref"
 verify_digest() {
-  local ref=$1 digest=$2
-  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" | grep -Fx "${ref%:*}@$digest" >/dev/null
+  local ref=$1 digest=$2 repo
+  repo=${ref%%@*}
+  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" | grep -Fx "$repo@$digest" >/dev/null
 }
 verify_digest "$api_ref" "$api_digest" || die 'API digest does not match the manifest'
 verify_digest "$web_ref" "$web_digest" || die 'Web digest does not match the manifest'

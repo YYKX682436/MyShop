@@ -18,47 +18,57 @@ the stack, restore a database from another host, or change DNS or TLS.
 
 ## Routine production upgrade
 
-1. Ordinary pushes do not start a release. Only after an explicit deployment
-   request, dispatch GitHub Actions manually for the current `main` SHA. The
-   workflow refuses a stale SHA or one that already has a successful release,
-   and serializes release runs. It compares the commit with the most recent
-   successful ancestor release and runs the affected checks;
-   if no trustworthy baseline exists, all checks run. API changes retain
-   the PostgreSQL integration gate, migrations also run deployment/schema
-   checks, and unknown paths run all checks. Documentation-only changes do
-   not publish images. Use only the successful run matching the full SHA.
-2. On the existing host, verify the `myshop-friend-prod` services, accepted
-   release, runtime, mounts and loopback binding. Run the read-only upgrade
-   preflight with the existing private environment. Do not use first-install
-   mode for an upgrade.
-3. Transfer the validated release manifest and exact image archives using the
-   authenticated deployment connection. Import and verify the offline bundle
-   when registry blobs are unavailable. Provide a complete local Git history
-   at `MYSHOP_RELEASE_REPOSITORY` (default `/opt/myshop-friend/release.git`),
-   containing both the accepted and candidate commits. The deployment lock
-   protects an ancestry check, so an older or unrelated release is refused.
-4. Run `deploy-production.sh` with the validated manifest and the shared-host
-   settings below. The transaction checks image identities, creates its database
-   recovery point, stops all old API containers before the new API starts its
-   media index and migration, waits up to approximately six minutes for candidate
-   health, validates schema/smoke checks, and permits app
-   rollback only if Flyway history is unchanged. If history changed or cannot
-   be read, the old API remains stopped and the database and recovery point
-   remain available for assessment. No database restore is automatic.
-5. Verify the accepted SHA, service and database health, and the real HTTPS
-   homepage and `/api/site/config`. Do not use the disabled candidate site.
+1. Ordinary pushes do not start a release. Dispatch **MyShop CI** manually on
+   the current `main` SHA. It refuses stale SHAs, repeated successful SHAs, and
+   reruns, and serializes releases. It compares the commit with the most recent
+   successful ancestor. If that baseline is missing or untrusted, all checks
+   run and both images build. API changes run API/PostgreSQL and Web compatibility
+   checks but rebuild only API. Web changes build only Web. Database resources
+   also run deployment/schema contract tests. Documentation-only changes do not
+   publish images. A successful release publishes a small full-service manifest;
+   routine publishing does not create Docker archives.
+2. Fetch the manifest with `scripts/fetch-release-manifest.sh <full-sha>
+   <private-path>`. Confirm the SHA and accepted state. Install the matching
+   production scripts and Compose file from the same `main` commit, then run the
+   read-only upgrade preflight on the host. Never use first-install mode for an
+   upgrade.
+3. Provide complete local Git history at `MYSHOP_RELEASE_REPOSITORY` (default
+   `/opt/myshop-friend/release.git`) containing the accepted SHA, each image
+   source SHA and the candidate SHA. The deployment lock protects ancestry
+   checks, so an older or unrelated release is refused. Transfer only the
+   manifest for the normal route. Production pulls changed application images
+   by exact digest and checks the resulting RepoDigest.
+4. Run `deploy-production.sh` with the manifest and the shared-host settings
+   below. Web-only updates start only Web; API-only updates start only API,
+   retaining the database backup and schema gates. Migrations keep the strict
+   backup, API stop, migration, schema validation and recovery protection.
+   Digests determine actual changes, so identical image content does not cause
+   container recreation. The transaction waits up to approximately six minutes
+   for changed-service health and permits rollback only if Flyway history is
+   unchanged. If history changed or cannot be read, application services stay
+   stopped and the recovery point remains available. No database restore is
+   automatic.
+5. Verify the accepted SHA, image digests, service and database health, and the
+   public homepage plus `/api/site/config`. Do not use the disabled candidate site.
+
+API runs Maven `verify` once, checks and saves the resulting JAR with its SHA-256
+and schema contract, then builds a runtime-only image from that exact file. Web
+installs dependencies once, runs its checks and builds Next.js once only when
+Web changes. Runtime images copy the standalone output in separate dependency,
+server and static-asset layers so ordinary code changes can reuse stable layers.
 
 If a release reports `CRITICAL_SCHEMA_ROLLBACK_BLOCKED`, keep the old API
-stopped. A subsequent, fully validated release may use forward recovery:
-the `forward-recovery` preflight requires the failed release's stopped
-containers, verified offline bundle, failure log, intact predeploy database dump,
-healthy database, and readable Flyway history. Use a root-only copy of the
-private environment whose image, bundle, and manifest references identify that
-failed release; set `MYSHOP_FORWARD_RECOVERY_FAILED_SHA` to its full SHA and run
-`preflight-shared-server.sh --mode forward-recovery`. Then run the normal
-`deploy-production.sh` with the new release manifest and its verified offline
-bundle. The deploy script repeats the recovery preflight under its lock, creates
-a new recovery point, and keeps the old API stopped if the new release fails.
+stopped. A subsequent, fully validated release may use forward recovery. Keep
+the failed release's manifest and imported bundle separate from the candidate's:
+set `MYSHOP_FORWARD_RECOVERY_FAILED_SHA`,
+`MYSHOP_FORWARD_RECOVERY_MANIFEST_FILE`, and
+`MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE` for the failed release; set
+`MYSHOP_RELEASE_MANIFEST_FILE` and `MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE` for the
+new candidate. Import both bundles before preflight. The gate checks the failed
+release's stopped containers, bundle image IDs, failure log, intact database
+recovery point, healthy database, and readable Flyway history. The deployer
+repeats the gate under its lock, creates a new recovery point, and keeps the
+old API stopped if the candidate fails.
 Before starting anything, it compares the new API image's schema contract to the
 failed migrated image and checks it against the current Flyway history.
 For the media cutover only, a completed V63 with V64 still pending is also
@@ -205,44 +215,22 @@ shared Compose file pins each GHCR image by digest as well as a content-named
 tag. `scripts/test-shared-server-images.sh` checks these pins and confirms the
 legacy production Compose remains on its existing references.
 
-If GHCR metadata is reachable but blob downloads reset, export each exact
-digest reference with Skopeo to a Docker archive in a trusted build environment.
-Run `scripts/create-offline-image-bundle.py` with the validated release manifest
-and archive directory, then verify it with
-`scripts/verify-offline-image-bundle.py --manifest ... --verify-archives ...`.
-Transfer the archives, manifest, bundle, and runtime files over an authenticated
-channel. On the host, `scripts/import-offline-image-bundle.sh <manifest>
-<bundle> <archive-dir>` checks archive hashes, tags, full config digests, and
-`linux/amd64`, then loads application images without creating containers. It
-reuses infrastructure images only when their runtime configuration and layer
-identities match the verified archives; otherwise it loads those archives. Docker may
-normalize local image metadata during import, so the importer also compares the
-runtime config and all filesystem layer diff IDs against the checked archive,
-then records the daemon's local image IDs. With `MYSHOP_OFFLINE_IMAGES=1`,
-deployment checks those recorded IDs and runtime contents, skips registry pulls,
-adds `--pull never` to Compose startup, and records both the GHCR manifest
-digest and local image ID for future rollback/retention. Keep the three
-infrastructure image overrides blank when pulling from GHCR; set them to the
-approved digest-derived `mirror-<digest>` tags only after an offline import.
-
-### Offline release transport
-
-Each successful application release retains `myshop-release-<full SHA>` for
-2 days. It contains the image archives produced by the same builds that push
-the registry images, the release manifest, carrier digest and checksums.
-The fetcher downloads ranges in parallel, verifies GitHub's ZIP digest and the
-included checksums, and rejects a mismatching source SHA:
-
-```bash
-release_sha=$(git rev-parse HEAD)
-release_dir=$(mktemp -d "${TMPDIR:-/tmp}/myshop-release.XXXXXX")
-python3 scripts/fetch-release-archives.py "$release_sha" "$release_dir"
-```
-
-Fetch the carrier by its recorded registry digest and compare its manifest to
-the artifact before transfer. Reuse the previously verified infrastructure
-archives only when their checks pass; otherwise export the pinned images with
-Skopeo. Create and verify an offline bundle, transfer it over SSH, import the
-images, then run the preflight and deployment transaction. Delete temporary
-local downloads after the release; retain the accepted server recovery point
-and the files required by its configured offline bundle.
+Normal deployment does not transfer Docker archives. If immutable GHCR blob
+downloads fail or are too slow, dispatch **MyShop emergency offline export** on
+`main` with the full SHA of an already successful CI release. It pulls only the
+published digest-pinned API and Web images, verifies their RepoDigests, and
+exports those app images without rebuilding or republishing. The three
+infrastructure images stay on the host; import verifies their pinned local
+RepoDigests before accepting the bundle. Download
+`myshop-emergency-offline-<full SHA>`, check `SHA256SUMS`, and run
+`scripts/import-offline-image-bundle.sh <manifest> <bundle> <archive-dir>` on the
+production host. Import verifies app archive hashes, tags, complete image
+config, platform and layers, and checks the existing infrastructure RepoDigests;
+it creates no containers. Set `MYSHOP_OFFLINE_IMAGES=1`
+point `MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE` to the imported bundle, and set
+`MYSHOP_RELEASE_MANIFEST_FILE` to that release's manifest before running the
+read-only preflight. Use those same paths for the deploy. The transaction checks
+local image IDs, skips registry pulls and uses
+`--pull never`. After acceptance, set offline mode back to `0` and remove the
+temporary bundle reference. The emergency artifact expires after two days; the
+application image is not rebuilt or republished.

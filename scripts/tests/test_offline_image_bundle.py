@@ -11,7 +11,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = "ghcr.io/yykx682436"
-SHA = "78e991d2372a6c76ccdf6d5e1ac50e70a83b6339"
+APP_SERVICES = ("api", "web")
+SERVICES = (*APP_SERVICES, "postgres", "caddy", "node-exporter")
+SHA = "a" * 40
+BASE_SHA = "b" * 40
 DIGESTS = {
     "api": "sha256:" + "1" * 64,
     "web": "sha256:" + "2" * 64,
@@ -19,6 +22,7 @@ DIGESTS = {
     "caddy": "sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
     "node-exporter": "sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
 }
+SOURCE_SHAS = {"api": SHA, "web": BASE_SHA, "postgres": "", "caddy": "", "node-exporter": ""}
 CONFIG_IDS: dict[str, str] = {}
 CONFIGS: dict[str, dict] = {}
 LOADED_IDS = {service: "sha256:" + character * 64 for service, character in zip(
@@ -26,20 +30,28 @@ LOADED_IDS = {service: "sha256:" + character * 64 for service, character in zip(
 )}
 
 
-def image_ref(service: str) -> str:
+def source_ref(service: str) -> str:
     if service in {"api", "web"}:
-        return f"{REGISTRY}/myshop-{service}:{SHA}"
-    digest = DIGESTS[service].split(":", 1)[1]
-    return f"{REGISTRY}/myshop-{service}:mirror-{digest}"
+        return f"{REGISTRY}/myshop-{service}@{DIGESTS[service]}"
+    return {
+        "postgres": f"{REGISTRY}/myshop-postgres:mirror-cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685@{DIGESTS[service]}",
+        "caddy": f"{REGISTRY}/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648@{DIGESTS[service]}",
+        "node-exporter": f"{REGISTRY}/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0@{DIGESTS[service]}",
+    }[service]
+
+
+def archive_ref(service: str) -> str:
+    if service in {"api", "web"}:
+        return f"{REGISTRY}/myshop-{service}:{SOURCE_SHAS[service]}"
+    return source_ref(service).split("@", 1)[0]
 
 
 def make_archive(path: Path, service: str) -> str:
     layer = b"layer-fixture"
     diff_id = "sha256:" + hashlib.sha256(layer).hexdigest()
     config = {
-        "architecture": "amd64",
-        "os": "linux",
-        "config": {"Env": ["PATH=/usr/bin"], "Labels": {"org.opencontainers.image.revision": SHA}},
+        "architecture": "amd64", "os": "linux",
+        "config": {"Env": ["PATH=/usr/bin"], "Labels": {"org.opencontainers.image.revision": SOURCE_SHAS[service] or "infra"}},
         "rootfs": {"type": "layers", "diff_ids": [diff_id]},
     }
     CONFIGS[service] = config
@@ -47,13 +59,10 @@ def make_archive(path: Path, service: str) -> str:
     config_digest = "sha256:" + hashlib.sha256(config_bytes).hexdigest()
     CONFIG_IDS[service] = config_digest
     config_name = config_digest.split(":", 1)[1] + ".json"
-    manifest = [{"Config": config_name, "RepoTags": [image_ref(service)], "Layers": ["layer/layer.tar"]}]
+    manifest = [{"Config": config_name, "RepoTags": [archive_ref(service)], "Layers": ["layer/layer.tar"]}]
     with tarfile.open(path, "w:") as outer:
-        for name, data in (
-            ("manifest.json", json.dumps(manifest).encode()),
-            (config_name, config_bytes),
-            ("layer/layer.tar", layer),
-        ):
+        for name, data in (("manifest.json", json.dumps(manifest).encode()),
+                           (config_name, config_bytes), ("layer/layer.tar", layer)):
             info = tarfile.TarInfo(name)
             info.size = len(data)
             outer.addfile(info, __import__("io").BytesIO(data))
@@ -69,58 +78,46 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     archive_dir = root / "archives"
     archive_dir.mkdir()
     release = {
-        "version": 1,
-        "project": "myshop",
-        "source_sha": SHA,
-        "created_at": "2026-11-17T19:35:33Z",
+        "version": 2, "project": "myshop", "source_sha": SHA,
+        "created_at": "2026-11-17T19:35:33Z", "built_services": ["api"],
+        "database_migration": False,
         "images": {
-            service: {
-                "ref": image_ref(service),
-                "digest": DIGESTS[service],
-            }
+            service: {"ref": source_ref(service), "digest": DIGESTS[service], "source_sha": SOURCE_SHAS[service]}
             for service in ("api", "web")
         },
     }
     release_path = root / "release-manifest.json"
     release_path.write_text(json.dumps(release), encoding="utf-8")
-    for service in ("api", "web", "postgres", "caddy", "node-exporter"):
+    for service in APP_SERVICES:
         make_archive(archive_dir / f"{service}.tar", service)
 
     bundle_path = root / "image-bundle.json"
-    created = run(
-        sys.executable,
-        str(ROOT / "scripts/create-offline-image-bundle.py"),
-        str(release_path),
-        str(archive_dir),
-        str(bundle_path),
-    )
+    created = run(sys.executable, str(ROOT / "scripts/create-offline-image-bundle.py"),
+                  str(release_path), str(archive_dir), str(bundle_path))
     assert created.returncode == 0, created.stderr
     bundle_data = json.loads(bundle_path.read_text(encoding="utf-8"))
-    for service in CONFIG_IDS:
+    for service in SERVICES:
         bundle_data["images"][service]["loaded_image_id"] = LOADED_IDS[service]
     bundle_path.write_text(json.dumps(bundle_data), encoding="utf-8")
-    verify = run(
-        sys.executable,
-        str(ROOT / "scripts/verify-offline-image-bundle.py"),
-        str(bundle_path),
-        "--manifest",
-        str(release_path),
-        "--verify-archives",
-        str(archive_dir),
-    )
+    verify = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                 str(bundle_path), "--manifest", str(release_path), "--verify-archives", str(archive_dir))
     assert verify.returncode == 0, verify.stderr
 
     metadata = {
-        image_ref(service): {
-            "Id": LOADED_IDS[service],
-            "Os": "linux",
-            "Architecture": "amd64",
-            "RepoTags": [image_ref(service)],
-            "Config": CONFIGS[service]["config"],
+        archive_ref(service): {
+            "Id": LOADED_IDS[service], "Os": "linux", "Architecture": "amd64",
+            "RepoTags": [archive_ref(service)], "Config": CONFIGS[service]["config"],
             "RootFS": {"Layers": CONFIGS[service]["rootfs"]["diff_ids"]},
         }
-        for service in CONFIG_IDS
+            for service in APP_SERVICES
     }
+    for service in ("postgres", "caddy", "node-exporter"):
+        repo = source_ref(service).split("@", 1)[0].rsplit(":", 1)[0]
+        metadata[archive_ref(service)] = {
+            "Id": LOADED_IDS[service], "Os": "linux", "Architecture": "amd64",
+            "RepoTags": [archive_ref(service)], "RepoDigests": [f"{repo}@{DIGESTS[service]}"],
+            "Config": {}, "RootFS": {"Layers": []},
+        }
     metadata_path = root / "fake-images.json"
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     fake_bin = root / "bin"
@@ -134,9 +131,8 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
         "image=images.get(ref)\n"
         "if image is None: raise SystemExit('missing fake image')\n"
         "if os.environ.get('FAKE_BAD_REF') == ref: image['Config']['Env']=['PATH=/tampered']\n"
-        "print(json.dumps(image))\n",
-        encoding="utf-8",
-    )
+        "if os.environ.get('FAKE_MISSING_INFRA_DIGEST') == ref: image['RepoDigests']=[]\n"
+        "print(json.dumps(image))\n", encoding="utf-8")
     fake_docker.chmod(0o755)
     local_env = os.environ.copy()
     local_env["PATH"] = str(fake_bin) + os.pathsep + local_env.get("PATH", "")
@@ -145,74 +141,50 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     unrecorded["images"]["api"]["loaded_image_id"] = ""
     unrecorded_path = root / "unrecorded-image-bundle.json"
     unrecorded_path.write_text(json.dumps(unrecorded), encoding="utf-8")
-    unrecorded_check = run(
-        sys.executable,
-        str(ROOT / "scripts/verify-offline-image-bundle.py"),
-        str(unrecorded_path),
-        "--verify-local",
-        env=local_env,
-    )
+    unrecorded_check = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                           str(unrecorded_path), "--verify-local", env=local_env)
     assert unrecorded_check.returncode != 0 and "has not been recorded" in unrecorded_check.stderr
     recorded_bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    assert recorded_bundle["version"] == 2
-    for service in CONFIG_IDS:
+    assert recorded_bundle["version"] == 4
+    for service in SERVICES:
         assert recorded_bundle["images"][service]["loaded_image_id"] == LOADED_IDS[service]
+    for service in APP_SERVICES:
         assert recorded_bundle["images"][service]["loaded_image_id"] != CONFIG_IDS[service]
-    local_check = run(
-        sys.executable,
-        str(ROOT / "scripts/verify-offline-image-bundle.py"),
-        str(bundle_path),
-        "--manifest",
-        str(release_path),
-        "--verify-local",
-        env=local_env,
-    )
+    local_check = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                      str(bundle_path), "--manifest", str(release_path), "--verify-local", env=local_env)
     assert local_check.returncode == 0, local_check.stderr
-    loaded_id = run(
-        sys.executable,
-        str(ROOT / "scripts/verify-offline-image-bundle.py"),
-        str(bundle_path),
-        "--get-loaded-image-id",
-        "api",
-    )
+    loaded_id = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                    str(bundle_path), "--get-loaded-image-id", "api")
     assert loaded_id.returncode == 0 and loaded_id.stdout.strip() == LOADED_IDS["api"]
+    runtime_ref = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                      str(bundle_path), "--get-runtime-ref", "web")
+    assert runtime_ref.returncode == 0 and runtime_ref.stdout.strip() == archive_ref("web")
 
     bad_local_env = local_env.copy()
-    bad_local_env["FAKE_BAD_REF"] = image_ref("web")
-    bad_runtime = run(
-        sys.executable,
-        str(ROOT / "scripts/verify-offline-image-bundle.py"),
-        str(bundle_path),
-        "--verify-local",
-        env=bad_local_env,
-    )
+    bad_local_env["FAKE_BAD_REF"] = archive_ref("web")
+    bad_runtime = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                      str(bundle_path), "--verify-local", env=bad_local_env)
     assert bad_runtime.returncode != 0 and "runtime config differs" in bad_runtime.stderr
+
+    bad_infra_env = local_env.copy()
+    bad_infra_env["FAKE_MISSING_INFRA_DIGEST"] = archive_ref("postgres")
+    bad_infra = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                    str(bundle_path), "--verify-local", env=bad_infra_env)
+    assert bad_infra.returncode != 0 and "preinstalled RepoDigest differs" in bad_infra.stderr
 
     tampered_archive = archive_dir / "api.tar"
     tampered_archive.write_bytes(tampered_archive.read_bytes() + b"corrupt")
-    tamper_check = run(
-        sys.executable,
-        str(ROOT / "scripts/verify-offline-image-bundle.py"),
-        str(bundle_path),
-        "--manifest",
-        str(release_path),
-        "--verify-archives",
-        str(archive_dir),
-    )
+    tamper_check = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                       str(bundle_path), "--manifest", str(release_path), "--verify-archives", str(archive_dir))
     assert tamper_check.returncode != 0 and "SHA-256 mismatch" in tamper_check.stderr
 
     wrong_source = json.loads(bundle_path.read_text(encoding="utf-8"))
     wrong_source["images"]["caddy"]["source_digest"] = "sha256:" + "9" * 64
     wrong_source_path = root / "wrong-source.json"
     wrong_source_path.write_text(json.dumps(wrong_source), encoding="utf-8")
-    source_check = run(
-        sys.executable,
-        str(ROOT / "scripts/verify-offline-image-bundle.py"),
-        str(wrong_source_path),
-        "--manifest",
-        str(release_path),
-    )
-    assert source_check.returncode != 0 and "approved mirror" in source_check.stderr
+    source_check = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                       str(wrong_source_path), "--manifest", str(release_path))
+    assert source_check.returncode != 0 and "approved infrastructure digest" in source_check.stderr
 
     wrapper_root = root / "runtime"
     wrapper_root.mkdir()
@@ -222,34 +194,22 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     env_file.write_text(
         "MYSHOP_COMPOSE_PROJECT_NAME=myshop-friend-prod\n"
         f"MYSHOP_COMPOSE_FILE={compose_file}\n"
-        f"MYSHOP_API_IMAGE={image_ref('api')}\n"
-        f"MYSHOP_WEB_IMAGE={image_ref('web')}\n"
-        "MYSHOP_OFFLINE_IMAGES=1\n",
-        encoding="utf-8",
-    )
+        f"MYSHOP_API_IMAGE={archive_ref('api')}\n"
+        f"MYSHOP_WEB_IMAGE={archive_ref('web')}\n"
+        "MYSHOP_OFFLINE_IMAGES=1\n", encoding="utf-8")
     wrapper_bin = root / "wrapper-bin"
     wrapper_bin.mkdir()
     wrapper_docker = wrapper_bin / "docker"
     wrapper_docker.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -eu\n"
+        "#!/usr/bin/env bash\nset -eu\n"
         "if [[ \"$1 $2\" == 'compose version' ]]; then printf 'Docker Compose version v2.30.0\\n'; exit 0; fi\n"
-        "printf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\n",
-        encoding="utf-8",
-    )
+        "printf '%s\\n' \"$*\" >>\"$FAKE_DOCKER_LOG\"\n", encoding="utf-8")
     wrapper_docker.chmod(0o755)
     wrapper_env = os.environ.copy()
-    wrapper_env.update(
-        {
-            "PATH": str(wrapper_bin) + os.pathsep + os.environ.get("PATH", ""),
-            "MYSHOP_RUNTIME_ROOT": str(wrapper_root),
-            "MYSHOP_ENV_FILE": str(env_file),
-            "MYSHOP_COMPOSE_FILE": str(compose_file),
-            "MYSHOP_COMPOSE_PROJECT_NAME": "myshop-friend-prod",
-            "MYSHOP_APPROVED_REGISTRY": REGISTRY,
-            "FAKE_DOCKER_LOG": str(root / "wrapper-docker.log"),
-        }
-    )
+    wrapper_env.update({"PATH": str(wrapper_bin) + os.pathsep + os.environ.get("PATH", ""),
+                        "MYSHOP_RUNTIME_ROOT": str(wrapper_root), "MYSHOP_ENV_FILE": str(env_file),
+                        "MYSHOP_COMPOSE_FILE": str(compose_file), "MYSHOP_COMPOSE_PROJECT_NAME": "myshop-friend-prod",
+                        "MYSHOP_APPROVED_REGISTRY": REGISTRY, "FAKE_DOCKER_LOG": str(root / "wrapper-docker.log")})
     up = run("bash", str(ROOT / "scripts/myshop-compose.sh"), "--env-file", str(env_file), "up", "-d", env=wrapper_env)
     assert up.returncode == 0, up.stderr
     wrapper_log = (root / "wrapper-docker.log").read_text(encoding="utf-8")
@@ -258,4 +218,4 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     assert pull.returncode != 0 and "refuses Docker Compose pull" in pull.stderr
     assert len((root / "wrapper-docker.log").read_text(encoding="utf-8").splitlines()) == 1
 
-print("offline image bundle source, platform, archive integrity, normalized runtime configuration, layers, and loaded image IDs passed")
+print("offline image bundle digest, provenance, platform, archive, runtime, layer, and image-ID checks passed")

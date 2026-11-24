@@ -1,33 +1,32 @@
-# Local/reproducible API image. CI may publish the same artifact with Jib.
-FROM maven:3.9.11-eclipse-temurin-25 AS build
-WORKDIR /build
-COPY apps/api/pom.xml apps/api/pom.xml
-RUN mvn -B -f apps/api/pom.xml dependency:go-offline
-COPY apps/api/src apps/api/src
-ARG SKIP_TESTS=false
-RUN if [ "$SKIP_TESTS" != "true" ]; then \
-      apt-get update \
-      && apt-get install --no-install-recommends --yes \
-           libvips-tools libheif1 libheif-examples libheif-plugin-libde265 libheif-plugin-aomdec \
-           icc-profiles-free ffmpeg \
-      && rm -rf /var/lib/apt/lists/*; \
-    fi \
- && mvn -B -f apps/api/pom.xml -DskipTests=${SKIP_TESTS} package
-
-# Keep the runtime distribution explicit: this image uses Ubuntu Noble, so
-# user creation below uses Debian/Ubuntu's documented adduser/addgroup flags.
+# Runtime-only image. CI runs Maven verify once, checksums the resulting JAR,
+# and stages that exact JAR with its embedded schema contract in the context.
 FROM eclipse-temurin:25-jre-noble
+
+ARG SOURCE_SHA
+ARG API_JAR_SHA256
 WORKDIR /app
+
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes \
       wget libvips-tools libheif1 libheif-examples libheif-plugin-libde265 libheif-plugin-aomdec \
       icc-profiles-free ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 10001 myshop \
- && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin myshop
-COPY --from=build /build/apps/api/target/myshop-api-*.jar /app/app.jar
-COPY apps/api/src/main/resources/db/production-schema-contract.json /app/production-schema-contract.json
-RUN mkdir -p /app/uploads /app/private-uploads && chown -R 10001:10001 /app
+ && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin myshop \
+ && mkdir -p /app/uploads /app/private-uploads \
+ && chown 10001:10001 /app /app/uploads /app/private-uploads
+
+COPY --chown=10001:10001 production-schema-contract.json /app/production-schema-contract.json
+COPY --chown=10001:10001 app.jar /app/app.jar
+RUN test -n "$SOURCE_SHA" \
+ && test -n "$API_JAR_SHA256" \
+ && test "$(sha256sum /app/app.jar | awk '{print $1}')" = "$API_JAR_SHA256" \
+ && test "$(stat -c '%u:%g' /app/app.jar)" = 10001:10001 \
+ && test "$(stat -c '%u:%g' /app/production-schema-contract.json)" = 10001:10001
+
+LABEL org.opencontainers.image.revision="$SOURCE_SHA" \
+      io.myshop.api.jar.sha256="$API_JAR_SHA256"
+
 USER 10001:10001
 EXPOSE 8083
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

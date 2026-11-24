@@ -29,15 +29,12 @@ PY
 for service in api web; do load_image "$service"; done
 install -o root -g root -m 0600 "$bundle" "$bundle.tmp"
 mv -f -- "$bundle.tmp" "$bundle"
-# Existing infrastructure images can be reused only if their runtime config,
-# layer identities and platform match the verified archives. Otherwise load
-# the verified pinned archives and repeat the complete verification.
-if ! python3 "$verifier" "$bundle" --record-loaded-image-ids >/dev/null 2>&1; then
-  for service in postgres caddy node-exporter; do load_image "$service"; done
-  python3 "$verifier" "$bundle" --record-loaded-image-ids >/dev/null \
-    || die 'loaded image runtime configuration or layers differ from the verified archive'
-fi
+# The shared host already runs the three pinned infrastructure images. Record
+# their local identities only after verifying the exact RepoDigests; the
+# emergency artifact carries app images only and never replaces infrastructure.
+python3 "$verifier" "$bundle" --record-loaded-image-ids >/dev/null \
+  || die 'app imports or preinstalled pinned infrastructure images failed identity checks'
 python3 "$verifier" "$bundle" --manifest "$manifest" --verify-local >/dev/null \
   || die 'loaded image IDs or platforms do not match the verified transfer bundle'
-printf 'OFFLINE_IMAGES_IMPORTED source_sha=%s platform=linux/amd64 services=5\n' \
+printf 'OFFLINE_IMAGES_IMPORTED source_sha=%s platform=linux/amd64 app_images=2 infra_images=verified_preinstalled\n' \
   "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["source_sha"])' "$bundle")"

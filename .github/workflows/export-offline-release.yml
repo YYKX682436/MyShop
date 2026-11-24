@@ -1,0 +1,49 @@
+name: MyShop emergency offline export
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full SHA of an already successful MyShop CI release
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+jobs:
+  export:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate source SHA and fetch its successful manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          scripts/fetch-release-manifest.sh "$SOURCE_SHA" "$RUNNER_TEMP/release-manifest.json"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Export the verified immutable digests without rebuilding
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          OUTPUT_DIR: ${{ runner.temp }}/myshop-emergency-offline-${{ inputs.source_sha }}
+        run: |
+          set -Eeuo pipefail
+          docker version
+          scripts/export-offline-release.sh "$RUNNER_TEMP/release-manifest.json" "$OUTPUT_DIR"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: myshop-emergency-offline-${{ inputs.source_sha }}
+          path: ${{ runner.temp }}/myshop-emergency-offline-${{ inputs.source_sha }}/
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 2

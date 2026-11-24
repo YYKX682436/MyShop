@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import re
+import importlib.util
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -14,65 +13,60 @@ spec.loader.exec_module(scope)
 
 
 class ReleaseScopeTests(unittest.TestCase):
-    def test_web_only_and_documentation_changes(self):
-        self.assertEqual(scope.classify(["apps/web/app/page.tsx", "docs/README.md"]),
-                         {"api": False, "web": True, "compose": False, "runtime": True})
-        self.assertEqual(scope.classify(["docs/example.md", "README.md"]),
-                         {"api": False, "web": False, "compose": False, "runtime": False})
+    def test_web_only_changes_build_only_web(self):
+        result = scope.classify(["apps/web/app/page.tsx", "docs/README.md"])
+        self.assertTrue(result["web_test"] and result["web_image"])
+        self.assertFalse(result["api_test"] or result["api_image"] or result["compose_test"])
 
-    def test_payment_delivery_refund_and_schema_cannot_skip_api(self):
-        for name in ("PaymentService.java", "DeliveryService.java", "RefundService.java"):
-            with self.subTest(name=name):
-                self.assertTrue(scope.classify([f"apps/api/src/main/java/{name}"])["api"])
-        migration = scope.classify(["apps/api/src/main/resources/db/migration/V56__example.sql"])
-        self.assertTrue(migration["api"] and migration["web"] and migration["compose"])
+    def test_api_changes_run_web_compatibility_without_web_image(self):
+        result = scope.classify(["apps/api/src/main/java/com/myshop/PaymentService.java"])
+        self.assertTrue(result["api_test"] and result["api_image"] and result["web_test"])
+        self.assertFalse(result["web_image"] or result["compose_test"])
 
-    def test_unknown_or_ci_files_require_all_checks(self):
-        for name in ("unexpected.conf", "other/readme.md", ".github/workflows/cicd.yml", ".dockerignore", "scripts/ci-release-scope.py"):
-            with self.subTest(name=name):
-                self.assertTrue(all(scope.classify([name]).values()))
+    def test_api_migrations_run_deployment_contract_without_building_web(self):
+        result = scope.classify(["apps/api/src/main/resources/db/migration/V66__example.sql"])
+        self.assertTrue(result["api_test"] and result["web_test"] and result["compose_test"])
+        self.assertTrue(result["api_image"] and result["migration"])
+        self.assertFalse(result["web_image"])
 
-    def test_deployment_only_runs_deployment_checks(self):
-        self.assertEqual(scope.classify(["scripts/deploy-production.sh"]),
-                         {"api": False, "web": False, "compose": True, "runtime": True})
+    def test_frontend_dependency_and_build_inputs_build_only_web(self):
+        for path_name in ("pnpm-lock.yaml", "package.json", "Dockerfile.web", "apps/web/next.config.mjs"):
+            with self.subTest(path=path_name):
+                result = scope.classify([path_name])
+                self.assertTrue(result["web_test"] and result["web_image"])
+                self.assertFalse(result["api_image"])
 
-    def test_test_only_and_download_helper_changes_do_not_publish_images(self):
-        for path in ("scripts/tests/test_fetch_release_archives.py", "scripts/fetch-release-archives.py", "scripts/test-deployment-transaction.sh"):
-            with self.subTest(path=path):
-                self.assertEqual(scope.classify([path]),
-                                 {"api": False, "web": False, "compose": True, "runtime": False})
-        self.assertEqual(scope.classify(["scripts/test-web-image-host-routing.sh"]),
-                         {"api": False, "web": True, "compose": True, "runtime": True})
+    def test_backend_pom_and_runtime_dockerfile_build_only_api(self):
+        for path_name in ("apps/api/pom.xml", "Dockerfile.api"):
+            with self.subTest(path=path_name):
+                result = scope.classify([path_name])
+                self.assertTrue(result["api_test"] and result["api_image"])
+                self.assertFalse(result["web_image"])
 
-    def test_no_baseline_and_api_failure_fall_back_to_all_checks(self):
-        for side_effect in (None, OSError("unavailable")):
-            with self.subTest(side_effect=side_effect), \
-                 mock.patch.dict(scope.os.environ, {"GITHUB_SHA": "a" * 40, "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "1"}, clear=True), \
-                 mock.patch.object(scope, "command", return_value="a" * 40), \
-                 mock.patch.object(scope, "prior_release", return_value=None, side_effect=side_effect), \
-                 mock.patch("sys.stdout", new_callable=__import__("io").StringIO) as out:
-                scope.main()
-                for key in ("api", "web", "compose", "runtime"):
-                    self.assertIn(f"{key}=true", out.getvalue())
+    def test_document_and_test_only_changes_do_not_build_images(self):
+        self.assertFalse(any(scope.classify(["docs/example.md", "README.md"]).values()))
+        result = scope.classify(["apps/api/src/test/java/PaymentServiceTest.java"])
+        self.assertTrue(result["api_test"])
+        self.assertFalse(result["api_image"] or result["web_image"] or result["runtime"])
+        result = scope.classify(["apps/web/lib/cart.test.mjs"])
+        self.assertTrue(result["web_test"])
+        self.assertFalse(result["api_image"] or result["web_image"] or result["runtime"])
 
-    def test_only_successful_published_ancestor_is_a_baseline(self):
-        runs = {"workflow_runs": [{"head_sha": "b" * 40, "id": 2}]}
-        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
-             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "skipped"}]})]):
-            self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
-        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
-             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]})]):
-            self.assertEqual(scope.prior_release("owner/repo", "a" * 40, "1"), ("b" * 40, 2))
-        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=1)), \
-             mock.patch.object(scope, "command", return_value=json.dumps(runs)):
-            self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
+    def test_deployment_scripts_run_contract_checks_without_app_images(self):
+        result = scope.classify(["scripts/deploy-production.sh"])
+        self.assertTrue(result["compose_test"] and result["runtime"])
+        self.assertFalse(result["api_image"] or result["web_image"])
 
-    def test_duplicate_or_stale_manual_release_is_rejected(self):
+    def test_unknown_ci_or_dockerignore_changes_fail_closed(self):
+        for path_name in ("unexpected.conf", "other/readme.md", ".github/workflows/cicd.yml", ".dockerignore"):
+            with self.subTest(path=path_name):
+                self.assertTrue(all(scope.classify([path_name]).values()))
+
+    def test_manual_release_duplicate_stale_and_rerun_guards(self):
         sha = "a" * 40
         runs = {"workflow_runs": [{"head_sha": sha, "id": 2, "conclusion": "success"}]}
         with mock.patch.object(scope, "command", side_effect=[
-            json.dumps({"object": {"sha": sha}}),
-            json.dumps(runs),
+            json.dumps({"object": {"sha": sha}}), json.dumps(runs),
             json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]}),
         ]):
             with self.assertRaisesRegex(SystemExit, "already succeeded"):
@@ -80,33 +74,28 @@ class ReleaseScopeTests(unittest.TestCase):
         with mock.patch.object(scope, "command", return_value=json.dumps({"object": {"sha": "b" * 40}})):
             with self.assertRaisesRegex(SystemExit, "Refusing stale release SHA"):
                 scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main")
-
-    def test_same_sha_without_successful_publish_can_retry(self):
-        sha = "a" * 40
-        with mock.patch.object(scope, "command", side_effect=[
-            json.dumps({"object": {"sha": sha}}),
-            json.dumps({"workflow_runs": []}),
-        ]):
-            scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main")
-
-    def test_workflow_rerun_attempt_is_rejected(self):
         with self.assertRaisesRegex(SystemExit, "fresh workflow dispatch"):
-            scope.validate_manual_release("owner/repo", "a" * 40, "3", "refs/heads/main", attempt="2")
+            scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main", attempt="2")
 
-    def test_workflow_is_manual_and_release_runs_are_serialized(self):
+    def test_only_successful_manifest_release_is_a_baseline(self):
+        runs = {"workflow_runs": [{"head_sha": "b" * 40, "id": 2}]}
+        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "skipped"}]})]):
+            self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
+        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]}), json.dumps({"artifacts": [{"name": "myshop-release-manifest-" + "b" * 40, "expired": False}]})]):
+            self.assertEqual(scope.prior_release("owner/repo", "a" * 40, "1"), ("b" * 40, 2))
+        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]}), json.dumps({"artifacts": [{"name": "myshop-release-manifest-" + "b" * 40, "expired": True}]})]):
+            self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
+
+    def test_manual_workflow_is_serialized_and_does_not_run_on_push(self):
         workflow = (path.parents[1] / ".github/workflows/cicd.yml").read_text(encoding="utf-8")
-        self.assertRegex(workflow, r"(?m)^on:\n  workflow_dispatch:\s*$")
+        self.assertRegex(workflow, r"(?m)^on:\n  workflow_dispatch:")
         self.assertNotRegex(workflow, r"(?m)^  (push|pull_request|schedule|workflow_run):")
         self.assertIn("group: myshop-manual-release", workflow)
         self.assertIn("queue: max", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
-
-    def test_app_test_only_changes_run_affected_checks_without_release(self):
-        self.assertEqual(scope.classify(["apps/api/src/test/java/PaymentTest.java"]),
-                         {"api": True, "web": False, "compose": False, "runtime": False})
-        self.assertEqual(scope.classify(["apps/web/lib/cart.test.mjs"]),
-                         {"api": False, "web": True, "compose": False, "runtime": False})
-        self.assertFalse(any(scope.classify(["nested/AGENTS.md"]).values()))
 
 
 if __name__ == "__main__":

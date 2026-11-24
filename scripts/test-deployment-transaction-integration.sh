@@ -16,6 +16,7 @@ rollback1_sha=$(printf 'b%.0s' {1..40})
 rollback2_sha=$(printf 'c%.0s' {1..40})
 candidate_sha=$(printf 'd%.0s' {1..40})
 registry=ghcr.io/yykx682436
+candidate_api_ref="$registry/myshop-api@sha256:$(printf '4%.0s' {1..64})"
 
 base_state="$tmp_dir/base-state.json"
 manifest="$tmp_dir/candidate-manifest.json"
@@ -53,12 +54,15 @@ state = {
 }
 Path(state_path).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 manifest = {
-    "version": 1,
+    "version": 2,
     "project": "myshop",
     "source_sha": candidate,
     "created_at": "2026-09-24T00:00:00Z",
+    "built_services": ["api", "web"],
+    "database_migration": True,
     "images": {
-        service: {"ref": f"{registry}/myshop-{service}:{candidate}", "digest": digests[candidate]}
+        service: {"ref": f"{registry}/myshop-{service}@{digests[candidate]}",
+                  "digest": digests[candidate], "source_sha": candidate}
         for service in ("api", "web")
     },
 }
@@ -66,15 +70,18 @@ Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + 
 PY
 
 offline_bundle="$tmp_dir/offline-image-bundle.json"
-python3 - "$manifest" "$offline_bundle" <<'PY'
+python3 - "$manifest" "$offline_bundle" "$registry" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1], encoding='utf-8'))
+registry = sys.argv[3]
 images = {}
 for service in ('api', 'web'):
     item = manifest['images'][service]
     images[service] = {
-        'ref': item['ref'],
+        'source_ref': item['ref'],
         'source_digest': item['digest'],
+        'source_sha': item['source_sha'],
+        'archive_ref': f"{registry}/myshop-{service}:{item['source_sha']}",
         'config_digest': 'sha256:' + ('7' if service == 'api' else '8') * 64,
         'runtime_config_digest': 'sha256:' + ('9' if service == 'api' else 'a') * 64,
         'rootfs_diff_ids': ['sha256:' + ('b' if service == 'api' else 'c') * 64],
@@ -83,17 +90,27 @@ for service in ('api', 'web'):
         'archive_sha256': '0' * 64,
     }
 for name in ('postgres', 'caddy', 'node-exporter'):
-    images[name] = {'ref': 'unused', 'source_digest': 'unused', 'config_digest': 'unused', 'runtime_config_digest': 'unused', 'rootfs_diff_ids': [], 'loaded_image_id': 'unused', 'archive': name + '.tar', 'archive_sha256': '0' * 64}
-json.dump({'version':2,'source_sha':manifest['source_sha'],'platform':'linux/amd64','images':images}, open(sys.argv[2], 'w'))
+    images[name] = {'source_ref': 'unused', 'source_digest': 'unused', 'source_sha': '', 'archive_ref': 'unused', 'config_digest': 'unused', 'runtime_config_digest': 'unused', 'rootfs_diff_ids': [], 'loaded_image_id': '', 'archive': name + '.tar', 'archive_sha256': '0' * 64}
+json.dump({'version':4,'source_sha':manifest['source_sha'],'platform':'linux/amd64','images':images}, open(sys.argv[2], 'w'))
 PY
 cat >"$tmp_dir/offline-verifier.py" <<'OFFLINE_VERIFY'
 #!/usr/bin/env python3
-import sys
+import os, sys
 if '--get-loaded-image-id' in sys.argv:
     service = sys.argv[sys.argv.index('--get-loaded-image-id') + 1]
     print('sha256:' + ('5' if service == 'api' else '6') * 64)
+elif '--get-runtime-ref' in sys.argv:
+    service = sys.argv[sys.argv.index('--get-runtime-ref') + 1]
+    sha = os.environ.get('ROLLBACK1_SHA') if sys.argv[1] == os.environ.get('FAKE_RECOVERY_BUNDLE') else os.environ.get('CANDIDATE_SHA')
+    print(f"{os.environ['FAKE_REGISTRY']}/myshop-{service}:{sha}")
+else:
+    sys.exit(0)
 OFFLINE_VERIFY
 chmod +x "$tmp_dir/offline-verifier.py"
+recovery_bundle="$tmp_dir/failed-recovery-bundle.json"
+recovery_manifest="$tmp_dir/failed-recovery-manifest.json"
+printf '{}\n' >"$recovery_bundle"
+printf '{}\n' >"$recovery_manifest"
 
 fake_bin="$tmp_dir/fake-bin"
 mkdir -p "$fake_bin"
@@ -135,6 +152,14 @@ candidate_sha=${CANDIDATE_SHA:?}
 registry=${FAKE_REGISTRY:?}
 mode=${FAKE_MODE:-deploy}
 stage=$(cat "$root/running" 2>/dev/null || printf old)
+stage_for_service() {
+  local service=$1
+  if [[ "$service" == api || "$service" == web ]]; then
+    cat "$root/$service-stage" 2>/dev/null || printf '%s' "$stage"
+  else
+    printf '%s' "$stage"
+  fi
+}
 if [[ "${1:-}" == ps && -n "${FAKE_DOCKER_PROJECT_LOG:-}" ]]; then
   for arg in "$@"; do
     [[ "$arg" == label=com.docker.compose.project=* ]] && printf '%s\n' "${arg##*=}" >>"$FAKE_DOCKER_PROJECT_LOG"
@@ -160,9 +185,33 @@ offline_id_for() {
 }
 
 ref_for_service() {
-  local service=$1 selected_sha=$old_sha
-  [[ "$stage" == candidate ]] && selected_sha=$candidate_sha
-  printf '%s/myshop-%s:%s' "$registry" "$service" "$selected_sha"
+  local service=$1 selected_sha=$old_sha service_stage
+  service_stage=$(stage_for_service "$service")
+  if [[ "$service_stage" == candidate ]]; then
+    selected_sha=$candidate_sha
+    if [[ "${FAKE_OFFLINE_MODE:-0}" == 1 ]]; then
+      printf '%s/myshop-%s:%s' "$registry" "$service" "$selected_sha"
+    else
+      printf '%s/myshop-%s@%s' "$registry" "$service" "$(digest_for_sha "$selected_sha")"
+    fi
+  else
+    printf '%s/myshop-%s:%s' "$registry" "$service" "$selected_sha"
+  fi
+}
+
+source_sha_for_ref() {
+  local ref=$1 repo_part tag digest
+  repo_part=${ref%%@*}
+  if [[ "$repo_part" != "$ref" ]]; then
+    digest=${ref##*@}
+    for sha in "$candidate_sha" "$old_sha" "$rollback1_sha" "$rollback2_sha"; do
+      [[ "$(digest_for_sha "$sha")" == "$digest" ]] && { printf '%s' "$sha"; return; }
+    done
+    printf '%s' unknown
+    return
+  fi
+  tag=${ref##*:}
+  printf '%s' "$tag"
 }
 
 service_from_args() {
@@ -173,7 +222,7 @@ service_from_args() {
 }
 
 container_id() {
-  printf 'myshop-%s-%s' "$1" "$stage"
+  printf 'myshop-%s-%s' "$1" "$(stage_for_service "$1")"
 }
 
 if [[ "$mode" == retention ]]; then
@@ -184,7 +233,7 @@ if [[ "$mode" == retention ]]; then
       else
         service=$(service_from_args "$@")
         [[ -n "$service" ]] || exit 0
-        printf 'myshop-%s-d|%s/myshop-%s:%s\n' "$service" "$registry" "$service" "$candidate_sha"
+        printf 'myshop-%s-d|%s\n' "$service" "$(ref_for_service "$service")"
       fi
       ;;
     inspect)
@@ -205,21 +254,23 @@ if [[ "$mode" == retention ]]; then
       if [[ "${2:-}" == inspect ]]; then
         format=${4:-}
         target=${5:-}
-        tag=${target##*:}
-        digest=$(digest_for_sha "$tag")
+        source_sha=$(source_sha_for_ref "$target")
+        repo=${target%%@*}
+        digest=${target#*@}
+        [[ "$repo" != "$target" ]] || digest=$(digest_for_sha "$source_sha")
         if [[ "$format" == '{{.Id}}' ]]; then
-          printf '%s\n' "$digest"
+          printf '%s\n' "$(digest_for_sha "$source_sha")"
         else
-          printf '%s@%s\n' "${target%:*}" "$digest"
+          printf '%s@%s\n' "$repo" "$digest"
         fi
       elif [[ "${2:-}" == ls ]]; then
         for service in api web; do
           for sha in "$candidate_sha" "$old_sha" "$rollback1_sha" "$rollback2_sha"; do
-            printf '%s/myshop-%s|%s|%s\n' "$registry" "$service" "$sha" "$(digest_for_sha "$sha")"
+            printf '%s/myshop-%s|%s|%s|%s\n' "$registry" "$service" "$sha" "$(digest_for_sha "$sha")" "$(digest_for_sha "$sha")"
           done
         done
         if [[ "${MYSHOP_SHARED_SERVER:-0}" == 1 ]]; then
-          printf 'myshop-api|friend-custom|sha256:%s\n' "$(printf '7%.0s' {1..64})"
+          printf 'myshop-api|friend-custom|sha256:%s|sha256:%s\n' "$(printf '7%.0s' {1..64})" "$(printf '7%.0s' {1..64})"
         fi
       else
         printf '%s\n' "${3:-}" >>"${FAKE_REMOVAL_LOG:?}"
@@ -258,14 +309,13 @@ case "${1:-}" in
     printf '%s\n' "${2:-}" >>"${FAKE_PULL_LOG:?}"
     ;;
   ps)
-    if [[ "$stage" == stopped && " $* " == *"label=com.docker.compose.service=api"* && "${FAKE_LINGERING_API:-0}" != 1 ]]; then
-      exit 0
-    fi
     if [[ " $* " == *" -aq "* || "${2:-}" == -aq ]]; then
-      printf 'myshop-db-%s\nmyshop-api-%s\nmyshop-web-%s\nmyshop-caddy-%s\n' "$stage" "$stage" "$stage" "$stage"
+      printf 'myshop-db-%s\nmyshop-api-%s\nmyshop-web-%s\nmyshop-caddy-%s\n' "$stage" "$(stage_for_service api)" "$(stage_for_service web)" "$stage"
     else
       service=$(service_from_args "$@")
       [[ -n "$service" ]] || exit 0
+      if [[ "$service" == api && "$(stage_for_service api)" == stopped && "${FAKE_LINGERING_API:-0}" != 1 ]]; then exit 0; fi
+      if [[ "$service" == web && "$(stage_for_service web)" == stopped ]]; then exit 0; fi
       if [[ " $* " == *" -q "* ]]; then
         printf '%s\n' "$(container_id "$service")"
       else
@@ -274,7 +324,7 @@ case "${1:-}" in
     fi
     ;;
   port)
-    [[ "${stage}" == candidate && "${2:-}" == myshop-caddy-candidate && "${3:-}" == 80/tcp ]] || exit 1
+    [[ "${2:-}" == myshop-caddy-* && "${3:-}" == 80/tcp ]] || exit 1
     printf '127.0.0.1:8082\n'
     ;;
   inspect)
@@ -283,23 +333,29 @@ case "${1:-}" in
     service=${target#myshop-}
     service=${service%-old}
     service=${service%-candidate}
+    service_stage=$(stage_for_service "$service")
     case "$format" in
       '{{.Id}}') digest_for_sha "${target##*:}"; printf '\n' ;;
       '{{.Config.Image}}')
         ref=$(ref_for_service "$service")
-        if [[ "$stage" == candidate && "${DEPLOY_TEST_FAIL:-}" == final-identity ]]; then
+        if [[ "$service_stage" == candidate && "${DEPLOY_TEST_FAIL:-}" == final-identity ]]; then
           printf '%s-wrong\n' "$ref"
         else
           printf '%s\n' "$ref"
         fi
         ;;
+      '{{index .Config.Labels "com.docker.compose.config-hash"}}')
+        if [[ "$service" == api ]]; then printf '%s\n' "$(printf 'a%.0s' {1..64})"
+        elif [[ "$service" == web ]]; then printf '%s\n' "$(printf 'b%.0s' {1..64})"
+        else exit 1; fi
+        ;;
       '{{.Image}}')
         sha=$old_sha
-        [[ "$stage" == candidate ]] && sha=$candidate_sha
-        if [[ "$stage" == candidate && "${DEPLOY_TEST_FAIL:-}" == final-identity ]]; then
+        [[ "$service_stage" == candidate ]] && sha=$candidate_sha
+        if [[ "$service_stage" == candidate && "${DEPLOY_TEST_FAIL:-}" == final-identity ]]; then
           printf 'sha256:%s\n' "$(printf '8%.0s' {1..64})"
-        elif [[ "$stage" == candidate && "${FAKE_OFFLINE_MODE:-0}" == 1 ]]; then
-          offline_id_for "${registry}/myshop-${service}:${candidate_sha}"
+        elif [[ "${FAKE_OFFLINE_MODE:-0}" == 1 ]]; then
+          offline_id_for "${registry}/myshop-${service}:${sha}"
           printf '\n'
         else
           digest_for_sha "$sha"
@@ -307,7 +363,7 @@ case "${1:-}" in
         fi
         ;;
       '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
-        if [[ "$stage" == candidate && "$service" == api && -n "${FAKE_CANDIDATE_HEALTH_AFTER:-}" ]]; then
+        if [[ "$service_stage" == candidate && "$service" == api && -n "${FAKE_CANDIDATE_HEALTH_AFTER:-}" ]]; then
           count=$(cat "$root/candidate-health-checks" 2>/dev/null || printf 0)
           count=$((count + 1))
           printf '%s\n' "$count" >"$root/candidate-health-checks"
@@ -321,17 +377,19 @@ case "${1:-}" in
     if [[ "${2:-}" == inspect ]]; then
       format=${4:-}
       target=${5:-}
-      tag=${target##*:}
-      digest=$(digest_for_sha "$tag")
+      source_sha=$(source_sha_for_ref "$target")
+      repo=${target%%@*}
+      digest=${target#*@}
+      [[ "$repo" != "$target" ]] || digest=$(digest_for_sha "$source_sha")
       if [[ "$format" == '{{.Id}}' ]]; then
-        if [[ "${FAKE_OFFLINE_MODE:-0}" == 1 && "$tag" == "$candidate_sha" ]]; then
+        if [[ "${FAKE_OFFLINE_MODE:-0}" == 1 ]]; then
           offline_id_for "$target"
           printf '\n'
         else
-          printf '%s\n' "$digest"
+          printf '%s\n' "$(digest_for_sha "$source_sha")"
         fi
       else
-        printf '%s@%s\n' "${target%:*}" "$digest"
+        printf '%s@%s\n' "$repo" "$digest"
       fi
     elif [[ "${2:-}" == ls ]]; then
       printf '%s/myshop-api|%s|%s\n' "$registry" "$old_sha" "$(digest_for_sha "$old_sha")"
@@ -381,8 +439,32 @@ done
 printf 'compose-project=%s\n' "${MYSHOP_COMPOSE_PROJECT_NAME:-myshop}" >>"${FAKE_PROJECT_LOG:?}"
 if [[ "$action" == up && " $* " == *" db "* ]]; then action=db-up; fi
 printf '%s\n' "$action" >>"${FAKE_COMPOSE_LOG:?}"
+printf '%s|%s|%s|%s\n' "$action" "$*" "${MYSHOP_API_IMAGE:-}" "${MYSHOP_WEB_IMAGE:-}" >>"${FAKE_COMPOSE_DETAIL_LOG:?}"
+candidate_api=0
+candidate_web=0
+[[ "${MYSHOP_API_IMAGE:-}" == *":${CANDIDATE_SHA}" || "${MYSHOP_API_IMAGE:-}" == "$FAKE_REGISTRY/myshop-api@sha256:$(printf '4%.0s' {1..64})" ]] && candidate_api=1
+[[ "${MYSHOP_WEB_IMAGE:-}" == *":${CANDIDATE_SHA}" || "${MYSHOP_WEB_IMAGE:-}" == "$FAKE_REGISTRY/myshop-web@sha256:$(printf '4%.0s' {1..64})" ]] && candidate_web=1
 candidate=0
-[[ "${MYSHOP_API_IMAGE:-}" == *":${CANDIDATE_SHA}" ]] && candidate=1
+(( candidate_api || candidate_web )) && candidate=1 || true
+if [[ "$action" == config && " $* " == *" --hash "* ]]; then
+  service=${!#}
+  selected=0
+  if [[ "$service" == api && ( "$candidate_api" == 1 || "${FAKE_CONFIG_API_CHANGED:-0}" == 1 ) ]]; then selected=1; fi
+  if [[ "$service" == web && ( "$candidate_web" == 1 || "${FAKE_CONFIG_WEB_CHANGED:-0}" == 1 ) ]]; then selected=1; fi
+  if [[ "$service" == api ]]; then base_hash=$(printf 'a%.0s' {1..64}); else base_hash=$(printf 'b%.0s' {1..64}); fi
+  if (( selected )); then config_hash=$(printf 'd%.0s' {1..64}); else config_hash=$base_hash; fi
+  printf '%s %s\n' "$service" "$config_hash"
+  exit 0
+fi
+write_running() {
+  local api web
+  api=$(cat "$root/api-stage" 2>/dev/null || printf old)
+  web=$(cat "$root/web-stage" 2>/dev/null || printf old)
+  if [[ "$api" == stopped && "$web" == stopped ]]; then printf 'stopped\n' >"$root/running"
+  elif [[ "$api" == candidate && "$web" == candidate ]]; then printf 'candidate\n' >"$root/running"
+  elif [[ "$api" == old && "$web" == old ]]; then printf 'old\n' >"$root/running"
+  else printf 'mixed\n' >"$root/running"; fi
+}
 case "$action" in
   config)
     [[ ! ( "$candidate" == 1 && "${DEPLOY_TEST_FAIL:-}" == compose ) ]] || exit 1
@@ -394,17 +476,27 @@ case "$action" in
   up)
     [[ ! ( "$candidate" == 1 && "${DEPLOY_TEST_FAIL:-}" == start ) ]] || exit 1
     [[ ! ( "$candidate" == 0 && "${DEPLOY_TEST_FAIL:-}" == rollback-start ) ]] || exit 1
-    if (( candidate )); then printf 'candidate\n' >"$root/running"; else printf 'old\n' >"$root/running"; fi
+    targets=()
+    for arg in "$@"; do [[ "$arg" != api && "$arg" != web ]] || targets+=("$arg"); done
+    if (( ${#targets[@]} == 0 )) && [[ "$action" == up ]]; then targets=(api web); fi
+    for service in "${targets[@]}"; do
+      if [[ "$service" == api ]]; then selected=$candidate_api; else selected=$candidate_web; fi
+      if (( selected )); then printf 'candidate\n' >"$root/$service-stage"; else printf 'old\n' >"$root/$service-stage"; fi
+    done
+    write_running
     ;;
   stop)
     [[ "$candidate" == 1 ]] || exit 1
     if [[ " $* " == *" api web caddy "* ]]; then
       [[ "${FAKE_STOP_FAIL:-0}" != 1 ]] || exit 1
     else
-      if [[ "${FAKE_PRE_STOP_PARTIAL_FAIL:-0}" == 1 ]]; then printf 'stopped\n' >"$root/running"; exit 1; fi
+      if [[ "${FAKE_PRE_STOP_PARTIAL_FAIL:-0}" == 1 ]]; then printf 'stopped\n' >"$root/api-stage"; write_running; exit 1; fi
       [[ "${FAKE_PRE_STOP_FAIL:-0}" != 1 ]] || exit 1
     fi
-    printf 'stopped\n' >"$root/running"
+    for service in api web; do
+      if [[ " $* " == *" $service "* ]]; then printf 'stopped\n' >"$root/$service-stage"; fi
+    done
+    write_running
     ;;
   *) exit 99 ;;
 esac
@@ -477,6 +569,8 @@ reset_case() {
   cp "$base_state" "$case_root/deploy-state.json"
   rm -f "$case_root/accepted-images.env"
   printf 'old\n' >"$case_root/running"
+  printf 'old\n' >"$case_root/api-stage"
+  printf 'old\n' >"$case_root/web-stage"
   printf 'PUBLIC_SITE_URL=http://myshop.test\n' >"$case_root/.env"
   : >"$case_root/pull.log"
   : >"$case_root/removal.log"
@@ -488,6 +582,7 @@ reset_case() {
   : >"$case_root/deploy-curl.log"
   : >"$case_root/helper-projects.log"
   : >"$case_root/compose.log"
+  : >"$case_root/compose-detail.log"
   rm -f "$case_root/health-count" "$case_root/curl-count" "$case_root/recovery-point.dump"
 }
 
@@ -501,6 +596,7 @@ run_deploy() {
     FAKE_REGISTRY="$registry" \
     FAKE_PULL_LOG="$case_root/pull.log" \
     FAKE_COMPOSE_LOG="$case_root/compose.log" \
+    FAKE_COMPOSE_DETAIL_LOG="$case_root/compose-detail.log" \
     FAKE_REMOVAL_LOG="$case_root/removal.log" \
     FAKE_BACKUP_LOG="$case_root/backup.log" \
     FAKE_SCHEMA_LOG="$case_root/schema.log" \
@@ -511,6 +607,7 @@ run_deploy() {
     FAKE_CURL_LOG="$case_root/deploy-curl.log" \
     FAKE_CANDIDATE_DOWN="${FAKE_CANDIDATE_DOWN:-0}" \
     FAKE_OFFLINE_MODE="${FAKE_OFFLINE_TEST:-0}" \
+    FAKE_RECOVERY_BUNDLE="$recovery_bundle" \
     MYSHOP_RUNTIME_ROOT="$case_root" \
     MYSHOP_DEPLOY_STATE="$case_root/deploy-state.json" \
     MYSHOP_ENV_FILE="$case_root/.env" \
@@ -536,8 +633,51 @@ run_deploy() {
     MYSHOP_OFFLINE_IMAGES="${FAKE_OFFLINE_TEST:-0}" \
     MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE="${FAKE_OFFLINE_TEST:+$offline_bundle}" \
     MYSHOP_OFFLINE_IMAGE_VERIFIER="${FAKE_OFFLINE_TEST:+$tmp_dir/offline-verifier.py}" \
+    MYSHOP_FORWARD_RECOVERY_BUNDLE_FILE="${FAKE_OFFLINE_TEST:+$recovery_bundle}" \
+    MYSHOP_FORWARD_RECOVERY_MANIFEST_FILE="${FAKE_OFFLINE_TEST:+$recovery_manifest}" \
     MYSHOP_MAINTENANCE_DIR="$case_root/maintenance" \
     bash "$deploy_script" "$manifest"
+}
+
+write_scope_manifest() {
+  local scope=$1 path=$2
+  python3 - "$path" "$scope" "$candidate_sha" "$old_sha" "$registry" <<'PY'
+import json, sys
+path, scope, release, old, registry = sys.argv[1:]
+digests = {"old": "sha256:" + "1" * 64, "candidate": "sha256:" + "4" * 64}
+built = [] if scope == "noop" else [scope]
+images = {}
+for service in ("api", "web"):
+    changed = service in built
+    image_sha = release if changed else old
+    digest = digests["candidate" if changed else "old"]
+    images[service] = {"ref": f"{registry}/myshop-{service}@{digest}",
+                       "digest": digest, "source_sha": image_sha}
+value = {"version": 2, "project": "myshop", "source_sha": release,
+         "created_at": "2026-09-25T00:00:00Z", "built_services": built,
+         "database_migration": False, "images": images}
+open(path, "w", encoding="utf-8").write(json.dumps(value, sort_keys=True) + "\n")
+PY
+}
+
+write_scope_bundle() {
+  local path=$1
+  python3 - "$manifest" "$offline_bundle" "$registry" <<'PY'
+import json, sys
+manifest_path, bundle_path, registry = sys.argv[1:]
+manifest = json.load(open(manifest_path, encoding="utf-8"))
+bundle = json.load(open(bundle_path, encoding="utf-8"))
+bundle["source_sha"] = manifest["source_sha"]
+for service in ("api", "web"):
+    release = manifest["images"][service]
+    bundle["images"][service].update({
+        "source_ref": release["ref"], "source_digest": release["digest"],
+        "source_sha": release["source_sha"],
+        "archive_ref": f"{registry}/myshop-{service}:{release['source_sha']}",
+    })
+with open(bundle_path, "w", encoding="utf-8") as handle:
+    json.dump(bundle, handle)
+PY
 }
 
 assert_pre_commit_failure() {
@@ -594,14 +734,17 @@ for stop_failure in FAKE_PRE_STOP_FAIL FAKE_LINGERING_API; do
   (( status != 0 )) || fail "$stop_failure unexpectedly started the candidate"
   [[ "$(<"$case_root/running")" == old ]] || fail "$stop_failure did not restore the old API"
   cmp -s "$base_state" "$case_root/deploy-state.json" || fail "$stop_failure changed accepted state"
-  [[ "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail "$stop_failure started the candidate"
+  if grep -F "up|" "$case_root/compose-detail.log" | grep -Fq "$candidate_api_ref"; then
+    fail "$stop_failure started the candidate API"
+  fi
+  (( $(grep -c '^up$' "$case_root/compose.log") >= 1 )) || fail "$stop_failure did not restore the previous stack"
 done
 pass 'candidate migration waits for all old API instances to stop'
 
 reset_case
 if output=$(FAKE_CANDIDATE_HEALTH_AFTER=35 run_deploy 2>&1); then status=0; else status=$?; fi
 (( status == 0 )) || { printf '%s\n' "$output" >&2; fail 'slow healthy candidate was rejected'; }
-[[ "$(<"$case_root/candidate-health-checks")" == 35 ]] || fail 'candidate health did not wait beyond the old limit'
+(( $(<"$case_root/candidate-health-checks") >= 35 )) || fail "candidate health did not wait beyond the old limit: observed $(cat "$case_root/candidate-health-checks" 2>/dev/null || printf missing)"
 [[ "$(<"$case_root/simulated-sleep-count")" == 34 ]] || fail 'slow candidate did not pass the 60-second point'
 grep -Fq 'DEPLOYMENT ACCEPTED' <<<"$output" || fail 'slow candidate was not accepted after becoming healthy'
 pass 'candidate health can succeed after more than 60 seconds without resetting the deployment'
@@ -631,7 +774,10 @@ for prior_state in accepted legacy; do
   (( status == 1 )) || { printf '%s\n' "$output" >&2; fail "$prior_state partial pre-stop did not recover"; }
   grep -Fq 'DEPLOYMENT FAILED / ROLLED BACK' <<<"$output" || { printf '%s\n' "$output" >&2; fail "$prior_state partial pre-stop was not reported"; }
   [[ "$(<"$case_root/running")" == old ]] || fail "$prior_state partial pre-stop left the old API down"
-  [[ "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail "$prior_state partial pre-stop did not restart the baseline"
+  (( $(grep -c '^up$' "$case_root/compose.log") >= 1 )) || fail "$prior_state partial pre-stop did not restart the baseline"
+  if grep -F "up|" "$case_root/compose-detail.log" | grep -Fq "$candidate_api_ref"; then
+    fail "$prior_state partial pre-stop started the candidate API"
+  fi
   if [[ "$prior_state" == accepted ]]; then cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'accepted state changed after partial stop'
   else [[ ! -e "$case_root/deploy-state.json" ]] || fail 'legacy pre-stop failure created accepted state'; fi
 done
@@ -782,6 +928,79 @@ done
 pass 'forward recovery refuses mismatched image contracts and database migration history'
 deploy_script=$normal_deploy_script
 
+printf 'INDEPENDENT APP UPDATE REGRESSION\n'
+saved_manifest=$manifest
+manifest="$tmp_dir/web-only-manifest.json"
+write_scope_manifest web "$manifest"
+reset_case
+if output=$(run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'Web-only release failed'; }
+[[ "$(<"$case_root/api-stage")" == old && "$(<"$case_root/web-stage")" == candidate ]] || fail 'Web-only release changed API runtime state'
+[[ ! -s "$case_root/backup.log" && ! -s "$case_root/schema.log" ]] || fail 'Web-only release touched database backup or schema checks'
+[[ "$(wc -l <"$case_root/pull.log" | tr -d ' ')" == 1 ]] || fail 'Web-only release pulled more than one image'
+grep -Fq "$registry/myshop-web@sha256:$(printf '4%.0s' {1..64})" "$case_root/pull.log" || fail 'Web-only release did not pull its immutable Web digest'
+! grep -Fq "$registry/myshop-api@" "$case_root/pull.log" || fail 'Web-only release pulled an API image'
+[[ "$(grep -c '^up|' "$case_root/compose-detail.log")" == 1 ]] || fail 'Web-only release started more than one app service'
+grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps web' || fail 'Web-only release did not target only Web'
+! grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps api' || fail 'Web-only release restarted API'
+pass 'pure Web update pulls and starts Web only; API and database remain untouched'
+
+write_scope_bundle "$manifest"
+reset_case
+cat >"$case_root/.env" <<EOF
+PUBLIC_SITE_URL=https://mc.mc520.top
+MYSHOP_OFFLINE_IMAGES=1
+MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE=$offline_bundle
+EOF
+if output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'offline Web-only release failed'; }
+[[ "$(<"$case_root/api-stage")" == old && "$(<"$case_root/web-stage")" == candidate ]] || fail 'offline Web-only release changed API runtime state'
+[[ ! -s "$case_root/pull.log" && ! -s "$case_root/backup.log" && ! -s "$case_root/schema.log" ]] || fail 'offline Web-only release pulled images or touched database state'
+[[ "$(grep -c '^up|' "$case_root/compose-detail.log")" == 1 ]] || fail 'offline Web-only release started more than one app service'
+grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps web' || fail 'offline Web-only release did not target only Web'
+! grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps api' || fail 'offline Web-only release restarted API'
+pass 'offline Web-only update keeps the accepted API reference and does not recreate API'
+
+manifest="$tmp_dir/api-only-manifest.json"
+write_scope_manifest api "$manifest"
+reset_case
+if output=$(run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'API-only release failed'; }
+[[ "$(<"$case_root/api-stage")" == candidate && "$(<"$case_root/web-stage")" == old ]] || fail 'API-only release changed Web runtime state'
+[[ -s "$case_root/backup.log" && -s "$case_root/schema.log" ]] || fail 'API-only release skipped required backup or schema checks'
+[[ "$(wc -l <"$case_root/pull.log" | tr -d ' ')" == 1 ]] || fail 'API-only release pulled more than one image'
+grep -Fq "$registry/myshop-api@sha256:$(printf '4%.0s' {1..64})" "$case_root/pull.log" || fail 'API-only release did not pull its immutable API digest'
+! grep -Fq "$registry/myshop-web@" "$case_root/pull.log" || fail 'API-only release pulled a Web image'
+[[ "$(grep -c '^up|' "$case_root/compose-detail.log")" == 1 ]] || fail 'API-only release started more than one app service'
+grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps api' || fail 'API-only release did not target only API'
+! grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps web' || fail 'API-only release restarted Web'
+! grep -Fxq stop "$case_root/compose.log" || fail 'non-migration API-only release unnecessarily stopped API before update'
+pass 'pure API update pulls and starts API only while retaining the required database recovery gates'
+
+manifest="$tmp_dir/no-op-manifest.json"
+write_scope_manifest noop "$manifest"
+reset_case
+if output=$(run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'unchanged-digest release failed'; }
+[[ "$(<"$case_root/api-stage")" == old && "$(<"$case_root/web-stage")" == old ]] || fail 'unchanged-digest release recreated an app container'
+[[ ! -s "$case_root/pull.log" && ! -s "$case_root/backup.log" && ! -s "$case_root/schema.log" ]] || fail 'unchanged-digest release pulled images or touched database state'
+! grep -E '^(up|stop)$' "$case_root/compose.log" | grep -q . || fail 'unchanged digests caused an app service restart'
+pass 'unchanged digests do not pull images, back up the database, or recreate containers'
+
+manifest="$tmp_dir/api-config-only-manifest.json"
+write_scope_manifest noop "$manifest"
+reset_case
+if output=$(FAKE_CONFIG_API_CHANGED=1 run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'API runtime-config-only release failed'; }
+[[ -s "$case_root/backup.log" && -s "$case_root/schema.log" ]] || fail 'API runtime-config-only release skipped recovery checks'
+[[ ! -s "$case_root/pull.log" ]] || fail 'API runtime-config-only release pulled an unchanged image'
+[[ "$(grep -c '^up|' "$case_root/compose-detail.log")" == 1 ]] || fail 'API runtime-config-only release updated more than one app service'
+grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps api' || fail 'API runtime-config-only release did not converge API'
+! grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps web' || fail 'API runtime-config-only release recreated Web'
+pass 'API runtime-config changes update only API without pulling an unchanged image'
+manifest=$saved_manifest
+write_scope_bundle "$manifest"
+
 reset_case
 set +e
 stop_output=$(FAKE_STOP_FAIL=1 DEPLOY_TEST_FAIL=health-after-start run_deploy 2>&1)
@@ -810,6 +1029,8 @@ reset_case
 if output=$(run_deploy 2>&1); then success_status=0; else success_status=$?; fi
 (( success_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'successful candidate deployment failed'; }
 [[ "$(awk '/^stop$|^up$/ {print; if (++count == 2) exit}' "$case_root/compose.log")" == $'stop\nup' ]] || fail 'candidate started before stopping the old API'
+grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps api' || fail 'combined release did not update API'
+grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps web' || fail 'combined release did not update Web'
 grep -Fq 'backup-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production backup did not retain the myshop project ID'
 grep -Fq 'schema-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production schema check did not retain the myshop project ID'
 grep -Fq 'retention-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production retention did not retain the myshop project ID'
@@ -1013,6 +1234,7 @@ pass 'post-commit failures remain accepted and never restore the previous applic
 
 invariant_root="$tmp_dir/invariant"
 mkdir -p "$invariant_root"
+printf 'candidate\n' >"$invariant_root/running"
 cp "$base_state" "$invariant_root/deploy-state.json"
 bash "$state_writer" "$invariant_root/deploy-state.json" "$manifest" >/dev/null
 cp "$invariant_root/deploy-state.json" "$invariant_root/promoted-state.json"
@@ -1043,7 +1265,8 @@ PATH="$fake_bin:$PATH" \
   bash "$retention_script" >/dev/null
 grep -Fxq "$registry/myshop-api:$rollback2_sha" "$invariant_removals" || fail 'retention did not remove old API rollback C'
 grep -Fxq "$registry/myshop-web:$rollback2_sha" "$invariant_removals" || fail 'retention did not remove old Web rollback C'
-if grep -Ev "$rollback2_sha" "$invariant_removals" | grep -q .; then fail 'retention removed an accepted image'; fi
+if grep -E "$candidate_sha|$old_sha|$rollback1_sha" "$invariant_removals" | grep -q .; then fail 'retention removed an accepted source-SHA image'; fi
+if grep -Ev "^$registry/myshop-(api|web)(:$rollback2_sha|@sha256:$(printf '3%.0s' {1..64}))$" "$invariant_removals" | grep -q .; then fail 'retention removed a non-rollback-C image ref'; fi
 cmp -s "$invariant_root/promoted-state.json" "$invariant_root/deploy-state.json" || fail 'retention modified committed state'
 printf 'DESTRUCTIVE-RETENTION INVARIANT before=active:%s rollback:[%s,%s] promoted=active:%s rollback:[%s,%s] deleted=[%s,%s] post-maintenance-failure=state remains active:%s rollback:[%s,%s]\n' \
   "$old_sha" "$rollback1_sha" "$rollback2_sha" "$candidate_sha" "$old_sha" "$rollback1_sha" \
@@ -1052,6 +1275,7 @@ pass 'accepted D,A,B remains the invariant after C deletion and post-commit main
 
 shared_retention_root="$tmp_dir/shared-retention"
 mkdir -p "$shared_retention_root"
+printf 'candidate\n' >"$shared_retention_root/running"
 cp "$invariant_root/deploy-state.json" "$shared_retention_root/deploy-state.json"
 : >"$shared_retention_root/removals.log"
 PATH="$fake_bin:$PATH" \

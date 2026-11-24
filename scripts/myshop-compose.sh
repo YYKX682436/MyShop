@@ -62,10 +62,18 @@ if not re.fullmatch(r"[0-9a-f]{40}", str(source_sha or "")) or not isinstance(im
 image = images.get(service)
 if not isinstance(image, dict):
     raise SystemExit(f"accepted deployment state has no active {service} image")
+digest = image.get("digest", "")
+image_sha = image.get("source_sha", source_sha)
 ref = image.get("ref")
-if not isinstance(ref, str) or not ref or ref.rsplit(":", 1)[-1] != source_sha:
-    raise SystemExit(f"accepted deployment state active {service} ref is malformed")
-print(ref)
+runtime_ref = image.get("runtime_ref", ref)
+repo = f"ghcr.io/yykx682436/myshop-{service}"
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)) or not re.fullmatch(r"[0-9a-f]{40}", str(image_sha)):
+    raise SystemExit(f"accepted deployment state active {service} digest/source SHA is malformed")
+if ref != f"{repo}@{digest}":
+    raise SystemExit(f"accepted deployment state active {service} digest ref is malformed")
+if runtime_ref not in {ref, f"{repo}:{image_sha}"}:
+    raise SystemExit(f"accepted deployment state active {service} runtime ref is malformed")
+print(runtime_ref)
 PY
 }
 
@@ -94,23 +102,23 @@ if [[ -z "$api_ref" && -z "$web_ref" ]]; then
 elif [[ -z "$api_ref" || -z "$web_ref" ]]; then
   die 'MYSHOP_API_IMAGE and MYSHOP_WEB_IMAGE must be supplied together'
 fi
-sha_re='[0-9a-f]{40}'
-api_prefix="$approved_registry/myshop-api:"
-web_prefix="$approved_registry/myshop-web:"
-if (( ! bootstrap_mode )); then
-  [[ "$api_ref" == "$api_prefix"* ]] || die 'MYSHOP_API_IMAGE is outside the approved registry namespace'
-  [[ "$web_ref" == "$web_prefix"* ]] || die 'MYSHOP_WEB_IMAGE is outside the approved registry namespace'
-else
-  [[ "$api_ref" != *:latest && "$api_ref" != *:local && "$web_ref" != *:latest && "$web_ref" != *:local ]] || die 'bootstrap baseline image is mutable'
-fi
-api_tag=${api_ref#"$api_prefix"}
-web_tag=${web_ref#"$web_prefix"}
+validate_app_ref() {
+  local service=$1 ref=$2 prefix="$approved_registry/myshop-$1" suffix
+  [[ "$ref" == "$prefix"@sha256:* || "$ref" == "$prefix":* ]] || die "$service image is outside the approved registry namespace"
+  if [[ "$ref" == "$prefix"@* ]]; then
+    suffix=${ref#"$prefix"@}
+    [[ "$suffix" =~ ^sha256:[0-9a-f]{64}$ ]] || die "$service image digest ref is malformed"
+  else
+    suffix=${ref#"$prefix":}
+    [[ "$suffix" =~ ^[0-9a-f]{40}$ ]] || die "$service local image tag must be a full lowercase source SHA"
+  fi
+}
 if (( bootstrap_mode )); then
-  api_tag=${api_ref##*:}
-  web_tag=${web_ref##*:}
+  [[ "$api_ref" != *:latest && "$api_ref" != *:local && "$web_ref" != *:latest && "$web_ref" != *:local ]] || die 'bootstrap baseline image is mutable'
+else
+  validate_app_ref api "$api_ref"
+  validate_app_ref web "$web_ref"
 fi
-[[ "$api_tag" =~ ^$sha_re$ && "$web_tag" =~ ^$sha_re$ ]] || die 'MyShop application image tags must be full lowercase SHAs'
-[[ "$api_tag" == "$web_tag" ]] || die 'API and Web must use the same full release SHA'
 
 export MYSHOP_API_IMAGE="$api_ref" MYSHOP_WEB_IMAGE="$web_ref"
 export MYSHOP_COMPOSE_PROJECT_NAME="$PROJECT_NAME"
@@ -119,6 +127,12 @@ if [[ "$offline_images" == 1 ]]; then
   for arg in "${args[@]}"; do
     [[ "$arg" != pull ]] || die 'offline image mode refuses Docker Compose pull'
   done
-  if [[ " ${args[*]} " == *" up "* ]]; then args+=(--pull never); fi
+  if [[ " ${args[*]} " == *" up "* ]]; then
+    has_pull_policy=0
+    for arg in "${args[@]}"; do
+      [[ "$arg" != --pull && "$arg" != --pull=* ]] || has_pull_policy=1
+    done
+    (( has_pull_policy )) || args+=(--pull never)
+  fi
 fi
 exec docker compose --project-directory "$PROJECT_ROOT" --file "$COMPOSE_FILE" --env-file "$env_file" "${args[@]}"
