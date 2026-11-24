@@ -416,7 +416,8 @@ try {
   assert.ok(requests.filter(url => url.includes("/vditor-assets/")).every(url => allowedAssets.has(new URL(url).pathname.split("/vditor-assets/4.0.1/")[1])), "editor must not load optional remote renderers")
   assert.ok(!requests.some(url => url.includes("unpkg.com")), requests.filter(url => url.includes("unpkg.com")).join("\n"))
   assert.ok(!requests.some(url => /MYSHOP(?:ALT|URL)/.test(url)), "conversion placeholders must never be requested")
-  mediaAsset = { ...mediaAsset, usage:["avatar"], thumbnail_url:null, size:500000, original_size:500000 }
+  mediaAsset = { ...mediaAsset, usage:["avatar"], thumbnail_url:undefined, size:500000, original_size:500000 }
+  assert.ok(!Object.hasOwn(JSON.parse(JSON.stringify(mediaAsset)), "thumbnail_url"), "the production API omits a null thumbnail URL")
   await page.goto(new URL("/admin/media", base).href)
   const optimizeButton = page.getByRole("button", { name:"优化头像" })
   await optimizeButton.waitFor()

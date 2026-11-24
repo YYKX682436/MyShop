@@ -690,7 +690,7 @@ export const adminProductApi = {
 export type MediaItem = {
   id: string; name: string; url: string | null; size: number; format: string; uploaded_at: number;
   type: "image" | "video"; usage: string[]; status: "uploading" | "processing" | "ready" | "failed" | "deleted";
-  thumbnail_url: string | null; clear_url: string | null; original_size: number | null;
+  thumbnail_url?: string | null; clear_url: string | null; original_size: number | null;
   thumbnail_size: number | null; clear_size: number | null; width: number | null; height: number | null;
   duration_ms: number | null; cleanup_error: string | null; upload_cleanup_error: string | null; processing_error: string | null; reused_asset_id: string | null; scope: string;
 }
