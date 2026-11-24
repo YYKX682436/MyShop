@@ -145,10 +145,24 @@ cat >"$fake_bin/docker" <<'DOCKER'
 set -Eeuo pipefail
 log=${FAKE_DOCKER_LOG:?}; active=${FAKE_ACTIVE_SHA:?}; digest=${FAKE_DIGEST:?}
 if [[ "$1" == ps && "$*" == *"--format"* ]]; then
-  [[ "$*" == *"service=api"* ]] && printf 'api-container|ghcr.io/yykx682436/myshop-api@%s\n' "$digest"
-  [[ "$*" == *"service=web"* ]] && printf 'web-container|ghcr.io/yykx682436/myshop-web@%s\n' "$digest"
+  # Model Docker's IMAGE display as a short local ID for digest-pinned refs.
+  [[ "$*" == *"service=api"* ]] && printf 'api-container|sha256:short-api-id\n'
+  [[ "$*" == *"service=web"* ]] && printf 'web-container|sha256:short-web-id\n'
+elif [[ "$1" == ps && "$2" == -q ]]; then
+  [[ "$*" == *"service=api"* ]] && printf 'api-container\n'
+  [[ "$*" == *"service=web"* ]] && printf 'web-container\n'
 elif [[ "$1" == ps && "$2" == -aq ]]; then printf 'api-container\nweb-container\nstopped-container\n'
-elif [[ "$1" == inspect ]]; then case "${4:-}" in api-container|web-container) printf 'sha256:accepted\n';; stopped-container) printf 'sha256:stopped\n';; esac
+elif [[ "$1" == inspect ]]; then
+  format=${3:-}; target=${4:-}
+  case "$format" in
+    '{{.Config.Image}}')
+      [[ "$target" == api-container ]] && printf 'ghcr.io/yykx682436/myshop-api@%s\n' "$digest"
+      [[ "$target" == web-container ]] && printf 'ghcr.io/yykx682436/myshop-web@%s\n' "$digest"
+      ;;
+    '{{.Image}}')
+      case "$target" in api-container|web-container) printf 'sha256:accepted\n';; stopped-container) printf 'sha256:stopped\n';; esac
+      ;;
+  esac
 elif [[ "$1" == image && "$2" == inspect ]]; then
   target=${5:-}
   repo=${target%%@*}
