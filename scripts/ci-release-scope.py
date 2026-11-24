@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 RELEASE_JOB = "Publish immutable release manifest"
 WEB_ROOT_FILES = {
@@ -91,21 +92,36 @@ def command(*args: str) -> str:
 
 def prior_release(repository: str, current_sha: str, current_run: str) -> tuple[str, int] | None:
     endpoint = f"repos/{repository}/actions/workflows/cicd.yml/runs?branch=main&status=success&per_page=50"
-    runs = json.loads(command("gh", "api", endpoint))["workflow_runs"]
+    artifact_endpoint = f"repos/{repository}/actions/artifacts?per_page=100"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        runs_future = pool.submit(command, "gh", "api", endpoint)
+        artifacts_future = pool.submit(command, "gh", "api", artifact_endpoint)
+        runs = json.loads(runs_future.result())["workflow_runs"]
+        artifacts = json.loads(artifacts_future.result())["artifacts"]
+
+    manifest_runs: dict[int, tuple[str, str]] = {}
+    for artifact in artifacts:
+        workflow_run = artifact.get("workflow_run") or {}
+        sha = workflow_run.get("head_sha", "")
+        run_id = workflow_run.get("id")
+        if (artifact.get("expired") or workflow_run.get("head_branch") != "main"
+                or not isinstance(sha, str) or not run_id
+                or artifact.get("name") != f"myshop-release-manifest-{sha}"):
+            continue
+        manifest_runs[int(run_id)] = (sha, artifact["name"])
+
     for run in runs:
         sha, run_id = run.get("head_sha", ""), run.get("id")
-        if not sha or sha == current_sha or str(run_id) == current_run:
+        if (not sha or sha == current_sha or str(run_id) == current_run
+                or run.get("head_branch") != "main" or not run_id):
+            continue
+        artifact = manifest_runs.get(int(run_id))
+        if not artifact or artifact[0] != sha:
             continue
         if subprocess.run(["git", "merge-base", "--is-ancestor", sha, current_sha],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10).returncode:
             continue
-        jobs = json.loads(command("gh", "api", f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100"))["jobs"]
-        if any(job.get("name") == RELEASE_JOB and job.get("conclusion") == "success" for job in jobs):
-            artifacts = json.loads(command("gh", "api", f"repos/{repository}/actions/runs/{run_id}/artifacts"))
-            artifact_name = f"myshop-release-manifest-{sha}"
-            if any(item.get("name") == artifact_name and not item.get("expired")
-                   for item in artifacts.get("artifacts", [])):
-                return sha, int(run_id)
+        return sha, int(run_id)
     return None
 
 

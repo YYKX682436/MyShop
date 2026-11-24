@@ -78,15 +78,32 @@ class ReleaseScopeTests(unittest.TestCase):
             scope.validate_manual_release("owner/repo", sha, "3", "refs/heads/main", attempt="2")
 
     def test_only_successful_manifest_release_is_a_baseline(self):
-        runs = {"workflow_runs": [{"head_sha": "b" * 40, "id": 2}]}
+        sha = "b" * 40
+        runs = {"workflow_runs": [{"head_sha": sha, "head_branch": "main", "id": 2}]}
+        artifact = {"name": "myshop-release-manifest-" + sha, "expired": False,
+                    "workflow_run": {"head_sha": sha, "head_branch": "main", "id": 2}}
+        def release_context_command(*args):
+            if "actions/artifacts?" in args[-1]:
+                return json.dumps({"artifacts": [artifact]})
+            return json.dumps(runs)
         with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
-             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "skipped"}]})]):
+             mock.patch.object(scope, "command", side_effect=release_context_command) as command:
+            self.assertEqual(scope.prior_release("owner/repo", "a" * 40, "1"), (sha, 2))
+            self.assertEqual(command.call_count, 2)
+        def expired_context_command(*args):
+            if "actions/artifacts?" in args[-1]:
+                return json.dumps({"artifacts": [{**artifact, "expired": True}]})
+            return json.dumps(runs)
+        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
+             mock.patch.object(scope, "command", side_effect=expired_context_command):
             self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
+        legacy_artifact = {**artifact, "name": "myshop-release-" + sha}
+        def legacy_context_command(*args):
+            if "actions/artifacts?" in args[-1]:
+                return json.dumps({"artifacts": [legacy_artifact]})
+            return json.dumps(runs)
         with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
-             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]}), json.dumps({"artifacts": [{"name": "myshop-release-manifest-" + "b" * 40, "expired": False}]})]):
-            self.assertEqual(scope.prior_release("owner/repo", "a" * 40, "1"), ("b" * 40, 2))
-        with mock.patch.object(scope.subprocess, "run", return_value=mock.Mock(returncode=0)), \
-             mock.patch.object(scope, "command", side_effect=[json.dumps(runs), json.dumps({"jobs": [{"name": scope.RELEASE_JOB, "conclusion": "success"}]}), json.dumps({"artifacts": [{"name": "myshop-release-manifest-" + "b" * 40, "expired": True}]})]):
+             mock.patch.object(scope, "command", side_effect=legacy_context_command):
             self.assertIsNone(scope.prior_release("owner/repo", "a" * 40, "1"))
 
     def test_manual_workflow_is_serialized_and_does_not_run_on_push(self):

@@ -12,6 +12,21 @@ cleanup() {
   rm -rf -- "$tmp_dir"
 }
 trap cleanup EXIT
+on_error() {
+  local status=$?
+  printf 'WEB_IMAGE_HOST_ROUTING_TEST_FAILED line=%s status=%s command=%s\n' \
+    "${BASH_LINENO[0]:-unknown}" "$status" "$BASH_COMMAND" >&2
+  [[ -z "$container_id" ]] || docker logs "$container_id" >&2 || true
+  for output in main.html subsite.html product.html default.html orders.html support.html admin.html; do
+    [[ ! -f "$tmp_dir/$output" ]] || {
+      printf '%s response preview: ' "$output" >&2
+      head -c 1600 "$tmp_dir/$output" >&2
+      printf '\n' >&2
+    }
+  done
+  return "$status"
+}
+trap on_error ERR
 
 node >"$tmp_dir/backend.log" 2>&1 <<'NODE' &
 const http = require('node:http')
