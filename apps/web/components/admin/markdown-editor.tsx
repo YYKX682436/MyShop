@@ -401,14 +401,17 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
       onTouchStartCapture={event => publishAfterCommand(event.target)}
       onKeyDownCapture={event => {
         const editor = editorRef.current
+        // Safari may deliver compositionend before the confirming keydown.
+        // VK_PROCESSKEY (229) still identifies that IME keystroke.
+        const composing = event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
         if (event.altKey && (event.ctrlKey || event.metaKey) && (event.code === "Digit8" || event.key === "8")) {
           event.preventDefault(); event.stopPropagation(); return
         }
-        if (editor && !event.nativeEvent.isComposing && (event.ctrlKey || event.metaKey) && ["z", "y"].includes(event.key.toLowerCase())) {
+        if (editor && !composing && (event.ctrlKey || event.metaKey) && ["z", "y"].includes(event.key.toLowerCase())) {
           commandBeforeRef.current = editor.getValue()
           window.setTimeout(flushCommand, 0)
         }
-        if (!editor || editor.getCurrentMode() !== "wysiwyg" || event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey || event.nativeEvent.isComposing) return
+        if (!editor || editor.getCurrentMode() !== "wysiwyg" || event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey || composing) return
         const element = editorElement(editor)
         const selection = window.getSelection()
         if (!element || !(event.target instanceof Node) || !element.contains(event.target) || !selection?.rangeCount || !element.contains(selection.getRangeAt(0).commonAncestorContainer)) return

@@ -76,6 +76,25 @@ try {
   await wysiwyg.waitFor()
   await wysiwyg.click()
   await page.keyboard.type("before")
+  // Safari can deliver the IME-confirming keydown after compositionend, with
+  // isComposing false but VK_PROCESSKEY (229) still set. Our capture handler
+  // must leave that keystroke to the editor/browser instead of inserting a BR.
+  const imeEnter = await wysiwyg.evaluate(element => {
+    const before = element.querySelectorAll("br").length
+    let reachedTarget = false
+    let prevented = false
+    element.addEventListener("keydown", event => {
+      reachedTarget = true
+      prevented = event.defaultPrevented
+      event.stopImmediatePropagation()
+    }, { once: true })
+    const dispatched = element.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", keyCode: 229, which: 229, shiftKey: true,
+      isComposing: false, bubbles: true, cancelable: true,
+    }))
+    return { reachedTarget, prevented, dispatched, before, after: element.querySelectorAll("br").length }
+  })
+  assert.deepEqual(imeEnter, { reachedTarget: true, prevented: false, dispatched: true, before: imeEnter.before, after: imeEnter.before })
   await editor.locator('input[type="file"]').setInputFiles({ name: "a[1].png", mimeType: "image/png", buffer: image })
   await page.getByText("图片上传中（1）").waitFor()
   assert.equal(await page.getByRole("button", { name: "保存并完成" }).isDisabled(), true)
