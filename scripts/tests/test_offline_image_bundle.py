@@ -153,6 +153,18 @@ with tempfile.TemporaryDirectory(prefix="myshop-offline-bundle-test-") as temp:
     local_check = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
                       str(bundle_path), "--manifest", str(release_path), "--verify-local", env=local_env)
     assert local_check.returncode == 0, local_check.stderr
+    legacy_repo_digests = {
+        "postgres": "sha256:60a518396f28c1c42c0fb640a41bc3516943802f683e59f7fe741a7df3d86822",
+        "caddy": "sha256:ee92234975200c8d302bf9b407ac32061eae9315c9cb6c7e3ddfd58c7a675ac6",
+        "node-exporter": "sha256:daafcbdb24336cb32dbe5590325d1a0fc61db5dcf43e53b414c99bdc8fb75fdc",
+    }
+    for service, local_digest in legacy_repo_digests.items():
+        repo = source_ref(service).split("@", 1)[0].rsplit(":", 1)[0]
+        metadata[archive_ref(service)]["RepoDigests"] = [f"{repo}@{local_digest}"]
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    legacy_local_check = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
+                             str(bundle_path), "--manifest", str(release_path), "--verify-local", env=local_env)
+    assert legacy_local_check.returncode == 0, legacy_local_check.stderr
     loaded_id = run(sys.executable, str(ROOT / "scripts/verify-offline-image-bundle.py"),
                     str(bundle_path), "--get-loaded-image-id", "api")
     assert loaded_id.returncode == 0 and loaded_id.stdout.strip() == LOADED_IDS["api"]

@@ -239,6 +239,40 @@ offline_tag_refs = {
     "caddy": "ghcr.io/yykx682436/myshop-caddy:mirror-5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648",
     "node-exporter": "ghcr.io/yykx682436/myshop-node-exporter:mirror-1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
 }
+legacy_infra_repo_digests = {
+    # The existing friend-prod containers use these preinstalled mirror images.
+    # They are accepted on upgrades only when the exact tagged image is still
+    # running and its local RepoDigest matches; new installs require the pins above.
+    "db": "sha256:60a518396f28c1c42c0fb640a41bc3516943802f683e59f7fe741a7df3d86822",
+    "caddy": "sha256:ee92234975200c8d302bf9b407ac32061eae9315c9cb6c7e3ddfd58c7a675ac6",
+    "node-exporter": "sha256:daafcbdb24336cb32dbe5590325d1a0fc61db5dcf43e53b414c99bdc8fb75fdc",
+}
+
+
+def verify_running_legacy_infra(service_name: str, ref: str) -> None:
+    if ref != offline_tag_refs[service_name] or mode != "upgrade":
+        fail(f"{service_name} infrastructure image is not the approved digest-pinned image")
+    containers = run(
+        "docker", "ps", "--filter", f"label=com.docker.compose.project={expected_project}",
+        "--filter", f"label=com.docker.compose.service={service_name}", "-q",
+    ).splitlines()
+    if len(containers) != 1:
+        fail(f"legacy {service_name} infrastructure image is allowed only for one existing upgrade container")
+    container_id = containers[0]
+    if run("docker", "inspect", "--format", "{{.Config.Image}}", container_id) != ref:
+        fail(f"running {service_name} infrastructure container does not use the approved legacy tag")
+    running_id = run("docker", "inspect", "--format", "{{.Image}}", container_id)
+    local_id = run("docker", "image", "inspect", "--format", "{{.Id}}", ref)
+    if running_id != local_id:
+        fail(f"running {service_name} infrastructure image differs from its local tag")
+    repo = expected_digest_refs[service_name].split("@", 1)[0].rsplit(":", 1)[0]
+    repo_digests = run(
+        "docker", "image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", ref,
+    ).splitlines()
+    if f"{repo}@{legacy_infra_repo_digests[service_name]}" not in repo_digests:
+        fail(f"running {service_name} legacy image has an unapproved local RepoDigest")
+
+
 ports = []
 for service_name, service in services.items():
     for port in service.get("ports", []) or []:
@@ -321,8 +355,9 @@ if mode == "forward-recovery" and offline_images != "1":
 for service_name, image in ((name, str(services[name].get("image", ""))) for name in expected_digest_refs):
     if image == expected_digest_refs[service_name]:
         continue
-    if offline_images != "1" or image != offline_tag_refs[service_name]:
-        fail(f"{service_name} infrastructure image is not the approved digest-pinned image or offline-import tag")
+    if image == offline_tag_refs[service_name] and offline_images == "1":
+        continue
+    verify_running_legacy_infra(service_name, image)
 if offline_images == "1":
     bundle_path = Path(env_values.get("MYSHOP_OFFLINE_IMAGE_BUNDLE_FILE", ""))
     if not bundle_path.is_file() or bundle_path.is_symlink():

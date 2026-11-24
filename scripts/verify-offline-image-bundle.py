@@ -29,6 +29,13 @@ INFRA = {
         "sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0",
     ),
 }
+LEGACY_INFRA_REPO_DIGESTS = {
+    # The existing friend-prod host has these exact preinstalled mirror images.
+    # Accept them for offline recovery after comparing the local RepoDigest.
+    "postgres": "sha256:60a518396f28c1c42c0fb640a41bc3516943802f683e59f7fe741a7df3d86822",
+    "caddy": "sha256:ee92234975200c8d302bf9b407ac32061eae9315c9cb6c7e3ddfd58c7a675ac6",
+    "node-exporter": "sha256:daafcbdb24336cb32dbe5590325d1a0fc61db5dcf43e53b414c99bdc8fb75fdc",
+}
 APP_SERVICES = ("api", "web")
 INFRA_SERVICES = tuple(INFRA)
 SERVICES = (*APP_SERVICES, *INFRA_SERVICES)
@@ -224,8 +231,12 @@ def verify_local_images(bundle: dict, bundle_path: Path, allow_unrecorded: bool 
                 fail(f"{service} loaded rootfs layers differ from the bundle")
         else:
             repo = item["source_ref"].split("@", 1)[0].rsplit(":", 1)[0]
-            expected_repo_digest = f"{repo}@{item['source_digest']}"
-            if expected_repo_digest not in (image.get("RepoDigests") or []):
+            repo_digests = image.get("RepoDigests") or []
+            accepted_repo_digests = {
+                f"{repo}@{item['source_digest']}",
+                f"{repo}@{LEGACY_INFRA_REPO_DIGESTS[service]}",
+            }
+            if not accepted_repo_digests.intersection(repo_digests):
                 fail(f"{service} preinstalled RepoDigest differs from its pinned infrastructure digest")
         observed[service] = image_id
     return observed
