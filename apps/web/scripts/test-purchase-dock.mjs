@@ -63,6 +63,28 @@ async function measurements(page, open) {
   return { shell: await rect(root), row: await rect(root.locator('[data-slot="purchase-action-bar"]')),
     price: await rect(root.locator('[data-slot="purchase-total"]')), button: await rect(root.locator('button').last()) }
 }
+async function assertPlainPurchaseButton(root, expectedType) {
+  const button = root.locator('[data-slot="purchase-action-bar"] button')
+  assert.equal(await button.getAttribute("type"), expectedType)
+  assert.equal(await button.innerText(), "立即购买")
+  assert.equal(await button.locator("svg").count(), 0)
+  const visual = await button.evaluate(el => {
+    const text = el.querySelector("span"), box = el.getBoundingClientRect(), label = text.getBoundingClientRect()
+    return { children: [...el.children].map(child => child.tagName), width: box.width, height: box.height,
+      xOffset: (label.left + label.right - box.left - box.right) / 2,
+      yOffset: (label.top + label.bottom - box.top - box.bottom) / 2 }
+  })
+  assert.deepEqual(visual.children, ["SPAN"], "the ordinary button has no icon or placeholder")
+  assert.ok(Math.abs(visual.width - 130) <= 1 && Math.abs(visual.height - 40) <= 1, JSON.stringify(visual))
+  assert.ok(Math.abs(visual.xOffset) <= 1 && Math.abs(visual.yOffset) <= 1, `button label must be centered: ${JSON.stringify(visual)}`)
+}
+async function shellAppearance(root) {
+  return root.evaluate(el => {
+    const style = getComputedStyle(el)
+    return { backgroundImage: style.backgroundImage, borderWidth: style.borderTopWidth,
+      borderColor: style.borderTopColor, shadow: style.boxShadow }
+  })
+}
 async function fixture({ id = "standard", width = 390, height = 844, theme = "light", profile = null, turnstile = false, video = false, channelsAvailable = true, orderHandler } = {}) {
   serverChannels = channelsAvailable ? channels : []
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: width < 768,
@@ -151,12 +173,21 @@ try {
     assert.match(await page.locator(".product-purchase-dock-closed").innerText(), /¥104\.00/)
     if (capture) await page.evaluate(() => window.scrollTo(0, 0))
     const closed = await measurements(page, false)
+    await assertPlainPurchaseButton(page.locator(".product-purchase-dock-closed"), "button")
+    const closedShell = await shellAppearance(page.locator(".product-purchase-dock-closed"))
     if (capture) { await page.waitForTimeout(450); await page.screenshot({ path: `${output}/closed-year-2.png` }) }
     await trigger.click()
     await dialog(page).waitFor()
     assert.equal(await dialog(page).getByRole("spinbutton", { name: "数量" }).inputValue(), "2")
     assert.match(await action(page).innerText(), /年卡\s*×\s*2/)
     const opened = await measurements(page, true)
+    await assertPlainPurchaseButton(dialog(page), "submit")
+    const openedShell = await shellAppearance(dialog(page))
+    assert.deepEqual(openedShell, closedShell, "both shells must have the same edge treatment")
+    assert.equal(closedShell.backgroundImage, "none", "purchase shells must not have a gradient")
+    assert.equal(closedShell.borderWidth, "1px")
+    assert.notEqual(closedShell.shadow, "none")
+    assert.doesNotMatch(closedShell.shadow, /inset/)
     if (capture) { await page.waitForTimeout(450); await page.screenshot({ path: `${output}/open-year-2.png` }) }
     for (const part of ["row", "price", "button"]) {
       for (const key of ["x", "y", "width", "height", "bottom"]) {
@@ -168,6 +199,7 @@ try {
     assert.ok(height - opened.shell.bottom >= 7, "panel must have an external bottom gap")
     assert.ok(Math.abs(closed.shell.x - opened.shell.x) <= 1 && Math.abs(closed.shell.width - opened.shell.width) <= 1)
     assert.equal(await page.locator('[data-slot="purchase-action-bar"]:visible').count(), 1)
+    assert.equal(await page.locator('[data-slot="purchase-action-bar"]:visible button:enabled').count(), 1)
     assert.equal(await page.locator('.product-purchase-dock-viewport').getAttribute("inert"), "")
     const panelStyle = await dialog(page).evaluate(el => {
       const s = getComputedStyle(el), row = getComputedStyle(el.querySelector('[data-slot="purchase-action-bar"]'))
@@ -176,7 +208,7 @@ try {
     assert.equal(panelStyle.rowBorder, "0px")
     assert.equal(panelStyle.rowBackground, "rgba(0, 0, 0, 0)")
     assert.equal(panelStyle.rowShadow, "none")
-    geometry.push({ width, height, theme, closed, opened, panelStyle })
+    geometry.push({ width, height, theme, closed, opened, panelStyle, closedShell, openedShell })
     for (let i = 0; i < 12; i++) {
       await page.keyboard.press("Tab")
       assert.ok(await page.evaluate(() => Boolean(document.querySelector('[role="dialog"]')?.contains(document.activeElement))), "Tab must remain in the modal")
@@ -315,6 +347,24 @@ try {
     await closeFixture(f)
   }
   console.log("Large price, long spec and no-spec summary: passed")
+
+  for (const [width, theme] of [[320, "light"], [320, "dark"], [390, "light"], [390, "dark"]]) {
+    const f = await fixture({ width, theme, channelsAvailable: false })
+    await f.trigger.click(); await dialog(f.page).waitFor()
+    const row = action(f.page), button = row.locator('button[type="submit"]')
+    assert.equal(await button.innerText(), "请选择可用的支付方式")
+    const bounds = await button.evaluate(el => {
+      const buttonBox = el.getBoundingClientRect(), textBox = el.querySelector("span").getBoundingClientRect()
+      return { fits: textBox.left >= buttonBox.left && textBox.right <= buttonBox.right
+        && textBox.top >= buttonBox.top && textBox.bottom <= buttonBox.bottom,
+        scrollFits: el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight }
+    })
+    const price = await rect(row.locator('[data-slot="purchase-total"]')), buttonBox = await rect(button)
+    assert.ok(bounds.fits && bounds.scrollFits && price.right <= buttonBox.x,
+      `long business label must fit without covering the amount at ${width}px/${theme}: ${JSON.stringify(bounds)}`)
+    await closeFixture(f)
+  }
+  console.log("Long business labels fit at 320px and 390px in both themes: passed")
 
   // Native form validation, single in-flight request, unit price, and retry key.
   {

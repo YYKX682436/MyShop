@@ -1183,6 +1183,12 @@
   padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
 }
 
+.product-purchase-dock-closed,
+.product-purchase-panel {
+  background-image: none;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.12);
+}
+
 .product-purchase-panel {
   --purchase-bottom-gap: calc(0.75rem + env(safe-area-inset-bottom, 0px));
   position: fixed;
@@ -1200,7 +1206,7 @@
 @supports ((-webkit-backdrop-filter: blur(8px)) or (backdrop-filter: blur(8px))) {
   @media (prefers-reduced-transparency: no-preference) {
     .product-purchase-dock-closed {
-      background-color: hsl(var(--material-regular) / 0.86);
+      background-color: hsl(var(--material-regular) / 0.9);
       -webkit-backdrop-filter: blur(8px);
       backdrop-filter: blur(8px);
     }

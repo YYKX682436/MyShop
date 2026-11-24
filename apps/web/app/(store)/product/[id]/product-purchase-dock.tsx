@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import * as Dialog from "@radix-ui/react-dialog"
-import { ChevronUp, Loader2, Minus, Plus, ShoppingCart, X } from "lucide-react"
+import { Loader2, Minus, Plus, X } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
 import { isAdminRole } from "@/lib/hooks"
@@ -89,13 +89,11 @@ function PurchaseActionBar({
       ref={open ? undefined : triggerRef}
       type={open ? "submit" : "button"}
       disabled={open ? submitting || isOutOfStock || !paymentReady : isOutOfStock || !authLoaded}
-      className="inline-flex min-h-10 min-w-[6.5rem] max-w-[55%] shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
+      className="inline-flex min-h-10 min-w-[8.125rem] max-w-[55%] shrink-0 items-center justify-center rounded-full bg-primary px-4 text-center text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
       aria-label={label}
     >
-      {submitting && open ? <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
-        : !isOutOfStock && <ShoppingCart className="size-4 shrink-0" aria-hidden="true" />}
+      {submitting && open && <Loader2 className="mr-1.5 size-4 shrink-0 animate-spin" aria-hidden="true" />}
       <span className="min-w-0">{label}</span>
-      {!isOutOfStock && <ChevronUp className={cn("size-3.5 shrink-0", open && "invisible")} aria-hidden="true" />}
     </button>
   )
 
