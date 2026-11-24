@@ -1185,6 +1185,8 @@
 
 .product-purchase-dock-closed,
 .product-purchase-panel {
+  --purchase-corner: 1.25rem;
+  border-radius: var(--purchase-corner);
   background-image: none;
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.12);
 }
@@ -1297,6 +1299,8 @@
   .auth-page { min-height: 0; gap: 1rem; padding-block: 0; }
   .auth-form-panel { padding-top: 1rem; }
   .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  .product-purchase-dock-closed,
+  .product-purchase-panel { --purchase-corner: 0.875rem; }
   .product-purchase-panel { --purchase-bottom-gap: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
   .product-purchase-dock-viewport .action-bar-material,
   .product-purchase-panel.action-bar-material { border-radius: 0.875rem; }

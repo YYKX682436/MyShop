@@ -70,18 +70,20 @@ async function assertPlainPurchaseButton(root, expectedType) {
   assert.equal(await button.locator("svg").count(), 0)
   const visual = await button.evaluate(el => {
     const text = el.querySelector("span"), box = el.getBoundingClientRect(), label = text.getBoundingClientRect()
-    return { children: [...el.children].map(child => child.tagName), width: box.width, height: box.height,
+    return { children: [...el.children].map(child => child.tagName), width: box.width, height: box.height, radius: getComputedStyle(el).borderTopLeftRadius,
       xOffset: (label.left + label.right - box.left - box.right) / 2,
       yOffset: (label.top + label.bottom - box.top - box.bottom) / 2 }
   })
+  const shellRadius = await root.evaluate(el => getComputedStyle(el).borderTopLeftRadius)
   assert.deepEqual(visual.children, ["SPAN"], "the ordinary button has no icon or placeholder")
+  assert.equal(visual.radius, shellRadius, "the button and purchase shell must use the same corner radius")
   assert.ok(Math.abs(visual.width - 130) <= 1 && Math.abs(visual.height - 40) <= 1, JSON.stringify(visual))
   assert.ok(Math.abs(visual.xOffset) <= 1 && Math.abs(visual.yOffset) <= 1, `button label must be centered: ${JSON.stringify(visual)}`)
 }
 async function shellAppearance(root) {
   return root.evaluate(el => {
     const style = getComputedStyle(el)
-    return { backgroundImage: style.backgroundImage, borderWidth: style.borderTopWidth,
+    return { backgroundImage: style.backgroundImage, borderWidth: style.borderTopWidth, radius: style.borderTopLeftRadius,
       borderColor: style.borderTopColor, shadow: style.boxShadow }
   })
 }

@@ -89,7 +89,7 @@ function PurchaseActionBar({
       ref={open ? undefined : triggerRef}
       type={open ? "submit" : "button"}
       disabled={open ? submitting || isOutOfStock || !paymentReady : isOutOfStock || !authLoaded}
-      className="inline-flex min-h-10 min-w-[8.125rem] max-w-[55%] shrink-0 items-center justify-center rounded-full bg-primary px-4 text-center text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
+      className="inline-flex min-h-10 min-w-[8.125rem] max-w-[55%] shrink-0 items-center justify-center rounded-[var(--purchase-corner)] bg-primary px-4 text-center text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
       aria-label={label}
     >
       {submitting && open && <Loader2 className="mr-1.5 size-4 shrink-0 animate-spin" aria-hidden="true" />}
