@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { createServer } from "node:http"
 import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -12,9 +13,10 @@ const root = fileURLToPath(new URL("..", import.meta.url))
 const require = createRequire(import.meta.url)
 const nextBin = require.resolve("next/dist/bin/next")
 const image = await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="#3188dc"/><path d="M0 100H400V200H0z" fill="#f4dd36"/><path d="M200 0V400" stroke="#f43f5e" stroke-width="28"/><text x="20" y="290" font-size="48">PRODUCT</text></svg>`)).png().toBuffer()
+const managedCover = `/api/uploads/${createHash("sha256").update(image).digest("hex")}.png`
 const products = Array.from({ length: 30 }, (_, index) => ({
   id: `fixture-${index}`, title: index === 10 ? "原始中文商品标题包含很多文字用于验证两行省略和真实背景截图".repeat(5) : `测试商品 ${index}`, price: index + 1,
-  cover_url: `/api/uploads/nav-fixture-${index}.png`, stock_available: 10, unlimited: false, has_specs: false,
+  cover_url: index < 3 ? managedCover : `/api/uploads/nav-fixture-${index}.png`, stock_available: 10, unlimited: false, has_specs: false,
   retail_price: index + 1, description: "测试商品", detail_md: null, specs: [], delivery_type: "AUTO",
   sales_count: 0, initial_sales: 0, customer_input_fields: [],
 }))
@@ -175,6 +177,13 @@ try {
   }
   await gotoHome()
   await checkMutedContent()
+  await page.waitForFunction(() => {
+    const image = document.querySelector(".product-card img")
+    return image?.complete && image.naturalWidth > 0 && image.currentSrc.includes("/_next/image?") &&
+      decodeURIComponent(image.currentSrc).includes("/image-source/")
+  }, null, { timeout: 15000 })
+  assert.equal(await page.locator(".store-liquid-nav").getAttribute("data-mode"), "webgl",
+    "a managed cover through the production image-source/optimizer path must retain WebGL")
 
   // Exercise SnapDOM's real live-text clamp and single-line ellipsis work in
   // the capture window, then leave the page idle long enough to catch loops.
@@ -376,12 +385,30 @@ try {
   }
   await page.setViewportSize({ width: 390, height: 600 })
   await page.waitForTimeout(700)
-  announcementUnread = 2; supportUnread = 3
-  await page.evaluate(() => window.dispatchEvent(new Event("myshop:messages-changed")))
-  await page.locator(".store-liquid-badge").filter({ hasText: "5" }).waitFor({ timeout: 10000 })
-  announcementUnread = 99; supportUnread = 3
-  await page.evaluate(() => window.dispatchEvent(new Event("myshop:messages-changed")))
-  await page.locator(".store-liquid-badge").filter({ hasText: "99+" }).waitFor({ timeout: 10000 })
+  for (const count of [1, 9, 10, 99, 101]) {
+    announcementUnread = count; supportUnread = 0
+    await page.evaluate(() => window.dispatchEvent(new Event("myshop:messages-changed")))
+    const badge = page.locator(".store-liquid-badge")
+    await page.waitForFunction(value => document.querySelector(".store-liquid-badge")?.textContent === (value > 99 ? "99+" : String(value)), count, { timeout: 10000 })
+    assert.equal(await badge.getAttribute("aria-label"), `${count} 条未读消息`)
+    const bounds = await badge.boundingBox()
+    assert.equal(bounds.height, 14)
+    assert.ok(bounds.width >= 14)
+    const label = await page.locator(".store-liquid-link").nth(2).locator(".store-liquid-fallback-content > span").last().boundingBox()
+    assert.ok(bounds.y + bounds.height <= label.y, "badge must not cover the message label")
+  }
+  box = await boxes(); start = center(box[0]); dest = center(box[1])
+  const badgeBefore = await page.locator(".store-liquid-badge").boundingBox()
+  await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.waitForTimeout(500)
+  const badgeHeld = await page.locator(".store-liquid-badge").boundingBox()
+  assert.ok(Math.abs(badgeHeld.x - badgeBefore.x) > 0.1 || Math.abs(badgeHeld.y - badgeBefore.y) > 0.1,
+    "badge anchor should follow the pressed container")
+  await page.mouse.move(dest.x, dest.y, { steps: 8 }); await page.waitForTimeout(350)
+  const badgeDragged = await page.locator(".store-liquid-badge").boundingBox()
+  assert.ok(Math.abs(badgeDragged.x - badgeHeld.x) > 0.1 || Math.abs(badgeDragged.y - badgeHeld.y) > 0.1,
+    "badge anchor should follow the panel offset while dragging")
+  await page.mouse.move(start.x, start.y, { steps: 8 }); await page.mouse.up()
+  await page.waitForTimeout(500)
   announcementUnread = 0; supportUnread = 0
   await page.evaluate(() => window.dispatchEvent(new Event("myshop:messages-changed")))
   await page.locator(".store-liquid-badge").waitFor({ state: "hidden", timeout: 10000 })
@@ -550,7 +577,39 @@ try {
     const nav = document.querySelector(".store-liquid-nav")
     return nav?.dataset.mode === "fallback" && nav.dataset.captureWarnings?.includes("image-fallback")
   }, null, { timeout: 15000 })
+  const fallbackGeometry = await page.evaluate(() => {
+    const nav = document.querySelector(".store-liquid-nav"), link = nav.querySelector('[aria-current="page"]')
+    const box = nav.getBoundingClientRect(), item = link.getBoundingClientRect(), selected = getComputedStyle(link, "::before")
+    return { width: box.width, height: box.height, itemWidth: item.width, top: selected.top, bottom: selected.bottom,
+      backdropFilter: getComputedStyle(nav).backdropFilter }
+  })
+  assert.equal(fallbackGeometry.height, 64)
+  assert.ok(Math.abs(fallbackGeometry.itemWidth - (fallbackGeometry.width - 8) / 4) < 0.1)
+  assert.equal(fallbackGeometry.top, "4px")
+  assert.equal(fallbackGeometry.bottom, "4px")
+  assert.notEqual(fallbackGeometry.backdropFilter, "none", "fallback should blur the real background when supported")
   await context.close()
+
+  // Foreground WebGL follows device DPR; background capture retains its
+  // independent 1.5 cap and is delivered at the canvas's final dimensions.
+  for (const dpr of [2, 3]) {
+    const retina = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: dpr, hasTouch: true })
+    const retinaPage = await retina.newPage()
+    await retinaPage.route("**/api/**", async route => {
+      const url = new URL(route.request().url())
+      const result = await route.fetch({ url: `http://127.0.0.1:${backendPort}${url.pathname}${url.search}` })
+      await route.fulfill({ response: result })
+    })
+    await retinaPage.goto(base, { waitUntil: "domcontentloaded" })
+    await retinaPage.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 20000 })
+    const dimensions = await retinaPage.locator(".store-liquid-canvas").evaluate(canvas => ({
+      width: canvas.width, height: canvas.height, cssWidth: canvas.getBoundingClientRect().width,
+      cssHeight: canvas.getBoundingClientRect().height,
+    }))
+    assert.equal(dimensions.width, Math.round(dimensions.cssWidth * dpr), `DPR ${dpr} foreground width`)
+    assert.equal(dimensions.height, Math.round(dimensions.cssHeight * dpr), `DPR ${dpr} foreground height`)
+    await retina.close()
+  }
 
   // The centered surface at this real desktop size begins halfway between
   // SnapDOM's 1.5-DPR pixels. It must not remain in fallback or recapture

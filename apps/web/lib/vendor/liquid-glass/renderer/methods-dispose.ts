@@ -15,6 +15,7 @@ declare module './index' {
 
 export const disposeMethods = {
   dispose(this: LiquidGlassRenderer) {
+    this.onAfterFrame = null
     if (this.rafId !== null) cancelAnimationFrame(this.rafId)
     this.rafId = null
     if (this.animRafId !== null) cancelAnimationFrame(this.animRafId)

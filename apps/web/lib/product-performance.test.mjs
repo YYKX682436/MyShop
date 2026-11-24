@@ -32,7 +32,11 @@ test("persistent surfaces use static materials and touch devices skip backdrop s
     assert.match(source, /static-material|large-material/)
     assert.doesNotMatch(source, /bar-glass|sheet-glass/)
   }
-  const activeBlurDeclarations = [...styles.matchAll(/^[ \t]*(?:-webkit-)?backdrop-filter:[ \t]*([^;\r\n]+);/gm)]
+  // The navigation's explicit compatibility mode is transient and has its
+  // own browser behavior tests; it is not a persistent material surface.
+  const navigationFallback = styles.match(/\.store-liquid-nav\[data-mode="fallback"\]\s*\{[^}]*\}/s)?.[0]
+  assert.ok(navigationFallback)
+  const activeBlurDeclarations = [...styles.replace(navigationFallback, "").matchAll(/^[ \t]*(?:-webkit-)?backdrop-filter:[ \t]*([^;\r\n]+);/gm)]
     .map((match) => match[1].trim())
     .filter((value) => value !== "none")
   assert.deepEqual(activeBlurDeclarations, ["blur(4px) saturate(120%)", "blur(4px) saturate(120%)", "blur(3px) saturate(115%)", "blur(3px) saturate(115%)"])

@@ -1,4 +1,4 @@
-// Modified by MyShop: text icons can use an optional outline stroke.
+// Modified by MyShop: text icons can use an optional outline stroke and layout gap.
 /* ------------------------------------------------------------------ *
  * Types — mirror the Kotlin modifier parameters.
  * ------------------------------------------------------------------ */
@@ -156,6 +156,8 @@ export interface TextSpec {
      *  this is N — the icon is centered within this box for layout
      *  purposes (matching ContentScale.Inside behavior). */
     layoutSize?: number
+    /** Space between the icon box and its text, in CSS px (default 2). */
+    textGap?: number
   }
 }
 

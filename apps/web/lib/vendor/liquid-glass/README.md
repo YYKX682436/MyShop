@@ -17,6 +17,9 @@ MyShop modifications, identified at the start of modified source files:
 - Pause rendering in background tabs and use deterministic targets for reduced
   motion. Correct upstream declaration mismatches and strict TypeScript errors.
 - Support outlined text icons in the existing foreground texture and tint mask.
+- Expose the icon/text gap as a layout option and a callback on existing
+  render frames so the storefront can align a crisp notification badge with
+  the animated tab row without starting another animation loop.
 - Remove the final blank line in two shader source files for repository
   whitespace checks; their shader code is unchanged.
 

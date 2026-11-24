@@ -1,4 +1,4 @@
-// Modified by MyShop: support outlined icons in the existing foreground mask.
+// Modified by MyShop: support outlined icons and a configurable icon/text gap.
 import type { LiquidGlassRenderer } from './index'
 import type { GlassElementConfig } from './types'
 import { wrapText } from './gl-utils'
@@ -184,7 +184,7 @@ export const rasterMethods = {
       // Gap between icon layout box and text — faithful to LiquidBottomTab.kt's
       // Arrangement.spacedBy(2f.dp). Only applies when there's text content;
       // icon-only tiles (control center) get gap=0 so the icon is centered.
-      const gap = t.content ? 2 : 0
+      const gap = t.content ? (t.icon.textGap ?? 2) : 0
       const totalBlockH = iconLayoutSize + gap + (t.content ? t.fontSizePx : 0)
       const blockTop = cssH / 2 - totalBlockH / 2
       const iconCx = cssW / 2

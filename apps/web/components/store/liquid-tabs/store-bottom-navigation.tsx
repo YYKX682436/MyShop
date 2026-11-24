@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent, type RefObject } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { House, ClipboardList, MessageCircle, UserRound } from "lucide-react"
@@ -8,10 +8,28 @@ import { useMessageSummary } from "@/components/store/message-summary"
 import { useTheme } from "@/lib/context"
 import { LiquidGlassRenderer } from "@/lib/vendor/liquid-glass/renderer"
 import { StoreBackdrop } from "./backdrop"
-import { BAR_TOP, buildElements, DRAWING_HEIGHT, GROUP, LABELS, PATHS } from "./elements"
+import { BAR_HEIGHT, BAR_TOP, buildElements, DRAWING_HEIGHT, GROUP, ICON_LAYOUT_SIZE, ICON_SIZE, ICON_TEXT_GAP, LABELS, PATHS, TAB_COUNT, TAB_FONT_SIZE, TAB_FONT_WEIGHT, TAB_INSET, tabWidth } from "./elements"
 
 const Icons = [House, ClipboardList, MessageCircle, UserRound]
 const DRAG_THRESHOLD = 8
+const MESSAGE_TAB = 2
+const NAV_STYLE = {
+  top: BAR_TOP,
+  "--store-bar-height": `${BAR_HEIGHT}px`,
+  "--store-tab-inset": `${TAB_INSET}px`,
+  "--store-tab-count": TAB_COUNT,
+  "--store-icon-size": `${ICON_SIZE}px`,
+  "--store-icon-layout": `${ICON_LAYOUT_SIZE}px`,
+  "--store-icon-gap": `${ICON_TEXT_GAP}px`,
+  "--store-tab-font-size": `${TAB_FONT_SIZE}px`,
+  "--store-tab-font-weight": TAB_FONT_WEIGHT,
+} as CSSProperties
+
+function tabAtPoint(nav: HTMLElement, x: number, y: number): number | null {
+  const rect = nav.getBoundingClientRect()
+  if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) return null
+  return Math.max(0, Math.min(TAB_COUNT - 1, Math.floor((x - rect.left - TAB_INSET) / tabWidth(rect.width))))
+}
 
 function tabContentColor(nav: HTMLElement, dark: boolean): [number, number, number, number] {
   // Read the same resolved theme token used by the catalog's category text.
@@ -25,7 +43,7 @@ type SuppressedClick = { id: number; x: number; y: number; until: number }
 
 /** Stop an interrupted hold without committing its target. */
 function restoreRoute(renderer: LiquidGlassRenderer, index: number, immediate = false) {
-  const state = renderer.ensureToggleState(GROUP, index, LiquidGlassRenderer.TAB_PRESSED_SCALE, 3)
+  const state = renderer.ensureToggleState(GROUP, index, LiquidGlassRenderer.TAB_PRESSED_SCALE, TAB_COUNT - 1)
   state.isDragging = false
   state.targetFraction = index
   state.targetPress = 0
@@ -55,6 +73,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
   const unread = announcements.unread + support.unread
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const navRef = useRef<HTMLElement>(null)
+  const badgeRef = useRef<HTMLSpanElement>(null)
   const rendererRef = useRef<LiquidGlassRenderer | null>(null)
   const backdropRef = useRef<StoreBackdrop | null>(null)
   const pointerRef = useRef<ActivePointer | null>(null)
@@ -121,14 +140,31 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     try {
       renderer = new LiquidGlassRenderer(canvas)
       rendererRef.current = renderer
-      renderer.dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+      renderer.dpr = Math.min(window.devicePixelRatio || 1, 3)
       renderer.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      renderer.ensureToggleState(GROUP, Math.max(0, selectedRef.current), LiquidGlassRenderer.TAB_PRESSED_SCALE, 3)
+      renderer.ensureToggleState(GROUP, Math.max(0, selectedRef.current), LiquidGlassRenderer.TAB_PRESSED_SCALE, TAB_COUNT - 1)
+      // The badge stays crisp in the DOM but follows the same container
+      // transform as the renderer's tab content, on its existing render loop.
+      const syncBadge = () => {
+        const badge = badgeRef.current
+        if (!badge) return
+        const state = renderer.toggleStates.get(GROUP)
+        if (!state || nav.dataset.mode !== "webgl") { badge.style.transform = ""; return }
+        const width = nav.getBoundingClientRect().width
+        if (!width) return
+        const scale = 1 + 16 / width * state.pressProgress
+        const iconRight = TAB_INSET + (MESSAGE_TAB + 0.5) * tabWidth(width) + ICON_SIZE / 2
+        const iconTop = (BAR_HEIGHT - ICON_LAYOUT_SIZE - ICON_TEXT_GAP - TAB_FONT_SIZE) / 2 + (ICON_LAYOUT_SIZE - ICON_SIZE) / 2
+        const dx = (iconRight - width / 2) * (scale - 1) + state.panelOffset
+        const dy = (iconTop - BAR_HEIGHT / 2) * (scale - 1)
+        badge.style.transform = `translate(${dx}px, ${dy}px)`
+      }
+      renderer.onAfterFrame = syncBadge
       const configure = () => {
         const rect = canvas.getBoundingClientRect()
         if (!rect.width || !rect.height) return
         const width = nav.getBoundingClientRect().width
-        renderer.dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+        renderer.dpr = Math.min(window.devicePixelRatio || 1, 3)
         renderer.resize(rect.width, rect.height)
         const dark = themeRef.current === "dark"
         renderer.setElements(buildElements(width, dark, (rect.width - width) / 2, tabContentColor(nav, dark)))
@@ -143,6 +179,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
         nav.dataset.captureCount = String(info.captures)
         nav.dataset.captureMs = info.lastMs.toFixed(1)
         nav.dataset.captureWarnings = info.warnings.join("; ")
+        syncBadge()
         setReady(current => current === info.ready ? current : info.ready)
       })
       backdropRef.current = backdrop
@@ -197,6 +234,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
         renderer.dispose()
         rendererDisposed = true
         rendererRef.current = null
+        if (badgeRef.current) badgeRef.current.style.transform = ""
         setReady(false)
         nav.dataset.backdropReason = "WebGL context lost"
       }
@@ -263,13 +301,13 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     const renderer = rendererRef.current
     const target = (event.target as Element).closest<HTMLAnchorElement>("a[data-tab]")
     if (!renderer || target && !event.currentTarget.contains(target) || !target && event.target !== event.currentTarget) return
-    const rect = event.currentTarget.getBoundingClientRect()
-    const clicked = target ? Number(target.dataset.tab) : Math.max(0, Math.min(3, Math.floor((event.clientX - rect.left) / (rect.width / 4))))
+    const clicked = target ? Number(target.dataset.tab) : tabAtPoint(event.currentTarget, event.clientX, event.clientY)
+    if (clicked === null) return
     pointerRef.current = { id: event.pointerId, type: event.pointerType, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY,
       startTarget: renderer.getTabTarget(GROUP), clicked, dragged: false }
     if (event.pointerType === "touch") event.currentTarget.dataset.touchActive = "true"
     event.currentTarget.setPointerCapture(event.pointerId)
-    renderer.beginTabDrag(GROUP, pointerRef.current.startTarget, 4)
+    renderer.beginTabDrag(GROUP, pointerRef.current.startTarget, TAB_COUNT)
   }
   function move(event: PointerEvent<HTMLElement>) {
     const pointer = pointerRef.current
@@ -281,7 +319,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     const dy = event.clientY - pointer.startY
     if (!pointer.dragged && Math.abs(dx) >= DRAG_THRESHOLD && Math.abs(dx) > Math.abs(dy)) pointer.dragged = true
     if (pointer.dragged) renderer.dragTab(GROUP, pointer.startTarget, event.clientX, pointer.startX,
-      (event.currentTarget.getBoundingClientRect().width - 8) / 4, 4)
+      tabWidth(event.currentTarget.getBoundingClientRect().width), TAB_COUNT)
   }
   function up(event: PointerEvent<HTMLElement>) {
     if (ignoredPointers.current.delete(event.pointerId)) {
@@ -292,18 +330,16 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     const renderer = rendererRef.current
     if (!pointer || pointer.id !== event.pointerId || !renderer) return
     if (!pointer.dragged) {
-      const link = event.currentTarget.querySelector<HTMLAnchorElement>(`a[data-tab="${pointer.clicked}"]`)
-      const rect = link?.getBoundingClientRect()
-      if (!rect || event.clientX < rect.left || event.clientX >= rect.right || event.clientY < rect.top || event.clientY >= rect.bottom) {
+      if (tabAtPoint(event.currentTarget, event.clientX, event.clientY) !== pointer.clicked) {
         cancel(event.pointerId, { x: event.clientX, y: event.clientY })
         return
       }
     }
     if (pointer.dragged) renderer.dragTab(GROUP, pointer.startTarget, event.clientX, pointer.startX,
-      (event.currentTarget.getBoundingClientRect().width - 8) / 4, 4)
-    const target = renderer.endTabDrag(GROUP, 4)
+      tabWidth(event.currentTarget.getBoundingClientRect().width), TAB_COUNT)
+    const target = renderer.endTabDrag(GROUP, TAB_COUNT)
     const destination = pointer.dragged ? target : pointer.clicked
-    if (!pointer.dragged && destination !== target) renderer.setTabSelected(GROUP, destination, 4)
+    if (!pointer.dragged && destination !== target) renderer.setTabSelected(GROUP, destination, TAB_COUNT)
     pointerRef.current = null
     delete event.currentTarget.dataset.touchActive
     suppressed.current = { id: event.pointerId, x: event.clientX, y: event.clientY, until: Date.now() + 700 }
@@ -325,7 +361,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
     event.preventDefault()
     const renderer = rendererRef.current
-    if (renderer && index !== selectedRef.current) renderer.setTabSelected(GROUP, index, 4)
+    if (renderer && index !== selectedRef.current) renderer.setTabSelected(GROUP, index, TAB_COUNT)
     navigate(index)
   }
 
@@ -334,7 +370,7 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
     <div className="store-liquid-surface" style={{ height: DRAWING_HEIGHT }}>
       <canvas ref={canvasRef} className="store-liquid-canvas" style={{ visibility: ready ? "visible" : "hidden" }} aria-hidden="true" />
       <nav ref={navRef} aria-label="店铺导航" data-mode={ready ? "webgl" : "fallback"}
-        className="store-liquid-nav" style={{ top: BAR_TOP }} onDragStart={event => event.preventDefault()} onPointerDown={down} onPointerMove={move} onPointerUp={up}
+        className="store-liquid-nav" style={NAV_STYLE} onDragStart={event => event.preventDefault()} onPointerDown={down} onPointerMove={move} onPointerUp={up}
         onContextMenu={event => {
           const pointerType = (event.nativeEvent as globalThis.MouseEvent & { pointerType?: string }).pointerType
           if (pointerRef.current?.type === "touch" || pointerType === "touch") event.preventDefault()
@@ -345,9 +381,9 @@ export function StoreBottomNavigation({ sourceRef }: { sourceRef: RefObject<HTML
           const Icon = Icons[index]
           return <Link key={path} href={path} replace scroll={false} draggable={false} data-tab={index} aria-current={index === selected ? "page" : undefined}
             onClick={event => click(event, index)} className="store-liquid-link">
-            <span className="store-liquid-fallback-content" aria-hidden="true"><Icon size={24} strokeWidth={1.8} /><span>{LABELS[index]}</span></span>
+            <span className="store-liquid-fallback-content" aria-hidden="true"><span className="store-liquid-icon-box"><Icon size={ICON_SIZE} strokeWidth={1.8} /></span><span>{LABELS[index]}</span></span>
             <span className="sr-only">{LABELS[index]}</span>
-            {index === 2 && unread > 0 && <span className="store-liquid-badge" aria-label={`${unread} 条未读消息`}>{unread > 99 ? "99+" : unread}</span>}
+            {index === MESSAGE_TAB && unread > 0 && <span ref={badgeRef} className="store-liquid-badge" aria-label={`${unread} 条未读消息`}>{unread > 99 ? "99+" : unread}</span>}
           </Link>
         })}
       </nav>

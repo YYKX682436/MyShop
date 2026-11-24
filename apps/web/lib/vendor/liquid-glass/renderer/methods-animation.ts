@@ -391,6 +391,7 @@ export const animationMethods = {
     this.rafId = requestAnimationFrame(() => {
       this.rafId = null
       this.render()
+      this.onAfterFrame?.()
     })
   },
 }

@@ -1498,9 +1498,10 @@ dialog.media-manage-dialog::backdrop {
   position: absolute;
   left: var(--store-liquid-bleed);
   right: var(--store-liquid-bleed);
-  height: 64px;
+  height: var(--store-bar-height);
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--store-tab-count), minmax(0, 1fr));
+  padding-inline: var(--store-tab-inset);
   color: hsl(var(--muted-foreground));
   pointer-events: auto;
   touch-action: pan-y;
@@ -1509,10 +1510,12 @@ dialog.media-manage-dialog::backdrop {
   -webkit-tap-highlight-color: transparent;
 }
 .store-liquid-nav[data-mode="fallback"] {
-  background: rgb(250 250 250 / 86%);
-  box-shadow: 0 4px 24px rgb(0 0 0 / 15%);
+  background: rgb(250 250 250 / 40%);
+  -webkit-backdrop-filter: blur(8px) saturate(1.5);
+  backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: inset 0 0 0 0.5px rgb(255 255 255 / 55%), 0 4px 24px rgb(0 0 0 / 10%);
 }
-.dark .store-liquid-nav[data-mode="fallback"] { background: rgb(24 24 24 / 88%); }
+.dark .store-liquid-nav[data-mode="fallback"] { background: rgb(18 18 18 / 40%); }
 .store-liquid-link {
   position: relative;
   min-width: 0;
@@ -1525,17 +1528,38 @@ dialog.media-manage-dialog::backdrop {
 }
 .store-liquid-link:focus-visible { outline: 2px solid #0088ff; }
 .store-liquid-nav[data-mode="fallback"] .store-liquid-link[aria-current="page"] {
-  background: rgb(0 136 255 / 13%);
   color: #0088ff;
 }
+.store-liquid-nav[data-mode="fallback"] .store-liquid-link[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  inset: var(--store-tab-inset) 0;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 12%);
+  box-shadow: inset 0 1px 2px rgb(255 255 255 / 30%);
+  pointer-events: none;
+}
+.dark .store-liquid-nav[data-mode="fallback"] .store-liquid-link[aria-current="page"]::before {
+  background: rgb(255 255 255 / 12%);
+}
 .store-liquid-fallback-content {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
-  line-height: 1;
+  gap: var(--store-icon-gap);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: var(--store-tab-font-size);
+  font-weight: var(--store-tab-font-weight);
+  line-height: var(--store-tab-font-size);
+}
+.store-liquid-icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--store-icon-layout);
+  height: var(--store-icon-layout);
 }
 .store-liquid-nav[data-mode="webgl"] .store-liquid-fallback-content { visibility: hidden; }
 /* A touch hold targets the navigation while preserving ordinary link hit
@@ -1543,17 +1567,17 @@ dialog.media-manage-dialog::backdrop {
 .store-liquid-nav[data-touch-active] .store-liquid-link { pointer-events: none; }
 .store-liquid-badge {
   position: absolute;
-  top: 5px;
-  left: calc(50% + 7px);
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
+  top: calc((var(--store-bar-height) - var(--store-icon-layout) - var(--store-icon-gap) - var(--store-tab-font-size)) / 2 + (var(--store-icon-layout) - var(--store-icon-size)) / 2 - 5px);
+  left: calc(50% + var(--store-icon-size) / 2 - 4px);
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
   border-radius: 999px;
   background: #dc2626;
   color: white;
   font-size: 10px;
   font-weight: 700;
-  line-height: 17px;
+  line-height: 14px;
   text-align: center;
 }
 @media (forced-colors: active) {

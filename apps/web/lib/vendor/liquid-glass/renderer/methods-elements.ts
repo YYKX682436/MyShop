@@ -1,4 +1,4 @@
-// Modified by MyShop: invalidate the foreground when outline width changes.
+// Modified by MyShop: invalidate the foreground when icon drawing or layout changes.
 import type { LiquidGlassRenderer } from './index'
 import type { GlassElementConfig } from './types'
 
@@ -108,6 +108,9 @@ export const elementMethods = {
         (prevTextIcon && nextTextIcon &&
           (prevTextIcon.path !== nextTextIcon.path ||
            prevTextIcon.size !== nextTextIcon.size ||
+           prevTextIcon.layoutSize !== nextTextIcon.layoutSize ||
+           prevTextIcon.viewport !== nextTextIcon.viewport ||
+           prevTextIcon.textGap !== nextTextIcon.textGap ||
            prevTextIcon.strokeWidth !== nextTextIcon.strokeWidth ||
            !eq4(prevTextIcon.color, nextTextIcon.color)))
       // Button-level icon (used by the circular back button).

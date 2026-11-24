@@ -4,8 +4,18 @@ export const GROUP = "store-tabs"
 export const DRAWING_HEIGHT = 160
 export const BAR_TOP = 48
 export const BAR_HEIGHT = 64
+export const TAB_COUNT = 4
+export const TAB_INSET = 4
+export const TAB_HEIGHT = BAR_HEIGHT - TAB_INSET * 2
+export const ICON_SIZE = 24
+export const ICON_LAYOUT_SIZE = 28
+export const ICON_TEXT_GAP = 2
+export const TAB_FONT_SIZE = 12
+export const TAB_FONT_WEIGHT = 400
 export const LABELS = ["首页", "订单", "消息", "我的"] as const
 export const PATHS = ["/", "/my/orders", "/messages", "/my"] as const
+
+export const tabWidth = (width: number) => (width - TAB_INSET * 2) / TAB_COUNT
 
 // Lucide house, clipboard-list, message-circle and user-round paths, rendered
 // with the same stroke as their React counterparts. See LUCIDE-LICENSE.
@@ -35,23 +45,23 @@ function shape(id: string, rect: { x: number; y: number; w: number; h: number })
 export function buildElements(width: number, dark: boolean, bleed: number, contentColor: Color): GlassElementConfig[] {
   const x = bleed
   const y = BAR_TOP
-  const tabWidth = (width - 8) / 4
+  const widthPerTab = tabWidth(width)
   const container = shape(`${GROUP}-container`, { x, y, w: width, h: BAR_HEIGHT })
   container.surfaceColor = dark ? [18 / 255, 18 / 255, 18 / 255, 0.4] : [250 / 255, 250 / 255, 250 / 255, 0.4]
-  container.isBottomTabContainer = { groupId: GROUP, tabsCount: 4 }
+  container.isBottomTabContainer = { groupId: GROUP, tabsCount: TAB_COUNT }
   container.independentBackdrop = true
 
   const tabs = LABELS.map((label, i): GlassElementConfig => ({
-    ...shape(`${GROUP}-tab-${i}`, { x: x + 4 + i * tabWidth, y: y + 4, w: tabWidth, h: 56 }),
+    ...shape(`${GROUP}-tab-${i}`, { x: x + TAB_INSET + i * widthPerTab, y: y + TAB_INSET, w: widthPerTab, h: TAB_HEIGHT }),
     kind: "text", cornerRadius: 0, refractionHeight: 0, refractionAmount: 0,
     depthEffect: false, blurRadius: 0, saturation: 1, highlight: null, outerShadow: null,
-    text: { content: label, color: contentColor, fontSizePx: 12, fontWeight: 400,
+    text: { content: label, color: contentColor, fontSizePx: TAB_FONT_SIZE, fontWeight: TAB_FONT_WEIGHT,
       align: "center", wrap: false, paddingPx: 0, halo: "none",
-      icon: { path: ICONS[i], size: 24, layoutSize: 28, color: contentColor, viewport: 24, strokeWidth: 1.8 } },
-    isBottomTabContent: { groupId: GROUP, containerCenterX: x + width / 2, containerCenterY: y + 32, containerWidth: width },
+      icon: { path: ICONS[i], size: ICON_SIZE, layoutSize: ICON_LAYOUT_SIZE, textGap: ICON_TEXT_GAP, color: contentColor, viewport: 24, strokeWidth: 1.8 } },
+    isBottomTabContent: { groupId: GROUP, containerCenterX: x + width / 2, containerCenterY: y + BAR_HEIGHT / 2, containerWidth: width },
   }))
 
-  const indicator = shape(`${GROUP}-indicator`, { x: x + 4, y: y + 4, w: tabWidth, h: 56 })
+  const indicator = shape(`${GROUP}-indicator`, { x: x + TAB_INSET, y: y + TAB_INSET, w: widthPerTab, h: TAB_HEIGHT })
   indicator.refractionHeight = 10
   indicator.refractionAmount = -14
   indicator.depthEffect = false
@@ -61,11 +71,11 @@ export function buildElements(width: number, dark: boolean, bleed: number, conte
   indicator.innerShadow = { radius: 8, alpha: 0.3, offsetX: 0, offsetY: 8 }
   indicator.independentBackdrop = false
   indicator.isBottomTabIndicator = {
-    groupId: GROUP, dragWidth: tabWidth,
+    groupId: GROUP, dragWidth: widthPerTab,
     dimColor: dark ? [1, 1, 1, 1] : [0, 0, 0, 1],
     accentColor: dark ? [0, 145 / 255, 1] : [0, 136 / 255, 1],
-    containerRect: { x, y: y + 4, w: width, h: 56 },
-    containerCenterX: x + width / 2, containerCenterY: y + 32, containerWidth: width,
+    containerRect: { x, y: y + TAB_INSET, w: width, h: TAB_HEIGHT },
+    containerCenterX: x + width / 2, containerCenterY: y + BAR_HEIGHT / 2, containerWidth: width,
     tabContentIds: tabs.map(tab => tab.id), tabContentRects: tabs.map(tab => tab.rect),
   }
   return [container, ...tabs, indicator]

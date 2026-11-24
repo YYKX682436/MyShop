@@ -895,6 +895,8 @@ export class LiquidGlassRenderer {
 
   rafId: number | null = null
   animRafId: number | null = null
+  /** Optional foreground overlay synchronization, invoked on existing render frames. */
+  onAfterFrame: (() => void) | null = null
   suspended = false
   reducedMotion = false
   /** Bottom-tabs first-entry double-render counter.
