@@ -14,7 +14,9 @@ grep -Fq 'BAOTA_NGINX_PROXY_SOURCE_CONFIRMED: ${MYSHOP_BAOTA_PROXY_SOURCE_CONFIR
 grep -Fq 'RATE_LIMIT_TRUSTED_PROXIES: ${MYSHOP_CADDY_IP:?' "$compose" || fail 'API must trust only the reserved Caddy address'
 grep -Fq 'AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}' "$compose" || fail 'shared Compose must default secure cookies on'
 grep -Fq 'PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be set in the private environment file}' "$compose" || fail 'canonical HTTPS origin must be configured'
-grep -Fq 'Host: $$TASK_HEALTH_AUTHORITY' "$compose" || fail 'Web health check must send the configured storefront Host'
+grep -Fq "require('node:http').get('http://127.0.0.1:3000/'" "$compose" || fail 'Web health check must use Node HTTP, which preserves an explicit Host header'
+grep -Fq 'new URL(process.env.PUBLIC_SITE_URL).host' "$compose" || fail 'Web health check must send the configured storefront Host'
+if grep -Fq 'wget -q -O /dev/null --header="Host:' "$compose"; then fail 'Web health check must not depend on wget in the runtime image'; fi
 grep -Fq 'reverse_proxy /api/* api:8083' "$caddyfile" || fail 'Caddy must preserve /api routes for Spring and callbacks'
 grep -Fq 'header_up X-Real-IP {client_ip}' "$caddyfile" || fail 'Caddy must overwrite X-Real-IP with its resolved client IP'
 grep -Fq 'header_up X-Forwarded-For {client_ip}' "$caddyfile" || fail 'Caddy must overwrite X-Forwarded-For with its resolved client IP'
