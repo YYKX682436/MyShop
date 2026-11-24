@@ -127,7 +127,8 @@ public class ImageUploadService {
         int dot = name == null ? -1 : name.lastIndexOf('.');
         String extension = dot < 0 ? "" : name.substring(dot).toLowerCase(Locale.ROOT);
         if (!(optimizeExisting ? FORMATS : avatar || favicon ? ACCOUNT_FORMATS : FORMATS).contains(extension))
-            throw validationFailure(avatar, optimizeExisting, "unsupported_format", "原头像格式不支持优化");
+            throw validationFailure(avatar, optimizeExisting, "unsupported_format", optimizeExisting
+                    ? "原头像格式不支持优化" : "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP/AVIF/HEIC/HEIF");
         String mime = file.getContentType();
         boolean generic = mime == null || mime.isBlank() || mime.equalsIgnoreCase("application/octet-stream");
         boolean png = (extension.equals(".png") || extension.equals(".apng"))
