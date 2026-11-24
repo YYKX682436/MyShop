@@ -7,7 +7,7 @@ import remarkGfm from "remark-gfm"
 
 // Isolated fixture exercises the actual product form; it does not substitute
 // for backend integration or real mobile/IME device testing.
-const base = new URL(process.env.BASE_URL ?? "http://127.0.0.1:3012")
+const base = new URL(process.env.BASE_URL ?? "http://localhost:3012")
 if (!["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("Local web server required")
 const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 const browser = await chromium.launch({ headless: true, executablePath: existsSync(chrome) ? chrome : undefined })
@@ -19,11 +19,16 @@ const failures = []
 let uploadCount = 0
 let releaseUpload
 let releaseSourceUpload
+let releaseUndoUpload
+let releaseFailedUpload
+let releasePendingUndo
 const releaseMulti = []
 let concurrentUploads = 0
 let maxConcurrentUploads = 0
 let productPayload
 let announcementPayload
+let optimizationCalls = 0
+let mediaAsset = {id:"library",name:"a[1].png",url:"/api/uploads/library.webp",size:500,format:"WEBP",type:"image",status:"ready",usage:["product"],uploaded_at:1,thumbnail_url:null,clear_url:null,original_size:500}
 const announcements = [{ id:"announcement-1", title:"旧公告", body:"旧行一\n旧行二\n\n- 清单\n\n![a\\[1\\].png](</api/uploads/legacy.png?x=a(b)>)\n\n[![odd\\[.png](<https://example.org/image?file=a(b&x=1>)](https://example.org/page)\n\n![left\\[.png](</api/uploads/legacy.png?side=1>)![right\\].png](</api/uploads/legacy.png?side=2>)\n\n![reference\\[.png][photo-ref]\n\n[photo-ref]: </api/uploads/legacy.png?x=1(2)> \"说明\"\n[photo-ref]: </api/uploads/wrong.png> \"错误\"\n\n![unsafe](javascript:alert) ![unsafe2](<javascript:alert(1)>)\n\n```mermaid\nA-->B\n```\n\n```plantuml\nAlice -> Bob\n```\n\n| 列一 | 列二 |\n| --- | --- |\n| 单元 | 另一个 |", status:"DRAFT", published_at:null }]
 const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL8WQAAAABJRU5ErkJggg==", "base64")
 try {
@@ -51,10 +56,22 @@ try {
       if (number === 1) await new Promise(resolve => { releaseUpload = resolve })
       if (number === 4 || number === 5) await new Promise(resolve => { releaseMulti.push(resolve) })
       if (number === 8) await new Promise(resolve => { releaseSourceUpload = resolve })
-      try { return await route.fulfill(ok({ url: `/api/uploads/editor-${number}.webp`, original_size: image.length, stored_size: image.length, reason: number === 1 ? "color_unspecified" : "FIXTURE" })) }
+      if (number === 9) await new Promise(resolve => { releaseUndoUpload = resolve })
+      if (number === 10) await new Promise(resolve => { releaseFailedUpload = resolve })
+      if (number === 11) await new Promise(resolve => { releasePendingUndo = resolve })
+      try {
+        if (number === 10) return await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: 500, message: "fixture upload failure" }) })
+        return await route.fulfill(ok({ url: `/api/uploads/editor-${number}.webp`, original_size: image.length, stored_size: image.length, reason: number === 1 ? "color_unspecified" : "FIXTURE" }))
+      }
       finally { concurrentUploads-- }
     }
-    if (path === "/api/admin/media") return route.fulfill(ok({ items: [{id:"library",name:"a[1].png",url:"/api/uploads/library.webp",size:500,format:"WEBP",type:"image",status:"ready",usage:["product"],uploaded_at:1}], total:1,page:0,page_size:20 }))
+    if (path === "/api/admin/media" && method === "GET") return route.fulfill(ok({ items: [mediaAsset], total:1,page:1,page_size:24 }))
+    if (path === "/api/admin/media/library/optimize-avatar" && method === "POST") {
+      optimizationCalls++
+      mediaAsset = { ...mediaAsset, thumbnail_url:"/api/uploads/avatar-thumb.webp" }
+      return route.fulfill(ok({ asset_id:"avatar-old", optimized:1, skipped:0, failed:0, display_bytes_saved:410000, physical_bytes_released:0,
+        outcomes:[{user_id:"fixture-user",status:"optimized",reason:null,message:null,before_bytes:500000,after_bytes:90000,url:"/api/uploads/avatar-new.webp"}], skipped_reason:null,message:null }))
+    }
     if (path === "/api/admin/products" && method === "POST") {
       productPayload = route.request().postDataJSON()
       return route.fulfill(ok({ id: "product-1", product_no: 1, ...productPayload, specs: [], warnings: [], pricing_matrix: [] }))
@@ -125,6 +142,8 @@ try {
   await editor.getByRole("button", { name: "插入", exact: true }).click()
   assert.equal(await wysiwyg.locator('img[src="https://example.org/photo?name=a%28b&size=1"]').count(), 1)
   await editor.getByRole("button", { name: "选择资源" }).click()
+  assert.equal(await page.getByRole("dialog", { name:"选择资源" }).getByRole("button", { name:"优化头像" }).count(), 0,
+    "the resource picker must not expose avatar optimization")
   await page.getByRole("dialog", { name: "选择资源" }).getByRole("button", { name: "使用图片" }).click()
   assert.equal(await wysiwyg.locator('img[src="/api/uploads/library.webp"]').count(), 1)
   // Clipboard and drop events use browser File/DataTransfer APIs with a real
@@ -208,6 +227,74 @@ try {
   await editor.locator('button[data-type="edit-mode"]').click()
   await editor.locator('button[data-mode="wysiwyg"]').click()
   await wysiwyg.waitFor()
+  await wysiwyg.evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element); range.collapse(false)
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
+  })
+  await page.keyboard.press("Enter"); await page.keyboard.press("Enter")
+  await editor.locator('input[type="file"]').setInputFiles({ name:"undo-after-upload.png",mimeType:"image/png",buffer:image })
+  await page.getByText("图片上传中（1）").waitFor()
+  await page.waitForTimeout(1100) // Vditor 4.0.1 default undoDelay is 800 ms.
+  releaseUndoUpload()
+  await page.getByText("图片上传中（1）").waitFor({ state:"hidden" })
+  await page.waitForTimeout(1100)
+  await editor.locator('button[data-type="undo"]').click()
+  const afterUploadUndo = await wysiwyg.innerHTML()
+  assert.ok(!afterUploadUndo.includes("MYSHOPUPLOAD"), "undo must restore a successful token as its image, not its private marker")
+  await editor.locator('button[data-type="redo"]').click()
+  const afterUploadRedo = await wysiwyg.innerHTML()
+  assert.equal(await wysiwyg.locator('img[src="/api/uploads/editor-9.webp"]').count(), 1,
+    "redo after upload completion must restore the completed image, never its private marker")
+  assert.ok(!afterUploadRedo.includes("MYSHOPUPLOAD"), "redo must not restore a private upload token")
+
+  await wysiwyg.evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element); range.collapse(false)
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
+  })
+  await editor.locator('input[type="file"]').setInputFiles({ name:"failed-upload.png",mimeType:"image/png",buffer:image })
+  await page.getByText("图片上传中（1）").waitFor()
+  for (let i = 0; i < 50 && !releaseFailedUpload; i++) await page.waitForTimeout(20)
+  assert.ok(releaseFailedUpload, "failed upload request must be in progress")
+  await page.waitForTimeout(1100)
+  releaseFailedUpload()
+  await page.getByText("图片上传中（1）").waitFor({ state:"hidden" })
+  await page.waitForTimeout(900)
+  assert.ok(!(await wysiwyg.innerHTML()).includes("MYSHOPUPLOAD"), "failed uploads must disappear from the editor")
+  await editor.locator('button[data-type="undo"]').click()
+  assert.ok(!(await wysiwyg.innerHTML()).includes("MYSHOPUPLOAD"), "undo after failure must not restore an upload token")
+  await editor.locator('button[data-type="redo"]').click()
+  assert.ok(!(await wysiwyg.innerHTML()).includes("MYSHOPUPLOAD"), "redo after failure must not restore an upload token")
+
+  await wysiwyg.evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element); range.collapse(false)
+    const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range)
+  })
+  await editor.locator('input[type="file"]').setInputFiles({ name:"undo-while-uploading.png",mimeType:"image/png",buffer:image })
+  await page.getByText("图片上传中（1）").waitFor()
+  for (let i = 0; i < 50 && !releasePendingUndo; i++) await page.waitForTimeout(20)
+  assert.ok(releasePendingUndo, "pending undo upload request must be in progress")
+  await page.waitForTimeout(1100)
+  await editor.locator('button[data-type="undo"]').click()
+  assert.equal(await page.getByRole("button", { name: "保存并完成" }).isDisabled(), true, "undo while upload is pending must still protect save")
+  releasePendingUndo()
+  await page.getByText("图片上传中（1）").waitFor({ state:"hidden" })
+  await editor.locator('button[data-type="redo"]').click()
+  assert.equal(await wysiwyg.locator('img[src="/api/uploads/editor-11.webp"]').count(), 1,
+    "redo after a pending upload finishes must restore its completed image")
+  assert.ok(!(await wysiwyg.innerHTML()).includes("MYSHOPUPLOAD"))
+
+  await editor.locator('button[data-type="edit-mode"]').click()
+  await editor.locator('button[data-mode="sv"]').click()
+  const resolvedSource = editor.locator("textarea.vditor-sv")
+  await resolvedSource.waitFor()
+  assert.ok(!(await resolvedSource.inputValue()).includes("MYSHOPUPLOAD"), "source output must not contain an upload marker")
+  assert.match(await resolvedSource.inputValue(), /editor-9\.webp/)
+  assert.match(await resolvedSource.inputValue(), /editor-11\.webp/)
+  assert.doesNotMatch(await resolvedSource.inputValue(), /editor-10\.webp/)
+  await editor.locator('button[data-type="edit-mode"]').click()
+  await editor.locator('button[data-mode="wysiwyg"]').click()
+  await wysiwyg.waitFor()
+
   await wysiwyg.click(); await page.keyboard.press("End")
   await page.waitForTimeout(900)
   await page.keyboard.insertText("不应保存的撤销内容")
@@ -329,6 +416,14 @@ try {
   assert.ok(requests.filter(url => url.includes("/vditor-assets/")).every(url => allowedAssets.has(new URL(url).pathname.split("/vditor-assets/4.0.1/")[1])), "editor must not load optional remote renderers")
   assert.ok(!requests.some(url => url.includes("unpkg.com")), requests.filter(url => url.includes("unpkg.com")).join("\n"))
   assert.ok(!requests.some(url => /MYSHOP(?:ALT|URL)/.test(url)), "conversion placeholders must never be requested")
+  mediaAsset = { ...mediaAsset, usage:["avatar"], thumbnail_url:null, size:500000, original_size:500000 }
+  await page.goto(new URL("/admin/media", base).href)
+  const optimizeButton = page.getByRole("button", { name:"优化头像" })
+  await optimizeButton.waitFor()
+  await optimizeButton.click()
+  assert.equal(optimizationCalls, 1, `the main admin library must call the avatar-only endpoint; requests=${JSON.stringify(requests.filter(url => url.includes("optimize-avatar")))}`)
+  await page.getByText(/展示文件减少/).waitFor()
+  await page.getByRole("button", { name:"优化头像" }).waitFor({ state:"detached" })
   assert.deepEqual(failures, [])
   console.log(JSON.stringify({ markdown: productPayload.detail_md, resources: requests.filter(url => url.includes("vditor-assets")), errors: failures }, null, 2))
 } finally { await browser.close() }

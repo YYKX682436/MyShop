@@ -696,6 +696,11 @@ export type MediaItem = {
 }
 export type MediaPage = { items: MediaItem[]; total: number; page: number; page_size: number }
 export type MediaInspection = { size: number; format: string; width?: number | null; height?: number | null; references: { table: string; source: string; count: number; owner_id: string; field: string; owner_type: string }[] }
+export type AvatarOptimizationReport = {
+  asset_id: string; optimized: number; skipped: number; failed: number; display_bytes_saved: number; physical_bytes_released: number;
+  outcomes: { user_id: string; status: "optimized" | "skipped" | "failed"; reason: string | null; message: string | null; before_bytes: number; after_bytes: number; url: string | null }[];
+  skipped_reason: string | null; message: string | null;
+}
 
 export const adminMediaApi = {
   getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc"; sort?: "time" | "size"; type?: string; usage?: string; unused?: boolean; exclude_avatars?: boolean; asset_id?: string }, signal?: AbortSignal) =>
@@ -703,6 +708,7 @@ export const adminMediaApi = {
   inspect: (filename: string, signal?: AbortSignal) =>
     request<MediaInspection>(`/admin/media/inspection?${buildQuery({ filename })}`, { signal }),
   delete: (filename: string) => request<void>(`/admin/media?${buildQuery({ filename })}`, { method: "DELETE" }),
+  optimizeAvatar: (assetId: string) => request<AvatarOptimizationReport>(`/admin/media/${encodeURIComponent(assetId)}/optimize-avatar`, { method: "POST" }),
 }
 
 export type VideoSession = {

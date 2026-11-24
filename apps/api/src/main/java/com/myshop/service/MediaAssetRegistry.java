@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -224,6 +225,72 @@ public class MediaAssetRegistry {
 
     public LockedReferences lockAvatar(String url, UUID userId) {
         return lockFields(Map.of("avatar_url", paths.direct(url)), true, userId, false, Map.of());
+    }
+
+    public record AvatarAsset(UUID id, String storagePath, String displayPath, String thumbnailPath, String clearPath,
+                              String originalFilename, String scope, String mediaType, String status, boolean deleted) {
+        List<String> paths() {
+            var result = new LinkedHashSet<String>();
+            for (String path : new String[]{storagePath, displayPath, thumbnailPath, clearPath}) if (path != null) result.add(path);
+            return List.copyOf(result);
+        }
+    }
+    public record AvatarTarget(UUID userId, String avatarUrl) { }
+    public record AvatarOptimizationLocks(boolean sourceUsable) { }
+
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public Optional<AvatarAsset> findAvatarAsset(UUID id) {
+        if (id == null) return Optional.empty();
+        return jdbc.query("""
+                SELECT id,storage_path,display_path,thumbnail_path,clear_path,original_filename,scope,media_type,
+                       processing_status,deleted_at
+                FROM media_assets WHERE id=?
+                """, (rs, n) -> new AvatarAsset(rs.getObject("id", UUID.class), rs.getString("storage_path"),
+                rs.getString("display_path"), rs.getString("thumbnail_path"), rs.getString("clear_path"),
+                rs.getString("original_filename"), rs.getString("scope"), rs.getString("media_type"),
+                rs.getString("processing_status"), rs.getTimestamp("deleted_at") != null), id).stream().findFirst();
+    }
+
+    /** Current user fields are checked against the asset paths; owner_user_id is not used to infer a shared avatar. */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public List<AvatarTarget> findCurrentAvatarTargets(AvatarAsset asset) {
+        if (asset == null) return List.of();
+        List<AvatarTarget> linked = jdbc.query("""
+                SELECT u.id,u.avatar_url FROM media_references r JOIN users u ON u.id=r.owner_id
+                WHERE r.asset_id=? AND r.owner_type='AVATAR' AND r.field='avatar_url'
+                  AND u.avatar_url IS NOT NULL AND btrim(u.avatar_url)<>''
+                ORDER BY u.id
+                """, (rs, n) -> new AvatarTarget(rs.getObject(1, UUID.class), rs.getString(2)), asset.id());
+        return linked.stream().filter(target -> {
+            String path = paths.managedPath(target.avatarUrl());
+            return path != null && asset.paths().contains(path);
+        }).toList();
+    }
+
+    /** Asset UUID order is shared with media deletion before the owner row is locked. */
+    public AvatarOptimizationLocks lockAvatarOptimization(UUID sourceId, String expectedOldUrl,
+                                                            ImageUploadService.UploadedImage uploaded, UUID ownerId) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive() || sourceId == null || ownerId == null
+                || uploaded == null || uploaded.assetId() == null || sourceId.equals(uploaded.assetId()))
+            throw new IllegalStateException("Avatar optimization requires two assets and an active transaction");
+        List<AvatarAsset> rows = jdbc.query("""
+                SELECT id,storage_path,display_path,thumbnail_path,clear_path,original_filename,scope,media_type,
+                       processing_status,deleted_at
+                FROM media_assets WHERE id IN (?,?) ORDER BY id FOR UPDATE
+                """, (rs, n) -> new AvatarAsset(rs.getObject("id", UUID.class), rs.getString("storage_path"),
+                rs.getString("display_path"), rs.getString("thumbnail_path"), rs.getString("clear_path"),
+                rs.getString("original_filename"), rs.getString("scope"), rs.getString("media_type"),
+                rs.getString("processing_status"), rs.getTimestamp("deleted_at") != null), sourceId, uploaded.assetId());
+        AvatarAsset source = rows.stream().filter(asset -> asset.id().equals(sourceId)).findFirst().orElse(null);
+        AvatarAsset target = rows.stream().filter(asset -> asset.id().equals(uploaded.assetId())).findFirst().orElse(null);
+        if (target == null || target.deleted() || !"IMAGE".equals(target.mediaType()) || !"READY".equals(target.status())
+                || !"AVATAR".equals(target.scope()) || target.thumbnailPath() == null
+                || !ownerId.equals(jdbc.queryForObject("SELECT owner_user_id FROM media_assets WHERE id=?", UUID.class, target.id()))
+                || !paths.direct(uploaded.url()).contains(target.displayPath()))
+            throw conflict("新头像资源未完成登记");
+        boolean sourceUsable = source != null && !source.deleted() && "IMAGE".equals(source.mediaType())
+                && "READY".equals(source.status()) && paths.direct(expectedOldUrl).stream().anyMatch(source.paths()::contains);
+        return new AvatarOptimizationLocks(sourceUsable);
     }
 
     private LockedReferences lockFields(Map<String, Set<String>> fields, boolean avatar, UUID owner, boolean allowHistoricalAvatar,

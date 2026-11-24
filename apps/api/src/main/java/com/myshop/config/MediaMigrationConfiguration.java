@@ -27,17 +27,17 @@ public class MediaMigrationConfiguration {
             JdbcTemplate jdbc = new JdbcTemplate(dataSource);
             var current = flyway.info().current();
             boolean beforeCutover = current == null || current.getVersion().compareTo(MigrationVersion.fromVersion("64")) < 0;
+            var indexer = new MediaLegacyIndexer(jdbc, uploadStorage.getObject(),
+                    new ManagedMediaReferences(jdbc, prefix, publicSite));
             if (beforeCutover) {
                 Flyway.configure().configuration(flyway.getConfiguration()).target("63").load().migrate();
-                var indexer = new MediaLegacyIndexer(jdbc, uploadStorage.getObject(), new ManagedMediaReferences(jdbc, prefix, publicSite));
                 indexer.indexBeforeCutover();
                 flyway.migrate();
-                indexer.clearOldDeletedReferences();
             } else {
                 flyway.migrate();
-                new MediaLegacyIndexer(jdbc, uploadStorage.getObject(), new ManagedMediaReferences(jdbc, prefix, publicSite))
-                        .clearOldDeletedReferences();
             }
+            indexer.clearOldDeletedReferences();
+            indexer.repairAvatarReferences();
             String marker = jdbc.queryForObject("SELECT obj_description('public.media_references'::regclass,'pg_class')", String.class);
             Integer oldTriggers = jdbc.queryForObject("""
                     SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid

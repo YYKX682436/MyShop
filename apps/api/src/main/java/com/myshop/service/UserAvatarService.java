@@ -16,6 +16,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.UUID;
+import java.util.Objects;
+import java.util.Map;
+import java.util.Set;
 
 /** Avatar assets are owned by one account and retired only after the account change commits. */
 @Slf4j
@@ -51,5 +54,29 @@ public class UserAvatarService {
         UserProfileResponse result = UserProfileResponse.from(saved, level);
         result.setImageProcessingReason(uploaded.reason());
         return result;
+    }
+
+    /** Switches one existing account only if its current URL still matches the optimization snapshot. */
+    @Transactional
+    public boolean applyOptimizedAvatar(UUID userId, UUID sourceAssetId, String expectedPreviousUrl,
+                                        ImageUploadService.UploadedImage uploaded) {
+        if (userId == null || uploaded == null) return false;
+        var lockedAssets = assets.lockAvatarOptimization(sourceAssetId, expectedPreviousUrl, uploaded, userId);
+        User user = userRepository.findByIdForUpdate(userId).orElse(null);
+        if (user == null || !lockedAssets.sourceUsable() || !Objects.equals(user.getAvatarUrl(), expectedPreviousUrl)) return false;
+        String previous = user.getAvatarUrl();
+        user.setAvatarUrl(uploaded.url());
+        userRepository.save(user);
+        var references = new MediaAssetRegistry.LockedReferences(Map.of("avatar_url", Set.of(uploaded.assetId())));
+        assets.replaceReferences("AVATAR", userId, references, "avatar_url");
+        if (!TransactionSynchronizationManager.isSynchronizationActive())
+            throw new IllegalStateException("Avatar persistence requires an active transaction");
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCommit() {
+                try { maintenance.retireUnreferencedAvatar(previous, userId); }
+                catch (RuntimeException failure) { log.warn("Previous avatar cleanup needs retry: {}", failure.getMessage()); }
+            }
+        });
+        return true;
     }
 }

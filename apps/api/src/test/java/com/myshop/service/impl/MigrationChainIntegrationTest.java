@@ -72,7 +72,11 @@ class MigrationChainIntegrationTest {
             jdbcTemplate.update("INSERT INTO products(id,title,category_id,cover_url,detail_md,retail_price,cost_price,stock_mode,delivery_type) VALUES (?,'fixture',?,?,?,1,0.5,'UNLIMITED','MANUAL')",
                     product, category, liveUrl, "第一行\n![旧图片](" + oldUrl + ")\n![有效图片](" + liveUrl + ")\n"
                             + "[![嵌套有效图片](" + liveUrl + ")](" + oldUrl + ")");
-            jdbcTemplate.update("INSERT INTO users(id,username,password_hash,role,avatar_url) VALUES (?,'backfill-owner','test','ADMIN',?)", user, "/api/uploads/" + avatar);
+            jdbcTemplate.update("""
+                    INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id,avatar_url,is_deleted)
+                    VALUES (?,'backfill-owner','backfill-owner@example.com','test','USER',12345678,
+                            (SELECT id FROM user_levels WHERE is_default=true AND enabled=true LIMIT 1),?,1)
+                    """, user, "/api/uploads/" + avatar);
             jdbcTemplate.update("INSERT INTO site_announcements(id,title,body,status) VALUES (?,'通知',?,'DRAFT')", announcement, "正文\n![图](" + liveUrl + ")");
             jdbcTemplate.update("UPDATE site_configs SET config_value=? WHERE config_key='favicon_url'", liveUrl);
             jdbcTemplate.update("INSERT INTO media_deleted_files(filename) VALUES (?)", deleted);
@@ -86,6 +90,7 @@ class MigrationChainIntegrationTest {
             assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM media_assets WHERE storage_path=?", Integer.class, deletedUpper));
             assertEquals(3, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references r JOIN media_assets a ON a.id=r.asset_id WHERE a.storage_path=?", Integer.class, image));
             assertEquals(user, jdbcTemplate.queryForObject("SELECT owner_user_id FROM media_assets WHERE storage_path=?", UUID.class, avatar));
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE owner_type='AVATAR' AND owner_id=? AND field='avatar_url'", Integer.class, user));
             assertNotNull(jdbcTemplate.queryForObject("SELECT deleted_at FROM media_assets WHERE storage_path=?", java.sql.Timestamp.class, deleted));
             flyway().migrate(); indexer.clearOldDeletedReferences();
             assertEquals("第一行\n（资源已删除）\n![有效图片](" + liveUrl + ")\n![嵌套有效图片](" + liveUrl + ")（资源已删除）",

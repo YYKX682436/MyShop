@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Copy, ImagePlus, Loader2, Search, Trash2, Upload, Video } from "lucide-react"
+import { Copy, ImagePlus, Loader2, Search, Sparkles, Trash2, Upload, Video } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -41,6 +41,7 @@ export function MediaLibrary({ onSelect, showHeader = false }: { onSelect?: (ite
   const [inspectionFailed, setInspectionFailed] = useState(false)
   const [inspectionRevision, setInspectionRevision] = useState(0)
   const [working, setWorking] = useState(false)
+  const [optimizingId, setOptimizingId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const manageDialog = useRef<HTMLDialogElement>(null)
   const refresh = useCallback(() => setRevision(value => value + 1), [])
@@ -129,6 +130,37 @@ export function MediaLibrary({ onSelect, showHeader = false }: { onSelect?: (ite
     try { await adminVideoApi.cleanup(item.id); toast.success(zh ? "临时文件已清理" : "Temporary upload cleaned"); refresh() }
     catch (failure) { toast.error(failure instanceof Error ? failure.message : String(failure)) }
   }
+  const optimizeAvatar = async (item: MediaItem) => {
+    if (optimizingId) return
+    setOptimizingId(item.id)
+    try {
+      const report = await adminMediaApi.optimizeAvatar(item.id)
+      const optimized = report.outcomes.filter(outcome => outcome.status === "optimized")
+      const skipped = report.outcomes.filter(outcome => outcome.status === "skipped")
+      const failed = report.outcomes.filter(outcome => outcome.status === "failed")
+      const before = optimized.reduce((sum, outcome) => sum + outcome.before_bytes, 0)
+      const after = optimized.reduce((sum, outcome) => sum + outcome.after_bytes, 0)
+      const skipReasons = [...new Set(skipped.map(outcome => outcome.message).filter(Boolean))]
+      const failureReasons = [...new Set(failed.map(outcome => outcome.message).filter(Boolean))]
+      const parts = [
+        optimized.length ? (zh
+          ? `已优化 ${optimized.length} 个头像：${formatSize(before)} → ${formatSize(after)}，展示文件减少 ${formatSize(report.display_bytes_saved)}`
+          : `Optimized ${optimized.length} avatars: ${formatSize(before)} → ${formatSize(after)}; display files reduced by ${formatSize(report.display_bytes_saved)}`) : "",
+        skipped.length ? (zh
+          ? `跳过 ${skipped.length} 个：${skipReasons.join("；") || report.message || "无需处理"}`
+          : `Skipped ${skipped.length}: ${skipReasons.join("; ") || report.message || "No changes needed"}`) : "",
+        failed.length ? (zh
+          ? `失败 ${failed.length} 个：${failureReasons.join("；") || "请重试"}`
+          : `Failed ${failed.length}: ${failureReasons.join("; ") || "Please retry"}`) : "",
+      ].filter(Boolean)
+      if (failed.length) toast.error(parts.join(" · "))
+      else if (optimized.length) toast.success(parts.join(" · "))
+      else toast.warning(parts.join(" · ") || report.message || (zh ? "没有可优化的头像" : "No avatar needs optimization"))
+      refresh()
+    } catch (failure) {
+      toast.error(failure instanceof Error ? failure.message : (zh ? "头像优化失败" : "Avatar optimization failed"))
+    } finally { setOptimizingId(null) }
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const selectClass = "h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground"
@@ -172,6 +204,7 @@ export function MediaLibrary({ onSelect, showHeader = false }: { onSelect?: (ite
                 {item.upload_cleanup_error && <p role="alert" className="break-words text-xs text-destructive">{item.upload_cleanup_error}</p>}
                 <div className="flex flex-wrap gap-1 pt-1">
                   {item.url && item.status === "ready" && <Button type="button" size="icon" variant="ghost" className="h-9 w-9" aria-label={t("admin.mediaCopy")} title={t("admin.mediaCopy")} onClick={() => void copy(item)}><Copy aria-hidden="true" /></Button>}
+                  {showHeader && !selecting && item.type === "image" && item.status === "ready" && item.thumbnail_url === null && item.usage.includes("avatar") && <Button type="button" size="icon" variant="ghost" className="h-9 w-9" aria-label={zh ? "优化头像" : "Optimize avatar"} title={zh ? "优化头像" : "Optimize avatar"} disabled={optimizingId !== null} onClick={() => void optimizeAvatar(item)}>{optimizingId === item.id ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}</Button>}
                   {showHeader && (item.status !== "deleted" || item.cleanup_error) && <Button type="button" size="icon" variant="ghost" className="h-9 w-9 text-destructive" aria-label={item.status === "deleted" ? (zh ? "重试清理" : "Retry cleanup") : t("admin.mediaDelete")} onClick={() => manage(item)}><Trash2 aria-hidden="true" /></Button>}
                   {showHeader && item.type === "video" && item.status === "failed" && <Button type="button" size="sm" variant="outline" onClick={() => void retryVideo(item)}>{t("common.retry")}</Button>}
                   {showHeader && item.type === "video" && item.upload_cleanup_error && <Button type="button" size="sm" variant="outline" onClick={() => void retryVideoCleanup(item)}>{zh ? "重试清理上传文件" : "Retry upload cleanup"}</Button>}

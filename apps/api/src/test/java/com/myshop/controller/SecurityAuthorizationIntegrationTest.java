@@ -4,6 +4,7 @@ import jakarta.servlet.DispatcherType;
 import com.myshop.common.PageResult;
 import com.myshop.model.response.AdministratorResponse;
 import com.myshop.service.AdministratorService;
+import com.myshop.service.AvatarMediaOptimizationService;
 import com.myshop.service.OperationLogService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,6 +56,9 @@ class SecurityAuthorizationIntegrationTest {
     private OperationLogService operationLogService;
 
     @MockitoBean
+    private AvatarMediaOptimizationService avatarMediaOptimizationService;
+
+    @MockitoBean
     private com.myshop.service.impl.UserSecretPriceService secretPriceService;
 
     @Autowired
@@ -85,6 +89,15 @@ class SecurityAuthorizationIntegrationTest {
         mockMvc.perform(get("/api/admin/media").contextPath("/api").with(user("buyer").roles("USER"))).andExpect(status().isForbidden());
         mockMvc.perform(get("/api/admin/media").contextPath("/api").with(user("admin").roles("ADMIN"))).andExpect(status().isOk());
         mockMvc.perform(get("/api/admin/media").contextPath("/api").with(user("super").roles("SUPER_ADMIN"))).andExpect(status().isOk());
+    }
+
+    @Test
+    void avatarOptimizationRequiresAdministrator() throws Exception {
+        String path = "/api/admin/media/00000000-0000-0000-0000-000000000001/optimize-avatar";
+        mockMvc.perform(post(path).contextPath("/api")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post(path).contextPath("/api").with(user("buyer").roles("USER"))).andExpect(status().isForbidden());
+        mockMvc.perform(post(path).contextPath("/api").with(user("admin").roles("ADMIN"))).andExpect(status().isOk());
+        mockMvc.perform(post(path).contextPath("/api").with(user("super").roles("SUPER_ADMIN"))).andExpect(status().isOk());
     }
 
     @Test

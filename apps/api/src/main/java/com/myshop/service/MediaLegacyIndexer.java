@@ -3,6 +3,8 @@ package com.myshop.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -31,11 +33,15 @@ public class MediaLegacyIndexer {
     private final JdbcTemplate jdbc;
     private final UploadStorage storage;
     private final ManagedMediaReferences paths;
+    private final TransactionTemplate avatarTransactions;
 
     public MediaLegacyIndexer(JdbcTemplate jdbc, UploadStorage storage, ManagedMediaReferences paths) {
         this.jdbc = jdbc;
         this.storage = storage;
         this.paths = paths;
+        var dataSource = java.util.Objects.requireNonNull(jdbc.getDataSource(), "Media indexing requires a data source");
+        this.avatarTransactions = new TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+        this.avatarTransactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public void indexBeforeCutover() {
@@ -45,7 +51,7 @@ public class MediaLegacyIndexer {
             indexField("PRODUCT", row.id(), "cover_url", row.first(), false);
             indexField("PRODUCT", row.id(), "detail_md", row.second(), true);
         });
-        page("SELECT id,avatar_url,NULL AS other FROM users WHERE is_deleted=0", row -> {
+        page("SELECT id,avatar_url,NULL AS other FROM users WHERE avatar_url IS NOT NULL AND btrim(avatar_url)<>''", row -> {
             indexField("AVATAR", row.id(), "avatar_url", row.first(), false);
             String path = paths.managedPath(row.first());
             if (path != null) jdbc.update("UPDATE media_assets SET owner_user_id=coalesce(owner_user_id,?) WHERE storage_path=? AND scope='AVATAR'", row.id(), path);
@@ -60,6 +66,79 @@ public class MediaLegacyIndexer {
         // written. All preceding work used short independent transactions.
         jdbc.execute("COMMENT ON TABLE media_references IS 'myshop-media-index-complete-v1'");
         log.info("Legacy public media and current references were indexed");
+    }
+
+    /** Idempotently repairs only current user avatar links after the original V64 cutover. */
+    public AvatarRepairStats repairAvatarReferences() {
+        int[] referencesAdded = {0};
+        int[] ownersAssigned = {0};
+        int[] tombstonesCleared = {0};
+        page("SELECT id,avatar_url,NULL AS other FROM users WHERE avatar_url IS NOT NULL AND btrim(avatar_url)<>''",
+                row -> {
+                    AvatarRepairStats change = avatarTransactions == null
+                            ? repairAvatarReference(row)
+                            : avatarTransactions.execute(status -> repairAvatarReference(row));
+                    if (change != null) {
+                        referencesAdded[0] += change.referencesAdded();
+                        ownersAssigned[0] += change.ownersAssigned();
+                        tombstonesCleared[0] += change.tombstonesCleared();
+                    }
+                });
+        var result = new AvatarRepairStats(referencesAdded[0], ownersAssigned[0], tombstonesCleared[0]);
+        log.info("Incremental avatar reference repair: references_added={}, owners_assigned={}, tombstones_cleared={}",
+                result.referencesAdded(), result.ownersAssigned(), result.tombstonesCleared());
+        return result;
+    }
+
+    private AvatarRepairStats repairAvatarReference(Row row) {
+        int[] referencesAdded = {0};
+        int[] ownersAssigned = {0};
+        int[] tombstonesCleared = {0};
+        String avatarUrl = row.first();
+        String path = paths.managedPath(avatarUrl);
+        if (path == null) return new AvatarRepairStats(0, 0, 0);
+        List<AvatarAssetMatch> matches = jdbc.query("""
+                SELECT id,storage_path,display_path,thumbnail_path,clear_path,scope,media_type,processing_status,deleted_at
+                FROM media_assets
+                WHERE storage_path=? OR display_path=? OR thumbnail_path=? OR clear_path=?
+                  OR (deleted_at IS NOT NULL AND position('/' in storage_path)=0 AND position('/' in ?)=0
+                      AND lower(storage_path)=lower(?))
+                ORDER BY id
+                """, (rs, n) -> new AvatarAssetMatch(rs.getObject("id", UUID.class), rs.getString("storage_path"),
+                rs.getString("display_path"), rs.getString("thumbnail_path"), rs.getString("clear_path"),
+                rs.getString("scope"), rs.getString("media_type"), rs.getString("processing_status"),
+                rs.getTimestamp("deleted_at") != null), path, path, path, path, path, path);
+        if (matches.isEmpty()) return new AvatarRepairStats(0, 0, 0);
+
+        List<AvatarAssetMatch> tombstones = matches.stream().filter(AvatarAssetMatch::deleted).toList();
+        if (!tombstones.isEmpty()) {
+            int cleared = jdbc.update("UPDATE users SET avatar_url=NULL WHERE id=? AND avatar_url=?", row.id(), avatarUrl);
+            if (cleared == 1) {
+                for (AvatarAssetMatch tombstone : tombstones)
+                    jdbc.update("DELETE FROM media_references WHERE asset_id=? AND owner_type='AVATAR' AND owner_id=? AND field='avatar_url'",
+                            tombstone.id(), row.id());
+                tombstonesCleared[0]++;
+            }
+            return new AvatarRepairStats(0, 0, tombstonesCleared[0]);
+        }
+
+        if (!storage.isSafePublicFile(path)) return new AvatarRepairStats(0, 0, 0);
+        for (AvatarAssetMatch match : matches) {
+            if (match.deleted() || !"IMAGE".equals(match.mediaType()) || !"READY".equals(match.processingStatus())) continue;
+            referencesAdded[0] += jdbc.update("""
+                    INSERT INTO media_references(asset_id,owner_type,owner_id,field)
+                    SELECT ?,'AVATAR',?,'avatar_url'
+                    WHERE EXISTS(SELECT 1 FROM users WHERE id=? AND avatar_url=?)
+                    ON CONFLICT DO NOTHING
+                    """, match.id(), row.id(), row.id(), avatarUrl);
+            if ("AVATAR".equals(match.scope()) && path.equals(match.storagePath()))
+                ownersAssigned[0] += jdbc.update("""
+                        UPDATE media_assets SET owner_user_id=coalesce(owner_user_id,?)
+                        WHERE id=? AND scope='AVATAR' AND owner_user_id IS NULL
+                          AND EXISTS(SELECT 1 FROM users WHERE id=? AND avatar_url=?)
+                        """, row.id(), match.id(), row.id(), avatarUrl);
+        }
+        return new AvatarRepairStats(referencesAdded[0], ownersAssigned[0], tombstonesCleared[0]);
     }
 
     /** Removes only references to files deleted before migration, never other historical data. */
@@ -230,6 +309,10 @@ public class MediaLegacyIndexer {
         } catch (IOException | RuntimeException ignored) { return null; }
     }
     private record Row(UUID id, String first, String second) { }
+    private record AvatarAssetMatch(UUID id, String storagePath, String displayPath, String thumbnailPath,
+                                    String clearPath, String scope, String mediaType, String processingStatus,
+                                    boolean deleted) { }
+    public record AvatarRepairStats(int referencesAdded, int ownersAssigned, int tombstonesCleared) { }
     private record DeletedReference(UUID assetId, String ownerType, UUID ownerId, String field,
                                     String storage, String display, String thumbnail, String clear) {
         List<String> paths() {

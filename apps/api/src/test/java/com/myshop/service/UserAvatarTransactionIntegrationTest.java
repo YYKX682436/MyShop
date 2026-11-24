@@ -71,6 +71,7 @@ class UserAvatarTransactionIntegrationTest {
     private EntityManager entityManager;
     @Autowired private ImageUploadService images;
     @Autowired private MediaAssetRegistry assets;
+    @Autowired private MediaMaintenanceService maintenance;
     @Autowired private org.springframework.transaction.PlatformTransactionManager transactions;
     @Autowired private javax.sql.DataSource dataSource;
 
@@ -204,6 +205,110 @@ class UserAvatarTransactionIntegrationTest {
             jdbcTemplate.update("DELETE FROM product_categories WHERE id=?", category);
             jdbcTemplate.update("DELETE FROM media_assets WHERE id=?", productImage.assetId());
         }
+    }
+
+    @Test
+    void optimizationUsesCurrentAvatarUsersAndKeepsSharedProductReferences() throws Exception {
+        User disabled = persistUserWithPreviousAvatar();
+        disabled.setIsDeleted(1);
+        userRepository.saveAndFlush(disabled);
+        User second = persistSecondAvatarUser(PREVIOUS_URL);
+        UUID category = UUID.randomUUID(), product = UUID.randomUUID();
+        String categoryName = "avatar optimization " + category;
+        jdbcTemplate.update("INSERT INTO product_categories(id,name) VALUES (?,?)", category, categoryName);
+        jdbcTemplate.update("INSERT INTO products(id,title,category_id,cover_url,retail_price,cost_price,stock_mode,delivery_type) VALUES (?, 'avatar optimization fixture', ?, ?, 1, 0.5, 'UNLIMITED', 'MANUAL')",
+                product, category, PREVIOUS_URL);
+        UUID oldAsset = jdbcTemplate.queryForObject("SELECT id FROM media_assets WHERE storage_path=?", UUID.class, PREVIOUS_RELATIVE_PATH);
+        jdbcTemplate.update("INSERT INTO media_references(asset_id,owner_type,owner_id,field) VALUES (?,'AVATAR',?,'avatar_url')", oldAsset, second.getId());
+        jdbcTemplate.update("INSERT INTO media_references(asset_id,owner_type,owner_id,field) VALUES (?,'PRODUCT',?,'cover_url')", oldAsset, product);
+        try {
+            var old = assets.findAvatarAsset(oldAsset).orElseThrow();
+            assertEquals(2, assets.findCurrentAvatarTargets(old).size(), "current user fields, including a disabled user, determine the optimization targets");
+
+            ImageUploadService.UploadedImage firstOptimized = createManagedAvatar(disabled.getId(), "optimized-disabled");
+            assertTrue(userAvatarService.applyOptimizedAvatar(disabled.getId(), oldAsset, PREVIOUS_URL, firstOptimized));
+            entityManager.clear();
+            assertEquals(firstOptimized.url(), userRepository.findById(disabled.getId()).orElseThrow().getAvatarUrl());
+            assertEquals(PREVIOUS_URL, userRepository.findById(second.getId()).orElseThrow().getAvatarUrl());
+            assertTrue(Files.exists(UPLOAD_DIRECTORY.resolve(PREVIOUS_RELATIVE_PATH)), "the other user's reference keeps the old shared file alive");
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE asset_id=? AND owner_type='AVATAR'", Integer.class, oldAsset));
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE asset_id=? AND owner_type='PRODUCT' AND owner_id=?", Integer.class, oldAsset, product));
+
+            ImageUploadService.UploadedImage reuploaded = createManagedAvatar(second.getId(), "concurrent-reupload");
+            new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(status -> {
+                var refs = assets.lockAvatar(reuploaded.url(), second.getId());
+                User locked = userRepository.findByIdForUpdate(second.getId()).orElseThrow();
+                locked.setAvatarUrl(reuploaded.url()); userRepository.save(locked);
+                assets.replaceReferences("AVATAR", second.getId(), refs, "avatar_url");
+            });
+            ImageUploadService.UploadedImage staleOptimization = createManagedAvatar(second.getId(), "stale-optimization");
+            assertFalse(userAvatarService.applyOptimizedAvatar(second.getId(), oldAsset, PREVIOUS_URL, staleOptimization),
+                    "the original URL comparison inside the user row lock must reject a stale optimization");
+            maintenance.retireUnreferencedAvatar(staleOptimization.url(), second.getId());
+
+            entityManager.clear();
+            assertEquals(reuploaded.url(), userRepository.findById(second.getId()).orElseThrow().getAvatarUrl());
+            assertNotNull(jdbcTemplate.queryForObject("SELECT deleted_at FROM media_assets WHERE id=?", java.sql.Timestamp.class, jdbcTemplate.queryForObject("SELECT id FROM media_assets WHERE storage_path=?", UUID.class, staleOptimization.relativePath())));
+            assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE asset_id=? AND owner_type='AVATAR' AND owner_id=?", Integer.class, oldAsset, second.getId()));
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE asset_id=? AND owner_type='PRODUCT' AND owner_id=?", Integer.class, oldAsset, product));
+            assertTrue(Files.exists(UPLOAD_DIRECTORY.resolve(PREVIOUS_RELATIVE_PATH)), "product use still retains the old shared file");
+            assertNull(jdbcTemplate.queryForObject("SELECT deleted_at FROM media_assets WHERE id=?", java.sql.Timestamp.class, oldAsset));
+        } finally {
+            jdbcTemplate.update("DELETE FROM media_references WHERE owner_type='PRODUCT' AND owner_id=?", product);
+            jdbcTemplate.update("DELETE FROM products WHERE id=?", product);
+            jdbcTemplate.update("DELETE FROM product_categories WHERE id=?", category);
+        }
+    }
+
+    @Test
+    void failedOptimizationTransactionKeepsOldAvatarAndDoesNotRetireIt() throws Exception {
+        User user = persistUserWithPreviousAvatar();
+        ImageUploadService.UploadedImage replacement = createManagedAvatar(user.getId(), "rollback-optimization");
+        jdbcTemplate.execute("ALTER TABLE users ADD CONSTRAINT avatar_optimization_rollback_check CHECK (avatar_url IS NULL OR avatar_url = '" + PREVIOUS_URL + "')");
+        try {
+            assertThrows(RuntimeException.class,
+                    () -> userAvatarService.applyOptimizedAvatar(user.getId(),
+                            jdbcTemplate.queryForObject("SELECT id FROM media_assets WHERE storage_path=?", UUID.class, PREVIOUS_RELATIVE_PATH),
+                            PREVIOUS_URL, replacement));
+            entityManager.clear();
+            assertEquals(PREVIOUS_URL, userRepository.findById(user.getId()).orElseThrow().getAvatarUrl());
+            assertTrue(Files.exists(UPLOAD_DIRECTORY.resolve(PREVIOUS_RELATIVE_PATH)));
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE owner_type='AVATAR' AND owner_id=? AND asset_id=(SELECT id FROM media_assets WHERE storage_path=?)", Integer.class, user.getId(), PREVIOUS_RELATIVE_PATH));
+            assertEquals(0, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE owner_type='AVATAR' AND owner_id=? AND asset_id=?", Integer.class, user.getId(), replacement.assetId()));
+        } finally {
+            jdbcTemplate.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS avatar_optimization_rollback_check");
+            maintenance.retireUnreferencedAvatar(replacement.url(), user.getId());
+        }
+    }
+
+    private User persistSecondAvatarUser(String avatarUrl) {
+        UUID defaultLevelId = jdbcTemplate.queryForObject("SELECT id FROM user_levels WHERE is_default = true AND enabled = true LIMIT 1", UUID.class);
+        User user = new User();
+        user.setUsername("avatar-transaction-" + UUID.randomUUID());
+        user.setEmail(user.getUsername() + "@example.com");
+        user.setPasswordHash("test-password-hash");
+        user.setRole(UserRole.USER);
+        user.setUserNo(USER_NO.incrementAndGet());
+        user.setUserLevelId(defaultLevelId);
+        user.setAvatarUrl(avatarUrl);
+        return userRepository.saveAndFlush(user);
+    }
+
+    private ImageUploadService.UploadedImage createManagedAvatar(UUID owner, String label) throws IOException {
+        UUID id = UUID.randomUUID();
+        String stem = "avatars/managed-" + UUID.randomUUID();
+        String display = stem + "-display.webp", thumbnail = stem + "-thumb.webp", clear = stem + "-clear.webp";
+        byte[] bytes = new byte[]{'R','I','F','F',1,2,3,4,'W','E','B','P'};
+        for (String path : List.of(display, thumbnail, clear)) {
+            Path file = UPLOAD_DIRECTORY.resolve(path); Files.createDirectories(file.getParent()); Files.write(file, bytes);
+        }
+        jdbcTemplate.update("""
+                INSERT INTO media_assets(id,storage_path,display_path,thumbnail_path,clear_path,original_filename,media_type,mime_type,
+                  size_bytes,original_size_bytes,thumbnail_size_bytes,clear_size_bytes,width,height,scope,owner_user_id,processing_status)
+                VALUES (?,?,?,?,?,?,'IMAGE','image/webp',12,128,12,12,32,32,'AVATAR',?,'READY')
+                """, id, display, display, thumbnail, clear, label + ".png", owner);
+        return new ImageUploadService.UploadedImage("/api/uploads/" + display, display, 128, 12,
+                "compressed", id, false, "/api/uploads/" + thumbnail, "/api/uploads/" + clear);
     }
 
     private User persistUserWithPreviousAvatar() throws IOException {

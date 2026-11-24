@@ -34,6 +34,22 @@ interface MarkdownEditorProps {
 type SavedSelection = { mode: "sv"; start: number; end: number } | { mode: "wysiwyg" | "ir"; range: Range }
 type PendingResult = { token: string; file: File; url?: string; error?: string }
 type PendingUpload = { marker: string; file: File; upload: (file: File) => Promise<string> }
+type UploadResolution = { markdown: string; html: string }
+type UndoPatch = { diffs: [number, string][]; start1: number; start2: number; length1: number; length2: number }
+type UndoMode = { hasUndo: boolean; lastText: string; redoStack: UndoPatch[][]; undoStack: UndoPatch[][] }
+type UndoAdapter = {
+  dmp: {
+    patch_apply: (patches: UndoPatch[], text: string) => [string, boolean[]]
+    patch_deepCopy: (patches: UndoPatch[]) => UndoPatch[]
+    patch_make: (before: string, after: string) => UndoPatch[]
+  }
+  addToUndoStack: (instance: unknown) => void
+  resetIcon: (instance: unknown) => void
+  wysiwyg: UndoMode
+  ir: UndoMode
+  sv: UndoMode
+}
+type UndoSnapshot = { mode: UndoMode; lastText: string; undoStack: UndoPatch[][]; redoStack: UndoPatch[][]; hasUndo: boolean }
 
 function token() {
   return `MYSHOPUPLOAD${globalThis.crypto.randomUUID().replaceAll("-", "")}END`
@@ -51,68 +67,145 @@ function editorElement(editor: Vditor) {
   return editor.vditor.wysiwyg?.element
 }
 
-/** Replace an upload marker without moving the active selection. */
-function replaceMarker(editor: Vditor, marker: string, replacement: string) {
+function imageHtml(editor: Vditor, markdown: string) {
+  const lute = editor.vditor.lute as unknown as { Md2VditorDOM: (value: string) => string }
+  const template = document.createElement("template")
+  template.innerHTML = lute.Md2VditorDOM(markdown)
+  const image = template.content.querySelector("img")
+  if (!image) throw new Error("Vditor did not produce an image node")
+  return image.outerHTML
+}
+
+function replaceHistoryToken(value: string, marker: string, replacement: string) {
+  const escaped = [...marker].map(char => char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  const splitByCaret = "(?:<wbr>|<span class=\"vditor-wbr\"></span>)*"
+  const pattern = new RegExp(escaped.join(splitByCaret), "g")
+  return value.replace(pattern, match => {
+    const caret = match.includes("<span class=\"vditor-wbr\">") ? "<span class=\"vditor-wbr\"></span>"
+      : match.includes("<wbr>") ? "<wbr>" : ""
+    return replacement + caret
+  })
+}
+
+function uploadReplacementText(value: string, resolutions: Map<string, UploadResolution>, mode: "wysiwyg" | "ir" | "sv") {
+  let result = value
+  for (const [marker, resolution] of resolutions)
+    result = replaceHistoryToken(result, marker, mode === "sv" ? resolution.markdown : resolution.html)
+  return result
+}
+
+/**
+ * Vditor 4.0.1 stores snapshots as patches from the latest snapshot to the
+ * previous one. Rebuild only the affected mode histories with resolved image
+ * content, keeping each undo/redo step and the live redo stack intact.
+ */
+function normalizeUploadUndoHistory(editor: Vditor, resolutions: Map<string, UploadResolution>) {
+  const instance = editor.vditor as unknown as { undo: UndoAdapter; currentMode: "wysiwyg" | "ir" | "sv" }
+  const undo = instance.undo
+  if (!undo?.dmp || !undo[instance.currentMode]) return null
+
+  // Flush the current rendered value through Vditor's ordinary debounced
+  // snapshot path before translating history. This does not clear the stack.
+  undo.addToUndoStack(editor.vditor)
+  const snapshots: UndoSnapshot[] = (["wysiwyg", "ir", "sv"] as const).map(mode => {
+    const source = undo[mode]
+    const undoStates = [source.lastText]
+    for (let index = source.undoStack.length - 1; index >= 1; index--) {
+      const [previous] = undo.dmp.patch_apply(undo.dmp.patch_deepCopy(source.undoStack[index]), undoStates.at(-1)!)
+      undoStates.push(previous)
+    }
+    undoStates.reverse()
+
+    const redoStates = [source.lastText]
+    for (let index = source.redoStack.length - 1; index >= 0; index--) {
+      const inverse = undo.dmp.patch_deepCopy(source.redoStack[index]).reverse()
+      inverse.forEach(patch => patch.diffs.forEach(diff => { diff[0] = -diff[0] }))
+      const [next] = undo.dmp.patch_apply(inverse, redoStates.at(-1)!)
+      redoStates.push(next)
+    }
+
+    const resolvedUndoStates = undoStates.map(text => uploadReplacementText(text, resolutions, mode))
+    const resolvedRedoStates = redoStates.map(text => uploadReplacementText(text, resolutions, mode))
+    const undoStack = source.undoStack.map((patches, index) => index === 0
+      ? undo.dmp.patch_deepCopy(patches)
+      : undo.dmp.patch_make(resolvedUndoStates[index], resolvedUndoStates[index - 1]))
+    const redoStack: UndoPatch[][] = []
+    for (let index = resolvedRedoStates.length - 2; index >= 0; index--)
+      redoStack.push(undo.dmp.patch_make(resolvedRedoStates[index + 1], resolvedRedoStates[index]))
+    return { mode: source, lastText: resolvedUndoStates.at(-1) ?? "", undoStack, redoStack, hasUndo: source.hasUndo }
+  })
+  return () => {
+    for (const snapshot of snapshots) {
+      snapshot.mode.lastText = snapshot.lastText
+      snapshot.mode.undoStack = snapshot.undoStack
+      snapshot.mode.redoStack = snapshot.redoStack
+      snapshot.mode.hasUndo = snapshot.hasUndo
+    }
+    undo.resetIcon(editor.vditor)
+  }
+}
+
+/** Replace an upload marker directly, without routing the correction through setValue. */
+function replaceMarker(editor: Vditor, marker: string, markdown: string, html: string) {
   const element = editorElement(editor)
   if (!element) return
   const focused = document.activeElement === element
   if (element instanceof HTMLTextAreaElement) {
-    const old = editor.getValue()
+    const old = element.value
     const at = old.indexOf(marker)
     if (at < 0) return
     const adjust = (offset: number) => offset <= at ? offset : offset >= at + marker.length
-      ? offset + replacement.length - marker.length : at + replacement.length
+      ? offset + markdown.length - marker.length : at + markdown.length
     const start = adjust(element.selectionStart)
     const end = adjust(element.selectionEnd)
-    editor.setValue(old.replace(marker, replacement), false)
+    element.value = old.replace(marker, markdown)
     if (focused) { element.focus(); element.setSelectionRange(start, end) }
     return
   }
 
   const selection = window.getSelection()
-  let caretStart = ""
-  let caretEnd = ""
-  if (focused && selection?.rangeCount && element.contains(selection.getRangeAt(0).commonAncestorContainer)) {
-    // Insert temporary plain-text sentinels into the current selection. Vditor
-    // round-trips them with the rest of the document, including inside lists.
-    const nonce = globalThis.crypto.randomUUID().replaceAll("-", "")
-    caretStart = `MYSHOPCARET${nonce}START`
-    caretEnd = `MYSHOPCARET${nonce}END`
-    const original = selection.getRangeAt(0).cloneRange()
-    const end = original.cloneRange(); end.collapse(false); end.insertNode(document.createTextNode(caretEnd))
-    const start = original.cloneRange(); start.collapse(true); start.insertNode(document.createTextNode(caretStart))
+  const savedRange = focused && selection?.rangeCount && element.contains(selection.getRangeAt(0).commonAncestorContainer)
+    ? selection.getRangeAt(0).cloneRange() : null
+  const locate = (offset: number, nodes: Text[], bias: "forward" | "backward") => {
+    let remaining = offset
+    for (let index = 0; index < nodes.length; index++) {
+      const node = nodes[index]
+      if (remaining < node.length || (remaining === node.length && (bias === "backward" || index === nodes.length - 1)))
+        return { node, offset: remaining }
+      remaining -= node.length
+    }
+    const last = nodes.at(-1)
+    return last ? { node: last, offset: last.length } : null
   }
-  const old = editor.getValue()
-  let next = old.replace(marker, replacement)
-  if (next === old && caretStart) {
-    // A user may select or type inside the marker while the upload finishes.
-    // Remove split sentinels and collapse the selection at the replacement.
-    const compact = old.replaceAll(caretStart, "").replaceAll(caretEnd, "")
-    next = compact.replace(marker, replacement + caretStart + caretEnd)
+  let searchFrom = 0
+  for (;;) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    const nodes: Text[] = []
+    while (walker.nextNode()) nodes.push(walker.currentNode as Text)
+    const fullText = nodes.map(node => node.data).join("")
+    const at = fullText.indexOf(marker, searchFrom)
+    if (at < 0) break
+    const start = locate(at, nodes, "forward"); const end = locate(at + marker.length, nodes, "backward")
+    if (!start || !end) break
+    const range = document.createRange()
+    range.setStart(start.node, start.offset); range.setEnd(end.node, end.offset)
+    const caretInMarker = Boolean(savedRange?.collapsed && range.comparePoint(savedRange.startContainer, savedRange.startOffset) === 0)
+    range.deleteContents()
+    let image: HTMLImageElement | null = null
+    if (html) {
+      const template = document.createElement("template"); template.innerHTML = html
+      image = template.content.querySelector("img")
+      if (image) range.insertNode(image)
+    }
+    if (savedRange && !caretInMarker) {
+      selection?.removeAllRanges(); selection?.addRange(savedRange)
+    } else if (focused) {
+      const caret = range.cloneRange()
+      if (image) caret.setStartAfter(image)
+      caret.collapse(true); selection?.removeAllRanges(); selection?.addRange(caret)
+    }
+    searchFrom = at
   }
-  editor.setValue(next, false)
-  if (!caretStart || !caretEnd) return
-
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-  let startNode: Text | null = null; let endNode: Text | null = null
-  while (walker.nextNode()) {
-    const current = walker.currentNode as Text
-    if (current.data.includes(caretStart)) startNode = current
-    if (current.data.includes(caretEnd)) endNode = current
-  }
-  if (!startNode || !endNode) {
-    editor.setValue(editor.getValue().replaceAll(caretStart, "").replaceAll(caretEnd, ""), false)
-    return
-  }
-  const startAt = startNode.data.indexOf(caretStart)
-  const endAt = endNode.data.indexOf(caretEnd)
-  const range = document.createRange()
-  range.setStart(startNode, startAt + caretStart.length)
-  range.setEnd(endNode, endAt)
-  selection?.removeAllRanges(); selection?.addRange(range)
-  // Range offsets automatically follow these removals.
-  endNode.deleteData(endAt, caretEnd.length)
-  startNode.deleteData(startAt, caretStart.length)
 }
 
 export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, uploadImage, renderMediaPicker, onUploadingChange, maxLength, id }: MarkdownEditorProps) {
@@ -128,6 +221,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
   const valueRef = useRef(value)
   const lastPublishedRef = useRef(value)
   const pendingRef = useRef(new Set<string>())
+  const uploadResolutionsRef = useRef(new Map<string, UploadResolution>())
   const queueRef = useRef<PendingUpload[]>([])
   const activeUploadsRef = useRef(0)
   const deferredRef = useRef<PendingResult[]>([])
@@ -150,6 +244,8 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
   const publish = (markdown: string) => {
     let clean = markdown
     for (const marker of pendingRef.current) clean = clean.replaceAll(marker, "")
+    for (const [marker, resolution] of uploadResolutionsRef.current)
+      clean = replaceHistoryToken(clean, marker, resolution.markdown)
     lastPublishedRef.current = clean
     onChangeRef.current(clean)
   }
@@ -233,7 +329,12 @@ export const MarkdownEditor = memo(function MarkdownEditor({ value, onChange, up
       const url = result.url && sanitizeMarkdownUrl(result.url, "image")
       // Lute 4.0.1 emits invalid HTML for escaped brackets in an image alt.
       // A generic label keeps arbitrary file names out of that parser path.
-      replaceMarker(editor, result.token, url ? imageMarkdown(url) : "")
+      const markdown = url ? imageMarkdown(url) : ""
+      const resolution = { markdown, html: url ? imageHtml(editor, markdown) : "" }
+      uploadResolutionsRef.current.set(result.token, resolution)
+      const restoreUndo = normalizeUploadUndoHistory(editor, uploadResolutionsRef.current)
+      replaceMarker(editor, result.token, markdown, resolution.html)
+      restoreUndo?.()
       pendingRef.current.delete(result.token)
       publish(editor.getValue())
       rememberSelection()

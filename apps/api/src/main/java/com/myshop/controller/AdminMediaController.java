@@ -3,8 +3,11 @@ package com.myshop.controller;
 import com.myshop.common.ApiResponse;
 import com.myshop.service.MediaLibraryService;
 import com.myshop.service.MediaMaintenanceService;
+import com.myshop.service.AvatarMediaOptimizationService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -14,10 +17,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class AdminMediaController {
     private final MediaLibraryService media;
     private final MediaMaintenanceService maintenance;
+    private final AvatarMediaOptimizationService avatarOptimization;
 
-    public AdminMediaController(MediaLibraryService media, MediaMaintenanceService maintenance) {
+    public AdminMediaController(MediaLibraryService media, MediaMaintenanceService maintenance,
+                                AvatarMediaOptimizationService avatarOptimization) {
         this.media = media;
         this.maintenance = maintenance;
+        this.avatarOptimization = avatarOptimization;
     }
 
     @GetMapping
@@ -44,6 +50,11 @@ public class AdminMediaController {
     public ApiResponse<?> delete(@RequestParam String filename) {
         maintenance.delete(filename);
         return ApiResponse.success();
+    }
+
+    @PostMapping("/{assetId}/optimize-avatar")
+    public ApiResponse<AvatarMediaOptimizationService.OptimizationReport> optimizeAvatar(@PathVariable java.util.UUID assetId) {
+        return ApiResponse.success(avatarOptimization.optimize(assetId));
     }
 
 }
