@@ -93,6 +93,27 @@ public class ImageProcessingTest {
     }
 
     @Test
+    void pngTrailingBytesAfterIendDoNotBreakStaticOrAnimatedImages() throws Exception {
+        byte[] trailingMetadata = "camera-private-metadata".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] staticSource = png(new BufferedImage(32, 24, BufferedImage.TYPE_INT_ARGB));
+        byte[] staticPng = java.util.Arrays.copyOf(staticSource, staticSource.length + trailingMetadata.length);
+        System.arraycopy(trailingMetadata, 0, staticPng, staticSource.length, trailingMetadata.length);
+        try (var result = process(staticPng, ".png")) {
+            assertFalse(result.animated());
+            assertEquals(32, decode(result.display()).getWidth());
+        }
+
+        byte[] animated = animatedPng();
+        byte[] animatedWithTrailing = java.util.Arrays.copyOf(animated, animated.length + trailingMetadata.length);
+        System.arraycopy(trailingMetadata, 0, animatedWithTrailing, animated.length, trailingMetadata.length);
+        try (var result = process(animatedWithTrailing, ".png")) {
+            assertTrue(result.animated());
+            assertArrayEquals(animatedWithTrailing, Files.readAllBytes(result.display().path()));
+            assertArrayEquals(animatedWithTrailing, Files.readAllBytes(result.clear().path()));
+        }
+    }
+
+    @Test
     void oversizedCompressedPngMetadataCannotHangImageProcessing() throws Exception {
         var compressed = new ByteArrayOutputStream();
         compressed.write(new byte[]{'n','o','t','e',0,0});

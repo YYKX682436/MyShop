@@ -442,10 +442,10 @@ public class VipsImageProcessor {
                     if ("acTL".equals(type)) animated = true;
                     stream.skipNBytes(length + 4);
                     remaining -= length + 12;
-                    if ("IEND".equals(type)) {
-                        if (remaining != 0) throw new IOException("Invalid PNG structure");
-                        return animated;
-                    }
+                    // Some camera and messaging apps append private metadata after IEND.
+                    // libvips validates and decodes the image itself; trailing bytes do not
+                    // change APNG semantics because acTL must precede the image end chunk.
+                    if ("IEND".equals(type)) return animated;
                 }
                 throw new IOException("Invalid PNG structure");
             }
