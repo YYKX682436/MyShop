@@ -18,7 +18,7 @@ const persistentSurfaces = [
   read("../app/(store)/product/[id]/product-purchase-dock.tsx"),
 ]
 
-test("persistent surfaces use static materials and touch devices skip backdrop sampling", () => {
+test("persistent surfaces remain static except the small purchase dock", () => {
   const staticMaterial = styles.match(/\.static-material\s*\{[^}]*\}/s)?.[0]
   const largeMaterial = styles.match(/\.large-material\s*\{[^}]*\}/s)?.[0]
   assert.ok(staticMaterial)
@@ -36,7 +36,11 @@ test("persistent surfaces use static materials and touch devices skip backdrop s
   // own browser behavior tests; it is not a persistent material surface.
   const navigationFallback = styles.match(/\.store-liquid-nav\[data-mode="fallback"\]\s*\{[^}]*\}/s)?.[0]
   assert.ok(navigationFallback)
-  const activeBlurDeclarations = [...styles.replace(navigationFallback, "").matchAll(/^[ \t]*(?:-webkit-)?backdrop-filter:[ \t]*([^;\r\n]+);/gm)]
+  const closedPurchaseDock = styles.match(/\.product-purchase-dock-closed\s*\{[^}]*\}/s)?.[0]
+  assert.ok(closedPurchaseDock)
+  assert.match(closedPurchaseDock, /backdrop-filter:\s*blur\(8px\)/)
+  assert.match(styles, /@media\s*\(prefers-reduced-transparency:\s*no-preference\)\s*\{\s*\.product-purchase-dock-closed/s)
+  const activeBlurDeclarations = [...styles.replace(navigationFallback, "").replace(closedPurchaseDock, "").matchAll(/^[ \t]*(?:-webkit-)?backdrop-filter:[ \t]*([^;\r\n]+);/gm)]
     .map((match) => match[1].trim())
     .filter((value) => value !== "none")
   assert.deepEqual(activeBlurDeclarations, ["blur(4px) saturate(120%)", "blur(4px) saturate(120%)", "blur(3px) saturate(115%)", "blur(3px) saturate(115%)"])

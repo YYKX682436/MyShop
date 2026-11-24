@@ -1183,6 +1183,30 @@
   padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
 }
 
+.product-purchase-panel {
+  --purchase-bottom-gap: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  position: fixed;
+  /* Radix's scroll lock exposes the removed scrollbar width on the body. */
+  inset-inline: 0.75rem calc(0.75rem + var(--removed-body-scroll-bar-size, 0px));
+  bottom: calc(var(--purchase-bottom-gap) + var(--purchase-visual-bottom, 0px));
+  width: auto;
+  max-width: 28rem;
+  max-height: calc(var(--purchase-visual-height, 100vh) - var(--purchase-bottom-gap) - max(0.5rem, env(safe-area-inset-top, 0px)));
+  max-height: calc(var(--purchase-visual-height, 100dvh) - var(--purchase-bottom-gap) - max(0.5rem, env(safe-area-inset-top, 0px)));
+  margin-inline: auto;
+}
+
+/* Only the small closed dock samples the backdrop; the open panel stays static. */
+@supports ((-webkit-backdrop-filter: blur(8px)) or (backdrop-filter: blur(8px))) {
+  @media (prefers-reduced-transparency: no-preference) {
+    .product-purchase-dock-closed {
+      background-color: hsl(var(--material-regular) / 0.86);
+      -webkit-backdrop-filter: blur(8px);
+      backdrop-filter: blur(8px);
+    }
+  }
+}
+
 @media (min-width: 640px) {
   :root {
     --storefront-gutter: max(1.5rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
@@ -1191,6 +1215,8 @@
   .storefront-main--without-header {
     padding-top: 1.5rem;
   }
+
+  .product-purchase-panel { max-width: 32rem; }
 }
 
 @media (min-width: 1024px) {
@@ -1265,7 +1291,9 @@
   .auth-page { min-height: 0; gap: 1rem; padding-block: 0; }
   .auth-form-panel { padding-top: 1rem; }
   .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
-  .product-purchase-dock-viewport .action-bar-material { border-radius: 0.875rem; }
+  .product-purchase-panel { --purchase-bottom-gap: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  .product-purchase-dock-viewport .action-bar-material,
+  .product-purchase-panel.action-bar-material { border-radius: 0.875rem; }
   .admin-header-layer { padding: max(0.5rem, env(safe-area-inset-top, 0px)) 1rem 0; }
   .admin-floating-toolbar { min-height: 3rem; padding: 0.25rem; border-radius: 0.875rem; }
   .admin-page-main { padding-top: 1rem; }

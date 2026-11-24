@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
+import * as Dialog from "@radix-ui/react-dialog"
 import { ChevronUp, Loader2, Minus, Plus, ShoppingCart, X } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth, useLocale } from "@/lib/context"
@@ -16,15 +17,6 @@ import {
 } from "@/services/api"
 import { Turnstile, useTurnstile } from "@/components/shared/turnstile"
 import { PaymentSelector } from "@/components/shared/payment-selector"
-import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/components/ui/drawer"
 import { cn, detectPaymentDevice, formatYuan } from "@/lib/utils"
 import { clearIdempotencyKey, getOrCreateIdempotencyKey } from "@/lib/idempotency"
 import {
@@ -69,11 +61,72 @@ function firstPurchasableSpec(specs: ProductSpec[]): ProductSpec | null {
   return specs.find((spec) => !isSpecOutOfStock(spec)) ?? specs[0] ?? null
 }
 
+interface PurchaseActionBarProps {
+  open: boolean
+  selectedSpec: ProductSpec | null
+  quantity: number
+  totalPrice: number
+  isOutOfStock: boolean
+  authLoaded: boolean
+  adminPickup: boolean
+  paymentReady: boolean
+  submitting: boolean
+  triggerRef: React.RefObject<HTMLButtonElement | null>
+}
+
+function PurchaseActionBar({
+  open, selectedSpec, quantity, totalPrice, isOutOfStock, authLoaded,
+  adminPickup, paymentReady, submitting, triggerRef,
+}: PurchaseActionBarProps) {
+  const { t } = useLocale()
+  const label = isOutOfStock ? t("product.soldOut")
+    : open && submitting ? t("common.processing")
+    : open && adminPickup ? t("product.adminPickup")
+    : open && !paymentReady ? t("product.paymentUnavailable")
+    : t("product.buyNow")
+  const button = (
+    <button
+      ref={open ? undefined : triggerRef}
+      type={open ? "submit" : "button"}
+      disabled={open ? submitting || isOutOfStock || !paymentReady : isOutOfStock || !authLoaded}
+      className="inline-flex min-h-10 min-w-[6.5rem] max-w-[55%] shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
+      aria-label={label}
+    >
+      {submitting && open ? <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+        : !isOutOfStock && <ShoppingCart className="size-4 shrink-0" aria-hidden="true" />}
+      <span className="min-w-0">{label}</span>
+      {!isOutOfStock && <ChevronUp className={cn("size-3.5 shrink-0", open && "invisible")} aria-hidden="true" />}
+    </button>
+  )
+
+  return (
+    <div data-slot="purchase-action-bar" className="flex shrink-0 items-center gap-3 p-2">
+      <div className="min-w-0 flex-1 px-3">
+        <p className="flex min-w-0 text-[11px] text-muted-foreground">
+          <span className="truncate">{selectedSpec?.name ?? t("product.quantity")}</span>
+          <span className="shrink-0 whitespace-nowrap">{` × ${quantity}`}</span>
+        </p>
+        <p data-slot="purchase-total" className={cn(
+          "break-all text-xl font-bold tracking-tight",
+          isOutOfStock ? "text-muted-foreground" : "text-primary",
+        )}>
+          {formatYuan(totalPrice)}
+        </p>
+      </div>
+      {open ? button : <Dialog.Trigger asChild>{button}</Dialog.Trigger>}
+    </div>
+  )
+}
+
 export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockProps) {
   const { t } = useLocale()
   const { user, setUser, authLoaded } = useAuth()
   const router = useRouter()
   const customerInputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>>({})
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const viewportCleanupRef = useRef<(() => void) | null>(null)
+  const submittingRef = useRef(false)
   const [open, setOpen] = useState(false)
   const [selectedSpec, setSelectedSpec] = useState<ProductSpec | null>(() => (
     firstPurchasableSpec(product.specs ?? [])
@@ -91,6 +144,30 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
   const [submitting, setSubmitting] = useState(false)
   const [paymentFallbackAction, setPaymentFallbackAction] = useState<ExecutablePaymentAction | null>(null)
   const { turnstileToken, setTurnstileToken, handleTurnstileReset } = useTurnstile()
+
+  const attachPanel = useCallback((panel: HTMLDivElement | null) => {
+    viewportCleanupRef.current?.()
+    viewportCleanupRef.current = null
+    if (!panel) return
+    const viewport = window.visualViewport
+    if (!viewport) return
+
+    // The visual viewport can shrink independently of the layout viewport
+    // when a mobile keyboard opens. Update only on viewport changes.
+    const syncViewport = () => {
+      panel.style.setProperty("--purchase-visual-height", `${viewport.height}px`)
+      panel.style.setProperty("--purchase-visual-bottom", `${Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)}px`)
+    }
+    syncViewport()
+    viewport.addEventListener("resize", syncViewport)
+    viewport.addEventListener("scroll", syncViewport)
+    window.addEventListener("resize", syncViewport)
+    viewportCleanupRef.current = () => {
+      viewport.removeEventListener("resize", syncViewport)
+      viewport.removeEventListener("scroll", syncViewport)
+      window.removeEventListener("resize", syncViewport)
+    }
+  }, [])
 
   useEffect(() => {
     const specs = product.specs ?? []
@@ -175,6 +252,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
   }
 
   const handleBuyNow = async () => {
+    if (submittingRef.current) return
     const normalizedCustomerInputs = validateCustomerInputsForAction()
     if (!normalizedCustomerInputs) return
 
@@ -198,6 +276,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
       return
     }
 
+    submittingRef.current = true
     setSubmitting(true)
     setPaymentFallbackAction(null)
     const requestPaymentIntent = adminPickup
@@ -211,16 +290,15 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
           payment_method: selectedPaymentMethod,
           payment_channel_code: selectedPaymentMethod === "ONLINE" ? selectedPaymentChannelCode : null,
         }
-    const intent = getOrCreateIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, {
-      product_id: product.id,
-      spec_id: selectedSpec?.id ?? null,
-      quantity,
-      customer_inputs: normalizedCustomerInputs,
-      ...fingerprintPaymentIntent,
-      expected_unit_price: Number(currentPrice.toFixed(2)),
-    })
-
     try {
+      const intent = getOrCreateIdempotencyKey(`myshop:direct-buy:${product.id}:idempotency`, {
+        product_id: product.id,
+        spec_id: selectedSpec?.id ?? null,
+        quantity,
+        customer_inputs: normalizedCustomerInputs,
+        ...fingerprintPaymentIntent,
+        expected_unit_price: Number(currentPrice.toFixed(2)),
+      })
       setTurnstileHeaders(turnstileToken)
       const device = detectPaymentDevice()
       const result = await requestOrThrow(() => orderApi.create({
@@ -290,97 +368,73 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
       }
       handleTurnstileReset()
     } finally {
+      submittingRef.current = false
       setSubmitting(false)
     }
   }
 
+  const actionBarProps = {
+    selectedSpec, quantity, totalPrice, isOutOfStock, authLoaded,
+    adminPickup, paymentReady, submitting, triggerRef,
+  }
+
   return (
-    <Drawer
-      open={open}
-      onOpenChange={handleOpenChange}
-      direction="bottom"
-      dismissible
-      modal
-      fixed
-      repositionInputs
-      shouldScaleBackground={false}
-    >
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <div
         aria-hidden={open}
         inert={open}
         className={cn(
-          "product-purchase-dock-viewport pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 transition-[opacity,transform] duration-180 motion-reduce:transition-none",
-          open ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100",
+          "product-purchase-dock-viewport pointer-events-none fixed inset-x-0 bottom-0 z-40 justify-center px-3",
+          open ? "hidden" : "flex",
         )}
       >
-        <div className={cn(
-          "pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-full border border-border-subtle/80 bg-surface/85 p-2 shadow-lg backdrop-blur-xl transition-all sm:max-w-lg",
-          !open && "static-material action-bar-material",
-          open && "pointer-events-none",
-        )}>
-          <div className="min-w-0 flex-1 px-3">
-            <p className="truncate text-[11px] text-muted-foreground">
-              {t("product.unitPrice")}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
-            </p>
-            <p className={cn(
-              "text-xl font-bold tracking-tight text-primary",
-              isOutOfStock ? "text-muted-foreground" : "text-primary",
-            )}>
-              {formatYuan(currentPrice)}
-            </p>
-          </div>
-          <DrawerTrigger asChild>
-            <button
-              type="button"
-              disabled={isOutOfStock || !authLoaded}
-              className="inline-flex min-h-10 min-w-[6.5rem] shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground shadow-sm transition-[background-color,transform] duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground"
-              aria-label={isOutOfStock ? t("product.soldOut") : t("product.buyNow")}
-            >
-              {isOutOfStock ? (
-                t("product.soldOut")
-              ) : (
-                <>
-                  <ShoppingCart className="size-4" aria-hidden="true" />
-                  <span>{t("product.buyNow")}</span>
-                  <ChevronUp className="size-3.5" aria-hidden="true" />
-                </>
-              )}
-            </button>
-          </DrawerTrigger>
+        <div className="product-purchase-dock-closed static-material action-bar-material pointer-events-auto w-full max-w-md sm:max-w-lg">
+          <PurchaseActionBar {...actionBarProps} open={false} />
         </div>
       </div>
 
-      <DrawerContent className="storefront-content-width static-material action-bar-material mx-auto max-w-lg origin-bottom outline-none rounded-t-[1.75rem] border-x border-t border-border-subtle/80 bg-surface shadow-2xl backdrop-blur-2xl">
-        <div className="flex max-h-[min(82dvh,760px)] flex-col">
-          <DrawerHeader className="shrink-0 border-b border-border-subtle/60 px-4 pb-2.5 pt-3 text-left sm:px-6">
-            <div className="flex items-center justify-between">
-              <DrawerTitle className="text-base font-semibold">{t("product.buyNow")}</DrawerTitle>
-              <DrawerClose className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground">
-                <span className="sr-only">{t("common.close")}</span>
-                <X className="size-4" />
-              </DrawerClose>
-            </div>
-            <DrawerDescription className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-              {product.title}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
-            </DrawerDescription>
-          </DrawerHeader>
-
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/45" />
+        <Dialog.Content
+          ref={attachPanel}
+          className="product-purchase-panel static-material action-bar-material z-50 flex flex-col outline-none"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault()
+            closeRef.current?.focus({ preventScroll: true })
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            triggerRef.current?.focus({ preventScroll: true })
+          }}
+        >
           <form
-            className="flex min-h-0 flex-1 flex-col"
+            className="flex min-h-0 flex-col"
             onSubmit={(event) => {
               event.preventDefault()
               void handleBuyNow()
             }}
           >
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3.5 sm:px-6 sm:py-4">
+            <div className="shrink-0 border-b border-border-subtle/60 px-4 pb-2.5 pt-3 text-left sm:px-6">
+              <div className="flex items-center justify-between">
+                <Dialog.Title className="text-base font-semibold">{t("product.buyNow")}</Dialog.Title>
+                <Dialog.Close ref={closeRef} type="button" className="rounded-full p-1 text-muted-foreground transition-colors hover:bg-surface-muted hover:text-foreground">
+                  <span className="sr-only">{t("common.close")}</span>
+                  <X className="size-4" aria-hidden="true" />
+                </Dialog.Close>
+              </div>
+              <Dialog.Description className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
+                {product.title}{selectedSpec ? ` · ${selectedSpec.name}` : ""}
+              </Dialog.Description>
+            </div>
+            <div data-slot="purchase-content" className="min-h-0 overflow-y-auto overscroll-contain px-4 py-3.5 sm:px-6 sm:py-4">
               {(product.specs ?? []).length > 1 && (
                 <section className="mb-4" aria-labelledby="purchase-spec-title">
-                  <div className="mb-2 flex items-center justify-between">
-                    <h2 id="purchase-spec-title" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <h2 id="purchase-spec-title" className="shrink-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       {t("product.selectSpec")}
                     </h2>
                     {selectedSpec && (
-                      <span className="text-xs font-medium text-primary">{selectedSpec.name}</span>
+                      <span className="min-w-0 truncate text-right text-xs font-medium text-primary">{selectedSpec.name}</span>
                     )}
                   </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -505,7 +559,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                 </section>
               )}
 
-              <section aria-labelledby="purchase-payment-title" className="mb-4">
+              <section aria-labelledby="purchase-payment-title">
                 <h2 id="purchase-payment-title" className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("product.paymentMethod")}
                 </h2>
@@ -578,11 +632,8 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
               </section>
 
               <Turnstile onSuccess={setTurnstileToken} onError={handleTurnstileReset} className="mt-4" />
-            </div>
-
-            <div data-slot="purchase-drawer-footer" className="shrink-0 border-t border-border-subtle/50 bg-surface px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
               {paymentFallbackAction && (
-                <div className="mb-3 flex flex-col items-center gap-2 rounded-xl border border-primary/20 bg-primary/[0.06] px-3 py-2.5 text-center" role="alert">
+                <div className="mt-3 flex flex-col items-center gap-2 rounded-xl border border-primary/20 bg-primary/[0.06] px-3 py-2.5 text-center" role="alert">
                   <p className="text-xs text-muted-foreground">{t("payment.actionFallback")}</p>
                   <button
                     type="button"
@@ -593,34 +644,11 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                   </button>
                 </div>
               )}
-              <div className="flex items-center gap-3">
-                <div className="min-w-0 pr-1">
-                  <p className="mb-1 text-[11px] font-medium leading-none text-muted-foreground">{t("product.totalPrice")}</p>
-                  <p className="text-2xl font-bold tracking-tight text-primary leading-none">
-                    {formatYuan(totalPrice)}
-                  </p>
-                </div>
-                <button
-                  type="submit"
-                  disabled={submitting || isOutOfStock || !paymentReady}
-                  className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-md transition-all duration-180 hover:bg-primary/90 active:scale-[.98] disabled:pointer-events-none disabled:opacity-40"
-                >
-                  {submitting && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
-                  {!submitting && isOutOfStock
-                    ? t("product.soldOut")
-                    : !submitting && adminPickup
-                      ? t("product.adminPickup")
-                      : !submitting && !paymentReady
-                        ? t("product.paymentUnavailable")
-                        : submitting
-                          ? t("common.processing")
-                          : t("product.buyNow")}
-                </button>
-              </div>
             </div>
+            <PurchaseActionBar {...actionBarProps} open />
           </form>
-        </div>
-      </DrawerContent>
-    </Drawer>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
