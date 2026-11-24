@@ -100,6 +100,7 @@ tmp_dir=$(mktemp -d)
 state_backup="$tmp_dir/state.json"
 state_existed=0
 candidate_started=0
+api_stop_attempted=0
 committed=0
 shared_bootstrap=0
 inspection_id=
@@ -352,7 +353,7 @@ SQL
 }
 
 verify_recovery_contracts() {
-  local service_ref destination db_id actual expected
+  local service_ref destination db_id actual expected staged_history
   for service_ref in "$approved_registry/myshop-api:$recovery_failed_sha" "${candidate_ref[api]}"; do
     destination="$tmp_dir/contract-${service_ref##*:}.json"
     # Create an isolated, never-started container solely to read the immutable
@@ -384,7 +385,40 @@ SELECT COUNT(*) FILTER (WHERE type = 'SQL'),
 FROM flyway_schema_history;
 SQL
   ) || return 1
-  [[ "$actual" == "$expected" ]] || return 1
+  [[ "$actual" == "$expected" ]] && return 0
+
+  # V63 is deliberately committed before the idempotent filesystem index is
+  # built. If indexing or V64 fails, the old API must stay stopped, but a new
+  # release with exactly the same final contract must be able to finish that
+  # staged cutover. Do not generalize this exception to other migrations.
+  [[ "$expected" == '64|64|0' && "$actual" == '63|63|0' ]] || return 1
+  python3 - "$tmp_dir/contract-$candidate_sha.json" <<'PY' || return 1
+import json, sys
+contract = json.load(open(sys.argv[1], encoding='utf-8'))
+tables = contract.get('tables', {})
+if (not {'id', 'storage_path', 'processing_status', 'deleted_at'}.issubset(tables.get('media_assets', []))
+        or not {'asset_id', 'owner_type', 'owner_id', 'field'}.issubset(tables.get('media_references', []))):
+    raise SystemExit('V64 media contract is incomplete')
+PY
+  staged_history=$(docker exec -i "$db_id" sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atq' <<'SQL'
+SELECT CASE WHEN
+    COUNT(*) FILTER (WHERE type='SQL') = 63
+    AND COUNT(DISTINCT version) FILTER (WHERE type='SQL') = 63
+    AND COUNT(*) FILTER (WHERE type='SQL' AND version ~ '^([1-9]|[1-5][0-9]|6[0-3])$') = 63
+    AND COUNT(*) FILTER (WHERE NOT success) = 0
+    AND COUNT(*) FILTER (WHERE type='SQL' AND version='63'
+        AND script='V63__media_assets_and_references.sql' AND success) = 1
+    AND to_regclass('public.media_assets') IS NOT NULL
+    AND to_regclass('public.media_references') IS NOT NULL
+    AND to_regclass('public.media_deleted_files') IS NOT NULL
+    AND to_regprocedure('public.myshop_media_guard_write()') IS NOT NULL
+  THEN '1' ELSE '0' END
+FROM public.flyway_schema_history;
+SQL
+  ) || return 1
+  [[ "$staged_history" == '1' ]] || return 1
+  printf 'FORWARD_RECOVERY_MEDIA_INDEX version=63 next=64\n'
 }
 
 prepare_prospective_state() {
@@ -399,8 +433,8 @@ prepare_prospective_state() {
 }
 
 wait_health() {
-  local project=$1
-  for attempt in $(seq 1 30); do
+  local project=$1 attempts=${2:-30} attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
     local healthy=1
     for service in db api web caddy; do
       container_id=$(docker ps --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=$service" -q | head -n 1)
@@ -409,7 +443,7 @@ wait_health() {
       [[ "$status" == healthy || ( "$service" == db && "$status" == running ) ]] || { healthy=0; break; }
     done
     (( healthy == 1 )) && return 0
-    (( attempt == 30 )) && return 1
+    (( attempt == attempts )) && return 1
     sleep 2
   done
 }
@@ -593,7 +627,7 @@ restore_old() {
     current_schema=$(database_schema_fingerprint) || return 2
     [[ -n "${baseline_schema_fingerprint:-}" && "$current_schema" == "$baseline_schema_fingerprint" ]] || return 2
   fi
-  if (( ! state_existed && ! candidate_started )); then
+  if (( ! state_existed && ! candidate_started && ! api_stop_attempted )); then
     verify_baseline || return 1
     unset DEPLOY_TEST_FAIL
     smoke || return 1
@@ -675,9 +709,24 @@ fi
 run_compose config --quiet || pre_commit_fail compose
 prepare_bootstrap_rollback_refs || pre_commit_fail bootstrap-rollback-prepare
 [[ "${DEPLOY_TEST_FAIL:-}" != start ]] || pre_commit_fail start
+# The media index is populated between forward migrations.  Stop every API
+# instance in this Compose project before the candidate starts so that an old
+# process cannot write references while the index is being populated.
+if (( ! shared_bootstrap )); then
+  # A failed stop can still have stopped some containers, so recovery must
+  # restart the baseline even if Compose reports an error before startup.
+  api_stop_attempted=1
+  run_compose stop api || pre_commit_fail stop-before-migration
+  running_apis=$(docker ps -q \
+    --filter "label=com.docker.compose.project=$COMPOSE_PROJECT" \
+    --filter 'label=com.docker.compose.service=api') || pre_commit_fail verify-api-stopped
+  [[ -z "$running_apis" ]] || pre_commit_fail verify-api-stopped
+fi
 candidate_started=1
 run_compose up -d || pre_commit_fail start
-wait_health "$COMPOSE_PROJECT" || pre_commit_fail health
+# First media indexing runs during API startup and may outlast the ordinary
+# rollback-health budget, particularly on CPU-constrained hosts.
+wait_health "$COMPOSE_PROJECT" 180 || pre_commit_fail health
 [[ "${DEPLOY_TEST_FAIL:-}" != health-after-start ]] || pre_commit_fail health-after-start
 [[ "${DEPLOY_TEST_FAIL:-}" != schema ]] || pre_commit_fail schema
 MYSHOP_COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT" "$SCHEMA_SCRIPT" || pre_commit_fail schema

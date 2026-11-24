@@ -29,6 +29,9 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     private final UserNumberSequenceRepository userNumberSequenceRepository;
     private final UserRepository userRepository;
     private final AnnouncementService announcementService;
+    private com.myshop.service.MediaAssetRegistry mediaAssets;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setMediaAssets(com.myshop.service.MediaAssetRegistry value) { this.mediaAssets = value; }
 
     @org.springframework.beans.factory.annotation.Value("${turnstile.site-key:}")
     private String turnstileSiteKey;
@@ -118,8 +121,14 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @Override
     @Transactional
     public void updateConfigs(List<Map<String, String>> configs) {
-        for (Map<String, String> item : configs) {
+        int lastFavicon = -1;
+        for (int i = 0; i < configs.size(); i++) if ("favicon_url".equals(configs.get(i).get("config_key"))) lastFavicon = i;
+        var faviconReferences = lastFavicon < 0 || mediaAssets == null ? null
+                : mediaAssets.lockExistingSiteIcon(configs.get(lastFavicon).get("config_value"));
+        for (int i = 0; i < configs.size(); i++) {
+            Map<String, String> item = configs.get(i);
             String key = item.get("config_key");
+            if ("favicon_url".equals(key) && i != lastFavicon) continue;
             String value = item.get("config_value");
             // F16: 只允许白名单内的 key 被修改，防止注入系统内部配置
             if (key == null || !EDITABLE_KEYS.contains(key)) {
@@ -133,14 +142,19 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             if ("custom_css".equals(key) && value != null) {
                 value = sanitizeCss(value);
             }
-            SiteConfig config = siteConfigRepository.findByConfigKey(key)
+            SiteConfig config = ("favicon_url".equals(key) ? siteConfigRepository.findByConfigKeyForUpdate(key)
+                    : siteConfigRepository.findByConfigKey(key))
                     .orElseGet(() -> {
                         SiteConfig c = new SiteConfig();
                         c.setConfigKey(key);
                         return c;
                     });
+            if ("favicon_url".equals(key) && mediaAssets != null)
+                mediaAssets.verifyHistoricalSiteIconReferences(config.getConfigValue(), faviconReferences);
             config.setConfigValue(value);
-            siteConfigRepository.save(config);
+            SiteConfig saved = siteConfigRepository.saveAndFlush(config);
+            if ("favicon_url".equals(key) && mediaAssets != null)
+                mediaAssets.replaceReferences("SITE_CONFIG", saved.getId(), faviconReferences, "favicon_url");
         }
     }
 

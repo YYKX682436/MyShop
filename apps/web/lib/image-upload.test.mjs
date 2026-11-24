@@ -14,13 +14,18 @@ const previewDialogSource = readFileSync(new URL("../components/admin/products/p
 
 test("image upload validation matches the backend-safe formats and size", () => {
   assert.equal(validateImageFile({ type: "image/jpeg", size: 10 * 1024 * 1024 }), null)
-  assert.equal(validateImageFile({ type: "image/svg+xml", size: 1 }), "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP")
+  assert.equal(validateImageFile({ type: "image/svg+xml", size: 1 }), "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/AVIF/HEIC/HEIF/BMP")
+  assert.equal(validateImageFile({ type: "image/avif", size: 1 }), null)
+  assert.equal(validateImageFile({ name: "photo.HEIC", type: "", size: 1 }), null)
+  assert.equal(validateImageFile({ name: "photo.heif", type: "application/octet-stream", size: 1 }), null)
+  assert.notEqual(validateImageFile({ name: "photo.svg", type: "", size: 1 }), null)
   assert.equal(validateImageFile({ type: "image/png", size: 10 * 1024 * 1024 + 1 }), "图片大小不能超过 10MB")
   assert.equal(ALLOWED_IMAGE_ACCEPT.includes(".svg"), false)
 })
 
 test("avatar upload validation is limited to JPG/PNG/WebP and 5MB", () => {
   assert.equal(getAvatarFileValidationError({ type: "image/jpeg", size: MAX_AVATAR_SIZE_BYTES }), null)
+  assert.equal(getAvatarFileValidationError({ name: "photo.heic", type: "", size: 1 }), null)
   assert.equal(getAvatarFileValidationError({ type: "image/gif", size: 1 }), "format")
   assert.equal(getAvatarFileValidationError({ type: "image/png", size: MAX_AVATAR_SIZE_BYTES + 1 }), "size")
   assert.equal(AVATAR_ALLOWED_IMAGE_ACCEPT.includes(".gif"), false)

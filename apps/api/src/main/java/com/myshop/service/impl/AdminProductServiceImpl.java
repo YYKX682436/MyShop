@@ -97,6 +97,8 @@ public class AdminProductServiceImpl implements AdminProductService {
     @Autowired public void setSupplierCheckout(SupplierCheckout value) { this.supplierCheckout=value; }
     private com.myshop.supplier.SupplierCatalogTransaction supplierCatalog;
     @Autowired public void setSupplierCatalog(com.myshop.supplier.SupplierCatalogTransaction value) { this.supplierCatalog=value; }
+    private com.myshop.service.MediaAssetRegistry mediaAssets;
+    @Autowired public void setMediaAssets(com.myshop.service.MediaAssetRegistry value) { this.mediaAssets = value; }
 
     @Override
     @Transactional(readOnly = true)
@@ -127,22 +129,31 @@ public class AdminProductServiceImpl implements AdminProductService {
     @Override
     @Transactional
     public AdminProductResponse createProduct(AdminProductUpsertRequest request) {
+        if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "商品参数不能为空");
+        var references = mediaAssets == null ? null : mediaAssets.lockProduct(request.coverUrl(), request.detailMd());
         Product product = new Product();
         long productNo = productRepository.nextProductNoValue();
         if (productNo < 1) {
             throw new IllegalStateException("product_no_sequence returned an invalid value");
         }
         product.setProductNo(productNo);
-        return saveAggregate(product, request, true);
+        var result = saveAggregate(product, request, true);
+        if (mediaAssets != null) mediaAssets.replaceReferences("PRODUCT", product.getId(), references, "cover_url", "detail_md");
+        return result;
     }
 
     @Override
     @Transactional
     public AdminProductResponse updateProduct(UUID id, AdminProductUpsertRequest request) {
+        if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "商品参数不能为空");
+        var references = mediaAssets == null ? null : mediaAssets.lockProduct(id, request.coverUrl(), request.detailMd());
         Product product = productRepository.findByIdForUpdate(id)
                 .filter(candidate -> candidate.getIsDeleted() == 0)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PRODUCT_NOT_FOUND, "商品不存在"));
-        return saveAggregate(product, request, false);
+        if (mediaAssets != null) mediaAssets.verifyHistoricalProductAvatarReferences(id, references);
+        var result = saveAggregate(product, request, false);
+        if (mediaAssets != null) mediaAssets.replaceReferences("PRODUCT", id, references, "cover_url", "detail_md");
+        return result;
     }
 
     @Override

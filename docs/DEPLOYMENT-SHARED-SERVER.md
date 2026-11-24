@@ -39,7 +39,9 @@ the stack, restore a database from another host, or change DNS or TLS.
    protects an ancestry check, so an older or unrelated release is refused.
 4. Run `deploy-production.sh` with the validated manifest and the shared-host
    settings below. The transaction checks image identities, creates its database
-   recovery point, validates health/schema/smoke checks, and permits app
+   recovery point, stops all old API containers before the new API starts its
+   media index and migration, waits up to approximately six minutes for candidate
+   health, validates schema/smoke checks, and permits app
    rollback only if Flyway history is unchanged. If history changed or cannot
    be read, the old API remains stopped and the database and recovery point
    remain available for assessment. No database restore is automatic.
@@ -59,6 +61,13 @@ bundle. The deploy script repeats the recovery preflight under its lock, creates
 a new recovery point, and keeps the old API stopped if the new release fails.
 Before starting anything, it compares the new API image's schema contract to the
 failed migrated image and checks it against the current Flyway history.
+For the media cutover only, a completed V63 with V64 still pending is also
+eligible when both image contracts are identical and describe V64. The script
+requires every migration from V1 through V63 to be successful, verifies the
+V63 script and media tables, and confirms the legacy guard is still present.
+The new API then repeats the idempotent media index before applying V64. Other
+partial or unreadable histories remain blocked, and the old API stays stopped
+if recovery fails.
 After acceptance, update the original private environment's release references
 to the newly accepted SHA and remove the temporary environment copy.
 
@@ -114,8 +123,20 @@ assign it to an API container first.
 The browser sends `/api/*` to the same origin. Caddy forwards the path unchanged
 to Spring, including uploads and payment webhooks. Baota must overwrite
 `X-Real-IP` and `X-Forwarded-For` with `$remote_addr`, and set
-`X-Forwarded-Proto` to `$scheme`; for the Baota reverse proxy use these
-header directives alongside its existing upstream configuration:
+`X-Forwarded-Proto` to `$scheme`.
+
+The administrator video endpoint uses tus chunks rather than a single large
+request. The defaults are a 1 GiB file limit (`VIDEO_MAX_UPLOAD_BYTES`) and
+8 MiB chunks (`VIDEO_MAX_CHUNK_BYTES`); the chunk limit must remain below this
+site's effective Nginx request-body limit. At the time of the November 2026
+host inspection it was 50 MiB, with 600-second proxy send/read timeouts. Check
+the effective site configuration again when changing these settings. Normal
+multipart image and private-attachment limits remain separate. The persistent
+public `uploads` and private `private-uploads` mounts hold video output and tus
+sessions respectively; keep both mounted across API replacement.
+
+For the Baota reverse proxy use these header directives alongside its existing
+upstream configuration:
 
 ```nginx
 proxy_set_header Host $host;

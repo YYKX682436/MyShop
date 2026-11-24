@@ -26,6 +26,9 @@ public class SubsiteManagementService {
     private final JdbcTemplate jdbc;
     private final BalanceTransactionRepository balanceTransactions;
     private final ImageUploadService imageUploadService;
+    private MediaAssetRegistry mediaAssets;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setMediaAssets(MediaAssetRegistry value) { this.mediaAssets = value; }
     @Value("${app.public-site-url:http://localhost:3000}") private String publicSiteUrl;
     @Value("${subsites.reserved-prefixes:mc,www,api,admin,mail,kf,jc,dl,openlist,myshop-candidate,tp}") private String reservedPrefixes;
 
@@ -151,20 +154,30 @@ public class SubsiteManagementService {
     }
     @Transactional
     public Map<String,Object> updateMine(UUID ownerId, SiteUpdate request) {
-        Subsite site = sites.findByOwnerId(ownerId).orElseThrow(() -> bad("尚未开通分站"));
         if (request == null) throw bad("站点设置无效");
         String favicon = text(request.faviconUrl(),500,false);
+        var references = mediaAssets == null ? null : mediaAssets.lockExistingSiteIcon(favicon);
+        Subsite site = sites.findByOwnerIdForUpdate(ownerId).orElseThrow(() -> bad("尚未开通分站"));
+        if (mediaAssets != null) mediaAssets.verifyHistoricalSiteIconReferences(site.getFaviconUrl(), references);
         if (favicon != null && !favicon.equals(site.getFaviconUrl())) throw bad("请通过上传设置网站图标");
         site.setName(text(request.name(),100,true));
         site.setFaviconUrl(favicon);
-        return view(sites.save(site));
+        var saved = sites.save(site);
+        if (mediaAssets != null) mediaAssets.replaceReferences("SUBSITE", saved.getId(), references, "favicon_url");
+        return view(saved);
     }
     @Transactional
     public Map<String,Object> uploadFavicon(UUID ownerId, org.springframework.web.multipart.MultipartFile file) {
-        Subsite site = sites.findByOwnerId(ownerId).orElseThrow(() -> bad("尚未开通分站"));
+        if (!sites.existsByOwnerId(ownerId)) throw bad("尚未开通分站");
         var uploaded = imageUploadService.uploadSiteFavicon(file);
+        var references = mediaAssets == null ? null : mediaAssets.lockSiteIcon(uploaded.url());
+        Subsite site = sites.findByOwnerIdForUpdate(ownerId).orElseThrow(() -> bad("尚未开通分站"));
         site.setFaviconUrl(uploaded.url());
-        return view(sites.save(site));
+        var saved = sites.save(site);
+        if (mediaAssets != null) mediaAssets.replaceReferences("SUBSITE", saved.getId(), references, "favicon_url");
+        Map<String,Object> result = view(saved);
+        result.put("image_processing_reason", uploaded.reason());
+        return result;
     }
     @Transactional
     public void transfer(UUID siteId, TransferRequest request) {

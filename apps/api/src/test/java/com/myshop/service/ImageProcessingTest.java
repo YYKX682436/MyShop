@@ -1,9 +1,7 @@
 package com.myshop.service;
 
-import com.myshop.exception.BusinessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.mock.web.MockMultipartFile;
 
 import javax.imageio.ImageIO;
 import javax.imageio.IIOImage;
@@ -17,13 +15,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Base64;
-import java.util.concurrent.Executors;
-import java.util.stream.IntStream;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class ImageProcessingTest {
+public class ImageProcessingTest {
     @TempDir Path temporary;
 
     @Test
@@ -34,18 +33,22 @@ class ImageProcessingTest {
             photo.setRGB(x, y, (r << 16) | (g << 8) | b);
         }
         byte[] before = jpeg(photo, 1f);
-        byte[] after = new ImageProcessor().process(before, ".jpg");
-        BufferedImage decodedBefore = ImageIO.read(new ByteArrayInputStream(before));
-        BufferedImage decodedAfter = ImageIO.read(new ByteArrayInputStream(after));
-        long error = 0;
-        for (int y = 0; y < 900; y += 5) for (int x = 0; x < 1200; x += 5) {
-            int a = decodedBefore.getRGB(x, y), b = decodedAfter.getRGB(x, y);
-            for (int shift : new int[]{0, 8, 16}) error += Math.abs(((a >> shift) & 255) - ((b >> shift) & 255));
+        try (var after = process(before, ".jpg")) {
+            BufferedImage decodedBefore = ImageIO.read(new ByteArrayInputStream(before));
+            BufferedImage decodedAfter = decode(after.display());
+            assertEquals(1200, decodedAfter.getWidth());
+            assertEquals(900, decodedAfter.getHeight());
+            long error = 0;
+            for (int y = 0; y < 900; y += 5) for (int x = 0; x < 1200; x += 5) {
+                int a = decodedBefore.getRGB(x, y), b = decodedAfter.getRGB(x, y);
+                for (int shift : new int[]{0, 8, 16}) error += Math.abs(((a >> shift) & 255) - ((b >> shift) & 255));
+            }
+            double meanError = error / (240.0 * 180 * 3);
+            System.out.printf("PHOTO_BYTES before=%d display=%d mean_rgb_error=%.2f%n", before.length, after.display().size(), meanError);
+            assertTrue(after.display().size() < before.length);
+            assertTrue(meanError < 8, "WebP detail loss exceeded test threshold: " + meanError);
+            assertEquals("image/webp", after.display().mime());
         }
-        double meanError = error / (240.0 * 180 * 3);
-        System.out.printf("PHOTO_BYTES before=%d after=%d mean_rgb_error=%.2f%n", before.length, after.length, meanError);
-        assertTrue(after.length < before.length);
-        assertTrue(meanError < 8, "JPEG detail loss exceeded test threshold: " + meanError);
     }
 
     @Test
@@ -53,12 +56,12 @@ class ImageProcessingTest {
         BufferedImage input = new BufferedImage(3000, 300, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = input.createGraphics();
         g.setColor(new Color(230, 40, 20, 128)); g.fillRect(0, 0, 1500, 300); g.dispose();
-        byte[] bytes = png(input);
-        byte[] result = new ImageProcessor().process(bytes, ".png");
-        BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(result));
-        assertEquals(2560, decoded.getWidth());
-        assertEquals(0, decoded.getRGB(2400, 100) >>> 24);
-        assertEquals(128, decoded.getRGB(200, 100) >>> 24);
+        try (var result = process(png(input), ".png")) {
+            BufferedImage decoded = decode(result.display());
+            assertEquals(1600, decoded.getWidth());
+            assertEquals(0, decoded.getRGB(1400, 80) >>> 24);
+            assertEquals(128, decoded.getRGB(200, 80) >>> 24);
+        }
     }
 
     @Test
@@ -66,15 +69,15 @@ class ImageProcessingTest {
         BufferedImage input = new BufferedImage(80, 40, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = input.createGraphics(); g.setColor(Color.RED); g.fillRect(0, 0, 40, 40); g.setColor(Color.BLUE); g.fillRect(40, 0, 40, 40); g.dispose();
         byte[] original = jpeg(input, 0.98f);
-        // JPEG APP1 with a little-endian TIFF IFD and orientation = 6.
         byte[] exif = new byte[]{(byte)0xff,(byte)0xe1,0,34,'E','x','i','f',0,0,'I','I',42,0,8,0,0,0,1,0,0x12,1,3,0,1,0,0,0,6,0,0,0,0,0,0,0};
         ByteArrayOutputStream oriented = new ByteArrayOutputStream();
         oriented.write(original, 0, 2); oriented.write(exif); oriented.write(original, 2, original.length - 2);
-        byte[] output = new ImageProcessor().process(oriented.toByteArray(), ".jpg");
-        BufferedImage image = ImageIO.read(new ByteArrayInputStream(output));
-        assertEquals(40, image.getWidth()); assertEquals(80, image.getHeight());
-        assertTrue(new Color(image.getRGB(20, 10)).getRed() > new Color(image.getRGB(20, 10)).getBlue());
-        assertTrue(new Color(image.getRGB(20, 70)).getBlue() > new Color(image.getRGB(20, 70)).getRed());
+        try (var output = process(oriented.toByteArray(), ".jpg")) {
+            BufferedImage image = decode(output.display());
+            assertEquals(40, image.getWidth()); assertEquals(80, image.getHeight());
+            assertTrue(new Color(image.getRGB(20, 10)).getRed() > new Color(image.getRGB(20, 10)).getBlue());
+            assertTrue(new Color(image.getRGB(20, 70)).getBlue() > new Color(image.getRGB(20, 70)).getRed());
+        }
     }
 
     @Test
@@ -82,86 +85,97 @@ class ImageProcessingTest {
         BufferedImage input = new BufferedImage(80, 40, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = input.createGraphics(); g.setColor(Color.RED); g.fillRect(0, 0, 40, 40); g.setColor(Color.BLUE); g.fillRect(40, 0, 40, 40); g.dispose();
         byte[] exif = {'I','I',42,0,8,0,0,0,1,0,0x12,1,3,0,1,0,0,0,6,0,0,0,0,0,0,0};
-        byte[] result = new ImageProcessor().process(withPngChunk(png(input), "eXIf", exif), ".png");
-        BufferedImage image = ImageIO.read(new ByteArrayInputStream(result));
-        assertEquals(40, image.getWidth()); assertEquals(80, image.getHeight());
-        assertTrue(new Color(image.getRGB(20, 10)).getRed() > new Color(image.getRGB(20, 10)).getBlue());
+        try (var result = process(withPngChunk(png(input), "eXIf", exif), ".png")) {
+            BufferedImage image = decode(result.display());
+            assertEquals(40, image.getWidth()); assertEquals(80, image.getHeight());
+            assertTrue(new Color(image.getRGB(20, 10)).getRed() > new Color(image.getRGB(20, 10)).getBlue());
+        }
     }
 
     @Test
-    void compressedPngTextDoesNotExpandDuringOrientationInspection() throws Exception {
+    void oversizedCompressedPngMetadataCannotHangImageProcessing() throws Exception {
         var compressed = new ByteArrayOutputStream();
         compressed.write(new byte[]{'n','o','t','e',0,0});
         try (var deflater = new java.util.zip.DeflaterOutputStream(compressed)) {
             byte[] block = new byte[8192];
-            for (int i = 0; i < 24576; i++) deflater.write(block); // 192 MiB compressed metadata
+            for (int i = 0; i < 24576; i++) deflater.write(block);
         }
-        byte[] png = png(new BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB));
-        byte[] output = new ImageProcessor().process(withPngChunk(png, "zTXt", compressed.toByteArray()), ".png");
-        assertNotNull(ImageIO.read(new ByteArrayInputStream(output)));
+        byte[] input = withPngChunk(png(new BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB)), "zTXt", compressed.toByteArray());
+        assertTimeoutPreemptively(Duration.ofSeconds(55), () -> {
+            try (var output = process(input, ".png")) {
+                assertNotNull(decode(output.display()));
+            } catch (IOException rejected) {
+                assertNotNull(rejected.getMessage(), "an oversized metadata block must fail cleanly");
+            }
+        });
     }
 
     @Test
     void animatedGifAndWebpRemainUnchanged() throws Exception {
         byte[] gif = animatedGif();
-        byte[] output = new ImageProcessor().process(gif, ".gif");
-        assertArrayEquals(gif, output);
-        try (var stream = ImageIO.createImageInputStream(new ByteArrayInputStream(output))) {
-            var reader = ImageIO.getImageReaders(stream).next(); reader.setInput(stream);
-            assertEquals(2, reader.getNumImages(true)); reader.dispose();
+        try (var result = process(gif, ".gif")) {
+            assertTrue(result.animated());
+            assertArrayEquals(gif, Files.readAllBytes(result.display().path()));
+            assertArrayEquals(gif, Files.readAllBytes(result.thumbnail().path()));
+            try (var stream = ImageIO.createImageInputStream(new ByteArrayInputStream(Files.readAllBytes(result.display().path())))) {
+                var reader = ImageIO.getImageReaders(stream).next(); reader.setInput(stream);
+                assertEquals(2, reader.getNumImages(true)); reader.dispose();
+            }
         }
         byte[] webp = Base64.getDecoder().decode("UklGRjwAAABXRUJQVlA4IDAAAAAwAgCdASoCAAIAAUAmJaACdLoB+AH4AAYeAAD+8U2v/Vn00Iv7SP/1v/qCA/SAAAA=");
-        assertArrayEquals(webp, new ImageProcessor().process(webp, ".webp"));
+        try (var result = process(webp, ".webp")) {
+            assertFalse(result.animated());
+            assertEquals(2, decode(result.display()).getWidth());
+        }
         byte[] animatedWebp = Base64.getDecoder().decode("UklGRtwAAABXRUJQVlA4WAoAAAACAAAAHwAAHwAAQU5JTQYAAAD/////AABBTk1GWAAAAAAAAAAAAB8AAB8AAMgAAAJWUDggQAAAAHADAJ0BKiAAIAA+bTSWR6QjIiEoCACADYllAMougH4AAEGUEAD+8JtD/8guWF1yNf/yA/5Af8gP/499jCgwAABBTk1GUAAAAAAAAAAAAB8AAB8AAMgAAABWUDggOAAAALQCAJ0BKiAAIAA+bTSWR4KAgAAA2JZQB2AACAoKAAD++R3b//5Af/5Af/5Af/yA//4hd7IDAAAA");
-        assertArrayEquals(animatedWebp, new ImageProcessor().process(animatedWebp, ".webp"));
+        try (var result = process(animatedWebp, ".webp")) {
+            assertTrue(result.animated());
+            assertArrayEquals(animatedWebp, Files.readAllBytes(result.display().path()));
+            assertArrayEquals(animatedWebp, Files.readAllBytes(result.clear().path()));
+        }
     }
 
     @Test
     void animatedPngIsNotFlattened() throws Exception {
         byte[] bytes = animatedPng();
         assertNotNull(ImageIO.read(new ByteArrayInputStream(bytes)));
-        assertArrayEquals(bytes, new ImageProcessor().process(bytes, ".png"));
-        assertArrayEquals(bytes, new ImageProcessor().processForStorage(bytes, ".png").bytes());
+        try (var output = process(bytes, ".png")) {
+            assertTrue(output.animated());
+            assertArrayEquals(bytes, Files.readAllBytes(output.display().path()));
+            assertArrayEquals(bytes, Files.readAllBytes(output.thumbnail().path()));
+            assertArrayEquals(bytes, Files.readAllBytes(output.clear().path()));
+        }
     }
 
     @Test
     void corruptAndOversizedDimensionsAreRejected() throws Exception {
-        ImageUploadService service = service();
         byte[] bogus = {(byte)0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0};
-        assertThrows(BusinessException.class, () -> service.uploadAdminImage(file("bad.png", "image/png", bogus)));
+        assertThrows(IOException.class, () -> process(bogus, ".png"));
         byte[] large = png(new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB));
-        large[16] = 0; large[17] = 0; large[18] = 0x40; large[19] = 0; // width 16384
-        assertThrows(BusinessException.class, () -> service.uploadAdminImage(file("big.png", "image/png", large)));
-        assertThrows(BusinessException.class, () -> service.uploadAdminImage(file("bad.webp", "image/webp", "RIFF0000WEBP".getBytes())));
+        java.nio.ByteBuffer.wrap(large, 16, 4).putInt(30_001);
+        var crc = new java.util.zip.CRC32(); crc.update(large, 12, 17);
+        java.nio.ByteBuffer.wrap(large, 29, 4).putInt((int) crc.getValue());
+        assertThrows(IOException.class, () -> process(large, ".png"));
+        assertThrows(IOException.class, () -> process("RIFF0000WEBP".getBytes(), ".webp"));
     }
 
-    @Test
-    void repeatedConcurrentUploadsShareOneCompletePublicFileAndAvatarsStaySeparate() throws Exception {
-        ImageUploadService service = service();
-        byte[] image = png(new BufferedImage(32, 32, BufferedImage.TYPE_INT_ARGB));
-        var pool = Executors.newFixedThreadPool(8);
-        try {
-            var futures = IntStream.range(0, 16).mapToObj(i -> pool.submit(() -> service.uploadAdminImage(file("photo.png", "image/png", image)).url())).toList();
-            String url = futures.getFirst().get();
-            for (var future : futures) assertEquals(url, future.get());
-            assertEquals(url, service.uploadAdminImage(file("renamed.png", "image/png", image)).url());
-            String avatar1 = service.uploadAvatar(file("avatar.png", "image/png", image)).url();
-            String avatar2 = service.uploadAvatar(file("avatar.png", "image/png", image)).url();
-            assertNotEquals(url, avatar1); assertNotEquals(avatar1, avatar2);
-            assertTrue(service.deleteManagedAvatar(avatar1));
-            assertTrue(Files.exists(temporary.resolve("uploads").resolve(url.substring(url.lastIndexOf('/') + 1))));
-            assertTrue(Files.exists(temporary.resolve("uploads").resolve(avatar2.substring("/api/uploads/".length()))));
-            try (var files = Files.list(temporary.resolve("uploads"))) {
-                assertFalse(files.anyMatch(path -> path.getFileName().toString().startsWith(".myshop-")));
-            }
-        } finally { pool.shutdownNow(); }
+    private VipsImageProcessor.Processed process(byte[] bytes, String extension) throws IOException {
+        Path source = temporary.resolve(UUID.randomUUID() + extension);
+        Files.write(source, bytes);
+        return new VipsImageProcessor().process(source, temporary.resolve("work"), VipsImageProcessor.Purpose.PRODUCT);
     }
 
-    private ImageUploadService service() {
-        UploadStorage storage = new UploadStorage(temporary.resolve("uploads").toString()); storage.initialize();
-        return new ImageUploadService(storage, new ImageProcessor(), "/api/uploads");
+    private BufferedImage decode(VipsImageProcessor.Variant variant) throws Exception {
+        Path decoded = temporary.resolve(UUID.randomUUID() + ".png");
+        Process process = new ProcessBuilder("vipsthumbnail", variant.path().toString(), "--size", "30000x>",
+                "-o", decoded.toString() + "[compression=3]").redirectErrorStream(true).start();
+        assertTrue(process.waitFor(45, TimeUnit.SECONDS), "test image decode timed out");
+        String output = new String(process.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertEquals(0, process.exitValue(), output);
+        BufferedImage image = ImageIO.read(decoded.toFile());
+        assertNotNull(image);
+        return image;
     }
-    private static MockMultipartFile file(String name, String type, byte[] bytes) { return new MockMultipartFile("file", name, type, bytes); }
     private static byte[] png(BufferedImage image) throws IOException { var out = new ByteArrayOutputStream(); ImageIO.write(image, "png", out); return out.toByteArray(); }
     private static byte[] jpeg(BufferedImage image, float quality) throws IOException {
         var writer = ImageIO.getImageWritersByFormatName("jpg").next();
@@ -172,7 +186,7 @@ class ImageProcessingTest {
         } finally { writer.dispose(); }
         return out.toByteArray();
     }
-    private static byte[] animatedGif() throws IOException {
+    public static byte[] animatedGif() throws IOException {
         var writer = ImageIO.getImageWritersByFormatName("gif").next(); var out = new ByteArrayOutputStream();
         try (var stream = new MemoryCacheImageOutputStream(out)) {
             writer.setOutput(stream); writer.prepareWriteSequence(null);
@@ -186,7 +200,7 @@ class ImageProcessingTest {
         return out.toByteArray();
     }
 
-    private static byte[] animatedPng() throws IOException {
+    public static byte[] animatedPng() throws IOException {
         var bytes = new ByteArrayOutputStream(); var out = new java.io.DataOutputStream(bytes);
         out.write(new byte[]{(byte) 137, 80, 78, 71, 13, 10, 26, 10});
         var header = new ByteArrayOutputStream(); var h = new java.io.DataOutputStream(header);

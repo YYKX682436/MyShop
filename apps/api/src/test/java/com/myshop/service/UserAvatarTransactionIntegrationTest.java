@@ -32,6 +32,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,6 +69,10 @@ class UserAvatarTransactionIntegrationTest {
 
     @Autowired
     private EntityManager entityManager;
+    @Autowired private ImageUploadService images;
+    @Autowired private MediaAssetRegistry assets;
+    @Autowired private org.springframework.transaction.PlatformTransactionManager transactions;
+    @Autowired private javax.sql.DataSource dataSource;
 
     @DynamicPropertySource
     static void postgresProperties(DynamicPropertyRegistry registry) {
@@ -90,6 +96,8 @@ class UserAvatarTransactionIntegrationTest {
     @AfterEach
     void cleanFixture() throws IOException {
         jdbcTemplate.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS " + ROLLBACK_CONSTRAINT);
+        jdbcTemplate.update("DELETE FROM media_references WHERE owner_type='AVATAR' AND owner_id IN (SELECT id FROM users WHERE username LIKE 'avatar-transaction-%')");
+        jdbcTemplate.update("DELETE FROM media_assets WHERE owner_user_id IN (SELECT id FROM users WHERE username LIKE 'avatar-transaction-%')");
         jdbcTemplate.update("DELETE FROM after_sale_attachments WHERE request_id IN (SELECT id FROM after_sale_requests WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'avatar-transaction-%'))");
         jdbcTemplate.update("DELETE FROM after_sale_requests WHERE user_id IN (SELECT id FROM users WHERE username LIKE 'avatar-transaction-%')");
         jdbcTemplate.update("DELETE FROM users WHERE username LIKE 'avatar-transaction-%'");
@@ -114,7 +122,7 @@ class UserAvatarTransactionIntegrationTest {
     }
 
     @Test
-    void committedDatabaseUpdateDeletesPreviousFileOnlyAfterCommit() throws IOException {
+    void committedDatabaseUpdateDeletesPreviousFileOnlyAfterCommit() throws Exception {
         User user = persistUserWithPreviousAvatar();
 
         var result = userAvatarService.uploadAvatar(user.getId(), validPng());
@@ -124,10 +132,17 @@ class UserAvatarTransactionIntegrationTest {
         assertEquals(result.getAvatarUrl(), reloaded.getAvatarUrl());
         assertFalse(Files.exists(UPLOAD_DIRECTORY.resolve(PREVIOUS_RELATIVE_PATH)));
         assertTrue(Files.exists(UPLOAD_DIRECTORY.resolve(relativePath(result.getAvatarUrl()))));
+        try (var connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("SELECT deleted_at,cleanup_error FROM media_assets WHERE storage_path=?")) {
+            statement.setString(1, PREVIOUS_RELATIVE_PATH);
+            try (var row = statement.executeQuery()) {
+                assertTrue(row.next()); assertNotNull(row.getTimestamp(1)); assertNull(row.getString(2));
+            }
+        }
     }
 
     @Test
-    void databaseFlushFailureRollsBackUrlAndDeletesOnlyNewFile() throws IOException {
+    void databaseFlushFailureRollsBackUrlAndDeletesOnlyNewFile() throws Exception {
         User user = persistUserWithPreviousAvatar();
         jdbcTemplate.execute("""
                 ALTER TABLE users
@@ -150,11 +165,44 @@ class UserAvatarTransactionIntegrationTest {
         User reloaded = userRepository.findById(user.getId()).orElseThrow();
         assertEquals(PREVIOUS_URL, reloaded.getAvatarUrl());
         assertTrue(Files.exists(UPLOAD_DIRECTORY.resolve(PREVIOUS_RELATIVE_PATH)));
+        try (var connection = dataSource.getConnection();
+             var statement = connection.prepareStatement("SELECT deleted_at FROM media_assets WHERE storage_path=?")) {
+            statement.setString(1, PREVIOUS_RELATIVE_PATH);
+            try (var row = statement.executeQuery()) { assertTrue(row.next()); assertNull(row.getTimestamp(1)); }
+        }
 
         Path avatarsDirectory = UPLOAD_DIRECTORY.resolve("avatars");
         try (var files = Files.list(avatarsDirectory)) {
             List<String> filenames = files.map(path -> path.getFileName().toString()).toList();
             assertEquals(List.of(Path.of(PREVIOUS_RELATIVE_PATH).getFileName().toString()), filenames);
+        }
+    }
+
+    @Test
+    void changingAccountAvatarCannotDeleteSharedProductImage() throws Exception {
+        User user = persistUserWithPreviousAvatar();
+        var productImage = images.uploadAdminImage(validPng());
+        UUID category = UUID.randomUUID(), product = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO product_categories(id,name) VALUES (?,?)", category, "avatar fixture " + category);
+        try {
+            new org.springframework.transaction.support.TransactionTemplate(transactions).executeWithoutResult(status -> {
+                var refs = assets.lockProduct(productImage.url(), "");
+                jdbcTemplate.update("INSERT INTO products(id,title,category_id,cover_url,retail_price,cost_price,stock_mode,delivery_type) VALUES (?,'fixture',?,?,1,0.5,'UNLIMITED','MANUAL')", product, category, productImage.url());
+                assets.replaceReferences("PRODUCT", product, refs, "cover_url", "detail_md");
+            });
+            String firstAvatar = userAvatarService.uploadAvatar(user.getId(), validPng()).getAvatarUrl();
+            String secondAvatar = userAvatarService.uploadAvatar(user.getId(), validPng()).getAvatarUrl();
+            assertFalse(firstAvatar.equals(secondAvatar));
+            assertTrue(Files.isRegularFile(UPLOAD_DIRECTORY.resolve(productImage.relativePath())));
+            assertEquals(productImage.url(), jdbcTemplate.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, product));
+            assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM media_references WHERE asset_id=? AND owner_type='PRODUCT'", Integer.class, productImage.assetId()));
+            assertThrows(com.myshop.exception.BusinessException.class, () -> new org.springframework.transaction.support.TransactionTemplate(transactions)
+                    .executeWithoutResult(status -> assets.lockProduct(secondAvatar, "")));
+        } finally {
+            jdbcTemplate.update("DELETE FROM media_references WHERE owner_type='PRODUCT' AND owner_id=?", product);
+            jdbcTemplate.update("DELETE FROM products WHERE id=?", product);
+            jdbcTemplate.update("DELETE FROM product_categories WHERE id=?", category);
+            jdbcTemplate.update("DELETE FROM media_assets WHERE id=?", productImage.assetId());
         }
     }
 
@@ -174,7 +222,12 @@ class UserAvatarTransactionIntegrationTest {
         user.setUserNo(USER_NO.incrementAndGet());
         user.setUserLevelId(defaultLevelId);
         user.setAvatarUrl(PREVIOUS_URL);
-        return userRepository.saveAndFlush(user);
+        User saved = userRepository.saveAndFlush(user);
+        UUID assetId = UUID.randomUUID();
+        jdbcTemplate.update("INSERT INTO media_assets(id,storage_path,display_path,clear_path,original_filename,media_type,mime_type,size_bytes,scope,owner_user_id,processing_status) VALUES (?,?,?,?,?,'IMAGE','image/png',?,'AVATAR',?,'READY')",
+                assetId, PREVIOUS_RELATIVE_PATH, PREVIOUS_RELATIVE_PATH, PREVIOUS_RELATIVE_PATH, "old.png", Files.size(previousFile), saved.getId());
+        jdbcTemplate.update("INSERT INTO media_references(asset_id,owner_type,owner_id,field) VALUES (?,'AVATAR',?,'avatar_url')", assetId, saved.getId());
+        return saved;
     }
 
     private static MockMultipartFile validPng() throws IOException {

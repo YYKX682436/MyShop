@@ -39,6 +39,9 @@ for table, columns in contract["tables"].items():
         print("SELECT 'column=%s.%s' FROM information_schema.columns WHERE table_schema='public' AND table_name='%s' AND column_name='%s';" % (table, column, table, column))
 for index in contract["indexes"]:
     print(f"SELECT 'index={index}' FROM pg_indexes WHERE schemaname='public' AND indexname='{index}';")
+if {"media_assets", "media_references"}.issubset(contract["tables"]):
+    print("SELECT 'media_index_complete=' || CASE WHEN obj_description(to_regclass('public.media_references'), 'pg_class') = 'myshop-media-index-complete-v1' THEN '1' ELSE '0' END;")
+    print("SELECT 'media_legacy_guards=' || COUNT(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal AND t.tgname='myshop_media_guard' AND t.tgfoid=to_regprocedure('public.myshop_media_guard_write()');")
 PY
 ) || die 'could not materialize schema contract query'
 result=$(printf '%s\n' "$sql" | docker exec -i "$db_id" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atq') || die 'schema contract query failed'
@@ -51,4 +54,8 @@ printf '%s\n' "$result" | grep -Fx "flyway_latest=$expected_latest" >/dev/null |
 actual_expected=$(printf '%s\n' "$sql" | grep -Ec "^SELECT '(table|column|index)=")
 actual_found=$(printf '%s\n' "$result" | grep -Ec '^(table|column|index)=')
 [[ "$actual_found" == "$actual_expected" ]] || die "schema contract objects missing: expected=$actual_expected found=$actual_found"
+if printf '%s\n' "$sql" | grep -Fq "SELECT 'media_index_complete="; then
+  printf '%s\n' "$result" | grep -Fx 'media_index_complete=1' >/dev/null || die 'media index cutover marker is missing'
+  printf '%s\n' "$result" | grep -Fx 'media_legacy_guards=0' >/dev/null || die 'legacy global media trigger remains active'
+fi
 printf 'MYSHOP_SCHEMA_CONTRACT_OK objects=%s migrations=%s latest=%s\n' "$actual_found" "$expected_count" "$expected_latest"

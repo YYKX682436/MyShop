@@ -20,7 +20,11 @@ public class UploadController {
     @PostMapping("/image")
     public ApiResponse<?> uploadImage(@RequestParam("file") MultipartFile file) {
         var result = imageUploadService.uploadAdminImage(file);
-        return ApiResponse.success(Map.of("url", result.url(), "original_size", result.originalSize(),
-                "stored_size", result.storedSize(), "reason", result.reason()));
+        var data = new java.util.LinkedHashMap<String, Object>();
+        data.put("url", result.url()); data.put("original_size", result.originalSize());
+        data.put("stored_size", result.storedSize()); data.put("reason", result.reason());
+        data.put("asset_id", result.assetId()); data.put("reused", result.reused());
+        data.put("thumbnail_url", result.thumbnailUrl()); data.put("clear_url", result.clearUrl());
+        return ApiResponse.success(data);
     }
 }

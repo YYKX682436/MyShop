@@ -20,6 +20,8 @@ public class UserProfileResponse {
     private String email;
     @JsonInclude(JsonInclude.Include.ALWAYS)
     private String avatarUrl;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String imageProcessingReason;
     private String role;
     private Long userNo;
     private UUID userLevelId;

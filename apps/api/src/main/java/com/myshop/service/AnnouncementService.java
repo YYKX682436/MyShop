@@ -27,6 +27,9 @@ import java.util.UUID;
 public class AnnouncementService {
     private final JdbcTemplate jdbc;
     private final SubsiteRepository subsites;
+    private MediaAssetRegistry mediaAssets;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setMediaAssets(MediaAssetRegistry mediaAssets) { this.mediaAssets = mediaAssets; }
 
     private static final String SITE_SCOPE = "coalesce(?::uuid, '00000000-0000-0000-0000-000000000000'::uuid)";
 
@@ -165,17 +168,27 @@ public class AnnouncementService {
     @Transactional
     public UUID create(UUID siteId, Edit edit) {
         validate(edit);
+        var references = mediaAssets == null ? null : mediaAssets.lockAnnouncement(edit.body());
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO site_announcements(id,site_id,title,body,status) VALUES (?,?,?,?,'DRAFT')",
                 id, siteId, edit.title().trim(), edit.body());
+        if (mediaAssets != null) mediaAssets.replaceReferences("ANNOUNCEMENT", id, references, "body");
         return id;
     }
 
     @Transactional
     public void edit(UUID siteId, UUID id, Edit edit) {
         validate(edit);
+        var references = mediaAssets == null ? null : mediaAssets.lockAnnouncement(id, edit.body());
+        if (references != null && !references.historicalAvatarPaths().isEmpty()) {
+            var old = jdbc.query("SELECT body FROM site_announcements WHERE id=? AND site_scope=" + SITE_SCOPE + " FOR UPDATE",
+                    (rs, n) -> rs.getString(1), id, siteId);
+            if (old.isEmpty()) throw notFound();
+            mediaAssets.verifyHistoricalAnnouncementAvatarReferences(old.getFirst(), references);
+        }
         if (jdbc.update("UPDATE site_announcements SET title=?,body=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND site_scope=" + SITE_SCOPE,
                 edit.title().trim(), edit.body(), id, siteId) != 1) throw notFound();
+        if (mediaAssets != null) mediaAssets.replaceReferences("ANNOUNCEMENT", id, references, "body");
     }
 
     /** Editing does not increment this version; this explicit action does. */

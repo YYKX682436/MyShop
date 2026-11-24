@@ -138,6 +138,15 @@ public class UploadStorage {
         }
     }
 
+    /** Atomically publish a completed local work file without copying or replacing an immutable URL. */
+    public void publishFile(String relativePath, Path source) throws IOException {
+        Path realRoot = uploadDirectory.toRealPath();
+        if (Files.isSymbolicLink(source) || !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)
+                || !source.toRealPath().startsWith(realRoot)) throw new IOException("Invalid managed work file");
+        Path target = prepareManagedFile(relativePath);
+        Files.createLink(target, source);
+    }
+
     public static byte[] sha256(byte[] bytes) {
         try { return MessageDigest.getInstance("SHA-256").digest(bytes); }
         catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
@@ -156,25 +165,6 @@ public class UploadStorage {
 
     public static String identifier(byte[] bytes) { return HexFormat.of().formatHex(sha256(bytes)); }
 
-    public void rememberMediaName(String identifier, String name) throws IOException {
-        if (!identifier.matches("[0-9a-f]{64}")) throw new IOException("Invalid identifier");
-        Path metadata = uploadDirectory.resolve(".media-info");
-        if (!Files.exists(metadata, LinkOption.NOFOLLOW_LINKS)) {
-            try { Files.createDirectory(metadata); } catch (FileAlreadyExistsException ignored) { }
-        }
-        if (Files.isSymbolicLink(metadata) || !Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS)
-                || !metadata.toRealPath().startsWith(uploadDirectory.toRealPath())) throw new IOException("Invalid media metadata directory");
-        Path target = metadata.resolve(identifier + ".txt");
-        Path temporary = Files.createTempFile(uploadDirectory, ".myshop-name-", ".tmp");
-        try {
-            Files.writeString(temporary, name, StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
-            try { Files.createLink(target, temporary); }
-            catch (FileAlreadyExistsException ignored) {
-                if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Invalid media metadata");
-            }
-        } finally { Files.deleteIfExists(temporary); }
-    }
-
     public String mediaName(String identifier, String fallback) {
         if (!identifier.matches("[0-9a-f]{64}")) return fallback;
         Path metadata = uploadDirectory.resolve(".media-info");
@@ -186,29 +176,6 @@ public class UploadStorage {
             String name = Files.readString(file, StandardCharsets.UTF_8).trim();
             return name.isEmpty() ? fallback : name;
         } catch (IOException | SecurityException ignored) { return fallback; }
-    }
-
-    /** Remove only metadata for an orphaned content hash; never follow links. */
-    public void forgetMediaName(String identifier) throws IOException {
-        forgetMediaNameExcept(identifier, null);
-    }
-
-    /** Used under the media lock before removing the named file. */
-    public void forgetMediaNameExcept(String identifier, String excludedFilename) throws IOException {
-        if (!identifier.matches("[0-9a-f]{64}")) return;
-        try (var files = Files.list(uploadDirectory)) {
-            if (files.anyMatch(path -> path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).startsWith(identifier + ".")
-                    && !path.getFileName().toString().equals(excludedFilename)
-                    && isSafePublicFile(path.getFileName().toString()))) return;
-        }
-        Path metadata = uploadDirectory.resolve(".media-info");
-        if (!Files.exists(metadata, LinkOption.NOFOLLOW_LINKS)) return;
-        if (Files.isSymbolicLink(metadata) || !Files.isDirectory(metadata, LinkOption.NOFOLLOW_LINKS)
-                || !metadata.toRealPath().startsWith(uploadDirectory.toRealPath())) throw new IOException("Invalid media metadata directory");
-        Path file = metadata.resolve(identifier + ".txt");
-        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return;
-        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Invalid media metadata");
-        Files.delete(file);
     }
 
     /** Reject hidden paths, symlink components and files outside the actual root. */
@@ -246,6 +213,11 @@ public class UploadStorage {
             Path realParent = target.getParent().toRealPath();
             if (!realParent.startsWith(realDirectory)) {
                 throw new IllegalArgumentException("managed upload path escapes storage");
+            }
+            Path current = uploadDirectory;
+            for (Path part : uploadDirectory.relativize(target.getParent())) {
+                current = current.resolve(part);
+                if (Files.isSymbolicLink(current)) throw new IllegalArgumentException("managed upload directory is a symlink");
             }
             return target;
         } catch (IOException | SecurityException exception) {

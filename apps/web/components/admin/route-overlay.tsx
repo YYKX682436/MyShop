@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef } from "react"
 import type { ReactNode } from "react"
+import { toast } from "sonner"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useLocale } from "@/lib/context"
 import { shouldConfirmRouteOverlayClose, type RouteOverlayCloseOptions } from "@/lib/route-overlay"
@@ -16,26 +17,46 @@ export type { RouteOverlayCloseOptions } from "@/lib/route-overlay"
  * mounted only while the form is actually dirty, so clean inspectors never
  * add sentinel entries or delay navigation.
  */
-export function useRouteOverlayClose(dirty = false, enabled = true) {
+export function useRouteOverlayClose(dirty = false, enabled = true, blocked = false) {
   const router = useRouter()
   const { t } = useLocale()
   const dirtyRef = useRef(dirty)
   const promptRef = useRef(t("admin.unsavedChangesMessage"))
   const closingRef = useRef(false)
   const restoringRef = useRef(false)
+  const blockedRef = useRef(blocked)
+  const ignoredPopRef = useRef(false)
+  const guardUrlRef = useRef("")
+  const guardIdRef = useRef("")
 
   useEffect(() => {
     dirtyRef.current = dirty
   }, [dirty])
 
   useEffect(() => {
+    blockedRef.current = blocked
+  }, [blocked])
+
+  useEffect(() => {
     promptRef.current = t("admin.unsavedChangesMessage")
   }, [t])
 
   useEffect(() => {
-    if (!enabled || !dirty || typeof window === "undefined") return
+    if (!enabled || typeof window === "undefined") return
+
+    const blockedNotice = () => toast.error("请等待图片上传完成")
 
     const handlePopState = () => {
+      if (ignoredPopRef.current) { ignoredPopRef.current = false; return }
+      if (blockedRef.current) {
+        if (window.location.href === guardUrlRef.current) {
+          window.history.pushState({ ...window.history.state, myshopUploadGuard: guardIdRef.current }, "", guardUrlRef.current)
+        } else {
+          window.history.forward()
+        }
+        blockedNotice()
+        return
+      }
       if (closingRef.current) {
         closingRef.current = false
         return
@@ -53,12 +74,48 @@ export function useRouteOverlayClose(dirty = false, enabled = true) {
       }
     }
 
+    const handleLink = (event: MouseEvent) => {
+      if (!blockedRef.current || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target && anchor.target !== "_self" || anchor.hasAttribute("download")) return
+      const destination = new URL(anchor.href, window.location.href)
+      if (destination.origin === window.location.origin && destination.pathname === window.location.pathname && destination.search === window.location.search) return
+      event.preventDefault(); event.stopPropagation(); blockedNotice()
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!blockedRef.current) return
+      event.preventDefault()
+      event.returnValue = ""
+    }
     window.addEventListener("popstate", handlePopState)
-    return () => window.removeEventListener("popstate", handlePopState)
-  }, [dirty, enabled])
+    document.addEventListener("click", handleLink, true)
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => {
+      window.removeEventListener("popstate", handlePopState)
+      document.removeEventListener("click", handleLink, true)
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+    }
+  }, [enabled])
+
+  useEffect(() => {
+    if (!enabled || !blocked) return
+    const guardId = globalThis.crypto.randomUUID()
+    guardIdRef.current = guardId
+    guardUrlRef.current = window.location.href
+    // Back lands on the same route first, allowing the pending upload to keep
+    // its mounted editor and selection while we restore the guard entry.
+    window.history.pushState({ ...window.history.state, myshopUploadGuard: guardId }, "", guardUrlRef.current)
+    return () => {
+      if (window.history.state?.myshopUploadGuard === guardId) {
+        ignoredPopRef.current = true
+        window.history.back()
+      }
+    }
+  }, [blocked, enabled])
 
   return useCallback((options: RouteOverlayCloseOptions = {}) => {
     if (!enabled) return
+    if (blockedRef.current) { toast.error("请等待图片上传完成"); return }
     if (shouldConfirmRouteOverlayClose(dirtyRef.current, options) && !window.confirm(promptRef.current)) return
     closingRef.current = true
     router.back()
@@ -72,6 +129,7 @@ interface RouteSheetProps {
   footer?: ReactNode
   headerActions?: ReactNode
   dirty?: boolean
+  blocked?: boolean
   onClose: () => void
   open?: boolean
   className?: string
@@ -102,7 +160,7 @@ export function InspectorSheet({ children, title, description, footer, dirty = f
   )
 }
 
-export function WorkspaceSheet({ children, title, description, headerActions, dirty = false, onClose, open = true, className, contentClassName }: RouteSheetProps) {
+export function WorkspaceSheet({ children, title, description, headerActions, dirty = false, blocked = false, onClose, open = true, className, contentClassName }: RouteSheetProps) {
   const { t } = useLocale()
 
   return (
@@ -112,7 +170,7 @@ export function WorkspaceSheet({ children, title, description, headerActions, di
         data-testid="product-workspace-sheet"
         className={cn("flex h-full w-full max-w-none flex-col gap-0 p-0 sm:w-[88vw] lg:w-[64vw] lg:max-w-[1100px] xl:w-[60vw]", className)}
         onInteractOutside={(event) => {
-          if (dirty) {
+          if (dirty || blocked) {
             event.preventDefault()
             onClose()
           }

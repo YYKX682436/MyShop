@@ -115,6 +115,14 @@ set -Eeuo pipefail
 exit 0
 FLOCK
 
+cat >"$fake_bin/sleep" <<'SLEEP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+count_file="${FAKE_ROOT:?}/simulated-sleep-count"
+count=$(cat "$count_file" 2>/dev/null || printf 0)
+printf '%s\n' "$((count + 1))" >"$count_file"
+SLEEP
+
 cat >"$fake_bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -233,15 +241,26 @@ case "${1:-}" in
   cp)
     source=${2:-}; destination=${3:-}
     count=55
+    latest=55
+    tables='{}'
+    if [[ "${FAKE_RECOVERY_MEDIA_STAGE:-0}" == 1 ]]; then
+      count=64
+      latest=64
+      tables='{"media_assets":["id","storage_path","processing_status","deleted_at"],"media_references":["asset_id","owner_type","owner_id","field"]}'
+    fi
     [[ "${FAKE_RECOVERY_CONTRACT_MISMATCH:-0}" != 1 || "$source" != *"$candidate_sha"* ]] || count=54
-    printf '{"version":1,"migration_count":%s,"latest_migration_version":"55","tables":{},"indexes":[]}\n' "$count" >"$destination"
+    printf '{"version":1,"migration_count":%s,"latest_migration_version":"%s","tables":%s,"indexes":[]}\n' "$count" "$latest" "$tables" >"$destination"
     ;;
   rm) ;;
+  tag) ;;
   pull)
     [[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || exit 1
     printf '%s\n' "${2:-}" >>"${FAKE_PULL_LOG:?}"
     ;;
   ps)
+    if [[ "$stage" == stopped && " $* " == *"label=com.docker.compose.service=api"* && "${FAKE_LINGERING_API:-0}" != 1 ]]; then
+      exit 0
+    fi
     if [[ " $* " == *" -aq "* || "${2:-}" == -aq ]]; then
       printf 'myshop-db-%s\nmyshop-api-%s\nmyshop-web-%s\nmyshop-caddy-%s\n' "$stage" "$stage" "$stage" "$stage"
     else
@@ -265,6 +284,7 @@ case "${1:-}" in
     service=${service%-old}
     service=${service%-candidate}
     case "$format" in
+      '{{.Id}}') digest_for_sha "${target##*:}"; printf '\n' ;;
       '{{.Config.Image}}')
         ref=$(ref_for_service "$service")
         if [[ "$stage" == candidate && "${DEPLOY_TEST_FAIL:-}" == final-identity ]]; then
@@ -286,7 +306,14 @@ case "${1:-}" in
           printf '\n'
         fi
         ;;
-      '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}') printf 'healthy\n' ;;
+      '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+        if [[ "$stage" == candidate && "$service" == api && -n "${FAKE_CANDIDATE_HEALTH_AFTER:-}" ]]; then
+          count=$(cat "$root/candidate-health-checks" 2>/dev/null || printf 0)
+          count=$((count + 1))
+          printf '%s\n' "$count" >"$root/candidate-health-checks"
+          if (( count < FAKE_CANDIDATE_HEALTH_AFTER )); then printf 'starting\n'; else printf 'healthy\n'; fi
+        else printf 'healthy\n'; fi
+        ;;
       *) printf 'healthy\n' ;;
     esac
     ;;
@@ -320,8 +347,15 @@ case "${1:-}" in
   exec)
     [[ "${2:-}" == -i ]] || exit 99
     sql=$(cat)
+    if [[ "$sql" == *'V63__media_assets_and_references.sql'* ]]; then
+      [[ "${FAKE_RECOVERY_STAGE_UNREADABLE:-0}" != 1 ]] || exit 1
+      if [[ "${FAKE_RECOVERY_STAGE_INVALID:-0}" == 1 ]]; then printf '0\n'; else printf '1\n'; fi
+      exit 0
+    fi
     if [[ "$sql" == *'COUNT(*) FILTER'* ]]; then
-      if [[ "${FAKE_RECOVERY_DB_MISMATCH:-0}" == 1 ]]; then printf '54|54|0\n'; else printf '55|55|0\n'; fi
+      if [[ "${FAKE_RECOVERY_MEDIA_STAGE:-0}" == 1 ]]; then
+        if [[ "${FAKE_RECOVERY_DB_MISMATCH:-0}" == 1 ]]; then printf '62|62|0\n'; else printf '63|63|0\n'; fi
+      elif [[ "${FAKE_RECOVERY_DB_MISMATCH:-0}" == 1 ]]; then printf '54|54|0\n'; else printf '55|55|0\n'; fi
       exit 0
     fi
     if [[ "${FAKE_SCHEMA_MODE:-}" == unreadable && "$stage" == stopped ]]; then exit 1; fi
@@ -364,7 +398,12 @@ case "$action" in
     ;;
   stop)
     [[ "$candidate" == 1 ]] || exit 1
-    [[ "${FAKE_STOP_FAIL:-0}" != 1 ]] || exit 1
+    if [[ " $* " == *" api web caddy "* ]]; then
+      [[ "${FAKE_STOP_FAIL:-0}" != 1 ]] || exit 1
+    else
+      if [[ "${FAKE_PRE_STOP_PARTIAL_FAIL:-0}" == 1 ]]; then printf 'stopped\n' >"$root/running"; exit 1; fi
+      [[ "${FAKE_PRE_STOP_FAIL:-0}" != 1 ]] || exit 1
+    fi
     printf 'stopped\n' >"$root/running"
     ;;
   *) exit 99 ;;
@@ -429,7 +468,7 @@ printf '%s\n' "$((count + 1))" >"$count_file"
 exit 0
 CURL
 
-chmod +x "$fake_bin/docker" "$fake_bin/flock" "$tmp_dir/compose.sh" "$tmp_dir/backup.sh" "$tmp_dir/schema.sh" "$tmp_dir/health.sh" "$tmp_dir/retention.sh" "$fake_bin/curl"
+chmod +x "$fake_bin/docker" "$fake_bin/flock" "$fake_bin/sleep" "$tmp_dir/compose.sh" "$tmp_dir/backup.sh" "$tmp_dir/schema.sh" "$tmp_dir/health.sh" "$tmp_dir/retention.sh" "$fake_bin/curl"
 
 case_root="$tmp_dir/case"
 reset_case() {
@@ -545,6 +584,59 @@ for hook in pull backup compose start health-after-start schema smoke candidate-
 done
 pass 'all ten pre-commit failure paths restore old state and stack without destructive retention'
 
+for stop_failure in FAKE_PRE_STOP_FAIL FAKE_LINGERING_API; do
+  reset_case
+  if [[ "$stop_failure" == FAKE_PRE_STOP_FAIL ]]; then
+    if output=$(FAKE_PRE_STOP_FAIL=1 run_deploy 2>&1); then status=0; else status=$?; fi
+  else
+    if output=$(FAKE_LINGERING_API=1 run_deploy 2>&1); then status=0; else status=$?; fi
+  fi
+  (( status != 0 )) || fail "$stop_failure unexpectedly started the candidate"
+  [[ "$(<"$case_root/running")" == old ]] || fail "$stop_failure did not restore the old API"
+  cmp -s "$base_state" "$case_root/deploy-state.json" || fail "$stop_failure changed accepted state"
+  [[ "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail "$stop_failure started the candidate"
+done
+pass 'candidate migration waits for all old API instances to stop'
+
+reset_case
+if output=$(FAKE_CANDIDATE_HEALTH_AFTER=35 run_deploy 2>&1); then status=0; else status=$?; fi
+(( status == 0 )) || { printf '%s\n' "$output" >&2; fail 'slow healthy candidate was rejected'; }
+[[ "$(<"$case_root/candidate-health-checks")" == 35 ]] || fail 'candidate health did not wait beyond the old limit'
+[[ "$(<"$case_root/simulated-sleep-count")" == 34 ]] || fail 'slow candidate did not pass the 60-second point'
+grep -Fq 'DEPLOYMENT ACCEPTED' <<<"$output" || fail 'slow candidate was not accepted after becoming healthy'
+pass 'candidate health can succeed after more than 60 seconds without resetting the deployment'
+
+reset_case
+if output=$(FAKE_CANDIDATE_HEALTH_AFTER=181 run_deploy 2>&1); then status=0; else status=$?; fi
+(( status == 1 )) || { printf '%s\n' "$output" >&2; fail 'candidate health timeout was not rejected'; }
+[[ "$(<"$case_root/candidate-health-checks")" == 180 ]] || fail 'candidate health timeout did not use its full bound'
+[[ "$(<"$case_root/simulated-sleep-count")" == 179 ]] || fail 'candidate health timeout wait was incorrect'
+grep -Fq 'DEPLOYMENT FAILED / ROLLED BACK' <<<"$output" || fail 'health timeout did not use the existing rollback path'
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'health timeout changed accepted state'
+[[ "$(<"$case_root/running")" == old ]] || fail 'health timeout did not restore the old API'
+pass 'candidate health remains bounded and rolls back when the unchanged schema is safe'
+
+reset_case
+if output=$(FAKE_CANDIDATE_HEALTH_AFTER=181 FAKE_SCHEMA_MODE=changed run_deploy 2>&1); then status=0; else status=$?; fi
+(( status == 2 )) || { printf '%s\n' "$output" >&2; fail 'changed-schema health timeout did not block rollback'; }
+grep -Fq 'CRITICAL_SCHEMA_ROLLBACK_BLOCKED' <<<"$output" || fail 'changed-schema timeout was not reported'
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'changed-schema timeout changed accepted state'
+[[ "$(<"$case_root/running")" == stopped && "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail 'changed-schema timeout restarted the old API'
+pass 'a health timeout after migration preserves the database and keeps the old API stopped'
+
+for prior_state in accepted legacy; do
+  reset_case
+  [[ "$prior_state" == accepted ]] || rm -f "$case_root/deploy-state.json"
+  if output=$(FAKE_PRE_STOP_PARTIAL_FAIL=1 run_deploy 2>&1); then status=0; else status=$?; fi
+  (( status == 1 )) || { printf '%s\n' "$output" >&2; fail "$prior_state partial pre-stop did not recover"; }
+  grep -Fq 'DEPLOYMENT FAILED / ROLLED BACK' <<<"$output" || { printf '%s\n' "$output" >&2; fail "$prior_state partial pre-stop was not reported"; }
+  [[ "$(<"$case_root/running")" == old ]] || fail "$prior_state partial pre-stop left the old API down"
+  [[ "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail "$prior_state partial pre-stop did not restart the baseline"
+  if [[ "$prior_state" == accepted ]]; then cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'accepted state changed after partial stop'
+  else [[ ! -e "$case_root/deploy-state.json" ]] || fail 'legacy pre-stop failure created accepted state'; fi
+done
+pass 'a partial pre-stop restores both accepted and legacy baselines before candidate startup'
+
 for schema_mode in changed unreadable; do
   reset_case
   printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
@@ -596,6 +688,42 @@ import json, sys
 assert json.load(open(sys.argv[1]))['active']['source_sha'] == sys.argv[2]
 PY
 pass 'forward recovery verifies its gate and promotes only the healthy new candidate'
+
+reset_case
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+printf 'stopped\n' >"$case_root/running"
+if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_MEDIA_STAGE=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+(( recovery_status == 0 )) || { printf '%s\n' "$recovery_output" >&2; fail 'V63 staged media recovery failed'; }
+grep -Fq 'FORWARD_RECOVERY_MEDIA_INDEX version=63 next=64' <<<"$recovery_output" || fail 'V63 staged recovery was not recorded'
+[[ "$(<"$case_root/running")" == candidate && -f "$case_root/recovery-point.dump" ]] || fail 'V63 recovery did not start the new candidate with a recovery point'
+pass 'a matching V64 release can resume the verified V63 media index and complete forward recovery'
+
+for invalid_stage in FAKE_RECOVERY_STAGE_INVALID FAKE_RECOVERY_STAGE_UNREADABLE FAKE_RECOVERY_DB_MISMATCH FAKE_RECOVERY_CONTRACT_MISMATCH; do
+  reset_case
+  printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+  printf 'stopped\n' >"$case_root/running"
+  case "$invalid_stage" in
+    FAKE_RECOVERY_STAGE_INVALID) if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_MEDIA_STAGE=1 FAKE_RECOVERY_STAGE_INVALID=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi ;;
+    FAKE_RECOVERY_STAGE_UNREADABLE) if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_MEDIA_STAGE=1 FAKE_RECOVERY_STAGE_UNREADABLE=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi ;;
+    FAKE_RECOVERY_DB_MISMATCH) if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_MEDIA_STAGE=1 FAKE_RECOVERY_DB_MISMATCH=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi ;;
+    FAKE_RECOVERY_CONTRACT_MISMATCH) if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_MEDIA_STAGE=1 FAKE_RECOVERY_CONTRACT_MISMATCH=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi ;;
+  esac
+  (( recovery_status == 2 )) || fail "V63 recovery accepted $invalid_stage"
+  grep -Fq 'reason=schema-compatibility' <<<"$recovery_output" || fail "V63 recovery did not report $invalid_stage"
+  ! grep -Fxq up "$case_root/compose.log" || fail "V63 $invalid_stage started an API"
+  cmp -s "$base_state" "$case_root/deploy-state.json" || fail "V63 $invalid_stage changed accepted state"
+done
+pass 'V63 recovery rejects invalid or unreadable history, other versions, and mismatched image contracts'
+
+reset_case
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+printf 'stopped\n' >"$case_root/running"
+if recovery_output=$(FAKE_SHARED_TEST=1 FAKE_OFFLINE_TEST=1 FAKE_RECOVERY_MEDIA_STAGE=1 MYSHOP_FORWARD_RECOVERY_FAILED_SHA="$rollback1_sha" DEPLOY_TEST_FAIL=health-after-start run_deploy 2>&1); then recovery_status=0; else recovery_status=$?; fi
+(( recovery_status == 2 )) || fail 'failed V63 forward recovery did not block rollback'
+grep -Fq 'CRITICAL_SCHEMA_ROLLBACK_BLOCKED' <<<"$recovery_output" || fail 'failed V63 recovery was not reported'
+[[ "$(<"$case_root/running")" == stopped && "$(grep -c '^up$' "$case_root/compose.log")" == 1 ]] || fail 'failed V63 recovery restarted the older API'
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'failed V63 recovery changed accepted state'
+pass 'failed V63 forward recovery leaves the old API stopped and accepted state unchanged'
 
 reset_case
 printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
@@ -681,6 +809,7 @@ pass 'rollback failure returns CRITICAL_ROLLBACK_FAILED without retention'
 reset_case
 if output=$(run_deploy 2>&1); then success_status=0; else success_status=$?; fi
 (( success_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'successful candidate deployment failed'; }
+[[ "$(awk '/^stop$|^up$/ {print; if (++count == 2) exit}' "$case_root/compose.log")" == $'stop\nup' ]] || fail 'candidate started before stopping the old API'
 grep -Fq 'backup-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production backup did not retain the myshop project ID'
 grep -Fq 'schema-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production schema check did not retain the myshop project ID'
 grep -Fq 'retention-project=myshop' "$case_root/helper-projects.log" || fail 'legacy production retention did not retain the myshop project ID'

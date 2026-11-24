@@ -1,12 +1,20 @@
-const managedPath = /^\/api\/uploads\/(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:jpe?g|png|webp|bmp)$/i
+const legacyPath = /^\/api\/uploads\/(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:jpe?g|png|webp|bmp)$/i
+const variantPath = /^(\/api\/uploads\/(?:images\/|avatars\/managed-)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(?:display|thumb|clear)(\.(?:jpe?g|png|gif|webp|avif|heic|heif|bmp))$/i
 
-/** Convert only an exact, trusted site upload URL into the existing local optimizer path. */
+/** Map only our versioned local variants, never an arbitrary external URL. */
+export function managedImageVariant(path: string, variant: "display" | "thumb" | "clear"): string | null {
+  const match = variantPath.exec(path)
+  return match ? `${match[1]}-${variant}${match[2]}` : null
+}
+
+/** Resolve only trusted site uploads; legacy query strings do not change the stored file. */
 export function managedProductImagePath(src: string, allowedOrigins: string[]): string | null {
-  if (managedPath.test(src)) return src
   try {
-    const url = new URL(src)
-    if (!["http:", "https:"].includes(url.protocol) || !allowedOrigins.includes(url.origin) || url.username || url.password || url.search || url.hash) return null
-    return managedPath.test(url.pathname) ? url.pathname : null
+    const absolute = /^https?:\/\//i.test(src)
+    const url = new URL(src, "http://local.invalid")
+    if (url.username || url.password || (!absolute && url.origin !== "http://local.invalid")) return null
+    if (absolute && !allowedOrigins.includes(url.origin)) return null
+    return legacyPath.test(url.pathname) || variantPath.test(url.pathname) ? url.pathname : null
   } catch {
     return null
   }

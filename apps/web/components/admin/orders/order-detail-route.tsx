@@ -15,8 +15,9 @@ import { invalidateAdminOrders } from "@/lib/admin-order-invalidation"
 import { invalidateAdminData } from "@/lib/admin-data-invalidation"
 import { useRequestGuard } from "@/lib/admin-page-requests"
 import { invalidateAdminAttention } from "@/lib/admin-attention"
+import { uploadAdminImage } from "@/lib/admin-image-upload"
 import { getRefundCardKeyAvailability, normalizeRefundCardKeySelection } from "@/lib/admin-refund-ui"
-import { adminCardKeyApi, adminOrderApi, adminProductApi, requestOrThrow } from "@/services/api"
+import { adminCardKeyApi, adminOrderApi, requestOrThrow } from "@/services/api"
 import { isManualFulfillmentItem } from "@/lib/order-status"
 import { formatYuan } from "@/lib/utils"
 import type { AdminManualFulfillmentItem, AdminOrderItem, OrderCardKey } from "@/types"
@@ -27,7 +28,7 @@ interface AdminOrderDetailRouteProps {
 }
 
 export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: AdminOrderDetailRouteProps) {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const [order, setOrder] = useState<AdminOrderItem | null>(null)
   const [cardKeys, setCardKeys] = useState<OrderCardKey[]>([])
   const [loading, setLoading] = useState(true)
@@ -465,7 +466,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
         isManualFulfillmentItem(item) && item.fulfillment_status === "WAITING_MANUAL"
       ) ?? []}
       loading={manualFulfillmentLoading}
-      uploadImage={(file) => adminProductApi.uploadImage(file).then((result) => result.url)}
+      uploadImage={(file) => uploadAdminImage(file, locale).then((result) => result.url)}
       onOpenChange={setManualFulfillmentOpen}
       onConfirm={(items) => void handleCompleteManualFulfillment(items)}
     />

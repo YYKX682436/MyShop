@@ -5,16 +5,43 @@ import com.myshop.controller.AuthController;
 import com.myshop.model.request.RegisterRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.apache.catalina.connector.ClientAbortException;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import java.io.IOException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class GlobalExceptionHandlerTest {
+
+    @RestController
+    static class AbortedVideoController {
+        @GetMapping("/aborted-video")
+        void stream(HttpServletResponse response) throws IOException {
+            response.setContentType("video/mp4");
+            throw new ClientAbortException(new IOException("Broken pipe"));
+        }
+    }
+
+    @Test
+    void disconnectedVideoClientDoesNotReceiveAnApiErrorBody() throws Exception {
+        var mvc = MockMvcBuilders.standaloneSetup(new AbortedVideoController())
+                .setControllerAdvice(new GlobalExceptionHandler()).build();
+        mvc.perform(get("/aborted-video"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(""));
+    }
 
     @Test
     void registrationBeanValidationResponseIncludesStableFieldParameters() throws Exception {

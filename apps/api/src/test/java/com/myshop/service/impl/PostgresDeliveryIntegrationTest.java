@@ -1740,7 +1740,13 @@ class PostgresDeliveryIntegrationTest {
         String token = jwtUtils.generateToken(admin, username, "ADMIN", scalar("select auth_version from users where id=?", Integer.class, admin));
         String csrf = UUID.randomUUID().toString();
         var old = jdbcTemplate.queryForList("select config_key,config_value from site_configs where config_key in ('site_name','favicon_url')");
-        String body = "{\"configs\":[{\"config_key\":\"site_name\",\"config_value\":\"品牌测试\"},{\"config_key\":\"favicon_url\",\"config_value\":\"/api/uploads/brand.png\"}]}";
+        UUID iconId = UUID.randomUUID();
+        String iconPath = "images/" + iconId + "-display.png", iconUrl = "/api/uploads/" + iconPath;
+        var uploadStorage = webApplicationContext.getBean(com.myshop.service.UploadStorage.class);
+        java.nio.file.Files.write(uploadStorage.prepareManagedFile(iconPath), new byte[]{(byte) 137,80,78,71});
+        jdbcTemplate.update("INSERT INTO media_assets(id,storage_path,display_path,clear_path,original_filename,media_type,mime_type,size_bytes,scope,processing_status) VALUES (?,?,?,?,?,'IMAGE','image/png',4,'SHARED','READY')",
+                iconId, iconPath, iconPath, iconPath, "brand.png");
+        String body = "{\"configs\":[{\"config_key\":\"site_name\",\"config_value\":\"品牌测试\"},{\"config_key\":\"favicon_url\",\"config_value\":\"" + iconUrl + "\"}]}";
         MockMvc mvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).addFilters(springSecurityFilterChain).build();
         try {
             mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/admin/site-config").contextPath("/api")
@@ -1751,7 +1757,7 @@ class PostgresDeliveryIntegrationTest {
                     .contentType("application/json").content(body)).andExpect(status().isOk());
             var config = webApplicationContext.getBean(com.myshop.service.SiteConfigService.class).getPublicConfig();
             assertEquals("品牌测试", config.get("site_name"));
-            assertEquals("/api/uploads/brand.png", config.get("favicon_url"));
+            assertEquals(iconUrl, config.get("favicon_url"));
             assertFalse(config.containsKey("site_slogan"));
             assertFalse(config.containsKey("contact_items"));
         } finally {
@@ -1760,6 +1766,9 @@ class PostgresDeliveryIntegrationTest {
                 if (previous.isPresent()) jdbcTemplate.update("update site_configs set config_value=? where config_key=?", previous.get().get("config_value"), key);
                 else jdbcTemplate.update("delete from site_configs where config_key=?", key);
             }
+            jdbcTemplate.update("DELETE FROM media_references WHERE asset_id=?", iconId);
+            jdbcTemplate.update("DELETE FROM media_assets WHERE id=?", iconId);
+            java.nio.file.Files.deleteIfExists(uploadStorage.resolve(iconPath));
         }
     }
 

@@ -477,7 +477,7 @@ export const userApi = {
   uploadAvatar: (file: File) => {
     const formData = new FormData()
     formData.append("file", file)
-    return uploadRequest<UserProfile>("/user/avatar", formData)
+    return uploadRequest<UserProfile & { image_processing_reason?: string }>("/user/avatar", formData)
   },
   getOrders: (params: { page?: number; page_size?: number; status?: string }) => {
     const qs = buildQuery(params)
@@ -574,7 +574,7 @@ export const subsiteApi = {
   uploadFavicon: (file: File) => {
     const formData = new FormData()
     formData.append("file", file)
-    return uploadRequest<SubsiteInfo>("/subsite/mine/favicon", formData)
+    return uploadRequest<SubsiteInfo & { image_processing_reason?: string }>("/subsite/mine/favicon", formData)
   },
   customers: (page: number) => request<{ content: SubsiteCustomer[]; total_pages: number }>(`/subsite/customers?page=${page}&size=20`),
   overview: () => request<{ order_count: number; estimated_profit: number; pending_profit: number; settled_profit: number }>("/subsite/overview"),
@@ -683,22 +683,42 @@ export const adminProductApi = {
   uploadImage: (file: File) => {
     const formData = new FormData()
     formData.append("file", file)
-    return uploadRequest<{ url: string; original_size: number; stored_size: number; reason: string }>("/upload/image", formData)
+    return uploadRequest<{ asset_id: string; url: string; thumbnail_url: string; clear_url: string; original_size: number; stored_size: number; reason: string; reused: boolean }>("/upload/image", formData)
   },
 }
 
-export type MediaItem = { name: string; url: string; size: number; format: string; uploaded_at: number }
+export type MediaItem = {
+  id: string; name: string; url: string | null; size: number; format: string; uploaded_at: number;
+  type: "image" | "video"; usage: string[]; status: "uploading" | "processing" | "ready" | "failed" | "deleted";
+  thumbnail_url: string | null; clear_url: string | null; original_size: number | null;
+  thumbnail_size: number | null; clear_size: number | null; width: number | null; height: number | null;
+  duration_ms: number | null; cleanup_error: string | null; upload_cleanup_error: string | null; processing_error: string | null; reused_asset_id: string | null; scope: string;
+}
 export type MediaPage = { items: MediaItem[]; total: number; page: number; page_size: number }
-export type MediaInspection = { size: number; format: string; width?: number; height?: number; optimizable: boolean; references: { table: string; source: string; count: number }[] }
-export type MediaOptimization = { url: string; original_size: number; optimized_size: number; replaced_covers: number; changed_products: { id: string; title: string }[]; retained_references: { table: string; source: string; count: number }[] }
+export type MediaInspection = { size: number; format: string; width?: number | null; height?: number | null; references: { table: string; source: string; count: number; owner_id: string; field: string; owner_type: string }[] }
 
 export const adminMediaApi = {
-  getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc" }, signal?: AbortSignal) =>
+  getList: (params: { page: number; page_size: number; query: string; order: "asc" | "desc"; sort?: "time" | "size"; type?: string; usage?: string; unused?: boolean; exclude_avatars?: boolean; asset_id?: string }, signal?: AbortSignal) =>
     request<MediaPage>(`/admin/media?${buildQuery(params)}`, { signal }),
   inspect: (filename: string, signal?: AbortSignal) =>
     request<MediaInspection>(`/admin/media/inspection?${buildQuery({ filename })}`, { signal }),
   delete: (filename: string) => request<void>(`/admin/media?${buildQuery({ filename })}`, { method: "DELETE" }),
-  optimize: (filename: string) => request<MediaOptimization>(`/admin/media/optimize?${buildQuery({ filename })}`, { method: "POST" }),
+}
+
+export type VideoSession = {
+  id: string; status: "UPLOADING" | "PROCESSING" | "READY" | "FAILED";
+  name: string; size: number; error: string | null; url: string | null; chunk_bytes: number; reused: boolean;
+}
+
+export const adminVideoApi = {
+  tusEndpoint: `${API_BASE}/admin/media/tus`,
+  create: (name: string, size: number) => request<{ id: string; max_bytes: number; chunk_bytes: number }>(
+    "/admin/media/video-sessions", { method: "POST", body: JSON.stringify({ name, size }) }),
+  status: (id: string) => request<VideoSession>(`/admin/media/video-sessions/${encodeURIComponent(id)}`),
+  statusByUpload: (uploadUri: string) => request<VideoSession>(`/admin/media/video-sessions?${buildQuery({ upload_uri: uploadUri })}`),
+  retry: (id: string) => request<void>(`/admin/media/video-sessions/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+  cleanup: (id: string) => request<void>(`/admin/media/video-sessions/${encodeURIComponent(id)}/cleanup`, { method: "POST" }),
+  cancel: (id: string) => request<void>(`/admin/media/video-sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
 }
 
 // ============================================================

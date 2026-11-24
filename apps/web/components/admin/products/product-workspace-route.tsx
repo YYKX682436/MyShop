@@ -11,13 +11,15 @@ export function ProductWorkspaceRoute({ productId, initialTab }: { productId?: s
   const { t } = useLocale()
   const router = useRouter()
   const [dirty, setDirty] = useState(false)
-  const close = useRouteOverlayClose(dirty)
+  const [uploading, setUploading] = useState(false)
+  const close = useRouteOverlayClose(dirty, true, uploading)
   const title = productId ? t("admin.editProduct") : t("admin.addProduct")
 
   return (
     <WorkspaceSheet
       title={title}
       dirty={dirty}
+      blocked={uploading}
       onClose={close}
       contentClassName="bg-surface"
     >
@@ -25,6 +27,7 @@ export function ProductWorkspaceRoute({ productId, initialTab }: { productId?: s
         productId={productId}
         presentation="workspace"
         onDirtyChange={setDirty}
+        onUploadingChange={setUploading}
         initialTab={initialTab}
         onSaved={(saved, continueRestock) => {
           setDirty(false)

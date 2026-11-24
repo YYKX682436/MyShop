@@ -1,6 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import React from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import ReactMarkdown from "react-markdown"
 import { createMarkdownImage, insertMarkdownImage } from "./markdown-image.ts"
+
+test("serialized images preserve bracketed names and URLs with parentheses", () => {
+  const markdown = createMarkdownImage("a[b]\\photo.png", "https://example.test/a(b).png?token=(x)&copy;=1")
+  const rendered = renderToStaticMarkup(React.createElement(ReactMarkdown, null, markdown))
+  assert.match(rendered, /<img[^>]*src="https:\/\/example\.test\/a\(b\)\.png\?token=\(x\)&amp;copy;=1"/)
+  assert.match(rendered, /<img[^>]*alt="a\[b\]\\photo\.png"/)
+})
 
 test("markdown image insertion replaces the current selection and returns the cursor after the image", () => {
   const markdownImage = createMarkdownImage("商品图.png", "/api/uploads/item.png")

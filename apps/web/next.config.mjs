@@ -1,6 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',   // Docker 部署必须：生成独立运行的 server.js，不依赖完整 node_modules
+  // Vditor loads these resources only on editor pages. Keep the exact pinned
+  // package files in the standalone server rather than depending on a CDN.
+  outputFileTracingIncludes: {
+    '/vditor-assets/*': [
+      './node_modules/vditor/package.json',
+      './node_modules/vditor/dist/js/lute/lute.min.js',
+      './node_modules/vditor/dist/js/i18n/{zh_CN,en_US}.js',
+      './node_modules/vditor/dist/js/icons/ant.js',
+      './node_modules/vditor/dist/css/content-theme/{light,dark}.css',
+    ],
+  },
   images: {
     // Only our public, top-level uploads may be fetched by the optimizer.
     // In particular, never turn arbitrary supplier URLs into server-side fetches.

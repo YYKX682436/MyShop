@@ -11,5 +11,9 @@ public interface SiteConfigRepository extends JpaRepository<SiteConfig, UUID> {
 
     Optional<SiteConfig> findByConfigKey(String configKey);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select c from SiteConfig c where c.configKey = :key")
+    Optional<SiteConfig> findByConfigKeyForUpdate(@org.springframework.data.repository.query.Param("key") String configKey);
+
     List<SiteConfig> findByConfigGroup(String configGroup);
 }

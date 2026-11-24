@@ -22,6 +22,9 @@ class SubsiteManagementServiceTest {
         UUID owner=UUID.randomUUID(), stranger=UUID.randomUUID();
         Subsite site=new Subsite(); site.setId(UUID.randomUUID()); site.setOwnerId(owner); site.setPrefix("owner"); site.setName("原站");
         when(sites.findByOwnerId(owner)).thenReturn(Optional.of(site));
+        when(sites.findByIdForUpdate(site.getId())).thenReturn(Optional.of(site));
+        when(sites.findByOwnerIdForUpdate(owner)).thenReturn(Optional.of(site));
+        when(sites.existsByOwnerId(owner)).thenReturn(true);
         when(sites.findByOwnerId(stranger)).thenReturn(Optional.empty());
         var file=new org.springframework.mock.web.MockMultipartFile("file","icon.png","image/png",new byte[]{1});
         assertThrows(BusinessException.class, () -> service.uploadFavicon(stranger,file));

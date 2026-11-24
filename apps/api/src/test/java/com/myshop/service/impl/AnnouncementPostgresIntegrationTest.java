@@ -34,11 +34,23 @@ class AnnouncementPostgresIntegrationTest {
     SubsiteRepository sites;
     AnnouncementService service;
 
-    @BeforeEach void prepare() {
+    @BeforeEach void prepare() throws Exception {
         var data = new DriverManagerDataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
         var flyway = Flyway.configure().dataSource(data).cleanDisabled(false).load();
-        flyway.clean(); flyway.migrate();
+        flyway.clean();
+        Flyway.configure().dataSource(data).target("63").load().migrate();
         jdbc = new JdbcTemplate(data);
+        var root = java.nio.file.Files.createTempDirectory("myshop-announcement-media-");
+        try {
+            var storage = new com.myshop.service.UploadStorage(root.toString()); storage.initialize();
+            var paths = new com.myshop.service.ManagedMediaReferences(jdbc, "/api/uploads", "http://localhost:3000");
+            var indexer = new com.myshop.service.MediaLegacyIndexer(jdbc, storage, paths);
+            indexer.indexBeforeCutover(); flyway.migrate(); indexer.clearOldDeletedReferences();
+        } finally {
+            try (var files = java.nio.file.Files.walk(root)) {
+                for (var path : files.sorted(java.util.Comparator.reverseOrder()).toList()) java.nio.file.Files.deleteIfExists(path);
+            }
+        }
         sites = mock(SubsiteRepository.class);
         service = new AnnouncementService(jdbc, sites);
     }

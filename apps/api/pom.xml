@@ -131,6 +131,36 @@
             <artifactId>core</artifactId>
             <version>3.5.4</version>
         </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>0.32.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-tables</artifactId>
+            <version>0.32.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-strikethrough</artifactId>
+            <version>0.32.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-autolink</artifactId>
+            <version>0.32.0</version>
+        </dependency>
+        <dependency>
+            <groupId>me.desair.tus</groupId>
+            <artifactId>tus-java-server</artifactId>
+            <version>1.0.0-3.3</version>
+            <exclusions>
+                <!-- The application supplies its Jakarta Servlet and SLF4J APIs. -->
+                <exclusion><groupId>jakarta.servlet</groupId><artifactId>jakarta.servlet-api</artifactId></exclusion>
+                <exclusion><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId></exclusion>
+            </exclusions>
+        </dependency>
 
         <!-- Lombok -->
         <dependency>

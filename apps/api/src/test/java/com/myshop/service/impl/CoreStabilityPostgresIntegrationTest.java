@@ -159,7 +159,7 @@ class CoreStabilityPostgresIntegrationTest {
         Account account = account();
         String newHash = passwordEncoder.encode("changed-elsewhere");
         String avatarUrl = "/uploads/avatars/" + UUID.randomUUID() + ".webp";
-        when(images.uploadAvatar(any())).thenReturn(new ImageUploadService.UploadedImage(avatarUrl, "avatar.webp"));
+        when(images.uploadAvatar(any(), eq(account.id()))).thenReturn(new ImageUploadService.UploadedImage(avatarUrl, "avatar.webp"));
 
         afterConcurrentWrite("update users set balance = 90, auth_version = 7, password_hash = ? where id = ?",
                 List.of(newHash, account.id()), "users", () -> avatarService.uploadAvatar(account.id(),

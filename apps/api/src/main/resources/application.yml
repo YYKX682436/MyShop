@@ -84,6 +84,11 @@ upload:
   path: ${UPLOAD_PATH:./uploads}
   url-prefix: ${UPLOAD_URL_PREFIX:/api/uploads}
 
+video:
+  max-upload-bytes: ${VIDEO_MAX_UPLOAD_BYTES:1073741824}
+  max-chunk-bytes: ${VIDEO_MAX_CHUNK_BYTES:8388608}
+  processing-timeout-seconds: ${VIDEO_PROCESSING_TIMEOUT_SECONDS:14400}
+
 # Private after-sale evidence. This root must remain separate from UPLOAD_PATH
 # and has no static resource mapping.
 private-upload:

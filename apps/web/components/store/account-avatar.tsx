@@ -6,6 +6,7 @@ import { useLocale } from "@/lib/context"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { getAvatarDisplayState, type AvatarImageLoadingStatus } from "@/lib/avatar-display"
 import { AVATAR_ALLOWED_IMAGE_ACCEPT } from "@/lib/image-upload"
+import { managedImageVariant } from "@/lib/managed-product-image"
 
 interface AccountAvatarProps {
   avatarUrl: string | null
@@ -51,7 +52,7 @@ export function AccountAvatar({
       {avatarUrl && (
         <AvatarImage
           key={avatarUrl}
-          src={avatarUrl}
+          src={managedImageVariant(avatarUrl, "thumb") || avatarUrl}
           alt={username}
           className="object-cover"
           onLoadingStatusChange={(status) => setImageState({ avatarUrl, status })}

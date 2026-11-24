@@ -4,6 +4,7 @@ import com.myshop.common.ApiResponse;
 import com.myshop.constant.ErrorCode;
 import com.myshop.model.request.RegisterRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.catalina.connector.ClientAbortException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -110,6 +111,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
     public ResponseEntity<Void> handleMissingResource() {
         return ResponseEntity.notFound().build();
+    }
+
+    @ExceptionHandler(ClientAbortException.class)
+    public void handleClientAbort() {
+        // Video players routinely close a streaming request when seeking or
+        // navigating away. The response is already gone; do not write JSON to
+        // a video/mp4 response or report the disconnect as a server failure.
+        log.debug("Client disconnected while receiving a response");
     }
 
     @ExceptionHandler(Exception.class)

@@ -4,18 +4,22 @@ import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { MarkdownEditor } from "@/components/admin/markdown-editor"
-import { adminProductApi, announcementApi, type AnnouncementChannel, type SiteAnnouncement } from "@/services/api"
+import { MediaPicker } from "@/components/admin/media-library"
+import { announcementApi, type AnnouncementChannel, type SiteAnnouncement } from "@/services/api"
+import { uploadAdminImage } from "@/lib/admin-image-upload"
+import { useLocale } from "@/lib/context"
 import { formatDateTime } from "@/lib/utils"
 
-export function AnnouncementManagement({ scope }: { scope: "admin" | "subsite" }) {
+export function AnnouncementManagement({ scope, onUploadingChange }: { scope: "admin" | "subsite"; onUploadingChange?: (uploading: boolean) => void }) {
+  const { locale } = useLocale()
   const [items, setItems] = useState<SiteAnnouncement[]>([])
   const [channels, setChannels] = useState<AnnouncementChannel[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [title, setTitle] = useState("")
   const [body, setBody] = useState("")
   const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const selected = items.find(item => item.id === selectedId)
@@ -40,12 +44,16 @@ export function AnnouncementManagement({ scope }: { scope: "admin" | "subsite" }
   }, [scope])
 
   function select(item: SiteAnnouncement | null) {
+    if (uploading) { toast.error("请等待图片上传完成"); return }
     if (dirty && !window.confirm("放弃未保存的更改？")) return
     setSelectedId(item?.id ?? null); setTitle(item?.title ?? ""); setBody(item?.body ?? "")
   }
 
   async function save(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true)
+    event.preventDefault()
+    if (uploading) { toast.error("请等待图片上传完成"); return }
+    if (!body.trim() || body.length > 100000) { toast.error("请填写不超过 100000 个字符的正文"); return }
+    setBusy(true)
     try {
       const api = announcementApi.manage(scope)
       const id = selectedId ?? (await api.create(title, body)).id
@@ -81,10 +89,10 @@ export function AnnouncementManagement({ scope }: { scope: "admin" | "subsite" }
         </label>
       })}
     </div>
-    <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">公告</h3><Button type="button" variant="outline" onClick={() => select(null)} disabled={busy}>新建公告</Button></div>
+    <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">公告</h3><Button type="button" variant="outline" onClick={() => select(null)} disabled={busy || uploading}>新建公告</Button></div>
     <div className="grid gap-4 md:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]">
       <ul className="max-h-80 overflow-auto rounded-control border border-border-subtle">
-        {items.map(item => <li key={item.id}><button type="button" onClick={() => select(item)} disabled={busy}
+        {items.map(item => <li key={item.id}><button type="button" onClick={() => select(item)} disabled={busy || uploading}
           className={`w-full border-b border-border-subtle px-3 py-3 text-left last:border-b-0 ${selectedId === item.id ? "bg-primary/10" : "hover:bg-surface-muted"}`}>
           <span className="block truncate text-sm font-medium">{item.title}</span>
           <span className="text-xs text-muted-foreground">{item.status === "PUBLISHED" ? "已发布" : item.status === "DRAFT" ? "待发布" : "已撤下"}{item.published_at ? ` · ${formatDateTime(item.published_at)}` : ""}</span>
@@ -93,10 +101,14 @@ export function AnnouncementManagement({ scope }: { scope: "admin" | "subsite" }
       </ul>
       <form onSubmit={save}><fieldset disabled={busy} className="space-y-3"><legend className="sr-only">编辑公告</legend>
         <label className="block space-y-1 text-sm"><span>标题</span><Input required maxLength={200} value={title} onChange={e => setTitle(e.target.value)} /></label>
-        {scope === "admin" ? <div className="space-y-1 text-sm"><label htmlFor="announcement-body">正文</label><MarkdownEditor id="announcement-body" maxLength={100000} value={body} onChange={setBody} uploadImage={file => adminProductApi.uploadImage(file).then(result => result.url)} /></div>
-          : <label className="block space-y-1 text-sm"><span>正文</span><Textarea required maxLength={100000} rows={8} value={body} onChange={e => setBody(e.target.value)} /></label>}
+        <div className="space-y-1 text-sm"><label htmlFor="announcement-body">正文</label><MarkdownEditor
+          key={selectedId || "new"} id="announcement-body" maxLength={100000} value={body} onChange={setBody}
+          onUploadingChange={next => { setUploading(next); onUploadingChange?.(next) }}
+          uploadImage={scope === "admin" ? file => uploadAdminImage(file, locale).then(result => result.url) : undefined}
+          renderMediaPicker={scope === "admin" ? props => <MediaPicker disabled={props.disabled} onOpen={props.onOpen}
+            onSelect={item => { if (item.url) props.onSelect({ name: item.name, url: item.url }) }} /> : undefined} /></div>
         <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={busy || !dirty}>保存</Button>
+          <Button type="submit" disabled={busy || uploading || body.length > 100000 || !dirty}>保存</Button>
           {selected && <Button type="button" variant="outline" disabled={busy || dirty}
             onClick={() => void change(() => announcementApi.manage(scope).publish(selected.id), "公告已发布")}>{selected.status === "PUBLISHED" ? "重新发布" : "发布"}</Button>}
           {selected?.status === "PUBLISHED" && <Button type="button" variant="outline" disabled={busy || dirty}

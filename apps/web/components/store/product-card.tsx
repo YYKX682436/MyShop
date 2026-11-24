@@ -27,6 +27,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
         {product.cover_url ? (
           <ProductImage
             src={product.cover_url}
+            variant="thumb"
             alt=""
             priority={priority}
             sizes="(min-width: 1536px) 220px, (min-width: 1280px) calc(20vw - 26px), (min-width: 1024px) calc(25vw - 28px), (min-width: 640px) calc(33.333vw - 24px), calc(50vw - 22px)"

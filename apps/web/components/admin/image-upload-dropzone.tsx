@@ -188,7 +188,7 @@ export const ImageUploadDropzone = memo(function ImageUploadDropzone({ value, on
           />
         </label>
 
-        <div className="mt-3"><MediaPicker disabled={busy} onSelect={(item) => handleUrlChange(item.url)} /></div>
+        <div className="mt-3"><MediaPicker disabled={busy} onSelect={(item) => { if (item.url) handleUrlChange(item.url) }} /></div>
 
         {normalizedValue && (
           <div className="mt-3 flex flex-wrap items-center gap-2">

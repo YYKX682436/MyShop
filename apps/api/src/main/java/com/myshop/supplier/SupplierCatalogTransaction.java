@@ -42,10 +42,18 @@ public class SupplierCatalogTransaction {
     private final OrderRepository orders;
     private final SupplierPurchaseRepository purchases;
     private final SupplierPresentation presentation;
+    private com.myshop.service.MediaAssetRegistry mediaAssets;
+    private org.springframework.jdbc.core.JdbcTemplate mediaJdbc;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setMediaServices(com.myshop.service.MediaAssetRegistry assets, org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this.mediaAssets = assets; this.mediaJdbc = jdbc;
+    }
 
     @Transactional
     public ImportResult importProduct(UUID accountId, UUID categoryId, SupplierModels.Product remote) {
+        var preparedMedia = prepareMedia(accountId, null, remote);
         var account = accounts.findForUpdate(accountId).orElseThrow(() -> error("货源账号不存在"));
+        if (preparedMedia != null && !java.util.Objects.equals(preparedMedia.base(), account.getBaseUrl())) throw error("货源资料已变化，请重试");
         if (!account.isEnabled()) throw error("货源账号已停用");
         List<SupplierProductMapping> existing=mappings.findByAccountIdAndRemoteGoodsIdOrderByRemoteSku(accountId, remote.id());
         // Historical soft-deleted products must not permanently reserve the remote SKU.
@@ -84,6 +92,7 @@ public class SupplierCatalogTransaction {
         product.setRetailPrice(initialRetail.max(new BigDecimal("0.01")));
         product.setCostPrice(product.isSpecEnabled() ? null : first);
         product=products.saveAndFlush(product);
+        if (preparedMedia != null) mediaAssets.replaceReferences("PRODUCT", product.getId(), preparedMedia.references(), "cover_url", "detail_md");
         LocalDateTime now=LocalDateTime.now();
         Set<String> names = new HashSet<>();
         int order=0;
@@ -220,6 +229,8 @@ public class SupplierCatalogTransaction {
             mappings.deleteAll(rows);
         }
         product.setEnabled(false); product.setIsDeleted(1); products.save(product);
+        if (mediaAssets != null) mediaAssets.replaceReferences("PRODUCT", productId,
+                new com.myshop.service.MediaAssetRegistry.LockedReferences(Map.of()), "cover_url", "detail_md");
     }
 
     @Transactional
@@ -241,15 +252,41 @@ public class SupplierCatalogTransaction {
 
     @Transactional
     public void syncPresentation(UUID accountId, UUID productId, SupplierModels.Product remote) {
+        var preparedMedia = prepareMedia(accountId, productId, remote);
         var account=accounts.findForUpdate(accountId).orElseThrow(() -> error("货源账号不存在"));
         if (!account.isEnabled()) throw error("货源账号已停用");
         Product product=products.findByIdForUpdate(productId).filter(p -> p.getIsDeleted()==0)
                 .orElseThrow(() -> error("本地商品不存在"));
+        if (preparedMedia != null) mediaAssets.verifyHistoricalProductAvatarReferences(productId, preparedMedia.references());
+        if (preparedMedia != null && (!java.util.Objects.equals(preparedMedia.base(), account.getBaseUrl())
+                || !java.util.Objects.equals(preparedMedia.oldCover(), product.getCoverUrl())
+                || !java.util.Objects.equals(preparedMedia.oldDetail(), product.getDetailMd())))
+            throw error("商品或货源资料已变化，请重试");
         if (mappings.findByAccountIdAndRemoteGoodsIdOrderByRemoteSku(accountId,remote.id()).stream()
                 .noneMatch(m -> m.getProductId().equals(productId))) throw error("商品绑定关系已变化，请刷新后重试");
         presentation.apply(product,account.getBaseUrl(),remote.snapshot());
         products.save(product);
+        if (preparedMedia != null) mediaAssets.replaceReferences("PRODUCT", productId, preparedMedia.references(), "cover_url", "detail_md");
     }
+
+    private PreparedMedia prepareMedia(UUID accountId, UUID productId, SupplierModels.Product remote) {
+        if (mediaAssets == null) return null;
+        var bases = mediaJdbc.query("SELECT base_url FROM supplier_accounts WHERE id=?", (rs, n) -> rs.getString(1), accountId);
+        if (bases.isEmpty()) throw error("货源账号不存在");
+        String oldCover = null, oldDetail = null;
+        if (productId != null) {
+            var values = mediaJdbc.query("SELECT cover_url,detail_md FROM products WHERE id=? AND is_deleted=0",
+                    (rs, n) -> new String[]{rs.getString(1),rs.getString(2)}, productId);
+            if (values.isEmpty()) throw error("本地商品不存在");
+            oldCover = values.getFirst()[0]; oldDetail = values.getFirst()[1];
+        }
+        Product candidate = new Product(); candidate.setCoverUrl(oldCover); candidate.setDetailMd(oldDetail);
+        presentation.apply(candidate, bases.getFirst(), remote.snapshot());
+        return new PreparedMedia(bases.getFirst(), oldCover, oldDetail,
+                mediaAssets.lockProduct(productId, candidate.getCoverUrl(), candidate.getDetailMd()));
+    }
+    private record PreparedMedia(String base, String oldCover, String oldDetail,
+                                 com.myshop.service.MediaAssetRegistry.LockedReferences references) { }
 
     @Transactional
     public LocalDateTime markAttempt(UUID accountId,String goodsId) {

@@ -63,3 +63,45 @@ assert max(map(int, versions)) == 34
 assert max(versions) == "9"  # documents the failure this test prevents
 print("production schema contract numeric-version regression passed")
 PY
+
+# Exercise the actual schema checker against three database responses. The
+# deployed API's contract selects the cutover checks; neither is advisory.
+tmp_dir=$(mktemp -d)
+trap 'rm -rf -- "$tmp_dir"' EXIT
+mkdir -p "$tmp_dir/bin"
+cat >"$tmp_dir/bin/docker" <<'PYDOCKER'
+#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+if args[0] == "ps":
+    print("isolated-container")
+elif args[0] == "exec" and "production-schema-contract.json" in " ".join(args):
+    print(open(os.environ["FAKE_SCHEMA_CONTRACT"], encoding="utf-8").read())
+elif args[0] == "exec" and "psql" in " ".join(args):
+    sql = sys.stdin.read()
+    contract = json.load(open(os.environ["FAKE_SCHEMA_CONTRACT"], encoding="utf-8"))
+    print("flyway_failures=0")
+    print("flyway_count=" + str(contract["migration_count"]))
+    print("flyway_latest=" + str(contract["latest_migration_version"]))
+    for table, columns in contract["tables"].items():
+        print("table=" + table)
+        for column in columns: print("column=" + table + "." + column)
+    for index in contract["indexes"]: print("index=" + index)
+    if "media_index_complete=" in sql:
+        print("media_index_complete=" + ("0" if os.environ.get("FAKE_SCHEMA_CASE") == "missing" else "1"))
+        print("media_legacy_guards=" + ("1" if os.environ.get("FAKE_SCHEMA_CASE") == "legacy" else "0"))
+else:
+    raise SystemExit("unexpected fake Docker command")
+PYDOCKER
+chmod +x "$tmp_dir/bin/docker"
+contract_path="$(CDPATH= cd -- "$(dirname -- "$script")/../apps/api/src/main/resources/db" && pwd -P)/production-schema-contract.json"
+for case_name in complete missing legacy; do
+  if output=$(PATH="$tmp_dir/bin:$PATH" FAKE_SCHEMA_CONTRACT="$contract_path" FAKE_SCHEMA_CASE="$case_name" bash "$script" 2>&1); then
+    [[ "$case_name" == complete ]] || { printf 'FAIL: accepted %s media cutover\n' "$case_name" >&2; exit 1; }
+  else
+    [[ "$case_name" != complete ]] || { printf '%s\n' "$output" >&2; exit 1; }
+    if [[ "$case_name" == missing ]]; then [[ "$output" == *'media index cutover marker is missing'* ]] || exit 1
+    else [[ "$output" == *'legacy global media trigger remains active'* ]] || exit 1; fi
+  fi
+done
+printf 'production schema cutover checks reject missing markers and old global triggers\n'

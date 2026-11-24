@@ -1,6 +1,7 @@
 package com.myshop.config;
 
 import com.myshop.service.UploadStorage;
+import com.myshop.service.PublicMediaVisibility;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,13 +13,14 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.resource.PathResourceResolver;
+import org.springframework.web.servlet.resource.ResourceResolverChain;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.core.io.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 import java.time.Duration;
 import java.util.regex.Pattern;
 
@@ -26,7 +28,9 @@ import java.util.regex.Pattern;
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private static final Pattern IMMUTABLE_MEDIA = Pattern.compile(
-            "(?i)(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.(?:jpg|jpeg|png|gif|webp|bmp)");
+            "(?i)(?:(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.(?:jpg|jpeg|png|gif|webp|bmp)|(?:images/|avatars/managed-)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(?:display|thumb|clear)\\.(?:jpg|jpeg|png|gif|webp|avif|heic|heif|bmp)|videos/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.mp4)");
+    private static final String MEDIA_ACCESS_ATTRIBUTE = WebMvcConfig.class.getName() + ".mediaAccess";
+    private record MediaAccess(String path, boolean visible) { }
 
     /** CORS 允许的来源列表，逗号分隔。默认允许 localhost 开发环境。 */
     @Value("${cors.allowed-origins:http://localhost:3000,http://localhost:3001}")
@@ -39,13 +43,16 @@ public class WebMvcConfig implements WebMvcConfigurer {
             "X-Message-Viewer",
             "X-CSRF-Token",
             "X-Device-Id",
-            "X-Turnstile-Token"
+            "X-Turnstile-Token",
+            "Tus-Resumable", "Upload-Length", "Upload-Offset", "Upload-Metadata", "Upload-Checksum"
     };
 
     private final UploadStorage uploadStorage;
+    private final PublicMediaVisibility publicMediaVisibility;
 
-    public WebMvcConfig(UploadStorage uploadStorage) {
+    public WebMvcConfig(UploadStorage uploadStorage, PublicMediaVisibility publicMediaVisibility) {
         this.uploadStorage = uploadStorage;
+        this.publicMediaVisibility = publicMediaVisibility;
     }
 
     @Bean
@@ -67,17 +74,17 @@ public class WebMvcConfig implements WebMvcConfigurer {
             // 通配符模式：不允许 credentials
             registry.addMapping("/**")
                     .allowedOriginPatterns("*")
-                    .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                    .allowedMethods("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                     .allowedHeaders(ALLOWED_HEADERS)
-                    .exposedHeaders("X-Session-Token")
+                    .exposedHeaders("X-Session-Token", "Location", "Tus-Resumable", "Tus-Version", "Tus-Extension", "Tus-Max-Size", "Upload-Offset", "Upload-Length", "Upload-Expires")
                     .allowCredentials(false)
                     .maxAge(3600);
         } else {
             registry.addMapping("/**")
                     .allowedOrigins(origins)
-                    .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                    .allowedMethods("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                     .allowedHeaders(ALLOWED_HEADERS)
-                    .exposedHeaders("X-Session-Token")
+                    .exposedHeaders("X-Session-Token", "Location", "Tus-Resumable", "Tus-Version", "Tus-Extension", "Tus-Max-Size", "Upload-Offset", "Upload-Length", "Upload-Expires")
                     .allowCredentials(true)
                     .maxAge(3600);
         }
@@ -94,7 +101,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 if (("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod()))
                         && path.startsWith("/uploads/")) {
                     String filename = path.substring("/uploads/".length());
-                    if (IMMUTABLE_MEDIA.matcher(filename).matches() && uploadStorage.isSafePublicFile(filename)) {
+                    boolean visible = publicMediaVisibility.visible(filename);
+                    request.setAttribute(MEDIA_ACCESS_ATTRIBUTE, new MediaAccess(filename, visible));
+                    if (IMMUTABLE_MEDIA.matcher(filename).matches() && visible) {
                         response.setHeader("Cache-Control", CacheControl.maxAge(Duration.ofDays(365))
                                 .cachePublic().immutable().getHeaderValue());
                     }
@@ -112,9 +121,13 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .resourceChain(false)
                 .addResolver(new PathResourceResolver() {
                     @Override
-                    protected Resource getResource(String resourcePath, Resource location) throws IOException {
-                        if (!uploadStorage.isSafePublicFile(resourcePath)) return null;
-                        return super.getResource(resourcePath, location);
+                    protected Resource resolveResourceInternal(HttpServletRequest request, String resourcePath,
+                            List<? extends Resource> locations, ResourceResolverChain chain) {
+                        Object checked = request == null ? null : request.getAttribute(MEDIA_ACCESS_ATTRIBUTE);
+                        boolean visible = checked instanceof MediaAccess access && access.path().equals(resourcePath)
+                                ? access.visible() : publicMediaVisibility.visible(resourcePath);
+                        if (!visible) return null;
+                        return super.resolveResourceInternal(request, resourcePath, locations, chain);
                     }
                 });
     }

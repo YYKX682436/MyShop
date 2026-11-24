@@ -40,7 +40,7 @@ jobs:
     needs: scope
     if: ${{ needs.scope.outputs.api == 'true' }}
     name: API build and tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Set up Java 25
@@ -49,6 +49,10 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+      - name: Install image and video processing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes libvips-tools libheif1 libheif-examples libheif-plugin-libde265 libheif-plugin-aomdec icc-profiles-free ffmpeg
       - name: Build and test, including required PostgreSQL integration tests
         working-directory: apps/api
         shell: bash
@@ -74,6 +78,7 @@ jobs:
             target/surefire-reports/TEST-com.myshop.service.UserAvatarTransactionIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.CoreStabilityPostgresIntegrationTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.MediaMaintenancePostgresIntegrationTest.xml
+            target/surefire-reports/TEST-com.myshop.controller.UploadControllerTest.xml
             target/surefire-reports/TEST-com.myshop.service.impl.UserLevelConcurrencyIntegrationTest.xml
           )
           rm -f "${reports[@]}"
@@ -138,6 +143,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @myshop/web exec tsc --noEmit
       - run: pnpm --filter @myshop/web test:logic
+      - run: pnpm --filter @myshop/web test:legacy-image-cache
       - run: pnpm --filter @myshop/web lint
   compose:
     needs: scope
@@ -263,6 +269,14 @@ jobs:
           docker load --input "$ARCHIVE_DIR/web.tar"
           docker tag "ghcr.io/yykx682436/myshop-web:$SOURCE_SHA" myshop-web:ci
           bash scripts/test-web-image-host-routing.sh
+          # Test the exact archive that will be deployed, including the Noble
+          # HEIC/AVIF decoders and the runtime's non-root identity.
+          docker load --input "$ARCHIVE_DIR/api.tar"
+          docker run --rm --entrypoint /bin/sh \
+            --volume "$PWD/scripts/probe-vips-image-formats.sh:/probe.sh:ro" \
+            --volume "$PWD/apps/api/src/test/resources/media-formats:/samples:ro" \
+            "ghcr.io/yykx682436/myshop-api:$SOURCE_SHA" /probe.sh \
+            /samples/fox-derived.heic /samples/fox.avif
       - name: Generate immutable release manifest
         env:
           SOURCE_SHA: ${{ github.sha }}

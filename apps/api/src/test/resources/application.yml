@@ -31,6 +31,10 @@ upload:
   path: ./test-uploads
   url-prefix: /api/uploads
 
+video:
+  # H2 unit-test schemas do not run Flyway; PostgreSQL integration tests enable recovery explicitly.
+  recover-on-startup: false
+
 logging:
   level:
     com.myshop: INFO

@@ -17,108 +17,39 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.UUID;
 
-/** Account-scoped avatar lifecycle. The caller supplies only RequestContext's user id. */
+/** Avatar assets are owned by one account and retired only after the account change commits. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserAvatarService {
-
     private final UserRepository userRepository;
     private final UserLevelRepository userLevelRepository;
     private final ImageUploadService imageUploadService;
+    private final MediaAssetRegistry assets;
+    private final MediaMaintenanceService maintenance;
 
     @Transactional
     public UserProfileResponse uploadAvatar(UUID userId, MultipartFile file) {
-        if (userId == null) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Not logged in or session expired");
-        }
-        // Process the image before taking the user lock. The first user read
-        // must be locked so a stale avatar save cannot overwrite a balance or
-        // password update committed while the image was being processed.
-        ImageUploadService.UploadedImage uploaded = imageUploadService.uploadAvatar(file);
-        boolean cleanupRegistered = false;
-
-        try {
-            User user = findUser(userId);
-            String previousAvatarUrl = user.getAvatarUrl();
-            requireActiveTransactionSynchronization();
-            user.setAvatarUrl(uploaded.url());
-            User saved = userRepository.save(user);
-            registerFileCleanup(previousAvatarUrl, uploaded.url());
-            cleanupRegistered = true;
-            return toProfile(saved);
-        } catch (RuntimeException exception) {
-            // Once the synchronization is registered, afterCompletion owns the
-            // rollback cleanup. Before that point the new file must be removed
-            // immediately, while the previous file remains untouched.
-            if (!cleanupRegistered) {
-                cleanupNewAvatar(uploaded.url());
-            }
-            throw exception;
-        }
-    }
-
-    private void requireActiveTransactionSynchronization() {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+        if (userId == null) throw new BusinessException(ErrorCode.UNAUTHORIZED, "Not logged in or session expired");
+        ImageUploadService.UploadedImage uploaded = imageUploadService.uploadAvatar(file, userId);
+        var references = assets.lockAvatar(uploaded.url(), userId);
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
+        String previous = user.getAvatarUrl();
+        user.setAvatarUrl(uploaded.url());
+        User saved = userRepository.save(user);
+        assets.replaceReferences("AVATAR", userId, references, "avatar_url");
+        if (!TransactionSynchronizationManager.isSynchronizationActive())
             throw new IllegalStateException("Avatar persistence requires an active transaction");
-        }
-    }
-
-    private void registerFileCleanup(String previousAvatarUrl, String uploadedAvatarUrl) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                // The database now points at the new file. A cleanup failure
-                // must be observable but must not turn a committed update into
-                // a false failure or attempt a database rollback.
-                cleanupPreviousAvatar(previousAvatarUrl);
-            }
-
-            @Override
-            public void afterCompletion(int status) {
-                if (status != TransactionSynchronization.STATUS_COMMITTED) {
-                    // The save may have failed during flush/commit. The old
-                    // URL is still authoritative, so only remove the new file.
-                    cleanupNewAvatar(uploadedAvatarUrl);
-                }
+            @Override public void afterCommit() {
+                try { maintenance.retireUnreferencedAvatar(previous, userId); }
+                catch (RuntimeException failure) { log.warn("Previous avatar cleanup needs retry: {}", failure.getMessage()); }
             }
         });
-    }
-
-    private User findUser(UUID userId) {
-        if (userId == null) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "Not logged in or session expired");
-        }
-        return userRepository.findByIdForUpdate(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "用户不存在"));
-    }
-
-    private UserProfileResponse toProfile(User user) {
-        UserLevel level = user.getUserLevelId() == null ? null
-                : userLevelRepository.findById(user.getUserLevelId()).orElse(null);
-        return UserProfileResponse.from(user, level);
-    }
-
-    private void cleanupPreviousAvatar(String previousAvatarUrl) {
-        if (previousAvatarUrl == null) {
-            return;
-        }
-        try {
-            if (!imageUploadService.deleteManagedAvatar(previousAvatarUrl)) {
-                log.warn("Previous managed avatar cleanup was skipped or failed");
-            }
-        } catch (RuntimeException exception) {
-            log.warn("Previous managed avatar cleanup failed");
-        }
-    }
-
-    private void cleanupNewAvatar(String uploadedAvatarUrl) {
-        try {
-            if (!imageUploadService.deleteManagedAvatar(uploadedAvatarUrl)) {
-                log.warn("Newly uploaded avatar cleanup was skipped or failed");
-            }
-        } catch (RuntimeException exception) {
-            log.warn("Newly uploaded avatar cleanup failed");
-        }
+        UserLevel level = saved.getUserLevelId() == null ? null : userLevelRepository.findById(saved.getUserLevelId()).orElse(null);
+        UserProfileResponse result = UserProfileResponse.from(saved, level);
+        result.setImageProcessingReason(uploaded.reason());
+        return result;
     }
 }

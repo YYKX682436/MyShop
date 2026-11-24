@@ -147,6 +147,7 @@ export default function MyPage() {
       const updatedProfile = await requestOrThrow(() => userApi.uploadAvatar(file))
       setUser(updatedProfile)
       toast.success(t("my.avatarUpdated"))
+      if (updatedProfile.image_processing_reason === "color_unspecified") toast.warning(t("my.imageColorAssumed"))
     } catch (error: unknown) {
       toast.error(getApiErrorMessage(error, t))
     } finally {

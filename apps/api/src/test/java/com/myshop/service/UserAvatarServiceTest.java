@@ -4,7 +4,6 @@ import com.myshop.constant.UserRole;
 import com.myshop.entity.User;
 import com.myshop.repository.UserLevelRepository;
 import com.myshop.repository.UserRepository;
-import com.myshop.model.response.UserProfileResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,151 +13,73 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.Map;
 import java.util.UUID;
-
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class UserAvatarServiceTest {
+    @Mock UserRepository users;
+    @Mock UserLevelRepository levels;
+    @Mock ImageUploadService images;
+    @Mock MediaAssetRegistry assets;
+    @Mock MediaMaintenanceService maintenance;
 
-    @Mock
-    private UserRepository userRepository;
-    @Mock
-    private UserLevelRepository userLevelRepository;
-    @Mock
-    private ImageUploadService imageUploadService;
-
-    @AfterEach
-    void clearTransactionSynchronization() {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.clearSynchronization();
-        }
+    @AfterEach void clearSynchronization() {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) TransactionSynchronizationManager.clearSynchronization();
     }
 
-    @Test
-    void replacingAvatarDefersPreviousFileCleanupUntilAfterCommit() {
-        UUID userId = UUID.randomUUID();
-        User user = user(userId);
-        String previous = "/api/uploads/avatars/avatar-11111111-1111-1111-1111-111111111111.png";
-        user.setAvatarUrl(previous);
-        MockMultipartFile file = validPng();
-        ImageUploadService.UploadedImage uploaded = uploaded("avatar-22222222-2222-2222-2222-222222222222.png");
-        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
-        when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(imageUploadService.deleteManagedAvatar(any())).thenReturn(true);
-
+    @Test void accountReferenceChangesInTransactionAndOldAssetRetiresOnlyAfterCommit() {
+        UUID id = UUID.randomUUID(); User user = user(id); String previous = user.getAvatarUrl();
+        var file = new MockMultipartFile("file", "new.png", "image/png", new byte[]{1});
+        var uploaded = new ImageUploadService.UploadedImage("/api/uploads/avatars/new.png", "avatars/new.png");
+        var references = new MediaAssetRegistry.LockedReferences(Map.of());
+        when(images.uploadAvatar(file, id)).thenReturn(uploaded);
+        when(assets.lockAvatar(uploaded.url(), id)).thenReturn(references);
+        when(users.findByIdForUpdate(id)).thenReturn(java.util.Optional.of(user));
+        when(users.save(user)).thenReturn(user);
         TransactionSynchronizationManager.initSynchronization();
-        UserProfileResponse result = service().uploadAvatar(userId, file);
-
-        assertEquals(uploaded.url(), result.getAvatarUrl());
-        verify(userRepository).save(user);
-        verify(imageUploadService, never()).deleteManagedAvatar(previous);
-
-        TransactionSynchronization synchronization = synchronization();
-        synchronization.afterCommit();
-
-        verify(imageUploadService).deleteManagedAvatar(previous);
-        verify(imageUploadService, never()).deleteManagedAvatar(uploaded.url());
+        var response = service().uploadAvatar(id, file);
+        assertEquals(uploaded.url(), response.getAvatarUrl());
+        verify(assets).replaceReferences("AVATAR", id, references, "avatar_url");
+        verifyNoInteractions(maintenance);
+        TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit();
+        verify(maintenance).retireUnreferencedAvatar(previous, id);
     }
 
-    @Test
-    void rollbackCleanupRemovesOnlyTheNewFileAndLeavesPreviousFileUntouched() {
-        UUID userId = UUID.randomUUID();
-        User user = user(userId);
-        String previous = "/api/uploads/avatars/avatar-33333333-3333-3333-3333-333333333333.jpg";
-        user.setAvatarUrl(previous);
-        MockMultipartFile file = validPng();
-        ImageUploadService.UploadedImage uploaded = uploaded("avatar-44444444-4444-4444-4444-444444444444.png");
-        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
-        when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(imageUploadService.deleteManagedAvatar(any())).thenReturn(true);
-
+    @Test void rollbackNeverRetiresThePreviousAvatar() {
+        UUID id = UUID.randomUUID(); User user = user(id);
+        var file = new MockMultipartFile("file", "new.png", "image/png", new byte[]{1});
+        var uploaded = new ImageUploadService.UploadedImage("/api/uploads/avatars/new.png", "avatars/new.png");
+        when(images.uploadAvatar(file, id)).thenReturn(uploaded);
+        when(assets.lockAvatar(uploaded.url(), id)).thenReturn(new MediaAssetRegistry.LockedReferences(Map.of()));
+        when(users.findByIdForUpdate(id)).thenReturn(java.util.Optional.of(user));
+        when(users.save(user)).thenReturn(user);
         TransactionSynchronizationManager.initSynchronization();
-        service().uploadAvatar(userId, file);
-
-        synchronization().afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
-
-        verify(imageUploadService).deleteManagedAvatar(uploaded.url());
-        verify(imageUploadService, never()).deleteManagedAvatar(previous);
+        service().uploadAvatar(id, file);
+        TransactionSynchronizationManager.getSynchronizations().getFirst().afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+        verifyNoInteractions(maintenance);
     }
 
-    @Test
-    void saveFailureCleansNewFileWithoutTouchingPreviousFile() {
-        UUID userId = UUID.randomUUID();
-        User user = user(userId);
-        String previous = "/api/uploads/avatars/avatar-55555555-5555-5555-5555-555555555555.webp";
-        user.setAvatarUrl(previous);
-        MockMultipartFile file = validPng();
-        ImageUploadService.UploadedImage uploaded = uploaded("avatar-66666666-6666-6666-6666-666666666666.png");
-        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
-        when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
-        when(userRepository.save(any(User.class))).thenThrow(new IllegalStateException("save failed"));
-        when(imageUploadService.deleteManagedAvatar(uploaded.url())).thenReturn(true);
-
+    @Test void cleanupErrorAfterCommitDoesNotInvalidateCommittedAccountChange() {
+        UUID id = UUID.randomUUID(); User user = user(id); String previous = user.getAvatarUrl();
+        var file = new MockMultipartFile("file", "new.png", "image/png", new byte[]{1});
+        var uploaded = new ImageUploadService.UploadedImage("/api/uploads/avatars/new.png", "avatars/new.png");
+        when(images.uploadAvatar(file, id)).thenReturn(uploaded);
+        when(assets.lockAvatar(uploaded.url(), id)).thenReturn(new MediaAssetRegistry.LockedReferences(Map.of()));
+        when(users.findByIdForUpdate(id)).thenReturn(java.util.Optional.of(user));
+        when(users.save(user)).thenReturn(user);
+        doThrow(new IllegalStateException("cleanup failed")).when(maintenance).retireUnreferencedAvatar(previous, id);
         TransactionSynchronizationManager.initSynchronization();
-        assertThrows(IllegalStateException.class, () -> service().uploadAvatar(userId, file));
-
-        verify(imageUploadService).deleteManagedAvatar(uploaded.url());
-        verify(imageUploadService, never()).deleteManagedAvatar(previous);
+        service().uploadAvatar(id, file);
+        assertDoesNotThrow(() -> TransactionSynchronizationManager.getSynchronizations().getFirst().afterCommit());
     }
 
-    @Test
-    void previousFileCleanupFailureAfterCommitDoesNotTurnCommittedUpdateIntoFailure() {
-        UUID userId = UUID.randomUUID();
-        User user = user(userId);
-        String previous = "/api/uploads/avatars/avatar-77777777-7777-7777-7777-777777777777.jpg";
-        user.setAvatarUrl(previous);
-        MockMultipartFile file = validPng();
-        ImageUploadService.UploadedImage uploaded = uploaded("avatar-88888888-8888-8888-8888-888888888888.png");
-        when(userRepository.findByIdForUpdate(userId)).thenReturn(java.util.Optional.of(user));
-        when(imageUploadService.uploadAvatar(file)).thenReturn(uploaded);
-        when(userRepository.save(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        when(imageUploadService.deleteManagedAvatar(previous)).thenThrow(new IllegalStateException("cleanup failed"));
-
-        TransactionSynchronizationManager.initSynchronization();
-        UserProfileResponse result = service().uploadAvatar(userId, file);
-
-        assertDoesNotThrow(() -> synchronization().afterCommit());
-        assertEquals(uploaded.url(), result.getAvatarUrl());
-        verify(imageUploadService).deleteManagedAvatar(previous);
-        verify(imageUploadService, never()).deleteManagedAvatar(uploaded.url());
-    }
-
-    private UserAvatarService service() {
-        return new UserAvatarService(userRepository, userLevelRepository, imageUploadService);
-    }
-
-    private TransactionSynchronization synchronization() {
-        return TransactionSynchronizationManager.getSynchronizations().get(0);
-    }
-
-    private static ImageUploadService.UploadedImage uploaded(String filename) {
-        return new ImageUploadService.UploadedImage(
-                "/api/uploads/avatars/" + filename,
-                "avatars/" + filename);
-    }
-
-    private static MockMultipartFile validPng() {
-        return new MockMultipartFile(
-                "file", "new.png", "image/png",
-                new byte[]{(byte) 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a});
-    }
-
+    private UserAvatarService service() { return new UserAvatarService(users, levels, images, assets, maintenance); }
     private static User user(UUID id) {
-        User user = new User();
-        user.setId(id);
-        user.setUsername("buyer");
-        user.setEmail("buyer@example.com");
-        user.setRole(UserRole.USER);
-        user.setUserNo(10000L);
-        return user;
+        User user = new User(); user.setId(id); user.setUsername("buyer"); user.setEmail("buyer@example.com");
+        user.setRole(UserRole.USER); user.setUserNo(10000L); user.setAvatarUrl("/api/uploads/avatars/old.png"); return user;
     }
 }

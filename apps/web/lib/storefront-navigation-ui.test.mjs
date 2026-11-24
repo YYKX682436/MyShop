@@ -31,11 +31,13 @@ test("admin navigation search is gone while business search remains available", 
   }
 })
 
-test("product preview uses an on-demand original without altering shared markdown", () => {
+test("product and markdown previews share an on-demand original viewer", () => {
   const page = read("../app/(store)/product/[id]/page.tsx")
-  const viewer = read("../components/store/product-image-viewer.tsx")
+  const productViewer = read("../components/store/product-image-viewer.tsx")
+  const viewer = read("../components/shared/image-viewer.tsx")
   const markdown = read("../components/shared/markdown-content.tsx")
   assert.match(page, /ProductImageViewer src=\{product\.cover_url\}/)
+  assert.match(productViewer, /<ImageViewer src=\{managedImageVariant\(previewSrc, "clear"\) \|\| src\}/)
   assert.match(viewer, /<DialogTrigger asChild>/)
   assert.match(viewer, /<DialogPrimitive\.Close/)
   assert.match(viewer, /onCloseAutoFocus=[\s\S]*?focus\(\{ preventScroll: true \}\)/)
@@ -43,7 +45,7 @@ test("product preview uses an on-demand original without altering shared markdow
   assert.match(viewer, /requestAnimationFrame\([\s\S]*?triggerRef\.current\?\.isConnected[\s\S]*?window\.scrollTo\(/)
   assert.match(viewer, /product-image-viewer-scroll/)
   assert.match(viewer, /<img src=\{src\}/)
-  assert.doesNotMatch(markdown, /ProductImageViewer/)
+  assert.match(markdown, /<ImageViewer src=\{clearPath \|\| src\}/)
 })
 
 test("the registration captcha input can shrink beside its image on narrow screens", () => {

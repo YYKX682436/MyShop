@@ -1,5 +1,6 @@
 package com.myshop.config;
 
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -43,6 +44,10 @@ public class SecurityConfig {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
                 .authorizeHttpRequests(auth -> auth
+                        // Servlet error dispatches must retain their original status
+                        // (notably 416 for an unsatisfiable public video range).
+                        // A direct request to /error still follows normal rules.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         // CORS preflight must reach Spring MVC before authentication is evaluated.
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         // Public endpoints
@@ -59,6 +64,7 @@ public class SecurityConfig {
                         .requestMatchers("/payments/webhook/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/supplier-callback/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/uploads/**").permitAll()
+                        .requestMatchers(HttpMethod.HEAD, "/uploads/**").permitAll()
                         // Private after-sale evidence is authorized again by
                         // the database ownership service before it is streamed.
                         .requestMatchers(HttpMethod.GET, "/after-sale-attachments/**").authenticated()

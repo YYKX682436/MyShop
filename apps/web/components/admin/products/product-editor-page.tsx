@@ -5,6 +5,7 @@ import { ArrowLeft } from "lucide-react"
 import { useRouter } from "next/navigation"
 
 import { ProductForm } from "@/components/admin/products/product-form"
+import { useRouteOverlayClose } from "@/components/admin/route-overlay"
 import { AdminPage, PageHeader } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { useLocale } from "@/lib/context"
@@ -38,10 +39,11 @@ interface ProductEditorPageProps {
   onSaved?: (product: AdminProductDetail, continueRestock: boolean) => void | Promise<void>
   onCancel?: () => void
   onDirtyChange?: (dirty: boolean) => void
+  onUploadingChange?: (uploading: boolean) => void
   initialTab?: ProductEditorTab
 }
 
-export function ProductEditorPage({ productId, presentation = "full", onSaved, onCancel, onDirtyChange, initialTab }: ProductEditorPageProps) {
+export function ProductEditorPage({ productId, presentation = "full", onSaved, onCancel, onDirtyChange, onUploadingChange, initialTab }: ProductEditorPageProps) {
   const { t } = useLocale()
   const router = useRouter()
   const isWorkspace = presentation === "workspace"
@@ -50,6 +52,9 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
   const [product, setProduct] = useState<AdminProductDetail | null>(null)
   const [productLoading, setProductLoading] = useState(Boolean(productId))
   const [productError, setProductError] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  useRouteOverlayClose(false, !isWorkspace, uploading)
+  const handleUploadingChange = useCallback((next: boolean) => { setUploading(next); onUploadingChange?.(next) }, [onUploadingChange])
   const categoriesRequestIdRef = useRef(0)
   const productRequestIdRef = useRef(0)
 
@@ -161,6 +166,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
         onSaved={handleSaved}
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}
+        onUploadingChange={handleUploadingChange}
         onProductRefresh={refreshProduct}
         initialTab={initialTab}
       />
@@ -172,7 +178,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
       <PageHeader
         title={productId ? t("admin.editProduct") : t("admin.addProduct")}
         actions={
-          <Button type="button" variant="outline" onClick={() => router.push("/admin/products")}>
+          <Button type="button" variant="outline" disabled={uploading} onClick={() => router.push("/admin/products")}>
             <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
             {t("admin.backToProducts")}
           </Button>
@@ -186,6 +192,7 @@ export function ProductEditorPage({ productId, presentation = "full", onSaved, o
         onSaved={handleSaved}
         onCancel={handleCancel}
         onDirtyChange={onDirtyChange}
+        onUploadingChange={handleUploadingChange}
         onProductRefresh={refreshProduct}
         initialTab={initialTab}
       />

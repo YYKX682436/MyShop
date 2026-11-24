@@ -8,6 +8,7 @@ import { toast } from "sonner"
 
 import { AnnouncementManagement } from "@/components/shared/announcement-management"
 import { MediaPicker } from "@/components/admin/media-library"
+import { useRouteOverlayClose } from "@/components/admin/route-overlay"
 import { AdminPage, PageHeader, SettingsSection } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -18,13 +19,14 @@ import { useLocale, useSiteConfig } from "@/lib/context"
 import { useAdminPageRefresh, useRequestGuard } from "@/lib/admin-page-requests"
 import { cn } from "@/lib/utils"
 import { ALLOWED_IMAGE_ACCEPT, validateImageFile } from "@/lib/image-upload"
-import { adminConfigApi, adminProductApi, requestOrThrow } from "@/services/api"
+import { uploadAdminImage } from "@/lib/admin-image-upload"
+import { adminConfigApi, requestOrThrow } from "@/services/api"
 import type { SiteConfigKV, UserNumberConfig } from "@/types"
 
 type TabKey = "basic" | "announcement" | "user" | "maintenance"
 
 export default function AdminSiteConfigPage() {
-  const { t } = useLocale()
+  const { t, locale } = useLocale()
   const { refresh: refreshSiteConfig } = useSiteConfig()
   const router = useRouter()
   const [tab, setTab] = useState<TabKey>("basic")
@@ -33,6 +35,8 @@ export default function AdminSiteConfigPage() {
   const [error, setError] = useState(false)
   const [saving, setSaving] = useState(false)
   const [faviconUploading, setFaviconUploading] = useState(false)
+  const [announcementUploading, setAnnouncementUploading] = useState(false)
+  useRouteOverlayClose(false, true, announcementUploading)
   const [maintenanceToggling, setMaintenanceToggling] = useState(false)
   const [userNumberConfig, setUserNumberConfig] = useState<UserNumberConfig>({ start_user_no: 10000, next_user_no: 10000, has_existing_users: false })
   const [userNumberLoading, setUserNumberLoading] = useState(true)
@@ -80,6 +84,7 @@ export default function AdminSiteConfigPage() {
   useEffect(() => { void load() }, [load])
   const { refresh, refreshing } = useAdminPageRefresh(load)
   const requestRefresh = () => {
+    if (announcementUploading) { toast.error("请等待图片上传完成"); return }
     if ((settingsDirty || numberDirty) && !window.confirm(t("admin.refreshDiscardDraft"))) return
     void refresh()
   }
@@ -124,7 +129,7 @@ export default function AdminSiteConfigPage() {
     if (validationError) { toast.error(validationError); return }
     setFaviconUploading(true)
     try {
-      const result = await adminProductApi.uploadImage(file)
+      const result = await uploadAdminImage(file, locale)
       setValue("favicon_url", result.url)
       toast.success(t("admin.uploadSuccess"))
     } catch (requestError: unknown) {
@@ -192,7 +197,7 @@ export default function AdminSiteConfigPage() {
     }
   }
 
-  const header = <PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} onRefresh={requestRefresh} refreshing={refreshing} refreshDisabled={saving || userNumberSaving || faviconUploading || maintenanceToggling} />
+  const header = <PageHeader title={t("admin.siteConfig")} description={t("admin.siteConfigDesc")} onRefresh={requestRefresh} refreshing={refreshing} refreshDisabled={saving || userNumberSaving || faviconUploading || maintenanceToggling || announcementUploading} />
   if (loading && !hasConfig) return <AdminPage>{header}<div className="h-64 animate-pulse rounded-card border border-border bg-muted" role="status" aria-label={t("common.loading")} /></AdminPage>
   if (error && !hasConfig) return <AdminPage>{header}<div className="flex flex-col items-center gap-3 rounded-card border border-destructive/30 bg-destructive/5 px-4 py-12 text-center text-sm text-destructive"><span>{t("admin.loadError")}</span><Button type="button" variant="outline" onClick={requestRefresh}>{t("common.retry")}</Button></div></AdminPage>
 
@@ -200,7 +205,7 @@ export default function AdminSiteConfigPage() {
     <AdminPage>
       {header}
       {error && <div role="alert" className="flex items-center gap-3 text-sm text-destructive">{t("admin.loadError")}<Button type="button" variant="outline" size="sm" onClick={requestRefresh}>{t("common.retry")}</Button></div>}
-      <Tabs value={tab} onValueChange={(value) => setTab(value as TabKey)}>
+      <Tabs value={tab} onValueChange={(value) => { if (!announcementUploading) setTab(value as TabKey) }}>
         <TabsList className="max-w-full justify-start overflow-x-auto"><TabsTrigger value="basic">{t("admin.basicInfo")}</TabsTrigger><TabsTrigger value="announcement">{t("admin.announcementTab")}</TabsTrigger><TabsTrigger value="user">{t("admin.userSettingsTab")}</TabsTrigger><TabsTrigger value="maintenance">{t("admin.maintenanceTab")}</TabsTrigger></TabsList>
 
         <TabsContent value="basic">
@@ -216,7 +221,7 @@ export default function AdminSiteConfigPage() {
                     {getValue("favicon_url") ? t("admin.faviconReplace") : t("admin.faviconUpload")}
                     <input type="file" accept={ALLOWED_IMAGE_ACCEPT} className="sr-only" disabled={faviconUploading || saving} onChange={(event) => { void uploadFavicon(event.target.files?.[0]); event.target.value = "" }} />
                   </label>
-                  <MediaPicker disabled={saving || faviconUploading} onSelect={(item) => setValue("favicon_url", item.url)} />
+                  <MediaPicker disabled={saving || faviconUploading} onSelect={(item) => { if (item.url) setValue("favicon_url", item.url) }} />
                   {getValue("favicon_url") && <Button type="button" variant="ghost" disabled={saving || faviconUploading} onClick={() => setValue("favicon_url", "")}><Trash2 className="size-4" aria-hidden="true" />{t("admin.faviconRemove")}</Button>}
                 </div>
               </div>
@@ -227,7 +232,7 @@ export default function AdminSiteConfigPage() {
 
         <TabsContent value="announcement">
           <SettingsSection title={t("admin.announcementTab")}>
-            <AnnouncementManagement scope="admin" />
+            <AnnouncementManagement scope="admin" onUploadingChange={setAnnouncementUploading} />
           </SettingsSection>
         </TabsContent>
 

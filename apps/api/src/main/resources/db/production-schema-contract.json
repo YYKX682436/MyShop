@@ -1,9 +1,10 @@
 {
   "version": 1,
-  "migration_count": 62,
-  "latest_migration_version": "62",
+  "migration_count": 64,
+  "latest_migration_version": "64",
   "tables": {
-    "media_deleted_files": ["filename", "deleted_at"],
+    "media_assets": ["id", "storage_path", "display_path", "thumbnail_path", "clear_path", "original_filename", "media_type", "mime_type", "size_bytes", "original_size_bytes", "thumbnail_size_bytes", "clear_size_bytes", "width", "height", "duration_ms", "content_hash", "source_hash", "scope", "uploader_id", "owner_user_id", "created_at", "processing_status", "upload_uri", "declared_size_bytes", "processing_error", "processing_reason", "deleted_at", "cleanup_error", "upload_cleanup_error", "reused_asset_id"],
+    "media_references": ["asset_id", "owner_type", "owner_id", "field"],
     "users": ["id", "username", "role", "subsite_id"],
     "products": ["id", "title", "retail_price", "card_content_column_count"],
     "orders": ["id", "order_no", "status", "created_at", "subsite_id", "subsite_owner_id_snapshot", "subsite_profit", "subsite_profit_settled_at", "subsite_profit_reversed_at", "subsite_profit_state", "subsite_profit_canceled_at"],
@@ -48,6 +49,16 @@
     "supplier_complaint_attachments": ["id", "event_id", "storage_key", "content_type", "file_size"]
   },
   "indexes": [
+    "idx_media_assets_created",
+    "idx_media_assets_size",
+    "idx_media_assets_type_created",
+    "idx_media_assets_hash_scope",
+    "idx_media_assets_video_source",
+    "idx_media_assets_legacy_tombstone",
+    "idx_media_assets_display_path",
+    "idx_media_assets_thumbnail_path",
+    "idx_media_assets_clear_path",
+    "idx_media_references_owner",
     "uq_support_conversation_user",
     "uq_support_conversation_guest",
     "idx_support_conversation_order",

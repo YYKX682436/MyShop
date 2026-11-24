@@ -5,14 +5,23 @@ COPY apps/api/pom.xml apps/api/pom.xml
 RUN mvn -B -f apps/api/pom.xml dependency:go-offline
 COPY apps/api/src apps/api/src
 ARG SKIP_TESTS=false
-RUN mvn -B -f apps/api/pom.xml -DskipTests=${SKIP_TESTS} package
+RUN if [ "$SKIP_TESTS" != "true" ]; then \
+      apt-get update \
+      && apt-get install --no-install-recommends --yes \
+           libvips-tools libheif1 libheif-examples libheif-plugin-libde265 libheif-plugin-aomdec \
+           icc-profiles-free ffmpeg \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi \
+ && mvn -B -f apps/api/pom.xml -DskipTests=${SKIP_TESTS} package
 
 # Keep the runtime distribution explicit: this image uses Ubuntu Noble, so
 # user creation below uses Debian/Ubuntu's documented adduser/addgroup flags.
 FROM eclipse-temurin:25-jre-noble
 WORKDIR /app
 RUN apt-get update \
- && apt-get install --no-install-recommends --yes wget \
+ && apt-get install --no-install-recommends --yes \
+      wget libvips-tools libheif1 libheif-examples libheif-plugin-libde265 libheif-plugin-aomdec \
+      icc-profiles-free ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --gid 10001 myshop \
  && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin myshop

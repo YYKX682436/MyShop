@@ -3,338 +3,188 @@ package com.myshop.service;
 import com.myshop.constant.ErrorCode;
 import com.myshop.exception.BusinessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.MemoryCacheImageInputStream;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
-import java.sql.Connection;
-import java.sql.ResultSet;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.Semaphore;
-import java.util.regex.Pattern;
+import java.util.UUID;
 
-/** Conservative, administrator-initiated maintenance of public root images. */
+/** Deletion locks one asset, then only the current owner rows which reference it. */
 @Service
 public class MediaMaintenanceService {
-    private static final Pattern FILENAME = Pattern.compile("(?i)(?:[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.(?:jpg|jpeg|png|gif|webp|bmp)");
-    private static final int MAX_BYTES = 10 * 1024 * 1024;
-    private static final long MAX_OPTIMIZE_PIXELS = 8_000_000;
     private final UploadStorage storage;
-    private final MediaFileGuard guard;
-    private final ImageProcessor processor;
-    private final String prefix;
-    private final Semaphore optimizePermit = new Semaphore(1, true);
-    @org.springframework.beans.factory.annotation.Value("${app.public-site-url:http://localhost:3000}")
-    private String publicSiteUrl = "http://localhost:3000";
+    private final JdbcTemplate jdbc;
+    private final ManagedMediaReferences paths;
+    private final TransactionTemplate transactions;
 
-    public MediaMaintenanceService(UploadStorage storage, MediaFileGuard guard, ImageProcessor processor,
-                                   @org.springframework.beans.factory.annotation.Value("${upload.url-prefix:/api/uploads}") String prefix) {
+    public MediaMaintenanceService(UploadStorage storage, JdbcTemplate jdbc, ManagedMediaReferences paths,
+                                   org.springframework.transaction.PlatformTransactionManager manager) {
         this.storage = storage;
-        this.guard = guard;
-        this.processor = processor;
-        this.prefix = prefix.replaceAll("/+$", "");
+        this.jdbc = jdbc;
+        this.paths = paths;
+        this.transactions = new TransactionTemplate(manager);
+        this.transactions.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    public Inspection inspect(String filename) {
-        validate(filename);
-        return guard.exclusive(true, connection -> inspection(connection, filename));
+    public Inspection inspect(String identifier) {
+        Asset asset = find(identifier, false);
+        return new Inspection(asset.size(), format(asset.display() != null ? asset.display() : asset.storage()),
+                asset.width(), asset.height(), references(asset.id()));
     }
 
-    public void delete(String filename) {
-        validate(filename);
-        guard.exclusive(true, connection -> {
-            if (!storage.isSafePublicFile(filename))
-                throw new BusinessException(ErrorCode.NOT_FOUND, "资源不存在", HttpStatus.NOT_FOUND);
-            // Verify guard coverage and reportable references before changing anything.
-            inspection(connection, filename);
-            String oldUrl = prefix + "/" + filename;
-            String absoluteUrl = publicSiteUrl.replaceAll("/+$", "") + oldUrl;
-            clearProductCovers(connection, filename);
-            try (var statement = connection.prepareStatement(
-                    "UPDATE site_configs SET config_value = '' WHERE config_key = 'favicon_url' AND config_value IN (?, ?)")) {
-                statement.setString(1, oldUrl);
-                statement.setString(2, absoluteUrl);
-                statement.executeUpdate();
-            }
-            try (var statement = connection.prepareStatement("UPDATE subsites SET favicon_url = NULL WHERE favicon_url IN (?, ?)")) {
-                statement.setString(1, oldUrl);
-                statement.setString(2, absoluteUrl);
-                statement.executeUpdate();
-            }
-            try (var query = connection.prepareStatement("INSERT INTO media_deleted_files(filename) VALUES (?) ON CONFLICT DO NOTHING")) {
-                query.setString(1, filename.toLowerCase(Locale.ROOT));
-                query.executeUpdate();
-            }
-            // Commit the tombstone and field updates before deleting the file.
-            // If cleanup fails, the guarded file remains listed and a retry can
-            // finish deletion without allowing stale forms to recreate a reference.
-            connection.commit();
-            try {
-                storage.forgetMediaNameExcept(filename.substring(0, filename.lastIndexOf('.')).toLowerCase(Locale.ROOT), filename);
-            } catch (IOException exception) {
-                throw new BusinessException(ErrorCode.SERVER_ERROR, "图片清理未完成，请刷新后重试", HttpStatus.CONFLICT);
-            }
-            if (!storage.isSafePublicFile(filename) || !storage.deleteManagedFile(filename))
-                throw new BusinessException(ErrorCode.SERVER_ERROR, "图片清理未完成，请刷新后重试", HttpStatus.CONFLICT);
-            return null;
+    public void delete(String identifier) {
+        Asset asset = transactions.execute(status -> {
+            Asset locked = find(identifier, true);
+            if ("VIDEO".equals(locked.type()) && !"READY".equals(locked.status()))
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "请先通过视频上传会话取消并清理临时文件", HttpStatus.CONFLICT);
+            List<Reference> refs = references(locked.id());
+            for (Reference ref : refs) clearReference(ref, locked.paths());
+            jdbc.update("DELETE FROM media_references WHERE asset_id=?", locked.id());
+            // Persist the pending cleanup before committing. A crash immediately
+            // after the business transaction must leave a visible retry entry.
+            jdbc.update("UPDATE media_assets SET deleted_at=coalesce(deleted_at,CURRENT_TIMESTAMP),cleanup_error='资源文件待清理' WHERE id=?", locked.id());
+            return locked;
         });
+        if (asset == null) throw new IllegalStateException("Media deletion transaction returned no asset");
+        cleanup(asset);
     }
 
-    private void clearProductCovers(Connection connection, String filename) throws Exception {
-        for (ProductCover cover : findProductCovers(connection, filename)) {
-            try (var update = connection.prepareStatement("UPDATE products SET cover_url = NULL WHERE id = ? AND cover_url = ?")) {
-                update.setObject(1, cover.id());
-                update.setString(2, cover.url());
-                if (update.executeUpdate() != 1)
-                    throw new BusinessException(ErrorCode.BAD_REQUEST, "商品封面已变化，请重试", HttpStatus.CONFLICT);
-            }
-        }
-    }
-
-    private List<ProductCover> findProductCovers(Connection connection, String filename) throws Exception {
-        String target = prefix + "/" + filename;
-        var origin = java.net.URI.create(publicSiteUrl);
-        List<ProductCover> covers = new ArrayList<>();
-        try (var query = connection.prepareStatement("""
-                SELECT id, title, cover_url FROM products
-                WHERE cover_url IS NOT NULL AND
-                  (public.myshop_media_normalize(cover_url) IS NULL
-                    OR position(? IN public.myshop_media_normalize(cover_url)) > 0)
-                FOR UPDATE NOWAIT
-                """)) {
-            query.setString(1, filename.toLowerCase(Locale.ROOT));
-            try (var result = query.executeQuery()) {
-                while (result.next()) {
-                    String value = result.getString(3);
-                    final java.net.URI uri;
-                    try { uri = java.net.URI.create(value); }
-                    catch (IllegalArgumentException exception) {
-                        throw new BusinessException(ErrorCode.BAD_REQUEST, "商品封面引用格式不明确，未执行删除", HttpStatus.CONFLICT);
-                    }
-                    boolean local = !uri.isAbsolute() && uri.getRawAuthority() == null;
-                    if (uri.isAbsolute()) local = ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                            && uri.getUserInfo() == null && origin.getHost() != null && origin.getHost().equalsIgnoreCase(uri.getHost())
-                            && uri.getPort() == origin.getPort();
-                    if (!local) continue;
-                    if (!target.equals(uri.getPath()))
-                        throw new BusinessException(ErrorCode.BAD_REQUEST, "商品封面引用格式不明确，未执行删除", HttpStatus.CONFLICT);
-                    covers.add(new ProductCover(result.getObject(1), result.getString(2), value));
-                }
-            }
-        }
-        return covers;
-    }
-
-    public Optimization optimize(String filename) {
-        if (!optimizePermit.tryAcquire())
-            throw new BusinessException(ErrorCode.TOO_MANY_REQUESTS, "已有图片正在优化，请稍后重试", HttpStatus.TOO_MANY_REQUESTS);
-        try { return optimizeOnce(filename); }
-        finally { optimizePermit.release(); }
-    }
-
-    private Optimization optimizeOnce(String filename) {
-        validate(filename);
-        // Read and compress before taking the DB lock. Original bytes are
-        // checked again under the lock before any reference can change.
-        byte[] original = readImage(filename);
-        Dimensions dimensions = dimensions(original);
-        String extension = filename.substring(filename.lastIndexOf('.')).toLowerCase(Locale.ROOT);
-        if (!eligible(filename, original, dimensions))
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅支持尺寸合适、无动画或复杂色彩配置的 PNG/JPEG");
-        final ImageProcessor.ProcessedImage processed;
-        try { processed = processor.processForStorage(original, extension); }
-        catch (IOException exception) { throw new BusinessException(ErrorCode.BAD_REQUEST, "图片无法安全优化"); }
-        byte[] optimized = processed.bytes();
-        if (optimized.length >= original.length
-                || (processed.extension().equals(".png") && !samePixels(original, optimized))
-                || (!extension.equals(".png") && !ImageProcessor.acceptableJpeg(original, optimized)))
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "图片没有符合质量要求的压缩收益，已跳过");
-
-        return guard.exclusive(true, connection -> {
-            if (!Arrays.equals(original, readImage(filename)))
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "图片已变化，已跳过", HttpStatus.CONFLICT);
-            references(connection, filename);
-            List<ProductCover> covers = findProductCovers(connection, filename);
-            String newFilename = UploadStorage.identifier(optimized) + processed.extension();
-            storage.publish(newFilename, optimized, true);
-            MediaFileGuard.restorePublishedFile(connection, newFilename);
-            try {
-                String name = storage.mediaName(filename.substring(0, filename.lastIndexOf('.')), filename);
-                if (!processed.extension().equalsIgnoreCase(filename.substring(filename.lastIndexOf('.'))) && name.lastIndexOf('.') >= 0)
-                    name = name.substring(0, name.lastIndexOf('.')) + processed.extension();
-                storage.rememberMediaName(newFilename.substring(0, 64), name);
-            } catch (IOException ignored) { /* Display name is optional. */ }
-            List<ChangedProduct> products = new ArrayList<>();
-            for (ProductCover cover : covers) {
-                try (var statement = connection.prepareStatement("UPDATE products SET cover_url = ? WHERE id = ? AND cover_url = ?")) {
-                    statement.setString(1, prefix + "/" + newFilename);
-                    statement.setObject(2, cover.id());
-                    statement.setString(3, cover.url());
-                    if (statement.executeUpdate() != 1)
-                        throw new BusinessException(ErrorCode.BAD_REQUEST, "商品引用已变化，已跳过", HttpStatus.CONFLICT);
-                    products.add(new ChangedProduct(cover.id().toString(), cover.title()));
-                }
-            }
-            return new Optimization(prefix + "/" + newFilename, original.length, optimized.length, products.size(),
-                    products, references(connection, filename));
+    /** Called after an avatar change commits; account avatars cannot be shared with product assets. */
+    public void retireUnreferencedAvatar(String url, UUID owner) {
+        String path = paths.managedPath(url);
+        if (path == null || owner == null) return;
+        Asset asset = transactions.execute(status -> {
+            var rows = jdbc.query("""
+                    SELECT id,storage_path,display_path,thumbnail_path,clear_path,size_bytes,width,height,media_type,processing_status FROM media_assets a
+                    WHERE a.scope='AVATAR' AND a.deleted_at IS NULL
+                      AND (a.storage_path=? OR a.display_path=? OR a.thumbnail_path=? OR a.clear_path=?) FOR UPDATE
+                    """, (rs, n) -> new Asset(rs.getObject("id", UUID.class), rs.getString("storage_path"), rs.getString("display_path"),
+                    rs.getString("thumbnail_path"), rs.getString("clear_path"), rs.getLong("size_bytes"),
+                    rs.getObject("width", Integer.class), rs.getObject("height", Integer.class), rs.getString("media_type"),
+                    rs.getString("processing_status")), path, path, path, path);
+            if (rows.size() != 1 || Boolean.TRUE.equals(jdbc.queryForObject(
+                    "SELECT EXISTS(SELECT 1 FROM media_references WHERE asset_id=?)", Boolean.class, rows.getFirst().id()))) return null;
+            Asset result = rows.getFirst();
+            jdbc.update("UPDATE media_assets SET deleted_at=CURRENT_TIMESTAMP,cleanup_error='头像文件待清理' WHERE id=?", result.id());
+            return result;
         });
+        if (asset != null) cleanup(asset);
     }
 
-    private Inspection inspection(Connection connection, String filename) throws Exception {
-        if (!storage.isSafePublicFile(filename)) throw new BusinessException(ErrorCode.NOT_FOUND, "资源不存在", HttpStatus.NOT_FOUND);
-        long size = Files.size(storage.resolve(filename));
-        Dimensions dimensions = null;
-        boolean eligible = false;
-        if (size <= MAX_BYTES) {
-            byte[] bytes = readImage(filename);
-            dimensions = dimensions(bytes);
-            eligible = eligible(filename, bytes, dimensions);
+    private void cleanup(Asset asset) {
+        List<String> failures = new ArrayList<>();
+        for (String path : asset.paths()) {
+            try {
+                var file = storage.resolveManagedPath(path);
+                if (Files.exists(file, LinkOption.NOFOLLOW_LINKS) && !storage.deleteManagedFile(path)) failures.add(path);
+            } catch (RuntimeException exception) { failures.add(path); }
         }
-        return new Inspection(size, filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT),
-                dimensions == null ? null : dimensions.width(), dimensions == null ? null : dimensions.height(),
-                eligible, references(connection, filename));
-    }
-
-    private List<Reference> references(Connection connection, String filename) throws Exception {
-        // Deletion briefly excludes writes. Bound both each query and the
-        // whole scan; a large or stalled database must fail closed promptly.
-        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
-        try (var statement = connection.createStatement()) { statement.execute("SET LOCAL statement_timeout = '2s'"); }
-        List<String> tables = new ArrayList<>();
-        try (var statement = connection.createStatement(); var result = statement.executeQuery("""
-                SELECT c.relname, EXISTS (
-                    SELECT 1 FROM pg_trigger t
-                    WHERE t.tgrelid = c.oid AND t.tgname = 'myshop_media_guard'
-                      AND NOT t.tgisinternal AND t.tgenabled IN ('O', 'A')
-                      AND (t.tgtype & 23) = 23
-                      AND t.tgfoid = to_regprocedure('public.myshop_media_guard_write()')
-                )
-                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p')
-                  AND c.relname NOT IN ('flyway_schema_history', 'media_deleted_files')
-                ORDER BY c.relname
-                """)) {
-            while (result.next()) {
-                String name = result.getString(1);
-                if (!result.getBoolean(2) || !name.matches("[a-z0-9_]+"))
-                    throw new BusinessException(ErrorCode.SERVER_ERROR, "资源引用保护不完整，已停止操作");
-                tables.add(name);
-            }
+        if (!failures.isEmpty()) {
+            transactions.executeWithoutResult(status -> jdbc.update("UPDATE media_assets SET cleanup_error=? WHERE id=?",
+                    "文件清理失败，请重试：" + String.join(", ", failures), asset.id()));
+            throw new BusinessException(ErrorCode.SERVER_ERROR, "资源引用已清理，但文件删除失败；请重试清理", HttpStatus.CONFLICT);
         }
-        List<Reference> references = new ArrayList<>();
-        for (String table : tables) {
-            if (System.nanoTime() >= deadline)
-                throw new BusinessException(ErrorCode.SERVER_ERROR, "资源引用检查超时，未执行操作", HttpStatus.CONFLICT);
-            // CSS escapes can encode even the name of url(). Do not guess.
-            String ambiguousCss = table.equals("site_configs")
-                    ? " OR (t.config_key = 'custom_css' AND position(chr(92) IN coalesce(t.config_value, '')) > 0)"
-                    : "";
-            String sql = "SELECT count(*) FROM public.\"" + table + "\" t CROSS JOIN LATERAL "
-                    + "(SELECT public.myshop_media_normalize(to_jsonb(t)::text) AS value) n "
-                    + "WHERE n.value IS NULL OR position(? IN n.value) > 0" + ambiguousCss;
-            try (var statement = connection.prepareStatement(sql)) {
-                statement.setString(1, filename.toLowerCase(Locale.ROOT));
-                try (var result = statement.executeQuery()) {
-                    result.next(); long count = result.getLong(1);
-                    if (count > 0) references.add(new Reference(table, label(table), count));
-                }
-            }
-        }
-        return references;
+        transactions.executeWithoutResult(status -> jdbc.update("UPDATE media_assets SET cleanup_error=NULL WHERE id=?", asset.id()));
     }
 
-    private byte[] readImage(String filename) {
-        if (!storage.isSafePublicFile(filename)) throw new BusinessException(ErrorCode.NOT_FOUND, "资源不存在", HttpStatus.NOT_FOUND);
-        try (var input = Files.newInputStream(storage.resolve(filename), LinkOption.NOFOLLOW_LINKS)) {
-            byte[] bytes = input.readNBytes(MAX_BYTES + 1);
-            if (bytes.length > MAX_BYTES) throw new BusinessException(ErrorCode.BAD_REQUEST, "图片超过 10 MB，已跳过");
-            return bytes;
-        } catch (IOException exception) { throw new BusinessException(ErrorCode.SERVER_ERROR, "图片读取失败"); }
-    }
-
-    private static Dimensions dimensions(byte[] bytes) {
-        try (var stream = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
-            Iterator<ImageReader> readers = ImageIO.getImageReaders(stream);
-            if (!readers.hasNext()) return null;
-            ImageReader reader = readers.next();
-            try { reader.setInput(stream, true, true); return new Dimensions(reader.getWidth(0), reader.getHeight(0)); }
-            finally { reader.dispose(); }
-        } catch (IOException | RuntimeException exception) { return null; }
-    }
-
-    private static boolean eligiblePng(String filename, byte[] bytes, Dimensions dimensions) {
-        if (!filename.toLowerCase(Locale.ROOT).endsWith(".png") || dimensions == null
-                || dimensions.width() <= 0 || dimensions.height() <= 0
-                || dimensions.width() > ImageProcessor.OUTPUT_DIMENSION || dimensions.height() > ImageProcessor.OUTPUT_DIMENSION
-                || (long) dimensions.width() * dimensions.height() > MAX_OPTIMIZE_PIXELS || bytes.length < 20) return false;
-        // Do not discard animation, embedded color profiles, or orientation.
-        for (int i = 8; i + 12 <= bytes.length;) {
-            long length = ((long) (bytes[i] & 255) << 24) | ((long) (bytes[i+1] & 255) << 16)
-                    | ((long) (bytes[i+2] & 255) << 8) | (bytes[i+3] & 255L);
-            if (length > bytes.length - i - 12L) return false;
-            String type = new String(bytes, i + 4, 4, java.nio.charset.StandardCharsets.US_ASCII);
-            if (List.of("acTL", "iCCP", "gAMA", "cHRM", "sRGB", "eXIf").contains(type)) return false;
-            i += (int) length + 12;
-            if (type.equals("IEND")) return i == bytes.length;
-        }
-        return false;
-    }
-
-    private static boolean eligible(String filename, byte[] bytes, Dimensions dimensions) {
-        if (eligiblePng(filename, bytes, dimensions)) return true;
-        String lower = filename.toLowerCase(Locale.ROOT);
-        return (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) && dimensions != null
-                && dimensions.width() > 0 && dimensions.height() > 0
-                && dimensions.width() <= ImageProcessor.MAX_DIMENSION && dimensions.height() <= ImageProcessor.MAX_DIMENSION
-                && (long) dimensions.width() * dimensions.height() <= MAX_OPTIMIZE_PIXELS
-                && ImageProcessor.eligibleOldJpeg(bytes, dimensions.width(), dimensions.height());
-    }
-
-    private static boolean samePixels(byte[] before, byte[] after) {
-        try {
-            BufferedImage a = ImageIO.read(new ByteArrayInputStream(before));
-            BufferedImage b = ImageIO.read(new ByteArrayInputStream(after));
-            if (a == null || b == null || a.getWidth() != b.getWidth() || a.getHeight() != b.getHeight()) return false;
-            for (int y = 0; y < a.getHeight(); y++) {
-                if (!Arrays.equals(a.getRGB(0, y, a.getWidth(), 1, null, 0, a.getWidth()),
-                        b.getRGB(0, y, b.getWidth(), 1, null, 0, b.getWidth()))) return false;
-            }
-            return true;
-        } catch (IOException | RuntimeException exception) { return false; }
-    }
-
-    private static String label(String table) {
-        return switch (table) {
-            case "products" -> "商品";
-            case "order_items" -> "订单商品快照";
-            case "site_configs" -> "网站设置、公告或二维码";
-            case "subsites" -> "分站设置";
-            case "supplier_product_mappings" -> "货源商品资料";
-            case "users" -> "用户资料";
-            default -> "其他业务数据（" + table + "）";
-        };
-    }
-
-    private static void validate(String filename) {
-        if (filename == null || !FILENAME.matcher(filename).matches())
+    private Asset find(String identifier, boolean lock) {
+        if (identifier == null || !identifier.matches("[a-zA-Z0-9._/-]{1,512}") || identifier.contains(".."))
             throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的资源名称");
+        String suffix = "%/" + identifier;
+        List<Asset> found = jdbc.query("""
+                SELECT id,storage_path,display_path,thumbnail_path,clear_path,size_bytes,width,height,media_type,processing_status FROM media_assets
+                WHERE id::text=? OR storage_path=? OR display_path=? OR thumbnail_path=? OR clear_path=?
+                   OR storage_path LIKE ? OR display_path LIKE ? OR thumbnail_path LIKE ? OR clear_path LIKE ?
+                ORDER BY id
+                """ + (lock ? " FOR UPDATE" : ""), (rs, n) -> new Asset(rs.getObject("id", UUID.class), rs.getString("storage_path"),
+                rs.getString("display_path"), rs.getString("thumbnail_path"), rs.getString("clear_path"), rs.getLong("size_bytes"),
+                rs.getObject("width", Integer.class), rs.getObject("height", Integer.class), rs.getString("media_type"),
+                rs.getString("processing_status")),
+                identifier, identifier, identifier, identifier, identifier, suffix, suffix, suffix, suffix);
+        if (found.size() != 1) throw new BusinessException(ErrorCode.NOT_FOUND, "资源不存在或名称不唯一", HttpStatus.NOT_FOUND);
+        return found.getFirst();
     }
 
-    private record Dimensions(int width, int height) { }
-    private record ProductCover(Object id, String title, String url) { }
-    public record Reference(String table, String source, long count) { }
-    public record ChangedProduct(String id, String title) { }
-    public record Inspection(long size, String format, Integer width, Integer height, boolean optimizable, List<Reference> references) { }
-    public record Optimization(String url, long originalSize, long optimizedSize, int replacedCovers,
-                               List<ChangedProduct> changedProducts, List<Reference> retainedReferences) { }
+    private List<Reference> references(UUID assetId) {
+        List<Reference> result = jdbc.query("""
+                SELECT owner_type,owner_id,field FROM media_references WHERE asset_id=?
+                """, (rs, n) -> {
+            String type = rs.getString(1);
+            return new Reference(table(type), label(type), 1, rs.getObject(2, UUID.class), rs.getString(3), type);
+        }, assetId);
+        // Checkout locks subsite -> product -> user; supplier transactions
+        // sort product UUIDs with Java's UUID ordering. Match both here so a
+        // multi-owner deletion cannot invert unrelated business row locks.
+        result.sort(java.util.Comparator.comparingInt((Reference ref) -> ownerOrder(ref.ownerType()))
+                .thenComparing(Reference::ownerId).thenComparing(Reference::field));
+        return result;
+    }
+
+    private static int ownerOrder(String type) {
+        return switch (type) { case "SUBSITE" -> 0; case "PRODUCT" -> 1; case "AVATAR" -> 2;
+            case "SITE_CONFIG" -> 3; case "ANNOUNCEMENT" -> 4; default -> throw new IllegalStateException("Unexpected media owner"); };
+    }
+
+    private void clearReference(Reference ref, List<String> aliases) {
+        String table = table(ref.ownerType());
+        String column = switch (ref.ownerType() + ":" + ref.field()) {
+            case "PRODUCT:cover_url", "PRODUCT:detail_md", "AVATAR:avatar_url", "SUBSITE:favicon_url", "ANNOUNCEMENT:body" -> ref.field();
+            case "SITE_CONFIG:favicon_url" -> "config_value";
+            default -> throw new IllegalStateException("Unexpected media reference field");
+        };
+        List<String> rows = jdbc.query("SELECT " + column + " FROM " + table + " WHERE id=? FOR UPDATE",
+                (rs, n) -> rs.getString(1), ref.ownerId());
+        if (rows.isEmpty() || rows.getFirst() == null) return;
+        String before = rows.getFirst(), after = before;
+        for (String alias : aliases) {
+            if (ref.field().equals("body") || ref.field().equals("detail_md"))
+                after = MarkdownMediaCleaner.removeManaged(after, alias, paths);
+            else if (paths.direct(after).contains(alias)) after = ref.ownerType().equals("SITE_CONFIG") ? "" : null;
+            if (after == null) break;
+        }
+        if (ref.ownerType().equals("ANNOUNCEMENT") && (after == null || after.isBlank())) after = "（资源已删除）";
+        if (!java.util.Objects.equals(before, after)) {
+            jdbc.update("UPDATE " + table + " SET " + column + "=? WHERE id=?", after, ref.ownerId());
+            if (ref.field().equals("body") || ref.field().equals("detail_md")) {
+                List<String> removedAvatars = paths.pruneRemovedMarkdownReferences(ref.ownerType(), ref.ownerId(), ref.field(), after)
+                        .stream().filter(path -> !aliases.contains(path)).toList();
+                if (!removedAvatars.isEmpty()) org.springframework.transaction.support.TransactionSynchronizationManager
+                        .registerSynchronization(new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override public void afterCommit() {
+                                for (String path : removedAvatars) try { retireUnreferencedAvatar(paths.url(path), ref.ownerId()); }
+                                catch (RuntimeException failure) { org.slf4j.LoggerFactory.getLogger(MediaMaintenanceService.class)
+                                        .warn("Historical avatar cleanup needs retry: {}", failure.getMessage()); }
+                            }
+                        });
+            }
+        }
+    }
+
+    private static String table(String type) {
+        return switch (type) { case "PRODUCT" -> "products"; case "AVATAR" -> "users"; case "SITE_CONFIG" -> "site_configs";
+            case "SUBSITE" -> "subsites"; case "ANNOUNCEMENT" -> "site_announcements"; default -> throw new IllegalStateException("Unexpected media owner"); };
+    }
+    private static String label(String type) {
+        return switch (type) { case "PRODUCT" -> "商品"; case "AVATAR" -> "用户头像"; case "SITE_CONFIG" -> "主站图标";
+            case "SUBSITE" -> "分站图标"; case "ANNOUNCEMENT" -> "公告"; default -> "其他"; };
+    }
+    private static String format(String path) {
+        return path == null || !path.contains(".") ? "" : path.substring(path.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+    }
+    private record Asset(UUID id, String storage, String display, String thumbnail, String clear, long size, Integer width, Integer height,
+                         String type, String status) {
+        List<String> paths() {
+            var result = new LinkedHashSet<String>();
+            for (String path : new String[]{storage, display, thumbnail, clear}) if (path != null) result.add(path);
+            return List.copyOf(result);
+        }
+    }
+    public record Reference(String table, String source, long count, UUID ownerId, String field, String ownerType) { }
+    public record Inspection(long size, String format, Integer width, Integer height, List<Reference> references) { }
 }

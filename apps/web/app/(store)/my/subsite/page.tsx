@@ -62,11 +62,12 @@ export default function MySubsitePage() {
   async function uploadFavicon(file?: File) {
     if (!file) return
     const invalid = getAvatarFileValidationError(file)
-    if (invalid) { toast.error(invalid === "size" ? "图片大小不能超过 5MB" : "仅支持 JPG、PNG 或 WebP 图片"); return }
+    if (invalid) { toast.error(invalid === "size" ? "图片大小不能超过 5MB" : "仅支持 JPG、PNG、WebP、AVIF、HEIC 或 HEIF 图片"); return }
     setBusy(true)
     try {
       const updated = await subsiteApi.uploadFavicon(file)
       setSite(updated); setFavicon(updated.favicon_url ?? ""); toast.success("图标已更新")
+      if (updated.image_processing_reason === "color_unspecified") toast.warning("源文件未声明色彩配置，已按 sRGB 处理")
     } catch (e) { toast.error(e instanceof Error ? e.message : "上传失败") }
     finally { setBusy(false) }
   }

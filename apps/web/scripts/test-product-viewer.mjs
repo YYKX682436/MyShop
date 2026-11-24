@@ -35,7 +35,8 @@ const product = (id) => {
     id, title: id === "long-title" ? `超长商品标题MixedEnglish${"VeryLongUnbrokenText".repeat(4)}中文标题` : `测试商品 ${id}`,
     price: id === "long-title" ? 123456789012.34 : 4, retail_price: 4,
     cover_url: noImage ? null : `${id === "absolute" ? base : ""}/api/uploads/${cover}`,
-    description: "商品详情正文。".repeat(60), detail_md: null,
+    description: "商品详情正文。".repeat(60),
+    detail_md: id === "markdown" ? `第一行\n第二行\n\n[![详情长图](/api/uploads/${names.portrait})](https://example.com/destination)\n\n[普通链接](https://example.com/help)\n\n| 标题 | 内容 |\n| --- | --- |\n| 一 | 二 |` : null,
     stock_available: soldOut ? 0 : 10, unlimited: false, has_specs: !soldOut,
     specs: soldOut ? [] : specs, delivery_type: id === "long-title" ? "MANUAL" : "AUTO",
     sales_count: 20, initial_sales: 2, customer_input_fields: [],
@@ -117,7 +118,7 @@ try {
       : ["/api/payment-channels", "/api/categories"].includes(url.pathname) ? [] : null
     await route.fulfill({ status: 200, contentType: "application/json", body: response(data) })
   })
-  const imageButton = () => page.getByRole("button", { name: /查看商品原图/ })
+  const imageButton = () => page.locator("button.product-image-stage--detail")
   const dialog = () => page.getByRole("dialog")
   const area = () => page.locator(".product-image-viewer-scroll")
   async function navigate(id) {
@@ -233,6 +234,28 @@ try {
     await dialog().waitFor()
     await closeBackdrop()
   }
+  await navigate("markdown")
+  originals.length = 0
+  await page.reload({ waitUntil: "domcontentloaded" })
+  const detailImage = page.getByRole("button", { name: /查看商品原图: 详情长图/ })
+  await detailImage.waitFor()
+  await detailImage.locator("img").waitFor()
+  assert.equal(originals.length, 0, "markdown preview must not request the original before opening")
+  const detailPreviewUrl = await detailImage.locator("img").evaluate(img => img.currentSrc)
+  assert.equal(new URL(detailPreviewUrl).pathname, "/_next/image", "markdown preview uses the managed image optimizer")
+  assert.equal(await detailImage.locator("xpath=ancestor::a").count(), 0, "a linked image must not nest a viewer button in a link")
+  assert.equal(await page.getByRole("link", { name: "普通链接" }).getAttribute("href"), "https://example.com/help")
+  assert.equal(await page.locator(".product-description-content p br").count(), 1, "legacy single newlines render as line breaks")
+  assert.equal(await page.locator(".product-description-content table").count(), 1, "GFM tables render in product details")
+  await detailImage.scrollIntoViewIfNeeded()
+  const detailScroll = await page.evaluate(() => window.scrollY)
+  await detailImage.click()
+  await page.locator(".product-image-viewer-original").waitFor()
+  assert.ok(originals.some(url => url.endsWith(names.portrait)), "opening the markdown viewer loads the original")
+  await page.keyboard.press("Escape")
+  await dialog().waitFor({ state: "hidden" })
+  await page.waitForFunction(y => window.scrollY === y, detailScroll)
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "查看商品原图: 详情长图", null, { timeout: 3000 })
   await navigate("absolute")
   originals.length = 0
   await page.reload({ waitUntil: "domcontentloaded" })
@@ -317,6 +340,47 @@ try {
   await page.goBack()
   assert.equal(new URL(page.url()).pathname, "/", "closing the viewer must not leave an extra back step")
   await context.close()
+  const adminContext = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const adminPage = await adminContext.newPage()
+  let deleted = false
+  let inspectedId = null
+  let deletedId = null
+  const assetId = "11111111-1111-4111-8111-111111111111"
+  const item = {
+    id: assetId, name: "媒体测试.png", url: `/api/uploads/${names.square}`,
+    thumbnail_url: `/api/uploads/${names.square}`, clear_url: `/api/uploads/${names.square}`,
+    size: images[names.square].length, original_size: images[names.square].length,
+    thumbnail_size: images[names.square].length, clear_size: images[names.square].length,
+    format: "png", uploaded_at: Date.now(), type: "image", usage: ["product"], status: "ready",
+    width: 600, height: 600, duration_ms: null, cleanup_error: null, upload_cleanup_error: null,
+    processing_error: null, reused_asset_id: null, scope: "public",
+  }
+  await adminPage.route("**/api/**", async route => {
+    const url = new URL(route.request().url())
+    let data = {}
+    if (url.pathname === "/api/user/profile") data = { id: "fixture-admin", username: "admin", role: "SUPER_ADMIN" }
+    else if (url.pathname === "/api/site/config") data = config
+    else if (url.pathname === "/api/admin/media/inspection") {
+      inspectedId = url.searchParams.get("filename")
+      data = { size: item.size, format: "png", width: 600, height: 600, references: [{ table: "products", source: "商品", count: 1, owner_type: "PRODUCT", owner_id: "fixture-product", field: "detail_md" }] }
+    }
+    else if (url.pathname === "/api/admin/media" && route.request().method() === "DELETE") { deletedId = url.searchParams.get("filename"); deleted = true; data = null }
+    else if (url.pathname === "/api/admin/media") data = { items: deleted ? [] : [item], total: deleted ? 0 : 1, page: 1, page_size: 24 }
+    else if (url.pathname.startsWith("/api/uploads/")) return route.fulfill({ status: 200, contentType: "image/png", body: images[url.pathname.split("/").at(-1)] })
+    await route.fulfill({ status: 200, contentType: "application/json", body: response(data) })
+  })
+  await adminPage.goto(`${base}/admin/media`, { waitUntil: "domcontentloaded" })
+  await adminPage.getByText("媒体测试.png").waitFor()
+  assert.equal(await adminPage.getByRole("button", { name: /优化/ }).count(), 0, "the removed optimizer is not offered in resource management")
+  await adminPage.getByRole("button", { name: "删除", exact: true }).click()
+  const management = adminPage.getByRole("dialog", { name: "检查资源" })
+  await management.getByText("商品 · fixture-product · detail_md").waitFor()
+  assert.equal(inspectedId, assetId, "inspection uses the selected asset ID")
+  await management.getByRole("button", { name: "确认删除" }).click()
+  await adminPage.getByTitle("媒体测试.png").waitFor({ state: "hidden" })
+  assert.equal(deleted, true, "confirming deletion calls the resource delete API")
+  assert.equal(deletedId, assetId, "deletion uses the selected asset ID")
+  await adminContext.close()
   console.log(`PRODUCT_VIEWER_UI_OK widths=320,390,430,768 desktop=1280 themes=light,dark thumbnail=ok original=on-demand square=ok portrait-scroll=mouse,touch landscape=ok backdrop=mouse,touch drag=ok keyboard=ok browser-back=ok close-watcher=${closeWatcherTested ? "request-tested" : "unsupported"} restore=ok purchase=ok failure=ok no-image=ok`)
 } finally {
   if (browser) await browser.close()

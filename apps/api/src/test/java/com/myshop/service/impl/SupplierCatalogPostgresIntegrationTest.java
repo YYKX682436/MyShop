@@ -364,6 +364,36 @@ class SupplierCatalogPostgresIntegrationTest {
         assertTrue(updated.getDetailMd().contains("上游详情"));
     }
 
+    @Test void presentationSyncCanRetainButCannotAddAHistoricalAvatarReference() throws Exception {
+        var account = account("legacy-avatar", "fake-secret-a");
+        var original = product("legacy-avatar-goods", 1, 0, "0.10", 20);
+        fixture.goods.put(original.id(), original);
+        UUID productId = service.importProduct(account.id(), original.id(), category).productId();
+        UUID avatar = UUID.randomUUID(), owner = UUID.randomUUID();
+        String path = "avatars/avatar-" + avatar + ".png", url = "/api/uploads/" + path;
+        var storage = webContext.getBean(com.myshop.service.UploadStorage.class);
+        java.nio.file.Files.write(storage.prepareManagedFile(path), new byte[]{1,2,3});
+        try {
+            jdbc.update("INSERT INTO media_assets(id,storage_path,display_path,clear_path,original_filename,media_type,mime_type,size_bytes,scope,owner_user_id) VALUES (?,?,?,?,?,'IMAGE','image/png',3,'AVATAR',?)",
+                    avatar, path, path, path, "legacy-avatar.png", owner);
+            jdbc.update("UPDATE products SET cover_url=?,detail_md='原正文' WHERE id=?", url, productId);
+            jdbc.update("INSERT INTO media_references VALUES (?,'PRODUCT',?,'cover_url')", avatar, productId);
+            var same = json.readTree("{\"goodsDescribe\":\"新简介\"}");
+            fixture.goods.put(original.id(),new SupplierModels.Product(original.id(),original.name(),original.goodsType(),original.status(),original.skuType(),
+                    original.multiple(),original.minQuantity(),original.maxQuantity(),original.skus(),same));
+            service.syncPresentation(account.id(), original.id(), productId, true);
+            assertEquals(url, jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, productId));
+            var extra = json.createObjectNode(); extra.put("goodsDetail", "![新增](" + url + ")");
+            fixture.goods.put(original.id(),new SupplierModels.Product(original.id(),original.name(),original.goodsType(),original.status(),original.skuType(),
+                    original.multiple(),original.minQuantity(),original.maxQuantity(),original.skus(),extra));
+            assertThrows(com.myshop.exception.BusinessException.class, () -> service.syncPresentation(account.id(), original.id(), productId, true));
+        } finally {
+            jdbc.update("DELETE FROM media_references WHERE asset_id=?", avatar);
+            jdbc.update("DELETE FROM media_assets WHERE id=?", avatar);
+            java.nio.file.Files.deleteIfExists(storage.resolve(path));
+        }
+    }
+
     @Test void partiallyBoundLocalProductIsTakenDownAndCanStillEditNamesAndPrices() throws Exception {
         var a=account("edit-converted","fake-secret-a"); fixture.goods.put("117",product("117",1,0,"0.10",20));
         UUID local=localProduct(true),first=localSpec(local,"月卡",10),second=localSpec(local,"季卡",30);

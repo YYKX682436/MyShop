@@ -5,6 +5,7 @@ import { AlertTriangle, ChevronDown, ChevronUp, Loader2, Plus, Trash2 } from "lu
 import { toast } from "sonner"
 
 import { ImageUploadDropzone } from "@/components/admin/image-upload-dropzone"
+import { MediaPicker } from "@/components/admin/media-library"
 import { SupplierPicker, type SupplierSelection } from "@/components/admin/suppliers/supplier-picker"
 import { FormSection, StatusBadge } from "@/components/admin/shared"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useLocale } from "@/lib/context"
 import { getCategoryChildren, getCategorySelection, getRootCategories } from "@/lib/categories"
 import { announceCreatedProduct, invalidateAdminData } from "@/lib/admin-data-invalidation"
+import { uploadAdminImage } from "@/lib/admin-image-upload"
 import {
   buildPricingPreviewDraft,
   getCardKeyImportAvailability,
@@ -209,12 +211,13 @@ interface ProductFormProps {
   onSaved: (product: AdminProductDetail, continueRestock: boolean) => void | Promise<void>
   onCancel: () => void
   onDirtyChange?: (dirty: boolean) => void
+  onUploadingChange?: (uploading: boolean) => void
   onProductRefresh?: () => void | Promise<void>
   initialTab?: ProductEditorTab
 }
 
-export function ProductForm({ product, categories, categoryStatus, onRetryCategories, onSaved, onCancel, onDirtyChange, onProductRefresh, initialTab = "basic" }: ProductFormProps) {
-  const { t } = useLocale()
+export function ProductForm({ product, categories, categoryStatus, onRetryCategories, onSaved, onCancel, onDirtyChange, onUploadingChange, onProductRefresh, initialTab = "basic" }: ProductFormProps) {
+  const { t, locale } = useLocale()
   const [draft, setDraft] = useState<ProductFormData>(() => getProductDraft(product))
   const [activeTab, setActiveTab] = useState<ProductEditorTab>(initialTab)
   const [tabErrors, setTabErrors] = useState<Partial<Record<ProductEditorTab, boolean>>>({})
@@ -225,6 +228,8 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [detailUploading, setDetailUploading] = useState(false)
+  const detailUploadingRef = useRef(false)
   const [dirty, setDirtyState] = useState(false)
   const [cardKeyImportOpen, setCardKeyImportOpen] = useState(false)
   const [supplierMappings, setSupplierMappings] = useState<SupplierMapping[]>([])
@@ -297,7 +302,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
     })
   }, [activeTab, levelsLoaded])
 
-  const uploadImage = useCallback(async (file: File) => (await adminProductApi.uploadImage(file)).url, [])
+  const uploadImage = useCallback(async (file: File) => (await uploadAdminImage(file, locale)).url, [locale])
 
   const markDirty = useCallback(() => {
     setDirty(true)
@@ -611,6 +616,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
 
   const handleSave = async (continueRestock = false) => {
     if (savingRef.current) return
+    if (detailUploadingRef.current) { toast.error("请等待图片上传完成"); return }
     const supplierMode = draft.stock_mode === "SUPPLIER"
     const sourceKeys = draft.spec_enabled ? draft.specs.filter(spec => spec.visible).map(spec => spec.id) : ["root"]
     if (supplierMode) {
@@ -689,6 +695,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
 
   const moveStep = (direction: -1 | 1) => {
     if (savingRef.current) return
+    if (detailUploadingRef.current) { toast.error("请等待图片上传完成"); return }
     if (direction === 1) {
       const failure = validate(activeTab)
       if (failure) { showValidationFailure(failure); return }
@@ -770,6 +777,7 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
   return (
     <form data-testid="product-form" noValidate className="admin-editor-form flex min-w-0 flex-col gap-5" onSubmit={(event) => { event.preventDefault(); if (activeTab === "details") void handleSave(); else moveStep(1) }}>
       <Tabs value={activeTab} onValueChange={(value) => {
+          if (detailUploadingRef.current) { toast.error("请等待图片上传完成"); return }
           if (PRODUCT_EDITOR_TABS.includes(value as ProductEditorTab)) setActiveTab(value as ProductEditorTab)
         }}>
         <div className="admin-editor-tabs -mx-1 px-1 py-2">
@@ -1049,7 +1057,10 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
             <FormSection title={t("admin.detailMd")} description={t("admin.detailMdHint")}>
               <div ref={registerField("detail_md")} tabIndex={-1}>
                 <Suspense fallback={<div className="content-surface min-h-52 p-4 text-sm text-muted-foreground" role="status">{t("common.loading")}</div>}>
-                  <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage} />
+                  <MarkdownEditor value={draft.detail_md} onChange={handleDetailChange} uploadImage={uploadImage}
+                    onUploadingChange={uploading => { detailUploadingRef.current = uploading; setDetailUploading(uploading); onUploadingChange?.(uploading) }}
+                    renderMediaPicker={props => <MediaPicker disabled={props.disabled} onOpen={props.onOpen}
+                      onSelect={item => { if (item.url) props.onSelect({ name: item.name, url: item.url }) }} />} />
                 </Suspense>
               </div>
             </FormSection>
@@ -1057,11 +1068,11 @@ export function ProductForm({ product, categories, categoryStatus, onRetryCatego
       </Tabs>
 
       <div className="static-material action-bar-material sticky bottom-3 z-20 flex flex-wrap justify-end gap-2 p-3">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>{t("admin.cancel")}</Button>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={saving || detailUploading}>{t("admin.cancel")}</Button>
         {product && activeTab !== "details" && <Button type="button" variant="outline" onClick={() => void handleSave()} disabled={saving}>{t("admin.save")}</Button>}
-        {activeTab !== "basic" && <Button type="button" variant="outline" onClick={() => moveStep(-1)} disabled={saving}>{t("admin.previousStep")}</Button>}
-        {activeTab === "details" && !product && draft.delivery_type === "AUTO" && draft.stock_mode === "CARD_KEY" && <Button type="button" variant="outline" onClick={() => void handleSave(true)} disabled={saving}>{t("admin.saveAndRestock")}</Button>}
-        <Button type="submit" disabled={saving}>{saving ? t("admin.saving") : activeTab === "details" ? t("admin.saveAndFinish") : t("admin.nextStep")}</Button>
+        {activeTab !== "basic" && <Button type="button" variant="outline" onClick={() => moveStep(-1)} disabled={saving || detailUploading}>{t("admin.previousStep")}</Button>}
+        {activeTab === "details" && !product && draft.delivery_type === "AUTO" && draft.stock_mode === "CARD_KEY" && <Button type="button" variant="outline" onClick={() => void handleSave(true)} disabled={saving || detailUploading}>{t("admin.saveAndRestock")}</Button>}
+        <Button type="submit" disabled={saving || detailUploading}>{saving ? t("admin.saving") : activeTab === "details" ? t("admin.saveAndFinish") : t("admin.nextStep")}</Button>
       </div>
       {cardKeyImportOpen && cardKeyImportAvailability === "ready" && (
         <Suspense fallback={<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20" role="status"><div className="static-material rounded-surface px-5 py-4 text-sm text-foreground">{t("common.loading")}</div></div>}>

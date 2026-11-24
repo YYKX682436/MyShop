@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import { Loader2 } from "lucide-react"
 
 import { MarkdownEditor } from "@/components/admin/markdown-editor"
+import { MediaPicker } from "@/components/admin/media-library"
+import { useRouteOverlayClose } from "@/components/admin/route-overlay"
 import {
   Dialog,
   DialogContent,
@@ -38,6 +40,9 @@ export function ManualFulfillmentDialog({
 }: ManualFulfillmentDialogProps) {
   const { t } = useLocale()
   const [contentByItem, setContentByItem] = useState<Record<string, string>>({})
+  const [uploadingItems, setUploadingItems] = useState<Set<string>>(() => new Set())
+  const overLimit = Object.values(contentByItem).some(content => content.length > 20_000)
+  useRouteOverlayClose(false, open, uploadingItems.size > 0)
   const itemIds = items.map((item) => item.id).join(",")
 
   useEffect(() => {
@@ -47,7 +52,7 @@ export function ManualFulfillmentDialog({
   }, [itemIds, open])
 
   const handleConfirm = () => {
-    if (loading || items.length === 0) return
+    if (loading || uploadingItems.size || overLimit || items.length === 0) return
     onConfirm(items.map((item) => {
       const content = contentByItem[item.id] || ""
       return {
@@ -58,7 +63,7 @@ export function ManualFulfillmentDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!loading) onOpenChange(nextOpen) }}>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!loading && !uploadingItems.size) onOpenChange(nextOpen) }}>
       <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("admin.manualFulfillmentTitle")}</DialogTitle>
@@ -94,6 +99,13 @@ export function ManualFulfillmentDialog({
                     value={contentByItem[item.id] || ""}
                     onChange={(value) => setContentByItem((current) => ({ ...current, [item.id]: value }))}
                     uploadImage={uploadImage}
+                    renderMediaPicker={props => <MediaPicker disabled={props.disabled} onOpen={props.onOpen}
+                      onSelect={item => { if (item.url) props.onSelect({ name: item.name, url: item.url }) }} />}
+                    onUploadingChange={uploading => setUploadingItems(current => {
+                      const next = new Set(current)
+                      if (uploading) next.add(item.id); else next.delete(item.id)
+                      return next
+                    })}
                     maxLength={20_000}
                 />
               </div>
@@ -102,10 +114,10 @@ export function ManualFulfillmentDialog({
         </div>
 
         <DialogFooter className="gap-2">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading || uploadingItems.size > 0}>
             {t("common.cancel")}
           </Button>
-          <Button type="button" onClick={handleConfirm} disabled={loading || items.length === 0}>
+          <Button type="button" onClick={handleConfirm} disabled={loading || uploadingItems.size > 0 || overLimit || items.length === 0}>
             {loading && <Loader2 className="animate-spin" aria-hidden="true" />}
             {t("admin.manualFulfillmentConfirm")}
           </Button>

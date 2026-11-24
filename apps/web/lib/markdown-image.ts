@@ -9,7 +9,11 @@ export interface MarkdownInsertionResult {
 }
 
 export function createMarkdownImage(fileName: string, url: string): string {
-  return `![${fileName}](${url})`
+  // Angle-delimited destinations allow parentheses in signed or external
+  // URLs. Escaping the label prevents brackets in a filename from ending it.
+  const label = fileName.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]").replace(/[\r\n]+/g, " ")
+  const destination = url.replace(/[&<>\s\\]/g, char => char === "&" ? "&amp;" : encodeURIComponent(char))
+  return `![${label}](<${destination}>)`
 }
 
 export function insertMarkdownImage(

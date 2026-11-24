@@ -1,5 +1,6 @@
 package com.myshop.controller;
 
+import jakarta.servlet.DispatcherType;
 import com.myshop.common.PageResult;
 import com.myshop.model.response.AdministratorResponse;
 import com.myshop.service.AdministratorService;
@@ -120,6 +121,19 @@ class SecurityAuthorizationIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void errorDispatchIsAccessibleWithoutMakingTheErrorRoutePublic() throws Exception {
+        mockMvc.perform(get("/api/error").contextPath("/api"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/error").contextPath("/api")
+                        .with(request -> {
+                            request.setDispatcherType(DispatcherType.ERROR);
+                            request.setAttribute("jakarta.servlet.error.status_code", 416);
+                            return request;
+                        }))
+                .andExpect(status().isRequestedRangeNotSatisfiable());
     }
 
     @Test
