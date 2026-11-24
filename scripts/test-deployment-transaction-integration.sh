@@ -106,7 +106,7 @@ elif '--get-runtime-ref' in sys.argv:
 else:
     sys.exit(0)
 OFFLINE_VERIFY
-chmod +x "$tmp_dir/offline-verifier.py"
+[[ ! -x "$tmp_dir/offline-verifier.py" ]] || fail 'Python offline verifier fixture should not require executable mode'
 recovery_bundle="$tmp_dir/failed-recovery-bundle.json"
 recovery_manifest="$tmp_dir/failed-recovery-manifest.json"
 printf '{}\n' >"$recovery_bundle"

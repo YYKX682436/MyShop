@@ -60,7 +60,8 @@ OFFLINE_IMAGE_VERIFIER=${MYSHOP_OFFLINE_IMAGE_VERIFIER:-$SCRIPT_DIR/verify-offli
 if [[ "$offline_images" == 1 ]]; then
   (( shared_server_mode )) || die 'offline image imports are supported only for the isolated shared-server project'
   [[ -n "$offline_bundle" && -f "$offline_bundle" && ! -L "$offline_bundle" ]] || die 'offline image bundle file is missing or unsafe'
-  [[ -x "$OFFLINE_IMAGE_VERIFIER" ]] || die 'offline image verifier is missing or not executable'
+  [[ -f "$OFFLINE_IMAGE_VERIFIER" && ! -L "$OFFLINE_IMAGE_VERIFIER" ]] \
+    || die 'offline image verifier is missing or unsafe'
 fi
 run_host_maintenance_default=1
 (( shared_server_mode )) && run_host_maintenance_default=0
