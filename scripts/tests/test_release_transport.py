@@ -127,6 +127,9 @@ else:
         self.assertNotIn("type=docker,dest=", workflow)
         self.assertNotIn("fetch-release-archives.py", workflow)
         self.assertNotIn("myshop-release-${{ github.sha }}", workflow)
+        self.assertEqual(workflow.count('docker pull "$image@$digest"'), 2)
+        self.assertIn('"$pulled_jar_sha" == "$API_JAR_SHA256"', workflow)
+        self.assertIn('[[ "$pulled_revision" == "$SOURCE_SHA" ]]', workflow)
 
     def test_emergency_export_is_manual_digest_only_and_separate(self):
         workflow = OFFLINE_WORKFLOW.read_text(encoding="utf-8")
