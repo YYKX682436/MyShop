@@ -135,6 +135,20 @@ multipart image and private-attachment limits remain separate. The persistent
 public `uploads` and private `private-uploads` mounts hold video output and tus
 sessions respectively; keep both mounted across API replacement.
 
+The November 2026 Baota installation also enables `proxy_cache` globally.
+It can serve a deleted asset from the proxy cache, and its default HEAD-to-GET
+conversion breaks the authenticated tus resume HEAD request. Install
+`ops/shared-server/baota-myshop-tus.conf` in each MyShop server-block extension
+directory (`mc.mc520.top` and the `mc520.top` wildcard site routing to this
+stack), adjusting its loopback port if the site's Caddy port differs. It
+disables the upstream proxy cache for those MyShop sites; browsers still receive
+the application's immutable caching headers. The tus location also disables
+request buffering and preserves the existing client IP and forwarding headers
+and 600-second timeouts. Run `nginx -t` before a reload, then verify an
+authenticated interrupted upload resumes and a deleted asset is no longer
+served through the public HTTPS hostname. Do not change the global Baota proxy
+cache or other sites' configuration.
+
 For the Baota reverse proxy use these header directives alongside its existing
 upstream configuration:
 
@@ -163,6 +177,9 @@ its trusted real-IP ranges in that site before relying on the client's IP.
   it does not request or store public certificates.
 - `ops/shared-server/myshop.env.example`: credential-free operational template.
   It is a reference only; do not replace the live environment with it.
+- `ops/shared-server/baota-myshop-tus.conf`: site-scoped Baota Nginx settings
+  that bypass proxy caches for MyShop and stream tus chunks without converting
+  resume HEAD requests to GET.
 - `ops/shared-server/audit-readonly.sh`: sanitized read-only host inventory for
   a server operator to run when direct access is unavailable.
 - `scripts/preflight-shared-server.sh`: renders Compose without starting it and
