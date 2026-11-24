@@ -419,7 +419,7 @@ project_network_names = set(run("docker", "network", "ls", "--filter", f"label=c
 project_volumes = set(run("docker", "volume", "ls", "--filter", f"label=com.docker.compose.project={expected_project}", "--format", "{{.Name}}").splitlines())
 project_container_rows = run(
     "docker", "ps", "-a", "--filter", f"label=com.docker.compose.project={expected_project}",
-    "--format", "{{.Label \"com.docker.compose.service\"}}|{{.ID}}|{{.Names}}|{{.Image}}|{{.State}}"
+    "--format", "{{.Label \"com.docker.compose.service\"}}|{{.ID}}|{{.Names}}|{{.State}}"
 ).splitlines()
 all_container_names = set(run("docker", "ps", "-a", "--format", "{{.Names}}").splitlines())
 all_volume_names = set(run("docker", "volume", "ls", "-q").splitlines())
@@ -461,10 +461,11 @@ elif mode == "bootstrap-retry":
     rows_by_service: dict[str, list[tuple[str, str, str, str]]] = {}
     labelled_container_names: set[str] = set()
     for row in project_container_rows:
-        parts = row.split("|", 4)
-        if len(parts) != 5 or parts[0] not in expected_services:
+        parts = row.split("|", 3)
+        if len(parts) != 4 or parts[0] not in expected_services:
             fail("bootstrap-retry found a container outside the expected MyShop service set")
-        rows_by_service.setdefault(parts[0], []).append((parts[1], parts[2], parts[3], parts[4]))
+        image = run("docker", "inspect", "--format", "{{.Config.Image}}", parts[1])
+        rows_by_service.setdefault(parts[0], []).append((parts[1], parts[2], image, parts[3]))
         labelled_container_names.add(parts[2])
     reserved_containers = {f"{expected_project}-{service}-1" for service in expected_services}
     if (reserved_containers & all_container_names) - labelled_container_names:
@@ -487,10 +488,11 @@ else:
         fail("upgrade mode requires exactly the expected MyShop project networks and database volume")
     rows_by_service: dict[str, list[tuple[str, str, str, str]]] = {}
     for row in project_container_rows:
-        parts = row.split("|", 4)
-        if len(parts) != 5:
+        parts = row.split("|", 3)
+        if len(parts) != 4:
             fail("could not identify an existing MyShop project container")
-        rows_by_service.setdefault(parts[0], []).append((parts[1], parts[2], parts[3], parts[4]))
+        image = run("docker", "inspect", "--format", "{{.Config.Image}}", parts[1])
+        rows_by_service.setdefault(parts[0], []).append((parts[1], parts[2], image, parts[3]))
     if set(rows_by_service) != expected_services or any(len(rows) != 1 for rows in rows_by_service.values()):
         fail("upgrade mode requires exactly one existing container for each expected MyShop service")
     state_path = Path(env_values.get("MYSHOP_DEPLOY_STATE", str(runtime_root / "deploy-state.json")))

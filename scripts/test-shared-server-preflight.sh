@@ -139,6 +139,9 @@ assert 'mode == "first-install"' in body and 'mode == "bootstrap-retry"' in body
 assert 'def verify_running_legacy_infra(service_name: str, ref: str)' in body
 assert 'legacy_infra_repo_digests[service_name]' in body
 assert 'if image == offline_tag_refs[service_name] and offline_images == "1"' in body
+assert r'{{.Label \"com.docker.compose.service\"}}|{{.ID}}|{{.Names}}|{{.State}}' in body
+assert 'run("docker", "inspect", "--format", "{{.Config.Image}}", parts[1])' in body
+assert '|{{.Names}}|{{.Image}}|' not in body
 assert 'if project_network_names != expected_networks' in body
 assert 'docker", "port"' in body and '"ss", "-H", "-lnt"' in body
 assert '(20, 10, 0)' in body and '(2, 20, 0)' in body
