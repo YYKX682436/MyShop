@@ -31,7 +31,11 @@ case "${1:-}" in
   ps)
     printf 'container-query-project=%s service=%s\n' "$project_name" "${service:-all}" >>"${ISOLATION_LOG:?}"
     if [[ "$mode" == retention && " $* " == *' -aq '* ]]; then printf 'friend-api\nfriend-web\nfriend-db\n'; exit 0; fi
-    if [[ " $* " == *' -q '* ]]; then printf '%s-db\n' "$project_name"; exit 0; fi
+    if [[ " $* " == *' -q '* ]]; then
+      if [[ "$mode" == retention && ( "$service" == api || "$service" == web ) ]]; then printf '%s-%s\n' "$project_name" "$service"; else printf '%s-db\n' "$project_name"; fi
+      exit 0
+    fi
+    if [[ "$mode" == retention ]]; then printf '%s-%s|sha256:running\n' "$project_name" "$service"; exit 0; fi
     printf '%s-%s|%s/myshop-%s:%s\n' "$project_name" "$service" "$REGISTRY" "$service" "$SHA"
     ;;
   exec)
@@ -84,7 +88,10 @@ case "${1:-}" in
     ;;
   inspect)
     fmt=${3:-}; target=${4:-}
-    if [[ "$fmt" == '{{.Image}}' ]]; then printf 'sha256:running\n'; fi
+    if [[ "$fmt" == '{{.Config.Image}}' ]]; then
+      service=${target##*-}
+      printf '%s/myshop-%s:%s\n' "$REGISTRY" "$service" "$SHA"
+    elif [[ "$fmt" == '{{.Image}}' ]]; then printf 'sha256:running\n'; fi
     ;;
   system) echo 'fake-docker-system-df' ;;
   *) exit 99 ;;

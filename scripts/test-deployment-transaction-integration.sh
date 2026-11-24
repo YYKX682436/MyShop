@@ -233,13 +233,24 @@ if [[ "$mode" == retention ]]; then
       else
         service=$(service_from_args "$@")
         [[ -n "$service" ]] || exit 0
-        printf 'myshop-%s-d|%s\n' "$service" "$(ref_for_service "$service")"
+        if [[ " $* " == *" -q "* ]]; then
+          printf 'myshop-%s-d\n' "$service"
+        else
+          # Docker 29 may render the IMAGE column as a short local ID for
+          # digest-pinned containers. Retention must inspect Config.Image.
+          printf 'myshop-%s-d|%s\n' "$service" "$(digest_for_sha "$candidate_sha")"
+        fi
       fi
       ;;
     inspect)
       format=${3:-}
       target=${4:-}
       case "$format" in
+        '{{.Config.Image}}')
+          service=${target#myshop-}
+          service=${service%-d}
+          ref_for_service "$service"
+          ;;
         '{{.Image}}')
           case "$target" in
             myshop-api-d|myshop-web-d) digest_for_sha "$candidate_sha" ;;

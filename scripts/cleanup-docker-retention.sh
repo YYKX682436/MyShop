@@ -169,14 +169,18 @@ def main() -> int:
         owned_repositories = repositories if SHARED_SERVER else repositories | {"myshop-api", "myshop-web"}
         if not args.prospective:
             for service, expected in active["images"].items():
-                rows = docker("ps", "--filter", f"label=com.docker.compose.project={PROJECT_NAME}", "--filter", f"label=com.docker.compose.service={service}", "--format", "{{.ID}}|{{.Image}}")
-                matches = [line.split("|", 1) for line in rows.splitlines() if "|" in line]
+                rows = docker(
+                    "ps", "-q", "--filter", f"label=com.docker.compose.project={PROJECT_NAME}",
+                    "--filter", f"label=com.docker.compose.service={service}",
+                )
+                matches = [line.strip() for line in rows.splitlines() if line.strip()]
                 if len(matches) != 1:
                     die(f"expected one active MyShop {service} container, found {len(matches)}")
+                running_ref = docker("inspect", "--format", "{{.Config.Image}}", matches[0]).strip()
                 runtime_ref = expected.get("runtime_ref", expected["ref"])
-                if matches[0][1] != runtime_ref:
+                if running_ref != runtime_ref:
                     die(f"active MyShop {service} image differs from state")
-                running_id = docker("inspect", "--format", "{{.Image}}", matches[0][0]).strip()
+                running_id = docker("inspect", "--format", "{{.Image}}", matches[0]).strip()
                 if running_id not in accepted_ids:
                     die(f"active MyShop {service} image ID is not protected")
 
