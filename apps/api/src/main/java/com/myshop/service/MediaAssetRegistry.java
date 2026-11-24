@@ -104,14 +104,16 @@ public class MediaAssetRegistry {
         if (!image.display().mime().equals(image.thumbnail().mime()) || !image.display().mime().equals(image.clear().mime()))
             throw conflict("图片版本格式不一致");
         UUID legacyId = null;
+        String legacyPath = null;
         if (avatarOwner == null) {
             jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", rs -> { }, "myshop-image:" + hash);
             var existing = lockedImages(hash);
             var complete = existing.stream().filter(this::completeImage).findFirst();
             if (complete.isPresent()) return complete.get().registration();
-            legacyId = existing.stream().filter(item -> item.thumbnailPath() == null && item.storagePath() != null
+            ExistingImage legacy = existing.stream().filter(item -> item.thumbnailPath() == null && item.storagePath() != null
                             && item.storagePath().equals(item.displayPath()) && storage.isSafePublicFile(item.storagePath()))
-                    .map(ExistingImage::id).findFirst().orElse(null);
+                    .findFirst().orElse(null);
+            if (legacy != null) { legacyId = legacy.id(); legacyPath = legacy.storagePath(); }
         }
         UUID id = legacyId == null ? UUID.randomUUID() : legacyId;
         // Variant names are independent of asset identity so a crash before
@@ -151,6 +153,7 @@ public class MediaAssetRegistry {
                     """, display, thumb, clear, image.display().mime(), image.display().size(), image.originalSize(),
                     image.thumbnail().size(), image.clear().size(), image.display().width(), image.display().height(), image.reason(), id);
             if (updated != 1) throw conflict("旧资源状态已变化，请重试上传");
+            if (maintenance != null) maintenance.rewriteLegacyImageReferences(id, List.of(legacyPath), display);
             return new ImageRegistration(id, display, thumb, clear, image.originalSize(), image.display().size(), true, image.reason());
         }
         jdbc.update("""
@@ -163,6 +166,69 @@ public class MediaAssetRegistry {
                 hash, avatarOwner == null ? "SHARED" : "AVATAR", uploader, avatarOwner, image.reason());
         return new ImageRegistration(id, display, thumb, clear, image.originalSize(), image.display().size(), false, image.reason());
     }
+
+    @Transactional(rollbackFor = Exception.class)
+    public ImageRegistration upgradeLegacyImage(UUID assetId, String hash, String originalName, UUID uploader,
+                                                VipsImageProcessor.Processed image) throws IOException {
+        if (assetId == null || hash == null || !hash.matches("[0-9a-f]{64}") || image == null)
+            throw conflict("图片信息无效");
+        if (!image.display().mime().equals(image.thumbnail().mime()) || !image.display().mime().equals(image.clear().mime()))
+            throw conflict("图片版本格式不一致");
+        jdbc.query("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", rs -> { }, "myshop-image:" + hash);
+        var rows = jdbc.query("""
+                SELECT storage_path,display_path,thumbnail_path,scope,media_type,processing_status,deleted_at
+                FROM media_assets WHERE id=? FOR UPDATE
+                """, (rs, n) -> new LegacyImageState(rs.getString("storage_path"), rs.getString("display_path"),
+                rs.getString("thumbnail_path"), rs.getString("scope"), rs.getString("media_type"),
+                rs.getString("processing_status"), rs.getTimestamp("deleted_at") != null), assetId);
+        if (rows.size() != 1) throw conflict("旧图片资源不存在");
+        LegacyImageState source = rows.getFirst();
+        if (!"SHARED".equals(source.scope()) || !"IMAGE".equals(source.mediaType()) || source.deleted()
+                || !"READY".equals(source.status()) || source.storagePath() == null
+                || !source.storagePath().equals(source.displayPath()) || source.thumbnailPath() != null
+                || !storage.isSafePublicFile(source.storagePath()))
+            throw conflict("旧图片状态已变化，请刷新资源列表后重试");
+
+        String stem = "images/" + UUID.randomUUID();
+        String display = stem + "-display" + extension(image.display().mime());
+        String thumb = stem + "-thumb" + extension(image.thumbnail().mime());
+        String clear = stem + "-clear" + extension(image.clear().mime());
+        List<String> published = new ArrayList<>();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override public void afterCompletion(int status) {
+                if (status == STATUS_UNKNOWN) {
+                    org.slf4j.LoggerFactory.getLogger(MediaAssetRegistry.class).warn("Image transaction outcome is unknown; retaining published files");
+                    return;
+                }
+                if (status == STATUS_ROLLED_BACK) {
+                    boolean failed = false;
+                    for (String path : published) {
+                        if (java.nio.file.Files.exists(storage.resolveManagedPath(path), java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                                && !storage.deleteManagedFile(path)) failed = true;
+                    }
+                    if (failed) recordRolledBackImageCleanup(display, thumb, clear, originalName, uploader, null,
+                            image.display().mime(), image.display().size());
+                }
+            }
+        });
+        storage.publishFile(display, image.display().path()); published.add(display);
+        storage.publishFile(thumb, image.thumbnail().path()); published.add(thumb);
+        storage.publishFile(clear, image.clear().path()); published.add(clear);
+        int updated = jdbc.update("""
+                UPDATE media_assets SET display_path=?,thumbnail_path=?,clear_path=?,mime_type=?,size_bytes=?,
+                  original_size_bytes=?,thumbnail_size_bytes=?,clear_size_bytes=?,width=?,height=?,content_hash=?,processing_reason=?
+                WHERE id=? AND scope='SHARED' AND media_type='IMAGE' AND processing_status='READY'
+                  AND deleted_at IS NULL AND thumbnail_path IS NULL AND storage_path=display_path
+                """, display, thumb, clear, image.display().mime(), image.display().size(), image.originalSize(),
+                image.thumbnail().size(), image.clear().size(), image.display().width(), image.display().height(), hash,
+                image.reason(), assetId);
+        if (updated != 1) throw conflict("旧图片状态已变化，请重试");
+        if (maintenance != null) maintenance.rewriteLegacyImageReferences(assetId, List.of(source.storagePath()), display);
+        return new ImageRegistration(assetId, display, thumb, clear, image.originalSize(), image.display().size(), false, image.reason());
+    }
+
+    private record LegacyImageState(String storagePath, String displayPath, String thumbnailPath,
+                                    String scope, String mediaType, String status, boolean deleted) { }
 
     private static String extension(String mime) {
         return switch (mime.toLowerCase(Locale.ROOT)) {
@@ -324,6 +390,10 @@ public class MediaAssetRegistry {
                     for (String column : List.of("storage_path", "display_path", "thumbnail_path", "clear_path")) {
                         String path = rs.getString(column);
                         if (path != null && requested.contains(path)) {
+                            if ("SHARED".equals(scope) && "storage_path".equals(column)
+                                    && rs.getString("thumbnail_path") != null
+                                    && !path.equals(rs.getString("display_path")))
+                                throw conflict("旧图片地址已优化，请刷新后选择新版图片");
                             if (!storage.isSafePublicFile(path)) throw conflict("所选资源文件不可用，请重新上传");
                             found.put(path, id);
                             if ("AVATAR".equals(scope) && !avatar) historicalAvatarPaths.add(path);

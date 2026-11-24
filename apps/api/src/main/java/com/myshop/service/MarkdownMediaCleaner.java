@@ -15,7 +15,9 @@ import java.net.URI;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /** Removes only parsed media nodes, leaving the surrounding Markdown bytes intact. */
 final class MarkdownMediaCleaner {
@@ -43,6 +45,74 @@ final class MarkdownMediaCleaner {
     static String removeLegacyTombstone(String markdown, String relativePath, ManagedMediaReferences paths) {
         if (markdown == null || markdown.isEmpty()) return markdown;
         return removeMatching(markdown, destination -> paths.equivalent(relativePath, paths.managedPath(destination)));
+    }
+
+    static String replaceManaged(String markdown, List<String> sourcePaths, String newDestination, ManagedMediaReferences paths) {
+        if (markdown == null || markdown.isEmpty()) return markdown;
+        Set<String> aliases = new HashSet<>(sourcePaths);
+        List<Replacement> replacements = new ArrayList<>();
+        ArrayDeque<Node> nodes = new ArrayDeque<>();
+        nodes.push(PARSER.parse(markdown));
+        while (!nodes.isEmpty()) {
+            Node node = nodes.pop();
+            String destination = node instanceof Image image ? image.getDestination()
+                    : node instanceof Link link ? link.getDestination()
+                    : node instanceof LinkReferenceDefinition reference ? reference.getDestination() : null;
+            if (destination != null && aliases.contains(paths.managedPath(destination))) {
+                List<SourceSpan> spans = node.getSourceSpans();
+                if (!spans.isEmpty()) {
+                    int start = spans.stream().mapToInt(SourceSpan::getInputIndex).min().orElse(-1);
+                    int end = spans.stream().mapToInt(span -> span.getInputIndex() + span.getLength()).max().orElse(-1);
+                    int searchStart = start;
+                    for (Node child = node.getFirstChild(); child != null; child = child.getNext())
+                        for (SourceSpan childSpan : child.getSourceSpans())
+                            searchStart = Math.max(searchStart, childSpan.getInputIndex() + childSpan.getLength());
+                    int[] range = locateDestination(markdown, searchStart, end, destination);
+                    if (range == null) range = locateDestination(markdown, start, end, destination);
+                    if (range != null) replacements.add(new Replacement(range[0], range[1], newDestination));
+                }
+            }
+            // Image descendants are alt text and cannot contain another fetched resource.
+            if (!(node instanceof Image))
+                for (Node child = node.getLastChild(); child != null; child = child.getPrevious()) nodes.push(child);
+        }
+        if (replacements.isEmpty()) return markdown;
+        replacements.sort(Comparator.comparingInt(Replacement::start).reversed());
+        StringBuilder result = new StringBuilder(markdown);
+        int previousStart = markdown.length();
+        int previousEnd = -1;
+        for (Replacement replacement : replacements) {
+            if (replacement.start() == previousStart && replacement.end() == previousEnd) continue;
+            if (replacement.start() < 0 || replacement.end() > previousStart || replacement.end() < replacement.start())
+                throw new IllegalStateException("Overlapping Markdown source positions");
+            result.replace(replacement.start(), replacement.end(), replacement.text());
+            previousStart = replacement.start();
+            previousEnd = replacement.end();
+        }
+        return result.toString();
+    }
+
+    private static int[] locateDestination(String markdown, int start, int end, String destination) {
+        if (start < 0 || end < start || end > markdown.length() || destination.isEmpty()) return null;
+        for (int candidate = start; candidate < end; candidate++) {
+            int cursor = candidate;
+            boolean matches = true;
+            for (int target = 0; target < destination.length(); target++) {
+                while (cursor + 1 < end && markdown.charAt(cursor) == '\\'
+                        && isMarkdownPunctuation(markdown.charAt(cursor + 1))) cursor++;
+                if (cursor >= end || markdown.charAt(cursor) != destination.charAt(target)) {
+                    matches = false;
+                    break;
+                }
+                cursor++;
+            }
+            if (matches) return new int[]{candidate, cursor};
+        }
+        return null;
+    }
+
+    private static boolean isMarkdownPunctuation(char value) {
+        return "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".indexOf(value) >= 0;
     }
 
     private static String removeMatching(String markdown, java.util.function.Predicate<String> matches) {

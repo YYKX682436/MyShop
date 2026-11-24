@@ -101,6 +101,31 @@ class ImageUploadServiceTest {
         assertTrue(Files.exists(old)); assertTrue(Files.exists(gif));
     }
 
+    @Test void existingSharedImageOptimizationUpgradesTheRequestedAssetWithProductPolicy() throws Exception {
+        UUID id = UUID.randomUUID();
+        Path old = directory.resolve("uploads/images/legacy.png");
+        Files.createDirectories(old.getParent()); Files.write(old, png());
+        var processed = mock(VipsImageProcessor.Processed.class);
+        when(processed.animated()).thenReturn(false);
+        when(processed.display()).thenReturn(new VipsImageProcessor.Variant(Path.of("unused-display.webp"), "image/webp", 1, 1, 4));
+        when(processed.reason()).thenReturn("compressed");
+        when(vips.process(any(Path.class), any(Path.class), eq(VipsImageProcessor.Purpose.PRODUCT))).thenReturn(processed);
+        when(assets.upgradeLegacyImage(eq(id), anyString(), eq("legacy.png"), isNull(), eq(processed)))
+                .thenReturn(new MediaAssetRegistry.ImageRegistration(id, "images/managed-display.webp", "images/managed-thumb.webp",
+                        "images/managed-clear.webp", 8, 4, false, "compressed"));
+
+        var result = service.optimizeExistingManagedImage(old, "legacy.png", id);
+
+        assertFalse(result.skipped());
+        assertEquals(id, result.image().assetId());
+        assertEquals("/api/uploads/images/managed-display.webp", result.image().url());
+        verify(vips).process(any(Path.class), any(Path.class), eq(VipsImageProcessor.Purpose.PRODUCT));
+        verify(assets).upgradeLegacyImage(eq(id), anyString(), eq("legacy.png"), isNull(), eq(processed));
+        verify(assets, never()).findReusableImage(anyString());
+        verify(processed).close();
+        assertTrue(Files.exists(old));
+    }
+
     @Test void oldAvatarProcessingFailureKeepsTheSourceAndDoesNotRegisterAReplacement() throws Exception {
         UUID owner = UUID.randomUUID();
         Path old = directory.resolve("uploads/avatars/avatar-old.png");

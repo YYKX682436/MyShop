@@ -1,8 +1,16 @@
 package com.myshop.service;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class MarkdownMediaCleanerTest {
     private static final String FILE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.png";
@@ -59,5 +67,21 @@ class MarkdownMediaCleanerTest {
         String source = "[![删除](" + PATH + ") 和 ![保留](/api/uploads/other.png)](" + PATH + ")";
         assertEquals("（资源已删除） 和 ![保留](/api/uploads/other.png)（资源已删除）",
                 MarkdownMediaCleaner.remove(source, PATH, SITE));
+    }
+
+    @Test void replacesManagedDestinationsWithoutChangingMarkdownStructureOrExternalLinks() {
+        String replacement = "/api/uploads/images/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb-display.webp";
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(), eq(Boolean.class), any(Object[].class))).thenReturn(false);
+        ManagedMediaReferences paths = new ManagedMediaReferences(jdbc, "/api/uploads", SITE);
+        String source = "标题\n"
+                + "- [![内图](" + PATH + "?live=1)](" + PATH + ")\n"
+                + "- [外链](https://elsewhere.example/" + FILE + ")\n"
+                + "![引用][legacy]\n\n[legacy]: https://shop.example" + PATH + "\n";
+        String expected = "标题\n"
+                + "- [![内图](" + replacement + ")](" + replacement + ")\n"
+                + "- [外链](https://elsewhere.example/" + FILE + ")\n"
+                + "![引用][legacy]\n\n[legacy]: " + replacement + "\n";
+        assertEquals(expected, MarkdownMediaCleaner.replaceManaged(source, List.of(FILE), replacement, paths));
     }
 }

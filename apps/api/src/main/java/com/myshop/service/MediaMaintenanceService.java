@@ -38,6 +38,16 @@ public class MediaMaintenanceService {
                 asset.width(), asset.height(), references(asset.id()));
     }
 
+    /** Rewrites only current owner fields while the shared asset row is already locked by its updater. */
+    public void rewriteLegacyImageReferences(UUID assetId, List<String> oldPaths, String newDisplayPath) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Legacy image references require the asset transaction");
+        if (assetId == null || oldPaths == null || oldPaths.isEmpty() || newDisplayPath == null)
+            throw new IllegalArgumentException("Legacy image replacement is incomplete");
+        String newUrl = paths.url(newDisplayPath);
+        for (Reference ref : references(assetId)) replaceReference(assetId, ref, oldPaths, newUrl);
+    }
+
     public void delete(String identifier) {
         Asset asset = transactions.execute(status -> {
             Asset locked = find(identifier, true);
@@ -164,6 +174,38 @@ public class MediaMaintenanceService {
                         });
             }
         }
+    }
+
+    private void replaceReference(UUID assetId, Reference ref, List<String> aliases, String newUrl) {
+        String table = table(ref.ownerType());
+        String column = switch (ref.ownerType() + ":" + ref.field()) {
+            case "PRODUCT:cover_url", "PRODUCT:detail_md", "AVATAR:avatar_url", "SUBSITE:favicon_url", "ANNOUNCEMENT:body" -> ref.field();
+            case "SITE_CONFIG:favicon_url" -> "config_value";
+            default -> throw new IllegalStateException("Unexpected media reference field");
+        };
+        List<String> rows = jdbc.query("SELECT " + column + " FROM " + table + " WHERE id=? FOR UPDATE",
+                (rs, n) -> rs.getString(1), ref.ownerId());
+        if (rows.isEmpty()) {
+            jdbc.update("DELETE FROM media_references WHERE asset_id=? AND owner_type=? AND owner_id=? AND field=?",
+                    assetId, ref.ownerType(), ref.ownerId(), ref.field());
+            return;
+        }
+        String before = rows.getFirst();
+        if (before == null) {
+            jdbc.update("DELETE FROM media_references WHERE asset_id=? AND owner_type=? AND owner_id=? AND field=?",
+                    assetId, ref.ownerType(), ref.ownerId(), ref.field());
+            return;
+        }
+        String after;
+        if (ref.field().equals("body") || ref.field().equals("detail_md")) {
+            after = MarkdownMediaCleaner.replaceManaged(before, aliases, newUrl, paths);
+        } else {
+            String currentPath = paths.managedPath(before);
+            after = aliases.contains(currentPath) ? newUrl : before;
+        }
+        if (java.util.Objects.equals(before, after))
+            throw new IllegalStateException("Current media reference does not match its asset path");
+        jdbc.update("UPDATE " + table + " SET " + column + "=? WHERE id=?", after, ref.ownerId());
     }
 
     private static String table(String type) {

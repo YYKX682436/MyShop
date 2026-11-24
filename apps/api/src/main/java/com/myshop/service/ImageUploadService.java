@@ -27,7 +27,7 @@ import java.util.UUID;
 public class ImageUploadService {
     private static final long ADMIN_LIMIT = 10L * 1024 * 1024;
     private static final long ACCOUNT_LIMIT = 5L * 1024 * 1024;
-    private static final long EXISTING_AVATAR_LIMIT = 10L * 1024 * 1024;
+    private static final long EXISTING_IMAGE_LIMIT = 10L * 1024 * 1024;
     private static final Set<String> FORMATS = Set.of(".jpg", ".jpeg", ".png", ".apng", ".gif", ".webp", ".bmp", ".avif", ".heic", ".heif");
     private static final Set<String> ACCOUNT_FORMATS = Set.of(".jpg", ".jpeg", ".png", ".apng", ".webp", ".avif", ".heic", ".heif");
     private final UploadStorage storage;
@@ -55,22 +55,39 @@ public class ImageUploadService {
         try {
             String name = StringUtils.hasText(originalName) ? originalName : source.getFileName().toString();
             return new AvatarOptimizationResult(upload(new PathMultipartFile(source, name), true, false, ownerId, true), null, null);
-        } catch (AvatarOptimizationSkipped skipped) {
+        } catch (ImageOptimizationSkipped skipped) {
             return AvatarOptimizationResult.skipped(skipped.reason, skipped.getMessage());
         }
     }
 
+    public ImageOptimizationResult optimizeExistingManagedImage(Path source, String originalName, UUID assetId) {
+        if (assetId == null) throw new IllegalArgumentException("assetId is required");
+        if (source == null || Files.isSymbolicLink(source) || !Files.isRegularFile(source))
+            return ImageOptimizationResult.skipped("source_missing", "原图片文件不存在");
+        try {
+            String name = StringUtils.hasText(originalName) ? originalName : source.getFileName().toString();
+            return new ImageOptimizationResult(upload(new PathMultipartFile(source, name), false, false, null, true, assetId), null, null);
+        } catch (ImageOptimizationSkipped skipped) {
+            return ImageOptimizationResult.skipped(skipped.reason, skipped.getMessage());
+        }
+    }
+
     private UploadedImage upload(MultipartFile file, boolean avatar, boolean favicon, UUID owner) {
-        return upload(file, avatar, favicon, owner, false);
+        return upload(file, avatar, favicon, owner, false, null);
     }
 
     private UploadedImage upload(MultipartFile file, boolean avatar, boolean favicon, UUID owner, boolean optimizeExisting) {
+        return upload(file, avatar, favicon, owner, optimizeExisting, null);
+    }
+
+    private UploadedImage upload(MultipartFile file, boolean avatar, boolean favicon, UUID owner,
+                                 boolean optimizeExisting, UUID upgradeAssetId) {
         validate(file, avatar, favicon, optimizeExisting);
         Path input = null;
         try {
             input = Files.createTempFile(storage.directory(), ".image-input-", ".tmp");
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            long total = 0, limit = optimizeExisting ? EXISTING_AVATAR_LIMIT : avatar || favicon ? ACCOUNT_LIMIT : ADMIN_LIMIT;
+            long total = 0, limit = optimizeExisting ? EXISTING_IMAGE_LIMIT : avatar || favicon ? ACCOUNT_LIMIT : ADMIN_LIMIT;
             try (var in = file.getInputStream(); var out = Files.newOutputStream(input, StandardOpenOption.TRUNCATE_EXISTING)) {
                 byte[] buffer = new byte[8192];
                 for (int n; (n = in.read(buffer)) != -1;) {
@@ -81,7 +98,7 @@ public class ImageUploadService {
             }
             if (total == 0) throw invalid(avatar, "文件不能为空");
             String hash = HexFormat.of().formatHex(digest.digest());
-            if (!avatar) {
+            if (!avatar && !optimizeExisting) {
                 var existing = assets.findReusableImage(hash);
                 if (existing.isPresent()) return result(existing.get(), total, "reused");
             }
@@ -90,10 +107,12 @@ public class ImageUploadService {
             var processed = vips.process(input, storage.directory().resolve(".image-work"),
                     avatar ? VipsImageProcessor.Purpose.AVATAR : VipsImageProcessor.Purpose.PRODUCT);
             try {
-                if (optimizeExisting && processed.animated()) throw new AvatarOptimizationSkipped("animated", "动画头像保持原样");
+                if (optimizeExisting && processed.animated()) throw new ImageOptimizationSkipped("animated", avatar ? "动画头像保持原样" : "动画图片保持原样");
                 if (optimizeExisting && processed.display().size() >= total)
-                    throw new AvatarOptimizationSkipped("no_savings", "处理后展示文件没有变小");
-                var registered = assets.registerImage(hash, file.getOriginalFilename(), RequestContext.getUserId(), owner, processed);
+                    throw new ImageOptimizationSkipped("no_savings", "处理后展示文件没有变小");
+                var registered = upgradeAssetId == null
+                        ? assets.registerImage(hash, file.getOriginalFilename(), RequestContext.getUserId(), owner, processed)
+                        : assets.upgradeLegacyImage(upgradeAssetId, hash, file.getOriginalFilename(), RequestContext.getUserId(), processed);
                 return result(registered, total, registered.reused() ? "reused" : processed.reason());
             } finally {
                 try { processed.close(); } catch (IOException failure) { log.warn("Image work cleanup failed: {}", failure.getMessage()); }
@@ -101,7 +120,7 @@ public class ImageUploadService {
         } catch (IOException | NoSuchAlgorithmException failure) {
             log.warn("Image processing failed: {}", failure.getMessage());
             if (optimizeExisting)
-                throw new BusinessException(ErrorCode.BAD_REQUEST, "头像优化失败：" + failure.getMessage());
+                throw new BusinessException(ErrorCode.BAD_REQUEST, (avatar ? "头像" : "图片") + "优化失败：" + failure.getMessage());
             throw invalid(avatar, "图片无法解码或处理失败：" + failure.getMessage());
         } finally {
             if (input != null) try { Files.deleteIfExists(input); } catch (IOException failure) { log.warn("Image input cleanup failed"); }
@@ -117,10 +136,10 @@ public class ImageUploadService {
 
     private void validate(MultipartFile file, boolean avatar, boolean favicon, boolean optimizeExisting) {
         if (file == null || file.isEmpty()) throw validationFailure(avatar, optimizeExisting, "source_missing", "原头像文件不存在");
-        long limit = optimizeExisting ? EXISTING_AVATAR_LIMIT : avatar || favicon ? ACCOUNT_LIMIT : ADMIN_LIMIT;
+        long limit = optimizeExisting ? EXISTING_IMAGE_LIMIT : avatar || favicon ? ACCOUNT_LIMIT : ADMIN_LIMIT;
         if (file.getSize() > limit) {
             if (avatar && !optimizeExisting) throw new BusinessException(ErrorCode.AVATAR_SIZE_EXCEEDED, "头像大小不能超过 5MB");
-            if (optimizeExisting) throw new AvatarOptimizationSkipped("source_too_large", "原头像超过图片处理上限");
+            if (optimizeExisting) throw new ImageOptimizationSkipped("source_too_large", avatar ? "原头像超过图片处理上限" : "原图片超过处理上限");
             throw new BusinessException(ErrorCode.BAD_REQUEST, favicon ? "网站图标大小不能超过 5MB" : "图片大小不能超过 10MB");
         }
         String name = file.getOriginalFilename();
@@ -128,13 +147,13 @@ public class ImageUploadService {
         String extension = dot < 0 ? "" : name.substring(dot).toLowerCase(Locale.ROOT);
         if (!(optimizeExisting ? FORMATS : avatar || favicon ? ACCOUNT_FORMATS : FORMATS).contains(extension))
             throw validationFailure(avatar, optimizeExisting, "unsupported_format", optimizeExisting
-                    ? "原头像格式不支持优化" : "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP/AVIF/HEIC/HEIF");
+                    ? (avatar ? "原头像格式不支持优化" : "原图片格式不支持优化") : "不支持的图片格式，仅支持 JPG/PNG/GIF/WebP/BMP/AVIF/HEIC/HEIF");
         String mime = file.getContentType();
         boolean generic = mime == null || mime.isBlank() || mime.equalsIgnoreCase("application/octet-stream");
         boolean png = (extension.equals(".png") || extension.equals(".apng"))
                 && ("image/png".equalsIgnoreCase(mime) || "image/apng".equalsIgnoreCase(mime));
         if (!generic && !png && !expectedMime(extension).equalsIgnoreCase(mime))
-            throw validationFailure(avatar, optimizeExisting, "unsupported_or_invalid", "原头像文件类型与扩展名不匹配");
+            throw validationFailure(avatar, optimizeExisting, "unsupported_or_invalid", avatar ? "原头像文件类型与扩展名不匹配" : "原图片文件类型与扩展名不匹配");
         try (var stream = file.getInputStream()) {
             byte[] header = stream.readNBytes(16);
             boolean valid = switch (extension) {
@@ -146,11 +165,11 @@ public class ImageUploadService {
                 case ".avif", ".heic", ".heif" -> starts(header, new byte[]{'f','t','y','p'}, 4);
                 default -> false;
             };
-            if (!valid) throw validationFailure(avatar, optimizeExisting, "unsupported_or_invalid", "原头像文件内容与扩展名不匹配");
-        } catch (IOException exception) { throw validationFailure(avatar, optimizeExisting, "source_missing", "原头像文件无法读取"); }
+            if (!valid) throw validationFailure(avatar, optimizeExisting, "unsupported_or_invalid", avatar ? "原头像文件内容与扩展名不匹配" : "原图片文件内容与扩展名不匹配");
+        } catch (IOException exception) { throw validationFailure(avatar, optimizeExisting, "source_missing", avatar ? "原头像文件无法读取" : "原图片文件无法读取"); }
     }
     private static RuntimeException validationFailure(boolean avatar, boolean optimizeExisting, String reason, String detail) {
-        return optimizeExisting ? new AvatarOptimizationSkipped(reason, detail) : invalid(avatar, detail);
+        return optimizeExisting ? new ImageOptimizationSkipped(reason, detail) : invalid(avatar, detail);
     }
     private static String expectedMime(String extension) {
         return switch (extension) {
@@ -181,9 +200,14 @@ public class ImageUploadService {
         public boolean skipped() { return image == null; }
     }
 
-    private static final class AvatarOptimizationSkipped extends RuntimeException {
+    public record ImageOptimizationResult(UploadedImage image, String skippedReason, String message) {
+        static ImageOptimizationResult skipped(String reason, String message) { return new ImageOptimizationResult(null, reason, message); }
+        public boolean skipped() { return image == null; }
+    }
+
+    private static final class ImageOptimizationSkipped extends RuntimeException {
         private final String reason;
-        private AvatarOptimizationSkipped(String reason, String message) { super(message); this.reason = reason; }
+        private ImageOptimizationSkipped(String reason, String message) { super(message); this.reason = reason; }
     }
 
     private static final class PathMultipartFile implements MultipartFile {

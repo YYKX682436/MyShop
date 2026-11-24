@@ -162,6 +162,26 @@ export function MediaLibrary({ onSelect, showHeader = false }: { onSelect?: (ite
     } finally { setOptimizingId(null) }
   }
 
+  const optimizeImage = async (item: MediaItem) => {
+    if (optimizingId) return
+    setOptimizingId(item.id)
+    try {
+      const report = await adminMediaApi.optimizeImage(item.id)
+      const detail = report.message || (zh ? "图片处理完成" : "Image processing finished")
+      if (report.status === "optimized") {
+        const sizes = formatSize(report.original_bytes) + " → " + formatSize(report.display_bytes)
+        const saved = report.display_bytes_saved > 0
+          ? (zh ? "，展示版减少 " + formatSize(report.display_bytes_saved) : "; display file reduced by " + formatSize(report.display_bytes_saved))
+          : ""
+        toast.success(detail + "：" + sizes + saved)
+      } else if (report.status === "failed") toast.error(detail)
+      else toast.warning(detail)
+      refresh()
+    } catch (failure) {
+      toast.error(failure instanceof Error ? failure.message : (zh ? "图片优化失败" : "Image optimization failed"))
+    } finally { setOptimizingId(null) }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const selectClass = "h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground"
   const usageLabel = (value: string) => ({ product: zh ? "商品" : "Products", avatar: zh ? "头像" : "Avatars", site: zh ? "站点" : "Site", other: zh ? "其他" : "Other" }[value] || value)
@@ -204,7 +224,8 @@ export function MediaLibrary({ onSelect, showHeader = false }: { onSelect?: (ite
                 {item.upload_cleanup_error && <p role="alert" className="break-words text-xs text-destructive">{item.upload_cleanup_error}</p>}
                 <div className="flex flex-wrap gap-1 pt-1">
                   {item.url && item.status === "ready" && <Button type="button" size="icon" variant="ghost" className="h-9 w-9" aria-label={t("admin.mediaCopy")} title={t("admin.mediaCopy")} onClick={() => void copy(item)}><Copy aria-hidden="true" /></Button>}
-                  {showHeader && !selecting && item.type === "image" && item.status === "ready" && !item.thumbnail_url && item.usage.includes("avatar") && <Button type="button" size="icon" variant="ghost" className="h-9 w-9" aria-label={zh ? "优化头像" : "Optimize avatar"} title={zh ? "优化头像" : "Optimize avatar"} disabled={optimizingId !== null} onClick={() => void optimizeAvatar(item)}>{optimizingId === item.id ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}</Button>}
+                  {showHeader && !selecting && item.type === "image" && item.status === "ready" && !item.thumbnail_url && item.usage.includes("avatar") && !item.usage.some(use => ["product", "site", "other"].includes(use)) && <Button type="button" size="icon" variant="ghost" className="h-9 w-9" aria-label={zh ? "优化头像" : "Optimize avatar"} title={zh ? "优化头像" : "Optimize avatar"} disabled={optimizingId !== null} onClick={() => void optimizeAvatar(item)}>{optimizingId === item.id ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}</Button>}
+                  {showHeader && !selecting && item.type === "image" && item.status === "ready" && !item.thumbnail_url && item.scope === "shared" && item.usage.some(use => ["product", "site", "other"].includes(use)) && <Button type="button" size="icon" variant="ghost" className="h-9 w-9" aria-label={zh ? "优化图片" : "Optimize image"} title={zh ? "优化图片" : "Optimize image"} disabled={optimizingId !== null} onClick={() => void optimizeImage(item)}>{optimizingId === item.id ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Sparkles aria-hidden="true" />}</Button>}
                   {showHeader && (item.status !== "deleted" || item.cleanup_error) && <Button type="button" size="icon" variant="ghost" className="h-9 w-9 text-destructive" aria-label={item.status === "deleted" ? (zh ? "重试清理" : "Retry cleanup") : t("admin.mediaDelete")} onClick={() => manage(item)}><Trash2 aria-hidden="true" /></Button>}
                   {showHeader && item.type === "video" && item.status === "failed" && <Button type="button" size="sm" variant="outline" onClick={() => void retryVideo(item)}>{t("common.retry")}</Button>}
                   {showHeader && item.type === "video" && item.upload_cleanup_error && <Button type="button" size="sm" variant="outline" onClick={() => void retryVideoCleanup(item)}>{zh ? "重试清理上传文件" : "Retry upload cleanup"}</Button>}

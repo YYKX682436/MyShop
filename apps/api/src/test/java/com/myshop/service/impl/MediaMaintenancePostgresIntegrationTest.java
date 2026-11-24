@@ -85,6 +85,51 @@ class MediaMaintenancePostgresIntegrationTest {
         jdbc.update("DELETE FROM product_categories WHERE id=?", category);
     }
 
+    @Test void upgradingLegacySharedImageRewritesOnlyCurrentOwnerFieldsAndKeepsTheOriginalUrlReadable() throws Exception {
+        UUID asset = fixture("legacy-shared.png");
+        String oldPath = path(asset), oldUrl = url(asset);
+        String markdown = "说明\n![正文图](" + oldUrl + "?live=1)\n[查看原图](" + oldUrl + ")\n";
+        UUID product = products.createProduct(request(oldUrl, markdown)).id();
+        UUID announcement = announcements.create(null, new AnnouncementService.Edit("媒体优化", markdown));
+        UUID siteConfig = UUID.randomUUID();
+        jdbc.update("INSERT INTO site_configs(id,config_key,config_value) VALUES (?,?,?)", siteConfig, "media-test-" + siteConfig, oldUrl);
+        jdbc.update("INSERT INTO media_references VALUES (?,'SITE_CONFIG',?,'favicon_url')", asset, siteConfig);
+        var displayFile = Files.createTempFile(UPLOADS, ".legacy-display-", ".webp");
+        var thumbFile = Files.createTempFile(UPLOADS, ".legacy-thumb-", ".webp");
+        var clearFile = Files.createTempFile(UPLOADS, ".legacy-clear-", ".webp");
+        Files.write(displayFile, new byte[]{1,2,3,4});
+        Files.write(thumbFile, new byte[]{1,2});
+        Files.write(clearFile, new byte[]{1,2,3,4,5,6});
+        var image = mock(VipsImageProcessor.Processed.class);
+        when(image.display()).thenReturn(new VipsImageProcessor.Variant(displayFile, "image/webp", 100, 80, 4));
+        when(image.thumbnail()).thenReturn(new VipsImageProcessor.Variant(thumbFile, "image/webp", 100, 80, 2));
+        when(image.clear()).thenReturn(new VipsImageProcessor.Variant(clearFile, "image/webp", 100, 80, 6));
+        when(image.originalSize()).thenReturn(8L);
+        when(image.reason()).thenReturn("compressed");
+        try {
+            var upgraded = assets.upgradeLegacyImage(asset, "c".repeat(64), "legacy-shared.png", null, image);
+            String displayUrl = "/api/uploads/" + upgraded.displayPath();
+            String expected = "说明\n![正文图](" + displayUrl + ")\n[查看原图](" + displayUrl + ")\n";
+            assertEquals(oldPath, jdbc.queryForObject("SELECT storage_path FROM media_assets WHERE id=?", String.class, asset));
+            assertEquals(upgraded.displayPath(), jdbc.queryForObject("SELECT display_path FROM media_assets WHERE id=?", String.class, asset));
+            assertEquals(displayUrl, jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, product));
+            assertEquals(expected, jdbc.queryForObject("SELECT detail_md FROM products WHERE id=?", String.class, product));
+            assertEquals(expected, jdbc.queryForObject("SELECT body FROM site_announcements WHERE id=?", String.class, announcement));
+            assertEquals(displayUrl, jdbc.queryForObject("SELECT config_value FROM site_configs WHERE id=?", String.class, siteConfig));
+            assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM media_references WHERE asset_id=?", Integer.class, asset));
+            assertNotNull(resolver.visible(oldUrl));
+            assertNotNull(resolver.visible(displayUrl));
+            assertTrue(Files.exists(UPLOADS.resolve(oldPath)), "legacy URL bytes remain available");
+            assertThrows(BusinessException.class, () -> products.updateProduct(product, request(oldUrl, expected)),
+                    "stale forms may not reattach the raw legacy URL");
+        } finally {
+            jdbc.update("DELETE FROM media_references WHERE owner_type='SITE_CONFIG' AND owner_id=?", siteConfig);
+            jdbc.update("DELETE FROM site_configs WHERE id=?", siteConfig);
+            jdbc.update("DELETE FROM media_references WHERE owner_type='ANNOUNCEMENT' AND owner_id=?", announcement);
+            jdbc.update("DELETE FROM site_announcements WHERE id=?", announcement);
+        }
+    }
+
     @Test void sharedCurrentReferencesAreRemovedWithoutDamagingMarkdownOrSnapshots() throws Exception {
         UUID asset = fixture("shared.png"); String url = url(asset);
         String markdown = "前文\n下一行\n\n- ![图](" + url + ")\n- [帮助](https://example.com/help)";
@@ -578,6 +623,7 @@ class MediaMaintenancePostgresIntegrationTest {
         Files.write(UPLOADS.resolve(oldPath), new byte[]{1,2,3});
         jdbc.update("INSERT INTO media_assets(id,storage_path,display_path,clear_path,original_filename,media_type,mime_type,size_bytes,content_hash,scope) VALUES (?,?,?,?,?,'IMAGE','image/png',3,?,'SHARED')",
                 id, oldPath, oldPath, oldPath, "legacy.png", hash);
+        UUID product = products.createProduct(request("/api/uploads/" + oldPath, "正文")).id();
         assertTrue(assets.findReusableImage(hash).isEmpty(), "legacy original must first gain display variants");
         Path temporary = Files.createTempFile(UPLOADS, ".test-legacy-", ".webp"); Files.writeString(temporary, "variant");
         var variant = new VipsImageProcessor.Variant(temporary, "image/webp", 2, 2, 7);
@@ -588,6 +634,7 @@ class MediaMaintenancePostgresIntegrationTest {
         var promoted = assets.registerImage(hash, "legacy.png", null, null, image);
         assertEquals(id, promoted.id()); assertTrue(promoted.reused()); assertNotEquals(oldPath, promoted.displayPath());
         assertEquals(oldPath, jdbc.queryForObject("SELECT storage_path FROM media_assets WHERE id=?", String.class, id));
+        assertEquals("/api/uploads/" + promoted.displayPath(), jdbc.queryForObject("SELECT cover_url FROM products WHERE id=?", String.class, product));
         assertEquals(3, Files.size(UPLOADS.resolve(oldPath)));
         assertNotNull(resolver.visible("/api/uploads/" + oldPath));
         assertEquals(id, assets.findReusableImage(hash).orElseThrow().id());
