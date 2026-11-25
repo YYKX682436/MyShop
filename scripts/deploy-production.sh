@@ -236,6 +236,24 @@ if (( shared_server_mode && state_existed )); then
       && git --git-dir="$release_repository" merge-base --is-ancestor "$image_sha" "$candidate_sha" \
       || die "${service} image provenance is missing from or not ancestral to the release history"
   done
+
+  # CI compares migrations with its latest successful release, which may be
+  # newer than production. Recheck the accepted-to-candidate range so an
+  # unaccepted CI migration cannot be hidden by a later manifest's false bit.
+  if (( database_migration == 0 )); then
+    migration_diff_status=0
+    git --git-dir="$release_repository" diff --quiet --no-renames \
+      "$active_sha" "$candidate_sha" -- apps/api/src/main/resources/db/ || migration_diff_status=$?
+    case "$migration_diff_status" in
+      0) ;;
+      1)
+        database_migration=1
+        printf 'DATABASE_MIGRATION_INFERRED_FROM_ACCEPTED_RANGE accepted=%s candidate=%s\n' \
+          "$active_sha" "$candidate_sha"
+        ;;
+      *) die 'could not compare production-accepted and candidate migration files' ;;
+    esac
+  fi
 fi
 
 verify_baseline() {

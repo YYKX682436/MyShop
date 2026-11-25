@@ -69,6 +69,8 @@ manifest = {
 Path(manifest_path).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
+base_candidate_manifest="$tmp_dir/base-candidate-manifest.json"
+cp "$manifest" "$base_candidate_manifest"
 offline_bundle="$tmp_dir/offline-image-bundle.json"
 python3 - "$manifest" "$offline_bundle" "$registry" <<'PY'
 import json, sys
@@ -122,6 +124,10 @@ set -Eeuo pipefail
 if [[ "${2:-}" == rev-parse ]]; then printf '%s\n' "${FAKE_SHALLOW:-false}"; exit 0; fi
 if [[ "${2:-}" == cat-file ]]; then exit "${FAKE_MISSING_COMMIT:-0}"; fi
 if [[ "${2:-}" == merge-base ]]; then exit "${FAKE_NOT_ANCESTOR:-0}"; fi
+if [[ "${2:-}" == diff ]]; then
+  [[ "${FAKE_SOURCE_MIGRATION:-0}" == 1 ]] && exit 1
+  exit 0
+fi
 exit 1
 GIT
 chmod +x "$fake_bin/git"
@@ -762,6 +768,24 @@ for stop_failure in FAKE_PRE_STOP_FAIL FAKE_LINGERING_API; do
   (( $(grep -c '^up$' "$case_root/compose.log") >= 1 )) || fail "$stop_failure did not restore the previous stack"
 done
 pass 'candidate migration waits for all old API instances to stop'
+
+# The CI baseline may include a migration that production has not accepted.
+# The manifest's CI-relative bit is false here; deployment must infer the
+# accepted-to-candidate migration and stop the old API before starting it.
+reset_case
+printf 'PUBLIC_SITE_URL=https://mc.mc520.top\n' >"$case_root/.env"
+write_scope_manifest api "$manifest"
+if output=$(FAKE_SHARED_TEST=1 FAKE_SOURCE_MIGRATION=1 run_deploy 2>&1); then status=0; else status=$?; fi
+(( status == 0 )) || { printf '%s\n' "$output" >&2; fail 'accepted-to-candidate migration was rejected'; }
+grep -Fq 'DATABASE_MIGRATION_INFERRED_FROM_ACCEPTED_RANGE' <<<"$output" || fail 'deployment did not infer the migration missed by the CI baseline'
+[[ -s "$case_root/backup.log" ]] || fail 'inferred migration skipped the required database backup'
+stop_line=$(grep -n '^stop|' "$case_root/compose-detail.log" | head -n 1 | cut -d: -f1)
+api_up_line=$(grep -n '^up|' "$case_root/compose-detail.log" | grep -F -- '--no-deps api' | head -n 1 | cut -d: -f1)
+[[ "$stop_line" =~ ^[0-9]+$ && "$api_up_line" =~ ^[0-9]+$ && "$stop_line" -lt "$api_up_line" ]] \
+  || fail 'inferred migration did not stop API before candidate startup'
+! grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps web' || fail 'API migration update recreated Web'
+pass 'production accepted baseline detects a migration hidden by the newer successful CI baseline'
+cp "$base_candidate_manifest" "$manifest"
 
 reset_case
 if output=$(FAKE_CANDIDATE_HEALTH_AFTER=35 run_deploy 2>&1); then status=0; else status=$?; fi
