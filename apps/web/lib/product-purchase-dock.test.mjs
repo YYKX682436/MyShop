@@ -11,7 +11,7 @@ test("the purchase Dock is the only entry point and cannot open before auth or f
   assert.match(source, /isOutOfStock \|\| !authLoaded/)
   assert.match(source, /if \(isOutOfStock \|\| !authLoaded\) return/)
   assert.match(source, /setSelectedPaymentMethod\(getDefaultPaymentMethod\(balanceAvailability\)\)/)
-  assert.match(source, /t\("product\.soldOut"\)/)
+  assert.match(source, /t\(stockNoticeKey\(stockStatus\)\)/)
 })
 
 test("the purchase panel keeps the existing customer, Turnstile, and order flow", () => {

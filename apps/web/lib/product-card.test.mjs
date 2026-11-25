@@ -15,7 +15,7 @@ test("product cards stay limited to image, title, price, and a light sold-out st
   assert.doesNotMatch(styles.match(/\.product-image-stage-image\s*\{[^}]*\}/s)?.[0] ?? "", /padding/)
   assert.match(source, /line-clamp-2/)
   assert.match(source, /formatYuan\(product\.price\)/)
-  assert.match(source, /product\.soldOut/)
+  assert.match(source, /t\(stockNoticeKey\(product\.stock_status\)\)/)
   assert.doesNotMatch(source, /home\.instantDelivery|home\.sales|home\.stock|home\.inStock|home\.outOfStock/)
   assert.doesNotMatch(source, /product\.delivery_type|sales_count|lowStock/)
   assert.doesNotMatch(source, /<span[^>]+product\.buyNow|t\("product\.buyNow"\)/)
