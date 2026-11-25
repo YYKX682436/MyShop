@@ -379,7 +379,7 @@ pull_candidate() {
     for attempt in 1 2 3; do
       started=$SECONDS
       printf '[myshop-deploy] pulling %s attempt %s/3 ref=%s\n' "$service" "$attempt" "${candidate_ref[$service]}"
-      if timeout --signal=TERM --kill-after=5s 180s docker pull "${candidate_ref[$service]}" >"$pull_log" 2>&1; then
+      if timeout --signal=TERM --kill-after=5s 600s docker pull "${candidate_ref[$service]}" >"$pull_log" 2>&1; then
         elapsed=$((SECONDS - started))
         cat "$pull_log"
         printf '[myshop-deploy] %s pull succeeded attempt=%s/3 elapsed=%ss\n' "$service" "$attempt" "$elapsed"
@@ -390,7 +390,7 @@ pull_candidate() {
       elapsed=$((SECONDS - started))
       printf '[myshop-deploy] %s pull failed attempt=%s/3 elapsed=%ss exit=%s\n' "$service" "$attempt" "$elapsed" "$status" >&2
       if (( status == 124 )); then
-        printf '[myshop-deploy] %s pull exceeded the 180s attempt limit\n' "$service" >&2
+        printf '[myshop-deploy] %s pull exceeded the 600s attempt limit\n' "$service" >&2
       fi
       tail -n 5 "$pull_log" >&2
       if (( attempt == 3 )); then
