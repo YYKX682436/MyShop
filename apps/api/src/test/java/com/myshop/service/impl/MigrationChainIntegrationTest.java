@@ -269,7 +269,7 @@ class MigrationChainIntegrationTest {
         migrateLatest();
 
         assertEquals("66", flyway.info().current().getVersion().getVersion());
-        assertEquals(65, flyway.info().all().length);
+        assertEquals(66, flyway.info().all().length);
         for (String table : List.of(
                 "users", "user_levels", "product_categories", "products", "product_specs",
                 "product_level_price_overrides", "subsites", "subsite_settings", "subsite_allowed_levels",

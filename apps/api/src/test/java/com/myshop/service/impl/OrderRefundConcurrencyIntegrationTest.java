@@ -129,7 +129,7 @@ class OrderRefundConcurrencyIntegrationTest {
         jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, ?, ?)", site, owner, "manual-test", "Manual");
         PendingCardOrder fixture = insertPendingCardOrder(buyer);
         jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
-        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00, delivery_type='MANUAL', stock_mode='MANUAL', fulfillment_status='WAITING_MANUAL' WHERE id=?", fixture.itemId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00, delivery_type='MANUAL', stock_mode='UNLIMITED', fulfillment_status='WAITING_MANUAL' WHERE id=?", fixture.itemId());
         fulfillmentService.completeManualItems(fixture.orderId(), List.of(new FulfillmentService.ManualFulfillmentItem(fixture.itemId(), "complete")));
         org.junit.jupiter.api.Assertions.assertThrows(BusinessException.class, () -> fulfillmentService.completeManualItems(fixture.orderId(), List.of(new FulfillmentService.ManualFulfillmentItem(fixture.itemId(), "again"))));
         assertMoney("5.00", scalar("SELECT balance FROM users WHERE id=?", BigDecimal.class, owner));
@@ -144,7 +144,7 @@ class OrderRefundConcurrencyIntegrationTest {
         jdbcTemplate.update("INSERT INTO subsites(id, owner_id, prefix, name) VALUES (?, ?, 'manual-full', 'Manual full')", site, owner);
         PendingCardOrder fixture = insertPendingCardOrder(buyer);
         jdbcTemplate.update("UPDATE orders SET subsite_id=?, subsite_owner_id_snapshot=?, subsite_profit=5.00, total_amount=15.00, actual_amount=15.00 WHERE id=?", site, owner, fixture.orderId());
-        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00, delivery_type='MANUAL', stock_mode='MANUAL', fulfillment_status='WAITING_MANUAL' WHERE id=?", fixture.itemId());
+        jdbcTemplate.update("UPDATE order_items SET unit_price=15.00, subtotal=15.00, subsite_supply_price_snapshot=10.00, delivery_type='MANUAL', stock_mode='UNLIMITED', fulfillment_status='WAITING_MANUAL' WHERE id=?", fixture.itemId());
         fulfillmentService.completeManualItems(fixture.orderId(), List.of(new FulfillmentService.ManualFulfillmentItem(fixture.itemId(), "complete")));
         assertEquals("DELIVERED", scalar("SELECT status FROM orders WHERE id=?", String.class, fixture.orderId()));
         assertEquals("PENDING", scalar("SELECT subsite_profit_state FROM orders WHERE id=?", String.class, fixture.orderId()));

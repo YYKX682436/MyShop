@@ -2451,7 +2451,7 @@ class PostgresDeliveryIntegrationTest {
         insertProduct(productId);
         UUID itemId = insertOrderItem(orderId, productId);
         UUID cardId = insertCard(productId, "manual-late-callback-card");
-        configurePaymentCreation("created-trade");
+        configurePaymentCreation("late-real-trade");
         Map<String, Object> payment = paymentService.createPayment(orderId, channel, new BigDecimal("10.00"), "pc");
         UUID attemptId = (UUID) payment.get("payment_id");
         String merchantTradeNo = scalar("select merchant_trade_no from payment_attempts where id = ?", String.class, attemptId);
