@@ -10,7 +10,7 @@ test("account home owns the complete logged-in summary and scoped account action
   const dictionary = readSource("./i18n.ts")
   const loadingSource = source.slice(source.indexOf("function LoadingAccount"), source.indexOf("export default function MyPage"))
   const identityBadgeStart = source.indexOf("const identityBadge =")
-  const metadataRowStart = source.indexOf('className="mt-1 flex min-w-0 max-w-full flex-wrap items-center gap-2"', identityBadgeStart)
+  const metadataRowStart = source.indexOf('className="mt-0.5 flex min-w-0 max-w-full flex-wrap items-center gap-2"', identityBadgeStart)
   const metadataRowEnd = source.indexOf("</div>", metadataRowStart) + "</div>".length
   const metadataRow = source.slice(metadataRowStart, metadataRowEnd)
 
@@ -57,11 +57,11 @@ test("account home owns the complete logged-in summary and scoped account action
   assert.match(loadingSource, /<header[\s\S]*aria-hidden="true"/)
   assert.equal((loadingSource.match(/<section/g) || []).length, 2)
   assert.match(loadingSource, /<section className="content-surface rounded-card p-5 sm:p-6"/)
-  assert.match(loadingSource, /<section\n\s+className="overflow-hidden rounded-card border border-border-subtle bg-surface/)
+  assert.match(loadingSource, /<section className="account-balance bg-surface p-2 sm:p-3/)
   const identitySkeletonStart = loadingSource.indexOf('<section className="content-surface')
-  const balanceSkeletonStart = loadingSource.indexOf('<section\n        className="overflow-hidden rounded-card')
+  const balanceSkeletonStart = loadingSource.indexOf('<section className="account-balance bg-surface p-2 sm:p-3"')
   assert.ok(balanceSkeletonStart > identitySkeletonStart)
-  assert.match(loadingSource.slice(identitySkeletonStart, balanceSkeletonStart), /metadata|mt-2 flex min-w-0 max-w-full items-center gap-2/)
+  assert.match(loadingSource.slice(identitySkeletonStart, balanceSkeletonStart), /metadata|mt-0.5 flex min-w-0 max-w-full items-center gap-2/)
   assert.doesNotMatch(loadingSource.slice(identitySkeletonStart, balanceSkeletonStart), /justify-between/)
   assert.doesNotMatch(loadingSource.slice(identitySkeletonStart, balanceSkeletonStart), /h-28/)
   assert.match(loadingSource.slice(identitySkeletonStart), /<\/section>\s*<section/)
