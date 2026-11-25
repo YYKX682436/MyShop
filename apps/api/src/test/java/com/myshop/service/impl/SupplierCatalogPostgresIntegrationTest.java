@@ -713,7 +713,7 @@ class SupplierCatalogPostgresIntegrationTest {
             service.importProduct(a.id(),id,category);
             fixture.goods.put(id,product(id,1,0,"0.01",15));
         }
-        jdbc.update("update supplier_product_mappings set last_attempt_at='2000-01-01' where account_id=?",a.id());
+        jdbc.update("update supplier_product_mappings set last_synced_at='2000-01-01',last_attempt_at='2000-01-01' where account_id=?",a.id());
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(8);
         while (System.nanoTime()<deadline) {
             service.enqueueScheduledSync();
@@ -751,7 +751,8 @@ class SupplierCatalogPostgresIntegrationTest {
         assertThrows(SupplierException.class,()->service.sync(a.id(),"20"));
         var failed=service.mappings(a.id()).stream().filter(m->m.remoteGoodsId().equals("20")).findFirst().orElseThrow();
         assertEquals("CONNECTION",failed.syncError()); assertEquals(7,failed.stock()); assertEquals(refreshed.lastSyncedAt(),failed.lastSyncedAt());
-        var stock=inventory.load(List.of(edited),Map.of()).values().iterator().next(); assertEquals(0,stock.available());
+        var stock=inventory.load(List.of(edited),Map.of()).values().iterator().next();
+        assertNull(stock.available()); assertEquals("SYNC_FAILED",stock.status());
     }
 
     @Test void syncUpdatesSkuStatusAndContinuesPastAnOfflineProduct() throws Exception {
@@ -765,6 +766,7 @@ class SupplierCatalogPostgresIntegrationTest {
                 List.of(new SupplierModels.Sku("A","第一项","组一",new BigDecimal("0.09000000"),2,0),
                         new SupplierModels.Sku("B","第二项","组二",new BigDecimal("0.04000000"),8,1)),old.snapshot());
         fixture.goods.put("40",updated); fixture.failedGoods.add("41");
+        jdbc.update("update supplier_product_mappings set last_synced_at='2000-01-01',last_attempt_at='2000-01-01' where account_id=?",a.id());
         service.enqueueScheduledSync();
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(3);
         while (System.nanoTime()<deadline && service.mappings(a.id()).stream().noneMatch(m->m.remoteGoodsId().equals("41") && "CONNECTION".equals(m.syncError()))) Thread.sleep(20);
@@ -782,6 +784,7 @@ class SupplierCatalogPostgresIntegrationTest {
         fixture.goods.put("71",product("71",1,0,"0.01",5));
         service.importProduct(a.id(),"71",category);
         fixture.goods.put("71",product("71",1,0,"0.01",15));
+        jdbc.update("update supplier_product_mappings set last_synced_at='2000-01-01',last_attempt_at='2000-01-01' where account_id=?",a.id());
         var before=service.mappings(a.id()).stream().filter(m->m.remoteGoodsId().equals("70")).findFirst().orElseThrow().lastSyncedAt();
         fixture.entered=new java.util.concurrent.CountDownLatch(1); fixture.release=new java.util.concurrent.CountDownLatch(1);
         fixture.blockedGoods="70";
