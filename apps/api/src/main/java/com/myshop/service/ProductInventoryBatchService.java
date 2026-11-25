@@ -44,17 +44,37 @@ public class ProductInventoryBatchService {
 
         Map<PriceTarget, StockSnapshot> result = new HashMap<>();
         List<UUID> supplierIds=products.stream().filter(p -> p.getStockMode()==StockMode.SUPPLIER).map(Product::getId).toList();
-        Map<PriceTarget,Long> supplierCounts=supplierStockService==null ? Map.of() : supplierStockService.available(supplierIds);
+        Map<PriceTarget,com.myshop.supplier.SupplierStockRules.Availability> supplierAvailability=
+                supplierStockService==null ? Map.of() : supplierStockService.availability(supplierIds);
         for (Product product : products) {
             if (product.getStockMode() == StockMode.SUPPLIER) {
                 long total=0;
+                boolean hasUnknown=false;
+                String aggregateState="OUT_OF_STOCK";
                 for (ProductSpec spec : specsByProduct.getOrDefault(product.getId(), List.of())) {
-                    long count=supplierCounts.getOrDefault(new PriceTarget(product.getId(),spec.getId()),0L);
-                    total=total>Long.MAX_VALUE-count ? Long.MAX_VALUE : total+count;
-                    result.put(new PriceTarget(product.getId(), spec.getId()), new StockSnapshot(count, false));
+                    var availability=supplierAvailability.get(new PriceTarget(product.getId(),spec.getId()));
+                    if (availability==null) availability=new com.myshop.supplier.SupplierStockRules.Availability(null,"UNMAPPED",0,0,null);
+                    if (availability.quantity()==null) {
+                        hasUnknown=true;
+                        if (statePriority(availability.status())>statePriority(aggregateState)) aggregateState=availability.status();
+                    } else {
+                        long count=availability.quantity();
+                        total=total>Long.MAX_VALUE-count ? Long.MAX_VALUE : total+count;
+                        if (count>0) aggregateState="AVAILABLE";
+                        else if (!"AVAILABLE".equals(aggregateState)
+                                && statePriority(availability.status())>statePriority(aggregateState)) aggregateState=availability.status();
+                    }
+                    result.put(new PriceTarget(product.getId(),spec.getId()),snapshot(availability));
                 }
-                if (!product.isSpecEnabled()) total=supplierCounts.getOrDefault(new PriceTarget(product.getId(),null),0L);
-                result.put(new PriceTarget(product.getId(), null), new StockSnapshot(total, false));
+                StockSnapshot root;
+                if (!product.isSpecEnabled()) {
+                    var availability=supplierAvailability.get(new PriceTarget(product.getId(),null));
+                    root=availability==null ? new StockSnapshot(null,false,"UNMAPPED",null,null) : snapshot(availability);
+                } else {
+                    Long rootCount=total>0 ? total : hasUnknown ? null : 0L;
+                    root=new StockSnapshot(rootCount,false,total>0 ? "AVAILABLE" : aggregateState,null,null);
+                }
+                result.put(new PriceTarget(product.getId(),null),root);
                 continue;
             }
             if (product.getStockMode() == StockMode.UNLIMITED) {
@@ -92,6 +112,26 @@ public class ProductInventoryBatchService {
         return value == null ? 0L : ((Number) value).longValue();
     }
 
-    public record StockSnapshot(Long available, boolean unlimited) {
+    private StockSnapshot snapshot(com.myshop.supplier.SupplierStockRules.Availability availability) {
+        return new StockSnapshot(availability.quantity(),false,availability.status(),availability.minQuantity(),availability.maxQuantity());
+    }
+
+    private int statePriority(String status) {
+        return switch (status) {
+            case "SYNC_FAILED" -> 9;
+            case "ACCOUNT_UNAVAILABLE" -> 8;
+            case "STALE" -> 7;
+            case "INVALID_DATA", "INPUT_UNSUPPORTED", "UNMAPPED" -> 6;
+            case "LOCAL_UNAVAILABLE", "UPSTREAM_UNAVAILABLE" -> 5;
+            case "BELOW_MINIMUM", "MULTIPLE_SHORTAGE" -> 4;
+            case "OUT_OF_STOCK" -> 2;
+            default -> 0;
+        };
+    }
+
+    public record StockSnapshot(Long available, boolean unlimited, String status, Integer minQuantity, Integer maxQuantity) {
+        public StockSnapshot(Long available, boolean unlimited) {
+            this(available,unlimited,unlimited ? "UNLIMITED" : available==null ? "UNKNOWN" : available>0 ? "AVAILABLE" : "OUT_OF_STOCK",null,null);
+        }
     }
 }

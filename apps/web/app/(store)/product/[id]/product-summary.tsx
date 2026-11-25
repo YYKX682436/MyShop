@@ -3,12 +3,14 @@
 import { useLocale } from "@/lib/context"
 import { cn, formatYuan } from "@/lib/utils"
 import type { ProductDetail } from "@/types"
+import { hasPurchasableStock, stockNoticeKey } from "@/lib/product-stock"
 
 export function ProductSummary({ product }: { product: ProductDetail }) {
   const { t } = useLocale()
-  const inStock = product.unlimited
-    || product.specs?.some((spec) => spec.unlimited || (spec.stock_available ?? 0) > 0)
-    || (product.stock_available ?? 0) > 0
+  const inStock = product.unlimited || (product.stock_status
+    ? hasPurchasableStock(product.stock_available, false, product.stock_status)
+    : product.specs?.some((spec) => hasPurchasableStock(spec.stock_available, Boolean(spec.unlimited), spec.stock_status))
+      || hasPurchasableStock(product.stock_available, false))
   const sales = (product.sales_count ?? 0) + (product.initial_sales ?? 0)
   const hasUnlimitedSpec = product.specs?.some((spec) => spec.unlimited) ?? false
   const finiteSpecStock = product.specs?.reduce(
@@ -17,7 +19,9 @@ export function ProductSummary({ product }: { product: ProductDetail }) {
   ) ?? 0
   const stockLabel = product.unlimited || hasUnlimitedSpec
     ? t("product.unlimitedStock")
-    : `${t("product.stock")} ${product.specs?.length ? finiteSpecStock : Math.max(0, product.stock_available ?? 0)}`
+    : product.stock_status && product.stock_status !== "AVAILABLE"
+      ? t(stockNoticeKey(product.stock_status))
+      : `${t("product.stock")} ${product.specs?.length ? finiteSpecStock : Math.max(0, product.stock_available ?? 0)}`
   const deliveryLabel = product.delivery_type === "MANUAL"
     ? t("product.deliveryManual")
     : t("product.deliveryAuto")
@@ -42,7 +46,7 @@ export function ProductSummary({ product }: { product: ProductDetail }) {
       )}>
         {inStock
           ? `${stockLabel} · ${t("product.sold")} ${sales}`
-          : `${t("product.soldOut")} · ${t("product.sold")} ${sales}`}
+          : `${t(stockNoticeKey(product.stock_status))} · ${t("product.sold")} ${sales}`}
         <span className="hidden lg:inline"> · {deliveryLabel}</span>
       </p>
     </div>

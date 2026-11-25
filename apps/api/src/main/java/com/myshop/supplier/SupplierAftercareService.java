@@ -205,6 +205,8 @@ public class SupplierAftercareService {
     }
     private Map<String,Object> cardView(SupplierDeliveryCard card) {
         Map<String,Object> m=new LinkedHashMap<>(); m.put("id",card.getId()); m.put("remote_card_id",card.getRemoteCardId());
+        m.put("card_no",card.getCardNo()); m.put("card_pwd",card.getCardPwd());
+        m.put("content_parts",SupplierCardContentFormatter.parts(card));
         m.put("status",card.getCardStatus()); m.put("cancel_request",card.getCancelRequest());
         m.put("result",card.getSupplierResult()); m.put("last_checked_at",card.getLastCheckedAt()); return m;
     }

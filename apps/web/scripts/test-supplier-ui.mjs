@@ -58,10 +58,10 @@ try {
     if (path === "/api/admin/suppliers/account-1/goods/31397/import") {
       assert.equal(route.request().postDataJSON().category_id, "local-category")
       const created = mappings.length === 0
-      mappings = [{ id: "mapping-1", account_id: "account-1", remote_goods_id: "31397", remote_sku: "", product_id: "local-product", goods_type: 1, sku_type: 0, cost: "0.01000000", stock: 12, goods_status: 1, sku_status: 1, multiple: 1, min_quantity: 1, max_quantity: 1, last_synced_at: "2026-11-20 14:00:00", last_attempt_at: "2026-11-20 14:00:00" }]
+      mappings = [{ id: "mapping-1", account_id: "account-1", remote_goods_id: "31397", remote_sku: "", product_id: "local-product", goods_type: 1, sku_type: 0, cost: "0.01000000", stock: 12, goods_status: 1, sku_status: 1, multiple: 1, min_quantity: 1, max_quantity: 100, available_quantity: 12, stock_state: "AVAILABLE", last_synced_at: "2026-11-20 14:00:00", last_attempt_at: "2026-11-20 14:00:00" }]
       return route.fulfill(ok({ product_id: "local-product", created }))
     }
-    if (path === "/api/admin/suppliers/account-1/goods/31397/sync") { mappings[0].stock = 8; mappings[0].cost = "0.02000000"; return route.fulfill(ok(null)) }
+    if (path === "/api/admin/suppliers/account-1/goods/31397/sync") { mappings[0].stock = 8; mappings[0].available_quantity = 8; mappings[0].cost = "0.02000000"; return route.fulfill(ok(null)) }
     if (path === "/api/admin/suppliers/account-1/goods/31397/presentation") { assert.equal(route.request().postDataJSON().confirmed, true); presentationPosts++; return route.fulfill(ok(null)) }
     if (path.endsWith("/bind") && method === "POST") {
       const body = route.request().postDataJSON(); const goodsId = path.split("/").at(-2)

@@ -282,8 +282,9 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     </Button>
   ) : null
 
-  const hasSupplierItems = order?.items.some(item => item.stock_mode === "SUPPLIER") ?? false
-  const canRefund = !hasSupplierItems && order?.customer_type === "REGISTERED"
+  const supplierRefundSafe = order?.items.every(item => item.stock_mode !== "SUPPLIER"
+    || item.supplier_purchase?.can_local_refund === true) ?? false
+  const canRefund = supplierRefundSafe && order?.customer_type === "REGISTERED"
     && order.order_type === "NORMAL"
     && (order.status === "PAID" || order.status === "DELIVERED")
   const reclaimableCardKeyCount = order
@@ -323,7 +324,7 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
       {t("admin.afterSaleReject")}
     </Button>
   ) : null
-  const afterSaleApproveButton = canReviewAfterSale && !hasSupplierItems ? (
+  const afterSaleApproveButton = canReviewAfterSale && supplierRefundSafe ? (
     <Button type="button" variant="destructive" onClick={() => { setAfterSaleApproveOpen(true); setReclaimCardKeys(false) }} disabled={afterSaleApproveLoading || afterSaleRejectLoading}>
       <ShieldAlert className="size-4" aria-hidden="true" />
       {t("admin.afterSaleApprove")}

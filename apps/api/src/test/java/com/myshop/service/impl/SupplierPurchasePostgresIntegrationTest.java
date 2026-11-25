@@ -166,6 +166,7 @@ class SupplierPurchasePostgresIntegrationTest {
     @Autowired SupplierPurchaseTransactions tx;
     @Autowired SupplierPurchaseWorker worker;
     @Autowired SupplierPurchaseRepository purchases;
+    @Autowired com.myshop.repository.SupplierProductMappingRepository supplierMappings;
     @Autowired SupplierAccountRepository accounts;
     @Autowired ProductRepository products;
     @Autowired OrderItemRepository items;
@@ -186,6 +187,7 @@ class SupplierPurchasePostgresIntegrationTest {
     @Autowired SupplierAftercareService aftercare;
     @Autowired SupplierAftercareOperationRepository aftercareOperations;
     @Autowired SupplierAftercareTransactions aftercareTx;
+    @Autowired com.myshop.supplier.SupplierCustomerRefundGuard refundGuard;
     @Autowired SupplierComplaintNotifications complaintNotifications;
     @Autowired com.myshop.utils.JwtUtils jwt;
     @Autowired com.myshop.service.PaymentService paymentService;
@@ -231,6 +233,14 @@ class SupplierPurchasePostgresIntegrationTest {
         });
         return new Fixture(account.id(),product,order,item,purchase);
     }
+    private UUID registeredCustomer() {
+        UUID customer=UUID.randomUUID();
+        Long number=jdbc.queryForObject("select coalesce(max(user_no),9999)+1 from users",Long.class);
+        UUID level=jdbc.queryForObject("select id from user_levels where is_default=true",UUID.class);
+        jdbc.update("insert into users(id,username,email,password_hash,role,is_deleted,user_no,user_level_id,balance) values (?,?,?,'test-hash','USER',0,?,?,20.00)",
+                customer,"supplier-test-"+customer,customer+"@example.invalid",number,level);
+        return customer;
+    }
     private record Fixture(UUID account,UUID product,UUID order,UUID item,UUID purchase){}
     private String value(String sql,UUID id){return jdbc.queryForObject(sql,String.class,id);}
 
@@ -252,6 +262,13 @@ class SupplierPurchasePostgresIntegrationTest {
         var purchase=purchases.findByOrderId(order).getFirst();
         assertEquals("mock-recharge-account",purchase.getAttach().get(0).path("value").asText());
         assertEquals("完成",purchase.getResult());
+        jdbc.update("update supplier_purchases set start_count='0',now_count='3',end_count='3' where id=?",purchase.getId());
+        Map<?,?> adminPurchase=adminOrders.forItem(purchase.getOrderItemId());
+        assertEquals(3,adminPurchase.get("goods_type"));
+        assertEquals("完成",adminPurchase.get("result"));
+        assertEquals("0",adminPurchase.get("start_count"));
+        assertEquals("3",adminPurchase.get("now_count"));
+        assertEquals("3",adminPurchase.get("end_count"));
         fake.rechargeLabel="更新后的充值字段";
         assertEquals("充值账号",jdbc.queryForObject("select customer_inputs->0->>'label' from order_items where order_id=?",String.class,order));
         assertEquals("mock-recharge-account",purchase.getAttach().get(0).path("value").asText());
@@ -308,6 +325,96 @@ class SupplierPurchasePostgresIntegrationTest {
         assertEquals("DELIVERED",value("select status from orders where id=?",order));
     }
     private record OnlineFixture(UUID order,UUID attempt,String merchant,UUID purchase,UUID item) {}
+
+    @Test void blockedUnsubmittedPurchaseCanResumeWithTheSameIntentAndNumber() throws Exception {
+        Fixture f=fixture(1,0);
+        jdbc.update("update orders set user_id=? where id=?",registeredCustomer(),f.order());
+        tx.blockBeforeClaim(f.purchase(),"CONNECTION");
+        var before=purchases.findById(f.purchase()).orElseThrow();
+        assertTrue(tx.canResumeBeforeSubmit(f.purchase()));
+        assertEquals(true,adminOrders.forItem(f.item()).get("can_recover"));
+        assertEquals(true,adminOrders.forItem(f.item()).get("can_local_refund"));
+
+        assertTrue(tx.resumeBeforeSubmit(f.purchase()));
+        var resumed=purchases.findById(f.purchase()).orElseThrow();
+        assertEquals("WAITING_PAYMENT",resumed.getStatus());
+        assertEquals(before.getId(),resumed.getId());
+        assertEquals(before.getOuterNumber(),resumed.getOuterNumber());
+        assertNull(resumed.getSubmitStartedAt());
+        assertEquals(0,fake.creates.get());
+        assertFalse(tx.resumeBeforeSubmit(f.purchase()));
+    }
+
+    @Test void ambiguousSubmittedPurchaseCannotUsePreSubmitRecovery() throws Exception {
+        Fixture f=fixture(1,0);
+        var before=purchases.findById(f.purchase()).orElseThrow();
+        assertTrue(tx.claim(f.purchase()));
+        tx.submissionUnknown(f.purchase(),"CONNECTION");
+        assertFalse(tx.canResumeBeforeSubmit(f.purchase()));
+        assertFalse(tx.resumeBeforeSubmit(f.purchase()));
+        var after=purchases.findById(f.purchase()).orElseThrow();
+        assertEquals("UNKNOWN",after.getStatus());
+        assertEquals(before.getOuterNumber(),after.getOuterNumber());
+        assertNotNull(after.getSubmitStartedAt());
+        assertEquals(0,fake.creates.get());
+    }
+
+    @Test void localRefundGuardAndPurchaseClaimExcludeEachOtherForUnsubmittedOrders() throws Exception {
+        Fixture refundFirst=fixture(1,0);
+        UUID customer=registeredCustomer();
+        jdbc.update("update orders set user_id=? where id=?",customer,refundFirst.order());
+        tx.blockBeforeClaim(refundFirst.purchase(),"CONNECTION");
+        RequestContext.set(new RequestContext.UserInfo(customer,"supplier-refund-admin","ADMIN"));
+        try { refunds.refund(refundFirst.order(),"上游尚未提交",true,false); }
+        finally { RequestContext.clear(); }
+        assertEquals("REFUNDED",value("select status from orders where id=?",refundFirst.order()));
+        assertEquals("WITHDRAWN",purchases.findById(refundFirst.purchase()).orElseThrow().getStatus());
+        assertEquals(0,new BigDecimal("30.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,customer)));
+        assertFalse(tx.claim(refundFirst.purchase()));
+
+        Fixture purchaseFirst=fixture(1,0);
+        assertTrue(tx.claim(purchaseFirst.purchase()));
+        assertThrows(com.myshop.exception.BusinessException.class,() -> new TransactionTemplate(manager).execute(status -> {
+            orderRepository.findByIdForUpdate(purchaseFirst.order()).orElseThrow();
+            refundGuard.validate(items.findByOrderId(purchaseFirst.order()));
+            return null;
+        }));
+        assertEquals("SUBMITTING",purchases.findById(purchaseFirst.purchase()).orElseThrow().getStatus());
+        assertEquals(0,fake.creates.get());
+    }
+
+    @Test void rechargePurchaseUsesBuyerCountLimitsAndMultipliesDeliveredStock() throws Exception {
+        Fixture f=fixture(3,0);
+        var product=fake.product;
+        fake.product=new SupplierModels.Product(product.id(),product.name(),product.goodsType(),product.status(),product.skuType(),
+                3,2,3,List.of(new SupplierModels.Sku("","","",new BigDecimal("0.01"),20,1)),product.snapshot());
+        suppliers.sync(f.account(),product.id());
+        jdbc.update("update order_items set quantity=2,unit_price=10,subtotal=20 where id=?",f.item());
+        jdbc.update("update supplier_purchases set buyer_quantity=2,multiple=3,actual_quantity=6,unit_cost=0.01,safe_price=0.06 where id=?",f.purchase());
+
+        worker.process(f.purchase());
+
+        assertEquals(1,fake.creates.get());
+        assertNotNull(fake.lastRequest);
+        assertEquals(2,fake.lastRequest.count());
+        var saved=purchases.findById(f.purchase()).orElseThrow();
+        assertEquals(2,saved.getBuyerQuantity());
+        assertEquals(6,saved.getActualQuantity());
+        assertEquals("COMPLETED",saved.getStatus());
+    }
+
+    @Test void scheduledCatalogQueryReturnsMoreThanTwentyDueGoodsAndRetriesTransientErrors() throws Exception {
+        List<Fixture> due=new java.util.ArrayList<>();
+        for (int i=0;i<21;i++) due.add(fixture(1,0));
+        for (Fixture f:due) jdbc.update("update supplier_product_mappings set last_synced_at=current_timestamp-interval '31 minutes',last_attempt_at=current_timestamp-interval '31 minutes' where account_id=?",f.account());
+        assertTrue(supplierMappings.findDue(org.springframework.data.domain.PageRequest.of(0,100)).size()>=21);
+
+        Fixture transientFailure=fixture(1,0);
+        jdbc.update("update supplier_product_mappings set sync_error='CONNECTION',last_attempt_at=current_timestamp-interval '2 minutes' where account_id=?",transientFailure.account());
+        assertTrue(supplierMappings.findDue(org.springframework.data.domain.PageRequest.of(0,100)).stream()
+                .anyMatch(row -> transientFailure.account().equals(row[0])));
+    }
+
     private OnlineFixture onlineSupplierOrder() throws Exception {
         Fixture f=fixture(1,0); suppliers.sync(f.account(),fake.product.id());
         adminProducts.updatePrices(f.product(),new com.myshop.model.request.AdminProductPricesUpdateRequest(new BigDecimal("0.02"),new BigDecimal("10.00"),List.of()));
@@ -559,6 +666,7 @@ class SupplierPurchasePostgresIntegrationTest {
         try {
             aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
             assertEquals(0,new BigDecimal("5.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
+            assertEquals(true,adminOrders.forItem(purchases.findById(f.purchase()).orElseThrow().getOrderItemId()).get("can_local_refund"));
             refunds.refund(f.order(),"核实后退款",true,false);
             assertEquals(0,new BigDecimal("15.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
             assertThrows(com.myshop.exception.BusinessException.class,()->refunds.refund(f.order(),"重复退款",true,false));
@@ -572,6 +680,7 @@ class SupplierPurchasePostgresIntegrationTest {
             RequestContext.set(new RequestContext.UserInfo(user,"admin","ADMIN"));
             try {
                 aftercare.refund(f.order(),f.purchase(),UUID.randomUUID(),true);
+                assertEquals(false,adminOrders.forItem(purchases.findById(f.purchase()).orElseThrow().getOrderItemId()).get("can_local_refund"));
                 assertThrows(com.myshop.exception.BusinessException.class,()->refunds.refund(f.order(),"待核实",true,false));
                 assertEquals(0,new BigDecimal("5.00").compareTo(jdbc.queryForObject("select balance from users where id=?",BigDecimal.class,user)));
             } finally { RequestContext.clear(); }
@@ -1324,6 +1433,17 @@ class SupplierPurchasePostgresIntegrationTest {
     }
     @Test void guestSessionIsRequiredForSupplierCards() throws Exception {
         Fixture f=fixture(1,0); worker.process(f.purchase());
+        Map<?,?> adminPurchase=adminOrders.forItem(f.item());
+        List<?> adminCards=(List<?>)adminPurchase.get("supplier_cards");
+        assertEquals(2,adminCards.size());
+        Map<?,?> first=(Map<?,?>)adminCards.get(0),second=(Map<?,?>)adminCards.get(1);
+        assertEquals("test-number",first.get("card_no")); assertEquals(List.of("test-number"),first.get("content_parts"));
+        assertEquals("test-password",second.get("card_pwd")); assertEquals(List.of("test-password"),second.get("content_parts"));
+        assertEquals(0,jdbc.queryForObject("select count(*) from card_keys where order_id=?",Integer.class,f.order()));
+        var customerView=orderAccess.getOrder(f.order(),null,"owner-session");
+        var group=(Map<?,?>)((List<?>)((Map<?,?>)customerView.get("delivery")).get("groups")).getFirst();
+        var delivered=(List<?>)group.get("delivery_items");
+        assertEquals(first.get("content_parts"),((Map<?,?>)delivered.get(0)).get("content_parts"));
         assertTrue(orderAccess.exportCardKeys(f.order(),null,"owner-session").contains("test-password"));
         assertThrows(com.myshop.exception.BusinessException.class,()->orderAccess.getOrder(f.order(),null,"another-session"));
         assertThrows(com.myshop.exception.BusinessException.class,()->orderAccess.exportCardKeys(f.order(),null,"another-session"));

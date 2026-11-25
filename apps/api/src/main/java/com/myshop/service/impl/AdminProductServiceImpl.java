@@ -890,7 +890,8 @@ public class AdminProductServiceImpl implements AdminProductService {
                 category == null ? null : category.getName(), categoryPath.primaryCategoryId(),
                 categoryPath.primaryCategoryName(), categoryPath.secondaryCategoryId(),
                 categoryPath.secondaryCategoryName(),
-                rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
+                rootStock.available(), rootStock.unlimited(),rootStock.status(),rootStock.minQuantity(),rootStock.maxQuantity(),
+                hasSpecs, product.getDeliveryType(),
                 ProductRules.currentFields(product), product.getStockMode().name(), product.getCardContentColumnCount(),
                 Integer.valueOf(0).equals(product.getCardContentColumnCount())
                         ? cardKeyRepository.findHistoricalColumnCounts(product.getId()) : List.of(),
@@ -921,7 +922,7 @@ public class AdminProductServiceImpl implements AdminProductService {
                     product.getId(), spec.getId(), CardKeyStatus.INVALID);
             return new AdminProductSpecResponse(spec.getId(), spec.getName(), spec.getCostPrice(), spec.getRetailPrice(),
                     margin, marginRate, spec.isVisible(), spec.getSortOrder(), spec.getIsDeleted(), snapshot.available(),
-                    snapshot.unlimited(), manual, cardKeys);
+                    snapshot.unlimited(),snapshot.status(),snapshot.minQuantity(),snapshot.maxQuantity(),manual,cardKeys);
         }).toList();
     }
 

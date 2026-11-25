@@ -405,10 +405,7 @@ public class OrderAccessServiceImpl implements OrderAccessService {
                 .orElseGet(List::of);
     }
     private List<String> parts(SupplierDeliveryCard card) {
-        List<String> parts=new ArrayList<>();
-        if (card.getCardNo()!=null && !card.getCardNo().isBlank()) parts.add(card.getCardNo());
-        if (card.getCardPwd()!=null && !card.getCardPwd().isBlank()) parts.add(card.getCardPwd());
-        return List.copyOf(parts);
+        return com.myshop.supplier.SupplierCardContentFormatter.parts(card);
     }
     private String cardStatusPrefix(SupplierDeliveryCard card) {
         return switch (card.getCardStatus()) {

@@ -3,6 +3,7 @@ import { ProductImageViewer } from "@/components/store/product-image-viewer"
 import { Package } from "lucide-react"
 import { getAnonymousProductDetail, getViewerProductDetail, getPaymentChannels, getSiteConfig } from "@/services/api-server"
 import { ProductPurchaseDock } from "./product-purchase-dock"
+import { hasPurchasableStock } from "@/lib/product-stock"
 import { ProductBreadcrumb } from "./product-breadcrumb"
 import { ProductDescription } from "@/components/shared/product-description"
 import { ProductSummary } from "./product-summary"
@@ -52,7 +53,11 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
 
   if (!product) notFound()
 
-  const inStock = product.unlimited || product.specs?.some(spec => spec.unlimited || (spec.stock_available ?? 0) > 0) || (product.stock_available ?? 0) > 0
+  const inStock = product.unlimited || (product.stock_status
+    ? hasPurchasableStock(product.stock_available,false,product.stock_status)
+    : product.specs?.some(spec => hasPurchasableStock(spec.stock_available,Boolean(spec.unlimited),spec.stock_status))
+      || hasPurchasableStock(product.stock_available,false))
+  const stockUnconfirmed=Boolean(product.stock_status && !["AVAILABLE","OUT_OF_STOCK"].includes(product.stock_status))
   const baseUrl = await requestSiteUrl()
   const allowedImageOrigins = [baseUrl]
   try { if (siteConfig?.main_site_url) allowedImageOrigins.push(new URL(siteConfig.main_site_url).origin) } catch { /* Ignore invalid configuration. */ }
@@ -82,7 +87,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       priceCurrency: "CNY",
       availability: inStock
         ? "https://schema.org/InStock"
-        : "https://schema.org/OutOfStock",
+        : stockUnconfirmed ? undefined : "https://schema.org/OutOfStock",
     },
   }
 

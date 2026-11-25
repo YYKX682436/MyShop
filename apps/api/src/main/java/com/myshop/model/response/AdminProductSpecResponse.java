@@ -18,6 +18,9 @@ public record AdminProductSpecResponse(
         int isDeleted,
         Long stockAvailable,
         boolean unlimited,
+        String stockStatus,
+        Integer minQuantity,
+        Integer maxQuantity,
         Integer manualStock,
         long cardKeyCount
 ) {

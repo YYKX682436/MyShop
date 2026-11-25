@@ -22,6 +22,7 @@ public final class SupplierModels {
     public record Attachment(String name, String value) {
         @Override public String toString() { return "Attachment[redacted]"; }
     }
+    /** The API count is buyer quantity; stored actualQuantity uses the provider detail multiple. */
     public record PurchaseRequest(String goodsId, int count, String notifyUrl, String outerNumber,
                                   BigDecimal safePrice, String sku, List<Attachment> attach) {
         @Override public String toString() { return "PurchaseRequest[redacted]"; }

@@ -10,14 +10,23 @@ import java.time.LocalDateTime;
 public class SupplierPurchasePolicy {
     public Quote quote(SupplierProductMapping m,boolean enabled,int quantity,BigDecimal customerTotal,LocalDateTime now) {
         if (!enabled || m.getGoodsStatus()!=1 || m.getSkuStatus()!=1) throw error("SUPPLIER_DISABLED");
-        if (m.getLastSyncedAt()==null || m.getLastSyncedAt().isBefore(now.minusMinutes(30))
-                || m.getLastSyncedAt().isAfter(now.plusMinutes(1)) || m.getSyncError()!=null) throw error("STALE_STOCK");
+        var availability=SupplierStockRules.assess(m,now);
+        if ("SYNC_FAILED".equals(availability.status())) throw error("SYNC_FAILED");
+        if ("STALE".equals(availability.status())) throw error("STALE_STOCK");
+        if ("ACCOUNT_UNAVAILABLE".equals(availability.status())) throw error("SUPPLIER_DISABLED");
+        if ("INVALID_DATA".equals(availability.status()) || "LOCAL_UNAVAILABLE".equals(availability.status())) throw error("SUPPLIER_DISABLED");
+        if ("UPSTREAM_UNAVAILABLE".equals(availability.status())) throw error("SUPPLIER_DISABLED");
+        if ("INPUT_UNSUPPORTED".equals(availability.status())) throw error("SUPPLIER_DISABLED");
         int actual;
         try { actual=Math.multiplyExact(quantity,m.getMultiple()); }
         catch (ArithmeticException e) { throw error("QUANTITY"); }
         if (quantity<1 || m.getMultiple()<1 || actual<1
-                || (m.getMinQuantity()>0 && (quantity<m.getMinQuantity() || actual<m.getMinQuantity()))
-                || (m.getMaxQuantity()>0 && (quantity>m.getMaxQuantity() || actual>m.getMaxQuantity()))) throw error("QUANTITY");
+                || (availability.minQuantity()>0 && quantity<availability.minQuantity())
+                || (availability.maxQuantity()>0 && quantity>availability.maxQuantity())) throw error("QUANTITY");
+        if ("BELOW_MINIMUM".equals(availability.status())) throw error("QUANTITY");
+        if ("OUT_OF_STOCK".equals(availability.status()) || "MULTIPLE_SHORTAGE".equals(availability.status())) throw error("STOCK");
+        if (!"AVAILABLE".equals(availability.status()) || availability.quantity()==null) throw error("STALE_STOCK");
+        if (quantity>availability.quantity()) throw error("STOCK");
         if (m.getStock()<actual) throw error("STOCK");
         if (m.getCost()==null || m.getCost().signum()<0) throw error("COST");
         BigDecimal cost=m.getCost().multiply(BigDecimal.valueOf(actual));

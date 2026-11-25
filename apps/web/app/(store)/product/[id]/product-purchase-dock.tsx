@@ -41,6 +41,7 @@ import {
   reconcilePaymentMethod,
 } from "@/lib/payment-method"
 import { validateCustomerInputValue, validateCustomerInputs } from "@/lib/customer-inputs"
+import { clampPurchaseQuantity, hasPurchasableStock, purchaseQuantityBounds, stockNoticeKey } from "@/lib/product-stock"
 import type {
   OrderPaymentMethod,
   ProductDetail,
@@ -54,7 +55,8 @@ interface ProductPurchaseDockProps {
 }
 
 function isSpecOutOfStock(spec: ProductSpec): boolean {
-  return !spec.unlimited && (spec.stock_available ?? 0) <= 0
+  const bounds=purchaseQuantityBounds(spec.stock_available,spec.min_quantity,spec.max_quantity,Boolean(spec.unlimited))
+  return !hasPurchasableStock(spec.stock_available,Boolean(spec.unlimited),spec.stock_status) || !bounds.selectable
 }
 
 function firstPurchasableSpec(specs: ProductSpec[]): ProductSpec | null {
@@ -67,6 +69,7 @@ interface PurchaseActionBarProps {
   quantity: number
   totalPrice: number
   isOutOfStock: boolean
+  stockStatus?: string | null
   authLoaded: boolean
   adminPickup: boolean
   paymentReady: boolean
@@ -75,11 +78,11 @@ interface PurchaseActionBarProps {
 }
 
 function PurchaseActionBar({
-  open, selectedSpec, quantity, totalPrice, isOutOfStock, authLoaded,
+  open, selectedSpec, quantity, totalPrice, isOutOfStock, stockStatus, authLoaded,
   adminPickup, paymentReady, submitting, triggerRef,
 }: PurchaseActionBarProps) {
   const { t } = useLocale()
-  const label = isOutOfStock ? t("product.soldOut")
+  const label = isOutOfStock ? t(stockNoticeKey(stockStatus))
     : open && submitting ? t("common.processing")
     : open && adminPickup ? t("product.adminPickup")
     : open && !paymentReady ? t("product.paymentUnavailable")
@@ -169,12 +172,9 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
 
   useEffect(() => {
     const specs = product.specs ?? []
-    setSelectedSpec((current) => {
-      const refreshed = current ? specs.find((spec) => spec.id === current.id) : null
-      if (refreshed && !isSpecOutOfStock(refreshed)) return refreshed
-      return firstPurchasableSpec(specs)
-    })
-    setQuantity(1)
+    const next = firstPurchasableSpec(specs)
+    setSelectedSpec(next)
+    setQuantity(Math.max(1,next?.min_quantity ?? product.min_quantity ?? 1))
   }, [product])
 
   useEffect(() => {
@@ -191,8 +191,22 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
   const zeroPriceUnavailable = currentPrice === 0 && !zeroPricePurchase && !adminPickup
   const totalPrice = currentPrice * quantity
   const unlimited = selectedSpec?.unlimited ?? product.unlimited ?? false
-  const finiteStock = selectedSpec?.stock_available ?? product.stock_available ?? 0
-  const isOutOfStock = !unlimited && finiteStock <= 0
+  const finiteStock = selectedSpec ? selectedSpec.stock_available ?? 0 : product.stock_available ?? 0
+  const stockStatus = selectedSpec?.stock_status ?? product.stock_status
+  const minQuantity = selectedSpec?.min_quantity ?? product.min_quantity ?? 1
+  const maxQuantity = selectedSpec?.max_quantity ?? product.max_quantity ?? 0
+  const quantityBounds = purchaseQuantityBounds(finiteStock,minQuantity,maxQuantity,unlimited)
+  const isOutOfStock = !hasPurchasableStock(finiteStock,unlimited,stockStatus) || !quantityBounds.selectable
+  const hasSupplierQuantityRule=(selectedSpec?.stock_mode ?? product.stock_mode)==="SUPPLIER"
+    && (quantityBounds.minimum>1 || maxQuantity>0)
+  const quantityRange = hasSupplierQuantityRule
+    ? t("product.quantityRange").replace("{min}",String(quantityBounds.minimum))
+      .replace("{max}",Number.isFinite(quantityBounds.maximum) ? String(quantityBounds.maximum) : "∞")
+    : null
+
+  useEffect(() => {
+    setQuantity(current => clampPurchaseQuantity(current,quantityBounds.minimum,quantityBounds.maximum))
+  }, [quantityBounds.minimum,quantityBounds.maximum])
   const balanceAvailability = useMemo(() => getBalancePaymentAvailability(
     Boolean(user),
     user?.role,
@@ -372,7 +386,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
   }
 
   const actionBarProps = {
-    selectedSpec, quantity, totalPrice, isOutOfStock, authLoaded,
+    selectedSpec, quantity, totalPrice, isOutOfStock, stockStatus, authLoaded,
     adminPickup, paymentReady, submitting, triggerRef,
   }
 
@@ -447,7 +461,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                           disabled={specOutOfStock}
                           onClick={() => {
                             setSelectedSpec(spec)
-                            setQuantity(1)
+                            setQuantity(Math.max(1,spec.min_quantity ?? 1))
                             setCustomerInputs({})
                             setCustomerInputErrors({})
                           }}
@@ -462,7 +476,7 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                           <span className="block truncate">{spec.name}</span>
                           {specOutOfStock && (
                             <span className="mt-0.5 block text-[10px] text-muted-foreground">
-                              {t("product.soldOut")}
+                              {t(stockNoticeKey(spec.stock_status))}
                             </span>
                           )}
                         </button>
@@ -478,38 +492,40 @@ export function ProductPurchaseDock({ product, channels }: ProductPurchaseDockPr
                     {t("product.quantity")}
                   </h2>
                   <p className="mt-0.5 text-xs text-muted-foreground/80">
-                    {formatYuan(currentPrice)} / {t("product.perPiece")}
+                    {formatYuan(currentPrice)} / {t("product.perPiece")}{quantityRange ? ` · ${quantityRange}` : ""}
                   </p>
                 </div>
                 <div className="inline-flex items-center rounded-xl border border-border-subtle bg-surface-muted/60 p-0.5">
                   <button
                     type="button"
-                    onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                    onClick={() => setQuantity(clampPurchaseQuantity(quantity-1,quantityBounds.minimum,quantityBounds.maximum))}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                    disabled={quantity <= 1}
+                    disabled={quantity <= quantityBounds.minimum}
                     aria-label={t("product.decreaseQuantity")}
                   >
                     <Minus className="size-3.5" aria-hidden="true" />
                   </button>
                   <input
                     type="number"
-                    min={1}
-                    max={unlimited ? undefined : Math.max(1, finiteStock)}
+                    name="quantity"
+                    min={quantityBounds.minimum}
+                    max={Number.isFinite(quantityBounds.maximum) ? quantityBounds.maximum : undefined}
+                    step={1}
+                    required
+                    inputMode="numeric"
                     value={quantity}
                     onChange={(event) => {
-                      const value = Number.parseInt(event.target.value, 10) || 1
-                      setQuantity(unlimited
-                        ? Math.max(1, value)
-                        : Math.min(Math.max(1, value), Math.max(1, finiteStock)))
+                      const value = Number.parseInt(event.target.value, 10) || quantityBounds.minimum
+                      setQuantity(clampPurchaseQuantity(value,quantityBounds.minimum,quantityBounds.maximum))
                     }}
-                    className="h-9 w-14 border-x border-border-subtle/80 bg-transparent text-center text-sm font-semibold text-foreground [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-primary/40 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="h-9 w-14 border-x border-border-subtle/80 bg-transparent text-center text-base font-semibold text-foreground [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-primary/40 sm:text-sm [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     aria-label={t("product.quantity")}
                   />
                   <button
                     type="button"
-                    onClick={() => setQuantity(unlimited ? quantity + 1 : Math.min(quantity + 1, Math.max(1, finiteStock)))}
+                    onClick={() => setQuantity(clampPurchaseQuantity(quantity+1,quantityBounds.minimum,quantityBounds.maximum))}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                    disabled={!unlimited && quantity >= finiteStock}
+                    disabled={quantity >= quantityBounds.maximum}
                     aria-label={t("product.increaseQuantity")}
                   >
                     <Plus className="size-3.5" aria-hidden="true" />

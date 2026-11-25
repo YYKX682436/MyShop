@@ -24,6 +24,8 @@ public class SupplierAdminOrders {
     private final SupplierPurchaseRepository purchases;
     private final SupplierAccountRepository accounts;
     private final SupplierPurchaseWorker worker;
+    private final SupplierPurchaseTransactions transactions;
+    private final SupplierCustomerRefundGuard refundGuard;
     private final OperationLogRepository logs;
     private final OperationLogService audit;
     private final SupplierAftercareService aftercare;
@@ -40,12 +42,24 @@ public class SupplierAdminOrders {
         worker.refresh(purchaseId);
         return view(purchases.findById(purchaseId).orElseThrow());
     }
+    public Map<String,Object> resumeBeforeSubmit(UUID orderId,UUID purchaseId,boolean confirmed) {
+        requireAdmin();
+        if (!confirmed) throw new BusinessException(ErrorCode.BAD_REQUEST,"必须确认重新检查并继续采购");
+        SupplierPurchase p=purchases.findById(purchaseId)
+                .filter(row -> row.getOrderId().equals(orderId))
+                .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND,"采购记录不存在"));
+        if (!transactions.resumeBeforeSubmit(purchaseId)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST,"采购已提交、付款异常或当前订单状态不允许恢复；请先查询并核实上游");
+        }
+        audit.logCurrentRequest("supplier.purchase.resume","SUPPLIER_PURCHASE",p.getId().toString(),
+                "重新检查原采购意图，采购单号="+p.getOuterNumber());
+        worker.enqueueOrder(orderId);
+        return view(purchases.findById(purchaseId).orElseThrow());
+    }
     /** Fixed classifications record manual investigation without changing purchase state. */
     @Transactional
     public Map<String,Object> recordReview(UUID orderId,UUID purchaseId,String outcome) {
-        var operator=RequestContext.get();
-        if (operator==null || operator.getUserId()==null || operator.getRole()==null || !Set.of("ADMIN","SUPER_ADMIN").contains(operator.getRole()))
-            throw new BusinessException(ErrorCode.FORBIDDEN,"仅管理员可以记录核实结果");
+        requireAdmin();
         SupplierPurchase p=purchases.findForUpdate(purchaseId)
                 .filter(row -> row.getOrderId().equals(orderId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND,"采购记录不存在"));
@@ -62,10 +76,16 @@ public class SupplierAdminOrders {
         result.put("account_name",accounts.findById(p.getAccountId()).map(a -> a.getName()).orElse("—"));
         result.put("outer_number",p.getOuterNumber()); result.put("upstream_order_number",p.getUpstreamOrderNumber());
         result.put("status",p.getStatus()); result.put("upstream_status",p.getUpstreamStatus());
+        result.put("goods_type",p.getGoodsType());
         result.put("buyer_quantity",p.getBuyerQuantity()); result.put("actual_quantity",p.getActualQuantity());
         result.put("safe_price",p.getSafePrice()); result.put("actual_cost",p.getActualCost());
         result.put("refunded_amount",p.getRefundedAmount()); result.put("last_checked_at",p.getLastCheckedAt());
+        result.put("submit_started_at",p.getSubmitStartedAt());
+        result.put("result",p.getResult()); result.put("start_count",p.getStartCount());
+        result.put("now_count",p.getNowCount()); result.put("end_count",p.getEndCount());
         result.put("error_code",p.getErrorCode()); result.put("can_refresh",p.getSubmitStartedAt()!=null);
+        result.put("can_recover",transactions.canResumeBeforeSubmit(p.getId()));
+        result.put("can_local_refund",refundGuard.canRefund(p));
         result.put("aftercare_operations",aftercare.operations(p.getId()));
         result.put("supplier_cards",aftercare.cards(p.getId()));
         result.put("late_payments",paymentEvents.findByOrderIdAndProcessResultStartingWithOrderByCreatedAtDesc(p.getOrderId(),"LATE_PAID_")
@@ -76,5 +96,12 @@ public class SupplierAdminOrders {
                 .filter(log -> "supplier.purchase.review".equals(log.getAction()))
                 .map(log -> Map.of("outcome",log.getDetail(),"operator",log.getUsername(),"created_at",log.getCreatedAt())).toList());
         return result;
+    }
+
+    private void requireAdmin() {
+        var operator=RequestContext.get();
+        if (operator==null || operator.getUserId()==null || operator.getRole()==null
+                || !Set.of("ADMIN","SUPER_ADMIN").contains(operator.getRole()))
+            throw new BusinessException(ErrorCode.FORBIDDEN,"仅管理员可处理货源采购");
     }
 }

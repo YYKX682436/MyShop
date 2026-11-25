@@ -8,7 +8,7 @@ import { adminOrderApi, requestOrThrow } from "@/services/api"
 import type { AdminOrderItemDetail, AfterSaleRequest } from "@/types"
 
 type Purchase = NonNullable<AdminOrderItemDetail["supplier_purchase"]>
-type Confirmation = { kind: "refund" } | { kind: "void"; cardId: string; remoteId: string }
+type Confirmation = { kind: "refund" } | { kind: "recover" } | { kind: "void"; cardId: string; remoteId: string }
 const cardStatus: Record<number, string> = { 0: "未使用 / 已发货", 1: "未使用 / 已处理", 2: "已作废 / 已退款", 3: "已使用", 4: "作废中" }
 const operationStatus: Record<string, string> = { INTENT: "待提交", SUBMITTING: "提交中", UNKNOWN: "结果待核实", ACCEPTED: "上游处理中", COMPLETED: "上游处理结束", REJECTED: "未受理" }
 const operationKind: Record<string, string> = { REFUND: "上游退款", CARD_VOID: "卡券作废", COMPLAINT: "售后申诉" }
@@ -65,13 +65,14 @@ export function SupplierAftercarePanel({ orderId, purchase, sale, onReload }: {
 
   return <div className="mt-4 space-y-4 border-t border-border-subtle pt-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h5 className="text-sm font-medium">供应商售后</h5>
+      {purchase.can_recover && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setConfirmation({ kind: "recover" })}>重新检查并继续采购</Button>}
       <Button type="button" variant="outline" size="sm" disabled={busy || hasRefund || voidPending || purchase.upstream_status == null} onClick={() => setConfirmation({ kind: "refund" })}>申请上游退款</Button>
     </div>
     {operations.map(op => <div key={op.id} className="rounded-control bg-surface-muted p-3 text-sm">
       <p className="font-medium">{operationKind[op.kind] || op.kind} · {operationStatus[op.status] || op.status}</p>
       <p className="mt-1 text-xs text-muted-foreground">{op.supplier_req_id != null ? `申诉编号 ${op.supplier_req_id} · ` : ""}{op.upstream_status != null ? `上游状态 ${op.upstream_status} · ` : ""}{op.created_at}</p>
       {op.content && <p className="mt-1 whitespace-pre-wrap break-words">{op.content}</p>}
-      {op.result && <p className="mt-1 whitespace-pre-wrap break-words">{op.result}</p>}
+      {op.result && <p className="mt-1 whitespace-pre-wrap break-words"><span className="text-xs text-muted-foreground">上游处理结果：</span>{op.result}</p>}
       {op.error_code && <p className="mt-1 text-xs text-destructive">{op.error_code} · 请人工核实</p>}
       {(op.reviews ?? []).map((review, i) => <p key={`${review.created_at}-${i}`} className="mt-1 text-xs text-muted-foreground">{review.outcome === "CONTACTED_SUPPLIER" ? "已联系供应商" : review.outcome === "MANUAL_HANDLING" ? "已转人工处理" : "结果尚未确认"} · {review.operator} · {review.created_at}</p>)}
       {["INTENT", "SUBMITTING", "UNKNOWN", "ACCEPTED"].includes(op.status) && <div className="mt-2 flex flex-wrap gap-2">
@@ -83,11 +84,11 @@ export function SupplierAftercarePanel({ orderId, purchase, sale, onReload }: {
       </div>}
     </div>)}
     {(purchase.supplier_cards ?? []).map(card => <div key={card.id} className="rounded-control border border-border-subtle p-3 text-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2"><p>卡券 {card.remote_card_id} · {cardStatus[card.status] || "状态未知"}</p><div className="flex gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2"><p>上游卡券编号 {card.remote_card_id} · {cardStatus[card.status] || "状态未知"}</p><div className="flex gap-2">
         <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void run(() => requestOrThrow(() => adminOrderApi.supplierCardQuery(orderId, purchase.id, card.id)), "查询完成")}>查询卡券</Button>
         <Button type="button" variant="outline" size="sm" disabled={busy || refundPending || card.cancel_request !== 1 || ![0, 1].includes(card.status) || operations.some(op => op.kind === "CARD_VOID" && op.card_id === card.id)} onClick={() => setConfirmation({ kind: "void", cardId: card.id, remoteId: card.remote_card_id })}>申请作废</Button>
       </div></div>
-      {card.result && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">{card.result}</p>}
+      {card.result && <p className="mt-1 whitespace-pre-wrap break-words text-xs text-muted-foreground">上游处理结果：{card.result}</p>}
       <p className="mt-1 text-xs text-muted-foreground">{card.cancel_request === 1 ? "供应商允许申请作废" : "供应商不允许申请作废"}{card.last_checked_at ? ` · ${card.last_checked_at}` : " · 尚未主动查询"}</p>
     </div>)}
     {sale && !complaintClosed && <form onSubmit={submitComplaint} aria-label="供应商申诉" className="space-y-3 rounded-control border border-border-subtle p-3">
@@ -99,14 +100,17 @@ export function SupplierAftercarePanel({ orderId, purchase, sale, onReload }: {
       <Button type="submit" size="sm" disabled={busy || complaintUnconfirmed}>{busy ? "提交中" : "提交申诉"}</Button>
     </form>}
     <dialog ref={dialog} aria-labelledby={titleId} onClose={() => setConfirmation(null)} className="w-[min(92vw,28rem)] rounded-surface border border-border-subtle bg-background p-5 text-foreground shadow-xl">
-      <h5 id={titleId} className="text-base font-semibold">{confirmation?.kind === "void" ? "确认申请作废" : "确认申请上游退款"}</h5>
-      <p className="mt-3 text-sm">{confirmation?.kind === "void" ? `将向供应商申请作废卡券 ${confirmation.remoteId}，作废可能不可逆。` : "将向供应商申请订单退款，是否到账及金额以查询结果为准。"}</p>
-      <p className="mt-2 text-sm">此操作不会自动向顾客退款。</p>
+      <h5 id={titleId} className="text-base font-semibold">{confirmation?.kind === "void" ? "确认申请作废" : confirmation?.kind === "recover" ? "重新检查采购" : "确认申请上游退款"}</h5>
+      <p className="mt-3 text-sm">{confirmation?.kind === "void" ? `将向供应商申请作废卡券 ${confirmation.remoteId}，作废可能不可逆。`
+        : confirmation?.kind === "recover" ? `将重新检查库存、映射、价格和余额，并继续原采购意图（${purchase.outer_number}）。仅当系统确认尚未提交上游时才会继续。`
+        : "将向供应商申请订单退款，是否到账及金额以查询结果为准。"}</p>
+      {confirmation?.kind !== "recover" && <p className="mt-2 text-sm">此操作不会自动向顾客退款。</p>}
       <div className="mt-5 flex justify-end gap-2"><form method="dialog"><Button type="submit" variant="outline" autoFocus>取消</Button></form>
         <Button type="button" disabled={busy} onClick={() => {
           const action=confirmation; dialog.current?.close()
           if (!action) return
-          if (action.kind === "refund") void run(() => requestOrThrow(() => adminOrderApi.supplierRefund(orderId,purchase.id,crypto.randomUUID())), "退款申请已记录")
+          if (action.kind === "recover") void run(() => requestOrThrow(() => adminOrderApi.resumeSupplierPurchase(orderId,purchase.id,crypto.randomUUID())), "已重新检查采购状态")
+          else if (action.kind === "refund") void run(() => requestOrThrow(() => adminOrderApi.supplierRefund(orderId,purchase.id,crypto.randomUUID())), "退款申请已记录")
           else void run(() => requestOrThrow(() => adminOrderApi.supplierCardVoid(orderId,purchase.id,action.cardId,crypto.randomUUID())), "作废申请已记录")
         }}>确认提交</Button>
       </div>

@@ -205,15 +205,23 @@ export function OrderDetailSheet({
   const copyToClipboard = (value: string) => {
     const cleanValue = stripInvisible(value)
     const fallback = () => {
+      const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
       const textarea = document.createElement("textarea")
       textarea.value = cleanValue
+      textarea.setAttribute("readonly", "")
       textarea.style.position = "fixed"
       textarea.style.opacity = "0"
       document.body.appendChild(textarea)
       textarea.select()
-      document.execCommand("copy")
-      document.body.removeChild(textarea)
-      toast.success(t("order.copied"))
+      try {
+        if (!document.execCommand("copy")) throw new Error("copy failed")
+        toast.success(t("order.copied"))
+      } catch {
+        toast.error(t("common.error"))
+      } finally {
+        textarea.remove()
+        previousFocus?.focus({ preventScroll: true })
+      }
     }
     if (navigator.clipboard?.writeText) void navigator.clipboard.writeText(cleanValue).then(() => toast.success(t("order.copied")), fallback)
     else fallback()
@@ -370,6 +378,32 @@ export function OrderDetailSheet({
                       <DefinitionRow label="上游已退款">{item.supplier_purchase.refunded_amount == null ? "—" : `¥${item.supplier_purchase.refunded_amount}`}</DefinitionRow>
                       <DefinitionRow label="最近查询">{item.supplier_purchase.last_checked_at ? formatDateTime(item.supplier_purchase.last_checked_at, locale) : "—"}</DefinitionRow>
                     </dl>
+                    {item.supplier_purchase.goods_type === 3 && <section className="mt-3 rounded-control border border-border-subtle bg-surface-muted/50 p-3" aria-label="直充结果与进度">
+                      <h5 className="text-sm font-medium">实际充值结果与进度</h5>
+                      <dl className="mt-1 grid gap-x-5 gap-y-1 sm:grid-cols-2">
+                        <DefinitionRow label="开始进度">{item.supplier_purchase.start_count || "—"}</DefinitionRow>
+                        <DefinitionRow label="当前进度">{item.supplier_purchase.now_count || "—"}</DefinitionRow>
+                        <DefinitionRow label="目标进度">{item.supplier_purchase.end_count || "—"}</DefinitionRow>
+                        <DefinitionRow label="实际充值结果"><span className="whitespace-pre-wrap break-words">{item.supplier_purchase.result || "供应商尚未返回结果"}</span></DefinitionRow>
+                      </dl>
+                    </section>}
+                    {item.fulfillment_status === "DELIVERED" && item.supplier_purchase.goods_type === 1
+                      && (item.supplier_purchase.supplier_cards?.length ?? 0) > 0 && <section className="mt-3 rounded-control border border-border-subtle p-3" aria-label="货源交付卡券">
+                        <h5 className="text-sm font-medium">交付卡券</h5>
+                        <div className="mt-2 divide-y divide-border-subtle/70">
+                          {item.supplier_purchase.supplier_cards!.map((card,index) => {
+                            const parts=card.content_parts?.length ? card.content_parts
+                              : [card.card_no,card.card_pwd].filter((part): part is string => Boolean(part?.trim()))
+                            return <div key={card.id} className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0">
+                              <span className="w-14 shrink-0 pt-1 text-xs text-muted-foreground">卡券 {index+1}</span>
+                              {parts.length===0
+                                ? <span className="min-w-0 flex-1 text-sm text-muted-foreground">—</span>
+                                : <CardContentParts parts={parts} onCopy={copyToClipboard} showCopyAll={false} className="flex-1 font-mono text-sm" />}
+                              {parts.length>0 && <CopyButton value={formatCardContent(parts)} label={`卡券 ${index+1}`} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} />}
+                            </div>
+                          })}
+                        </div>
+                      </section>}
                     {item.supplier_purchase.error_code && <p className="mt-2 text-xs text-destructive">{supplierErrorLabel(item.supplier_purchase.error_code)}</p>}
                     {onReviewSupplier && ["UNKNOWN", "SUBMITTING", "BLOCKED"].includes(item.supplier_purchase.status) && <SupplierReview purchaseId={item.supplier_purchase.id} reviews={item.supplier_purchase.reviews || []} onReview={onReviewSupplier} />}
                     {onReloadSupplier && <SupplierAftercarePanel orderId={order.id} purchase={item.supplier_purchase} sale={order.after_sale_history?.[0] ?? null} onReload={onReloadSupplier} />}

@@ -29,7 +29,7 @@ class SupplierStockServiceTest {
         when(provider.customerFields(a.getSnapshot())).thenThrow(new SupplierException("DATA","invalid"));
         when(provider.customerFields(b.getSnapshot())).thenReturn(List.of());
         var stock=service.available(List.of(broken,good));
-        assertFalse(stock.containsKey(new PriceTarget(broken,null)));
+        assertEquals(0L,stock.get(new PriceTarget(broken,null)));
         assertEquals(5L,stock.get(new PriceTarget(good,null)));
     }
     @Test void eachSpecUsesItsOwnSupplierFieldsAndUnboundSpecsHaveNoStock() throws Exception {
@@ -63,5 +63,33 @@ class SupplierStockServiceTest {
         var m=new SupplierProductMapping(); m.setAccountId(account);m.setProductId(product);
         m.setGoodsType(1);m.setGoodsStatus(1);m.setSkuStatus(1);m.setMultiple(2);m.setStock(10);
         m.setMaxQuantity(20);m.setLastSyncedAt(LocalDateTime.now());return m;
+    }
+
+    @Test void keepsSyncFailuresAndExpiredInventoryDistinctFromTrueZero() {
+        var m=mapping(UUID.randomUUID(),UUID.randomUUID());
+        m.setSyncError("CONNECTION");
+        var failed=SupplierStockRules.assess(m,LocalDateTime.now());
+        assertEquals("SYNC_FAILED",failed.status()); assertNull(failed.quantity());
+        assertEquals(10L,m.getStock());
+
+        m.setSyncError(null); m.setLastSyncedAt(LocalDateTime.now().minusMinutes(31));
+        var stale=SupplierStockRules.assess(m,LocalDateTime.now());
+        assertEquals("STALE",stale.status()); assertNull(stale.quantity());
+
+        m.setLastSyncedAt(LocalDateTime.now()); m.setStock(0);
+        var empty=SupplierStockRules.assess(m,LocalDateTime.now());
+        assertEquals("OUT_OF_STOCK",empty.status()); assertEquals(0L,empty.quantity());
+    }
+
+    @Test void capsBuyerQuantityAfterApplyingDeliveryMultipleAndMinimum() {
+        var m=mapping(UUID.randomUUID(),UUID.randomUUID());
+        m.setStock(100); m.setMultiple(4); m.setMinQuantity(2); m.setMaxQuantity(5);
+        var available=SupplierStockRules.assess(m,LocalDateTime.now());
+        assertEquals("AVAILABLE",available.status()); assertEquals(5L,available.quantity());
+        m.setStock(3);
+        var belowMultiple=SupplierStockRules.assess(m,LocalDateTime.now());
+        assertEquals("MULTIPLE_SHORTAGE",belowMultiple.status()); assertEquals(0L,belowMultiple.quantity());
+        m.setStock(20); m.setMinQuantity(6); m.setMaxQuantity(10);
+        assertEquals("BELOW_MINIMUM",SupplierStockRules.assess(m,LocalDateTime.now()).status());
     }
 }

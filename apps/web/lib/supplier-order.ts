@@ -15,7 +15,8 @@ export function supplierStatusLabel(status?: string | null): string {
 export function supplierErrorLabel(code: string): string {
   const labels: Record<string, string> = {
     COST_EXCEEDED: "上游成本超过采购保护金额", NO_MARGIN: "当前售价不足以覆盖成本",
-    STOCK: "上游库存不足", STALE_STOCK: "库存同步失败或已过期", BALANCE: "供货账号余额不足",
+    STOCK: "上游库存不足", SYNC_FAILED: "库存同步失败，请等待自动重试或后台刷新",
+    STALE_STOCK: "库存数据已过期，请刷新后重试", BALANCE: "供货账号余额不足",
     SUPPLIER_DISABLED: "供货账号或商品已停用", PRODUCT_DISABLED: "本地商品已停用",
     SKU_DISABLED: "本地规格已停用", SKU_CHANGED: "上游规格已变化", MAPPING_CHANGED: "货源映射已变化",
     PRODUCT_CHANGED: "上游商品状态或发货倍数已变化", TEMPLATE_CHANGED: "充值模板已变化",

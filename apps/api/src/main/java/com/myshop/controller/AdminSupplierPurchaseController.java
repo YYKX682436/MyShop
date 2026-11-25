@@ -17,6 +17,11 @@ public class AdminSupplierPurchaseController {
     public record ConfirmedOperation(UUID idempotencyKey,boolean confirmed) {}
     public record ComplaintOperation(UUID idempotencyKey,boolean confirmed,UUID afterSaleId,
                                      String topic,String content,java.util.List<UUID> attachmentIds) {}
+    @PostMapping("/{orderId}/supplier-purchases/{purchaseId}/recover")
+    public ApiResponse<Map<String,Object>> recover(@PathVariable UUID orderId,@PathVariable UUID purchaseId,
+                                                    @RequestBody ConfirmedOperation request) {
+        return ApiResponse.success(orders.resumeBeforeSubmit(orderId,purchaseId,request.confirmed()));
+    }
     @PostMapping("/{orderId}/supplier-purchases/{purchaseId}/refresh")
     public ApiResponse<Map<String,Object>> refresh(@PathVariable UUID orderId,@PathVariable UUID purchaseId) {
         return ApiResponse.success(orders.refresh(orderId,purchaseId));

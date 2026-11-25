@@ -33,7 +33,7 @@ public class SupplierService {
     private final SupplierCatalogTransaction transactions;
     private final PaymentUrlService urls;
     private final AtomicBoolean scheduledRunning = new AtomicBoolean();
-    private final ExecutorService syncWorker = Executors.newFixedThreadPool(3, task -> {
+    private final ExecutorService syncWorker = Executors.newFixedThreadPool(4, task -> {
         Thread thread = new Thread(task, "supplier-sync");
         thread.setDaemon(true);
         return thread;
@@ -47,7 +47,7 @@ public class SupplierService {
                               int goodsType,int skuType,@com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) java.math.BigDecimal cost,long stock,int goodsStatus,int skuStatus,
                               int multiple,int minQuantity,int maxQuantity,LocalDateTime lastSyncedAt,
                               LocalDateTime lastAttemptAt,String syncError,String remoteGoodsName,String remoteSkuName,
-                              String productName,String specName,String localState) {}
+                              String productName,String specName,String localState,String stockState,Long availableQuantity) {}
 
     @Transactional(readOnly=true)
     public List<AccountView> listAccounts() { return accounts.findAll().stream().map(this::view).toList(); }
@@ -124,18 +124,21 @@ public class SupplierService {
             throw new SupplierException("INTERNAL","货源同步失败，请检查本地商品和规格");
         }
     }
-    @Scheduled(fixedDelayString="${supplier.sync-interval-ms:900000}", initialDelayString="${supplier.sync-initial-delay-ms:120000}")
+    @Scheduled(fixedDelayString="${supplier.sync-interval-ms:60000}", initialDelayString="${supplier.sync-initial-delay-ms:120000}")
     public void enqueueScheduledSync() {
         if (!scheduledRunning.compareAndSet(false, true)) return;
         try {
             syncWorker.execute(() -> {
                 try {
-                    List<Object[]> due = mappings.findDue(PageRequest.of(0,20));
-                    var tasks = due.stream().map(row -> java.util.concurrent.CompletableFuture.runAsync(
-                            () -> syncOne(row), syncWorker)).toArray(java.util.concurrent.CompletableFuture[]::new);
-                    java.util.concurrent.CompletableFuture.allOf(tasks)
-                            .whenComplete((result, failure) -> scheduledRunning.set(false));
-                } catch (RuntimeException ignored) { scheduledRunning.set(false); }
+                    while (!Thread.currentThread().isInterrupted()) {
+                        List<Object[]> due=mappings.findDue(PageRequest.of(0,100));
+                        if (due.isEmpty()) break;
+                        var tasks=due.stream().map(row -> java.util.concurrent.CompletableFuture.runAsync(
+                                () -> syncOne(row),syncWorker)).toArray(java.util.concurrent.CompletableFuture[]::new);
+                        java.util.concurrent.CompletableFuture.allOf(tasks).join();
+                    }
+                } catch (RuntimeException ignored) { /* the next scheduled pass retries due rows */ }
+                finally { scheduledRunning.set(false); }
             });
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
             scheduledRunning.set(false);
@@ -197,14 +200,20 @@ public class SupplierService {
                 .stream().collect(java.util.stream.Collectors.toMap(com.myshop.entity.Product::getId,p -> p));
         var localSpecs=specs.findAllById(rows.stream().map(SupplierProductMapping::getSpecId).filter(java.util.Objects::nonNull).distinct().toList())
                 .stream().collect(java.util.stream.Collectors.toMap(com.myshop.entity.ProductSpec::getId,s -> s));
+        var enabledAccounts=accounts.findAllById(rows.stream().map(SupplierProductMapping::getAccountId).distinct().toList())
+                .stream().collect(java.util.stream.Collectors.toMap(SupplierAccount::getId,SupplierAccount::isEnabled));
+        LocalDateTime now=LocalDateTime.now();
         return rows.stream().map(m -> {
             var p=localProducts.get(m.getProductId()); var s=localSpecs.get(m.getSpecId());
             String state=p==null || p.getIsDeleted()!=0 ? "PRODUCT_DELETED" :
                     p.getStockMode()!=com.myshop.constant.StockMode.SUPPLIER ? "PRODUCT_CHANGED" :
                     (m.getSpecId()==null && p.isSpecEnabled()) || (m.getSpecId()!=null && (!p.isSpecEnabled() || s==null || s.getIsDeleted()!=0 || !s.getProductId().equals(m.getProductId()))) ? "SPEC_DELETED" : null;
+            var availability=state!=null ? new SupplierStockRules.Availability(0L,"LOCAL_UNAVAILABLE",m.getMinQuantity(),m.getMaxQuantity(),state)
+                    : !enabledAccounts.getOrDefault(m.getAccountId(),false) ? SupplierStockRules.accountUnavailable(m)
+                    : SupplierStockRules.assess(m,now);
             String name=m.getSnapshot().path("name").asText("");
             return view(m,name.isBlank() ? "上游商品 "+m.getRemoteGoodsId() : name,skuName(m),
-                    p==null ? "本地商品不存在" : p.getTitle(),s==null ? null : s.getName(),state);
+                    p==null ? "本地商品不存在" : p.getTitle(),s==null ? null : s.getName(),state,availability);
         }).toList();
     }
     private String skuName(SupplierProductMapping m) {
@@ -226,10 +235,12 @@ public class SupplierService {
         }
         return "规格 "+m.getRemoteSku();
     }
-    private MappingView view(SupplierProductMapping m,String remoteName,String remoteSkuName,String productName,String specName,String localState) {
+    private MappingView view(SupplierProductMapping m,String remoteName,String remoteSkuName,String productName,String specName,String localState,
+                             SupplierStockRules.Availability availability) {
         return new MappingView(m.getId(),m.getAccountId(),m.getRemoteGoodsId(),m.getRemoteSku(),m.getProductId(),m.getSpecId(),m.getGoodsType(),m.getSkuType(),
                 m.getCost(),m.getStock(),m.getGoodsStatus(),m.getSkuStatus(),m.getMultiple(),m.getMinQuantity(),m.getMaxQuantity(),
-                m.getLastSyncedAt(),m.getLastAttemptAt(),m.getSyncError(),remoteName,remoteSkuName,productName,specName,localState);
+                m.getLastSyncedAt(),m.getLastAttemptAt(),m.getSyncError(),remoteName,remoteSkuName,productName,specName,localState,
+                availability.status(),availability.quantity());
     }
     private SupplierException invalid(String message) { return new SupplierException("CONFIG",message); }
 }

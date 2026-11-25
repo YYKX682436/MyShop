@@ -798,6 +798,8 @@ export const adminOrderApi = {
     request<null>(`/admin/orders/${encodeURIComponent(orderId)}/payment-reviews`, { method: "POST", body: JSON.stringify({ attempt_id: attemptId, note }) }),
   refreshSupplier: (orderId: string, purchaseId: string) =>
     request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/refresh`, { method: "POST" }),
+  resumeSupplierPurchase: (orderId: string, purchaseId: string, idempotencyKey: string) =>
+    request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/recover`, { method: "POST", body: JSON.stringify({ idempotency_key: idempotencyKey, confirmed: true }) }),
   reviewSupplier: (orderId: string, purchaseId: string, outcome: string) =>
     request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/reviews`, { method: "POST", body: JSON.stringify({ outcome }) }),
   supplierRefund: (orderId: string, purchaseId: string, idempotencyKey: string) =>
@@ -1149,7 +1151,7 @@ export type SupplierCategory = { id: string; name: string; children: SupplierCat
 export type SupplierSummary = { id: string; name: string; goods_type: number; status: number; sku_type: number; cost: string }
 export type SupplierSku = { id: string; name: string; group: string; cost: string; stock: number; status: number }
 export type SupplierProduct = { id: string; name: string; goods_type: number; status: number; sku_type: number; multiple: number; min_quantity: number; max_quantity: number; skus: SupplierSku[]; snapshot: Record<string, unknown> }
-export type SupplierMapping = { id: string; account_id: string; remote_goods_id: string; remote_sku: string; product_id: string; spec_id?: string | null; goods_type: number; sku_type: number; cost: string; stock: number; goods_status: number; sku_status: number; multiple: number; min_quantity: number; max_quantity: number; last_synced_at: string; last_attempt_at: string; sync_error?: string; remote_goods_name?: string; remote_sku_name?: string; product_name?: string; spec_name?: string | null; local_state?: string | null }
+export type SupplierMapping = { id: string; account_id: string; remote_goods_id: string; remote_sku: string; product_id: string; spec_id?: string | null; goods_type: number; sku_type: number; cost: string; stock: number; goods_status: number; sku_status: number; multiple: number; min_quantity: number; max_quantity: number; last_synced_at: string; last_attempt_at: string; sync_error?: string; remote_goods_name?: string; remote_sku_name?: string; product_name?: string; spec_name?: string | null; local_state?: string | null; stock_state?: string; available_quantity?: number | null }
 export const adminSupplierApi = {
   accounts: () => request<SupplierAccount[]>("/admin/suppliers"),
   create: (input: SupplierAccountInput) => request<SupplierAccount>("/admin/suppliers", { method: "POST", body: JSON.stringify(input) }),

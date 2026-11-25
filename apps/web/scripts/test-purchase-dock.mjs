@@ -16,13 +16,15 @@ const year = { id: "spec-year", name: "年卡", price: 52, retail_price: 52, sto
 const month = { id: "spec-month", name: "月卡", price: 20, retail_price: 20, stock_available: 5, unlimited: false }
 let refreshedProduct = false
 const product = id => {
-  const noSpecs = ["plain", "zero", "zero-disallowed", "soldout"].includes(id)
+  const noSpecs = ["plain", "zero", "zero-disallowed", "soldout", "sync-failed"].includes(id)
   const fields = id === "required" ? [{ id: "contact", label: "联系方式", type: "TEXT", required: true }]
     : id === "long" ? Array.from({ length: 20 }, (_, i) => ({ id: `field-${i}`, label: `填写信息 ${i + 1}`, type: "TEXT", required: false })) : []
   return { id, title: "测试商品", price: id.startsWith("zero") ? 0 : 52, retail_price: 52, cover_url: null,
-    description: "商品详情正文。".repeat(240), detail_md: null, stock_available: id === "soldout" ? 0 : 5,
-    unlimited: false, has_specs: !noSpecs, specs: noSpecs ? [] : id === "huge"
+    description: "商品详情正文。".repeat(240), detail_md: null, stock_available: id === "soldout" ? 0 : id === "sync-failed" ? null : 5,
+    stock_status: id === "soldout" ? "OUT_OF_STOCK" : id === "sync-failed" ? "SYNC_FAILED" : undefined,
+    unlimited: false, has_specs: !noSpecs, stock_mode: ["sync-failed","supplier-limits"].includes(id) ? "SUPPLIER" : "CARD_KEY", specs: noSpecs ? [] : id === "huge"
       ? [{ ...year, name: "超级长规格名称MixedEnglishWithoutBreak混合中文".repeat(4), price: 123456789012.34 }, month]
+      : id === "supplier-limits" ? [{ ...year, stock_available: 5, stock_status: "AVAILABLE", min_quantity: 2, max_quantity: 4, stock_mode: "SUPPLIER" }, month]
       : [id === "refresh" && refreshedProduct ? { ...year, stock_available: 0 } : year, month],
     zero_price_purchase_allowed: id === "zero", delivery_type: "MANUAL", sales_count: 0, initial_sales: 0,
     customer_input_fields: fields }
@@ -128,7 +130,7 @@ async function fixture({ id = "standard", width = 390, height = 844, theme = "li
   await page.goto(`${base}/product/${id}`, { waitUntil: "networkidle" })
   const trigger = page.locator(".product-purchase-dock-closed button")
   await trigger.waitFor({ state: "visible" })
-  if (id !== "soldout") await page.waitForFunction(() => !document.querySelector('.product-purchase-dock-closed button')?.disabled)
+  if (id !== "soldout" && id !== "sync-failed") await page.waitForFunction(() => !document.querySelector('.product-purchase-dock-closed button')?.disabled)
   return { context, page, trigger, requests, requestHeaders, errors }
 }
 const dialog = page => page.getByRole("dialog", { name: "立即购买" })
@@ -476,6 +478,31 @@ try {
     }
     await closeFixture(f)
   }
+  {
+    const f = await fixture({ id: "supplier-limits" })
+    await f.trigger.click(); await dialog(f.page).waitFor()
+    const quantity=dialog(f.page).getByRole("spinbutton",{ name: "数量" })
+    assert.equal(await quantity.getAttribute("min"),"2")
+    assert.equal(await quantity.getAttribute("max"),"4")
+    assert.equal(await quantity.inputValue(),"2")
+    assert.equal(await dialog(f.page).getByRole("button",{name:"减少数量"}).isDisabled(),true)
+    await dialog(f.page).getByRole("button",{name:"增加数量"}).click()
+    await dialog(f.page).getByRole("button",{name:"增加数量"}).click()
+    assert.equal(await quantity.inputValue(),"4")
+    assert.equal(await dialog(f.page).getByRole("button",{name:"增加数量"}).isDisabled(),true)
+    await quantity.fill("1")
+    assert.equal(await quantity.inputValue(),"2")
+    await closeFixture(f)
+    console.log("Supplier minimum and maximum quantities clamp to buyer units: passed")
+  }
+
+  {
+    const f = await fixture({ id: "sync-failed" })
+    assert.equal(await f.trigger.isDisabled(),true)
+    assert.equal(await f.trigger.innerText(),"库存待确认")
+    await closeFixture(f)
+  }
+
   {
     const f = await fixture({ id: "soldout" })
     assert.equal(await f.trigger.isDisabled(), true)

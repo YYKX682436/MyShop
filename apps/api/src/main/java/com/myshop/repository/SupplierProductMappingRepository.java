@@ -24,12 +24,25 @@ public interface SupplierProductMappingRepository extends JpaRepository<Supplier
     List<UUID> findAccountsByProductId(@Param("productId") UUID productId);
     @Query("select m.accountId, m.productId from SupplierProductMapping m where m.id=:id")
     List<Object[]> findCoordinates(@Param("id") UUID id);
-    @Query("select m.accountId, m.remoteGoodsId from SupplierProductMapping m, SupplierAccount a, Product p " +
-           "where m.accountId = a.id and a.enabled = true and p.id=m.productId and p.isDeleted=0 " +
-           "and p.stockMode=com.myshop.constant.StockMode.SUPPLIER and " +
-           "((m.specId is null and p.specEnabled=false) or (m.specId is not null and p.specEnabled=true and exists " +
-           "(select s.id from ProductSpec s where s.id=m.specId and s.productId=p.id and s.isDeleted=0))) " +
-           "group by m.accountId, m.remoteGoodsId " +
-           "order by min(m.lastAttemptAt) asc")
+    @Query(value="""
+        SELECT m.account_id, m.remote_goods_id
+        FROM supplier_product_mappings m
+        JOIN supplier_accounts a ON a.id=m.account_id
+        JOIN products p ON p.id=m.product_id
+        WHERE a.enabled=true AND p.is_deleted=0 AND p.stock_mode='SUPPLIER'
+          AND ((m.spec_id IS NULL AND p.spec_enabled=false)
+            OR (m.spec_id IS NOT NULL AND p.spec_enabled=true AND EXISTS (
+                SELECT 1 FROM product_specs s
+                WHERE s.id=m.spec_id AND s.product_id=p.id AND s.is_deleted=0)))
+        GROUP BY m.account_id,m.remote_goods_id
+        HAVING MIN(m.last_attempt_at)<CURRENT_TIMESTAMP-INTERVAL '1 minute'
+          AND (BOOL_OR(m.sync_error IN ('CONNECTION','HTTP','BUSINESS','INTERNAL'))
+            OR (BOOL_AND(m.sync_error IS NULL)
+                AND MIN(m.last_synced_at)<CURRENT_TIMESTAMP-INTERVAL '25 minutes')
+            OR (BOOL_OR(m.sync_error IS NOT NULL)
+                AND MIN(m.last_synced_at)<CURRENT_TIMESTAMP-INTERVAL '25 minutes'
+                AND MIN(m.last_attempt_at)<CURRENT_TIMESTAMP-INTERVAL '25 minutes'))
+        ORDER BY MIN(m.last_attempt_at),m.account_id,m.remote_goods_id
+        """,nativeQuery=true)
     List<Object[]> findDue(Pageable pageable);
 }

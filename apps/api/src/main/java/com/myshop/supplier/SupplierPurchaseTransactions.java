@@ -111,6 +111,39 @@ public class SupplierPurchaseTransactions {
         }
     }
 
+    /** Reopens only a pre-submit blocked intent; its original outer number is never changed. */
+    @Transactional(propagation=Propagation.REQUIRES_NEW,timeout=5)
+    public boolean resumeBeforeSubmit(UUID id) {
+        UUID orderId=purchases.findOrderId(id).orElseThrow();
+        UUID itemId=purchases.findOrderItemId(id).orElseThrow();
+        Order order=orders.findByIdForUpdate(orderId).orElseThrow();
+        SupplierPurchase p=purchases.findForUpdate(id).orElseThrow();
+        OrderItem item=items.findById(itemId).orElseThrow();
+        if (!canResumeBeforeSubmit(order,p,item,id)) return false;
+        p.setStatus("WAITING_PAYMENT"); p.setErrorCode(null); p.setLastCheckedAt(LocalDateTime.now());
+        purchases.saveAndFlush(p);
+        return true;
+    }
+
+    @Transactional(readOnly=true)
+    public boolean canResumeBeforeSubmit(UUID id) {
+        SupplierPurchase p=purchases.findById(id).orElse(null);
+        if (p==null) return false;
+        Order order=orders.findById(p.getOrderId()).orElse(null);
+        OrderItem item=items.findById(p.getOrderItemId()).orElse(null);
+        return order!=null && item!=null && canResumeBeforeSubmit(order,p,item,id);
+    }
+
+    private boolean canResumeBeforeSubmit(Order order,SupplierPurchase p,OrderItem item,UUID id) {
+        return "BLOCKED".equals(p.getStatus()) && p.getSubmitStartedAt()==null && p.getUpstreamOrderNumber()==null
+                && !"LATE_PAYMENT".equals(p.getErrorCode()) && !"ORDER_STATE".equals(p.getErrorCode())
+                && order.getId().equals(item.getOrderId()) && order.getStatus()==OrderStatus.PAID && !order.isRiskFlagged()
+                && item.getStockMode()==StockMode.SUPPLIER && item.getFulfillmentStatus()!=FulfillmentStatus.DELIVERED
+                && cards.findByPurchaseIdOrderByCreatedAtAsc(id).isEmpty()
+                && aftercare.findByPurchaseIdOrderByCreatedAtAsc(id).isEmpty()
+                && !paymentEvents.existsByOrderIdAndProcessResultStartingWith(order.getId(),"LATE_PAID_");
+    }
+
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public void submissionUnknown(UUID id,String error) {
         SupplierPurchase p=purchases.findForUpdate(id).orElseThrow();

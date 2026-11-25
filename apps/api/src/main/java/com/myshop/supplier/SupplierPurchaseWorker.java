@@ -113,8 +113,8 @@ public class SupplierPurchaseWorker {
         catch (RuntimeException e) { throw issue("CALLBACK_CONFIG"); }
         var remote=account.provider().detail(account.connection(),p.getRemoteGoodsId());
         if (remote.status()!=1 || remote.goodsType()!=p.getGoodsType() || remote.multiple()!=p.getMultiple()) throw issue("PRODUCT_CHANGED");
-        if ((remote.minQuantity()>0 && (p.getBuyerQuantity()<remote.minQuantity() || p.getActualQuantity()<remote.minQuantity()))
-                || (remote.maxQuantity()>0 && (p.getBuyerQuantity()>remote.maxQuantity() || p.getActualQuantity()>remote.maxQuantity()))) throw issue("QUANTITY");
+        if ((remote.minQuantity()>0 && p.getBuyerQuantity()<remote.minQuantity())
+                || (remote.maxQuantity()>0 && p.getBuyerQuantity()>remote.maxQuantity())) throw issue("QUANTITY");
         var sku=remote.skus().stream().filter(s -> s.id().equals(p.getRemoteSku())).findFirst().orElseThrow(() -> issue("SKU_CHANGED"));
         if (sku.status()!=1 || sku.stock()<p.getActualQuantity()) throw issue("STOCK");
         BigDecimal cost=sku.cost().multiply(BigDecimal.valueOf(p.getActualQuantity()));

@@ -224,7 +224,8 @@ public class PublicProductServiceImpl implements PublicProductService {
                 category == null ? null : category.getName(), categoryPath.primaryCategoryId(),
                 categoryPath.primaryCategoryName(), categoryPath.secondaryCategoryId(),
                 categoryPath.secondaryCategoryName(),
-                rootStock.available(), rootStock.unlimited(), hasSpecs, product.getDeliveryType(),
+                rootStock.available(), rootStock.unlimited(), rootStock.status(),rootStock.minQuantity(),rootStock.maxQuantity(),
+                hasSpecs, product.getDeliveryType(),
                 customerFields(product,detail),
                 product.getStockMode().name(), salesCount,
                 product.getInitialSales(), product.isSpecEnabled(), specResponses,
@@ -247,7 +248,8 @@ public class PublicProductServiceImpl implements PublicProductService {
         ProductInventoryBatchService.StockSnapshot stockSnapshot = stock.getOrDefault(
                 new PriceTarget(product.getId(), spec.getId()), new ProductInventoryBatchService.StockSnapshot(0L, false));
         return new PublicProductSpecResponse(spec.getId(), spec.getName(), price.price(), siteCustomer && product.getStockMode() != StockMode.SUPPLIER && price.pricingSource() == com.myshop.constant.PricingSource.SUBSITE && price.price().signum() == 0, spec.getRetailPrice(),
-                stockSnapshot.available(), stockSnapshot.unlimited(), product.getStockMode().name(),
+                stockSnapshot.available(), stockSnapshot.unlimited(),stockSnapshot.status(),stockSnapshot.minQuantity(),stockSnapshot.maxQuantity(),
+                product.getStockMode().name(),
                 product.getStockMode()==StockMode.SUPPLIER && supplierStockService!=null
                         ? supplierStockService.fields(product.getId(),spec.getId()) : null);
     }

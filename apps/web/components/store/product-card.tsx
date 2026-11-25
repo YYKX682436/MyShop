@@ -6,6 +6,7 @@ import { ProductImage } from "@/components/store/product-image"
 import type { ProductCard as ProductCardType } from "@/types"
 import { useLocale } from "@/lib/context"
 import { formatYuan } from "@/lib/utils"
+import { hasPurchasableStock, stockNoticeKey } from "@/lib/product-stock"
 
 interface ProductCardProps {
   product: ProductCardType
@@ -14,7 +15,7 @@ interface ProductCardProps {
 
 export function ProductCard({ product, priority = false }: ProductCardProps) {
   const { t } = useLocale()
-  const inStock = product.unlimited || (product.stock_available ?? 0) > 0
+  const inStock = hasPurchasableStock(product.stock_available, Boolean(product.unlimited), product.stock_status)
   const productUrl = `/product/${product.id}`
 
   return (
@@ -40,7 +41,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
         )}
         {!inStock && (
           <span className="pointer-events-none absolute right-2 top-2 rounded-full border border-border-subtle bg-surface/95 px-2 py-1 text-[10px] font-medium text-muted-foreground shadow-xs">
-            {t("product.soldOut")}
+            {t(stockNoticeKey(product.stock_status))}
           </span>
         )}
       </div>

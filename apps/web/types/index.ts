@@ -90,6 +90,9 @@ export interface ProductSpec {
   zero_price_purchase_allowed?: boolean
   retail_price: number
   stock_available: number | null
+  stock_status?: string
+  min_quantity?: number | null
+  max_quantity?: number | null
   unlimited?: boolean
   stock_mode?: "CARD_KEY" | "MANUAL" | "UNLIMITED" | "SUPPLIER"
   manual_stock?: number | null
@@ -134,6 +137,9 @@ export interface ProductCard {
   secondary_category_id?: string | null
   secondary_category_name?: string | null
   stock_available: number | null
+  stock_status?: string
+  min_quantity?: number | null
+  max_quantity?: number | null
   unlimited?: boolean
   has_specs: boolean
   delivery_type?: string
@@ -167,6 +173,9 @@ export interface AdminProductSpec {
   is_deleted: 0 | 1
   sort_order: number
   stock_available: number | null
+  stock_status?: string
+  min_quantity?: number | null
+  max_quantity?: number | null
   unlimited: boolean
   manual_stock: number | null
   card_key_count: number
@@ -230,6 +239,9 @@ export interface AdminProductDetail {
   secondary_category_id: string | null
   secondary_category_name: string | null
   stock_available: number | null
+  stock_status?: string
+  min_quantity?: number | null
+  max_quantity?: number | null
   unlimited: boolean
   has_specs: boolean
   delivery_type: "AUTO" | "MANUAL"
@@ -760,6 +772,7 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
   supplier_purchase?: {
     id: string
     account_name: string
+    goods_type: number
     outer_number: string
     upstream_order_number: string | null
     status: string
@@ -770,12 +783,19 @@ export interface AdminOrderItemDetail extends OrderItemDetail {
     actual_cost: number | string | null
     refunded_amount: number | string | null
     last_checked_at: string | null
+    submit_started_at: string | null
+    result: string | null
+    start_count: string | null
+    now_count: string | null
+    end_count: string | null
     error_code: string | null
     can_refresh: boolean
+    can_recover: boolean
+    can_local_refund: boolean
     reviews?: { outcome: string; operator: string; created_at: string }[]
     aftercare_operations?: { id: string; idempotency_key: string; kind: string; status: string; card_id: string | null; after_sale_id: string | null; supplier_req_id: number | null; upstream_status: number | null; result: string | null; error_code: string | null; topic: string | null; content: string | null; attachment_ids: string[]; created_at: string; last_checked_at: string | null; reviews: { outcome: string; operator: string; created_at: string }[] }[]
     late_payments?: { id: string; attempt_id: string; channel: string; recorded_at: string }[]
-    supplier_cards?: { id: string; remote_card_id: string; status: number; cancel_request: number; result: string | null; last_checked_at: string | null }[]
+    supplier_cards?: { id: string; remote_card_id: string; card_no: string | null; card_pwd: string | null; content_parts: string[]; status: number; cancel_request: number; result: string | null; last_checked_at: string | null }[]
   } | null
 }
 

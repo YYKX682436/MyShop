@@ -17,6 +17,13 @@ class SupplierPurchasePolicyTest {
         var result=policy.quote(mapping(),true,2,new BigDecimal("1.00"),LocalDateTime.now());
         assertEquals(6,result.actualQuantity()); assertEquals(new BigDecimal("0.07407402"),result.totalCost());
     }
+    @Test void minAndMaxApplyToBuyerCountWhileStockAndCostUseDeliveredCount() {
+        var m=mapping(); m.setStock(30); m.setMinQuantity(2); m.setMaxQuantity(3);
+        var quote=policy.quote(m,true,3,BigDecimal.TEN,LocalDateTime.now());
+        assertEquals(9,quote.actualQuantity());
+        assertThrows(SupplierException.class,()->policy.quote(m,true,1,BigDecimal.TEN,LocalDateTime.now()));
+        assertThrows(SupplierException.class,()->policy.quote(m,true,4,BigDecimal.TEN,LocalDateTime.now()));
+    }
     @Test void rejectsQuantityStockStaleAndNonProfitableOrders() {
         var m=mapping();
         assertThrows(SupplierException.class,()->policy.quote(m,true,5,BigDecimal.TEN,LocalDateTime.now()));
@@ -24,6 +31,10 @@ class SupplierPurchasePolicyTest {
         m.setStock(12); m.setLastSyncedAt(LocalDateTime.now().minusMinutes(31));
         assertThrows(SupplierException.class,()->policy.quote(m,true,1,BigDecimal.TEN,LocalDateTime.now()));
         m.setLastSyncedAt(LocalDateTime.now());
+        m.setSyncError("CONNECTION");
+        assertEquals("SYNC_FAILED",assertThrows(SupplierException.class,
+                ()->policy.quote(m,true,1,BigDecimal.TEN,LocalDateTime.now())).kind());
+        m.setSyncError(null);
         assertThrows(SupplierException.class,()->policy.quote(m,true,1,new BigDecimal("0.01"),LocalDateTime.now()));
         assertThrows(SupplierException.class,()->policy.quote(m,false,1,BigDecimal.TEN,LocalDateTime.now()));
     }

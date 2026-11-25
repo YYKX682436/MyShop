@@ -18,25 +18,35 @@ public class SupplierStockService {
     private final SupplierRechargeFields inputs;
 
     public Map<PriceTarget,Long> available(List<UUID> ids) {
+        Map<PriceTarget,SupplierStockRules.Availability> availability=availability(ids);
+        Map<PriceTarget,Long> result=new HashMap<>();
+        availability.forEach((target,value) -> result.put(target,value.quantity()));
+        return result;
+    }
+
+    public Map<PriceTarget,SupplierStockRules.Availability> availability(List<UUID> ids) {
         if (ids.isEmpty()) return Map.of();
         Map<UUID,SupplierService.RuntimeAccount> accounts=new HashMap<>(); Set<UUID> invalidAccounts=new HashSet<>();
-        Map<PriceTarget,Long> result=new HashMap<>(); LocalDateTime now=LocalDateTime.now();
+        Map<PriceTarget,SupplierStockRules.Availability> result=new HashMap<>(); LocalDateTime now=LocalDateTime.now();
         for (SupplierProductMapping m:mappings.findByProductIdIn(ids)) {
-            if (invalidAccounts.contains(m.getAccountId())) continue;
+            PriceTarget target=new PriceTarget(m.getProductId(),m.getSpecId());
+            var assessment=SupplierStockRules.assess(m,now);
+            if (!"AVAILABLE".equals(assessment.status())) { result.put(target,assessment); continue; }
+            if (invalidAccounts.contains(m.getAccountId())) { result.put(target,SupplierStockRules.accountUnavailable(m)); continue; }
             SupplierService.RuntimeAccount account=accounts.get(m.getAccountId());
             try {
                 if (account==null) { account=suppliers.runtime(m.getAccountId(),true); accounts.put(m.getAccountId(),account); }
-            } catch (RuntimeException ignored) { invalidAccounts.add(m.getAccountId()); continue; }
+            } catch (RuntimeException ignored) {
+                invalidAccounts.add(m.getAccountId()); result.put(target,SupplierStockRules.accountUnavailable(m)); continue;
+            }
             try {
                 var fields=account.provider().customerFields(m.getSnapshot());
-                if (!inputs.supported(fields) || m.getGoodsType()==3 && fields.isEmpty() || m.getGoodsStatus()!=1
-                        || m.getSkuStatus()!=1 || m.getMultiple()<1 || m.getSyncError()!=null || m.getLastSyncedAt()==null
-                        || m.getLastSyncedAt().isBefore(now.minusMinutes(30)) || m.getLastSyncedAt().isAfter(now.plusMinutes(1))) continue;
-                long qty=m.getStock()/m.getMultiple();
-                if (m.getMaxQuantity()>0) qty=Math.min(qty,m.getMaxQuantity()/m.getMultiple());
-                if (m.getMinQuantity()>0 && qty<m.getMinQuantity()) qty=0;
-                result.put(new PriceTarget(m.getProductId(),m.getSpecId()),qty);
-            } catch (RuntimeException ignored) { /* Invalid product data does not hide other products. */ }
+                if (!inputs.supported(fields) || m.getGoodsType()==3 && fields.isEmpty()) {
+                    result.put(target,SupplierStockRules.unsupportedInputs(m));
+                } else result.put(target,assessment);
+            } catch (RuntimeException ignored) {
+                result.put(target,SupplierStockRules.unsupportedInputs(m));
+            }
         }
         return result;
     }

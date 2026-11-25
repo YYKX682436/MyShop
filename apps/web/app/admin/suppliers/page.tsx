@@ -24,7 +24,26 @@ function syncError(row: SupplierMapping) {
     case "DATA": return "上游资料或规格不兼容，请检查后重新同步"
     case "CONNECTION": return "无法连接供货站，请检查连接后重试"
     case "CONFIG": return "货源配置异常，请检查账号"
+    case "HTTP": return "上游暂时无法响应，请等待自动重试或手动同步"
+    case "BUSINESS": return "上游暂时拒绝查询，请等待自动重试或手动同步"
+    case "INTERNAL": return "本地同步处理失败，请检查商品映射后重试"
     default: return row.sync_error ? "同步失败，请检查货源配置后重试" : ""
+  }
+}
+function stockStateLabel(row: SupplierMapping) {
+  switch (row.stock_state) {
+    case "AVAILABLE": return "可购买"
+    case "OUT_OF_STOCK": return "上游实际无库存"
+    case "MULTIPLE_SHORTAGE": return "库存未达到发货倍数"
+    case "BELOW_MINIMUM": return `可售数量低于最低购买量 ${row.min_quantity}`
+    case "SYNC_FAILED": return "同步失败，原库存仅作参考"
+    case "STALE": return "同步数据已过期"
+    case "UPSTREAM_UNAVAILABLE": return "上游商品或规格停售"
+    case "LOCAL_UNAVAILABLE": return syncError(row) || "本地商品或规格不可售"
+    case "ACCOUNT_UNAVAILABLE": return "货源账号不可用"
+    case "INPUT_UNSUPPORTED": return "充值字段暂不支持"
+    case "INVALID_DATA": return "上游数据格式异常"
+    default: return "未绑定可售库存"
   }
 }
 function flatten<T extends { id: string; name: string; children?: T[] }>(items: T[], depth = 0): { id: string; name: string }[] {
@@ -262,7 +281,7 @@ export default function SuppliersPage() {
       </section>
       <section>
         <div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-semibold">已关联商品</h2><Button type="button" variant="ghost" size="sm" disabled={loadingMappings} onClick={() => void loadMappings(active.id)}><RefreshCw />刷新</Button></div>
-        <section className="admin-table-region min-w-0"><div className="admin-table-scroll min-w-0 overflow-x-auto" role="region" aria-label="货源商品同步状态" tabIndex={0}><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-border-subtle"><th scope="col" className="p-3">上游商品 / 规格</th><th scope="col" className="p-3">MyShop 商品 / 规格</th><th scope="col" className="p-3">成本</th><th scope="col" className="p-3">库存</th><th scope="col" className="p-3">状态</th><th scope="col" className="p-3">操作</th></tr></thead><tbody>{mappings.map(row => <tr className="border-b border-border-subtle" key={row.id}><td data-label="上游商品 / 规格" className="p-3"><div>{row.remote_goods_name || `上游商品 ${row.remote_goods_id}`}<div className="text-xs text-muted-foreground">{row.remote_sku_name || row.remote_sku || "单规格"} · #{row.remote_goods_id}{row.remote_sku ? ` / ${row.remote_sku}` : ""}</div></div></td><td data-label="MyShop 商品 / 规格" className="p-3"><div>{row.local_state === "PRODUCT_DELETED" ? row.product_name || "已删除商品" : <a className="text-primary underline" href={`/admin/products/${row.product_id}/edit`}>{row.product_name || "查看商品"}</a>}{row.spec_name && <div className="text-xs text-muted-foreground">{row.spec_name}</div>}</div></td><td data-label="成本" className="p-3"><div>¥{row.cost}</div></td><td data-label="库存" className="p-3"><div>{row.stock}</div></td><td data-label="状态" className="p-3"><div>{row.goods_status === 1 && row.sku_status === 1 ? "上游可售" : "上游停售"}{syncError(row) && <div className="text-destructive">{syncError(row)}</div>}</div></td><td data-label="操作" className="p-3"><div><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" disabled={busy || Boolean(row.local_state)} onClick={() => setReplacement(row)}>更换货源</Button><Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void unbind(row)}>解除关联</Button><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled || Boolean(row.local_state)} onClick={() => void sync(row.remote_goods_id)}>同步库存</Button><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled || Boolean(row.local_state)} onClick={() => void syncPresentation(row)}>同步商品资料</Button></div></div></td></tr>)}{!mappings.length && <tr className="admin-table-state-row"><td colSpan={6} className="admin-table-state-cell p-8 text-center text-muted-foreground">暂无关联商品</td></tr>}</tbody></table></div></section>
+        <section className="admin-table-region min-w-0"><div className="admin-table-scroll min-w-0 overflow-x-auto" role="region" aria-label="货源商品同步状态" tabIndex={0}><table className="w-full min-w-[820px] text-left text-sm"><thead><tr className="border-b border-border-subtle"><th scope="col" className="p-3">上游商品 / 规格</th><th scope="col" className="p-3">MyShop 商品 / 规格</th><th scope="col" className="p-3">成本</th><th scope="col" className="p-3">库存</th><th scope="col" className="p-3">状态</th><th scope="col" className="p-3">操作</th></tr></thead><tbody>{mappings.map(row => <tr className="border-b border-border-subtle" key={row.id}><td data-label="上游商品 / 规格" className="p-3"><div>{row.remote_goods_name || `上游商品 ${row.remote_goods_id}`}<div className="text-xs text-muted-foreground">{row.remote_sku_name || row.remote_sku || "单规格"} · #{row.remote_goods_id}{row.remote_sku ? ` / ${row.remote_sku}` : ""}</div></div></td><td data-label="MyShop 商品 / 规格" className="p-3"><div>{row.local_state === "PRODUCT_DELETED" ? row.product_name || "已删除商品" : <a className="text-primary underline" href={`/admin/products/${row.product_id}/edit`}>{row.product_name || "查看商品"}</a>}{row.spec_name && <div className="text-xs text-muted-foreground">{row.spec_name}</div>}</div></td><td data-label="成本" className="p-3"><div>¥{row.cost}</div></td><td data-label="库存" className="p-3"><div>原始 {row.stock} · 倍数 {row.multiple}</div><div className="text-xs text-muted-foreground">可购买 {row.available_quantity ?? "待确认"}{row.min_quantity > 0 ? ` · 最少 ${row.min_quantity}` : ""}{row.max_quantity > 0 ? ` · 最多 ${row.max_quantity}` : ""}</div></td><td data-label="状态" className="p-3"><div>{stockStateLabel(row)}</div><div className="text-xs text-muted-foreground">最近成功 {row.last_synced_at?.replace("T", " ") || "无"} · 最近尝试 {row.last_attempt_at?.replace("T", " ") || "无"}</div>{syncError(row) && <div className="text-destructive">{syncError(row)}</div>}</td><td data-label="操作" className="p-3"><div><div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" disabled={busy || Boolean(row.local_state)} onClick={() => setReplacement(row)}>更换货源</Button><Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void unbind(row)}>解除关联</Button><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled || Boolean(row.local_state)} onClick={() => void sync(row.remote_goods_id)}>同步库存</Button><Button type="button" variant="outline" size="sm" disabled={busy || !active.enabled || Boolean(row.local_state)} onClick={() => void syncPresentation(row)}>同步商品资料</Button></div></div></td></tr>)}{!mappings.length && <tr className="admin-table-state-row"><td colSpan={6} className="admin-table-state-cell p-8 text-center text-muted-foreground">暂无关联商品</td></tr>}</tbody></table></div></section>
       </section>
     </>}
     <SupplierPicker open={replacement !== null} onOpenChange={open => { if (!open) setReplacement(null) }} onSelect={selection => { if (replacement) void replaceSource(replacement,selection) }} />

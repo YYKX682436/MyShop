@@ -16,6 +16,9 @@ public record PublicProductSpecResponse(
         BigDecimal retailPrice,
         Long stockAvailable,
         boolean unlimited,
+        String stockStatus,
+        Integer minQuantity,
+        Integer maxQuantity,
         String stockMode,
         List<CustomerInputField> supplierInputFields
 ) {
