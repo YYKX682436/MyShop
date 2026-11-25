@@ -816,15 +816,6 @@
     border-radius: 0.875rem;
   }
 
-  .account-balance-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-block: 0.75rem;
-    padding-inline: 1rem;
-  }
-
   .auth-page {
     display: grid;
     gap: 2rem;
@@ -1294,7 +1285,6 @@
   .product-description-content { padding-block: 0.5rem 1rem; }
   .account-identity { gap: 0.75rem; }
   .account-balance { border-color: hsl(var(--border-subtle)); border-radius: 0.875rem; }
-  .account-balance-row { min-height: 5rem; justify-content: space-between; padding: 0.75rem 1rem; }
   .auth-page { min-height: 0; gap: 1rem; padding-block: 0; }
   .auth-form-panel { padding-top: 1rem; }
   .product-purchase-dock-viewport { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }

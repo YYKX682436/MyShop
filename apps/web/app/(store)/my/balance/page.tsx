@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { ArrowLeft, Check, Clock3, Wallet } from "lucide-react"
 import { toast } from "sonner"
@@ -36,7 +36,6 @@ export default function MyBalancePage() {
   const [channels, setChannels] = useState<PublicPaymentChannel[]>([])
   const [selectedChannel, setSelectedChannel] = useState("")
   const [amount, setAmount] = useState("")
-  const [customAmount, setCustomAmount] = useState(false)
   const [payment, setPayment] = useState<AccountPaymentCreateResult | null>(null)
   const [transaction, setTransaction] = useState<AccountTransaction | null>(null)
   const [busy, setBusy] = useState(false)
@@ -70,7 +69,6 @@ export default function MyBalancePage() {
     ]).then(([nextOverview, nextChannels, nextHistory]) => {
       if (cancelled) return
       setOverview(nextOverview)
-      setAmount(String(nextOverview.recharge_min_amount))
       setChannels(nextChannels)
       setSelectedChannel(nextChannels[0]?.channel_code ?? "")
       setHistory(nextHistory.list)
@@ -112,6 +110,9 @@ export default function MyBalancePage() {
 
   const activeTransactionId = transaction?.id
   const activeTransactionStatus = transaction?.status
+  const enteredAmount = amount.trim() ? Number(amount) : Number.NaN
+  const canSubmitRecharge = !!overview && Number.isFinite(enteredAmount)
+    && enteredAmount >= overview.recharge_min_amount && enteredAmount <= overview.recharge_max_amount
 
   useEffect(() => {
     if (!activeTransactionId || activeTransactionStatus === "PENDING") return
@@ -133,9 +134,6 @@ export default function MyBalancePage() {
     }, 3000)
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [activeTransactionId, activeTransactionStatus])
-
-  const quickAmounts = useMemo(() => [10, 50, 100, 200].filter((value) =>
-    value >= (overview?.recharge_min_amount ?? 10) && value <= (overview?.recharge_max_amount ?? 5000)), [overview])
 
   const refreshActiveTransaction = useCallback(async () => {
     if (!transaction) return
@@ -177,24 +175,18 @@ export default function MyBalancePage() {
         <section className="content-surface space-y-5 rounded-card p-4 sm:p-5">
           <form action="/api/user/account/recharges" method="post" onSubmit={(event) => void submitRecharge(event)} className="space-y-5" aria-labelledby="recharge-heading">
             <h2 id="recharge-heading" className="sr-only">{t("my.rechargeTitle")}</h2>
-            <fieldset className="space-y-3">
-              <legend className="text-sm font-medium text-foreground">{t("my.rechargeAmount")}</legend>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {quickAmounts.map((value) => (
-                  <button key={value} type="button" aria-pressed={!customAmount && amount === String(value)} onClick={() => { setAmount(String(value)); setCustomAmount(false) }} className={`min-h-12 rounded-control border px-3 text-sm font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${!customAmount && amount === String(value) ? "border-primary/30 bg-primary/10 text-primary" : "border-border-subtle bg-surface text-foreground hover:bg-surface-muted"}`}>{value} 元</button>
-                ))}
-                <button type="button" aria-pressed={customAmount} onClick={() => setCustomAmount(true)} className={`min-h-12 rounded-control border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${customAmount ? "border-primary/30 bg-primary/10 text-primary" : "border-border-subtle bg-surface text-foreground hover:bg-surface-muted"}`}>{t("my.customAmount")}</button>
-              </div>
-              {customAmount && <label className="block max-w-xs space-y-1.5 text-sm font-medium text-foreground" htmlFor="recharge-amount"><span>{t("my.rechargeAmount")}</span><input id="recharge-amount" name="amount" type="number" inputMode="decimal" min={overview.recharge_min_amount} max={overview.recharge_max_amount} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)} className="h-11 w-full rounded-control border border-input bg-background px-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" /></label>}
-              <p className="text-xs text-muted-foreground">{formatYuan(overview.recharge_min_amount)} – {formatYuan(overview.recharge_max_amount)}</p>
-            </fieldset>
+            <div className="max-w-sm space-y-1.5">
+              <label htmlFor="recharge-amount" className="block text-sm font-medium text-foreground">{t("my.rechargeAmount")}</label>
+              <input id="recharge-amount" name="amount" type="number" inputMode="decimal" min={overview.recharge_min_amount} max={overview.recharge_max_amount} step="0.01" required value={amount} onChange={(event) => setAmount(event.target.value)} aria-describedby="recharge-limit-hint" className="h-11 w-full rounded-control border border-input bg-background px-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              <p id="recharge-limit-hint" className="text-xs text-muted-foreground">{formatYuan(overview.recharge_min_amount)} – {formatYuan(overview.recharge_max_amount)}</p>
+            </div>
 
             <fieldset className="space-y-3">
               <legend className="text-sm font-medium text-foreground">{t("product.paymentMethod")}</legend>
               {channels.length ? <PaymentSelector channels={channels} selected={selectedChannel} onSelect={setSelectedChannel} /> : <p className="text-sm text-muted-foreground">{t("product.noOnlineChannels")}</p>}
             </fieldset>
-            <Button type="submit" disabled={busy || !channels.length || !selectedChannel || Number(amount) < overview.recharge_min_amount || Number(amount) > overview.recharge_max_amount} className="w-full sm:w-auto">
-              <Wallet className="size-4" aria-hidden="true" />{busy ? t("admin.processing") : t("my.confirmRecharge").replace("{amount}", formatYuan(Number(amount) || 0))}
+            <Button type="submit" disabled={busy || !channels.length || !selectedChannel || !canSubmitRecharge} className="w-full sm:w-auto">
+              <Wallet className="size-4" aria-hidden="true" />{busy ? t("admin.processing") : canSubmitRecharge ? t("my.confirmRecharge").replace("{amount}", formatYuan(enteredAmount)) : t("my.recharge")}
             </Button>
           </form>
 

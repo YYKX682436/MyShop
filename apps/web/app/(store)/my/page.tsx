@@ -12,7 +12,6 @@ import {
   ShieldCheck,
   Store,
   UserPlus,
-  Wallet,
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -53,32 +52,32 @@ function Divider() {
 
 function LoadingAccount() {
   return (
-    <div className="account-page space-y-3 sm:space-y-4">
+    <div className="account-page -mt-2 space-y-3 sm:space-y-4">
       <header className="hidden space-y-2 sm:block" aria-hidden="true">
         <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
         <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
       </header>
       <section className="content-surface rounded-card p-5 sm:p-6" data-layout="account-identity" aria-hidden="true">
-        <div className="flex items-start gap-4">
-          <div className="size-16 shrink-0 animate-pulse rounded-full bg-foreground/[0.07] sm:size-20 md:size-24" />
-          <div className="min-w-0 flex-1 space-y-2 pt-1">
+        <div className="flex items-center gap-3">
+          <div className="size-14 shrink-0 animate-pulse rounded-card bg-foreground/[0.07] sm:size-16" />
+          <div className="min-w-0 flex-1 space-y-1">
             <div className="h-5 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="mt-2 flex min-w-0 max-w-full items-center gap-2">
+            <div className="mt-0.5 flex min-w-0 max-w-full items-center gap-2">
               <div className="h-6 w-28 min-w-0 animate-pulse rounded-full bg-foreground/[0.07]" />
               <div className="h-3 w-20 shrink-0 animate-pulse rounded-full bg-foreground/[0.07]" />
             </div>
           </div>
         </div>
       </section>
-      <section
-        className="overflow-hidden rounded-card border border-border-subtle bg-surface p-4"
-        data-layout="account-balance"
-        aria-hidden="true"
-      >
-        <div className="flex items-center gap-4">
-          <div className="space-y-2">
+      <section className="account-balance bg-surface p-2 sm:p-3" data-layout="account-balance" aria-hidden="true">
+        <div className="flex flex-col gap-0">
+          <div className="flex min-h-9 items-center justify-between gap-3">
             <div className="h-4 w-14 animate-pulse rounded-full bg-foreground/[0.07]" />
-            <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="h-4 w-20 animate-pulse rounded-full bg-foreground/[0.07]" />
+          </div>
+          <div className="flex min-h-10 items-center justify-between gap-3">
+            <div className="h-8 w-28 animate-pulse rounded-full bg-foreground/[0.07]" />
+            <div className="h-9 w-14 animate-pulse rounded-control bg-foreground/[0.07]" />
           </div>
         </div>
       </section>
@@ -194,7 +193,7 @@ export default function MyPage() {
   ) : user.user_level_name ? (
     <Badge
       variant="secondary"
-      className="min-w-0 max-w-full gap-1.5 overflow-hidden border-border-subtle bg-surface-muted text-foreground"
+      className="min-w-0 max-w-full gap-1.5 overflow-hidden border-amber-300/80 bg-gradient-to-r from-amber-50 via-amber-100/80 to-yellow-50 text-amber-800 dark:border-amber-400/35 dark:from-amber-950/70 dark:via-amber-900/55 dark:to-yellow-950/55 dark:text-amber-200"
     >
       <Crown className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate">{user.user_level_name}</span>
@@ -202,7 +201,7 @@ export default function MyPage() {
   ) : null
 
   return (
-    <div className="account-page space-y-3 sm:space-y-4">
+    <div className="account-page -mt-2 space-y-3 sm:space-y-4">
       <header className="sr-only sm:not-sr-only">
         <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{t("my.accountSummary")}</p>
@@ -216,19 +215,19 @@ export default function MyPage() {
             isBusy={isAvatarBusy}
             onUpload={handleAvatarUpload}
           />
-          <div className="min-w-0 flex-1 pt-1">
+          <div className="min-w-0 flex-1">
             <h2 className="max-w-full text-xl font-semibold tracking-tight text-foreground">
               <button
                 type="button"
                 onClick={handleCopyUsername}
                 aria-label={t("my.copyUsername")}
-                className="-mx-1 inline-flex min-h-11 max-w-full items-center rounded px-1 py-0.5 text-left text-xl font-semibold tracking-tight text-foreground transition-[color,transform] hover:text-foreground/80 active:scale-[.995] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="-mx-1 inline-flex min-h-9 max-w-full items-center rounded px-1 py-0 text-left text-xl font-semibold tracking-tight text-foreground transition-[color,transform] hover:text-foreground/80 active:scale-[.995] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <span className="truncate">{user.username}</span>
               </button>
             </h2>
             {(identityBadge || (!isAdminRole(user.role) && user.user_no !== null)) && (
-              <div className="mt-1 flex min-w-0 max-w-full flex-wrap items-center gap-2">
+              <div className="mt-0.5 flex min-w-0 max-w-full flex-wrap items-center gap-2">
                 {identityBadge}
                 {!isAdminRole(user.role) && user.user_no !== null && (
                   <button
@@ -246,22 +245,21 @@ export default function MyPage() {
         </div>
       </section>
 
-      <section
-        className="account-balance bg-surface"
-        aria-label={t("my.balance")}
-      >
-        <div className="account-balance-row">
-          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-muted-foreground">{t("my.balance")}</p>
-              <p className="mt-0.5 break-all text-2xl font-semibold tracking-tight text-foreground tabular-nums">
-                {user.unlimited ? "∞" : formatYuan(user.balance)}
-              </p>
-              {!user.unlimited && <Link href="/my/balance#history" className="mt-1 inline-flex min-h-8 items-center text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">{t("my.balanceDetails")}</Link>}
-            </div>
+      <section className="account-balance bg-surface p-2 sm:p-3" aria-label={t("my.balance")}>
+        <div className="flex flex-col gap-0">
+          <div className="flex min-h-9 items-center justify-between gap-3">
+            <p className="text-xs font-medium text-muted-foreground">{t("my.balance")}</p>
+            {!user.unlimited && <Link href="/my/balance#history" className="inline-flex min-h-9 shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+              {t("my.balanceDetails")}<ChevronRight className="size-3.5" aria-hidden="true" />
+            </Link>}
+          </div>
+          <div className="flex min-h-10 items-center justify-between gap-3">
+            <p className="min-w-0 break-all text-2xl font-semibold tracking-tight text-foreground tabular-nums">
+              {user.unlimited ? "∞" : formatYuan(user.balance)}
+            </p>
             {!user.unlimited && accountOverview?.recharge_enabled && (
-              <Link href="/my/balance" className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-control bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
-                <Wallet className="size-4" aria-hidden="true" />{t("my.recharge")}
+              <Link href="/my/balance" className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-control bg-primary/10 px-3 text-sm font-semibold text-primary transition-colors hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+                {t("my.recharge")}
               </Link>
             )}
           </div>

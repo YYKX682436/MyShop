@@ -48,7 +48,7 @@ export function AccountAvatar({
   const displayState = getAvatarDisplayState(avatarUrl, imageState.avatarUrl, imageState.status)
 
   const avatar = (
-    <Avatar className="size-full border border-border-subtle bg-surface-muted shadow-sm">
+    <Avatar className="size-full overflow-hidden rounded-card border border-border-subtle bg-surface-muted shadow-sm">
       {avatarUrl && (
         <AvatarImage
           key={avatarUrl}
@@ -59,9 +59,9 @@ export function AccountAvatar({
         />
       )}
       {displayState === "loading" ? (
-        <span className="flex size-full animate-pulse items-center justify-center rounded-full bg-foreground/[0.07]" aria-hidden="true" />
+        <span className="flex size-full animate-pulse items-center justify-center rounded-card bg-foreground/[0.07]" aria-hidden="true" />
       ) : (
-        <AvatarFallback className="bg-primary/10 text-2xl font-semibold text-primary sm:text-3xl">
+        <AvatarFallback className="rounded-card bg-primary/10 text-2xl font-semibold text-primary sm:text-3xl">
           {fallbackCharacter || <UserRound className="size-9" strokeWidth={1.7} aria-hidden="true" />}
         </AvatarFallback>
       )}
@@ -77,17 +77,17 @@ export function AccountAvatar({
           disabled={isBusy}
           aria-label={t("my.editAvatar")}
           aria-busy={isBusy}
-          className="group relative block size-full rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-80"
+          className="group relative block size-full overflow-hidden rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-80"
         >
           {avatar}
           {isBusy && (
-            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-background/55 text-foreground" aria-hidden="true">
+            <span className="absolute inset-0 flex items-center justify-center rounded-card bg-background/55 text-foreground" aria-hidden="true">
               <LoaderCircle className="size-6 animate-spin" />
             </span>
           )}
         </button>
       ) : (
-        <div className="relative size-full">{avatar}</div>
+        <div className="relative size-full overflow-hidden rounded-card">{avatar}</div>
       )}
 
       {editable && (
