@@ -123,7 +123,7 @@ function CopyOrderNoButton({ orderNo, onCopy }: { orderNo: number; onCopy: (valu
       aria-label={`${t("admin.copyOrderNo")}: ${value}`}
       onClick={() => onCopy(value)}
     >
-      <span className="truncate">{value}</span>
+      <span className="break-all">{value}</span>
       <Copy className="h-3.5 w-3.5 shrink-0 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
     </button>
   )

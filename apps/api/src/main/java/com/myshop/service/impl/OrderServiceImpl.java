@@ -314,7 +314,7 @@ public class OrderServiceImpl implements OrderService {
         order.setSessionToken(guestSession);
         setUserLevelSnapshot(order, userLevel, adminPickup);
         // Flush the INSERT now so Hibernate can read the database-generated
-        // order_no before the response is assembled. The sequence remains the
+        // order_no before the response is assembled. PostgreSQL remains the
         // sole source of the business number; no entry point allocates one.
         orderRepository.saveAndFlush(order);
 

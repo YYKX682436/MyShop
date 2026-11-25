@@ -56,4 +56,19 @@ class OrderPaymentCompletionServiceImplTest {
         verify(orderRepository, times(0)).save(any(Order.class));
         verify(autoFulfillmentService, times(0)).trigger(any(UUID.class));
     }
+
+    @Test
+    void expiredOrderCannotBeCompletedByTheSharedAutomaticPaymentPath() {
+        Order order = new Order();
+        order.setId(UUID.randomUUID());
+        order.setStatus(OrderStatus.EXPIRED);
+        OrderPaymentCompletionServiceImpl service =
+                new OrderPaymentCompletionServiceImpl(orderRepository, autoFulfillmentService);
+
+        assertFalse(service.completeFirstPayment(order));
+
+        assertEquals(OrderStatus.EXPIRED, order.getStatus());
+        verify(orderRepository, times(0)).save(any(Order.class));
+        verify(autoFulfillmentService, times(0)).trigger(any(UUID.class));
+    }
 }

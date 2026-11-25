@@ -246,8 +246,17 @@ public class FulfillmentTransactionService implements FulfillmentService {
         List<UUID> newlyCompletedManualItems = new ArrayList<>();
         for (FulfillmentService.ManualFulfillmentItem requested : requestedItems) {
             OrderItem item = itemsById.get(requested.orderItemId());
-            int reserved = item.getManualStockReserved();
-            if (reserved > 0 && item.getStockMode() == StockMode.MANUAL) {
+            if (item.getStockMode() == StockMode.MANUAL) {
+                int reserved = item.getManualStockReserved();
+                if (reserved < 0 || reserved > item.getQuantity()) {
+                    throw new BusinessException(ErrorCode.BAD_REQUEST, "人工库存预占状态异常，请联系管理员");
+                }
+                if (reserved < item.getQuantity()) {
+                    manualStockService.reserveOrThrow(item.getProductId(), item.getSpecId(),
+                            item.getQuantity() - reserved);
+                    reserved = item.getQuantity();
+                    item.setManualStockReserved(reserved);
+                }
                 manualStockService.consumeReservation(item.getProductId(), item.getSpecId(), reserved);
                 item.setManualStockReserved(0);
             }

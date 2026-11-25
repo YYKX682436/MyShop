@@ -67,6 +67,18 @@ class AdminOrderControllerTest {
     }
 
     @Test
+    void markPaidApiRequiresOnlyExplicitConfirmation() throws Exception {
+        UUID orderId = UUID.randomUUID();
+
+        mockMvc().perform(post("/admin/orders/{id}/mark-paid", orderId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"confirmed\":true}"))
+                .andExpect(status().isOk());
+
+        verify(adminOrderService).markPaid(orderId, true);
+    }
+
+    @Test
     void afterSaleRejectApiRequiresReplyAndForwardsIt() throws Exception {
         UUID orderId = UUID.randomUUID();
 

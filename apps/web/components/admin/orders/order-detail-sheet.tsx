@@ -255,7 +255,7 @@ export function OrderDetailSheet({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-mono text-lg font-semibold tracking-tight text-foreground">{order.order_no}</span>
+              <span className="break-all font-mono text-lg font-semibold tracking-tight text-foreground">{order.order_no}</span>
               <CopyButton value={String(order.order_no)} label={t("admin.orderNo")} copyActionLabel={copyActionLabel} onCopy={copyToClipboard} />
               <OrderStatusBadge status={order.status} items={order.items} />
               <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium border", order.is_risk_flagged ? "border-destructive/20 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/15 dark:text-red-300" : "border-emerald-500/20 bg-emerald-500/10 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-300")}>

@@ -349,7 +349,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
     <details className="content-surface overflow-hidden">
       <summary aria-controls="order-information-panel" className="group flex min-h-12 cursor-pointer list-none items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{t("order.orderInformation")}</span>
-        <span className="min-w-0 max-w-[55%] truncate font-mono text-xs text-muted-foreground">{view.order.order_no}</span>
+        <span className="min-w-0 max-w-[55%] break-all text-right font-mono text-xs text-muted-foreground">{view.order.order_no}</span>
         <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden="true" />
       </summary>
       <div id="order-information-panel" className="border-t border-border-subtle px-4 py-3 sm:px-5 sm:py-4">

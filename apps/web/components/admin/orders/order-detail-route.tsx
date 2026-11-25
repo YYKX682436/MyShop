@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { CheckCircle, Loader2, ShieldAlert, XCircle } from "lucide-react"
 import { toast } from "sonner"
 
@@ -38,8 +38,10 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   const [manualFulfillmentOpen, setManualFulfillmentOpen] = useState(false)
   const [manualFulfillmentLoading, setManualFulfillmentLoading] = useState(false)
   const [markPaidOpen, setMarkPaidOpen] = useState(false)
-  const [markPaidReason, setMarkPaidReason] = useState("")
   const [markPaidLoading, setMarkPaidLoading] = useState(false)
+  const markPaidDialogRef = useRef<HTMLDialogElement>(null)
+  const markPaidTitleId = useId()
+  const markPaidDescriptionId = useId()
   const [refundOpen, setRefundOpen] = useState(false)
   const [refundReason, setRefundReason] = useState("")
   const [refundLoading, setRefundLoading] = useState(false)
@@ -92,6 +94,13 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
 
   useEffect(() => { void load() }, [load])
 
+  useEffect(() => {
+    const dialog = markPaidDialogRef.current
+    if (!dialog) return
+    if (markPaidOpen && !dialog.open) dialog.showModal()
+    else if (!markPaidOpen && dialog.open) dialog.close()
+  }, [markPaidOpen])
+
   const refreshSupplier = async (purchaseId: string) => {
     setRefreshingSupplier(purchaseId)
     try {
@@ -131,19 +140,15 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   }
 
   const handleMarkPaid = async () => {
-    const reason = markPaidReason.trim()
-    if (reason.length < 3) {
-      toast.error(t("admin.markPaidReasonTooShort"))
-      return
-    }
+    if (!order || markPaidLoading) return
     setMarkPaidLoading(true)
     try {
-      await requestOrThrow(() => adminOrderApi.markPaid(orderId, reason))
+      await requestOrThrow(() => adminOrderApi.markPaid(orderId))
       invalidateAdminOrders()
       invalidateAdminData("products", "inventory")
+      invalidateAdminAttention()
       toast.success(t("admin.markedPaid"))
       setMarkPaidOpen(false)
-      setMarkPaidReason("")
       await load()
     } catch (requestError: unknown) {
       toast.error(requestError instanceof Error ? requestError.message : t("admin.saveFailed"))
@@ -270,13 +275,11 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
     </>
   )
 
-  const canMarkPaid = order?.status === "PENDING"
+  const canMarkPaid = (order?.status === "PENDING" || order?.status === "EXPIRED")
     && order.order_type === "NORMAL"
     && order.payment_method === "ONLINE"
-    && Boolean(order.payment_channel_code)
-    && (!order.expires_at || new Date(order.expires_at).getTime() > Date.now())
   const markPaidButton = canMarkPaid ? (
-    <Button type="button" onClick={() => { setMarkPaidOpen(true); setMarkPaidReason("") }}>
+    <Button type="button" onClick={() => setMarkPaidOpen(true)} disabled={markPaidLoading}>
       <CheckCircle className="size-4" aria-hidden="true" />
       {t("admin.markPaid")}
     </Button>
@@ -343,19 +346,26 @@ export function AdminOrderDetailRoute({ orderId, presentation = "inspector" }: A
   ) : null
 
   const confirmDialog = (
-    <ConfirmAlert
-      open={markPaidOpen}
-      onOpenChange={(open) => { if (!open && !markPaidLoading) { setMarkPaidOpen(false); setMarkPaidReason("") } }}
-      title={t("admin.markPaidConfirm")}
-      description={t("admin.markPaidReasonPlaceholder")}
-      confirmLabel={t("admin.markPaidBtn")}
-      cancelLabel={t("admin.cancel")}
-      loading={markPaidLoading}
-      confirmDisabled={markPaidReason.trim().length < 3}
-      onConfirm={() => void handleMarkPaid()}
+    <dialog
+      ref={markPaidDialogRef}
+      aria-labelledby={markPaidTitleId}
+      aria-describedby={markPaidDescriptionId}
+      className="myshop-dialog static-material fixed left-1/2 top-1/2 m-0 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-surface p-6 text-foreground"
+      onClose={() => setMarkPaidOpen(false)}
+      onCancel={(event) => { if (markPaidLoading) event.preventDefault() }}
     >
-      <Textarea value={markPaidReason} onChange={(event) => setMarkPaidReason(event.target.value)} placeholder={t("admin.markPaidReasonPlaceholder")} maxLength={500} rows={4} aria-label={t("admin.markPaidReasonPlaceholder")} />
-    </ConfirmAlert>
+      <h1 id={markPaidTitleId} className="text-lg font-semibold">{t("admin.markPaidConfirm")}</h1>
+      <p id={markPaidDescriptionId} className="mt-2 text-sm text-muted-foreground">{t("admin.markPaidDescription")}</p>
+      <form method="dialog" className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button type="submit" formMethod="dialog" value="cancel" variant="outline" autoFocus disabled={markPaidLoading} onClick={() => setMarkPaidOpen(false)}>
+          {t("admin.cancel")}
+        </Button>
+        <Button type="button" disabled={markPaidLoading} onClick={() => void handleMarkPaid()}>
+          {markPaidLoading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+          {t("admin.markPaidBtn")}
+        </Button>
+      </form>
+    </dialog>
   )
 
   const refundDialog = (

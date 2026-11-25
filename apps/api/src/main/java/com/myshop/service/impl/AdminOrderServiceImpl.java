@@ -6,6 +6,8 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderStatus;
 import com.myshop.constant.OrderType;
+import com.myshop.constant.FulfillmentStatus;
+import com.myshop.constant.StockMode;
 import com.myshop.entity.BalanceTransaction;
 import com.myshop.entity.Order;
 import com.myshop.entity.OrderItem;
@@ -28,6 +30,7 @@ import com.myshop.service.FulfillmentService;
 import com.myshop.service.OperationLogService;
 import com.myshop.service.OrderPaymentCompletionService;
 import com.myshop.service.OrderRefundService;
+import com.myshop.service.ManualStockService;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.myshop.supplier.SupplierAdminOrders;
 import org.springframework.data.domain.Page;
@@ -62,6 +65,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
     private final BalanceTransactionRepository balanceTransactionRepository;
     private final CardKeyReclaimService cardKeyReclaimService;
     private final AfterSaleService afterSaleService;
+    private final ManualStockService manualStockService;
     private SupplierAdminOrders supplierAdminOrders;
     private com.myshop.repository.WebhookEventRepository paymentEvents;
     @Autowired public void setPaymentEvents(com.myshop.repository.WebhookEventRepository value) { paymentEvents=value; }
@@ -82,7 +86,8 @@ public class AdminOrderServiceImpl implements AdminOrderService {
                                  OrderRefundService orderRefundService,
                                  BalanceTransactionRepository balanceTransactionRepository,
                                  CardKeyReclaimService cardKeyReclaimService,
-                                 AfterSaleService afterSaleService) {
+                                 AfterSaleService afterSaleService,
+                                 ManualStockService manualStockService) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.userRepository = userRepository;
@@ -94,6 +99,7 @@ public class AdminOrderServiceImpl implements AdminOrderService {
         this.balanceTransactionRepository = balanceTransactionRepository;
         this.cardKeyReclaimService = cardKeyReclaimService;
         this.afterSaleService = afterSaleService;
+        this.manualStockService = manualStockService;
     }
 
     @Override
@@ -178,64 +184,69 @@ public class AdminOrderServiceImpl implements AdminOrderService {
 
     @Override
     @Transactional
-    public void markPaid(UUID id, String reason, boolean confirmed) {
+    public void markPaid(UUID id, boolean confirmed) {
         if (!confirmed) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "必须明确确认手动标记已支付");
-        }
-        String normalizedReason = reason == null ? null : reason.trim();
-        if (normalizedReason == null || normalizedReason.length() < 3 || normalizedReason.length() > 500) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "请填写 3 至 500 个字符的操作原因");
         }
         Order order = orderRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.ORDER_NOT_FOUND, "订单不存在"));
         if (order.getStatus() == OrderStatus.PAID || order.getStatus() == OrderStatus.DELIVERED) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "订单已支付");
+            operationLogService.logCurrentRequest(
+                    "order.mark_paid", "ORDER", order.getId().toString(),
+                    "订单号=" + order.getOrderNo() + "，人工确认支付重复请求，未重复触发履约");
+            return;
         }
         if (order.getStatus() == OrderStatus.REFUNDED) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单已退款，不能确认支付");
         }
-        if (order.getStatus() == OrderStatus.EXPIRED) {
-            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期，不能恢复为已支付");
-        }
-        if (order.getStatus() != OrderStatus.PENDING) {
+        if (order.getStatus() != OrderStatus.PENDING && order.getStatus() != OrderStatus.EXPIRED) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前订单状态不允许人工确认支付");
         }
         if (order.getOrderType() != OrderType.NORMAL
-                || order.getPaymentMethod() != OrderPaymentMethod.ONLINE
-                || order.getPaymentChannelCode() == null
-                || order.getPaymentChannelCode().isBlank()) {
+                || order.getPaymentMethod() != OrderPaymentMethod.ONLINE) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
                     "人工确认支付仅支持 NORMAL 在线支付订单，余额订单不能人工确认");
         }
-        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(LocalDateTime.now())) {
-            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "订单已过期，不能人工确认支付");
+
+        if (order.getStatus() == OrderStatus.EXPIRED) {
+            for (OrderItem item : orderItemRepository.findByOrderId(order.getId())) {
+                if (item.getFulfillmentStatus() != FulfillmentStatus.CANCELLED) {
+                    continue;
+                }
+                if (item.getStockMode() == StockMode.MANUAL) {
+                    int quantity = item.getQuantity();
+                    boolean reserved = manualStockService.tryReserve(
+                            item.getProductId(), item.getSpecId(), quantity);
+                    item.setManualStockReserved(reserved ? quantity : 0);
+                }
+                item.setFulfillmentStatus(FulfillmentStatus.PENDING);
+                item.setDeliveredAt(null);
+                item.setDeliveryNotifiedAt(null);
+                orderItemRepository.save(item);
+            }
+            // This temporary in-transaction transition keeps the shared payment
+            // completion service PENDING-only for verified gateway callbacks.
+            order.setStatus(OrderStatus.PENDING);
         }
-        // The repository query locks every pending attempt in creation order.
-        // The last one is the current effective attempt; all older pending
-        // attempts are closed so only one payment fact can remain active.
+
+        // Close only unsettled attempts for this locked order. Their merchant
+        // numbers and evidence remain intact so a real late callback can be
+        // recorded as late without triggering fulfillment a second time.
         List<PaymentAttempt> pendingAttempts = paymentAttemptRepository
                 .findByOrderIdAndStatusForUpdate(order.getId(), PaymentStatus.PENDING);
-        if (pendingAttempts == null || pendingAttempts.isEmpty()) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前订单没有可确认的支付尝试");
-        }
-        PaymentAttempt current = pendingAttempts.get(pendingAttempts.size() - 1);
-        if (current.getExpiresAt() != null && !current.getExpiresAt().isAfter(LocalDateTime.now())) {
-            throw new BusinessException(ErrorCode.ORDER_EXPIRED, "当前支付尝试已过期，不能人工确认支付");
-        }
-        for (PaymentAttempt attempt : pendingAttempts) {
-            if (attempt == current) {
-                attempt.setStatus(PaymentStatus.PAID);
-            } else {
+        if (pendingAttempts != null) {
+            for (PaymentAttempt attempt : pendingAttempts) {
                 attempt.setStatus(PaymentStatus.CLOSED);
+                paymentAttemptRepository.save(attempt);
             }
-            paymentAttemptRepository.save(attempt);
         }
+
         if (!orderPaymentCompletionService.completeFirstPayment(order)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "订单支付状态未能完成转换");
         }
         operationLogService.logCurrentRequest(
                 "order.mark_paid", "ORDER", order.getId().toString(),
-                "订单号=" + order.getOrderNo() + "，人工确认支付，原因=" + normalizedReason);
+                "订单号=" + order.getOrderNo() + "，管理员人工确认支付");
     }
 
     @Override

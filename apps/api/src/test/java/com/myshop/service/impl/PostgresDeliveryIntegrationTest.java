@@ -2380,6 +2380,102 @@ class PostgresDeliveryIntegrationTest {
         assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
     }
 
+    @Test
+    void expiredManualPaymentConfirmationRestoresAndAutomaticallyFulfillsCardOnlyOnce() {
+        UUID orderId = insertExpiredOrder("manual-confirm-auto-" + UUID.randomUUID());
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID itemId = insertOrderItem(orderId, productId);
+        UUID cardId = insertCard(productId, "manual-confirm-auto-card");
+
+        webApplicationContext.getBean(com.myshop.service.OrderExpiryService.class).expireById(orderId);
+        assertEquals("EXPIRED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("CANCELLED", scalar("select fulfillment_status from order_items where id = ?", String.class, itemId));
+
+        markPaidAsAdmin(orderId);
+
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("DELIVERED", scalar("select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
+        assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+
+        markPaidAsAdmin(orderId);
+        autoFulfillmentService.trigger(orderId);
+
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+        assertEquals(2, number("select count(*) from operation_logs where action = 'order.mark_paid' and target_type = 'ORDER' and target_id = ? and detail like '%人工确认支付%'", orderId.toString()));
+        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(itemId)));
+    }
+
+    @Test
+    void expiredManualConfirmationStaysPaidWhenInventoryIsShortAndFulfillsAfterRestock() {
+        UUID orderId = insertExpiredOrder("manual-confirm-stock-" + UUID.randomUUID());
+        UUID productId = UUID.randomUUID();
+        insertManualProduct(productId);
+        UUID itemId = insertOrderItem(orderId, productId, "MANUAL", "MANUAL", 2, 2);
+        insertManualStock(productId, null, 0, 2);
+
+        webApplicationContext.getBean(com.myshop.service.OrderExpiryService.class).expireById(orderId);
+        manualStockService.setAvailable(productId, null, 1);
+
+        markPaidAsAdmin(orderId);
+
+        assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("WAITING_MANUAL", scalar("select fulfillment_status from order_items where id = ?", String.class, itemId));
+        assertEquals(0, number("select manual_stock_reserved from order_items where id = ?", itemId));
+        assertEquals(1, number("select available_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+
+        assertThrows(BusinessException.class, () -> fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(itemId, "delivery"))));
+        assertEquals("PAID", scalar("select status from orders where id = ?", String.class, orderId));
+
+        manualStockService.setAvailable(productId, null, 2);
+        Map<?, ?> result = fulfillmentService.completeManualItems(orderId, List.of(
+                new FulfillmentService.ManualFulfillmentItem(itemId, "delivery")));
+
+        assertEquals("DELIVERED", result.get("status"));
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals(0, number("select manual_stock_reserved from order_items where id = ?", itemId));
+        assertEquals(0, number("select available_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+        assertEquals(0, number("select reserved_quantity from manual_stocks where product_id = ? and spec_id is null", productId));
+    }
+
+    @Test
+    void lateCallbackAfterManualConfirmationRecordsGatewayTradeWithoutSecondDelivery() {
+        String channel = "manual-late-" + UUID.randomUUID();
+        UUID orderId = insertPendingOrder(channel);
+        insertPaymentChannel(channel);
+        UUID productId = UUID.randomUUID();
+        insertProduct(productId);
+        UUID itemId = insertOrderItem(orderId, productId);
+        UUID cardId = insertCard(productId, "manual-late-callback-card");
+        configurePaymentCreation("created-trade");
+        Map<String, Object> payment = paymentService.createPayment(orderId, channel, new BigDecimal("10.00"), "pc");
+        UUID attemptId = (UUID) payment.get("payment_id");
+        String merchantTradeNo = scalar("select merchant_trade_no from payment_attempts where id = ?", String.class, attemptId);
+
+        jdbcTemplate.update("update orders set expires_at = current_timestamp - interval '1 minute' where id = ?", orderId);
+        webApplicationContext.getBean(com.myshop.service.OrderExpiryService.class).expireById(orderId);
+        markPaidAsAdmin(orderId);
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+
+        configureSuccessfulCallback("late-real-trade");
+        assertEquals("SUCCESS", webhookService.handleWebhook(
+                "epay", callback(merchantTradeNo, "late-real-trade")).body());
+        assertEquals("SUCCESS", webhookService.handleWebhook(
+                "epay", callback(merchantTradeNo, "late-real-trade")).body());
+
+        assertEquals("DELIVERED", scalar("select status from orders where id = ?", String.class, orderId));
+        assertEquals("CLOSED", scalar("select status from payment_attempts where id = ?", String.class, attemptId));
+        assertEquals("late-real-trade", scalar("select provider_trade_no from payment_attempts where id = ?", String.class, attemptId));
+        assertEquals("SOLD", scalar("select status from card_keys where id = ?", String.class, cardId));
+        assertEquals(1, number("select count(*) from webhook_events where payment_attempt_id = ? and process_result = 'LATE_PAID_CLOSED'", attemptId));
+        assertEquals(1, number("select count(*) from card_keys where order_id = ? and status = 'SOLD'", orderId));
+        verify(emailService, times(1)).sendDeliveryEmail(eq(orderId), eq(List.of(itemId)));
+    }
+
     private Map<String, Object> fulfillResultAfter(CountDownLatch start, CountDownLatch ready,
                                                     UUID orderId) throws Exception {
         ready.countDown();
@@ -2535,6 +2631,18 @@ class PostgresDeliveryIntegrationTest {
                 values (?, current_timestamp, current_timestamp, ?, ?, 'integration-hash', 'USER', 0, ?, ?)
                 """, userId, username, email, userNo, userLevelId);
         return userId;
+    }
+
+    private void markPaidAsAdmin(UUID orderId) {
+        UUID adminId = insertAdminUser("manual-payment-admin-" + UUID.randomUUID(),
+                "manual-payment-admin-" + UUID.randomUUID() + "@example.com");
+        com.myshop.context.RequestContext.set(
+                new com.myshop.context.RequestContext.UserInfo(adminId, "manual-payment-admin", "ADMIN"));
+        try {
+            adminOrderService.markPaid(orderId, true);
+        } finally {
+            com.myshop.context.RequestContext.clear();
+        }
     }
 
     private UUID insertPendingOrder(String paymentChannelCode) {

@@ -219,7 +219,7 @@ export function SupportThread({ id, orderId, orderNo, admin = false, identity, o
 
   return <div ref={root} style={{ height, marginBottom: keyboardSpace }} className="flex min-h-[260px] flex-col overflow-hidden rounded-card border border-border-subtle bg-surface">
     <header className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-border-subtle px-4 py-2">
-      <div className="min-w-0"><h2 className="truncate font-semibold">{conversation?.order_no || orderNo ? `订单 #${conversation?.order_no || orderNo}` : "主站客服"}</h2>
+      <div className="min-w-0"><h2 className="break-all font-semibold">{conversation?.order_no || orderNo ? `订单 #${conversation?.order_no || orderNo}` : "主站客服"}</h2>
         {admin && <p className="truncate text-xs text-muted-foreground">{conversation?.site_name || "主站"}</p>}</div>
       {conversation?.order_id && <Link href={admin ? `/admin/orders/${conversation.order_id}` : `/order/${conversation.order_id}`} className="text-sm text-primary">{admin && conversation.waiting_for ? "处理售后" : "查看订单"}</Link>}
     </header>

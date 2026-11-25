@@ -45,7 +45,7 @@ public class Order extends BaseEntity {
 
     /**
      * Human-facing business identity. PostgreSQL owns generation through the
-     * order_no_sequence default; Hibernate reads it back after INSERT.
+     * PostgreSQL trigger; Hibernate reads it back after INSERT.
      */
     @Generated(event = EventType.INSERT)
     @Column(name = "order_no", nullable = false, insertable = false, updatable = false)

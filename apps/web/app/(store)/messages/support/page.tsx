@@ -27,7 +27,7 @@ export default function SupportListPage() {
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     <div className="overflow-hidden rounded-card border border-border-subtle bg-surface">
       {rows.map(row => <Link key={row.id} href={`/messages/support/${row.id}`} className="flex min-h-20 items-center gap-3 border-b border-border-subtle px-4 py-4 last:border-0 hover:bg-surface-muted">
-        <span className="min-w-0 flex-1"><span className="flex justify-between gap-3"><span className="truncate font-medium">{row.order_no ? `订单 #${row.order_no}` : "普通咨询"}</span>{row.latest_at && <time className="shrink-0 text-xs text-muted-foreground">{formatDateTime(row.latest_at)}</time>}</span><span className="mt-1 block truncate text-sm text-muted-foreground">{row.preview || "暂无消息"}</span></span>
+        <span className="min-w-0 flex-1"><span className="flex justify-between gap-3"><span className="min-w-0 flex-1 break-all font-medium">{row.order_no ? `订单 #${row.order_no}` : "普通咨询"}</span>{row.latest_at && <time className="shrink-0 text-xs text-muted-foreground">{formatDateTime(row.latest_at)}</time>}</span><span className="mt-1 block truncate text-sm text-muted-foreground">{row.preview || "暂无消息"}</span></span>
         {row.unread > 0 && <span className="rounded-full bg-destructive px-1.5 text-xs text-white" aria-label={`${row.unread} 条未读`}>{row.unread > 99 ? "99+" : row.unread}</span>}<ChevronRight className="size-4 text-muted-foreground" aria-hidden="true" />
       </Link>)}
       {snapshot.identity === scope && !rows.length && !error && <p className="p-6 text-sm text-muted-foreground">暂无会话</p>}

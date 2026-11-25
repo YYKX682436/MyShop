@@ -86,7 +86,7 @@ export function AfterSaleRequestDialog({
         <div className="space-y-4">
           <div className="rounded-control border border-border-subtle bg-surface-muted/60 px-3 py-2 text-sm">
             <p className="text-xs text-muted-foreground">{t("order.orderNo")}</p>
-            <p className="mt-1 font-mono text-foreground">{orderNo}</p>
+            <p className="mt-1 break-all font-mono text-foreground">{orderNo}</p>
             <p className="mt-2 text-xs text-muted-foreground">{t("order.product")}</p>
             <p className="mt-1 break-words font-medium text-foreground">{productSummary}</p>
           </div>

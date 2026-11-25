@@ -9,14 +9,23 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 
 import java.math.BigDecimal;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -25,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Proves that concurrent JPA inserts read the PostgreSQL-generated business number back immediately. */
@@ -34,7 +44,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OrderNumberConcurrencyIntegrationTest {
 
     private static final int ORDER_COUNT = 32;
-    private static final long FIRST_ORDER_NO = 1_000_000_001L;
+    private static final long MAX_JS_SAFE_INTEGER = 9_007_199_254_740_991L;
+    private static final ZoneId ORDER_NUMBER_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final DateTimeFormatter ORDER_DATE = DateTimeFormatter.BASIC_ISO_DATE;
 
     static final IntegrationPostgres POSTGRES = new IntegrationPostgres();
     static boolean postgresAvailable() { return POSTGRES.available(); }
@@ -66,13 +78,10 @@ class OrderNumberConcurrencyIntegrationTest {
         jdbcTemplate.update("DELETE FROM after_sale_attachments");
         jdbcTemplate.update("DELETE FROM after_sale_requests");
         jdbcTemplate.update("DELETE FROM orders");
-        // The restart value is a test constant. PostgreSQL's ALTER SEQUENCE
-        // grammar does not accept a JDBC bind marker in this position.
-        jdbcTemplate.execute("ALTER SEQUENCE order_no_sequence RESTART WITH " + FIRST_ORDER_NO);
     }
 
     @Test
-    void concurrentJpaOrderInsertsReceiveDistinctNonNullIncreasingNumbers() throws Exception {
+    void concurrentJpaOrderInsertsReceiveDistinctSafeShanghaiDateNumbers() throws Exception {
         CountDownLatch ready = new CountDownLatch(ORDER_COUNT);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(ORDER_COUNT);
@@ -102,15 +111,20 @@ class OrderNumberConcurrencyIntegrationTest {
             start.countDown();
 
             List<Long> orderNumbers = new ArrayList<>();
+            String expectedDate = LocalDate.now(ORDER_NUMBER_ZONE).format(ORDER_DATE);
             for (Future<Long> future : futures) {
-                orderNumbers.add(future.get(30, TimeUnit.SECONDS));
+                long orderNumber = future.get(30, TimeUnit.SECONDS);
+                String rendered = Long.toString(orderNumber);
+                assertEquals(16, rendered.length());
+                assertEquals(expectedDate, rendered.substring(0, 8));
+                assertTrue(rendered.substring(8).matches("\\d{8}"));
+                assertTrue(orderNumber <= MAX_JS_SAFE_INTEGER);
+                assertTrue(orderNumber <= (long) (double) orderNumber,
+                        "the generated number must round-trip through a JavaScript Number");
+                orderNumbers.add(orderNumber);
             }
-            orderNumbers.sort(Long::compareTo);
 
             assertEquals(ORDER_COUNT, orderNumbers.stream().distinct().count());
-            for (int index = 0; index < ORDER_COUNT; index++) {
-                assertEquals(FIRST_ORDER_NO + index, orderNumbers.get(index));
-            }
         } finally {
             executor.shutdownNow();
         }
@@ -119,11 +133,58 @@ class OrderNumberConcurrencyIntegrationTest {
                 "SELECT COUNT(*) FROM orders", Integer.class));
         assertEquals(ORDER_COUNT, jdbcTemplate.queryForObject(
                 "SELECT COUNT(DISTINCT order_no) FROM orders", Integer.class));
-        assertEquals(FIRST_ORDER_NO + ORDER_COUNT - 1, jdbcTemplate.queryForObject(
-                "SELECT max(order_no) FROM orders", Long.class));
-        assertEquals(FIRST_ORDER_NO + ORDER_COUNT - 1, jdbcTemplate.queryForObject(
-                "SELECT last_value FROM order_no_sequence", Long.class));
-        assertEquals(FIRST_ORDER_NO + ORDER_COUNT, jdbcTemplate.queryForObject(
-                "SELECT nextval('order_no_sequence')", Long.class));
+        assertEquals(ORDER_COUNT, jdbcTemplate.queryForObject("""
+                SELECT count(DISTINCT registry.order_no)
+                FROM order_no_registry registry
+                JOIN orders order_row ON order_row.order_no = registry.order_no
+                """, Integer.class));
+    }
+
+    @Test
+    void retriesWhenTheRandomCandidateIsAlreadyReserved() {
+        long[] collidedCandidate = new long[1];
+        Long generated = jdbcTemplate.execute((ConnectionCallback<Long>) connection -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("SELECT setseed(0.38141)");
+                String date;
+                long suffix;
+                try (ResultSet random = statement.executeQuery("""
+                        SELECT to_char(clock_timestamp() AT TIME ZONE 'Asia/Shanghai', 'YYYYMMDD'),
+                               floor(random() * 100000000)::BIGINT
+                        """)) {
+                    assertTrue(random.next());
+                    date = random.getString(1);
+                    suffix = random.getLong(2);
+                }
+                collidedCandidate[0] = Long.parseLong(date + String.format(Locale.ROOT, "%08d", suffix));
+                try (PreparedStatement reserve = connection.prepareStatement(
+                        "INSERT INTO order_no_registry(order_no) VALUES (?) ON CONFLICT DO NOTHING")) {
+                    reserve.setLong(1, collidedCandidate[0]);
+                    reserve.executeUpdate();
+                }
+
+                statement.execute("SELECT setseed(0.38141)");
+                UUID id = UUID.randomUUID();
+                try (PreparedStatement insert = connection.prepareStatement("""
+                        INSERT INTO orders(id, created_at, updated_at, total_amount, actual_amount, status, order_type)
+                        VALUES (?, current_timestamp, current_timestamp, 0.00, 0.00, 'PENDING', 'NORMAL')
+                        RETURNING order_no
+                        """)) {
+                    insert.setObject(1, id);
+                    try (ResultSet result = insert.executeQuery()) {
+                        assertTrue(result.next());
+                        return result.getLong(1);
+                    }
+                }
+            }
+        });
+
+        assertNotNull(generated);
+        assertNotEquals(collidedCandidate[0], generated);
+        assertTrue(generated <= MAX_JS_SAFE_INTEGER);
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM orders WHERE order_no = ?", Integer.class, generated));
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM order_no_registry WHERE order_no = ?", Integer.class, generated));
     }
 }

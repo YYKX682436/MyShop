@@ -46,7 +46,7 @@ public class AdminOrderController {
 
     @PostMapping("/{id}/mark-paid")
     public ApiResponse<Void> markPaid(@PathVariable UUID id, @Valid @RequestBody MarkPaidRequest request) {
-        adminOrderService.markPaid(id, request.reason(), request.confirmed());
+        adminOrderService.markPaid(id, request.confirmed());
         return ApiResponse.success();
     }
 
@@ -87,5 +87,5 @@ public class AdminOrderController {
         return ApiResponse.success(adminOrderService.completeManualItems(id, request));
     }
 
-    public record MarkPaidRequest(String reason, boolean confirmed) {}
+    public record MarkPaidRequest(boolean confirmed) {}
 }

@@ -579,7 +579,7 @@ class OrderRefundConcurrencyIntegrationTest {
                 RequestContext.set(new RequestContext.UserInfo(
                         operatorId, "payment-race-admin", "ADMIN"));
                 try {
-                    adminOrderService.markPaid(orderId, "并发核验支付凭证", true);
+                    adminOrderService.markPaid(orderId, true);
                     return true;
                 } catch (BusinessException exception) {
                     return false;
@@ -604,8 +604,11 @@ class OrderRefundConcurrencyIntegrationTest {
 
         assertEquals(OrderStatus.PAID.name(), scalar(
                 "SELECT status FROM orders WHERE id = ?", String.class, orderId));
-        assertEquals("PAID", scalar(
-                "SELECT status FROM payment_attempts WHERE id = ?", String.class, attemptId));
+        String paymentStatus = scalar(
+                "SELECT status FROM payment_attempts WHERE id = ?", String.class, attemptId);
+        assertTrue("PAID".equals(paymentStatus) || "CLOSED".equals(paymentStatus));
+        assertEquals("payment-race-provider-trade", scalar(
+                "SELECT provider_trade_no FROM payment_attempts WHERE id = ?", String.class, attemptId));
         org.mockito.Mockito.verify(autoFulfillmentService, org.mockito.Mockito.timeout(5000).times(1))
                 .trigger(orderId);
         assertTrue(scalar("SELECT count(*) FROM operation_logs WHERE target_id = ?", Integer.class,

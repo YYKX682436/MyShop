@@ -844,10 +844,10 @@ export const adminOrderApi = {
     request<unknown>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/operations/${encodeURIComponent(operationId)}/reviews`, { method: "POST", body: JSON.stringify({ outcome }) }),
   supplierComplaint: (orderId: string, purchaseId: string, body: { idempotencyKey: string; confirmed: boolean; afterSaleId: string; topic: string; content: string; attachmentIds: string[] }) =>
     request<{ status: string }>(`/admin/orders/${encodeURIComponent(orderId)}/supplier-purchases/${encodeURIComponent(purchaseId)}/complaints`, { method: "POST", body: JSON.stringify({ idempotency_key: body.idempotencyKey, confirmed: body.confirmed, after_sale_id: body.afterSaleId, topic: body.topic, content: body.content, attachment_ids: body.attachmentIds }) }),
-  markPaid: (id: string, reason: string) =>
+  markPaid: (id: string) =>
     request<null>(`/admin/orders/${id}/mark-paid`, {
       method: "POST",
-      body: JSON.stringify({ reason, confirmed: true }),
+      body: JSON.stringify({ confirmed: true }),
     }),
   refund: (id: string, reason: string, reclaimCardKeys: boolean) =>
     request<AdminOrderRefundResponse>(`/admin/orders/${id}/refund`, {

@@ -55,6 +55,17 @@ public class ManualStockService {
         }
     }
 
+    /**
+     * Re-reserves finite manual inventory when an expired order is restored.
+     * A shortage leaves the paid order waiting without a partial reservation.
+     */
+    @Transactional
+    public boolean tryReserve(UUID productId, UUID specId, int quantity) {
+        if (quantity < 1) return true;
+        ensurePool(productId, specId);
+        return manualStockRepository.reserve(productId, specId, quantity) == 1;
+    }
+
     @Transactional
     public void release(UUID productId, UUID specId, int quantity) {
         if (quantity > 0) {

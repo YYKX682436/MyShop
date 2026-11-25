@@ -19,7 +19,7 @@ public interface AdminOrderService {
 
     void recordPaymentReview(UUID orderId, UUID attemptId, String note);
 
-    void markPaid(UUID id, String reason, boolean confirmed);
+    void markPaid(UUID id, boolean confirmed);
 
     AdminOrderRefundResponse refund(UUID id, String reason, boolean confirmed,
                                     boolean reclaimCardKeys);
