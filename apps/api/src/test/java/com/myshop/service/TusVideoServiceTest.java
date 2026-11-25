@@ -44,7 +44,7 @@ class TusVideoServiceTest {
         VideoFileProcessor processor = mock(VideoFileProcessor.class);
         UUID owner = UUID.randomUUID(), asset = UUID.randomUUID();
         AtomicReference<String> uri = new AtomicReference<>();
-        CountDownLatch completed = new CountDownLatch(1);
+        CountDownLatch completed = new CountDownLatch(1), cleaned = new CountDownLatch(1);
         when(registry.createVideo("lesson.mp4", owner, 8)).thenReturn(asset);
         when(registry.findVideo(eq(asset), eq(owner))).thenAnswer(invocation -> Optional.of(
                 new MediaAssetRegistry.VideoSession(asset, owner, uri.get(), "UPLOADING", "lesson.mp4", 8, null, null)));
@@ -60,6 +60,8 @@ class TusVideoServiceTest {
         });
         when(registry.markVideoReady(eq(asset), anyString(), anyString(), anyLong(), anyLong(), anyString(), anyString()))
                 .thenAnswer(invocation -> { completed.countDown(); return new MediaAssetRegistry.VideoCompletion(asset, "videos/" + asset + ".mp4", false); });
+        doAnswer(invocation -> { cleaned.countDown(); return null; })
+                .when(registry).markReadyVideoCleanupComplete(asset, owner);
         service = new TusVideoService(privateStorage, registry, processor, 8, 4);
         RequestContext.set(new RequestContext.UserInfo(owner, "admin", "ADMIN"));
         assertEquals(asset, service.create("lesson.mp4", 8).id());
@@ -98,6 +100,7 @@ class TusVideoServiceTest {
         assertEquals(204, second.getStatus());
         assertEquals("8", second.getHeader("Upload-Offset"));
         assertTrue(completed.await(5, TimeUnit.SECONDS), "completed upload should be processed asynchronously");
+        assertTrue(cleaned.await(5, TimeUnit.SECONDS), "completed upload should remove its temporary files before teardown");
     }
 
     @Test void failedDatabaseBindingDoesNotCommitTheTusCreationResponse() throws Exception {
