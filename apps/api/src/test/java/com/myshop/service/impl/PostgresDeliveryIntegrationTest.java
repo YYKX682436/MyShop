@@ -194,7 +194,7 @@ class PostgresDeliveryIntegrationTest {
         deleteSecretPriceAsAdmin(a, secret.id(), product);
         assertEquals(new BigDecimal("7.00"), publicProducts.getProduct(product, a).price());
         UUID markupLevel = UUID.randomUUID();
-        jdbcTemplate.update("insert into user_levels(id,name,pricing_type,markup_rate) values (?, ?, 'COST_MARKUP', 10.0000)", markupLevel, "secret-markup-" + markupLevel);
+        jdbcTemplate.update("insert into user_levels(id,name,pricing_type,markup_rate,upgrade_rank) values (?, ?, 'COST_MARKUP', 10.0000, (select coalesce(max(upgrade_rank),0)+100 from user_levels))", markupLevel, "secret-markup-" + markupLevel);
         jdbcTemplate.update("update users set user_level_id = ? where id in (?, ?)", markupLevel, a, b);
         jdbcTemplate.update("update products set retail_price = 20.00 where id = ?", product);
         secretPrices.create(a, new com.myshop.model.request.UserSecretPriceRequest(product, null, new BigDecimal("12.00")));
@@ -341,7 +341,7 @@ class PostgresDeliveryIntegrationTest {
 
     private com.myshop.entity.Subsite zeroSupplySite(UUID owner) {
         UUID siteId=UUID.randomUUID(), level=UUID.randomUUID();
-        jdbcTemplate.update("insert into user_levels(id,name,pricing_type,markup_rate,enabled,is_default) values (?,?,'COST_MARKUP',0,true,false)",level,"zero-level-"+level);
+        jdbcTemplate.update("insert into user_levels(id,name,pricing_type,markup_rate,enabled,is_default,upgrade_rank) values (?,?,'COST_MARKUP',0,true,false,(select coalesce(max(upgrade_rank),0)+100 from user_levels))",level,"zero-level-"+level);
         jdbcTemplate.update("update subsite_settings set supply_level_id=? where id=1",level);
         jdbcTemplate.update("insert into subsites(id,owner_id,prefix,name) values (?,?,?,?)",siteId,owner,"z"+siteId.toString().replace("-",""),"zero");
         com.myshop.entity.Subsite site=new com.myshop.entity.Subsite(); site.setId(siteId); site.setOwnerId(owner); return site;
