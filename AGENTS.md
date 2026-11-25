@@ -24,3 +24,9 @@
 
 ## 内测服务器连接
 - MyShop 生产服务器：`110.42.34.161`；SSH 命令：`ssh myshop-friend-prod`（root，端口 `1429`）。私钥只保存在本机 `~/.ssh/`，不放入仓库。
+
+## 正式发布路径
+- 代码提交并推送 `main` 后，手动触发 `.github/workflows/cicd.yml`；CI 发布不可变 GHCR 镜像和 release manifest。
+- 核对生产 accepted SHA 和部署锁后，以 `MYSHOP_OFFLINE_IMAGES=0` 在生产服务器运行 `scripts/deploy-production.sh`，让服务器按 manifest 中的 digest 直接拉取变化的 API/Web 镜像。沿用部署事务、备份、健康检查和回滚。
+- `export-offline-release.yml` 仅供人工决定的应急发布；正常 GHCR 拉取失败时停止并保留生产现状，不自动导出或下载离线大包。
+- `Dockerfile.api` 和 `Dockerfile.web` 的基础镜像按 digest 固定；定期在明确的依赖升级任务中验证并更新。

@@ -99,6 +99,7 @@ export HOST_DEPLOY_LOCK_FILE=/run/myshop-friend-deploy.lock
 export MYSHOP_RUN_HOST_MAINTENANCE=0
 export MYSHOP_RELEASE_REPOSITORY=/opt/myshop-friend/release.git
 export MYSHOP_APPROVED_REGISTRY=ghcr.io/yykx682436
+export MYSHOP_OFFLINE_IMAGES=0
 export MYSHOP_SMOKE_BASE_URL=http://127.0.0.1:8082
 export MYSHOP_SMOKE_HOST_HEADER=mc.mc520.top
 
@@ -215,8 +216,14 @@ shared Compose file pins each GHCR image by digest as well as a content-named
 tag. `scripts/test-shared-server-images.sh` checks these pins and confirms the
 legacy production Compose remains on its existing references.
 
-Normal deployment does not transfer Docker archives. If immutable GHCR blob
-downloads fail or are too slow, dispatch **MyShop emergency offline export** on
+Normal deployment uses `MYSHOP_OFFLINE_IMAGES=0`: after the manually triggered
+MyShop CI publishes a manifest, run `deploy-production.sh` with that manifest
+on the production host. The host pulls only changed API/Web digest references
+from GHCR, with at most three bounded attempts per image. A failed pull leaves
+the accepted release running and does not start an offline export. Keep the
+accepted runtime tags and rollback image IDs available when changing modes.
+
+For an explicitly chosen emergency release, dispatch **MyShop emergency offline export** on
 `main` with the full SHA of an already successful CI release. It pulls only the
 published digest-pinned API and Web images, verifies their RepoDigests, and
 exports those app images without rebuilding or republishing. The three

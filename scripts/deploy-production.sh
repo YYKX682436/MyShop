@@ -87,6 +87,7 @@ MAINTENANCE_DIR=${MYSHOP_MAINTENANCE_DIR:-$PROJECT_ROOT/maintenance}
 [[ -x "$COMPOSE_WRAPPER" && -x "$STATE_WRITER" && -x "$SCHEMA_SCRIPT" && -x "$BACKUP_SCRIPT" && -x "$RETENTION" ]] || die 'deployment helper is missing or not executable'
 [[ -x "$HEALTH_SCRIPT" ]] || die "storage health gate is missing: $HEALTH_SCRIPT"
 command -v python3 >/dev/null || die 'python3 is required'
+command -v timeout >/dev/null || die 'timeout is required for bounded registry pulls'
 [[ "$COMPOSE_PROJECT" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die 'MYSHOP_COMPOSE_PROJECT_NAME is invalid'
 [[ "$RUN_HOST_MAINTENANCE" == 0 || "$RUN_HOST_MAINTENANCE" == 1 ]] || die 'MYSHOP_RUN_HOST_MAINTENANCE must be 0 or 1'
 
@@ -353,7 +354,7 @@ verify_remote_digest() {
 }
 
 pull_candidate() {
-  local service bundle_image_id bundle_runtime_ref
+  local service bundle_image_id bundle_runtime_ref attempt started elapsed status pull_log
   if [[ "$offline_images" == 1 ]]; then
     python3 "$OFFLINE_IMAGE_VERIFIER" "$offline_bundle" --manifest "$manifest" --verify-local >/dev/null \
       || die 'preloaded image bundle does not match the release manifest or local image IDs'
@@ -374,7 +375,30 @@ pull_candidate() {
   fi
   for service in api web; do
     [[ "$service" == api && "$api_digest_changed" == 1 || "$service" == web && "$web_digest_changed" == 1 ]] || continue
-    docker pull "${candidate_ref[$service]}"
+    pull_log="$tmp_dir/pull-${service}.log"
+    for attempt in 1 2 3; do
+      started=$SECONDS
+      printf '[myshop-deploy] pulling %s attempt %s/3 ref=%s\n' "$service" "$attempt" "${candidate_ref[$service]}"
+      if timeout --signal=TERM --kill-after=5s 180s docker pull "${candidate_ref[$service]}" >"$pull_log" 2>&1; then
+        elapsed=$((SECONDS - started))
+        cat "$pull_log"
+        printf '[myshop-deploy] %s pull succeeded attempt=%s/3 elapsed=%ss\n' "$service" "$attempt" "$elapsed"
+        break
+      else
+        status=$?
+      fi
+      elapsed=$((SECONDS - started))
+      printf '[myshop-deploy] %s pull failed attempt=%s/3 elapsed=%ss exit=%s\n' "$service" "$attempt" "$elapsed" "$status" >&2
+      if (( status == 124 )); then
+        printf '[myshop-deploy] %s pull exceeded the 180s attempt limit\n' "$service" >&2
+      fi
+      tail -n 5 "$pull_log" >&2
+      if (( attempt == 3 )); then
+        printf '[myshop-deploy] %s pull exhausted three attempts; production remains on the accepted release\n' "$service" >&2
+        return 1
+      fi
+      sleep $((attempt * 3))
+    done
     verify_remote_digest "${candidate_ref[$service]}" "${candidate_digest[$service]}" \
       || die "${service} RepoDigest does not match release manifest"
     candidate_image_id[$service]=$(docker image inspect --format '{{.Id}}' "${candidate_ref[$service]}") \

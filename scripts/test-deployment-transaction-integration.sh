@@ -335,6 +335,13 @@ case "${1:-}" in
   pull)
     [[ "${DEPLOY_TEST_FAIL:-}" != pull ]] || exit 1
     printf '%s\n' "${2:-}" >>"${FAKE_PULL_LOG:?}"
+    if [[ -n "${FAKE_PULL_FAILURES:-}" ]]; then
+      pull_count=$(( $(wc -l <"${FAKE_PULL_LOG:?}") ))
+      if (( pull_count <= FAKE_PULL_FAILURES )); then
+        printf 'simulated temporary registry error on attempt %s\n' "$pull_count" >&2
+        exit 1
+      fi
+    fi
     ;;
   ps)
     if [[ " $* " == *" -aq "* || "${2:-}" == -aq ]]; then
@@ -990,6 +997,24 @@ grep -Fq "$registry/myshop-web@sha256:$(printf '4%.0s' {1..64})" "$case_root/pul
 grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps web' || fail 'Web-only release did not target only Web'
 ! grep -F 'up|' "$case_root/compose-detail.log" | grep -Fq -- '--no-deps api' || fail 'Web-only release restarted API'
 pass 'pure Web update pulls and starts Web only; API and database remain untouched'
+
+reset_case
+if output=$(FAKE_PULL_FAILURES=1 run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status == 0 )) || { printf '%s\n' "$output" >&2; fail 'temporary GHCR failure did not recover'; }
+[[ "$(wc -l <"$case_root/pull.log" | tr -d ' ')" == 2 ]] || fail 'temporary GHCR failure did not retry exactly once'
+grep -Fq 'web pull failed attempt=1/3' <<<"$output" || fail 'temporary GHCR failure was not reported'
+grep -Fq 'web pull succeeded attempt=2/3' <<<"$output" || fail 'successful GHCR retry was not reported'
+pass 'temporary GHCR failure retries the same immutable Web digest and deploys'
+
+reset_case
+if output=$(FAKE_PULL_FAILURES=3 run_deploy 2>&1); then update_status=0; else update_status=$?; fi
+(( update_status != 0 )) || fail 'three failed GHCR pulls unexpectedly deployed'
+[[ "$(wc -l <"$case_root/pull.log" | tr -d ' ')" == 3 ]] || fail 'GHCR failure did not stop after three attempts'
+grep -Fq 'simulated temporary registry error on attempt 3' <<<"$output" || { printf '%s\n' "$output" >&2; fail 'third GHCR failure reason was not reported'; }
+cmp -s "$base_state" "$case_root/deploy-state.json" || fail 'GHCR pull failure changed accepted state'
+[[ "$(<"$case_root/running")" == old ]] || fail 'GHCR pull failure stopped production'
+! grep -E '^(up|stop)$' "$case_root/compose.log" | grep -q . || fail 'GHCR pull failure changed running services'
+pass 'three failed GHCR pulls leave accepted state and running services intact'
 
 write_scope_bundle "$manifest"
 reset_case
