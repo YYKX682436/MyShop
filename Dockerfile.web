@@ -2,9 +2,8 @@
 # Next.js build once, then stages the standalone output, static assets and public files.
 # CI installs the standalone runtime on Linux/glibc. Keep the runtime ABI
 # compatible with that native Sharp binary so Next image optimization works.
-FROM node:22-bookworm-slim
+FROM node:22-bookworm-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb
 
-ARG SOURCE_SHA
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME="0.0.0.0"
 
@@ -24,6 +23,7 @@ COPY --chown=nextjs:nodejs apps/web/.next/BUILD_ID \
 COPY --chown=nextjs:nodejs apps/web/.next/server/ ./apps/web/.next/server/
 COPY --chown=nextjs:nodejs apps/web/.next/static/ ./apps/web/.next/static/
 COPY --chown=nextjs:nodejs apps/web/public/ ./apps/web/public/
+ARG SOURCE_SHA
 LABEL org.opencontainers.image.revision="$SOURCE_SHA"
 
 USER nextjs

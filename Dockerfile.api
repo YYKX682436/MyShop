@@ -1,9 +1,7 @@
 # Runtime-only image. CI runs Maven verify once, checksums the resulting JAR,
 # and stages that exact JAR with its embedded schema contract in the context.
-FROM eclipse-temurin:25-jre-noble
+FROM eclipse-temurin:25-jre-noble@sha256:f3dd0838e69b881cc382237d5901e74ae3705b1056ad964b2e0e523b174fef99
 
-ARG SOURCE_SHA
-ARG API_JAR_SHA256
 WORKDIR /app
 
 RUN apt-get update \
@@ -18,6 +16,8 @@ RUN apt-get update \
 
 COPY --chown=10001:10001 production-schema-contract.json /app/production-schema-contract.json
 COPY --chown=10001:10001 app.jar /app/app.jar
+ARG SOURCE_SHA
+ARG API_JAR_SHA256
 RUN test -n "$SOURCE_SHA" \
  && test -n "$API_JAR_SHA256" \
  && test "$(sha256sum /app/app.jar | awk '{print $1}')" = "$API_JAR_SHA256" \
