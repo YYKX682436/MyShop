@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import {
   ChevronRight,
@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Store,
   UserPlus,
+  Wallet,
   type LucideIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -22,7 +23,8 @@ import { isAdminRole } from "@/lib/hooks"
 import { copyText } from "@/lib/clipboard"
 import { getAvatarFileValidationError } from "@/lib/image-upload"
 import { formatYuan } from "@/lib/utils"
-import { getApiErrorMessage, requestOrThrow, userApi } from "@/services/api"
+import { getApiErrorMessage, requestOrThrow, userAccountApi, userApi } from "@/services/api"
+import type { UserAccountOverview } from "@/types"
 
 interface AccountLinkProps {
   href: string
@@ -51,7 +53,7 @@ function Divider() {
 
 function LoadingAccount() {
   return (
-    <div className="account-page space-y-4 sm:space-y-6">
+    <div className="account-page space-y-3 sm:space-y-4">
       <header className="hidden space-y-2 sm:block" aria-hidden="true">
         <div className="h-9 w-24 animate-pulse rounded-full bg-foreground/[0.07]" />
         <div className="h-4 w-32 animate-pulse rounded-full bg-foreground/[0.07]" />
@@ -88,12 +90,25 @@ export default function MyPage() {
   const { t } = useLocale()
   const { user, isLoggedIn, authLoaded, setUser, logout } = useAuth()
   const [isAvatarBusy, setIsAvatarBusy] = useState(false)
+  const [accountOverview, setAccountOverview] = useState<UserAccountOverview | null>(null)
+
+  useEffect(() => {
+    if (!authLoaded || !isLoggedIn || !user?.id) {
+      setAccountOverview(null)
+      return
+    }
+    let cancelled = false
+    requestOrThrow(() => userAccountApi.getOverview())
+      .then((overview) => { if (!cancelled) setAccountOverview(overview) })
+      .catch(() => { if (!cancelled) setAccountOverview(null) })
+    return () => { cancelled = true }
+  }, [authLoaded, isLoggedIn, user?.id])
 
   if (!authLoaded) return <LoadingAccount />
 
   if (!isLoggedIn || !user) {
     return (
-      <div className="account-page max-w-2xl space-y-4 sm:space-y-6">
+      <div className="account-page max-w-2xl space-y-3 sm:space-y-4">
         <header className="sr-only sm:not-sr-only">
           <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         </header>
@@ -179,7 +194,7 @@ export default function MyPage() {
   ) : user.user_level_name ? (
     <Badge
       variant="secondary"
-      className="min-w-0 max-w-full gap-1.5 overflow-hidden border-amber-300/80 bg-gradient-to-r from-amber-50 via-amber-100/80 to-yellow-50 text-amber-800 dark:border-amber-400/35 dark:from-amber-950/70 dark:via-amber-900/55 dark:to-yellow-950/55 dark:text-amber-200"
+      className="min-w-0 max-w-full gap-1.5 overflow-hidden border-border-subtle bg-surface-muted text-foreground"
     >
       <Crown className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate">{user.user_level_name}</span>
@@ -187,14 +202,14 @@ export default function MyPage() {
   ) : null
 
   return (
-    <div className="account-page space-y-4 sm:space-y-6">
+    <div className="account-page space-y-3 sm:space-y-4">
       <header className="sr-only sm:not-sr-only">
         <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground">{t("my.title")}</h1>
         <p className="mt-2 text-sm text-muted-foreground">{t("my.accountSummary")}</p>
       </header>
 
       <section className="account-identity-section" aria-label={t("my.accountSummary")}>
-        <div className="account-identity items-start">
+        <div className="account-identity">
           <AccountAvatar
             avatarUrl={user.avatar_url}
             username={user.username}
@@ -236,14 +251,28 @@ export default function MyPage() {
         aria-label={t("my.balance")}
       >
         <div className="account-balance-row">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-muted-foreground">{t("my.balance")}</p>
-            <p className="mt-1 break-all text-2xl font-semibold tracking-tight text-foreground tabular-nums">
-              {user.unlimited ? "∞" : formatYuan(user.balance)}
-            </p>
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">{t("my.balance")}</p>
+              <p className="mt-0.5 break-all text-2xl font-semibold tracking-tight text-foreground tabular-nums">
+                {user.unlimited ? "∞" : formatYuan(user.balance)}
+              </p>
+              {!user.unlimited && <Link href="/my/balance#history" className="mt-1 inline-flex min-h-8 items-center text-xs font-medium text-muted-foreground transition-colors hover:text-foreground">{t("my.balanceDetails")}</Link>}
+            </div>
+            {!user.unlimited && accountOverview?.recharge_enabled && (
+              <Link href="/my/balance" className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-control bg-primary px-4 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+                <Wallet className="size-4" aria-hidden="true" />{t("my.recharge")}
+              </Link>
+            )}
           </div>
         </div>
       </section>
+
+      {!user.unlimited && accountOverview?.upgrade_available && (
+        <section className="settings-group overflow-hidden rounded-card" aria-label={t("my.levelUpgrade")}>
+          <AccountLink href="/my/levels" icon={Crown} label={`${user.user_level_name ? `${user.user_level_name} · ` : ""}${t("my.levelUpgrade")}`} />
+        </section>
+      )}
 
       <section className="settings-group overflow-hidden rounded-card" aria-label={t("my.title")}>
         <AccountLink href="/my/subsite" icon={Store} label="我的分站" />

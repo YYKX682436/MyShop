@@ -20,6 +20,8 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
 
     List<PaymentAttempt> findByOrderIdOrderByCreatedAtDesc(UUID orderId);
 
+    List<PaymentAttempt> findByAccountPaymentTransactionIdOrderByCreatedAtDesc(UUID transactionId);
+
     Optional<PaymentAttempt> findFirstByOrderIdOrderByCreatedAtDesc(UUID orderId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -30,6 +32,9 @@ public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, 
     Optional<PaymentAttempt> findByMerchantTradeNo(String merchantTradeNo);
     @Query("select p.orderId from PaymentAttempt p where p.id=:id")
     Optional<UUID> findOrderId(@Param("id") UUID id);
+
+    @Query("select p.accountPaymentTransactionId from PaymentAttempt p where p.id=:id")
+    Optional<UUID> findAccountPaymentTransactionId(@Param("id") UUID id);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM PaymentAttempt p WHERE p.id = :id")

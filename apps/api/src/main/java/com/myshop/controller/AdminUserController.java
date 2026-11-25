@@ -14,6 +14,7 @@ import com.myshop.model.response.BalanceTransactionResponse;
 import com.myshop.model.response.AdminResetPasswordResponse;
 import com.myshop.model.response.UserLevelResponse;
 import com.myshop.service.AdminUserService;
+import com.myshop.service.AdminAccountPaymentService;
 import com.myshop.service.UserLevelService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/admin/users")
@@ -35,6 +37,19 @@ public class AdminUserController {
 
     private final AdminUserService adminUserService;
     private final UserLevelService userLevelService;
+    private final AdminAccountPaymentService accountPayments;
+
+    @GetMapping("/recharges")
+    public ApiResponse<?> listRecharges(@RequestParam(required = false) String keyword,
+                                        @RequestParam(required = false) String status,
+                                        @RequestParam(name = "channel_code", required = false) String channelCode,
+                                        @RequestParam(name = "min_amount", required = false) BigDecimal minAmount,
+                                        @RequestParam(name = "max_amount", required = false) BigDecimal maxAmount,
+                                        @RequestParam(defaultValue = "1") int page,
+                                        @RequestParam(name = "page_size", defaultValue = "20") int pageSize) {
+        return ApiResponse.success(accountPayments.recharges(keyword, status, channelCode,
+                minAmount, maxAmount, page, pageSize));
+    }
 
     @GetMapping
     public ApiResponse<PageResult<AdminUserListResponse>> listUsers(

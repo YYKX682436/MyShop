@@ -48,16 +48,20 @@ public class UserLevelServiceImpl implements UserLevelService {
     @Transactional
     public UserLevelResponse create(UserLevelUpsertRequest request) {
         boolean defaultRequested = request != null && Boolean.TRUE.equals(request.isDefault());
-        List<UserLevel> lockedLevels = defaultRequested ? userLevelRepository.findAllForUpdate() : List.of();
+        List<UserLevel> lockedLevels = userLevelRepository.findAllForUpdate();
         UserLevel level = new UserLevel();
-        apply(level, request, false);
+        apply(level, request, false, lockedLevels);
         if (defaultRequested) {
             if (!level.isEnabled()) {
                 throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "默认等级必须启用");
             }
+            prepareDefault(level, lockedLevels);
             clearDefaults(lockedLevels);
             level.setDefault(true);
         }
+        List<UserLevel> candidate = new java.util.ArrayList<>(lockedLevels);
+        candidate.add(level);
+        validateUpgradeConfiguration(candidate);
         UserLevel saved = userLevelRepository.saveAndFlush(level);
         log("user_level.create", saved.getId(), "创建用户等级：" + saved.getName());
         return toResponse(saved, 0);
@@ -67,14 +71,14 @@ public class UserLevelServiceImpl implements UserLevelService {
     @Transactional
     public UserLevelResponse update(UUID id, UserLevelUpsertRequest request) {
         boolean defaultRequested = request != null && Boolean.TRUE.equals(request.isDefault());
-        List<UserLevel> lockedLevels = defaultRequested ? userLevelRepository.findAllForUpdate() : List.of();
-        UserLevel level = defaultRequested ? requireLockedLevel(lockedLevels, id) : lockLevel(id);
+        List<UserLevel> lockedLevels = userLevelRepository.findAllForUpdate();
+        UserLevel level = requireLockedLevel(lockedLevels, id);
         UserLevel duplicate = findNamed(request == null ? null : request.name());
         if (duplicate != null && !duplicate.getId().equals(id)) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "用户等级名称已存在");
         }
         boolean wasDefault = level.isDefault();
-        apply(level, request, true);
+        apply(level, request, true, lockedLevels);
         if (wasDefault && !level.isEnabled()) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "默认等级不能停用");
         }
@@ -84,10 +88,12 @@ public class UserLevelServiceImpl implements UserLevelService {
         if (level.isDefault()) {
             level.setEnabled(true);
             if (defaultRequested) {
+                prepareDefault(level, lockedLevels);
                 clearDefaults(lockedLevels);
                 level.setDefault(true);
             }
         }
+        validateUpgradeConfiguration(lockedLevels);
         UserLevel saved = userLevelRepository.saveAndFlush(level);
         log("user_level.update", id, "更新用户等级：" + saved.getName());
         return toResponse(saved, userRepository.countByUserLevelId(id));
@@ -120,8 +126,14 @@ public class UserLevelServiceImpl implements UserLevelService {
         if (!level.isEnabled()) {
             throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "停用等级不能设为默认");
         }
+        prepareDefault(level, lockedLevels);
         clearDefaults(lockedLevels);
         level.setDefault(true);
+        level.setEnabled(true);
+        level.setUpgradePrice(BigDecimal.ZERO.setScale(2));
+        level.setSelfUpgradeEnabled(false);
+        level.setPublicPriceEnabled(false);
+        validateUpgradeConfiguration(lockedLevels);
         UserLevel saved = userLevelRepository.saveAndFlush(level);
         log("user_level.default", id, "设置默认用户等级：" + saved.getName());
         return toResponse(saved, userRepository.countByUserLevelId(id));
@@ -190,7 +202,8 @@ public class UserLevelServiceImpl implements UserLevelService {
         return toResponse(target, userRepository.countByUserLevelId(target.getId()));
     }
 
-    private void apply(UserLevel level, UserLevelUpsertRequest request, boolean update) {
+    private void apply(UserLevel level, UserLevelUpsertRequest request, boolean update,
+                       List<UserLevel> lockedLevels) {
         if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "用户等级参数不能为空");
         String name = request.name() == null ? null : request.name().trim();
         if (name == null || name.isBlank() || name.length() > 100) {
@@ -222,6 +235,72 @@ public class UserLevelServiceImpl implements UserLevelService {
         if (request.isDefault() != null) level.setDefault(request.isDefault());
         if (request.sortOrder() != null) level.setSortOrder(request.sortOrder());
         level.setRemark(request.remark() == null ? null : request.remark().trim());
+        boolean upgradeSettingsSupplied = request.upgradeRank() != null
+                || request.selfUpgradeEnabled() != null || request.publicPriceEnabled() != null;
+        if (request.upgradeRank() != null) level.setUpgradeRank(request.upgradeRank());
+        else if (!update) level.setUpgradeRank(lockedLevels.stream().mapToInt(UserLevel::getUpgradeRank)
+                .max().orElse(-100) + 100);
+        if (request.selfUpgradeEnabled() != null) level.setSelfUpgradeEnabled(request.selfUpgradeEnabled());
+        else if (!update) level.setSelfUpgradeEnabled(false);
+        if (request.publicPriceEnabled() != null) level.setPublicPriceEnabled(request.publicPriceEnabled());
+        else if (!update) level.setPublicPriceEnabled(false);
+        if (!update || upgradeSettingsSupplied) level.setUpgradePrice(normalizeUpgradePrice(request.upgradePrice()));
+        if (level.isDefault()) {
+            if (request.upgradePrice() != null && request.upgradePrice().signum() != 0)
+                throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "默认等级价格固定为 0");
+            level.setUpgradePrice(BigDecimal.ZERO.setScale(2));
+            level.setSelfUpgradeEnabled(false);
+            level.setPublicPriceEnabled(false);
+        }
+    }
+
+    private BigDecimal normalizeUpgradePrice(BigDecimal value) {
+        if (value == null) return null;
+        if (value.signum() < 0 || value.compareTo(new BigDecimal("9999999999.99")) > 0)
+            throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "等级开通价格无效");
+        try { return value.setScale(2, RoundingMode.UNNECESSARY); }
+        catch (ArithmeticException exception) {
+            throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "等级开通价格最多保留两位小数");
+        }
+    }
+
+    private void prepareDefault(UserLevel target, List<UserLevel> all) {
+        int minimum = all.stream().filter(level -> !level.getId().equals(target.getId()))
+                .mapToInt(UserLevel::getUpgradeRank).min().orElse(target.getUpgradeRank());
+        if (minimum < Integer.MIN_VALUE + 100)
+            throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "无法为默认等级分配更低的等级顺序");
+        target.setUpgradeRank(minimum - 100);
+        target.setUpgradePrice(BigDecimal.ZERO.setScale(2));
+        target.setSelfUpgradeEnabled(false);
+        target.setPublicPriceEnabled(false);
+        all.stream().filter(UserLevel::isDefault).filter(level -> !level.getId().equals(target.getId()))
+                .forEach(level -> level.setUpgradePrice(null));
+    }
+
+    private void validateUpgradeConfiguration(List<UserLevel> all) {
+        List<UserLevel> ordered = all.stream().sorted(Comparator.comparingInt(UserLevel::getUpgradeRank)).toList();
+        java.util.Set<Integer> ranks = new java.util.HashSet<>();
+        BigDecimal lastConfiguredPrice = null;
+        for (int index = 0; index < ordered.size(); index++) {
+            UserLevel level = ordered.get(index);
+            if (!ranks.add(level.getUpgradeRank()))
+                throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "等级高低顺序不能重复");
+            if (level.isDefault() && index != 0)
+                throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "默认等级必须排在最低等级");
+            if (level.isDefault() && (level.getUpgradePrice() == null
+                    || level.getUpgradePrice().compareTo(BigDecimal.ZERO) != 0
+                    || level.isSelfUpgradeEnabled() || level.isPublicPriceEnabled()))
+                throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "默认等级价格必须为 0，且不能开放自主升级或价格查询");
+            if (level.isSelfUpgradeEnabled() && level.getUpgradePrice() == null)
+                throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "开放自主升级前必须配置等级价格");
+            if (level.isPublicPriceEnabled() && (!level.isSelfUpgradeEnabled() || level.getUpgradePrice() == null))
+                throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "公开价格仅适用于已开放自主升级的等级");
+            if (level.getUpgradePrice() != null) {
+                if (lastConfiguredPrice != null && level.getUpgradePrice().compareTo(lastConfiguredPrice) < 0)
+                    throw new BusinessException(ErrorCode.USER_LEVEL_INVALID, "较高等级价格不能低于较低等级价格");
+                lastConfiguredPrice = level.getUpgradePrice();
+            }
+        }
     }
 
     private UserLevel lockLevel(UUID id) {

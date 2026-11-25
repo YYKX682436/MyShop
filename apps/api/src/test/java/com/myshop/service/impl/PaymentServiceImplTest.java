@@ -17,6 +17,7 @@ import com.myshop.payment.PaymentStatus;
 import com.myshop.repository.OrderItemRepository;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
+import com.myshop.repository.AccountPaymentTransactionRepository;
 import com.myshop.repository.PaymentChannelRepository;
 import com.myshop.service.OrderExpiryService;
 import com.myshop.service.PaymentQueryTransactionService;
@@ -57,6 +58,7 @@ class PaymentServiceImplTest {
     @Mock private OrderRepository orderRepository;
     @Mock private OrderItemRepository orderItemRepository;
     @Mock private PaymentAttemptRepository paymentAttemptRepository;
+    @Mock private AccountPaymentTransactionRepository accountPaymentTransactions;
     @Mock private PaymentProvider provider;
     @Mock private OrderExpiryService orderExpiryService;
     @Mock private PaymentQueryTransactionService paymentQueryTransactionService;
@@ -92,7 +94,7 @@ class PaymentServiceImplTest {
                 });
         lenient().when(paymentAttemptRepository.existsByMerchantTradeNo(anyString())).thenReturn(false);
         service = new PaymentServiceImpl(paymentChannelRepository, orderRepository, orderItemRepository,
-                paymentAttemptRepository, List.of(provider), new ObjectMapper(), orderExpiryService,
+                paymentAttemptRepository, accountPaymentTransactions, List.of(provider), new ObjectMapper(), orderExpiryService,
                 paymentQueryTransactionService, supplierOrderAvailability);
         var manager = org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class);
         lenient().when(manager.getTransaction(any())).thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());

@@ -16,6 +16,10 @@ public record UserLevelResponse(
         @JsonProperty("is_default") boolean isDefault,
         boolean enabled,
         int sortOrder,
+        int upgradeRank,
+        boolean selfUpgradeEnabled,
+        BigDecimal upgradePrice,
+        boolean publicPriceEnabled,
         String remark,
         long userCount,
         LocalDateTime createdAt,
@@ -24,6 +28,8 @@ public record UserLevelResponse(
     public static UserLevelResponse from(UserLevel level, long userCount) {
         return new UserLevelResponse(level.getId(), level.getName(), level.getPricingType(),
                 level.getMarkupRate(), level.isDefault(), level.isEnabled(), level.getSortOrder(),
-                level.getRemark(), userCount, level.getCreatedAt(), level.getUpdatedAt());
+                level.getUpgradeRank(), level.isSelfUpgradeEnabled(), level.getUpgradePrice(),
+                level.isPublicPriceEnabled(), level.getRemark(), userCount,
+                level.getCreatedAt(), level.getUpdatedAt());
     }
 }

@@ -11,6 +11,10 @@ public record UserLevelUpsertRequest(
         Boolean enabled,
         Boolean isDefault,
         Integer sortOrder,
-        String remark
+        String remark,
+        Integer upgradeRank,
+        Boolean selfUpgradeEnabled,
+        BigDecimal upgradePrice,
+        Boolean publicPriceEnabled
 ) {
 }

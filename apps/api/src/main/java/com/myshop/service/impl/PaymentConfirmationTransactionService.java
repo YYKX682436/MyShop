@@ -4,15 +4,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.constant.OrderStatus;
 import com.myshop.entity.Order;
 import com.myshop.entity.PaymentAttempt;
+import com.myshop.entity.AccountPaymentTransaction;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.OrderType;
 import com.myshop.entity.WebhookEvent;
 import com.myshop.payment.PaymentProvider;
 import com.myshop.payment.PaymentStatus;
+import com.myshop.constant.AccountPaymentStatus;
 import com.myshop.repository.OrderRepository;
 import com.myshop.repository.PaymentAttemptRepository;
 import com.myshop.repository.WebhookEventRepository;
 import com.myshop.repository.SupplierPurchaseRepository;
+import com.myshop.repository.AccountPaymentTransactionRepository;
+import com.myshop.service.AccountPaymentCompletionService;
 import com.myshop.service.OrderPaymentCompletionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -37,6 +41,10 @@ public class PaymentConfirmationTransactionService {
     private final ObjectMapper objectMapper;
     private SupplierPurchaseRepository supplierPurchases;
     @Autowired public void setSupplierPurchases(SupplierPurchaseRepository value) { supplierPurchases=value; }
+    private AccountPaymentTransactionRepository accountPaymentTransactions;
+    @Autowired public void setAccountPaymentTransactions(AccountPaymentTransactionRepository value) { accountPaymentTransactions = value; }
+    private AccountPaymentCompletionService accountPaymentCompletion;
+    @Autowired public void setAccountPaymentCompletion(AccountPaymentCompletionService value) { accountPaymentCompletion = value; }
 
     public boolean isSupplierOrder(UUID orderId) {
         return supplierPurchases!=null && orderId!=null && supplierPurchases.existsByOrderId(orderId);
@@ -57,6 +65,10 @@ public class PaymentConfirmationTransactionService {
     @Transactional
     public String confirmPaid(UUID paymentAttemptId, PaymentProvider.CallbackResult callback) {
         if (callback == null || callback.status() != PaymentStatus.PAID) return "FAIL";
+
+        UUID accountTransactionId = paymentAttemptRepository
+                .findAccountPaymentTransactionId(paymentAttemptId).orElse(null);
+        if (accountTransactionId != null) return confirmAccountPaid(paymentAttemptId, accountTransactionId, callback);
 
         // Obtain only the scalar id before waiting for the order lock; loading
         // the entity here would keep a stale status in the persistence context.
@@ -140,6 +152,17 @@ public class PaymentConfirmationTransactionService {
     @Transactional
     public void recordUnverifiedReceipt(UUID paymentAttemptId, PaymentProvider.CallbackResult callback) {
         if (callback == null || callback.status() != PaymentStatus.PAID) return;
+        UUID accountTransactionId = paymentAttemptRepository
+                .findAccountPaymentTransactionId(paymentAttemptId).orElse(null);
+        if (accountTransactionId != null) {
+            if (accountPaymentTransactions == null) return;
+            accountPaymentTransactions.findByIdForUpdate(accountTransactionId).orElse(null);
+            PaymentAttempt accountAttempt = paymentAttemptRepository.findByIdForUpdate(paymentAttemptId).orElse(null);
+            if (accountAttempt == null || !matchesCallback(accountAttempt, callback)) return;
+            WebhookEvent accountExisting = webhookEventRepository.findByEventId(callback.eventId()).orElse(null);
+            if (accountExisting == null) saveEvent(accountAttempt, callback, UNVERIFIED_RECEIPT);
+            return;
+        }
         UUID orderId = paymentAttemptRepository.findOrderId(paymentAttemptId).orElse(null);
         if (orderId == null || orderRepository.findByIdForUpdate(orderId).isEmpty()) return;
         PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentAttemptId).orElse(null);
@@ -153,6 +176,19 @@ public class PaymentConfirmationTransactionService {
     @Transactional
     public String recordConflictingReceipt(UUID paymentAttemptId, PaymentProvider.CallbackResult callback) {
         if (callback == null || callback.status() != PaymentStatus.PAID) return "FAIL";
+        UUID accountTransactionId = paymentAttemptRepository
+                .findAccountPaymentTransactionId(paymentAttemptId).orElse(null);
+        if (accountTransactionId != null) {
+            if (accountPaymentTransactions == null
+                    || accountPaymentTransactions.findByIdForUpdate(accountTransactionId).isEmpty()) return "FAIL";
+            PaymentAttempt accountAttempt = paymentAttemptRepository.findByIdForUpdate(paymentAttemptId).orElse(null);
+            if (accountAttempt == null || !accountAttempt.getMerchantTradeNo().equals(callback.merchantTradeNo())
+                    || callback.amount() == null || accountAttempt.getAmount() == null
+                    || accountAttempt.getAmount().compareTo(callback.amount()) != 0) return "FAIL";
+            if (webhookEventRepository.findByEventId(callback.eventId()).isPresent()) return "SUCCESS";
+            saveEvent(accountAttempt, callback, "LATE_PAID_CONFLICT");
+            return "SUCCESS";
+        }
         UUID orderId = paymentAttemptRepository.findOrderId(paymentAttemptId).orElse(null);
         if (orderId == null || orderRepository.findByIdForUpdate(orderId).isEmpty()) return "FAIL";
         PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentAttemptId).orElse(null);
@@ -161,6 +197,50 @@ public class PaymentConfirmationTransactionService {
                 || attempt.getAmount().compareTo(callback.amount()) != 0) return "FAIL";
         if (webhookEventRepository.findByEventId(callback.eventId()).isPresent()) return "SUCCESS";
         saveEvent(attempt, callback, "LATE_PAID_CONFLICT");
+        return "SUCCESS";
+    }
+
+    private String confirmAccountPaid(UUID paymentAttemptId, UUID transactionId,
+                                      PaymentProvider.CallbackResult callback) {
+        if (accountPaymentTransactions == null || accountPaymentCompletion == null) return "FAIL";
+        AccountPaymentTransaction transaction = accountPaymentTransactions.findByIdForUpdate(transactionId).orElse(null);
+        if (transaction == null) return "FAIL";
+        PaymentAttempt attempt = paymentAttemptRepository.findByIdForUpdate(paymentAttemptId).orElse(null);
+        if (attempt == null || !transactionId.equals(attempt.getAccountPaymentTransactionId())) return "FAIL";
+        WebhookEvent existing = webhookEventRepository.findByEventId(callback.eventId()).orElse(null);
+        boolean upgrading = existing != null && UNVERIFIED_RECEIPT.equals(existing.getProcessResult());
+        if (existing != null && !upgrading) return "SUCCESS";
+        if (!matchesCallback(attempt, callback)) {
+            if (attempt.getMerchantTradeNo().equals(callback.merchantTradeNo())
+                    && callback.amount() != null && attempt.getAmount() != null
+                    && attempt.getAmount().compareTo(callback.amount()) == 0
+                    && attempt.getProviderTradeNo() != null && callback.providerTradeNo() != null
+                    && !attempt.getProviderTradeNo().equals(callback.providerTradeNo())) {
+                saveEvent(attempt, callback, "LATE_PAID_CONFLICT");
+                return "SUCCESS";
+            }
+            return "FAIL";
+        }
+        if (upgrading) {
+            existing.setProcessResult("VERIFYING");
+            webhookEventRepository.saveAndFlush(existing);
+        }
+        if (attempt.getStatus() == PaymentStatus.PAID) {
+            if (upgrading || !webhookEventRepository.existsByPaymentAttemptId(attempt.getId())) {
+                if (attempt.getProviderTradeNo() == null && callback.providerTradeNo() != null)
+                    attempt.setProviderTradeNo(callback.providerTradeNo());
+                saveEvent(attempt, callback, "LATE_PAID_PAID");
+            }
+            return "SUCCESS";
+        }
+        if (callback.providerTradeNo() != null && !callback.providerTradeNo().isBlank())
+            attempt.setProviderTradeNo(callback.providerTradeNo());
+        attempt.setStatus(PaymentStatus.PAID);
+        paymentAttemptRepository.save(attempt);
+        AccountPaymentStatus result = accountPaymentCompletion.completePaid(transaction);
+        String process = result == AccountPaymentStatus.COMPLETED ? "SUCCESS"
+                : result == AccountPaymentStatus.RECOVERED ? "RECOVERED_TO_BALANCE" : "REVIEW_REQUIRED";
+        saveEvent(attempt, callback, process);
         return "SUCCESS";
     }
 

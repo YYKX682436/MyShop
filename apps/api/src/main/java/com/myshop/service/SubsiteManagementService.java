@@ -4,6 +4,7 @@ import com.myshop.constant.ErrorCode;
 import com.myshop.constant.UserRole;
 import com.myshop.context.SiteRequestContext;
 import com.myshop.entity.*;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.myshop.exception.BusinessException;
 import com.myshop.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,13 @@ public class SubsiteManagementService {
     public record TransferRequest(UUID userId, UUID levelId) {}
     public record StatusRequest(boolean enabled) {}
     public record LevelRequest(UUID levelId) {}
+    public record LevelUpgradeRuleRequest(UUID userLevelId, boolean selfUpgradeEnabled,
+                                          BigDecimal upgradePrice, boolean publicPriceEnabled) {}
+    public record LevelUpgradeRuleView(UUID userLevelId, String name, int upgradeRank,
+                                       @JsonProperty("is_default") boolean isDefault,
+                                       boolean levelEnabled, boolean platformPricePublic,
+                                       boolean selfUpgradeEnabled, BigDecimal upgradePrice,
+                                       boolean publicPriceEnabled) {}
 
     @Transactional(readOnly = true)
     public Settings getSettings() {
@@ -214,6 +222,129 @@ public class SubsiteManagementService {
         User user = users.findByIdForUpdate(customerId).orElseThrow(() -> bad("用户不存在"));
         if (user.getRole() != UserRole.USER || !Objects.equals(user.getSubsiteId(), site.getId())) throw bad("用户不属于该分站");
         user.setUserLevelId(request.levelId()); users.save(user);
+    }
+
+    @Transactional(readOnly = true)
+    public List<LevelUpgradeRuleView> levelUpgradeRules(UUID ownerId) {
+        Subsite site = sites.findByOwnerId(ownerId).orElseThrow(() -> bad("尚未开通分站"));
+        return levels.findAllOrdered().stream().sorted(Comparator.comparingInt(UserLevel::getUpgradeRank))
+                .filter(UserLevel::isEnabled).map(level -> {
+                    BigDecimal localPrice = null;
+                    boolean selfEnabled = false;
+                    boolean publicEnabled = false;
+                    if (level.isDefault()) localPrice = BigDecimal.ZERO.setScale(2);
+                    else {
+                        List<Map<String, Object>> rows = jdbc.queryForList("""
+                                SELECT self_upgrade_enabled, upgrade_price, public_price_enabled
+                                FROM subsite_level_upgrade_rules WHERE subsite_id = ? AND user_level_id = ?
+                                """, site.getId(), level.getId());
+                        if (!rows.isEmpty()) {
+                            Map<String, Object> row = rows.get(0);
+                            selfEnabled = Boolean.TRUE.equals(row.get("self_upgrade_enabled"));
+                            localPrice = (BigDecimal) row.get("upgrade_price");
+                            publicEnabled = Boolean.TRUE.equals(row.get("public_price_enabled"));
+                        }
+                    }
+                    return new LevelUpgradeRuleView(level.getId(), level.getName(), level.getUpgradeRank(),
+                            level.isDefault(), level.isEnabled(), level.isPublicPriceEnabled(), selfEnabled, localPrice,
+                            publicEnabled && level.isPublicPriceEnabled());
+                }).toList();
+    }
+
+    @Transactional
+    public List<LevelUpgradeRuleView> updateLevelUpgradeRules(UUID ownerId,
+                                                               List<LevelUpgradeRuleRequest> request) {
+        if (request == null) throw bad("等级升级规则不能为空");
+        Subsite site = sites.findByOwnerIdForUpdate(ownerId).orElseThrow(() -> bad("尚未开通分站"));
+        Map<UUID, UserLevel> available = levels.findAllOrdered().stream()
+                .filter(UserLevel::isEnabled).collect(java.util.stream.Collectors.toMap(UserLevel::getId, level -> level));
+        Map<UUID, LevelUpgradeRuleRequest> updates = new LinkedHashMap<>();
+        for (LevelUpgradeRuleRequest rule : request) {
+            if (rule == null || rule.userLevelId() == null || updates.putIfAbsent(rule.userLevelId(), rule) != null)
+                throw bad("等级升级规则无效");
+            UserLevel level = available.get(rule.userLevelId());
+            if (level == null) throw bad("等级不存在或已停用");
+            if (level.isDefault()) {
+                if (rule.selfUpgradeEnabled() || rule.publicPriceEnabled()
+                        || rule.upgradePrice() != null && rule.upgradePrice().signum() != 0)
+                    throw bad("默认等级价格固定为 0，不能开放自主升级或价格查询");
+                continue;
+            }
+            BigDecimal price = rule.upgradePrice() == null ? null : normalizeUpgradePrice(rule.upgradePrice());
+            if (rule.selfUpgradeEnabled() && price == null) throw bad("开放自主升级前必须配置价格");
+            if (rule.publicPriceEnabled() && (!rule.selfUpgradeEnabled() || price == null
+                    || !level.isPublicPriceEnabled()))
+                throw bad("主站隐藏的等级价格不能在分站公开");
+        }
+
+        Map<UUID, BigDecimal> effectivePrices = new HashMap<>();
+        Map<UUID, Boolean> effectiveEnabled = new HashMap<>();
+        Map<UUID, Boolean> effectivePublic = new HashMap<>();
+        for (UserLevel level : available.values()) {
+            if (level.isDefault()) {
+                effectivePrices.put(level.getId(), BigDecimal.ZERO.setScale(2));
+                effectiveEnabled.put(level.getId(), false);
+                effectivePublic.put(level.getId(), false);
+                continue;
+            }
+            List<Map<String, Object>> rows = jdbc.queryForList("""
+                    SELECT self_upgrade_enabled, upgrade_price, public_price_enabled
+                    FROM subsite_level_upgrade_rules WHERE subsite_id = ? AND user_level_id = ?
+                    """, site.getId(), level.getId());
+            if (!rows.isEmpty()) {
+                Map<String, Object> row = rows.get(0);
+                effectivePrices.put(level.getId(), (BigDecimal) row.get("upgrade_price"));
+                effectiveEnabled.put(level.getId(), Boolean.TRUE.equals(row.get("self_upgrade_enabled")));
+                effectivePublic.put(level.getId(), Boolean.TRUE.equals(row.get("public_price_enabled")));
+            }
+        }
+        for (LevelUpgradeRuleRequest rule : updates.values()) {
+            if (available.get(rule.userLevelId()).isDefault()) continue;
+            effectivePrices.put(rule.userLevelId(), rule.upgradePrice() == null ? null : normalizeUpgradePrice(rule.upgradePrice()));
+            effectiveEnabled.put(rule.userLevelId(), rule.selfUpgradeEnabled());
+            effectivePublic.put(rule.userLevelId(), rule.publicPriceEnabled());
+        }
+        BigDecimal lastConfiguredPrice = null;
+        for (UserLevel level : available.values().stream().sorted(Comparator.comparingInt(UserLevel::getUpgradeRank)).toList()) {
+            BigDecimal price = effectivePrices.get(level.getId());
+            if (Boolean.TRUE.equals(effectiveEnabled.get(level.getId())) && price == null)
+                throw bad("开放自主升级前必须配置价格");
+            if (Boolean.TRUE.equals(effectivePublic.get(level.getId()))
+                    && (!Boolean.TRUE.equals(effectiveEnabled.get(level.getId())) || !level.isPublicPriceEnabled()))
+                throw bad("主站隐藏的等级价格不能在分站公开");
+            if (price != null && lastConfiguredPrice != null && price.compareTo(lastConfiguredPrice) < 0)
+                throw bad("较高等级价格不能低于较低等级价格");
+            if (price != null) lastConfiguredPrice = price;
+        }
+
+        for (LevelUpgradeRuleRequest rule : updates.values()) {
+            UserLevel level = available.get(rule.userLevelId());
+            if (level.isDefault()) continue;
+            BigDecimal price = rule.upgradePrice() == null ? null : normalizeUpgradePrice(rule.upgradePrice());
+            jdbc.update("""
+                    INSERT INTO subsite_level_upgrade_rules
+                        (subsite_id, user_level_id, self_upgrade_enabled, upgrade_price, public_price_enabled, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT (subsite_id, user_level_id) DO UPDATE SET
+                        self_upgrade_enabled = EXCLUDED.self_upgrade_enabled,
+                        upgrade_price = EXCLUDED.upgrade_price,
+                        public_price_enabled = EXCLUDED.public_price_enabled,
+                        updated_at = CURRENT_TIMESTAMP
+                    """, site.getId(), rule.userLevelId(), rule.selfUpgradeEnabled(), price,
+                    rule.publicPriceEnabled());
+        }
+        return levelUpgradeRules(ownerId);
+    }
+
+    private BigDecimal normalizeUpgradePrice(BigDecimal value) {
+        try {
+            BigDecimal amount = value.setScale(2, RoundingMode.UNNECESSARY);
+            if (amount.signum() < 0 || amount.compareTo(new BigDecimal("9999999999.99")) > 0)
+                throw bad("等级开通价格无效");
+            return amount;
+        } catch (ArithmeticException exception) {
+            throw bad("等级开通价格最多保留两位小数");
+        }
     }
     @Transactional(readOnly = true)
     public Map<String,Object> overview(UUID ownerId) {

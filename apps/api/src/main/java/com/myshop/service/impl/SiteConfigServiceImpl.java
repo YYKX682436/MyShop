@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
+import java.math.BigDecimal;
 import java.util.regex.Pattern;
 
 @Slf4j
@@ -55,7 +56,9 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             // 自定义样式
             "custom_css",
             // 系统参数
-            "order_expire_minutes", "rate_limit_per_second"
+            "order_expire_minutes", "rate_limit_per_second",
+            // 余额充值
+            "recharge_enabled", "recharge_min_amount", "recharge_max_amount"
     );
 
     /** F15: CSS 危险模式 — 用于过滤 custom_css 中的 XSS 向量 */
@@ -121,6 +124,7 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @Override
     @Transactional
     public void updateConfigs(List<Map<String, String>> configs) {
+        validateRechargeConfiguration(configs);
         int lastFavicon = -1;
         for (int i = 0; i < configs.size(); i++) if ("favicon_url".equals(configs.get(i).get("config_key"))) lastFavicon = i;
         var faviconReferences = lastFavicon < 0 || mediaAssets == null ? null
@@ -156,6 +160,34 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             if ("favicon_url".equals(key) && mediaAssets != null)
                 mediaAssets.replaceReferences("SITE_CONFIG", saved.getId(), faviconReferences, "favicon_url");
         }
+    }
+
+    private void validateRechargeConfiguration(List<Map<String, String>> configs) {
+        if (configs == null) return;
+        Map<String, String> values = new HashMap<>();
+        for (String key : List.of("recharge_enabled", "recharge_min_amount", "recharge_max_amount")) {
+            values.put(key, siteConfigRepository.findByConfigKey(key).map(SiteConfig::getConfigValue)
+                    .orElse(key.equals("recharge_enabled") ? "false" : key.equals("recharge_min_amount") ? "10.00" : "5000.00"));
+        }
+        for (Map<String, String> item : configs) {
+            if (item == null) continue;
+            String key = item.get("config_key");
+            if (values.containsKey(key)) values.put(key, item.get("config_value"));
+        }
+        String enabled = values.get("recharge_enabled");
+        if (!"true".equalsIgnoreCase(enabled) && !"false".equalsIgnoreCase(enabled))
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "充值开关配置无效");
+        BigDecimal minimum;
+        BigDecimal maximum;
+        try {
+            minimum = new BigDecimal(values.get("recharge_min_amount")).setScale(2, java.math.RoundingMode.UNNECESSARY);
+            maximum = new BigDecimal(values.get("recharge_max_amount")).setScale(2, java.math.RoundingMode.UNNECESSARY);
+        } catch (RuntimeException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "充值金额限制最多支持两位小数");
+        }
+        BigDecimal supportedMax = new BigDecimal("9999999999.99");
+        if (minimum.signum() <= 0 || maximum.compareTo(minimum) < 0 || maximum.compareTo(supportedMax) > 0)
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "充值最低和最高金额设置无效");
     }
 
     @Override

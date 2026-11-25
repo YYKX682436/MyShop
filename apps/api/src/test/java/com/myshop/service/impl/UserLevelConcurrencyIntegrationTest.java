@@ -198,18 +198,21 @@ class UserLevelConcurrencyIntegrationTest {
     @Test
     void creatingAndUpdatingDefaultsPreserveTheSingleDefaultConstraint() {
         var created = levels.create(new UserLevelUpsertRequest(
-                fixturePrefix + "-created", PricingType.RETAIL, null, true, true, 0, null));
+                fixturePrefix + "-created", PricingType.RETAIL, null, true, true, 0, null,
+                null, null, null, null));
         assertDefault(created.id());
         levels.update(firstLevel, new UserLevelUpsertRequest(
-                fixturePrefix + "-first", PricingType.RETAIL, null, true, true, 0, null));
+                fixturePrefix + "-first", PricingType.RETAIL, null, true, true, 0, null,
+                null, null, null, null));
         assertDefault(firstLevel);
         levels.setDefault(secondLevel);
         assertDefault(secondLevel);
     }
 
     private void insertLevel(UUID id, String suffix) {
-        jdbc.update("INSERT INTO user_levels (id, name, pricing_type, enabled, is_default) VALUES (?, ?, 'RETAIL', true, false)",
-                id, fixturePrefix + suffix);
+        Integer rank = jdbc.queryForObject("SELECT coalesce(max(upgrade_rank), -100) + 100 FROM user_levels", Integer.class);
+        jdbc.update("INSERT INTO user_levels (id, name, pricing_type, enabled, is_default, upgrade_rank) VALUES (?, ?, 'RETAIL', true, false, ?)",
+                id, fixturePrefix + suffix, rank);
     }
 
     private UUID insertUser(UUID level) {

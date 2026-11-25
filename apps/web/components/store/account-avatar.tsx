@@ -69,7 +69,7 @@ export function AccountAvatar({
   )
 
   return (
-    <div className="size-14 shrink-0 sm:size-20 md:size-24">
+    <div className="size-14 shrink-0 sm:size-16">
       {editable ? (
         <button
           type="button"

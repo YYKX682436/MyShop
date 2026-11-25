@@ -30,6 +30,10 @@
   AdminUserOrder,
   AdminResetPasswordResponse,
   BalanceTransaction,
+  AccountTransaction,
+  AccountPaymentCreateResult,
+  UserAccountOverview,
+  ProductPriceCheck,
   AdminOperationLogDetail,
   UserNumberConfig,
   AdminOrderItem,
@@ -498,6 +502,24 @@ export const userApi = {
   },
 }
 
+export const userAccountApi = {
+  getOverview: () => request<UserAccountOverview>("/user/account/overview"),
+  getBalanceTransactions: (params: { page?: number; page_size?: number } = {}) => {
+    const qs = buildQuery(params)
+    return request<PaginatedData<BalanceTransaction>>(`/user/account/balance-transactions?${qs}`)
+  },
+  beginRecharge: (data: { amount: number; channel_code: string; device?: string }) =>
+    request<AccountPaymentCreateResult>("/user/account/recharges", { method: "POST", body: JSON.stringify(data) }),
+  beginUpgrade: (data: { target_level_id: string; payment_method: "BALANCE" | "ONLINE"; channel_code?: string; device?: string }) =>
+    request<AccountPaymentCreateResult>("/user/account/level-upgrades", { method: "POST", body: JSON.stringify(data) }),
+  getTransaction: (id: string) => request<AccountTransaction>(`/user/account/transactions/${encodeURIComponent(id)}`),
+  refreshTransaction: (id: string) => request<AccountTransaction>(`/user/account/transactions/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
+  checkProductPrice: (productId: string, specId?: string | null) => {
+    const qs = buildQuery({ product_id: productId, spec_id: specId ?? undefined })
+    return request<ProductPriceCheck>(`/user/account/price-check?${qs}`)
+  },
+}
+
 // ============================================================
 // Product
 // ============================================================
@@ -557,6 +579,11 @@ export interface SubsiteCustomer {
   id: string; user_no: number | null; username: string; user_level_id: string | null; created_at: string
 }
 export interface SubsiteLevel { id: string; name: string }
+export interface SubsiteLevelUpgradeRule {
+  user_level_id: string; name: string; upgrade_rank: number; is_default: boolean; level_enabled: boolean
+  platform_price_public: boolean; self_upgrade_enabled: boolean; upgrade_price: number | null
+  public_price_enabled: boolean
+}
 export interface SubsiteProduct {
   id: string; title: string; spec_enabled: boolean; retail_price: number; supply_price: number | null; underpriced_levels: string[]
   specs: { id: string; name: string; retail_price: number; supply_price: number; underpriced_levels: string[] }[]
@@ -586,6 +613,9 @@ export const subsiteApi = {
   updateProductPricing: (id: string, data: SubsiteProductPricing) => request<SubsiteProductPricing>(`/subsite/pricing/products/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(data) }),
   markups: () => request<SubsiteLevelMarkup[]>("/subsite/pricing/levels"),
   updateMarkups: (data: SubsiteLevelMarkup[]) => request<SubsiteLevelMarkup[]>("/subsite/pricing/levels", { method: "PUT", body: JSON.stringify(data) }),
+  levelUpgradeRules: () => request<SubsiteLevelUpgradeRule[]>("/subsite/level-upgrades"),
+  updateLevelUpgradeRules: (data: Pick<SubsiteLevelUpgradeRule, "user_level_id" | "self_upgrade_enabled" | "upgrade_price" | "public_price_enabled">[]) =>
+    request<SubsiteLevelUpgradeRule[]>("/subsite/level-upgrades", { method: "PUT", body: JSON.stringify(data) }),
 }
 
 export const adminSubsiteApi = {
@@ -912,6 +942,10 @@ export const adminUserApi = {
     const qs = buildQuery(params)
     return request<PaginatedData<AdminUserItem>>(`/admin/users?${qs}`)
   },
+  getRecharges: (params: { page?: number; page_size?: number; keyword?: string; status?: string; channel_code?: string; min_amount?: number; max_amount?: number }) => {
+    const qs = buildQuery(params)
+    return request<PaginatedData<AdminRechargeRecord>>(`/admin/users/recharges?${qs}`)
+  },
   getDetail: (id: string) =>
     request<AdminUserDetail>(`/admin/users/${id}`),
   getSecretPrices: (id: string) => request<UserSecretPrice[]>(`/admin/users/${id}/secret-prices`),
@@ -991,7 +1025,18 @@ export interface UserLevelUpsertPayload {
   is_default?: boolean
   enabled?: boolean
   sort_order?: number
+  upgrade_rank: number
+  self_upgrade_enabled: boolean
+  upgrade_price: number | null
+  public_price_enabled: boolean
   remark?: string | null
+}
+
+export interface AdminRechargeRecord {
+  id: string; user_id: string; user_no: number | null; username: string; email: string
+  amount: number; business_status: string; payment_status: string; payment_method: string
+  channel_code: string | null; channel_name: string | null; payment_type: string | null
+  subsite_id: string | null; created_at: string; completed_at: string | null; recovery_reason: string | null
 }
 
 export const adminUserLevelApi = {

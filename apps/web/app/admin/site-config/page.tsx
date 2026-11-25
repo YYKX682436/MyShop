@@ -97,6 +97,15 @@ export default function AdminSiteConfigPage() {
   }
   const getBool = (key: string) => getValue(key) === "true"
   const handleSave = async () => {
+    const rechargeMin = Number(getValue("recharge_min_amount") || "10")
+    const rechargeMax = Number(getValue("recharge_max_amount") || "5000")
+    if (!Number.isFinite(rechargeMin) || !Number.isFinite(rechargeMax)
+      || rechargeMin <= 0 || rechargeMax < rechargeMin || rechargeMax > 9999999999.99
+      || !/^\d+(\.\d{1,2})?$/.test(getValue("recharge_min_amount") || "10")
+      || !/^\d+(\.\d{1,2})?$/.test(getValue("recharge_max_amount") || "5000")) {
+      toast.error(t("admin.rechargeAmountInvalid"))
+      return
+    }
     const version = settingsVersion.current
     setSaving(true)
     try {
@@ -267,6 +276,19 @@ export default function AdminSiteConfigPage() {
                 </div>
               </div>
             )}
+          </SettingsSection>
+          <SettingsSection title={t("admin.rechargeTitle")} description={t("admin.rechargeSettingsHint")}>
+            <div className="max-w-2xl space-y-5">
+              <div className="flex items-center justify-between gap-4 rounded-control border border-border-subtle bg-surface-muted/60 px-3.5 py-3">
+                <span className="text-sm font-medium">{t("admin.rechargeEnabled")}</span>
+                <Switch checked={getBool("recharge_enabled")} onCheckedChange={(checked) => setValue("recharge_enabled", String(checked))} disabled={saving || refreshing} aria-label={t("admin.rechargeEnabled")} />
+              </div>
+              <div className="grid gap-5 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.rechargeMin")}</span><Input type="number" min="0.01" step="0.01" value={getValue("recharge_min_amount") || "10.00"} onChange={(event) => setValue("recharge_min_amount", event.target.value || "10.00")} disabled={saving || refreshing} /></label>
+                <label className="flex flex-col gap-1.5 text-sm font-medium"><span>{t("admin.rechargeMax")}</span><Input type="number" min="0.01" step="0.01" value={getValue("recharge_max_amount") || "5000.00"} onChange={(event) => setValue("recharge_max_amount", event.target.value || "5000.00")} disabled={saving || refreshing} /></label>
+              </div>
+              {saveButton}
+            </div>
           </SettingsSection>
         </TabsContent>
 

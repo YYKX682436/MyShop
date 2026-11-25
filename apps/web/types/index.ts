@@ -272,6 +272,10 @@ export interface UserLevel {
   is_default: boolean
   enabled: boolean
   sort_order: number
+  upgrade_rank: number
+  self_upgrade_enabled: boolean
+  upgrade_price: number | null
+  public_price_enabled: boolean
   remark: string | null
   user_count: number
   created_at: string
@@ -422,6 +426,26 @@ export interface PaymentCreateResult {
   order_type?: OrderType
   admin_pickup?: boolean
   paid?: boolean
+}
+
+export interface AccountPaymentCreateResult {
+  payment_id?: string | null
+  order_id?: null
+  order_no?: null
+  account_transaction_id?: string | null
+  transaction_id?: string | null
+  account_status?: AccountPaymentStatus
+  account_type?: AccountPaymentType
+  amount?: number
+  status: PaymentStatus
+  creation_status?: PaymentCreateResult["creation_status"]
+  can_retry?: boolean
+  payment_method?: OrderPaymentMethod | null
+  payment_type?: string | null
+  payment_channel_code?: string | null
+  next_action?: PaymentNextAction | null
+  expires_at: string | null
+  remaining_seconds?: number
 }
 
 export interface CreateOrderResult {
@@ -951,7 +975,72 @@ export interface AdministratorOperationLog {
   created_at: string
 }
 
-export type BalanceTransactionType = 'ADMIN_ADJUSTMENT' | 'RECHARGE' | 'ORDER_PAYMENT' | 'REFUND' | 'SUBSITE_OPENING' | 'SUBSITE_PROFIT' | 'SUBSITE_PROFIT_REVERSAL'
+export type BalanceTransactionType = 'ADMIN_ADJUSTMENT' | 'RECHARGE' | 'ORDER_PAYMENT' | 'REFUND' | 'SUBSITE_OPENING' | 'SUBSITE_PROFIT' | 'SUBSITE_PROFIT_REVERSAL' | 'LEVEL_UPGRADE' | 'SUBSITE_UPGRADE_PROFIT'
+
+export type AccountPaymentType = 'RECHARGE' | 'LEVEL_UPGRADE'
+export type AccountPaymentStatus = 'PENDING' | 'COMPLETED' | 'RECOVERED' | 'FAILED' | 'EXPIRED'
+
+export interface AccountUpgradeOption {
+  level_id: string
+  name: string
+  upgrade_rank: number
+  level_price: number
+  amount: number
+  public_price_enabled: boolean
+}
+
+export interface UserAccountOverview {
+  admin: boolean
+  recharge_enabled: boolean
+  recharge_min_amount: number
+  recharge_max_amount: number
+  balance: number | null
+  current_level_name: string | null
+  current_upgrade_rank: number
+  current_level_price: number | null
+  has_higher_level: boolean
+  upgrade_available: boolean
+  upgrades: AccountUpgradeOption[]
+}
+
+export interface AccountTransaction {
+  id: string
+  type: AccountPaymentType
+  status: AccountPaymentStatus
+  payment_method: OrderPaymentMethod
+  amount: number
+  channel_code: string | null
+  payment_id?: string
+  payment_status?: PaymentStatus
+  creation_status?: PaymentCreateResult["creation_status"]
+  payment_type?: string
+  next_action?: PaymentNextAction | null
+  expires_at?: string | null
+  current_level_id: string | null
+  target_level_id: string | null
+  current_level_name: string | null
+  target_level_name: string | null
+  recovery_reason: string | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface ProductLevelPrice {
+  level_id: string
+  level_name: string
+  price: number
+  saving: number
+}
+
+export interface ProductPriceCheck {
+  product_id: string
+  product_name: string
+  spec_id: string | null
+  spec_name: string | null
+  current_level_name: string
+  current_price: number
+  levels: ProductLevelPrice[]
+}
 
 export interface BalanceTransaction {
   id: string

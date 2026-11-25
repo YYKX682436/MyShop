@@ -30,7 +30,7 @@ import { copyText } from "@/lib/clipboard"
 import { formatCents, formatYuanFromCents, formatYuanValue, MAX_BALANCE_CENTS, parseMoneyValueToCents, parsePositiveMoneyToCents } from "@/lib/money"
 import { formatBalanceAdjustmentResult, isOptionalReasonValid, normalizeOptionalReason } from "@/lib/user-management"
 import { formatDateTime } from "@/lib/utils"
-import { adminUserApi, adminUserLevelApi, requestOrThrow } from "@/services/api"
+import { adminPaymentApi, adminUserApi, adminUserLevelApi, requestOrThrow, type AdminRechargeRecord } from "@/services/api"
 import type { AdminUserItem, BalanceTransaction, UserLevel } from "@/types"
 
 const PAGE_SIZE = 20
@@ -63,6 +63,20 @@ export default function AdminUsersPage() {
   const [balanceReason, setBalanceReason] = useState("")
   const [balanceLoading, setBalanceLoading] = useState(false)
   const [balanceResult, setBalanceResult] = useState<{ text: string; transaction: BalanceTransaction; copyStatus: CopyStatus } | null>(null)
+  const [viewMode, setViewMode] = useState<"users" | "recharges">("users")
+  const [rechargeRecords, setRechargeRecords] = useState<AdminRechargeRecord[]>([])
+  const [rechargeChannels, setRechargeChannels] = useState<{ channel_code: string; channel_name: string }[]>([])
+  const [rechargeKeyword, setRechargeKeyword] = useState("")
+  const [rechargeStatus, setRechargeStatus] = useState("")
+  const [rechargeChannel, setRechargeChannel] = useState("")
+  const [rechargeMin, setRechargeMin] = useState("")
+  const [rechargeMax, setRechargeMax] = useState("")
+  const [appliedRechargeFilters, setAppliedRechargeFilters] = useState({ keyword: "", status: "", channel: "", min: "", max: "" })
+  const [rechargePage, setRechargePage] = useState(1)
+  const [rechargeTotal, setRechargeTotal] = useState(0)
+  const [rechargeLoading, setRechargeLoading] = useState(false)
+  const [rechargeError, setRechargeError] = useState(false)
+  const [rechargeChannelsLoaded, setRechargeChannelsLoaded] = useState(false)
 
   const loadLevels = useCallback(async () => {
     const current = startLevelsRequest()
@@ -110,10 +124,45 @@ export default function AdminUsersPage() {
   }, [debouncedSearch, levelFilter, page, statusFilter, startUsersRequest])
 
   useEffect(() => { void loadUsers() }, [loadUsers, usersRevision, levelsRevision])
+  const loadRecharges = useCallback(async () => {
+    setRechargeLoading(true)
+    setRechargeError(false)
+    try {
+      const result = await requestOrThrow(() => adminUserApi.getRecharges({
+        page: rechargePage,
+        page_size: PAGE_SIZE,
+        keyword: appliedRechargeFilters.keyword || undefined,
+        status: appliedRechargeFilters.status || undefined,
+        channel_code: appliedRechargeFilters.channel || undefined,
+        min_amount: appliedRechargeFilters.min ? Number(appliedRechargeFilters.min) : undefined,
+        max_amount: appliedRechargeFilters.max ? Number(appliedRechargeFilters.max) : undefined,
+      }))
+      const lastPage = Math.max(1, Math.ceil(result.pagination.total / PAGE_SIZE))
+      if (rechargePage > lastPage) { setRechargePage(lastPage); return }
+      setRechargeRecords(result.list)
+      setRechargeTotal(result.pagination.total)
+    } catch {
+      setRechargeRecords([])
+      setRechargeTotal(0)
+      setRechargeError(true)
+    } finally { setRechargeLoading(false) }
+  }, [appliedRechargeFilters, rechargePage])
+
+  useEffect(() => {
+    if (viewMode !== "recharges") return
+    void loadRecharges()
+    if (!rechargeChannelsLoaded) {
+      adminPaymentApi.getList().then((channels) => setRechargeChannels(channels.map((channel) => ({
+        channel_code: channel.channel_code,
+        channel_name: channel.channel_name,
+      })))).finally(() => setRechargeChannelsLoaded(true)).catch(() => {})
+    }
+  }, [viewMode, loadRecharges, rechargeChannelsLoaded])
+
   const refreshPage = useCallback(async () => {
-    const [, levelsOk] = await Promise.all([loadUsers(), loadLevels()])
+    const [, levelsOk] = await Promise.all([loadUsers(), loadLevels(), viewMode === "recharges" ? loadRecharges() : Promise.resolve()])
     if (!levelsOk) toast.error(t("admin.loadError"))
-  }, [loadUsers, loadLevels, t])
+  }, [loadUsers, loadLevels, loadRecharges, viewMode, t])
   const { refresh, refreshing } = useAdminPageRefresh(refreshPage)
 
   const changeLevel = async (user: AdminUserItem, userLevelId: string): Promise<boolean> => {
@@ -218,9 +267,32 @@ export default function AdminUsersPage() {
     setBalanceResult((current) => current ? { ...current, copyStatus: success ? "success" : "failed" } : current)
   }
 
+  const submitRechargeFilters = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const minimum = rechargeMin.trim() ? Number(rechargeMin) : null
+    const maximum = rechargeMax.trim() ? Number(rechargeMax) : null
+    if (minimum !== null && (!Number.isFinite(minimum) || minimum < 0)
+      || maximum !== null && (!Number.isFinite(maximum) || maximum < 0)
+      || minimum !== null && maximum !== null && minimum > maximum) {
+      toast.error(t("admin.rechargeAmountInvalid"))
+      return
+    }
+    setRechargePage(1)
+    setAppliedRechargeFilters({
+      keyword: rechargeKeyword.trim(), status: rechargeStatus,
+      channel: rechargeChannel, min: rechargeMin.trim(), max: rechargeMax.trim(),
+    })
+  }
+
   return (
     <AdminPage>
       <PageHeader title={t("admin.users")} description={t("admin.usersDesc")} onRefresh={() => void refresh()} refreshing={refreshing} />
+      <div className="segmented-control w-fit" role="group" aria-label={t("admin.users")}>
+        <button type="button" className="segmented-control-item" aria-pressed={viewMode === "users"} data-active={viewMode === "users"} onClick={() => setViewMode("users")}>{t("admin.users")}</button>
+        <button type="button" className="segmented-control-item" aria-pressed={viewMode === "recharges"} data-active={viewMode === "recharges"} onClick={() => setViewMode("recharges")}>{t("admin.rechargeRecords")}</button>
+      </div>
+
+      {viewMode === "users" ? <>
       <PageToolbar>
         <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row">
           <Input
@@ -318,6 +390,43 @@ export default function AdminUsersPage() {
           </tbody>
         </table>
       </DataTableShell>
+      </> : <section className="space-y-4">
+        <form action="/admin/users/recharges" method="get" onSubmit={submitRechargeFilters} className="grid gap-3 rounded-card border border-border-subtle bg-surface p-4 sm:grid-cols-2 xl:grid-cols-6">
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground xl:col-span-2"><span>{t("admin.rechargeKeyword")}</span><Input type="search" name="keyword" value={rechargeKeyword} onChange={(event) => setRechargeKeyword(event.target.value)} /></label>
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeStatus")}</span><select name="status" className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground" value={rechargeStatus} onChange={(event) => setRechargeStatus(event.target.value)}><option value="">{t("admin.allStatus")}</option><option value="PENDING">PENDING</option><option value="PAID">PAID</option><option value="RECOVERED">RECOVERED</option><option value="FAILED">FAILED</option><option value="CLOSED">CLOSED</option></select></label>
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeChannel")}</span><select name="channel_code" className="h-10 rounded-control border border-input bg-surface px-3 text-sm text-foreground" value={rechargeChannel} onChange={(event) => setRechargeChannel(event.target.value)}><option value="">{t("admin.allStatus")}</option>{rechargeChannels.map((channel) => <option key={channel.channel_code} value={channel.channel_code}>{channel.channel_name} · {channel.channel_code}</option>)}</select></label>
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeMin")}</span><Input type="number" min="0" step="0.01" name="min_amount" value={rechargeMin} onChange={(event) => setRechargeMin(event.target.value)} /></label>
+          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground"><span>{t("admin.rechargeMax")}</span><Input type="number" min="0" step="0.01" name="max_amount" value={rechargeMax} onChange={(event) => setRechargeMax(event.target.value)} /></label>
+          <div className="flex items-end sm:col-span-2 xl:col-span-6"><Button type="submit" variant="outline" disabled={rechargeLoading}>{t("nav.search")}</Button></div>
+        </form>
+
+        <DataTableShell footer={<AdminPagination page={rechargePage} total={rechargeTotal} pageSize={PAGE_SIZE} onPageChange={setRechargePage} />}>
+          <table className="w-full min-w-[1050px] text-sm">
+            <caption className="sr-only">{t("admin.rechargeRecords")}</caption>
+            <thead><tr className="border-b border-border-subtle bg-surface-muted">
+              <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.usernameLabel")}</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.rechargeAmount")}</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.rechargeChannel")}</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.rechargeStatus")}</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.registeredAt")}</th>
+            </tr></thead>
+            <tbody>
+              {rechargeLoading && <TableLoadingState colSpan={5} />}
+              {!rechargeLoading && rechargeError && <TableErrorState colSpan={5} onRetry={() => void loadRecharges()} />}
+              {!rechargeLoading && !rechargeError && rechargeRecords.length === 0 && <TableEmptyState colSpan={5}>{t("admin.rechargeNoRecords")}</TableEmptyState>}
+              {!rechargeLoading && !rechargeError && rechargeRecords.map((record) => (
+                <tr key={record.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
+                  <td data-label={t("admin.usernameLabel")} className="px-4 py-3"><Link href={`/admin/users/${record.user_id}`} className="font-medium text-foreground hover:text-primary">{record.username}</Link><span className="ml-2 text-xs text-muted-foreground">{record.user_no == null ? record.email : `#${record.user_no}`}</span></td>
+                  <td data-label={t("admin.rechargeAmount")} className="whitespace-nowrap px-4 py-3 font-semibold tabular-nums">{formatYuanValue(record.amount)}</td>
+                  <td data-label={t("admin.rechargeChannel")} className="px-4 py-3">{record.channel_name || record.channel_code || "—"}</td>
+                  <td data-label={t("admin.rechargeStatus")} className="px-4 py-3">{record.business_status === "RECOVERED" ? "RECOVERED" : record.payment_status}</td>
+                  <td data-label={t("admin.registeredAt")} className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(record.created_at, locale)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTableShell>
+      </section>}
 
       <Dialog open={balanceTarget !== null} onOpenChange={(open) => { if (!balanceLoading && !open) setBalanceTarget(null) }}>
         <DialogContent className="max-w-lg">

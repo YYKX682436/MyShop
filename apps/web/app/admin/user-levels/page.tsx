@@ -33,6 +33,10 @@ type LevelForm = {
   is_default: boolean
   enabled: boolean
   sort_order: string
+  upgrade_rank: string
+  self_upgrade_enabled: boolean
+  upgrade_price: string
+  public_price_enabled: boolean
   remark: string
 }
 
@@ -44,6 +48,10 @@ function emptyForm(): LevelForm {
     is_default: false,
     enabled: true,
     sort_order: "0",
+    upgrade_rank: "100",
+    self_upgrade_enabled: false,
+    upgrade_price: "",
+    public_price_enabled: false,
     remark: "",
   }
 }
@@ -56,6 +64,10 @@ function formFromLevel(level: UserLevel): LevelForm {
     is_default: level.is_default,
     enabled: level.enabled,
     sort_order: String(level.sort_order),
+    upgrade_rank: String(level.upgrade_rank),
+    self_upgrade_enabled: level.self_upgrade_enabled,
+    upgrade_price: level.upgrade_price == null ? "" : String(level.upgrade_price),
+    public_price_enabled: level.public_price_enabled,
     remark: level.remark || "",
   }
 }
@@ -69,6 +81,10 @@ function toPayload(form: LevelForm): UserLevelUpsertPayload {
     is_default: form.is_default,
     enabled: form.is_default ? true : form.enabled,
     sort_order: Number.parseInt(form.sort_order, 10) || 0,
+    upgrade_rank: Number.parseInt(form.upgrade_rank, 10),
+    self_upgrade_enabled: !form.is_default && form.self_upgrade_enabled,
+    upgrade_price: form.is_default ? 0 : form.upgrade_price.trim() ? Number(form.upgrade_price) : null,
+    public_price_enabled: !form.is_default && form.self_upgrade_enabled && form.public_price_enabled,
     remark: form.remark.trim() || null,
   }
 }
@@ -109,7 +125,7 @@ export default function AdminUserLevelsPage() {
 
   const openCreate = () => {
     setEditing(null)
-    setForm(emptyForm())
+    setForm({ ...emptyForm(), upgrade_rank: String(Math.max(0, ...levels.map((level) => level.upgrade_rank)) + 100) })
     setDialogOpen(true)
   }
 
@@ -131,6 +147,19 @@ export default function AdminUserLevelsPage() {
     }
     if (form.pricing_type === "RETAIL" && form.markup_rate.trim()) {
       toast.error(t("admin.levelMarkupInvalid"))
+      return
+    }
+    if (!/^[-]?\d+$/.test(form.upgrade_rank.trim())) {
+      toast.error(t("admin.levelUpgradeRankInvalid"))
+      return
+    }
+    if (form.upgrade_price.trim()
+      && (!/^\d+(\.\d{1,2})?$/.test(form.upgrade_price.trim()) || Number(form.upgrade_price) < 0)) {
+      toast.error(t("admin.levelUpgradePriceInvalid"))
+      return
+    }
+    if (!form.is_default && form.self_upgrade_enabled && !form.upgrade_price.trim()) {
+      toast.error(t("admin.levelUpgradePriceRequired"))
       return
     }
     setSaving(true)
@@ -244,7 +273,7 @@ export default function AdminUserLevelsPage() {
       </PageToolbar>
 
       <DataTableShell>
-        <table className="w-full min-w-[1100px] text-sm">
+        <table className="w-full min-w-[1320px] text-sm">
           <thead>
             <tr className="border-b border-border-subtle bg-surface-muted">
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelName")}</th>
@@ -253,14 +282,17 @@ export default function AdminUserLevelsPage() {
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelUserCount")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelStatus")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.sortOrderLabel")}</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelUpgradeRank")}</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelUpgradePrice")}</th>
+              <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelPublicPrice")}</th>
               <th className="px-4 py-3 text-left font-medium text-muted-foreground">{t("admin.levelRemark")}</th>
               <th className="px-4 py-3 text-right font-medium text-muted-foreground">{t("admin.actions")}</th>
             </tr>
           </thead>
           <tbody>
-            {loading && <TableLoadingState colSpan={8} />}
-            {!loading && error && <TableErrorState colSpan={8} onRetry={() => void loadLevels()} />}
-            {!loading && !error && levels.length === 0 && <TableEmptyState colSpan={8}>{t("common.noData")}</TableEmptyState>}
+            {loading && <TableLoadingState colSpan={11} />}
+            {!loading && error && <TableErrorState colSpan={11} onRetry={() => void loadLevels()} />}
+            {!loading && !error && levels.length === 0 && <TableEmptyState colSpan={11}>{t("common.noData")}</TableEmptyState>}
             {!loading && !error && levels.map((level) => (
               <tr key={level.id} className="border-b border-border-subtle last:border-0 hover:bg-surface-muted/60">
                 <td data-label={t("admin.levelName")} className="px-4 py-3">
@@ -275,6 +307,9 @@ export default function AdminUserLevelsPage() {
                 <td data-label={t("admin.levelUserCount")} className="px-4 py-3">{level.user_count}</td>
                 <td data-label={t("admin.levelStatus")} className="px-4 py-3"><StatusBadge label={level.enabled ? t("admin.levelEnabled") : t("admin.levelDisabled")} tone={level.enabled ? "success" : "neutral"} /></td>
                 <td data-label={t("admin.sortOrderLabel")} className="px-4 py-3">{level.sort_order}</td>
+                <td data-label={t("admin.levelUpgradeRank")} className="px-4 py-3">{level.upgrade_rank}</td>
+                <td data-label={t("admin.levelUpgradePrice")} className="px-4 py-3">{level.upgrade_price == null ? "—" : `${level.upgrade_price} 元`}</td>
+                <td data-label={t("admin.levelPublicPrice")} className="px-4 py-3">{level.self_upgrade_enabled ? (level.public_price_enabled ? t("admin.levelPricePublic") : t("admin.levelPricePrivate")) : "—"}</td>
                 <td data-label={t("admin.levelRemark")} className="max-w-56 truncate px-4 py-3 text-muted-foreground" title={level.remark || undefined}>{level.remark || "—"}</td>
                 <td data-label={t("admin.actions")} className="px-4 py-3">
                   <div className="flex justify-end gap-1">
@@ -297,7 +332,7 @@ export default function AdminUserLevelsPage() {
             <DialogTitle>{editing ? t("admin.editUserLevel") : t("admin.addUserLevel")}</DialogTitle>
             <DialogDescription>{t("admin.levelLifecycleHint")}</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4">
+              <div className="grid gap-4">
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.levelName")}<Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} maxLength={100} autoFocus /></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.pricingType")}
               <select className="h-10 rounded-control border border-input bg-surface px-3 text-sm" value={form.pricing_type} onChange={(event) => setForm((current) => ({ ...current, pricing_type: event.target.value as PricingType, markup_rate: event.target.value === "RETAIL" ? "" : current.markup_rate }))}>
@@ -308,9 +343,13 @@ export default function AdminUserLevelsPage() {
             {form.pricing_type === "COST_MARKUP" && <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.markupRate")}<Input type="number" min="0" step="0.0001" value={form.markup_rate} onChange={(event) => setForm((current) => ({ ...current, markup_rate: event.target.value }))} placeholder="15" /><span className="text-xs font-normal text-muted-foreground">{t("admin.markupRateHint")}</span></label>}
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.sortOrderLabel")}<Input type="number" value={form.sort_order} onChange={(event) => setForm((current) => ({ ...current, sort_order: event.target.value }))} /></label>
+              <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.levelUpgradeRank")}<Input type="number" value={form.upgrade_rank} onChange={(event) => setForm((current) => ({ ...current, upgrade_rank: event.target.value }))} /></label>
             <label className="flex items-center justify-between gap-3 rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 text-sm font-medium">{t("admin.enabledLevel")}<Switch checked={form.is_default || form.enabled} onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked }))} disabled={form.is_default} /></label>
             </div>
             <label className="flex items-center justify-between gap-3 rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 text-sm font-medium">{t("admin.defaultLevel")}<Switch checked={form.is_default} onCheckedChange={(checked) => setForm((current) => ({ ...current, is_default: checked, enabled: checked || current.enabled }))} /></label>
+            <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.levelUpgradePrice")}<Input type="number" min="0" step="0.01" value={form.is_default ? "0" : form.upgrade_price} onChange={(event) => setForm((current) => ({ ...current, upgrade_price: event.target.value }))} disabled={form.is_default} placeholder={t("admin.levelUpgradePriceUnset")} /></label>
+            <label className="flex items-center justify-between gap-3 rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 text-sm font-medium">{t("admin.levelSelfUpgrade")}<Switch checked={!form.is_default && form.self_upgrade_enabled} onCheckedChange={(checked) => setForm((current) => ({ ...current, self_upgrade_enabled: checked, public_price_enabled: checked && current.public_price_enabled }))} disabled={form.is_default || !form.upgrade_price.trim()} /></label>
+            <label className="flex items-center justify-between gap-3 rounded-control border border-border-subtle bg-surface-muted px-3 py-2.5 text-sm font-medium">{t("admin.levelPublicPrice")}<Switch checked={!form.is_default && form.public_price_enabled} onCheckedChange={(checked) => setForm((current) => ({ ...current, public_price_enabled: checked }))} disabled={form.is_default || !form.self_upgrade_enabled} /></label>
             <label className="flex flex-col gap-1.5 text-sm font-medium">{t("admin.levelRemark")}<Textarea value={form.remark} onChange={(event) => setForm((current) => ({ ...current, remark: event.target.value }))} placeholder={t("admin.levelRemarkPlaceholder")} maxLength={500} rows={3} /></label>
           </div>
           <DialogFooter><Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>{t("admin.cancel")}</Button><Button type="button" onClick={() => void handleSave()} disabled={saving}>{saving ? t("admin.saving") : t("admin.save")}</Button></DialogFooter>

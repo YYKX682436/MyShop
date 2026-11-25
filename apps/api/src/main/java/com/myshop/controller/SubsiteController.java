@@ -28,6 +28,13 @@ public class SubsiteController {
             @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.success(service.customers(RequestContext.getUserId(), page, size));
     }
+    @GetMapping("/level-upgrades") public ApiResponse<?> levelUpgrades() {
+        return ApiResponse.success(service.levelUpgradeRules(RequestContext.getUserId()));
+    }
+    @PutMapping("/level-upgrades") public ApiResponse<?> levelUpgrades(
+            @RequestBody java.util.List<SubsiteManagementService.LevelUpgradeRuleRequest> request) {
+        return ApiResponse.success(service.updateLevelUpgradeRules(RequestContext.getUserId(), request));
+    }
     @PutMapping("/customers/{id}/level") public ApiResponse<?> level(@PathVariable java.util.UUID id,
             @RequestBody SubsiteManagementService.LevelRequest request) {
         service.changeCustomerLevel(RequestContext.getUserId(), id, request); return ApiResponse.success();

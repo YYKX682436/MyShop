@@ -37,6 +37,17 @@ print(
     f"(count={len(versions)}, latest={max(versions)})"
 )
 assert contract["tables"]["products"] == ["id", "title", "retail_price", "card_content_column_count"]
+assert "account_payment_transaction_id" in contract["tables"]["payment_attempts"]
+assert "account_payment_transactions" in contract["tables"]
+assert "upgrade_rank" in contract["tables"]["user_levels"]
+assert "subsite_level_upgrade_rules" in contract["tables"]
+for required_index in (
+    "uq_user_levels_upgrade_rank",
+    "uq_account_payment_pending_level_upgrade",
+    "uq_payment_attempt_unresolved_account_transaction",
+    "uq_balance_transactions_account_payment_type",
+):
+    assert required_index in contract["indexes"], f"missing account-payment index: {required_index}"
 assert contract["tables"]["user_secret_prices"] == [
     "id", "user_id", "product_id", "spec_id", "price", "created_at", "updated_at"
 ]

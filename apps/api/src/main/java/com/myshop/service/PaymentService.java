@@ -26,11 +26,17 @@ public interface PaymentService {
     /** Join the authorized order transaction to prepare a repayment. */
     Map<String, Object> prepareRepayment(UUID orderId, String device);
 
+    /** Join an account transaction to the existing durable payment INTENT flow. */
+    Map<String, Object> prepareAccountPayment(UUID accountTransactionId, String channelCode, String device);
+
     /** Claim an already committed intent and contact its provider outside transactions. */
     Map<String, Object> dispatchPayment(UUID paymentId);
 
     /** Confirm the active attempt through its provider without changing authorization context. */
     void refreshPayment(UUID orderId);
+
+    /** Query a provider transaction linked to a wallet or level purchase. */
+    void refreshAccountPayment(UUID accountTransactionId);
 
     /**
      * Re-initiate payment for a PENDING order by closing its current attempt

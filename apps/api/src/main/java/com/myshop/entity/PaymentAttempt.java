@@ -29,8 +29,11 @@ import java.util.UUID;
 @Table(name = "payment_attempts")
 public class PaymentAttempt extends BaseEntity {
 
-    @Column(name = "order_id", nullable = false)
+    @Column(name = "order_id")
     private UUID orderId;
+
+    @Column(name = "account_payment_transaction_id")
+    private UUID accountPaymentTransactionId;
 
     @Column(name = "channel_id", nullable = false)
     private UUID channelId;
@@ -55,7 +58,7 @@ public class PaymentAttempt extends BaseEntity {
     @Column(name = "provider_trade_no", length = 255)
     private String providerTradeNo;
 
-    @Column(nullable = false, precision = 10, scale = 2)
+    @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal amount;
 
     @Enumerated(EnumType.STRING)

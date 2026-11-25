@@ -22,7 +22,7 @@ public class WebhookEvent extends BaseEntity {
     @Column(nullable = false)
     private String channelCode;
 
-    @Column(nullable = false)
+    @Column
     private UUID orderId;
 
     /** The attempt is the source of truth for channel and order snapshots. */

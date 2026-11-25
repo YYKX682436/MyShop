@@ -43,6 +43,26 @@ public class PaymentUrlService {
         return main.getScheme() + "://" + prefix + host.substring(dot)
                 + "/order/" + requiredPathSegment(orderId, "orderId") + "?paymentReturn=1";
     }
+
+    public String accountPaymentReturnUrl(String transactionId, String destination, String prefix) {
+        String page = switch (destination == null ? "" : destination) {
+            case "balance" -> "balance";
+            case "levels" -> "levels";
+            default -> throw new BusinessException(ErrorCode.BAD_REQUEST, "账户支付回跳页面无效");
+        };
+        URI main = URI.create(publicSiteUrl);
+        String origin = publicSiteUrl;
+        if (prefix != null) {
+            if (!prefix.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"))
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "分站域名前缀无效");
+            String host = main.getHost();
+            int dot = host.indexOf('.');
+            if (dot < 0) throw new BusinessException(ErrorCode.BAD_REQUEST, "主站域名无法生成分站回跳地址");
+            origin = main.getScheme() + "://" + prefix + host.substring(dot);
+        }
+        return origin + "/my/" + page + "?payment_transaction="
+                + requiredPathSegment(transactionId, "transactionId");
+    }
     public String supplierWebhookUrl(String accountId) {
         URI uri=URI.create(publicSiteUrl);
         if (!"https".equalsIgnoreCase(uri.getScheme()) || "localhost".equalsIgnoreCase(uri.getHost())

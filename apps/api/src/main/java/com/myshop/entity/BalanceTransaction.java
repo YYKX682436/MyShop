@@ -52,4 +52,7 @@ public class BalanceTransaction extends BaseEntity {
 
     @Column(name = "order_id")
     private UUID orderId;
+
+    @Column(name = "account_payment_transaction_id")
+    private UUID accountPaymentTransactionId;
 }

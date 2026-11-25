@@ -10,7 +10,7 @@ import { AnnouncementManagement } from "@/components/shared/announcement-managem
 import { useRequireAuth } from "@/lib/hooks"
 import { formatYuan } from "@/lib/utils"
 import { AVATAR_ALLOWED_IMAGE_ACCEPT, getAvatarFileValidationError } from "@/lib/image-upload"
-import { subsiteApi, type SubsiteInfo, type SubsiteCustomer, type SubsiteLevel, type SubsiteOrder } from "@/services/api"
+import { subsiteApi, type SubsiteInfo, type SubsiteCustomer, type SubsiteLevel, type SubsiteLevelUpgradeRule, type SubsiteOrder } from "@/services/api"
 
 export default function MySubsitePage() {
   const user = useRequireAuth()
@@ -24,6 +24,7 @@ export default function MySubsitePage() {
   const [favicon, setFavicon] = useState("")
   const [customers, setCustomers] = useState<SubsiteCustomer[]>([])
   const [levels, setLevels] = useState<SubsiteLevel[]>([])
+  const [upgradeRules, setUpgradeRules] = useState<SubsiteLevelUpgradeRule[]>([])
   const [customerLevels, setCustomerLevels] = useState<Record<string, string>>({})
   const [overview, setOverview] = useState<{ order_count: number; estimated_profit: number; pending_profit: number; settled_profit: number } | null>(null)
   const [orders, setOrders] = useState<SubsiteOrder[]>([])
@@ -38,8 +39,9 @@ export default function MySubsitePage() {
       setSite(result)
       if (result) {
         setName(result.name); setFavicon(result.favicon_url ?? "")
-        const [customerPage, availableLevels, stats, orderResult] = await Promise.all([subsiteApi.customers(page), subsiteApi.levels(), subsiteApi.overview(), subsiteApi.orders(orderPage)])
+        const [customerPage, availableLevels, stats, orderResult, rules] = await Promise.all([subsiteApi.customers(page), subsiteApi.levels(), subsiteApi.overview(), subsiteApi.orders(orderPage), subsiteApi.levelUpgradeRules()])
         setCustomers(customerPage.content); setTotalPages(customerPage.total_pages); setLevels(availableLevels)
+        setUpgradeRules(rules)
         setCustomerLevels(Object.fromEntries(customerPage.content.map(customer => [customer.id, customer.user_level_id ?? ""])))
         setOverview(stats); setOrders(orderResult.content); setOrderTotalPages(orderResult.total_pages)
       } else setOpening(await subsiteApi.opening())
@@ -77,6 +79,19 @@ export default function MySubsitePage() {
     catch (e) { toast.error(e instanceof Error ? e.message : "修改失败") }
     finally { setBusy(false) }
   }
+  async function saveUpgradeRules(event: React.FormEvent) {
+    event.preventDefault(); setBusy(true)
+    try {
+      const saved = await subsiteApi.updateLevelUpgradeRules(upgradeRules.filter(rule => !rule.is_default).map(rule => ({
+        user_level_id: rule.user_level_id,
+        self_upgrade_enabled: rule.self_upgrade_enabled,
+        upgrade_price: rule.upgrade_price,
+        public_price_enabled: rule.public_price_enabled,
+      })))
+      setUpgradeRules(saved); toast.success("等级升级设置已保存")
+    } catch (e) { toast.error(e instanceof Error ? e.message : "保存失败") }
+    finally { setBusy(false) }
+  }
   if (!user) return null
   return <div className="mx-auto max-w-4xl space-y-4 py-0 sm:space-y-6 sm:py-6">
     <header><Link href="/my" className="inline-flex min-h-11 items-center text-sm text-muted-foreground">← 我的</Link><h1 className="mt-2 text-2xl font-semibold">我的分站</h1></header>
@@ -92,6 +107,23 @@ export default function MySubsitePage() {
           {favicon && <Button type="button" variant="ghost" disabled={busy} onClick={() => setFavicon("")}>移除</Button>}
         </div></div>
         <Button type="submit" disabled={busy}>保存设置</Button>
+      </form>
+      <form onSubmit={saveUpgradeRules} className="content-surface space-y-4 rounded-card p-5">
+        <div><h2 className="text-lg font-semibold">等级升级</h2><p className="mt-1 text-xs text-muted-foreground">按本站等级顺序设置开通价格；价格公开权限受主站设置限制。</p></div>
+        <ul className="divide-y divide-border-subtle">
+          {upgradeRules.map((rule, index) => (
+            <li key={rule.user_level_id} className="grid gap-3 py-3 sm:grid-cols-[minmax(0,1fr)_10rem_9rem_9rem] sm:items-center">
+              <div className="min-w-0"><p className="truncate text-sm font-medium">{rule.name}</p><p className="text-xs text-muted-foreground">顺序 {rule.upgrade_rank}{rule.is_default ? " · 默认等级" : ""}</p></div>
+              {rule.is_default ? <><span className="text-sm text-muted-foreground">基础价格 ¥0.00</span><span className="text-xs text-muted-foreground">不开放升级</span><span className="text-xs text-muted-foreground">—</span></> : <>
+                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground"><span>开通价格（元）</span><Input type="number" min="0" step="0.01" value={rule.upgrade_price ?? ""} disabled={busy || !rule.level_enabled} onChange={event => setUpgradeRules(current => current.map((item, i) => i === index ? { ...item, upgrade_price: event.target.value === "" ? null : Number(event.target.value) } : item))} /></label>
+                <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={rule.self_upgrade_enabled} disabled={busy || !rule.level_enabled || rule.upgrade_price == null} onChange={event => setUpgradeRules(current => current.map((item, i) => i === index ? { ...item, self_upgrade_enabled: event.target.checked, public_price_enabled: event.target.checked && item.public_price_enabled } : item))} />开放升级</label>
+                <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={rule.public_price_enabled} disabled={busy || !rule.level_enabled || !rule.self_upgrade_enabled || !rule.platform_price_public} onChange={event => setUpgradeRules(current => current.map((item, i) => i === index ? { ...item, public_price_enabled: event.target.checked } : item))} />{rule.platform_price_public ? "公开查价" : <span className="text-xs text-muted-foreground">主站隐藏</span>}</label>
+              </>}
+            </li>
+          ))}
+          {!upgradeRules.length && <li className="py-4 text-sm text-muted-foreground">暂无可配置等级</li>}
+        </ul>
+        <Button type="submit" disabled={busy || !upgradeRules.length}>保存等级设置</Button>
       </form>
       <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">公告管理</h2><AnnouncementManagement scope="subsite" /></section>
       <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">分站订单</h2><ul className="divide-y divide-border">{orders.map(order => <li key={order.id} className="space-y-1 py-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span className="break-all font-medium">{order.order_no}</span><span>{order.status}</span></div><div className="flex flex-wrap justify-between gap-2 text-muted-foreground"><span>成交 {formatYuan(order.actual_amount)}</span><span>{order.subsite_profit_state === "CANCELED" ? `已取消 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "REVERSED" ? `已冲回 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "SETTLED" ? `已入账 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "PENDING" ? `待入账 ${formatYuan(order.subsite_profit)}` : order.status === "PAID" ? `预计收益 ${formatYuan(order.subsite_profit)}` : "未结算"}</span></div></li>)}</ul>{!orders.length && <p className="text-sm text-muted-foreground">暂无订单</p>}<div className="flex items-center justify-between text-sm"><Button type="button" variant="ghost" disabled={orderPage === 0 || busy} onClick={() => setOrderPage(value => value - 1)}>上一页</Button><span>{orderPage + 1} / {Math.max(1, orderTotalPages)}</span><Button type="button" variant="ghost" disabled={orderPage + 1 >= orderTotalPages || busy} onClick={() => setOrderPage(value => value + 1)}>下一页</Button></div></section>

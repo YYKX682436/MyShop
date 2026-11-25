@@ -41,6 +41,18 @@ public class UserLevel extends BaseEntity {
     @Column(name = "sort_order", nullable = false)
     private int sortOrder = 0;
 
+    @Column(name = "upgrade_rank", nullable = false)
+    private int upgradeRank;
+
+    @Column(name = "self_upgrade_enabled", nullable = false)
+    private boolean selfUpgradeEnabled;
+
+    @Column(name = "upgrade_price", precision = 12, scale = 2)
+    private BigDecimal upgradePrice;
+
+    @Column(name = "public_price_enabled", nullable = false)
+    private boolean publicPriceEnabled;
+
     @Column(length = 500)
     private String remark;
 }
