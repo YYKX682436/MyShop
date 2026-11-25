@@ -577,17 +577,6 @@ export interface AdminPaymentChannel {
 export interface SiteConfig {
   site_name: string
   favicon_url?: string | null
-  announcement_enabled: boolean
-  announcement?: string
-  announcement_id?: string
-  announcement_title?: string
-  announcement_version?: number
-  announcement_site_id?: string
-  popup_enabled: boolean
-  popup_content?: string
-  popup_id?: string
-  popup_title?: string
-  popup_version?: number
   main_site_url?: string
   maintenance_enabled: boolean
   maintenance_message?: string

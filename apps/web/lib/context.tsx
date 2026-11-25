@@ -192,13 +192,18 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<UserProfile | null>(null)
   const [authLoaded, setAuthLoaded] = useState(false)
   const authVersionRef = useRef(0)
+  const userRef = useRef<UserProfile | null>(null)
+  const profileRefreshInFlight = useRef(false)
+  const lastProfileRefreshAt = useRef(0)
+
+  useEffect(() => { userRef.current = user }, [user])
 
   useEffect(() => {
     let cancelled = false
     const requestVersion = authVersionRef.current
     userApi.getProfile()
       .then(profile => {
-        if (!cancelled && requestVersion === authVersionRef.current) { setMessageViewer(profile.id); setUserState(profile) }
+        if (!cancelled && requestVersion === authVersionRef.current) { setMessageViewer(profile.id, profile.user_level_id); setUserState(profile) }
       })
       .catch(() => {
         if (!cancelled && requestVersion === authVersionRef.current) { setMessageViewer(null); setUserState(null) }
@@ -211,10 +216,52 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   const setUser = useCallback((u: UserProfile | null) => {
     authVersionRef.current += 1
-    setMessageViewer(u?.id ?? null)
+    setMessageViewer(u?.id ?? null, u?.user_level_id)
     setUserState(u)
     setAuthLoaded(true)
   }, [])
+
+  const refreshProfile = useCallback(async (force = false) => {
+    const now = Date.now()
+    if (profileRefreshInFlight.current || (!force && now - lastProfileRefreshAt.current < 3000)) return
+    profileRefreshInFlight.current = true
+    lastProfileRefreshAt.current = now
+    const requestVersion = ++authVersionRef.current
+    setMessageViewer(undefined)
+    setAuthLoaded(false)
+    try {
+      const profile = await userApi.getProfile()
+      if (requestVersion === authVersionRef.current) {
+        userRef.current = profile
+        setMessageViewer(profile.id, profile.user_level_id)
+        setUserState(profile)
+      }
+    } catch {
+      if (requestVersion === authVersionRef.current) {
+        userRef.current = null
+        setMessageViewer(null)
+        setUserState(null)
+      }
+    } finally {
+      if (requestVersion === authVersionRef.current) setAuthLoaded(true)
+      profileRefreshInFlight.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (authLoaded && document.visibilityState === "visible") void refreshProfile()
+    }
+    const refreshOnIdentityMismatch = () => { void refreshProfile(true) }
+    window.addEventListener("focus", refreshWhenVisible)
+    document.addEventListener("visibilitychange", refreshWhenVisible)
+    window.addEventListener("myshop:refresh-message-identity", refreshOnIdentityMismatch)
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible)
+      document.removeEventListener("visibilitychange", refreshWhenVisible)
+      window.removeEventListener("myshop:refresh-message-identity", refreshOnIdentityMismatch)
+    }
+  }, [authLoaded, refreshProfile])
 
   const isLoggedIn = useMemo(() => !!user, [user])
 
@@ -229,10 +276,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
       setMessageViewer(null); setUserState(null); setAuthLoaded(true)
     } catch (error) {
       if (requestVersion !== authVersionRef.current) throw error
-      setMessageViewer(user?.id ?? null); setAuthLoaded(true)
+      setMessageViewer(user?.id ?? null, user?.user_level_id); setAuthLoaded(true)
       throw error
     }
-  }, [user?.id])
+  }, [user?.id, user?.user_level_id])
 
   // ---------- Site Config ----------
   const [siteConfig, setSiteConfig] = useState<SiteConfig | null>(null)

@@ -6,7 +6,7 @@ import Image from "next/image"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { AnnouncementManagement } from "@/components/shared/announcement-management"
+import { NotificationManagement } from "@/components/shared/announcement-management"
 import { useRequireAuth } from "@/lib/hooks"
 import { formatYuan } from "@/lib/utils"
 import { AVATAR_ALLOWED_IMAGE_ACCEPT, getAvatarFileValidationError } from "@/lib/image-upload"
@@ -125,7 +125,7 @@ export default function MySubsitePage() {
         </ul>
         <Button type="submit" disabled={busy || !upgradeRules.length}>保存等级设置</Button>
       </form>
-      <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">公告管理</h2><AnnouncementManagement scope="subsite" /></section>
+      <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">通知管理</h2><NotificationManagement scope="subsite" /></section>
       <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">分站订单</h2><ul className="divide-y divide-border">{orders.map(order => <li key={order.id} className="space-y-1 py-3 text-sm"><div className="flex flex-wrap justify-between gap-2"><span className="break-all font-medium">{order.order_no}</span><span>{order.status}</span></div><div className="flex flex-wrap justify-between gap-2 text-muted-foreground"><span>成交 {formatYuan(order.actual_amount)}</span><span>{order.subsite_profit_state === "CANCELED" ? `已取消 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "REVERSED" ? `已冲回 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "SETTLED" ? `已入账 ${formatYuan(order.subsite_profit)}` : order.subsite_profit_state === "PENDING" ? `待入账 ${formatYuan(order.subsite_profit)}` : order.status === "PAID" ? `预计收益 ${formatYuan(order.subsite_profit)}` : "未结算"}</span></div></li>)}</ul>{!orders.length && <p className="text-sm text-muted-foreground">暂无订单</p>}<div className="flex items-center justify-between text-sm"><Button type="button" variant="ghost" disabled={orderPage === 0 || busy} onClick={() => setOrderPage(value => value - 1)}>上一页</Button><span>{orderPage + 1} / {Math.max(1, orderTotalPages)}</span><Button type="button" variant="ghost" disabled={orderPage + 1 >= orderTotalPages || busy} onClick={() => setOrderPage(value => value + 1)}>下一页</Button></div></section>
       <section className="content-surface space-y-4 rounded-card p-5"><h2 className="text-lg font-semibold">我的客户</h2>
         <ul className="divide-y divide-border">{customers.map(customer => <li key={customer.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><span>{customer.username} {customer.user_no != null && <span className="text-muted-foreground">#{customer.user_no}</span>}</span><label className="text-sm">等级 <select className="ml-2 rounded-control border border-input bg-background p-2" value={customerLevels[customer.id] ?? ""} disabled={busy} onChange={e => setCustomerLevels(value => ({ ...value, [customer.id]: e.target.value }))}><option value="" disabled>选择等级</option>{levels.map(level => <option key={level.id} value={level.id}>{level.name}</option>)}</select></label><Button type="button" variant="outline" disabled={busy || !customerLevels[customer.id] || customerLevels[customer.id] === customer.user_level_id} onClick={() => void updateLevel(customer.id, customerLevels[customer.id])}>保存等级</Button></li>)}</ul>

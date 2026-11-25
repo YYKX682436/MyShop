@@ -40,30 +40,40 @@ public class SupportService {
     private final AfterSaleAttachmentService attachments;
     private final PrivateUploadStorage storage;
     private final AfterSaleService afterSales;
+    private final AnnouncementService announcements;
     private static final UUID MAIN_SCOPE = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     private record Identity(UUID userId, byte[] guestHash, String token) {}
     private record Conversation(UUID id, UUID siteId, UUID userId, byte[] guestHash, UUID orderId) {}
     public record Download(org.springframework.core.io.Resource resource, String contentType, long size, String filename) {}
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Map<String, Object> orderContext(UUID orderId, String token) {
+        return orderContext(orderId, null, null, token);
+    }
+
+    @Transactional
+    public Map<String, Object> orderContext(UUID orderId, UUID requestId, Integer round, String token) {
         Identity identity = customer(token);
         Order order = authorizedOrder(orderId, identity);
-        UUID id = findConversation(order.getSubsiteId(), identity, orderId);
+        UUID siteId = SiteRequestContext.getSiteId();
+        Conversation root = getOrCreate(siteId, identity, null);
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("conversation_id", id);
+        result.put("conversation_id", root.id());
         result.put("order_id", order.getId());
-        result.put("order_no", order.getOrderNo());
+        result.put("order_no", Long.toString(order.getOrderNo()));
         result.put("order_status", order.getStatus().name());
+        if (requestId != null) {
+            result.put("request_id", requestId); result.put("round", round);
+        }
         return result;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public Map<String, Object> generalContext(String token) {
         Identity identity = customer(token);
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("conversation_id", findConversation(SiteRequestContext.getSiteId(), identity, null));
+        result.put("conversation_id", getOrCreate(SiteRequestContext.getSiteId(), identity, null).id());
         return result;
     }
 
@@ -71,7 +81,13 @@ public class SupportService {
     public Map<String, Object> adminOrderContext(UUID orderId) {
         requireAdmin();
         if (!orders.existsById(orderId)) throw notFound();
-        var rows = jdbc.query("SELECT id FROM support_conversations WHERE order_id=? ORDER BY created_at LIMIT 1",
+        var rows = jdbc.query("""
+                SELECT root.id FROM support_conversations order_thread
+                JOIN support_conversations root ON root.site_scope=order_thread.site_scope
+                  AND root.order_id IS NULL AND root.user_id IS NOT DISTINCT FROM order_thread.user_id
+                  AND root.guest_token_hash IS NOT DISTINCT FROM order_thread.guest_token_hash
+                WHERE order_thread.order_id=? ORDER BY order_thread.created_at LIMIT 1
+                """,
                 (rs, n) -> rs.getObject(1, UUID.class), orderId);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("conversation_id", rows.isEmpty() ? null : rows.getFirst());
@@ -381,48 +397,68 @@ public class SupportService {
     }
 
     @Transactional
-    public Map<String, Object> send(UUID conversationId, UUID orderId, UUID clientKey, String content,
-                                    List<MultipartFile> files, boolean admin, String token) {
+    public Map<String, Object> send(UUID conversationId, UUID orderId, UUID sourceAnnouncementId,
+                                    UUID clientKey, String content, List<MultipartFile> files,
+                                    boolean admin, String token) {
         if (clientKey == null) throw bad("缺少消息幂等键");
         String normalized = content == null ? "" : content.trim();
         if (normalized.codePointCount(0, normalized.length()) > 1000) throw bad("消息不能超过 1000 字");
         Identity identity = admin ? null : customer(token);
+        if (sourceAnnouncementId != null) {
+            if (admin || announcements == null) throw forbidden();
+            announcements.publicDetail(SiteRequestContext.getSiteId(), sourceAnnouncementId, token);
+        }
         Conversation conversation;
         if (conversationId != null) {
             conversation = authorizedConversation(conversationId, admin, token);
-            if (orderId != null && !orderId.equals(conversation.orderId())) throw forbidden();
         } else {
             if (admin) throw bad("请选择会话");
-            Order order = orderId == null ? null : authorizedOrder(orderId, identity);
+            if (orderId != null) authorizedOrder(orderId, identity);
             List<AfterSaleAttachmentService.ValidatedAttachment> validated = attachments.validate(files);
             if (normalized.isEmpty() && validated.isEmpty()) throw bad("消息不能为空");
-            UUID siteId = order == null ? SiteRequestContext.getSiteId() : order.getSubsiteId();
-            conversation = getOrCreate(siteId, identity, orderId);
-            return persistMessage(conversation, clientKey, normalized, validated, false);
+            conversation = getOrCreate(SiteRequestContext.getSiteId(), identity, null);
+            return persistMessage(conversation, clientKey, normalized, validated, false, orderId, sourceAnnouncementId);
         }
+        if (!admin && orderId != null) authorizedOrder(orderId, identity);
         List<AfterSaleAttachmentService.ValidatedAttachment> validated = attachments.validate(files);
         if (normalized.isEmpty() && validated.isEmpty()) throw bad("消息不能为空");
-        return persistMessage(conversation, clientKey, normalized, validated, admin);
+        return persistMessage(conversation, clientKey, normalized, validated, admin, orderId, sourceAnnouncementId);
+    }
+
+    /** Backward-compatible internal entry point for callers that do not attach a notice reference. */
+    @Transactional
+    public Map<String, Object> send(UUID conversationId, UUID orderId, UUID clientKey, String content,
+                                    List<MultipartFile> files, boolean admin, String token) {
+        return send(conversationId, orderId, null, clientKey, content, files, admin, token);
     }
 
     public void replyAfterSale(UUID conversationId, UUID clientKey, String content,
+                               UUID orderId, UUID requestId, Integer round,
                                List<MultipartFile> files, boolean admin, String token) {
         Conversation conversation = authorizedConversation(conversationId, admin, token);
-        if (conversation.orderId() == null) throw bad("此会话没有售后订单");
-        if (admin) afterSales.replyFromAdminWithKey(conversation.orderId(), content, files, clientKey);
-        else afterSales.replyFromCustomerWithKey(conversation.orderId(), RequestContext.getUserId(), content, files, clientKey);
+        UUID targetOrder = orderId == null ? conversation.orderId() : orderId;
+        if (targetOrder == null || requestId == null || round == null) throw bad("请选择具体售后申请");
+        if (!admin) authorizedOrder(targetOrder, customer(token));
+        else if (!orders.existsById(targetOrder)) throw notFound();
+        if (admin) afterSales.replyFromAdminWithContext(targetOrder, requestId, round, content, files, clientKey);
+        else afterSales.replyFromCustomerWithContext(targetOrder, requestId, round, RequestContext.getUserId(), content, files, clientKey);
     }
 
     private Map<String, Object> persistMessage(Conversation conversation, UUID key, String content,
                                               List<AfterSaleAttachmentService.ValidatedAttachment> files,
-                                              boolean admin) {
-        byte[] fingerprint = MessageFingerprint.calculate(content, files);
+                                              boolean admin, UUID orderReference, UUID sourceAnnouncementId) {
+        UUID orderId = orderReference == null ? conversation.orderId() : orderReference;
+        String context = "order=" + (orderId == null ? "" : orderId) + "\u0000notice="
+                + (sourceAnnouncementId == null ? "" : sourceAnnouncementId);
+        byte[] fingerprint = orderReference == null && sourceAnnouncementId == null
+                ? MessageFingerprint.calculate(content, files)
+                : MessageFingerprint.calculate(content, files, context);
         UUID sender = RequestContext.getUserId();
         String side = admin ? "ADMIN" : "CUSTOMER";
-        if (conversation.orderId() != null) {
+        if (orderId != null) {
             // Match the after-sale order-first lock. A concurrent application
             // or terminal action cannot race a normal support reply.
-            orders.findByIdForUpdate(conversation.orderId()).orElseThrow(SupportService::notFound);
+            orders.findByIdForUpdate(orderId).orElseThrow(SupportService::notFound);
             var retry = jdbc.query("SELECT id,request_fingerprint,sender_user_id FROM support_messages WHERE conversation_id=? AND sender_type=? AND client_key=?",
                     (rs, n) -> new Object[]{rs.getObject(1, UUID.class), rs.getBytes(2), rs.getObject(3, UUID.class)}, conversation.id(), side, key);
             if (!retry.isEmpty()) {
@@ -432,20 +468,18 @@ public class SupportService {
                 return Map.of("conversation_id", conversation.id(), "message_id", previous[0]);
             }
             var saleRetry = jdbc.query("SELECT id,request_fingerprint FROM after_sale_messages WHERE order_id=? AND sender_type=? AND sender_user_id=? AND client_key=?",
-                    (rs, n) -> new Object[]{rs.getObject(1, UUID.class),rs.getBytes(2)}, conversation.orderId(), side, sender, key);
+                    (rs, n) -> new Object[]{rs.getObject(1, UUID.class),rs.getBytes(2)}, orderId, side, sender, key);
             if (!saleRetry.isEmpty()) {
                 Object[] previous = saleRetry.getFirst();
                 if (!MessageDigest.isEqual(fingerprint, (byte[]) previous[1])) throw bad("幂等键已用于不同的消息");
                 return Map.of("conversation_id", conversation.id(), "message_id", previous[0]);
             }
-            if (jdbc.queryForObject("SELECT count(*) FROM after_sale_requests WHERE order_id=? AND status='PENDING'",
-                    Integer.class, conversation.orderId()) > 0) throw bad("售后处理中，请通过售后会话回复");
         }
         UUID id = UUID.randomUUID();
         int inserted = jdbc.update("""
-                INSERT INTO support_messages(id,conversation_id,sender_type,sender_user_id,content,client_key,request_fingerprint)
-                VALUES (?,?,?,?,?,?,?) ON CONFLICT (conversation_id,sender_type,client_key) DO NOTHING
-                """, id, conversation.id(), side, sender, content, key, fingerprint);
+                INSERT INTO support_messages(id,conversation_id,sender_type,sender_user_id,content,client_key,request_fingerprint,order_id,source_announcement_id)
+                VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (conversation_id,sender_type,client_key) DO NOTHING
+                """, id, conversation.id(), side, sender, content, key, fingerprint, orderId, sourceAnnouncementId);
         if (inserted == 0) {
             var existing = jdbc.query("SELECT id,request_fingerprint,sender_user_id FROM support_messages WHERE conversation_id=? AND sender_type=? AND client_key=?",
                     (rs, n) -> new Object[]{rs.getObject(1, UUID.class), rs.getBytes(2), rs.getObject(3, UUID.class)}, conversation.id(), side, key);
@@ -534,6 +568,7 @@ public class SupportService {
         if (SiteRequestContext.getSiteId() != null || RequestContext.getUserId() == null
                 || !Set.of("ADMIN", "SUPER_ADMIN").contains(RequestContext.getRole())) throw forbidden();
     }
+
 
     private static BusinessException bad(String message) { return new BusinessException(ErrorCode.BAD_REQUEST, message); }
     private static BusinessException forbidden() { return new BusinessException(ErrorCode.FORBIDDEN, "无权访问此会话"); }

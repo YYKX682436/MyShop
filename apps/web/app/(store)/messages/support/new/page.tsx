@@ -1,35 +1,21 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
-import Link from "next/link"
+import { useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { SupportThread } from "@/components/shared/support-thread"
-import { useSupportIdentity } from "@/hooks/use-support-identity"
-import { supportApi } from "@/services/api"
 
-function NewSupport() {
-  const identity = useSupportIdentity()
-  const orderId = useSearchParams().get("order") || undefined
+/** Keep old order consultation URLs, routing them into the single customer thread. */
+export default function LegacyNewSupportPage() {
   const router = useRouter()
-  const [ready, setReady] = useState("")
-  const [orderNo, setOrderNo] = useState<number | undefined>()
-  const [error, setError] = useState("")
-  const scope = `${identity}:${orderId ?? "general"}`
+  const search = useSearchParams()
+  const orderId = search.get("order")
+  const requestId = search.get("request_id")
+  const round = search.get("round")
   useEffect(() => {
-    if (!identity) return
-    const controller = new AbortController()
-    setError("")
-    const call = orderId ? supportApi.order(orderId, controller.signal) : supportApi.general(controller.signal)
-    call.then(result => {
-      if (controller.signal.aborted) return
-      if (result.conversation_id) router.replace(`/messages/support/${result.conversation_id}`)
-      else { setOrderNo("order_no" in result && typeof result.order_no === "number" ? result.order_no : undefined); setReady(scope) }
-    }).catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "无法打开会话") })
-    return () => controller.abort()
-  }, [identity, orderId, router, scope])
-  return <div className="mx-auto max-w-3xl space-y-2 py-2"><Link href="/messages/support" className="inline-flex min-h-11 items-center text-sm text-muted-foreground">← 客服</Link>
-    {error && <p role="alert" className="text-destructive">{error}</p>}
-    {ready === scope && <SupportThread key={scope} orderId={orderId} orderNo={orderNo} identity={identity} onCreated={id => router.replace(`/messages/support/${id}`)} />}
-  </div>
+    const params = new URLSearchParams()
+    if (orderId) params.set("order", orderId)
+    if (requestId) params.set("request_id", requestId)
+    if (round) params.set("round", round)
+    router.replace(`/messages/support${params.size ? `?${params}` : ""}`)
+  }, [orderId, requestId, round, router])
+  return <div role="status" aria-label="正在打开客服" className="mx-auto max-w-3xl py-8"><div className="h-48 animate-pulse rounded-card bg-muted" /></div>
 }
-export default function NewSupportPage() { return <Suspense><NewSupport /></Suspense> }

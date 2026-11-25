@@ -11,7 +11,6 @@ import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.service.SiteConfigService;
-import com.myshop.service.AnnouncementService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,7 +28,6 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     private final SiteConfigRepository siteConfigRepository;
     private final UserNumberSequenceRepository userNumberSequenceRepository;
     private final UserRepository userRepository;
-    private final AnnouncementService announcementService;
     private com.myshop.service.MediaAssetRegistry mediaAssets;
     @org.springframework.beans.factory.annotation.Autowired
     public void setMediaAssets(com.myshop.service.MediaAssetRegistry value) { this.mediaAssets = value; }
@@ -99,7 +97,6 @@ public class SiteConfigServiceImpl implements SiteConfigService {
             // A subsite without a custom icon must not inherit the main site's icon.
             result.put("favicon_url", subsite.getFaviconUrl());
         }
-        result.putAll(announcementService.channels(com.myshop.context.SiteRequestContext.getSiteId()));
         return result;
     }
 
@@ -111,7 +108,6 @@ public class SiteConfigServiceImpl implements SiteConfigService {
     @Override
     public List<?> getAllConfigs() {
         return siteConfigRepository.findAll().stream()
-                .filter(c -> !Set.of("announcement_enabled", "announcement", "popup_enabled", "popup_content").contains(c.getConfigKey()))
                 .map(c -> {
                     Map<String, Object> map = new LinkedHashMap<>();
                     map.put("config_key", c.getConfigKey());

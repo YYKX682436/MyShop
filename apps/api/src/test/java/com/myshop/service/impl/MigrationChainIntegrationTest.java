@@ -129,7 +129,8 @@ class MigrationChainIntegrationTest {
         assertFalse(columnExists("subsites", "logo_url"));
         assertFalse(columnExists("subsites", "customer_service"));
         assertNull(jdbcTemplate.queryForObject("SELECT favicon_url FROM subsites WHERE id=?", String.class, site));
-        assertEquals("公告保留", jdbcTemplate.queryForObject("SELECT announcement FROM subsites WHERE id=?", String.class, site));
+        assertFalse(columnExists("subsites", "announcement"));
+        assertEquals("公告保留", jdbcTemplate.queryForObject("SELECT body FROM site_announcements WHERE source_key=?", String.class, "legacy:subsite:" + site));
         assertEquals("/main-icon.png", configValue("favicon_url"));
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM orders WHERE id=?", Integer.class, order));
         assertEquals(ordersBefore, jdbcTemplate.queryForObject("SELECT count(*) FROM orders", Long.class));
@@ -173,13 +174,17 @@ class MigrationChainIntegrationTest {
         jdbcTemplate.update("UPDATE site_configs SET config_value='同一正文' WHERE config_key IN ('announcement','popup_content')");
         jdbcTemplate.update("UPDATE site_configs SET config_value='false' WHERE config_key='announcement_enabled'");
         jdbcTemplate.update("UPDATE site_configs SET config_value='true' WHERE config_key='popup_enabled'");
-        migrateLatest();
+        flyway("59").migrate();
 
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(*) FROM site_announcements", Integer.class));
         assertEquals("PUBLISHED", jdbcTemplate.queryForObject("SELECT status FROM site_announcements", String.class));
         assertEquals(1, jdbcTemplate.queryForObject("SELECT count(DISTINCT announcement_id) FROM site_announcement_channels", Integer.class));
         assertEquals(false, jdbcTemplate.queryForObject("SELECT enabled FROM site_announcement_channels WHERE channel='BANNER'", Boolean.class));
         assertEquals(true, jdbcTemplate.queryForObject("SELECT enabled FROM site_announcement_channels WHERE channel='POPUP'", Boolean.class));
+
+        migrateLatest();
+        assertFalse(tableExists("site_announcement_channels"));
+        assertEquals("同一正文", jdbcTemplate.queryForObject("SELECT body FROM site_announcements", String.class));
     }
 
     @Test

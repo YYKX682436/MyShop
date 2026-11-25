@@ -2,6 +2,7 @@ package com.myshop.service.impl;
 
 import com.myshop.constant.AccountPaymentStatus;
 import com.myshop.constant.AccountPaymentType;
+import com.myshop.context.RequestContext;
 import com.myshop.constant.BalanceTransactionType;
 import com.myshop.constant.OrderPaymentMethod;
 import com.myshop.constant.PricingType;
@@ -30,6 +31,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -60,6 +62,7 @@ class AccountPaymentFlowIntegrationTest {
     @Autowired UserAccountService accounts;
     @Autowired PaymentConfirmationTransactionService confirmations;
     @Autowired AccountPaymentTransactionRepository accountTransactions;
+    @Autowired com.myshop.service.SupportTimelineService supportTimeline;
     @Autowired PaymentAttemptRepository paymentAttempts;
     @Autowired SubsiteRepository subsites;
 
@@ -85,6 +88,7 @@ class AccountPaymentFlowIntegrationTest {
         SiteRequestContext.clear();
         if (!accountTransactionIds.isEmpty()) {
             for (UUID id : accountTransactionIds) {
+                jdbc.update("DELETE FROM support_system_events WHERE source_type='ACCOUNT_PAYMENT' AND source_id = ?", id);
                 jdbc.update("DELETE FROM webhook_events WHERE payment_attempt_id IN (SELECT id FROM payment_attempts WHERE account_payment_transaction_id = ?)", id);
                 jdbc.update("DELETE FROM balance_transactions WHERE account_payment_transaction_id = ?", id);
                 jdbc.update("DELETE FROM payment_attempts WHERE account_payment_transaction_id = ?", id);
@@ -93,6 +97,12 @@ class AccountPaymentFlowIntegrationTest {
         }
         if (!siteIds.isEmpty()) {
             for (UUID id : siteIds) {
+                jdbc.update("DELETE FROM support_system_events WHERE site_id = ?", id);
+                jdbc.update("DELETE FROM support_activity WHERE conversation_id IN (SELECT id FROM support_conversations WHERE site_id = ?)", id);
+                jdbc.update("DELETE FROM support_attachments WHERE message_id IN (SELECT m.id FROM support_messages m JOIN support_conversations c ON c.id=m.conversation_id WHERE c.site_id = ?)", id);
+                jdbc.update("DELETE FROM support_messages WHERE conversation_id IN (SELECT id FROM support_conversations WHERE site_id = ?)", id);
+                jdbc.update("DELETE FROM support_read_states WHERE conversation_id IN (SELECT id FROM support_conversations WHERE site_id = ?)", id);
+                jdbc.update("DELETE FROM support_conversations WHERE site_id = ?", id);
                 jdbc.update("DELETE FROM subsite_level_upgrade_rules WHERE subsite_id = ?", id);
                 jdbc.update("DELETE FROM subsite_product_prices WHERE subsite_id = ?", id);
                 jdbc.update("DELETE FROM subsite_hidden_products WHERE subsite_id = ?", id);
@@ -106,8 +116,16 @@ class AccountPaymentFlowIntegrationTest {
             jdbc.update("DELETE FROM products WHERE id = ?", id);
         }
         for (UUID specId : specIds) jdbc.update("DELETE FROM product_specs WHERE id = ?", specId);
-        for (UUID userId : userIds) jdbc.update("DELETE FROM balance_transactions WHERE user_id = ?", userId);
-        for (UUID userId : userIds) jdbc.update("DELETE FROM users WHERE id = ?", userId);
+        for (UUID userId : userIds) {
+            jdbc.update("DELETE FROM support_system_events WHERE user_id = ?", userId);
+            jdbc.update("DELETE FROM support_activity WHERE conversation_id IN (SELECT id FROM support_conversations WHERE user_id = ? OR order_id IN (SELECT id FROM orders WHERE user_id = ?))", userId, userId);
+            jdbc.update("DELETE FROM support_attachments WHERE message_id IN (SELECT id FROM support_messages WHERE conversation_id IN (SELECT id FROM support_conversations WHERE user_id = ?))", userId);
+            jdbc.update("DELETE FROM support_messages WHERE conversation_id IN (SELECT id FROM support_conversations WHERE user_id = ?)", userId);
+            jdbc.update("DELETE FROM support_read_states WHERE conversation_id IN (SELECT id FROM support_conversations WHERE user_id = ?)", userId);
+            jdbc.update("DELETE FROM support_conversations WHERE user_id = ?", userId);
+            jdbc.update("DELETE FROM balance_transactions WHERE user_id = ?", userId);
+            jdbc.update("DELETE FROM users WHERE id = ?", userId);
+        }
         for (UUID categoryId : categoryIds) jdbc.update("DELETE FROM product_categories WHERE id = ?", categoryId);
         for (String code : channelCodes) jdbc.update("DELETE FROM payment_channels WHERE channel_code = ?", code);
         jdbc.update("UPDATE subsite_settings SET supply_level_id = NULL WHERE id = 1");
@@ -131,6 +149,15 @@ class AccountPaymentFlowIntegrationTest {
         assertMoney("50.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, customer));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE account_payment_transaction_id = ? AND type = 'RECHARGE'", Integer.class, transactionId));
         assertEquals("COMPLETED", scalar("SELECT status FROM account_payment_transactions WHERE id = ?", String.class, transactionId));
+        assertEquals(1, scalar("SELECT count(*) FROM support_system_events WHERE source_type='ACCOUNT_PAYMENT' AND source_id=? AND event_type='RECHARGE_CREDITED'", Integer.class, transactionId));
+        UUID root=scalar("SELECT id FROM support_conversations WHERE user_id=? AND site_id IS NULL AND order_id IS NULL", UUID.class, customer);
+        RequestContext.set(new RequestContext.UserInfo(customer,"recharge-customer","USER"));
+        try {
+            var event=items(supportTimeline.activities(root,false,null,null,null,20)).stream()
+                    .filter(row -> "SYSTEM_RESULT".equals(row.get("source_type"))).findFirst().orElseThrow();
+            assertEquals("RECHARGE_CREDITED",event.get("event_type"));
+            assertEquals(scalar("SELECT id FROM balance_transactions WHERE account_payment_transaction_id=? AND type='RECHARGE'", UUID.class, transactionId),event.get("ledger_id"));
+        } finally { RequestContext.clear(); }
     }
 
     @Test
@@ -146,6 +173,7 @@ class AccountPaymentFlowIntegrationTest {
         assertMoney("71.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, customer));
         assertMoney("29.00", scalar("SELECT amount FROM account_payment_transactions WHERE id = ?", BigDecimal.class, result.transactionId()));
         assertMoney("-29.00", scalar("SELECT delta FROM balance_transactions WHERE account_payment_transaction_id = ? AND type = 'LEVEL_UPGRADE'", BigDecimal.class, result.transactionId()));
+        assertEquals(1, scalar("SELECT count(*) FROM support_system_events WHERE source_type='ACCOUNT_PAYMENT' AND source_id=? AND event_type='LEVEL_UPGRADE_COMPLETED'", Integer.class, result.transactionId()));
     }
 
     @Test
@@ -205,6 +233,7 @@ class AccountPaymentFlowIntegrationTest {
         assertMoney("29.00", scalar("SELECT balance FROM users WHERE id = ?", BigDecimal.class, customer));
         assertEquals("RECOVERED", scalar("SELECT status FROM account_payment_transactions WHERE id = ?", String.class, transactionId));
         assertEquals(1, scalar("SELECT count(*) FROM balance_transactions WHERE account_payment_transaction_id = ? AND type = 'RECHARGE'", Integer.class, transactionId));
+        assertEquals(1, scalar("SELECT count(*) FROM support_system_events WHERE source_type='ACCOUNT_PAYMENT' AND source_id=? AND event_type='LEVEL_UPGRADE_RECOVERED'", Integer.class, transactionId));
     }
 
     @Test
@@ -359,6 +388,8 @@ class AccountPaymentFlowIntegrationTest {
 
     private Subsite subsiteView(UUID id) { return subsites.findById(id).orElseThrow(); }
     private <T> T scalar(String sql, Class<T> type, Object... args) { return jdbc.queryForObject(sql, type, args); }
+    @SuppressWarnings("unchecked")
+    private List<Map<String,Object>> items(Map<String,Object> page) { return (List<Map<String,Object>>)page.get("items"); }
     private void assertMoney(String expected, BigDecimal actual) { assertEquals(0, new BigDecimal(expected).compareTo(actual)); }
     private record ProductFixture(UUID productId, UUID specId) { }
 }

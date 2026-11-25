@@ -7,6 +7,7 @@ import com.myshop.service.AnnouncementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -15,6 +16,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AnnouncementManagementController {
     private final AnnouncementService announcements;
+    public record Save(UUID requestKey, String title, String body, String audienceType,
+                       List<UUID> audienceLevelIds, boolean publish) {}
 
     private UUID site(String scope) {
         if (!"admin".equals(scope) && !"subsite".equals(scope))
@@ -25,18 +28,17 @@ public class AnnouncementManagementController {
     @GetMapping
     public ApiResponse<?> list(@PathVariable String scope) {
         UUID siteId = site(scope);
-        return ApiResponse.success(Map.of("announcements", announcements.managementList(siteId),
-                "channels", announcements.managementChannels(siteId)));
+        return ApiResponse.success(announcements.managementData(siteId));
     }
 
     @PostMapping
-    public ApiResponse<?> create(@PathVariable String scope, @RequestBody AnnouncementService.Edit edit) {
-        return ApiResponse.success(Map.of("id", announcements.create(site(scope), edit)));
+    public ApiResponse<?> create(@PathVariable String scope, @RequestBody Save request) {
+        return ApiResponse.success(Map.of("id", announcements.save(site(scope), null, edit(request))));
     }
 
     @PutMapping("/{id}")
-    public ApiResponse<Void> edit(@PathVariable String scope, @PathVariable UUID id, @RequestBody AnnouncementService.Edit edit) {
-        announcements.edit(site(scope), id, edit); return ApiResponse.success();
+    public ApiResponse<?> edit(@PathVariable String scope, @PathVariable UUID id, @RequestBody Save request) {
+        return ApiResponse.success(Map.of("id", announcements.save(site(scope), id, edit(request))));
     }
 
     @PostMapping("/{id}/publish")
@@ -49,9 +51,9 @@ public class AnnouncementManagementController {
         announcements.withdraw(site(scope), id); return ApiResponse.success();
     }
 
-    @PutMapping("/channels/{channel}")
-    public ApiResponse<Void> channel(@PathVariable String scope, @PathVariable String channel,
-                                     @RequestBody AnnouncementService.Channel setting) {
-        announcements.setChannel(site(scope), channel, setting); return ApiResponse.success();
+    private AnnouncementService.Edit edit(Save request) {
+        if (request == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "通知内容不完整");
+        return new AnnouncementService.Edit(request.requestKey(), request.title(), request.body(),
+                request.audienceType(), request.audienceLevelIds(), request.publish());
     }
 }

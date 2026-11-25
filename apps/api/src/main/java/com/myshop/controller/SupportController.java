@@ -2,6 +2,7 @@ package com.myshop.controller;
 
 import com.myshop.common.ApiResponse;
 import com.myshop.service.SupportService;
+import com.myshop.service.SupportTimelineService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
@@ -22,13 +23,14 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SupportController {
     private final SupportService support;
-    public record Read(long cursor) {}
+    private final SupportTimelineService timeline;
+    public record Read(List<String> cursors, Long cursor) {}
     private boolean admin(HttpServletRequest request) { return request.getServletPath().startsWith("/admin/support"); }
     private List<MultipartFile> files(MultipartFile[] files) { return files == null ? List.of() : Arrays.asList(files); }
 
     @GetMapping("/summary")
     public ApiResponse<?> summary(@RequestHeader(value="X-Session-Token", required=false) String token) {
-        return ApiResponse.success(support.customerSummary(token));
+        return ApiResponse.success(timeline.customerSummary(token));
     }
 
     @GetMapping("/general")
@@ -43,15 +45,17 @@ public class SupportController {
                                @RequestParam(required=false) String kind,
                                @RequestParam(defaultValue="false") boolean unread,
                                @RequestParam(defaultValue="false") boolean pending,
+                               @RequestParam(required=false) String order,
+                               @RequestParam(required=false) UUID level,
                                @RequestParam(defaultValue="0") int page,
                                @RequestParam(defaultValue="30") int size) {
-        return ApiResponse.success(support.list(admin(request), token, site, kind, unread, pending, page, size));
+        return ApiResponse.success(timeline.list(admin(request), token, site, kind, unread, pending, order, level, page, size));
     }
 
     @GetMapping("/conversations/{id}")
     public ApiResponse<?> detail(HttpServletRequest request, @PathVariable UUID id,
                                  @RequestHeader(value="X-Session-Token", required=false) String token) {
-        return ApiResponse.success(support.detail(id, admin(request), token));
+        return ApiResponse.success(timeline.detail(id, admin(request), token));
     }
 
     @GetMapping("/conversations/{id}/activities")
@@ -59,13 +63,15 @@ public class SupportController {
                                      @RequestHeader(value="X-Session-Token", required=false) String token,
                                      @RequestParam(required=false) Long after, @RequestParam(required=false) Long before,
                                      @RequestParam(defaultValue="40") int size) {
-        return ApiResponse.success(support.activities(id, admin(request), token, after, before, size));
+        return ApiResponse.success(timeline.activities(id, admin(request), token, after, before, size));
     }
 
     @PostMapping("/conversations/{id}/read")
     public ApiResponse<Void> read(HttpServletRequest request, @PathVariable UUID id, @RequestBody Read read,
                                   @RequestHeader(value="X-Session-Token", required=false) String token) {
-        support.markRead(id, admin(request), token, read.cursor()); return ApiResponse.success();
+        List<String> cursors = read.cursors() != null ? read.cursors()
+                : read.cursor() == null ? List.of() : List.of(Long.toString(read.cursor()));
+        timeline.markRead(id, admin(request), token, cursors); return ApiResponse.success();
     }
 
     @PostMapping("/conversations/send")
@@ -73,25 +79,33 @@ public class SupportController {
                                 @RequestHeader(value="X-Session-Token", required=false) String token,
                                 @RequestParam(value="conversation_id", required=false) UUID conversationId,
                                 @RequestParam(value="order_id", required=false) UUID orderId,
+                                @RequestParam(value="source_announcement_id", required=false) UUID sourceAnnouncementId,
                                 @RequestParam(value="client_key") UUID clientKey,
                                 @RequestParam(value="content", required=false) String content,
                                 @RequestParam(value="attachments", required=false) MultipartFile[] files) {
-        return ApiResponse.success(support.send(conversationId, orderId, clientKey, content, files(files), admin(request), token));
+        return ApiResponse.success(support.send(conversationId, orderId, sourceAnnouncementId,
+                clientKey, content, files(files), admin(request), token));
     }
 
     @PostMapping("/conversations/{id}/after-sale-reply")
     public ApiResponse<Void> reply(HttpServletRequest request, @PathVariable UUID id,
                                     @RequestHeader(value="X-Session-Token", required=false) String token,
+                                    @RequestParam(value="order_id", required=false) UUID orderId,
+                                    @RequestParam(value="request_id") UUID requestId,
+                                    @RequestParam(value="round") Integer round,
                                     @RequestParam(value="client_key") UUID clientKey,
                                     @RequestParam(value="content", required=false) String content,
                                     @RequestParam(value="attachments", required=false) MultipartFile[] files) {
-        support.replyAfterSale(id, clientKey, content, files(files), admin(request), token); return ApiResponse.success();
+        support.replyAfterSale(id, clientKey, content, orderId, requestId, round,
+                files(files), admin(request), token); return ApiResponse.success();
     }
 
     @GetMapping("/orders/{id}")
     public ApiResponse<?> order(HttpServletRequest request, @PathVariable UUID id,
+                                @RequestParam(value="request_id", required=false) UUID requestId,
+                                @RequestParam(value="round", required=false) Integer round,
                                 @RequestHeader(value="X-Session-Token", required=false) String token) {
-        return ApiResponse.success(admin(request) ? support.adminOrderContext(id) : support.orderContext(id, token));
+        return ApiResponse.success(admin(request) ? support.adminOrderContext(id) : support.orderContext(id, requestId, round, token));
     }
 
     @GetMapping("/attachments/{id}")

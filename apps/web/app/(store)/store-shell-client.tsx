@@ -1,32 +1,14 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, useRef } from "react"
+import React, { useRef } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Wrench } from "lucide-react"
 import { VisitTracker } from "@/components/store/visit-tracker"
 import { MessageSummaryProvider } from "@/components/store/message-summary"
 import { StoreBottomNavigation } from "@/components/store/liquid-tabs/store-bottom-navigation"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useSiteConfig, useAuth, useLocale } from "@/lib/context"
-import { MarkdownContent } from "@/components/shared/markdown-content"
 import { isAdminRole } from "@/lib/hooks"
-import { announcementPopupKey } from "@/lib/announcement-popup"
-
-function AnnouncementBar() {
-  const { config } = useSiteConfig()
-
-  if (!config?.announcement_enabled || !config.announcement) return null
-
-  return (
-    <div className="overflow-hidden border-b border-primary/15 bg-primary/[0.06] text-primary">
-      <Link href={config.announcement_id ? `/messages/announcements/${config.announcement_id}` : "/messages/announcements"}
-        className="mx-auto block max-w-[1440px] truncate px-4 py-2 text-center text-xs font-medium sm:px-6 sm:text-sm">
-        {config.announcement}
-      </Link>
-    </div>
-  )
-}
 
 function MaintenancePage() {
   const { t } = useLocale()
@@ -60,47 +42,6 @@ function MaintenanceAdminBanner() {
   )
 }
 
-function PopupAnnouncement() {
-  const { t } = useLocale()
-  const { config } = useSiteConfig()
-  const [open, setOpen] = useState(false)
-  const key = announcementPopupKey(config?.announcement_site_id, config?.popup_id, config?.popup_version)
-
-  useEffect(() => {
-    let dismissed = false
-    try { dismissed = !!key && localStorage.getItem(key) === "1" } catch { /* Storage can be disabled. */ }
-    setOpen(!!(key && config?.popup_enabled && config.popup_content && !dismissed))
-  }, [config?.popup_enabled, config?.popup_content, key])
-
-  const handleClose = useCallback(() => {
-    setOpen(false)
-    try { if (key) localStorage.setItem(key, "1") } catch { /* The dialog can still be closed. */ }
-  }, [key])
-
-  if (!open) return null
-
-  return (
-    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) handleClose() }}>
-      <DialogContent className="max-w-lg gap-0 p-0">
-        <DialogHeader className="border-b border-border px-6 py-4 pr-12">
-          <DialogTitle className="text-base">{config?.popup_title || t("common.announcement")}</DialogTitle>
-        </DialogHeader>
-        <div className="px-6 py-4">
-          <MarkdownContent value={config!.popup_content!} />
-        </div>
-        <DialogFooter className="border-t border-border px-6 py-3">
-          <button
-            type="button"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            onClick={handleClose}
-          >
-            {t("common.acknowledge")}
-          </button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
 
 /** Routes that are always accessible even in maintenance mode */
 const MAINTENANCE_EXEMPT_PATHS = ["/login", "/register"]
@@ -129,13 +70,11 @@ export function StoreShellClient({ children }: { children: React.ReactNode }) {
     <MessageSummaryProvider><div ref={shellRef} className="store-shell flex min-h-screen flex-col bg-background">
       <VisitTracker />
       {isMaintenance && isAdmin && <MaintenanceAdminBanner />}
-      <AnnouncementBar />
       <main
         className={`storefront-main storefront-main--without-header mx-auto w-full max-w-[var(--storefront-max-width)] flex-1 px-[var(--storefront-gutter)]${hasBottomNavigation ? " storefront-main--bottom-navigation" : ""}`}
       >
         {children}
       </main>
-      <PopupAnnouncement />
     </div><StoreBottomNavigation sourceRef={shellRef} /></MessageSummaryProvider>
   )
 }

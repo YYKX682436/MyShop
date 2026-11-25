@@ -7,6 +7,10 @@ import { getOrCreateGuestSessionToken, setMessageGuestToken } from "@/services/a
 export function useSupportIdentity() {
   const { authLoaded, isLoggedIn, user } = useAuth()
   const [guest, setGuest] = useState("")
+  const [site, setSite] = useState("")
+  useEffect(() => {
+    setSite(window.location.host.toLowerCase())
+  }, [])
   useEffect(() => {
     if (!authLoaded || isLoggedIn) { setGuest(""); return }
     const update = () => { try { const token = getOrCreateGuestSessionToken(); setMessageGuestToken(token); setGuest(token) } catch { setGuest("") } }
@@ -15,5 +19,8 @@ export function useSupportIdentity() {
     window.addEventListener("storage", onStorage)
     return () => window.removeEventListener("storage", onStorage)
   }, [authLoaded, isLoggedIn, user?.id])
-  return !authLoaded ? "" : isLoggedIn ? (user ? `user:${user.id}` : "") : guest ? `guest:${guest}` : ""
+  if (!authLoaded || !site) return ""
+  return isLoggedIn
+    ? user ? `${site}:user:${user.id}:level:${user.user_level_id ?? "none"}` : ""
+    : guest ? `${site}:guest:${guest}` : ""
 }

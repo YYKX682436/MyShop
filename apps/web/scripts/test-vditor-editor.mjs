@@ -29,7 +29,7 @@ let productPayload
 let announcementPayload
 let optimizationCalls = 0
 let mediaAsset = {id:"library",name:"a[1].png",url:"/api/uploads/library.webp",size:500,format:"WEBP",type:"image",status:"ready",usage:["product"],uploaded_at:1,thumbnail_url:null,clear_url:null,original_size:500}
-const announcements = [{ id:"announcement-1", title:"旧公告", body:"旧行一\n旧行二\n\n- 清单\n\n![a\\[1\\].png](</api/uploads/legacy.png?x=a(b)>)\n\n[![odd\\[.png](<https://example.org/image?file=a(b&x=1>)](https://example.org/page)\n\n![left\\[.png](</api/uploads/legacy.png?side=1>)![right\\].png](</api/uploads/legacy.png?side=2>)\n\n![reference\\[.png][photo-ref]\n\n[photo-ref]: </api/uploads/legacy.png?x=1(2)> \"说明\"\n[photo-ref]: </api/uploads/wrong.png> \"错误\"\n\n![unsafe](javascript:alert) ![unsafe2](<javascript:alert(1)>)\n\n```mermaid\nA-->B\n```\n\n```plantuml\nAlice -> Bob\n```\n\n| 列一 | 列二 |\n| --- | --- |\n| 单元 | 另一个 |", status:"DRAFT", published_at:null }]
+const announcements = [{ id:"announcement-1", title:"旧公告", body:"旧行一\n旧行二\n\n- 清单\n\n![a\\[1\\].png](</api/uploads/legacy.png?x=a(b)>)\n\n[![odd\\[.png](<https://example.org/image?file=a(b&x=1>)](https://example.org/page)\n\n![left\\[.png](</api/uploads/legacy.png?side=1>)![right\\].png](</api/uploads/legacy.png?side=2>)\n\n![reference\\[.png][photo-ref]\n\n[photo-ref]: </api/uploads/legacy.png?x=1(2)> \"说明\"\n[photo-ref]: </api/uploads/wrong.png> \"错误\"\n\n![unsafe](javascript:alert) ![unsafe2](<javascript:alert(1)>)\n\n```mermaid\nA-->B\n```\n\n```plantuml\nAlice -> Bob\n```\n\n| 列一 | 列二 |\n| --- | --- |\n| 单元 | 另一个 |", status:"DRAFT", published_at:null, publish_version:0, audience_type:"ALL", audience_level_ids:[] }]
 const image = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL8WQAAAABJRU5ErkJggg==", "base64")
 try {
   page.on("request", request => { requests.push(request.url()) })
@@ -43,9 +43,12 @@ try {
     if (path === "/api/subsite/customers" || path === "/api/subsite/orders") return route.fulfill(ok({ content:[], total_pages:0 }))
     if (path === "/api/subsite/pricing/levels/available") return route.fulfill(ok([]))
     if (path === "/api/subsite/overview") return route.fulfill(ok({ order_count:0, estimated_profit:0, pending_profit:0, settled_profit:0 }))
-    if (path === "/api/subsite/announcements" && method === "GET") return route.fulfill(ok({ announcements, channels:[] }))
+    if (path === "/api/subsite/announcements" && method === "GET") return route.fulfill(ok({ announcements, levels:[] }))
     if (path === "/api/subsite/announcements/announcement-1" && method === "PUT") {
-      announcementPayload = route.request().postDataJSON(); Object.assign(announcements[0], announcementPayload); return route.fulfill(ok(null))
+      announcementPayload = route.request().postDataJSON(); Object.assign(announcements[0], {
+        title:announcementPayload.title, body:announcementPayload.body, audience_type:announcementPayload.audienceType,
+        audience_level_ids:announcementPayload.audienceLevelIds, status:announcementPayload.publish ? "PUBLISHED" : "DRAFT",
+      }); return route.fulfill(ok({ id:"announcement-1" }))
     }
     if (path === "/api/admin/user-levels") return route.fulfill(ok([]))
     if (path === "/api/admin/products/pricing-preview") return route.fulfill(ok({ pricing_matrix: [], warnings: [] }))
@@ -333,29 +336,29 @@ try {
   const subText = subEditor.locator('.vditor-wysiwyg [contenteditable="true"]')
   await subText.waitFor()
   const subForm = subEditor.locator("xpath=ancestor::form")
-  assert.equal(await subForm.getByRole("button", { name: "保存", exact: true }).isDisabled(), true, "initializing old Markdown must not mark it dirty")
+  assert.equal(await subForm.getByRole("button", { name: "保存草稿", exact: true }).isDisabled(), true, "initializing old Markdown must not mark it dirty")
   assert.equal(await subText.locator('img[alt="a[1].png"]').count(), 1)
   assert.equal(await subText.locator('a[href="https://example.org/page"] img[alt="odd[.png"]').count(), 1)
   assert.equal(await subText.locator('img[src^="javascript:"]').count(), 0)
   await subEditor.getByRole("button", { name:"预览",exact:true }).click()
   assert.equal(await subEditor.locator('.prose img[alt="a[1].png"]').count(), 1)
   await subEditor.getByRole("button", { name:"编辑",exact:true }).click()
-  assert.equal(await subForm.getByRole("button", { name:"保存",exact:true }).isDisabled(), true, "previewing old Markdown must not mark it dirty")
+  assert.equal(await subForm.getByRole("button", { name:"保存草稿",exact:true }).isDisabled(), true, "previewing old Markdown must not mark it dirty")
   await subEditor.locator('button[data-type="edit-mode"]').click()
   await subEditor.locator('button[data-mode="sv"]').click()
   await subEditor.locator('textarea.vditor-sv').waitFor()
   await subEditor.locator('button[data-type="edit-mode"]').click()
   await subEditor.locator('button[data-mode="wysiwyg"]').click()
   await subText.waitFor()
-  assert.equal(await subForm.getByRole("button", { name: "保存", exact: true }).isDisabled(), true, "changing editor mode must not mark unchanged legacy Markdown dirty")
+  assert.equal(await subForm.getByRole("button", { name: "保存草稿", exact: true }).isDisabled(), true, "changing editor mode must not mark unchanged legacy Markdown dirty")
   assert.equal(await subText.locator('img[alt="a[1].png"]').count(), 1)
   assert.equal(await subText.locator('a[href="https://example.org/page"] img[alt="odd[.png"]').count(), 1)
   assert.equal(await subEditor.getByRole("button", { name: "选择资源" }).count(), 0)
   assert.equal(await subEditor.getByRole("button", { name: "插入图片" }).count(), 0)
-  await page.getByRole("button", { name: "新建公告" }).click()
+  await page.getByRole("button", { name: "新建" }).click()
   await page.getByRole("button", { name: /旧公告/ }).click()
   await subText.waitFor()
-  assert.equal(await subForm.getByRole("button", { name: "保存", exact: true }).isDisabled(), true)
+  assert.equal(await subForm.getByRole("button", { name: "保存草稿", exact: true }).isDisabled(), true)
   await subText.click()
   const existingSubsiteImages = await subText.locator("img").count()
   await subText.evaluate((element, data) => {
@@ -373,7 +376,7 @@ try {
   await cell.click(); await page.keyboard.press("End"); await page.keyboard.press("Shift+Enter")
   await page.getByText("表格单元格不支持换行，请使用新行").waitFor()
   await page.keyboard.insertText("新增单元文字")
-  await subForm.getByRole("button", { name: "保存", exact: true }).click()
+  await subForm.getByRole("button", { name: "保存草稿", exact: true }).click()
   await page.waitForTimeout(200)
   assert.ok(announcementPayload?.body.includes("追加中文"), JSON.stringify(announcementPayload))
   assert.ok(!announcementPayload.body.includes("data:image"))
@@ -393,7 +396,7 @@ try {
   assert.ok(imageNodes.some(node => node.alt === "left[.png" && node.url === "/api/uploads/legacy.png?side=1"))
   assert.ok(imageNodes.some(node => node.alt === "right].png" && node.url === "/api/uploads/legacy.png?side=2"))
   assert.ok(imageNodes.some(node => node.alt === "reference[.png" && node.url === "/api/uploads/legacy.png?x=1(2)" && node.title === "说明"))
-  await page.getByRole("button", { name:"新建公告" }).click()
+  await page.getByRole("button", { name:"新建" }).click()
   await page.getByRole("button", { name:/旧公告/ }).click()
   await subText.waitFor()
   assert.equal(await subText.locator('img[alt="a[1].png"]').count(), 1)
@@ -404,7 +407,7 @@ try {
   await subEditor.locator('button[data-mode="sv"]').click()
   await subEditor.locator('textarea.vditor-sv').fill("a".repeat(100_001))
   await subEditor.getByRole("alert").waitFor()
-  assert.equal(await subForm.getByRole("button", { name:"保存",exact:true }).isDisabled(), true, "overlength announcement content must not be submitted")
+  assert.equal(await subForm.getByRole("button", { name:"保存草稿",exact:true }).isDisabled(), true, "overlength notification content must not be submitted")
   for (const file of ["dist/js/i18n/en_US.js", "dist/js/i18n/zh_CN.js", "dist/js/lute/lute.min.js", "dist/js/icons/ant.js", "dist/css/content-theme/light.css", "dist/css/content-theme/dark.css"]) {
     const response = await page.request.get(new URL(`/vditor-assets/4.0.1/${file}`, base).href)
     assert.equal(response.status(), 200, file)

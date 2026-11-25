@@ -17,10 +17,17 @@ public final class MessageFingerprint {
     private MessageFingerprint() {}
 
     public static byte[] calculate(String content, List<AfterSaleAttachmentService.ValidatedAttachment> files) {
+        return calculate(content, files, null);
+    }
+
+    /** Context-bound retries must not be replayed against another order, sale round, or notice. */
+    public static byte[] calculate(String content, List<AfterSaleAttachmentService.ValidatedAttachment> files,
+                                   String context) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             try (DataOutputStream out = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
                 writeText(out, content);
+                if (context != null) writeText(out, context);
                 out.writeInt(files.size());
                 for (var file : files) {
                     writeText(out, file.originalFilename());

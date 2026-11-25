@@ -21,21 +21,28 @@ public class AnnouncementController {
     }
 
     @GetMapping
-    public ApiResponse<?> list(@RequestParam(defaultValue = "0") int page,
+    public ApiResponse<?> list(@RequestParam(required = false) String before,
                                @RequestParam(defaultValue = "30") int size,
                                @RequestHeader(value = "X-Session-Token", required = false) String token) {
-        return ApiResponse.success(announcements.publicList(SiteRequestContext.getSiteId(), page, size, token));
+        return ApiResponse.success(announcements.publicList(SiteRequestContext.getSiteId(), before, size, token));
     }
 
     @GetMapping("/{id}")
-    public ApiResponse<?> detail(@PathVariable UUID id) {
-        return ApiResponse.success(announcements.publicDetail(SiteRequestContext.getSiteId(), id));
+    public ApiResponse<?> detail(@PathVariable UUID id,
+                                 @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ApiResponse.success(announcements.publicDetail(SiteRequestContext.getSiteId(), id, token));
     }
 
     @PostMapping("/{id}/read")
     public ApiResponse<Void> read(@PathVariable UUID id, @RequestBody Read read,
                                   @RequestHeader(value = "X-Session-Token", required = false) String token) {
         announcements.markRead(SiteRequestContext.getSiteId(), id, read.version(), token);
+        return ApiResponse.success();
+    }
+
+    @PostMapping("/read-all")
+    public ApiResponse<Void> readAll(@RequestHeader(value = "X-Session-Token", required = false) String token) {
+        announcements.markAllVisibleRead(SiteRequestContext.getSiteId(), token);
         return ApiResponse.success();
     }
 }

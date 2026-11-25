@@ -374,7 +374,6 @@ public class SubsiteManagementService {
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("id",s.getId()); result.put("owner_id",s.getOwnerId()); result.put("prefix",s.getPrefix());
         result.put("name",s.getName()); result.put("enabled",s.isEnabled()); result.put("favicon_url",s.getFaviconUrl());
-        result.put("announcement",s.getAnnouncement());
         String host = URI.create(publicSiteUrl).getHost(); int dot = host.indexOf('.');
         result.put("url", dot < 0 ? null : "https://" + s.getPrefix() + "." + host.substring(dot+1));
         result.put("user_count", jdbc.queryForObject("select count(*) from users where subsite_id = ?", Long.class, s.getId()));

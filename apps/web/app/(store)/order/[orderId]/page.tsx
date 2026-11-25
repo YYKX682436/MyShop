@@ -96,6 +96,11 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
   }, [orderId, router])
 
   const orderItems = useMemo(() => view?.order.items ?? [], [view?.order.items])
+  const saleHistory = view?.order.after_sale_history ?? view?.after_sale_history ?? []
+  const activeSale = view?.order.after_sale?.status === "PENDING" ? view.order.after_sale : null
+  const activeSaleRound = activeSale ? Math.max(1, saleHistory.findIndex(request => request.id === activeSale.id) + 1) : undefined
+  const supportParams = new URLSearchParams({ order: orderId })
+  if (activeSale && activeSaleRound) { supportParams.set("request_id", activeSale.id); supportParams.set("round", String(activeSaleRound)) }
   const productIds = useMemo(
     () => Array.from(new Set(orderItems.map(item => item.product_id).filter((id): id is string => Boolean(id)))),
     [orderItems],
@@ -368,7 +373,7 @@ export default function OrderLifecyclePage({ params }: { params: Promise<{ order
       </div>
     </details>
 
-    <div className="content-surface flex items-center justify-between gap-3 rounded-card p-4"><span className="text-sm font-medium">主站客服</span><Link className="text-sm text-primary" href={`/messages/support/new?order=${encodeURIComponent(orderId)}`}>{view.order.after_sale || (view.order.after_sale_history ?? view.after_sale_history)?.length ? "查看会话" : "联系客服"}</Link></div>
+    <div className="content-surface flex items-center justify-between gap-3 rounded-card p-4"><span className="text-sm font-medium">主站客服</span><Link className="text-sm text-primary" href={`/messages/support?${supportParams.toString()}`}>{activeSale ? "回复售后" : saleHistory.length ? "查看客服对话" : "联系客服"}</Link></div>
 
     {itemsWithCustomerInputs.length > 0 && (
       <details className="content-surface overflow-hidden">

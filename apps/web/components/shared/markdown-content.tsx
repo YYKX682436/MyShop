@@ -23,7 +23,8 @@ export function MarkdownContent({ value, className }: MarkdownContentProps) {
   return (
     <div
       className={cn(
-        "min-w-0 max-w-full overflow-hidden break-words prose prose-sm text-muted-foreground dark:prose-invert",
+        "min-w-0 max-w-full break-words prose prose-sm text-muted-foreground dark:prose-invert",
+        "[&_a]:[overflow-wrap:anywhere] [&_code]:[overflow-wrap:anywhere]",
         "[&_img]:my-3 [&_img]:block [&_img]:h-auto [&_img]:max-w-full [&_img]:rounded-card",
         className,
       )}

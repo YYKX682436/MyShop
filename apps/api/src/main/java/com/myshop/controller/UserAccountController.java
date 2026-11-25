@@ -42,6 +42,12 @@ public class UserAccountController {
         return ApiResponse.success(accounts.balanceTransactions(RequestContext.getUserId(), page, pageSize));
     }
 
+    @GetMapping("/balance-transactions/{id}")
+    public ApiResponse<?> balanceTransactionLocation(@PathVariable UUID id,
+                                                      @RequestParam(name = "page_size", defaultValue = "20") int pageSize) {
+        return ApiResponse.success(accounts.balanceTransactionLocation(RequestContext.getUserId(), id, pageSize));
+    }
+
     @PostMapping("/recharges")
     public ApiResponse<?> recharge(@RequestBody RechargeRequest request) {
         var start = accounts.beginRecharge(RequestContext.getUserId(), request == null ? null : request.amount(),

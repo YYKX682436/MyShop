@@ -258,7 +258,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                                   List<MultipartFile> attachments) {
         requireCustomerContext(userId);
         return appendMessage(orderId, userId, AfterSaleMessageSenderType.CUSTOMER,
-                content, attachments, null);
+                content, attachments, null, null, null);
     }
 
     @Override
@@ -267,7 +267,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                                List<MultipartFile> attachments) {
         RequestContext.UserInfo operator = requireAdminContext();
         return appendMessage(orderId, operator.getUserId(), AfterSaleMessageSenderType.ADMIN,
-                content, attachments, null);
+                content, attachments, null, null, null);
     }
 
     @Override
@@ -276,7 +276,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                                         List<MultipartFile> attachments, UUID clientKey) {
         requireCustomerContext(userId);
         if (clientKey == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "缺少消息幂等键");
-        return appendMessage(orderId, userId, AfterSaleMessageSenderType.CUSTOMER, content, attachments, clientKey);
+        return appendMessage(orderId, userId, AfterSaleMessageSenderType.CUSTOMER, content, attachments, clientKey, null, null);
     }
 
     @Override
@@ -285,7 +285,27 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                                                      List<MultipartFile> attachments, UUID clientKey) {
         RequestContext.UserInfo operator = requireAdminContext();
         if (clientKey == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "缺少消息幂等键");
-        return appendMessage(orderId, operator.getUserId(), AfterSaleMessageSenderType.ADMIN, content, attachments, clientKey);
+        return appendMessage(orderId, operator.getUserId(), AfterSaleMessageSenderType.ADMIN, content, attachments, clientKey, null, null);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> replyFromCustomerWithContext(UUID orderId, UUID requestId, int round, UUID userId,
+                                                            String content, List<MultipartFile> attachments, UUID clientKey) {
+        requireCustomerContext(userId);
+        if (requestId == null || round < 1 || clientKey == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "售后引用或消息标识无效");
+        return appendMessage(orderId, userId, AfterSaleMessageSenderType.CUSTOMER, content, attachments,
+                clientKey, requestId, round);
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> replyFromAdminWithContext(UUID orderId, UUID requestId, int round,
+                                                         String content, List<MultipartFile> attachments, UUID clientKey) {
+        RequestContext.UserInfo operator = requireAdminContext();
+        if (requestId == null || round < 1 || clientKey == null) throw new BusinessException(ErrorCode.BAD_REQUEST, "售后引用或消息标识无效");
+        return appendMessage(orderId, operator.getUserId(), AfterSaleMessageSenderType.ADMIN, content, attachments,
+                clientKey, requestId, round);
     }
 
     @Override
@@ -298,7 +318,8 @@ public class AfterSaleServiceImpl implements AfterSaleService {
     private Map<String, Object> appendMessage(UUID orderId, UUID senderId,
                                               AfterSaleMessageSenderType senderType,
                                               String content,
-                                              List<MultipartFile> attachments, UUID clientKey) {
+                                              List<MultipartFile> attachments, UUID clientKey,
+                                              UUID requestedRequestId, Integer expectedRound) {
         String normalizedContent = normalizeMessage(content);
         List<AfterSaleAttachmentService.ValidatedAttachment> files =
                 attachmentService.validate(attachments);
@@ -315,11 +336,15 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                 || userRepository.findById(senderId).map(User::getRole).orElse(null) != UserRole.USER)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能回复自己的注册用户订单售后");
         }
-        byte[] fingerprint = clientKey == null ? null : com.myshop.service.MessageFingerprint.calculate(normalizedContent, files);
+        String requestContext = requestedRequestId == null ? null
+                : "after-sale:" + orderId + ":" + requestedRequestId + ":" + expectedRound;
+        byte[] fingerprint = clientKey == null ? null
+                : com.myshop.service.MessageFingerprint.calculate(normalizedContent, files, requestContext);
         if (clientKey != null) {
             var previous = messageRepository.findRetry(orderId, senderType, senderId, clientKey);
             if (previous.isPresent()) {
-                if (!java.security.MessageDigest.isEqual(fingerprint, previous.get().getRequestFingerprint()))
+                if (!java.security.MessageDigest.isEqual(fingerprint, previous.get().getRequestFingerprint())
+                        || (requestedRequestId != null && !requestedRequestId.equals(previous.get().getRequestId())))
                     throw new BusinessException(ErrorCode.BAD_REQUEST, "幂等键已用于不同的消息");
                 return buildOrderView(orderId);
             }
@@ -327,7 +352,7 @@ public class AfterSaleServiceImpl implements AfterSaleService {
                 var supportRetry = jdbc.query("""
                         SELECT m.request_fingerprint FROM support_messages m
                         JOIN support_conversations c ON c.id=m.conversation_id
-                        WHERE c.order_id=? AND m.sender_type=? AND m.sender_user_id=? AND m.client_key=?
+                        WHERE m.order_id=? AND m.after_sale_request_id IS NULL AND m.sender_type=? AND m.sender_user_id=? AND m.client_key=?
                         """, (rs, n) -> rs.getBytes(1), orderId, senderType.name(), senderId, clientKey);
                 if (!supportRetry.isEmpty()) {
                     if (!java.security.MessageDigest.isEqual(fingerprint, supportRetry.getFirst()))
@@ -338,6 +363,15 @@ public class AfterSaleServiceImpl implements AfterSaleService {
         }
         AfterSaleRequest request = pendingRequestForUpdate(orderId);
         ensurePendingOrder(order, request);
+        if (requestedRequestId != null) {
+            int actualRound = jdbc.queryForObject("""
+                    SELECT count(*) FROM after_sale_requests current JOIN after_sale_requests earlier
+                      ON earlier.order_id=current.order_id AND (earlier.submitted_at,earlier.id)<=(current.submitted_at,current.id)
+                    WHERE current.id=?
+                    """, Integer.class, request.getId());
+            if (!requestedRequestId.equals(request.getId()) || !expectedRound.equals(actualRound))
+                throw new BusinessException(ErrorCode.BAD_REQUEST, "售后申请已结束或引用的轮次已变化，请保留消息后更新引用");
+        }
         if (senderType == AfterSaleMessageSenderType.CUSTOMER
                 && !request.getUserId().equals(senderId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "无权回复此售后申请");

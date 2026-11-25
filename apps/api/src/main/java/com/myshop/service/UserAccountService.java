@@ -224,10 +224,26 @@ public class UserAccountService {
         siteContextFor(user, true);
         int p = Math.max(0, page - 1);
         int s = Math.max(1, Math.min(pageSize, 100));
-        Page<BalanceTransaction> result = balanceTransactions.findByUserIdOrderByCreatedAtDesc(
+        Page<BalanceTransaction> result = balanceTransactions.findByUserIdOrderByCreatedAtDescIdDesc(
                 userId, PageRequest.of(p, s));
         List<BalanceTransactionResponse> items = result.getContent().stream().map(this::toResponse).toList();
         return PageResult.of(result, items);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> balanceTransactionLocation(UUID userId, UUID transactionId, int pageSize) {
+        User user = requireStoreUser(userId, true);
+        if (user.getRole() != UserRole.USER) throw bad("管理员无需查询个人余额流水");
+        siteContextFor(user, true);
+        BalanceTransaction transaction = balanceTransactions.findById(transactionId)
+                .filter(value -> value.getUserId().equals(userId))
+                .orElseThrow(() -> bad("余额流水不存在"));
+        int boundedSize = Math.max(1, Math.min(pageSize, 100));
+        long newer = balanceTransactions.countNewerThanForUser(userId, transaction.getCreatedAt(), transaction.getId());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("transaction", toResponse(transaction));
+        result.put("page", Math.toIntExact(newer / boundedSize) + 1);
+        return result;
     }
 
     @Transactional

@@ -45,6 +45,9 @@ export default function MyBalancePage() {
   const [loading, setLoading] = useState(true)
   const queryTransactionId = typeof window === "undefined" ? null
     : new URLSearchParams(window.location.search).get("payment_transaction")
+  const queryLedgerId = typeof window === "undefined" ? null
+    : new URLSearchParams(window.location.search).get("ledger")
+  const [focusedLedger, setFocusedLedger] = useState<string | null>(null)
 
   const loadHistory = useCallback(async (page: number, append = false) => {
     const result = await requestOrThrow(() => userAccountApi.getBalanceTransactions({ page, page_size: 20 }))
@@ -62,21 +65,33 @@ export default function MyBalancePage() {
     if (!authLoaded) return
     if (!isLoggedIn || !userId) { setLoading(false); return }
     let cancelled = false
+    const historyRequest = queryLedgerId
+      ? userAccountApi.getBalanceTransactionLocation(queryLedgerId).then(location =>
+          userAccountApi.getBalanceTransactions({ page: location.page, page_size: 20 }).then(result => ({ result, page: location.page, id: location.transaction.id })))
+          .catch(() => userAccountApi.getBalanceTransactions({ page: 1, page_size: 20 }).then(result => ({ result, page: 1, id: null })))
+      : userAccountApi.getBalanceTransactions({ page: 1, page_size: 20 }).then(result => ({ result, page: 1, id: null }))
     Promise.all([
       requestOrThrow(() => userAccountApi.getOverview()),
       requestOrThrow(() => paymentApi.getChannels()),
-      requestOrThrow(() => userAccountApi.getBalanceTransactions({ page: 1, page_size: 20 })),
-    ]).then(([nextOverview, nextChannels, nextHistory]) => {
+      historyRequest,
+    ]).then(([nextOverview, nextChannels, locatedHistory]) => {
       if (cancelled) return
       setOverview(nextOverview)
       setChannels(nextChannels)
       setSelectedChannel(nextChannels[0]?.channel_code ?? "")
-      setHistory(nextHistory.list)
-      setHistoryTotal(nextHistory.pagination.total)
+      setHistory(locatedHistory.result.list)
+      setHistoryTotal(locatedHistory.result.pagination.total)
+      setHistoryPage(locatedHistory.page)
+      setFocusedLedger(locatedHistory.id)
       setLoading(false)
     }).catch(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [authLoaded, isLoggedIn, userId])
+  }, [authLoaded, isLoggedIn, userId, queryLedgerId])
+
+  useEffect(() => {
+    if (loading || !focusedLedger) return
+    document.getElementById(`balance-entry-${focusedLedger}`)?.scrollIntoView({ block: "center", behavior: "auto" })
+  }, [focusedLedger, history, loading])
 
   useEffect(() => {
     if (!queryTransactionId || !isLoggedIn) return
@@ -211,7 +226,7 @@ export default function MyBalancePage() {
         {history.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">{t("my.balanceEmpty")}</p> : (
           <ul className="divide-y divide-border-subtle rounded-card border border-border-subtle bg-surface px-4">
             {history.map((item) => (
-              <li key={item.id} className="flex min-w-0 items-center justify-between gap-3 py-3">
+              <li id={`balance-entry-${item.id}`} key={item.id} className={`flex min-w-0 items-center justify-between gap-3 rounded-control py-3 transition-colors ${item.id === focusedLedger ? "bg-primary/5 px-3 ring-1 ring-primary/25" : ""}`}>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{transactionLabel(item.type, t)}</p>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.reason || transactionLabel(item.type, t)}</p>

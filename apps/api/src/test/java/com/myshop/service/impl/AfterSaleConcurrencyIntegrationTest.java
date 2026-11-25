@@ -91,6 +91,7 @@ class AfterSaleConcurrencyIntegrationTest {
 
     @BeforeEach
     void resetDatabase() {
+        jdbcTemplate.update("DELETE FROM support_system_events");
         jdbcTemplate.update("DELETE FROM support_read_states");
         jdbcTemplate.update("DELETE FROM support_attachments");
         jdbcTemplate.update("DELETE FROM support_activity");

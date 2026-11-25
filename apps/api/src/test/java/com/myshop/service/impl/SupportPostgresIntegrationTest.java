@@ -5,6 +5,7 @@ import com.myshop.context.SiteRequestContext;
 import com.myshop.entity.Subsite;
 import com.myshop.exception.BusinessException;
 import com.myshop.service.SupportService;
+import com.myshop.service.SupportTimelineService;
 import com.myshop.service.AfterSaleService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -63,12 +64,14 @@ class SupportPostgresIntegrationTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired DataSource dataSource;
     @Autowired SupportService support;
+    @Autowired SupportTimelineService timeline;
     @Autowired AfterSaleService afterSales;
     @Autowired WebApplicationContext webContext;
     @Autowired FilterChainProxy security;
     @Autowired PlatformTransactionManager transactionManager;
 
     @BeforeEach void reset() {
+        jdbc.update("DELETE FROM support_system_events");
         jdbc.update("DELETE FROM support_read_states"); jdbc.update("DELETE FROM support_attachments");
         jdbc.update("DELETE FROM support_activity"); jdbc.update("DELETE FROM support_messages");
         jdbc.update("DELETE FROM support_conversations");
@@ -191,16 +194,16 @@ class SupportPostgresIntegrationTest {
         UUID order=UUID.randomUUID();
         jdbc.update("INSERT INTO orders(id,total_amount,actual_amount,status,order_type,session_token) VALUES (?,1,1,'PAID','NORMAL','guest-a')",order);
         assertThrows(BusinessException.class,() -> support.orderContext(order,"guest-b"));
-        assertNull(support.orderContext(order,"guest-a").get("conversation_id"));
+        assertNotNull(support.orderContext(order,"guest-a").get("conversation_id"));
         var file=new MockMultipartFile("attachments","proof.png","image/png",new byte[]{(byte)0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1});
         UUID key=UUID.randomUUID();
         Map<String,Object> sent=support.send(null,order,key,"凭证",List.of(file),false,"guest-a");
         UUID conversation=(UUID)sent.get("conversation_id");
         assertEquals("PAID",jdbc.queryForObject("SELECT status FROM orders WHERE id=?",String.class,order));
         assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM after_sale_requests WHERE order_id=?",Integer.class,order));
-        assertEquals(sent,support.send(conversation,null,key,"凭证",List.of(file),false,"guest-a"));
+        assertEquals(sent,support.send(conversation,order,key,"凭证",List.of(file),false,"guest-a"));
         var changed=new MockMultipartFile("attachments","proof.png","image/png",new byte[]{(byte)0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,2});
-        assertThrows(BusinessException.class,() -> support.send(conversation,null,key,"凭证",List.of(changed),false,"guest-a"));
+        assertThrows(BusinessException.class,() -> support.send(conversation,order,key,"凭证",List.of(changed),false,"guest-a"));
         UUID attachment=jdbc.queryForObject("SELECT id FROM support_attachments",UUID.class);
         assertEquals("image/png",support.openAttachment(attachment,false,"guest-a").contentType());
         assertThrows(BusinessException.class,() -> support.openAttachment(attachment,false,"guest-b"));
@@ -228,13 +231,15 @@ class SupportPostgresIntegrationTest {
         var application=initial.stream().filter(row -> "AFTER_SALE_APPLY".equals(row.get("source_type"))).findFirst().orElseThrow();
         assertEquals("需要处理的问题",application.get("content"));
         assertEquals(evidence,((Map<?,?>)((List<?>)application.get("attachments")).getFirst()).get("id"));
-        support.replyAfterSale(conversation,earlierKey,"之前的咨询",List.of(),false,null);
+        UUID root=(UUID)support.orderContext(order,null).get("conversation_id");
+        assertThrows(BusinessException.class,() -> support.replyAfterSale(root,earlierKey,"之前的咨询",order,sale,1,List.of(),false,null));
         assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,sale,earlierKey));
-        assertThrows(BusinessException.class,() -> support.replyAfterSale(conversation,earlierKey,"不同内容",List.of(),false,null));
-        assertThrows(BusinessException.class,() -> support.send(conversation,null,UUID.randomUUID(),"不应作为普通咨询",List.of(),false,null));
+        assertThrows(BusinessException.class,() -> support.replyAfterSale(root,earlierKey,"不同内容",order,sale,1,List.of(),false,null));
+        support.send(root,order,UUID.randomUUID(),"普通订单咨询不受待处理售后阻止",List.of(),false,null);
+        assertEquals("ADMIN",jdbc.queryForObject("SELECT waiting_for FROM after_sale_requests WHERE id=?",String.class,sale));
         UUID key=UUID.randomUUID();
-        support.replyAfterSale(conversation,key,"补充说明",List.of(),false,null);
-        support.replyAfterSale(conversation,key,"补充说明",List.of(),false,null);
+        support.replyAfterSale(root,key,"补充说明",order,sale,1,List.of(),false,null);
+        support.replyAfterSale(root,key,"补充说明",order,sale,1,List.of(),false,null);
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,sale,key));
         assertEquals("ADMIN",jdbc.queryForObject("SELECT waiting_for FROM after_sale_requests WHERE id=?",String.class,sale));
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
@@ -244,29 +249,29 @@ class SupportPostgresIntegrationTest {
         assertEquals("ADMIN",support.detail(conversation,true,null).get("waiting_for"));
         assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
         assertTrue(support.list(true,null,null,null,false,true,0,30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
-        support.replyAfterSale(conversation,UUID.randomUUID(),"请补充",List.of(),true,null);
+        support.replyAfterSale(root,UUID.randomUUID(),"请补充",order,sale,1,List.of(),true,null);
         assertEquals("CUSTOMER",support.detail(conversation,true,null).get("waiting_for"));
         assertEquals(false,support.detail(conversation,true,null).get("needs_attention"));
         assertFalse(isPending(conversation));
         RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
-        support.replyAfterSale(conversation,UUID.randomUUID(),"补充材料",List.of(),false,null);
+        support.replyAfterSale(root,UUID.randomUUID(),"补充材料",order,sale,1,List.of(),false,null);
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
         assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
         assertTrue(isPending(conversation));
         afterSales.reject(order,"已处理");
         RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
-        support.send(conversation,null,key,"补充说明",List.of(),false,null);
+        support.replyAfterSale(root,key,"补充说明",order,sale,1,List.of(),false,null);
         assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM after_sale_messages WHERE request_id=? AND client_key=?",Integer.class,sale,key));
         assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM support_messages WHERE conversation_id=? AND client_key=?",Integer.class,conversation,key));
-        support.send(conversation,null,UUID.randomUUID(),"继续咨询",List.of(),false,null);
+        support.send(root,order,UUID.randomUUID(),"继续咨询",List.of(),false,null);
         assertEquals("REJECTED",jdbc.queryForObject("SELECT status FROM after_sale_requests WHERE id=?",String.class,sale));
         assertEquals("PAID",jdbc.queryForObject("SELECT status FROM orders WHERE id=?",String.class,order));
         RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
-        assertNull(support.detail(conversation,true,null).get("waiting_for"));
-        assertEquals(true,support.detail(conversation,true,null).get("needs_attention"));
-        assertTrue(isPending(conversation));
-        support.send(conversation,null,UUID.randomUUID(),"后续回复",List.of(),true,null);
-        assertFalse(isPending(conversation));
+        assertNull(timeline.detail(root,true,null).get("waiting_for"));
+        assertEquals(true,timeline.detail(root,true,null).get("needs_attention"));
+        assertTrue(timeline.list(true,null,"main",null,false,true,null,null,0,30).stream().anyMatch(row -> root.equals(row.get("id"))));
+        support.send(root,order,UUID.randomUUID(),"后续回复",List.of(),true,null);
+        assertFalse(Boolean.TRUE.equals(timeline.detail(root,true,null).get("needs_attention")));
     }
 
     @Test void cursorDoesNotAdvancePastAnUncommittedEarlierMessage() throws Exception {
@@ -295,6 +300,56 @@ class SupportPostgresIntegrationTest {
             one.commit(); later.get(5,java.util.concurrent.TimeUnit.SECONDS);
             var ids=jdbc.queryForList("SELECT source_id FROM support_activity WHERE source_id IN (?,?) ORDER BY seq",UUID.class,first,second);
             assertEquals(List.of(first,second),ids);
+        } finally { executor.shutdownNow(); }
+    }
+
+    @Test void customerCursorSerializesAcrossTwoOrderThreadsRefundActivityAndGeneralChat() throws Exception {
+        UUID buyer=UUID.randomUUID(), orderA=UUID.randomUUID(), orderB=UUID.randomUUID();
+        long userNo=Math.abs((long)buyer.hashCode())+50000L;
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                buyer,"cursor-"+buyer,buyer+"@example.com",userNo);
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,1,1,'PAID','NORMAL'),(?,?,1,1,'PAID','NORMAL')",
+                orderA,buyer,orderB,buyer);
+        UUID orderThreadA=jdbc.queryForObject("SELECT support_order_conversation(?)",UUID.class,orderA);
+        UUID orderThreadB=jdbc.queryForObject("SELECT support_order_conversation(?)",UUID.class,orderB);
+        RequestContext.set(new RequestContext.UserInfo(buyer,"cursor-buyer","USER"));
+        UUID root=(UUID)support.generalContext(null).get("conversation_id");
+        RequestContext.clear();
+        UUID early=UUID.randomUUID(), secondOrder=UUID.randomUUID(), refund=UUID.randomUUID();
+        UUID messageKey=UUID.randomUUID();
+        var executor=java.util.concurrent.Executors.newFixedThreadPool(3);
+        java.util.concurrent.CountDownLatch started=new java.util.concurrent.CountDownLatch(3);
+        try (var first=dataSource.getConnection()) {
+            first.setAutoCommit(false);
+            try (var insert=first.prepareStatement("INSERT INTO support_activity(conversation_id,source_type,source_id,notify_customer,notify_admin) VALUES (?,'AFTER_SALE_APPLY',?,false,true)")) {
+                insert.setObject(1,orderThreadA); insert.setObject(2,early); insert.executeUpdate();
+            }
+            var laterOrder=java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                started.countDown(); jdbc.update("INSERT INTO support_activity(conversation_id,source_type,source_id,notify_customer,notify_admin) VALUES (?,'AFTER_SALE_APPLY',?,false,true)",orderThreadB,secondOrder); return secondOrder;
+            },executor);
+            var laterRefund=java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                started.countDown(); jdbc.update("INSERT INTO support_activity(conversation_id,source_type,source_id,notify_customer,notify_admin) VALUES (?,'ORDER_REFUND',?,true,false)",orderThreadB,refund); return refund;
+            },executor);
+            var laterGeneral=java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                started.countDown();
+                RequestContext.set(new RequestContext.UserInfo(buyer,"cursor-buyer","USER"));
+                try { return support.send(root,null,messageKey,"普通咨询",List.of(),false,null).get("message_id"); }
+                finally { RequestContext.clear(); }
+            },executor);
+            assertTrue(started.await(5,java.util.concurrent.TimeUnit.SECONDS));
+            assertThrows(java.util.concurrent.TimeoutException.class,() -> laterOrder.get(200,java.util.concurrent.TimeUnit.MILLISECONDS));
+            assertThrows(java.util.concurrent.TimeoutException.class,() -> laterRefund.get(200,java.util.concurrent.TimeUnit.MILLISECONDS));
+            assertThrows(java.util.concurrent.TimeoutException.class,() -> laterGeneral.get(200,java.util.concurrent.TimeUnit.MILLISECONDS));
+            first.commit();
+            Object generalMessage=laterGeneral.get(5,java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(secondOrder,laterOrder.get(5,java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(refund,laterRefund.get(5,java.util.concurrent.TimeUnit.SECONDS));
+            UUID general=(UUID)generalMessage;
+            var ordered=jdbc.query("SELECT source_id,seq FROM support_activity WHERE source_id IN (?,?,?,?) ORDER BY seq",
+                    (rs,n)->new Object[]{rs.getObject(1,UUID.class),rs.getLong(2)},early,secondOrder,refund,general);
+            assertEquals(4,ordered.size());
+            assertEquals(early,ordered.getFirst()[0]);
+            for(int index=1;index<ordered.size();index++) assertTrue((Long)ordered.get(index)[1]>(Long)ordered.get(index-1)[1]);
         } finally { executor.shutdownNow(); }
     }
 
@@ -327,11 +382,79 @@ class SupportPostgresIntegrationTest {
         jdbc.update("UPDATE users SET subsite_id=NULL WHERE id=?",buyer);
         UUID conversation=jdbc.queryForObject("SELECT id FROM support_conversations WHERE order_id=?",UUID.class,order);
         RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
-        assertEquals(conversation,support.orderContext(order,null).get("conversation_id"));
-        assertEquals(conversation,support.detail(conversation,false,null).get("id"));
+        UUID currentRoot=(UUID)support.orderContext(order,null).get("conversation_id");
+        assertNotEquals(conversation,currentRoot);
+        assertEquals(order,timeline.detail(conversation,false,null).get("order_id"));
         assertTrue(support.list(false,null,null,null,false,false,0,30).stream().anyMatch(row -> conversation.equals(row.get("id"))));
         Subsite other=new Subsite(); other.setId(UUID.randomUUID()); SiteRequestContext.set(other);
         assertThrows(BusinessException.class,() -> support.detail(conversation,false,null));
+    }
+
+    @Test void oneCustomerTimelineAggregatesGeneralAndMultipleSaleThreadsWithPerMessageReceipts() {
+        UUID buyer=UUID.randomUUID(), admin=UUID.randomUUID(), orderA=UUID.randomUUID(), orderB=UUID.randomUUID();
+        long userNo=Math.abs((long)buyer.hashCode())+40000L;
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                buyer,"timeline-"+buyer,buyer+"@example.com",userNo);
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role) VALUES (?,?,?,'test','ADMIN')",admin,"timeline-admin-"+admin,admin+"@example.com");
+        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
+        UUID root=(UUID)support.generalContext(null).get("conversation_id");
+        support.send(root,null,UUID.randomUUID(),"普通咨询",List.of(),false,null);
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,8,8,'PAID','NORMAL'),(?,?,9,9,'PAID','NORMAL')",
+                orderA,buyer,orderB,buyer);
+        UUID requestA=UUID.randomUUID(), requestB=UUID.randomUUID();
+        jdbc.update("INSERT INTO after_sale_requests(id,order_id,user_id,status,source_order_status,reason,waiting_for,last_activity_at,submitted_at) "
+                + "VALUES (?,?,?,'PENDING','PAID','申请售后 A','ADMIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP),(?,?,?,'PENDING','PAID','申请售后 B','ADMIN',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+                requestA,orderA,buyer,requestB,orderB,buyer);
+        jdbc.update("UPDATE orders SET status='AFTER_SALE' WHERE id IN (?,?)",orderA,orderB);
+        jdbc.update("INSERT INTO after_sale_messages(id,request_id,sender_type,sender_user_id,content) VALUES (? ,?,'ADMIN',?,'客服回复 A'),(?,?, 'ADMIN',?,'客服回复 B')",
+                UUID.randomUUID(),requestA,admin,UUID.randomUUID(),requestB,admin);
+        Map<String,Object> contextA=support.orderContext(orderA,requestA,1,null);
+        Map<String,Object> contextB=support.orderContext(orderB,requestB,1,null);
+        assertEquals(root,contextA.get("conversation_id")); assertEquals(root,contextB.get("conversation_id"));
+        assertEquals(1,contextA.get("round")); assertEquals(1,contextB.get("round"));
+
+        Map<String,Object> summary=timeline.detail(root,false,null);
+        assertEquals(2L,summary.get("unread"));
+        var firstPage=items(timeline.activities(root,false,null,null,null,40));
+        var replies=firstPage.stream().filter(row -> "AFTER_SALE_MESSAGE".equals(row.get("source_type"))
+                && "ADMIN".equals(row.get("sender_type"))).toList();
+        assertEquals(2,replies.size());
+        assertTrue(replies.stream().anyMatch(row -> orderA.equals(row.get("order_id")) && requestA.equals(row.get("request_id"))));
+        assertTrue(replies.stream().anyMatch(row -> orderB.equals(row.get("order_id")) && requestB.equals(row.get("request_id"))));
+        assertTrue(replies.stream().allMatch(row -> row.get("order_no") instanceof String));
+        String cursorA=(String)replies.stream().filter(row -> orderA.equals(row.get("order_id"))).findFirst().orElseThrow().get("cursor");
+        String cursorB=(String)replies.stream().filter(row -> orderB.equals(row.get("order_id"))).findFirst().orElseThrow().get("cursor");
+        timeline.markRead(root,false,null,List.of(cursorA));
+        assertEquals(1L,timeline.detail(root,false,null).get("unread"));
+        String messageIdA=replies.stream().filter(row -> orderA.equals(row.get("order_id"))).findFirst().orElseThrow().get("id").toString().substring("AFTER_SALE_MESSAGE:".length());
+        UUID oldA=jdbc.queryForObject("SELECT conversation_id FROM support_activity WHERE source_type='AFTER_SALE_MESSAGE' AND source_id=?",UUID.class,UUID.fromString(messageIdA));
+        assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM support_activity_receipts WHERE conversation_id=? AND viewer_type='CUSTOMER'",Integer.class,oldA));
+        timeline.markRead(root,false,null,List.of(cursorB));
+        assertEquals(0L,timeline.detail(root,false,null).get("unread"));
+
+        RequestContext.set(new RequestContext.UserInfo(admin,"admin","ADMIN"));
+        var adminRoot=timeline.list(true,null,"main","after_sale",false,true,null,null,0,30).stream()
+                .filter(row -> root.equals(row.get("id"))).findFirst().orElseThrow();
+        assertEquals(2,((List<?>)adminRoot.get("pending_after_sales")).size());
+    }
+
+    @Test void deliveredOrderCreatesOneCustomerResultAndAfterSaleRestoreDoesNotRepeatIt() {
+        UUID buyer=UUID.randomUUID(), order=UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id) VALUES (?,?,?,'test','USER',?,(SELECT id FROM user_levels WHERE is_default=true))",
+                buyer,"delivery-result-"+buyer,buyer+"@example.com",Math.abs((long)buyer.hashCode())+60000L);
+        jdbc.update("INSERT INTO orders(id,user_id,total_amount,actual_amount,status,order_type) VALUES (?,?,5,5,'PAID','NORMAL')",order,buyer);
+        jdbc.update("UPDATE orders SET status='DELIVERED',delivered_at=CURRENT_TIMESTAMP WHERE id=?",order);
+        UUID root=jdbc.queryForObject("SELECT id FROM support_conversations WHERE user_id=? AND order_id IS NULL",UUID.class,buyer);
+        assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='ORDER' AND source_id=? AND event_type='ORDER_DELIVERED'",Integer.class,order));
+        jdbc.update("UPDATE orders SET status='AFTER_SALE' WHERE id=?",order);
+        jdbc.update("UPDATE orders SET status='DELIVERED' WHERE id=?",order);
+        assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='ORDER' AND source_id=? AND event_type='ORDER_DELIVERED'",Integer.class,order));
+        RequestContext.set(new RequestContext.UserInfo(buyer,"buyer","USER"));
+        var result=items(timeline.activities(root,false,null,null,null,20)).stream()
+                .filter(row -> "SYSTEM_RESULT".equals(row.get("source_type"))).findFirst().orElseThrow();
+        assertEquals("ORDER_DELIVERED",result.get("event_type"));
+        assertEquals(order,result.get("order_id"));
+        assertTrue(result.get("order_no") instanceof String);
     }
 
     @Test void pagedHistoryAndIncrementalCatchUpUseStableNonoverlappingCursors() {

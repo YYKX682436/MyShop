@@ -34,6 +34,12 @@ public interface AfterSaleService {
     Map<String, Object> replyFromAdminWithKey(UUID orderId, String content,
                                                List<MultipartFile> attachments, UUID clientKey);
 
+    Map<String, Object> replyFromCustomerWithContext(UUID orderId, UUID requestId, int round, UUID userId,
+                                                      String content, List<MultipartFile> attachments, UUID clientKey);
+
+    Map<String, Object> replyFromAdminWithContext(UUID orderId, UUID requestId, int round,
+                                                   String content, List<MultipartFile> attachments, UUID clientKey);
+
     AdminOrderRefundResponse approve(UUID orderId, boolean confirmed,
                                      boolean reclaimCardKeys);
 }

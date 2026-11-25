@@ -343,17 +343,22 @@ test("manual payment confirmation has one input-free confirmation for pending an
   assert.match(translations, /"admin\.markPaidConfirm": "确认支付"/)
 })
 
-test("new business order numbers remain exact safe integers in frontend display and copy paths", () => {
+test("order numbers stay opaque display strings and order links use internal UUIDs", () => {
   const orderPage = readSource("../app/(store)/order/[orderId]/page.tsx")
   const supportThread = readSource("../components/shared/support-thread.tsx")
   const adminOrders = readSource("../app/admin/orders/page.tsx")
-  const sample = "2026112583740261"
+  const supportTypes = readSource("../services/api.ts")
+  const sample = "20261126999999999999"
 
-  assert.equal(Number.isSafeInteger(Number(sample)), true)
-  assert.equal(String(Number(sample)), sample)
+  assert.equal(Number.isSafeInteger(Number(sample)), false)
+  assert.equal(String(sample), sample)
   assert.match(orderPage, /view\.order\.order_no/)
   assert.match(orderPage, /break-all text-right font-mono/)
-  assert.match(supportThread, /break-all font-semibold/)
+  assert.match(supportTypes, /order_no: string \| null/)
+  assert.match(supportThread, /break-all font-mono text-xs/)
+  assert.match(supportThread, /href=\{`\/order\/\$\{encodeURIComponent\(orderId\)\}`\}/)
+  assert.match(supportTypes, /order_no\?: string \| null/)
+  assert.doesNotMatch(supportThread, /Number\([^)]*order_no/)
   assert.match(adminOrders, /copyOrderNo\(order\.order_no\)/)
   assert.match(adminOrders, /break-all text-left font-mono/)
 })
@@ -380,12 +385,14 @@ test("storefront markdown surfaces use the shared safe renderer", () => {
   const productSource = readSource("../components/shared/product-description.tsx")
   const productPageSource = readSource("../app/(store)/product/[id]/page.tsx")
   const shellSource = readSource("../app/(store)/store-shell-client.tsx")
+  const notificationSource = readSource("../app/(store)/messages/announcements/page.tsx")
 
   assert.match(productSource, /MarkdownContent/)
   assert.match(productPageSource, /@\/components\/shared\/product-description/)
-  assert.match(shellSource, /MarkdownContent/)
+  assert.match(notificationSource, /MarkdownContent/)
+  assert.doesNotMatch(shellSource, /AnnouncementBar|PopupAnnouncement|announcement-popup/)
   assert.doesNotMatch(productSource, /ReactMarkdown/)
-  assert.doesNotMatch(shellSource, /ReactMarkdown/)
+  assert.doesNotMatch(notificationSource, /ReactMarkdown/)
 })
 
 test("storefront order details fetch unique product metadata and keep card content out of UI labels", () => {

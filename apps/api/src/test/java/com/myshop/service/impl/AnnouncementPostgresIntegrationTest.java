@@ -55,7 +55,7 @@ class AnnouncementPostgresIntegrationTest {
         service = new AnnouncementService(jdbc, sites);
     }
 
-    @Test void readsArePerIdentityAndAdvanceOnlyForExplicitPublicationVersions() {
+    @Test void readsArePerIdentityAndEditingDoesNotRepublishOrResetUnread() {
         UUID user = UUID.randomUUID();
         jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id,balance) VALUES (?, 'notice-user','notice@example.com','test','USER',123459,(SELECT id FROM user_levels LIMIT 1),0)", user);
         UUID id = service.create(null, new AnnouncementService.Edit("标题", "正文"));
@@ -64,36 +64,31 @@ class AnnouncementPostgresIntegrationTest {
         assertTrue(unread(service.publicList(null, 0, 30, "guest-one"), id));
         assertEquals(1L,service.summary(null,"guest-one").get("unread"));
         service.markRead(null, id, 1, "guest-one");
+        var publishedAt = jdbc.queryForObject("SELECT published_at FROM site_announcements WHERE id=?", java.time.LocalDateTime.class, id);
         service.edit(null, id, new AnnouncementService.Edit("更新标题", "编辑正文"));
         assertFalse(unread(service.publicList(null, 0, 30, "guest-one"), id));
         assertEquals(0L,service.summary(null,"guest-one").get("unread"));
         service.publish(null, id);
-        assertTrue(unread(service.publicList(null, 0, 30, "guest-one"), id));
-        service.markRead(null, id, 2, "guest-one");
-        service.markRead(null, id, 1, "guest-one");
         assertFalse(unread(service.publicList(null, 0, 30, "guest-one"), id));
-        assertEquals(2, jdbc.queryForObject("SELECT read_version FROM site_announcement_reads WHERE announcement_id=? AND user_id=?", Integer.class, id, user));
-        assertThrows(BusinessException.class, () -> service.markRead(null, id, 3, null));
+        assertEquals(1, jdbc.queryForObject("SELECT publish_version FROM site_announcements WHERE id=?", Integer.class, id));
+        assertEquals(publishedAt, jdbc.queryForObject("SELECT published_at FROM site_announcements WHERE id=?", java.time.LocalDateTime.class, id));
+        assertEquals(1, jdbc.queryForObject("SELECT read_version FROM site_announcement_reads WHERE announcement_id=? AND user_id=?", Integer.class, id, user));
+        assertThrows(BusinessException.class, () -> service.markRead(null, id, 2, null));
         RequestContext.clear();
         assertTrue(unread(service.publicList(null, 0, 30, "guest-one"), id));
-        service.markRead(null, id, 2, "guest-one");
+        service.markRead(null, id, 1, "guest-one");
         assertFalse(unread(service.publicList(null, 0, 30, "guest-one"), id));
         assertTrue(unread(service.publicList(null, 0, 30, "guest-two"), id));
         assertThrows(BusinessException.class, () -> service.markRead(null, id, 2, null));
     }
 
-    @Test void channelSelectionAndWithdrawalDoNotLeakAcrossSites() {
+    @Test void notificationContentAndManagementRemainIsolatedAcrossSites() {
         UUID owner = UUID.randomUUID(), siteId = UUID.randomUUID();
         jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id,balance) VALUES (?, 'site-owner','site-owner@example.com','test','USER',123460,(SELECT id FROM user_levels LIMIT 1),0)", owner);
         jdbc.update("INSERT INTO subsites(id,owner_id,prefix,name) VALUES (?,?,'notice-site','通知分站')", siteId, owner);
         UUID main = service.create(null, new AnnouncementService.Edit("主站", "主站正文"));
         UUID sub = service.create(siteId, new AnnouncementService.Edit("分站", "分站正文"));
         service.publish(null, main); service.publish(siteId, sub);
-        assertThrows(BusinessException.class, () -> service.setChannel(siteId, "BANNER", new AnnouncementService.Channel(main, true)));
-        service.setChannel(siteId, "BANNER", new AnnouncementService.Channel(sub, true));
-        assertEquals("分站正文", service.channels(siteId).get("announcement"));
-        service.setChannel(siteId, "BANNER", new AnnouncementService.Channel(sub, false));
-        assertEquals(false, service.channels(siteId).get("announcement_enabled"));
         assertEquals(sub, service.publicDetail(siteId, sub).get("id"));
         assertThrows(BusinessException.class, () -> service.publicDetail(null, sub));
         service.withdraw(siteId, sub);
@@ -107,15 +102,83 @@ class AnnouncementPostgresIntegrationTest {
         assertThrows(BusinessException.class, () -> service.managementSite(true));
     }
 
+    @Test void levelAudienceIsAnExactPrivateScopeAndReadAllOnlyTouchesVisibleRows() {
+        UUID levelA = addLevel("通知等级 A", 1, 101);
+        UUID levelB = addLevel("通知等级 B", 2, 102);
+        UUID levelC = addLevel("通知等级 C", 3, 103);
+        UUID userA = addUser("notice-level-a", "notice-level-a@example.com", levelA, 123470);
+        UUID userB = addUser("notice-level-b", "notice-level-b@example.com", levelB, 123471);
+        UUID userC = addUser("notice-level-c", "notice-level-c@example.com", levelC, 123472);
+        UUID owner = addUser("notice-site-owner", "notice-site-owner@example.com", levelA, 123473);
+        UUID site = UUID.randomUUID();
+        jdbc.update("INSERT INTO subsites(id,owner_id,prefix,name) VALUES (?,?,'audience-site','通知站')", site, owner);
+
+        UUID restricted = service.save(site, null, new AnnouncementService.Edit(UUID.randomUUID(), null,
+                "等级范围正文", "LEVELS", List.of(levelA, levelB), true));
+        assertEquals(4, service.managementData(site).get("levels") instanceof List<?> rows ? rows.size() : 0);
+
+        RequestContext.set(new RequestContext.UserInfo(userA, "notice-level-a", "USER"));
+        assertTrue(unread(service.publicList(site, 0, 30, "guest-a"), restricted));
+        assertEquals(restricted, service.publicDetail(site, restricted, "guest-a").get("id"));
+        service.markAllVisibleRead(site, "guest-a");
+        assertEquals(0L, service.summary(site, "guest-a").get("unread"));
+
+        RequestContext.set(new RequestContext.UserInfo(userB, "notice-level-b", "USER"));
+        assertTrue(unread(service.publicList(site, 0, 30, "guest-b"), restricted));
+        assertEquals(1L, service.summary(site, "guest-b").get("unread"));
+        assertEquals(restricted, service.publicDetail(site, restricted, "guest-b").get("id"));
+        service.markRead(site, restricted, 1, "guest-b");
+        service.markAllVisibleRead(site, "guest-b");
+        assertEquals(0L, service.summary(site, "guest-b").get("unread"));
+
+        RequestContext.set(new RequestContext.UserInfo(userC, "notice-level-c", "USER"));
+        assertFalse(service.publicList(site, 0, 30, "guest-c").stream().anyMatch(row -> restricted.equals(row.get("id"))));
+        assertEquals(0L, service.summary(site, "guest-c").get("unread"));
+        assertThrows(BusinessException.class, () -> service.publicDetail(site, restricted, "guest-c"));
+
+        jdbc.update("UPDATE user_levels SET enabled=false WHERE id=?", levelA);
+        assertFalse(service.publicList(site, 0, 30, "guest-a").stream().anyMatch(row -> restricted.equals(row.get("id"))));
+        assertThrows(BusinessException.class, () -> service.save(site, null, new AnnouncementService.Edit(UUID.randomUUID(),
+                "停用等级", "正文", "LEVELS", List.of(levelA), true)));
+        assertThrows(BusinessException.class, () -> service.save(site, null, new AnnouncementService.Edit(UUID.randomUUID(),
+                "公开上传文件", "![图片](/api/uploads/private-looking.png)", "LEVELS", List.of(levelB), true)));
+    }
+
+    @Test void createRetryIsIdempotentAndCannotReuseAKeyForDifferentContent() {
+        UUID key = UUID.randomUUID();
+        var edit = new AnnouncementService.Edit(key, "标题", "同一正文", "ALL", List.of(), true);
+        UUID first = service.save(null, null, edit);
+        assertEquals(first, service.save(null, null, edit));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM site_announcements WHERE create_key=?", Integer.class, key));
+        assertThrows(BusinessException.class, () -> service.save(null, null,
+                new AnnouncementService.Edit(key, "不同标题", "不同正文", "ALL", List.of(), true)));
+    }
+
     @Test void importedUnknownPublicationTimeDoesNotCreateHistoricalUnread() {
         UUID id = UUID.randomUUID();
         jdbc.update("INSERT INTO site_announcements(id,title,body,status,publish_version,published_at) VALUES (?,'旧公告','旧正文','PUBLISHED',1,NULL)", id);
         assertFalse(unread(service.publicList(null, 0, 30, "guest"), id));
         service.publish(null, id);
-        assertTrue(unread(service.publicList(null, 0, 30, "guest"), id));
+        assertFalse(unread(service.publicList(null, 0, 30, "guest"), id));
+        assertEquals(1, jdbc.queryForObject("SELECT publish_version FROM site_announcements WHERE id=?", Integer.class, id));
+        assertNull(jdbc.queryForObject("SELECT published_at FROM site_announcements WHERE id=?", java.time.LocalDateTime.class, id));
     }
 
     private boolean unread(List<Map<String, Object>> rows, UUID id) {
         return (Boolean) rows.stream().filter(row -> id.equals(row.get("id"))).findFirst().orElseThrow().get("unread");
+    }
+
+    private UUID addLevel(String name, int sort, int rank) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO user_levels(id,name,pricing_type,is_default,enabled,sort_order,upgrade_rank) VALUES (?,?,'RETAIL',false,true,?,?)",
+                id, name, sort, rank);
+        return id;
+    }
+
+    private UUID addUser(String name, String email, UUID level, int number) {
+        UUID id = UUID.randomUUID();
+        jdbc.update("INSERT INTO users(id,username,email,password_hash,role,user_no,user_level_id,balance) VALUES (?,?,?,'test','USER',?,?,0)",
+                id, name, email, number, level);
+        return id;
     }
 }

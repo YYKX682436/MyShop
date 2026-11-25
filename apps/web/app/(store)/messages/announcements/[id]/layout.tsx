@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import { internalPageMetadata } from "@/lib/page-metadata"
 
 export function generateMetadata(_: unknown, parent: ResolvingMetadata) {
-  return internalPageMetadata("公告详情", parent)
+  return internalPageMetadata("商城通知", parent)
 }
 
 export default function PageTitleLayout({ children }: { children: ReactNode }) {

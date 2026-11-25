@@ -3,6 +3,7 @@ package com.myshop.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myshop.context.RequestContext;
 import com.myshop.entity.SiteConfig;
+import com.myshop.entity.User;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserRepository;
 import com.myshop.utils.JwtUtils;
@@ -24,7 +25,8 @@ class MessageAccessFilterTest {
     @Test void viewerAssertionDetectsCookieChangesButNeverGrantsAuthority() throws Exception {
         UUID user=UUID.randomUUID();
         RequestContext.set(new RequestContext.UserInfo(user,"buyer","USER"));
-        var filter=new MessageIdentityFilter();
+        var users=mock(UserRepository.class);
+        var filter=new MessageIdentityFilter(users);
         var request=new MockHttpServletRequest("GET","/api/support/conversations");
         request.setServletPath("/support/conversations"); request.addHeader("X-Message-Viewer","guest");
         var rejected=new MockHttpServletResponse(); var blocked=new MockFilterChain();
@@ -34,6 +36,22 @@ class MessageAccessFilterTest {
         matching.setServletPath("/support/conversations"); matching.addHeader("X-Message-Viewer","user:"+user);
         var accepted=new MockFilterChain(); filter.doFilter(matching,new MockHttpServletResponse(),accepted);
         assertNotNull(accepted.getRequest());
+    }
+
+    @Test void messageLevelAssertionForcesAnImmediateRefreshAfterTierChanges() throws Exception {
+        UUID userId=UUID.randomUUID(), currentLevel=UUID.randomUUID();
+        User user=new User(); user.setId(userId); user.setUserLevelId(currentLevel);
+        UserRepository users=mock(UserRepository.class); when(users.findById(userId)).thenReturn(Optional.of(user));
+        RequestContext.set(new RequestContext.UserInfo(userId,"buyer","USER"));
+        var filter=new MessageIdentityFilter(users);
+        var stale=new MockHttpServletRequest("GET","/api/announcements");
+        stale.setServletPath("/announcements"); stale.addHeader("X-Message-Viewer","user:"+userId); stale.addHeader("X-Message-Level",UUID.randomUUID().toString());
+        var staleResponse=new MockHttpServletResponse(); var staleChain=new MockFilterChain(); filter.doFilter(stale,staleResponse,staleChain);
+        assertEquals(409,staleResponse.getStatus()); assertNull(staleChain.getRequest());
+        var fresh=new MockHttpServletRequest("GET","/api/announcements");
+        fresh.setServletPath("/announcements"); fresh.addHeader("X-Message-Viewer","user:"+userId); fresh.addHeader("X-Message-Level",currentLevel.toString());
+        var freshChain=new MockFilterChain(); filter.doFilter(fresh,new MockHttpServletResponse(),freshChain);
+        assertNotNull(freshChain.getRequest());
     }
 
     @Test void maintenanceAllowsOnlySupportAndRequiredAuthenticatedImageReads() throws Exception {

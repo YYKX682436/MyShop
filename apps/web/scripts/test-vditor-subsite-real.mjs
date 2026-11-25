@@ -33,7 +33,7 @@ try {
   assert.equal(await editor.getByRole("button", { name:"插入图片" }).count(), 0)
   const form = editor.locator("xpath=ancestor::form")
   const title = `subsite-editor-test-${Date.now()}`
-  await form.getByRole("textbox", { name:"标题",exact:true }).fill(title)
+  await form.getByRole("textbox", { name:"标题（可选）",exact:true }).fill(title)
   await text.click(); await page.keyboard.insertText("分站首行"); await page.keyboard.press("Shift+Enter"); await page.keyboard.insertText("分站第二行")
   const imagesBefore = await text.locator("img").count()
   await text.evaluate(element => {
@@ -44,19 +44,19 @@ try {
   assert.equal(await text.locator("img").count(), imagesBefore)
   await page.waitForTimeout(1200)
   const save = page.waitForResponse(response => new URL(response.url()).pathname === "/api/subsite/announcements" && response.request().method() === "POST")
-  await form.getByRole("button", { name:"保存",exact:true }).click()
+  await form.getByRole("button", { name:"保存草稿",exact:true }).click()
   const saved = await save
   assert.ok(saved.ok(), `Subsite announcement save failed: HTTP ${saved.status()}`)
   const body = await saved.json()
   assert.equal(body.code, 0, body.message)
   const announcementId = body.data.id
   await page.getByRole("button", { name:title }).waitFor()
-  await page.getByRole("button", { name:"新建公告" }).click()
+  await page.getByRole("button", { name:"新建" }).click()
   await page.getByRole("button", { name:title }).click()
   await text.waitFor()
   assert.match(await text.innerText(), /分站首行/)
   assert.match(await text.innerText(), /分站第二行/)
-  assert.equal(await form.getByRole("button", { name:"保存",exact:true }).isDisabled(), true)
+  assert.equal(await form.getByRole("button", { name:"保存草稿",exact:true }).isDisabled(), true)
   await editor.getByRole("button", { name:"预览",exact:true }).click()
   assert.equal(await editor.locator(".prose br").count(), 1, "Subsite saved line break must render in the shared preview")
   await page.waitForTimeout(1200)

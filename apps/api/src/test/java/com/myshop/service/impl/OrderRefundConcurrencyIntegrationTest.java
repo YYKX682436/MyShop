@@ -9,6 +9,7 @@ import com.myshop.service.AdminCardKeyService;
 import com.myshop.service.AutoFulfillmentService;
 import com.myshop.service.FulfillmentService;
 import com.myshop.service.OrderRefundService;
+import com.myshop.service.SupportTimelineService;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import com.myshop.payment.PaymentProvider;
 import org.junit.jupiter.api.AfterEach;
@@ -61,6 +62,9 @@ class OrderRefundConcurrencyIntegrationTest {
     private com.myshop.service.SupportService supportService;
 
     @Autowired
+    private SupportTimelineService supportTimeline;
+
+    @Autowired
     private AdminOrderService adminOrderService;
 
     @Autowired
@@ -95,6 +99,7 @@ class OrderRefundConcurrencyIntegrationTest {
 
     @BeforeEach
     void resetDatabase() {
+        jdbcTemplate.update("DELETE FROM support_system_events");
         jdbcTemplate.update("DELETE FROM support_read_states");
         jdbcTemplate.update("DELETE FROM support_attachments");
         jdbcTemplate.update("DELETE FROM support_activity");
@@ -382,6 +387,12 @@ class OrderRefundConcurrencyIntegrationTest {
         assertEquals(new BigDecimal("12.34"),refund.get("refund_amount"));
         assertEquals("BALANCE",refund.get("refund_destination"));
         assertEquals("REFUNDED",refund.get("order_status"));
+        UUID root=scalar("SELECT id FROM support_conversations WHERE user_id=? AND order_id IS NULL AND site_id IS NULL",UUID.class,userId);
+        var timelineItems=items(supportTimeline.activities(root,false,null,null,null,40));
+        var timelineRefund=timelineItems.stream().filter(event -> "ORDER_REFUND".equals(event.get("source_type"))).findFirst().orElseThrow();
+        assertEquals(scalar("SELECT id FROM balance_transactions WHERE order_id=? AND type='REFUND'",UUID.class,orderId),timelineRefund.get("ledger_id"));
+        assertTrue(timelineRefund.get("order_no") instanceof String);
+        assertTrue(((String)supportTimeline.detail(root,false,null).get("preview")).contains("已退款 ¥12.34"));
     }
 
     @Test
@@ -731,6 +742,11 @@ class OrderRefundConcurrencyIntegrationTest {
 
     private <T> T scalar(String sql, Class<T> type, Object... args) {
         return jdbcTemplate.queryForObject(sql, type, args);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String,Object>> items(Map<String,Object> page) {
+        return (List<Map<String,Object>>)page.get("items");
     }
 
     private void assertMoney(String expected, BigDecimal actual) {

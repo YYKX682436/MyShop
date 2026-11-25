@@ -65,10 +65,12 @@ import type { AdminOrderSearchParams } from "@/lib/admin-order-search"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "/api"
 let messageViewer = "pending"
+let messageLevel = "pending"
 let expectedMessageGuest: string | null = null
 /** An assertion checked against the authenticated cookie, never an authority claim. */
-export function setMessageViewer(userId: string | null | undefined) {
+export function setMessageViewer(userId: string | null | undefined, userLevelId?: string | null) {
   messageViewer = userId === undefined ? "pending" : userId === null ? "guest" : `user:${userId}`
+  messageLevel = userId === undefined ? "pending" : userId === null ? "guest" : userLevelId ?? "none"
 }
 export function setMessageGuestToken(token: string) { expectedMessageGuest = token }
 function isMessagePath(path: string) {
@@ -237,7 +239,7 @@ async function request<T>(
     headers["X-Session-Token"] = sessionToken
   }
   const viewer = messageViewer
-  if (isMessagePath(path)) headers["X-Message-Viewer"] = viewer
+  if (isMessagePath(path)) { headers["X-Message-Viewer"] = viewer; headers["X-Message-Level"] = messageLevel }
   assertMessageIdentity(path, viewer, sessionToken)
 
   // Capture this action's token before any asynchronous fingerprint work.
@@ -269,6 +271,8 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    if (res.status === 409 && isMessagePath(path) && typeof window !== "undefined")
+      window.dispatchEvent(new Event("myshop:refresh-message-identity"))
     if (res.status === 401 && path !== "/user/profile" && redirectOnUnauthorized) {
       handleUnauthorized()
     }
@@ -292,7 +296,7 @@ async function uploadRequest<T>(path: string, formData: FormData, redirectOnUnau
   const sessionToken = getSessionToken()
   if (sessionToken) headers["X-Session-Token"] = sessionToken
   const viewer = messageViewer
-  if (isMessagePath(path)) headers["X-Message-Viewer"] = viewer
+  if (isMessagePath(path)) { headers["X-Message-Viewer"] = viewer; headers["X-Message-Level"] = messageLevel }
   assertMessageIdentity(path, viewer, sessionToken)
   const deviceId = cachedDeviceId
   if (deviceId) headers["X-Device-Id"] = deviceId
@@ -309,6 +313,8 @@ async function uploadRequest<T>(path: string, formData: FormData, redirectOnUnau
   assertMessageIdentity(path, viewer, sessionToken)
 
   if (!res.ok) {
+    if (res.status === 409 && isMessagePath(path) && typeof window !== "undefined")
+      window.dispatchEvent(new Event("myshop:refresh-message-identity"))
     if (res.status === 401 && redirectOnUnauthorized) {
       handleUnauthorized()
     }
@@ -351,32 +357,43 @@ export async function requestOrThrow<T>(apiCall: () => Promise<T>): Promise<T> {
 
 export interface SiteAnnouncement {
   id: string
-  title: string
+  title: string | null
   body: string
   status: "DRAFT" | "PUBLISHED" | "WITHDRAWN"
   published_at: string | null
   publish_version: number
   unread?: boolean
+  cursor?: string
+  audience_type?: "ALL" | "LEVELS"
+  audience_level_ids?: string[]
 }
 
-export interface AnnouncementChannel {
-  channel: "BANNER" | "POPUP"
-  announcement_id: string | null
-  enabled: boolean
+export interface NotificationLevel { id: string; name: string }
+export interface AnnouncementPage { items: SiteAnnouncement[]; next_cursor: string | null }
+export interface AnnouncementManagementData { announcements: SiteAnnouncement[]; levels: NotificationLevel[] }
+export interface NotificationEdit {
+  requestKey?: string
+  title: string | null
+  body: string
+  audienceType: "ALL" | "LEVELS"
+  audienceLevelIds: string[]
+  publish: boolean
 }
 
 export const announcementApi = {
   summary: (signal?: AbortSignal) => request<{ unread: number; latest: Pick<SiteAnnouncement, "id" | "title" | "body" | "published_at"> | null }>("/announcements/summary", { signal }, false),
-  list: (page = 0, signal?: AbortSignal) => request<SiteAnnouncement[]>(`/announcements?page=${page}`, { signal }, false),
+  list: (before?: string | null, signal?: AbortSignal) => {
+    const params = new URLSearchParams({ size: "30" }); if (before) params.set("before", before)
+    return request<AnnouncementPage>(`/announcements?${params}`, { signal }, false)
+  },
   detail: (id: string, signal?: AbortSignal) => request<SiteAnnouncement>(`/announcements/${encodeURIComponent(id)}`, { signal }, false),
   read: (id: string, version: number, signal?: AbortSignal) => request<null>(`/announcements/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ version }), signal }, false),
+  readAll: (signal?: AbortSignal) => request<null>("/announcements/read-all", { method: "POST", body: "{}", signal }, false),
   manage: (scope: "admin" | "subsite") => ({
-    list: () => request<{ announcements: SiteAnnouncement[]; channels: AnnouncementChannel[] }>(`/${scope}/announcements`),
-    create: (title: string, body: string) => request<{ id: string }>(`/${scope}/announcements`, { method: "POST", body: JSON.stringify({ title, body }) }),
-    edit: (id: string, title: string, body: string) => request<null>(`/${scope}/announcements/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ title, body }) }),
+    list: (signal?: AbortSignal) => request<AnnouncementManagementData>(`/${scope}/announcements`, { signal }),
+    save: (id: string | null, edit: NotificationEdit) => request<{ id: string }>(`/${scope}/announcements${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(edit) }),
     publish: (id: string) => request<null>(`/${scope}/announcements/${encodeURIComponent(id)}/publish`, { method: "POST" }),
     withdraw: (id: string) => request<null>(`/${scope}/announcements/${encodeURIComponent(id)}/withdraw`, { method: "POST" }),
-    channel: (channel: "BANNER" | "POPUP", announcementId: string | null, enabled: boolean) => request<null>(`/${scope}/announcements/channels/${channel}`, { method: "PUT", body: JSON.stringify({ announcement_id: announcementId, enabled }) }),
   }),
 }
 
@@ -385,8 +402,9 @@ export interface SupportConversation {
   site_id: string | null
   site_name: string | null
   customer_name?: string
+  customer_level_name?: string | null
   order_id: string | null
-  order_no: number | null
+  order_no: string | null
   order_status: string | null
   latest_at: string | null
   latest_type: string | null
@@ -394,26 +412,37 @@ export interface SupportConversation {
   unread: number
   waiting_for: "ADMIN" | "CUSTOMER" | null
   needs_attention: boolean
+  pending_after_sales?: { request_id: string; order_id: string; order_no: string; waiting_for: "ADMIN" | "CUSTOMER"; round: number; submitted_at: string }[]
 }
 
 export interface SupportAttachment { id: string; url: string; content_type: string; file_size: number }
 export interface SupportActivity {
   id: string
   cursor: string
-  source_type: "SUPPORT_MESSAGE" | "AFTER_SALE_MESSAGE" | "AFTER_SALE_APPLY" | "AFTER_SALE_REJECT" | "ORDER_REFUND" | "SUPPLIER_UPDATE"
+  source_type: "SUPPORT_MESSAGE" | "AFTER_SALE_MESSAGE" | "AFTER_SALE_APPLY" | "AFTER_SALE_REJECT" | "ORDER_REFUND" | "SUPPLIER_UPDATE" | "SYSTEM_RESULT"
   sender_type: "CUSTOMER" | "ADMIN" | "SYSTEM"
   content: string | null
   created_at: string | null
   request_id: string | null
+  order_id?: string | null
+  order_no?: string | null
+  notice_id?: string | null
+  notice_title?: string | null
   client_key: string | null
   round?: number
   refund_amount?: number | null
   refund_destination?: string | null
+  ledger_id?: string | null
   order_status?: string
   supplier_status?: number
+  event_type?: "RECHARGE_CREDITED" | "LEVEL_UPGRADE_COMPLETED" | "LEVEL_UPGRADE_RECOVERED" | "BALANCE_ADJUSTMENT" | "ORDER_DELIVERED"
+  amount?: number | null
+  direction?: "NONE" | "CREDIT" | "DEBIT"
+  balance_after?: number | null
+  level_name?: string | null
   attachments: SupportAttachment[]
 }
-export interface SupportActivityPage { items: SupportActivity[]; has_more: boolean; oldest_cursor: string | null; newest_cursor: string | null }
+export interface SupportActivityPage { items: SupportActivity[]; has_more: boolean; oldest_cursor: string | null; newest_cursor: string | null; first_unread_cursor?: string | null }
 
 export const supportApi = {
   summary: (signal?: AbortSignal) => request<{ unread: number; latest: SupportConversation | null }>("/support/summary", { signal }, false),
@@ -423,14 +452,20 @@ export const supportApi = {
     const params = new URLSearchParams(cursor)
     return request<SupportActivityPage>(`${admin ? "/admin" : ""}/support/conversations/${encodeURIComponent(id)}/activities?${params}`, { signal }, admin)
   },
-  read: (id: string, cursor: string, admin = false, signal?: AbortSignal) => request<null>(`${admin ? "/admin" : ""}/support/conversations/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ cursor }), signal }, admin),
-  order: (id: string, signal?: AbortSignal) => request<{ conversation_id: string | null; order_id: string; order_no: number; order_status: string }>(`/support/orders/${encodeURIComponent(id)}`, { signal }, false),
+  read: (id: string, cursors: string[], admin = false, signal?: AbortSignal) => request<null>(`${admin ? "/admin" : ""}/support/conversations/${encodeURIComponent(id)}/read`, { method: "POST", body: JSON.stringify({ cursors }), signal }, admin),
+  order: (id: string, signal?: AbortSignal, requestId?: string, round?: number) => {
+    const params = new URLSearchParams(); if (requestId) params.set("request_id", requestId); if (round) params.set("round", String(round))
+    return request<{ conversation_id: string | null; order_id: string; order_no: string; order_status: string; request_id?: string; round?: number }>(`/support/orders/${encodeURIComponent(id)}${params.size ? `?${params}` : ""}`, { signal }, false)
+  },
   adminOrder: (id: string, signal?: AbortSignal) => request<{ conversation_id: string | null }>(`/admin/support/orders/${encodeURIComponent(id)}`, { signal }),
-  general: (signal?: AbortSignal) => request<{ conversation_id: string | null }>("/support/general", { signal }, false),
-  send: (data: { conversationId?: string; orderId?: string; clientKey: string; content: string; files: File[] }, admin = false, afterSale = false, signal?: AbortSignal) => {
+  general: (signal?: AbortSignal) => request<{ conversation_id: string; unread_cursor?: string | null }>("/support/general", { signal }, false),
+  send: (data: { conversationId?: string; orderId?: string; requestId?: string; round?: number; noticeId?: string; clientKey: string; content: string; files: File[] }, admin = false, afterSale = false, signal?: AbortSignal) => {
     const form = new FormData()
     if (data.conversationId) form.append("conversation_id", data.conversationId)
     if (data.orderId) form.append("order_id", data.orderId)
+    if (data.requestId) form.append("request_id", data.requestId)
+    if (data.round !== undefined) form.append("round", String(data.round))
+    if (data.noticeId) form.append("source_announcement_id", data.noticeId)
     form.append("client_key", data.clientKey); form.append("content", data.content)
     data.files.forEach(file => form.append("attachments", file))
     const path = afterSale && data.conversationId
@@ -508,6 +543,9 @@ export const userAccountApi = {
     const qs = buildQuery(params)
     return request<PaginatedData<BalanceTransaction>>(`/user/account/balance-transactions?${qs}`)
   },
+  getBalanceTransactionLocation: (id: string, pageSize = 20) => request<{ transaction: BalanceTransaction; page: number }>(
+    `/user/account/balance-transactions/${encodeURIComponent(id)}?page_size=${pageSize}`,
+  ),
   beginRecharge: (data: { amount: number; channel_code: string; device?: string }) =>
     request<AccountPaymentCreateResult>("/user/account/recharges", { method: "POST", body: JSON.stringify(data) }),
   beginUpgrade: (data: { target_level_id: string; payment_method: "BALANCE" | "ONLINE"; channel_code?: string; device?: string }) =>
@@ -568,7 +606,7 @@ export const siteApi = {
 
 export interface SubsiteInfo {
   id: string; owner_id: string; prefix: string; name: string; enabled: boolean
-  favicon_url: string | null; announcement: string | null
+  favicon_url: string | null
   url: string | null; user_count: number
   owner_username?: string; owner_user_no?: number | null; order_count?: number; settled_profit?: number
 }

@@ -12,6 +12,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import com.myshop.repository.UserRepository;
 
 @Configuration
 @EnableWebSecurity
@@ -22,6 +23,7 @@ public class SecurityConfig {
     private final CsrfCookieFilter csrfCookieFilter;
     private final CustomAuthenticationEntryPoint authenticationEntryPoint;
     private final CustomAccessDeniedHandler accessDeniedHandler;
+    private final UserRepository users;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -54,7 +56,7 @@ public class SecurityConfig {
                         .requestMatchers("/auth/captcha", "/auth/register", "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/products/**", "/categories", "/site/config", "/subsite/current", "/payment-channels", "/payment-providers").permitAll()
                         .requestMatchers(HttpMethod.GET, "/announcements", "/announcements/*").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/announcements/*/read").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/announcements/*/read", "/announcements/read-all").permitAll()
                         .requestMatchers(HttpMethod.GET, "/support/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/support/conversations/send", "/support/conversations/*/read", "/support/conversations/*/after-sale-reply").permitAll()
                         .requestMatchers(HttpMethod.GET, "/orders/*", "/orders/*/export").permitAll()
@@ -80,7 +82,7 @@ public class SecurityConfig {
                         .anyRequest().authenticated())
                 .addFilterBefore(csrfCookieFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(new MessageIdentityFilter(), JwtAuthenticationFilter.class);
+                .addFilterAfter(new MessageIdentityFilter(users), JwtAuthenticationFilter.class);
 
         return http.build();
     }

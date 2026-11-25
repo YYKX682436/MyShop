@@ -80,6 +80,12 @@ class BalanceAdjustmentConcurrencyIntegrationTest {
 
     @BeforeEach
     void resetDatabase() {
+        jdbcTemplate.update("DELETE FROM support_system_events");
+        jdbcTemplate.update("DELETE FROM support_activity_receipts");
+        jdbcTemplate.update("DELETE FROM support_activity");
+        jdbcTemplate.update("DELETE FROM support_messages");
+        jdbcTemplate.update("DELETE FROM support_read_states");
+        jdbcTemplate.update("DELETE FROM support_conversations");
         jdbcTemplate.update("DELETE FROM balance_transactions");
         jdbcTemplate.update("DELETE FROM operation_logs");
         jdbcTemplate.update("DELETE FROM users");
@@ -157,6 +163,8 @@ class BalanceAdjustmentConcurrencyIntegrationTest {
         assertMoney("1.00", rows.get(0).after());
         assertMoney("1.00", rows.get(1).before());
         assertMoney("2.00", rows.get(1).after());
+        assertEquals(2, jdbcTemplate.queryForObject("SELECT count(*) FROM support_system_events WHERE source_type='BALANCE_TRANSACTION' AND event_type='BALANCE_ADJUSTMENT' AND user_id=?", Integer.class, userId));
+        assertEquals(2, jdbcTemplate.queryForObject("SELECT count(*) FROM support_activity WHERE source_type='SYSTEM_RESULT' AND notify_customer", Integer.class));
     }
 
     private void assertMoney(String expected, BigDecimal actual) {

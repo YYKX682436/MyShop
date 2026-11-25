@@ -158,7 +158,7 @@ async function openAnnouncements(expectedId) {
   await page.waitForTimeout(800)
   for (let attempt = 0; attempt < 4; attempt++) {
     const pending = page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/announcements" && response.request().method() === "GET").catch(() => null)
-    await page.getByRole("tab", { name:"公告管理" }).click()
+    await page.getByRole("tab", { name:"通知管理" }).click()
     const response = await pending
     if (response?.status() === 429 && attempt < 3) {
       const seconds = Math.min(5, Math.max(1, Number(response.headers()["retry-after"]) || 1))
@@ -423,7 +423,7 @@ try {
   const announcementText = announcementEditor.locator('.vditor-wysiwyg [contenteditable="true"]')
   await announcementText.waitFor()
   const announcementForm = announcementEditor.locator("xpath=ancestor::form")
-  await announcementForm.getByRole("textbox", { name:"标题",exact:true }).fill(marker)
+  await announcementForm.getByRole("textbox", { name:"标题（可选）",exact:true }).fill(marker)
   await announcementText.click()
   await page.keyboard.insertText("公告第一行")
   await page.keyboard.press("Shift+Enter")
@@ -435,13 +435,13 @@ try {
   await mediaCard.getByRole("button", { name: "使用图片" }).click()
   assert.ok(await announcementText.locator(`img[src="${uploaded.url}"]`).count())
   const announcementResponse = page.waitForResponse(response => new URL(response.url()).pathname === "/api/admin/announcements" && response.request().method() === "POST")
-  await announcementForm.getByRole("button", { name: "保存", exact: true }).click()
+  await announcementForm.getByRole("button", { name: "保存草稿", exact: true }).click()
   const announcement = await jsonResponse(await announcementResponse)
   assert.ok(announcement.id)
-  await page.getByRole("button", { name:"新建公告" }).click()
+  await page.getByRole("button", { name:"新建" }).click()
   await page.getByRole("button", { name: marker }).click()
   assert.ok(await announcementText.locator(`img[src="${uploaded.url}"]`).count(), "Announcement image must survive reopening")
-  assert.equal(await announcementForm.getByRole("button", { name: "保存", exact: true }).isDisabled(), true, "Loading a record must not mark it dirty")
+  assert.equal(await announcementForm.getByRole("button", { name: "保存草稿", exact: true }).isDisabled(), true, "Loading a record must not mark it dirty")
 
   const inspection = await request("GET", `/api/admin/media/inspection?filename=${encodeURIComponent(assetId)}`)
   assert.ok(inspection.references.some(ref => ref.owner_type === "PRODUCT" && ref.owner_id === productId && ref.field === "detail_md"))
@@ -472,7 +472,7 @@ try {
   const reopenedAnnouncement = page.getByTestId("markdown-editor").locator('.vditor-wysiwyg [contenteditable="true"]')
   await reopenedAnnouncement.waitFor(); await reopenedAnnouncement.click(); await page.keyboard.press("End"); await page.keyboard.insertText("公告保存回读")
   const announcementUpdate = page.waitForResponse(response => new URL(response.url()).pathname === `/api/admin/announcements/${announcement.id}` && response.request().method() === "PUT")
-  await page.getByTestId("markdown-editor").locator("xpath=ancestor::form").getByRole("button", { name:"保存",exact:true }).click()
+  await page.getByTestId("markdown-editor").locator("xpath=ancestor::form").getByRole("button", { name:"保存草稿",exact:true }).click()
   await jsonResponse(await announcementUpdate)
   const updatedAnnouncements = await request("GET", "/api/admin/announcements")
   assert.ok(updatedAnnouncements.announcements.find(item => item.id === announcement.id)?.body.includes("公告保存回读"))

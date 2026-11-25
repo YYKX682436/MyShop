@@ -20,7 +20,7 @@ const products = Array.from({ length: 30 }, (_, index) => ({
   retail_price: index + 1, description: "测试商品", detail_md: null, specs: [], delivery_type: "AUTO",
   sales_count: 0, initial_sales: 0, customer_input_fields: [],
 }))
-const config = { site_name: "导航测试", maintenance_enabled: false, popup_enabled: false }
+const config = { site_name: "导航测试", maintenance_enabled: false }
 const response = data => JSON.stringify({ code: 0, message: "ok", data })
 let announcementUnread = 0
 let supportUnread = 0
@@ -517,18 +517,6 @@ try {
   await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })
   await page.goForward(); await page.waitForURL("**/product/fixture-0")
   await page.goBack(); await page.waitForURL(base + "/")
-
-  await page.route("**/api/site/config", route => route.fulfill({ status: 200, contentType: "application/json", body: response({ ...config, popup_enabled: true, popup_id: "fixture", popup_version: 1, popup_content: "测试公告" }) }))
-  await page.reload({ waitUntil: "domcontentloaded" })
-  const dialog = page.getByRole("dialog")
-  await dialog.waitFor()
-  const modalAboveNavigation = await page.evaluate(() => {
-    const nav = document.querySelector(".store-liquid-nav").getBoundingClientRect()
-    return !!document.elementFromPoint(nav.left + nav.width / 2, nav.top + nav.height / 2)?.closest(".myshop-overlay")
-  })
-  assert.equal(modalAboveNavigation, true, "modal overlay must cover the navigation")
-  await dialog.getByRole("button", { name: "Close" }).click()
-  await page.unroute("**/api/site/config")
 
   // The browser's real context-loss extension exercises teardown and recovery.
   await page.locator('.store-liquid-nav[data-mode="webgl"]').waitFor({ timeout: 15000 })

@@ -371,7 +371,6 @@ const zh = {
   "common.noData": "暂无数据",
   "common.success": "操作成功",
   "common.close": "关闭",
-  "common.announcement": "公告",
   "common.acknowledge": "我知道了",
   "common.prev": "上一页",
   "common.next": "下一页",
@@ -1276,7 +1275,7 @@ const zh = {
   // Admin Site Config
   "admin.siteConfigDesc": "管理网站基本信息和功能配置",
   "admin.basicInfo": "基本信息",
-  "admin.announcementTab": "公告管理",
+  "admin.notificationTab": "通知管理",
   "admin.maintenanceTab": "维护模式",
   "admin.userSettingsTab": "用户设置",
   "admin.userNumberSettingsDesc": "配置普通会员 UID 的起始值和下一个待分配编号",
@@ -1819,7 +1818,6 @@ const en: Record<keyof typeof zh, string> = {
   "common.noData": "No Data",
   "common.success": "Success",
   "common.close": "Close",
-  "common.announcement": "Announcement",
   "common.acknowledge": "Got it",
   "common.prev": "Previous",
   "common.next": "Next",
@@ -2724,7 +2722,7 @@ const en: Record<keyof typeof zh, string> = {
   // Admin Site Config
   "admin.siteConfigDesc": "Manage site settings and configurations",
   "admin.basicInfo": "Basic Info",
-  "admin.announcementTab": "Announcements",
+  "admin.notificationTab": "Notification management",
   "admin.maintenanceTab": "Maintenance",
   "admin.userSettingsTab": "User Settings",
   "admin.userNumberSettingsDesc": "Configure the starting and next UID for ordinary members",

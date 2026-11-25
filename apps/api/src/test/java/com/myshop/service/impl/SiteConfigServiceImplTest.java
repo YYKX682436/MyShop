@@ -7,7 +7,6 @@ import com.myshop.model.request.UserNumberConfigUpdateRequest;
 import com.myshop.repository.SiteConfigRepository;
 import com.myshop.repository.UserNumberSequenceRepository;
 import com.myshop.repository.UserRepository;
-import com.myshop.service.AnnouncementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -40,14 +39,11 @@ class SiteConfigServiceImplTest {
     @Mock
     private UserRepository userRepository;
 
-    @Mock
-    private AnnouncementService announcements;
-
     private SiteConfigServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new SiteConfigServiceImpl(repository, userNumberSequenceRepository, userRepository, announcements);
+        service = new SiteConfigServiceImpl(repository, userNumberSequenceRepository, userRepository);
     }
 
     @Test
@@ -105,26 +101,22 @@ class SiteConfigServiceImplTest {
     }
 
     @Test
-    void subsiteDoesNotExposeMainSitePopupAndUsesItsOwnAnnouncement() {
+    void publicConfigNeverExposesAnnouncementContentOrRetiredChannels() {
         when(repository.findByConfigKey(anyString())).thenAnswer(invocation -> {
             String key = invocation.getArgument(0);
             return switch (key) {
-                case "popup_enabled" -> Optional.of(configValue("true"));
-                case "popup_content" -> Optional.of(configValue("主站内容"));
-                case "announcement" -> Optional.of(configValue("主站公告"));
                 default -> Optional.empty();
             };
         });
         var site = new com.myshop.entity.Subsite();
-        site.setId(java.util.UUID.randomUUID()); site.setName("分站"); site.setAnnouncement("旧数据");
-        when(announcements.channels(site.getId())).thenReturn(Map.of("announcement_enabled", true,
-                "announcement", "分站公告", "popup_enabled", false));
+        site.setId(java.util.UUID.randomUUID()); site.setName("分站");
         com.myshop.context.SiteRequestContext.set(site);
         try {
             var result = service.getPublicConfig();
-            assertEquals(false, result.get("popup_enabled"));
+            assertFalse(result.containsKey("popup_enabled"));
             assertFalse(result.containsKey("popup_content"));
-            assertEquals("分站公告", result.get("announcement"));
+            assertFalse(result.containsKey("announcement"));
+            assertFalse(result.containsKey("announcement_enabled"));
             assertEquals("分站", result.get("site_name"));
             assertEquals("http://localhost:3000", result.get("main_site_url"));
         } finally { com.myshop.context.SiteRequestContext.clear(); }
