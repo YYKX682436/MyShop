@@ -42,6 +42,32 @@ test("admin tables keep accessible scrolling while key lists use purpose-built m
   assert.doesNotMatch(styles, /admin-table-scroll[\s\S]{0,800}thead[\s\S]{0,300}display:\s*none/)
 })
 
+test("compact table visibility and record styles share the same container breakpoint", () => {
+  const start = styles.indexOf("@container admin-table (max-width: 767px)")
+  const end = styles.indexOf("/* Keep one keyboard-scrollable region", start)
+  assert.notEqual(start, -1, "compact list rules are container driven")
+  assert.notEqual(end, -1, "compact list rules end before shared scroll rules")
+  const compactStyles = styles.slice(start, end)
+
+  for (const selector of [
+    ".admin-orders-table .admin-table-scroll > table { display: none; }",
+    ".admin-order-mobile-list { display: grid; }",
+    ".admin-order-mobile-record { display: grid;",
+    ".admin-products-table .admin-table-scroll table { display: none; }",
+    ".admin-product-mobile-list { display: grid; }",
+    ".admin-product-mobile-record {",
+    ".admin-users-table .admin-table-scroll table { display: none; }",
+    ".admin-user-mobile-list { display: grid; }",
+    ".admin-user-mobile-record { display: grid;",
+    ".admin-recharges-table .admin-table-scroll table { display: none; }",
+    ".admin-recharge-mobile-list { display: grid; }",
+    ".admin-recharge-mobile-record { display: grid;",
+  ]) {
+    assert.ok(compactStyles.includes(selector), `missing compact style: ${selector}`)
+  }
+  assert.doesNotMatch(styles, /@container admin-table \(max-width: 720px\)/)
+})
+
 test("admin FormSection restores its shared card while retaining utility overrides", () => {
   const section = cssRule(".admin-settings-section")
   assert.match(shared, /settings-section admin-settings-section/)

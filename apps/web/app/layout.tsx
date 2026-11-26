@@ -5,7 +5,6 @@ import { AppProviders } from "@/lib/context"
 import { MotionProvider } from "@/components/ui/motion"
 import { ThemeScript } from "./theme-script"
 import { LayoutModeScript } from "./layout-mode-script"
-import { LayoutModeController } from "@/components/layout/layout-mode"
 import { requestSiteUrl } from "@/lib/request-site"
 import { getSiteConfig } from "@/services/api-server"
 import "./globals.css"
@@ -57,7 +56,6 @@ export default function RootLayout({
           <AppProviders>
             {children}
             <Toaster position="top-center" richColors closeButton />
-            <LayoutModeController />
           </AppProviders>
         </MotionProvider>
       </body>

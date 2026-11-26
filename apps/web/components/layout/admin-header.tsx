@@ -52,7 +52,7 @@ export function AdminHeader() {
   const router = useRouter()
   const { locale, setLocale, t } = useLocale()
   const { resolvedTheme, setTheme } = useTheme()
-  const { mode: layoutMode, setMode: setLayoutMode } = useLayoutPreference()
+  const { preference: layoutPreference, canToggle: canToggleLayout, setMode: setLayoutMode } = useLayoutPreference()
   const { user, logout } = useAuth()
   const { total: attentionTotal } = useAdminAttention()
   const attentionLabel = attentionTotal > 99 ? "99+" : String(attentionTotal)
@@ -105,11 +105,15 @@ export function AdminHeader() {
               {resolvedTheme === "dark" ? <Sun className="h-4 w-4" aria-hidden="true" /> : <Moon className="h-4 w-4" aria-hidden="true" />}
               {resolvedTheme === "dark" ? t("admin.switchToLight") : t("admin.switchToDark")}
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setLayoutMode(layoutMode === "desktop" ? "auto" : "desktop")}>
-              <Monitor className="h-4 w-4" aria-hidden="true" />
-              {t(layoutMode === "desktop" ? "layout.switchToAuto" : "layout.switchToDesktop")}
-            </DropdownMenuItem>
+            {canToggleLayout && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setLayoutMode(layoutPreference === "desktop" ? "auto" : "desktop")}>
+                  <Monitor className="h-4 w-4" aria-hidden="true" />
+                  {t(layoutPreference === "desktop" ? "layout.switchToAuto" : "layout.switchToDesktop")}
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
               <LogOut className="h-4 w-4" aria-hidden="true" />
