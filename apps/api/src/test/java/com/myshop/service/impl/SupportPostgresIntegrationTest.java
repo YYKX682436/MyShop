@@ -389,8 +389,8 @@ class SupportPostgresIntegrationTest {
         UUID transientErrorProduct = insertAttentionProduct(category,"mapping transient issue", "SUPPLIER", true, 3);
         UUID persistentErrorProduct = insertAttentionProduct(category,"mapping persistent issue", "SUPPLIER", true, 3);
         insertAttentionMapping(mappingAccount,configErrorProduct,"CONFIG","CONFIG",now);
-        insertAttentionMapping(mappingAccount,transientErrorProduct,"CONNECTION","CONNECTION",now);
-        insertAttentionMapping(mappingAccount,persistentErrorProduct,"CONNECTION","CONNECTION",now.minusMinutes(30),now);
+        insertAttentionMapping(mappingAccount,transientErrorProduct,"CONNECTION_TRANSIENT","CONNECTION",now);
+        insertAttentionMapping(mappingAccount,persistentErrorProduct,"CONNECTION_PERSISTENT","CONNECTION",now.minusMinutes(30),now);
 
         UUID paymentChannel = UUID.randomUUID(), paymentOrder = UUID.randomUUID(), paymentAttempt = UUID.randomUUID();
         String channelCode = "attention-"+paymentChannel;
