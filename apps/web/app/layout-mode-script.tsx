@@ -45,7 +45,18 @@ const SCRIPT = String.raw`
     }
 
     function isSmallTouchScreen() {
-      return navigator.maxTouchPoints > 0 && (window.screen?.width || window.innerWidth) <= 640;
+      const screenWidth = Number(window.screen?.width || window.innerWidth);
+      const screenHeight = Number(window.screen?.height || window.innerHeight);
+      return navigator.maxTouchPoints > 0 && Math.min(screenWidth, screenHeight) <= 640;
+    }
+
+    function isNativeDesktopRequest(viewport) {
+      const physicalWidth = Number(window.screen?.width || window.innerWidth);
+      const layoutWidth = Math.max(declaredViewportWidth(viewport), window.innerWidth);
+      return isSmallTouchScreen()
+        && hasNativeDesktopViewport(viewport)
+        && layoutWidth >= 768
+        && layoutWidth > physicalWidth * 1.1;
     }
 
     function isBrowserDesktopRequest() {
@@ -71,8 +82,8 @@ const SCRIPT = String.raw`
       const viewport = viewportMeta();
       const nativeViewport = hasNativeDesktopViewport(viewport);
       if (preference === "desktop" && (isSmallTouchScreen() || ownsViewport(viewport) || nativeViewport)) return "user";
-      if (nativeViewport) return "native";
-      if (isBrowserDesktopRequest()) return "browser";
+      if (isBrowserDesktopRequest()) return nativeViewport ? "native" : "browser";
+      if (isNativeDesktopRequest(viewport)) return "native";
       return "auto";
     }
 

@@ -1665,6 +1665,20 @@ dialog.media-manage-dialog::backdrop {
   .admin-recharges-table .admin-table-scroll table { display: none; }
   .admin-recharges-table .admin-recharge-mobile-list { display: grid; }
 
+  :root[data-layout-mode="desktop"] .admin-orders-table .admin-table-scroll > table { display: table; }
+  :root[data-layout-mode="desktop"] .admin-order-mobile-list { display: none; }
+  :root[data-layout-mode="desktop"] .admin-products-table .admin-table-scroll table { display: table; }
+  :root[data-layout-mode="desktop"] .admin-product-mobile-list { display: none; }
+  :root[data-layout-mode="desktop"] .admin-users-table .admin-table-scroll table { display: table; }
+  :root[data-layout-mode="desktop"] .admin-user-mobile-list { display: none; }
+  :root[data-layout-mode="desktop"] .admin-recharges-table .admin-table-scroll table { display: table; }
+  :root[data-layout-mode="desktop"] .admin-recharge-mobile-list { display: none; }
+
+  :root[data-layout-mode="desktop"] .admin-orders-table table { width: 1180px; min-width: 1180px; table-layout: fixed; }
+  :root[data-layout-mode="desktop"] .admin-products-table table { width: 1180px; min-width: 1180px; table-layout: fixed; }
+  :root[data-layout-mode="desktop"] .admin-users-table table { width: 1040px; min-width: 1040px; table-layout: fixed; }
+  :root[data-layout-mode="desktop"] .admin-recharges-table table { width: 1050px; min-width: 1050px; table-layout: fixed; }
+
   .admin-orders-table table {
     width: 860px;
     min-width: 860px;
